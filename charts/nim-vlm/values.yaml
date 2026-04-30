@@ -1,0 +1,41 @@
+image:
+  repository: registry.suse.com/ai/containers/nvidia/llava-v1.6-mistral-7b
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  port: 8000
+  type: ClusterIP
+
+gpu:
+  enabled: true
+  count: "2"
+  type: nvidia.com/gpu
+
+resources:
+  requests:
+    cpu: "16"
+    memory: "64Gi"
+  limits:
+    cpu: "16"
+    memory: "64Gi"
+    nvidia.com/gpu: "2"
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+nodeSelector:
+  nvidia.com/gpu.present: "true"
+
+imagePullSecrets:
+  - name: suse-registry-creds
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+env: []

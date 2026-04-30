@@ -1,0 +1,134 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aif-operator
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - blueprints
+      - bundles
+      - workloads
+      - installaiextensions
+      - settings
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - blueprints/status
+      - bundles/status
+      - workloads/status
+      - installaiextensions/status
+      - settings/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - services
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aif-blueprint-publisher
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - blueprints
+    verbs:
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - blueprints/status
+    verbs:
+      - get
+      - update
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aif-operator
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aif-operator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aif-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

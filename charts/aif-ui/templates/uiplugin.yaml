@@ -1,0 +1,13 @@
+apiVersion: catalog.cattle.io/v1
+kind: UIPlugin
+metadata:
+  name: {{ .Values.plugin.name }}
+  namespace: cattle-ui-plugin-system
+  annotations:
+    catalog.cattle.io/ui-extensions-version: ">= 3.0.0 < 4.0.0"
+spec:
+  plugin:
+    name: {{ .Values.plugin.name }}
+    version: {{ .Values.plugin.version }}
+    endpoint: {{ .Values.endpoint }}
+    noCache: {{ .Values.plugin.noCache }}

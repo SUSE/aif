@@ -1,0 +1,74 @@
+# Image configuration supports three install modes:
+# 1. Connected (default): Uses ghcr.io registry
+#    Result: ghcr.io/suse/aif-operator:<tag>
+# 2. Air-gap with hostname-only: --set image.registry=harbor.example.com
+#    Result: harbor.example.com/suse/aif-operator:<tag>
+# 3. Air-gap with project-prefix: --set image.registry=harbor.example.com/suse --set image.repository=aif-operator
+#    Result: harbor.example.com/suse/aif-operator:<tag>
+#    Note: When using a project-prefix registry, also override repository to match your mirrored path
+image:
+  registry: ghcr.io
+  repository: suse/aif-operator
+  tag: ""              # empty string → templated to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Image pull secrets for private registries (air-gap installs)
+# Example: imagePullSecrets:
+#   - name: harbor-pull-secret
+imagePullSecrets: []
+
+serviceAccount:
+  name: ""
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  ports:
+    api: 8080
+    health: 8081
+    metrics: 8082
+    webhook: 9443
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "512Mi"
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  mountPath: /data
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
+
+extraEmptyDirs:
+  - /data/charts
+  - /data/git
+  - /tmp
+
+operator:
+  logLevel: info
+  logFormat: json
+  catalogRefresh: 10m
+
+webhook:
+  enabled: true
+  tlsMode: cert-manager
+  certManager:
+    enabled: true
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false

@@ -1,0 +1,42 @@
+# Binaries
+bin/
+dist/
+
+# Helm packages
+*.tgz
+
+# Data directory
+data/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test coverage
+*.out
+coverage.html
+P0-4-VALIDATION.md
+test-lifecycle.sh
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# References (not part of AIF codebase)
+dashboard/
+harvester-ui-extension/
+suse-ai-lifecycle-manager/

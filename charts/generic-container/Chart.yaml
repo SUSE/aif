@@ -1,0 +1,16 @@
+apiVersion: v2
+name: generic-container
+description: Generic container workload template for SUSE AI Factory
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - container
+  - workload
+home: https://github.com/suse/aif
+sources:
+  - https://github.com/suse/aif
+maintainers:
+  - name: SUSE AI Factory Team
+    email: aif-maintainers@suse.com

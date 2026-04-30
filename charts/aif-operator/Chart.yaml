@@ -1,0 +1,17 @@
+apiVersion: v2
+name: aif-operator
+description: SUSE AI Factory operator for deploying and managing AI workloads
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - machine-learning
+  - kubernetes-operator
+  - nvidia
+home: https://github.com/suse/aif
+sources:
+  - https://github.com/suse/aif
+maintainers:
+  - name: SUSE AI Factory Team
+    email: aif-maintainers@suse.com

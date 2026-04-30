@@ -1,0 +1,67 @@
+{{- if and .Values.webhook.enabled (eq .Values.webhook.tlsMode "cert-manager") }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: aif-webhook-issuer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: aif-webhook-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  secretName: aif-webhook-tls
+  duration: 8760h
+  renewBefore: 720h
+  dnsNames:
+    - {{ include "aif-operator.fullname" . }}
+    - {{ include "aif-operator.fullname" . }}.{{ .Release.Namespace }}
+    - {{ include "aif-operator.fullname" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "aif-operator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: aif-webhook-issuer
+    kind: Issuer
+{{- end }}
+---
+{{- if .Values.webhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: aif-blueprint-immutability
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  {{- if eq .Values.webhook.tlsMode "cert-manager" }}
+  annotations:
+    cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/aif-webhook-cert"
+  {{- end }}
+webhooks:
+  - name: blueprint-immutability.ai-platform.suse.com
+    clientConfig:
+      service:
+        name: {{ include "aif-operator.fullname" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate-ai-platform-suse-com-v1alpha1-blueprint
+        port: {{ .Values.service.ports.webhook }}
+    rules:
+      - apiGroups:
+          - ai-platform.suse.com
+        apiVersions:
+          - v1alpha1
+        operations:
+          - UPDATE
+        resources:
+          - blueprints
+        scope: Namespaced
+    admissionReviewVersions:
+      - v1
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 10
+{{- end }}

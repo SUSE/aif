@@ -1,0 +1,5 @@
+endpoint: http://aif-operator.aif.svc.cluster.local:8080/ui
+plugin:
+  name: ai-factory
+  version: "1.0.0"
+  noCache: false
