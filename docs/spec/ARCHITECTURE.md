@@ -200,7 +200,7 @@ Apps are not CRDs. The catalog is built dynamically by reading the SUSE Registry
 
 | Component | Language / Framework | Port(s) | Responsibility |
 |-----------|---------------------|---------|----------------|
-| **aif-operator** | Go 1.21+ | 8080, 8081, 8082, 9443 | REST API server, controller manager, validating admission webhook |
+| **aif-operator** | Go 1.26+ | 8080, 8081, 8082, 9443 | REST API server, controller manager, validating admission webhook |
 | **ai-factory UI extension** | Vue 3 / `@rancher/shell` ^3.0.10 | served at 8080/ui | All user-facing pages; loaded dynamically by Rancher Dashboard |
 | **aif-operator Helm chart** | Helm 3 | — | Deploys operator, CRDs, RBAC, webhook config, PVC, Service |
 | **aif-ui Helm chart** | Helm 3 | — | Registers Rancher UIPlugin |

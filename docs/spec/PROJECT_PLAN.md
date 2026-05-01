@@ -143,17 +143,17 @@ A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on U
 - [ ] Rancher 2.10+ if doing UI work
 
 ### Languages & runtimes
-- [ ] Go 1.21+ installed; `go env GOPATH` writable
+- [ ] Go 1.26+ installed; `go env GOPATH` writable
 - [ ] Helm 3.13+ installed
 - [ ] Docker / podman available for image builds
 - [ ] Node 18+ and Yarn for UI work
 
 ### Code-generation & build tools (install via `make install-tools` — landed by P0-1)
-- [ ] `controller-gen` (CRD + RBAC generation, version pinned in `tools.go`)
-- [ ] `kubebuilder` (envtest binaries for controller integration tests)
-- [ ] `golangci-lint` (lint pipeline)
-- [ ] `mockgen` from `go.uber.org/mock` (for larger interface mocks)
-- [ ] `ginkgo` and `gomega` (BDD test framework)
+- [x] `controller-gen@v0.20.1` (CRD + RBAC generation, version pinned in Makefile)
+- [ ] `kubebuilder` (envtest binaries for controller integration tests) — **DEFERRED to P1-8**
+- [x] `golangci-lint@v2.11.4` (lint pipeline, version pinned in Makefile)
+- [x] `mockgen@v0.6.0` from `go.uber.org/mock` (for larger interface mocks)
+- [x] `ginkgo@v2.28.1` and `gomega` (BDD test framework)
 
 ### Air-gap / release tooling (needed for Phase 9; can install later)
 - [ ] `skopeo` (mirror.sh script + customer-side re-mirroring)
@@ -227,13 +227,13 @@ grep -E '^## ' CLAUDE.md
 - [ ] `go build ./...` succeeds with only an empty `main.go`
 - [ ] `.gitignore` excludes `bin/`, `dist/`, `*.tgz`, `data/`
 - [ ] `Makefile` has targets: `build`, `test`, `run`, `docker-build`, `docker-push`, `helm-install`, `helm-uninstall`, `charts-package`, `lint`, `manifests`, `generate`, **`install-tools`** *(installs all build/test tools per `tools.go`)*
-- [ ] `tools.go` (build tag `tools`) imports the toolchain dependencies so `go install ./...` resolves them with version pinning. Tools to include:
-  - `sigs.k8s.io/controller-tools/cmd/controller-gen`
-  - `sigs.k8s.io/kubebuilder/v3/cmd/kubebuilder` (for envtest binaries)
-  - `github.com/golangci/golangci-lint/cmd/golangci-lint`
-  - `go.uber.org/mock/mockgen`
-  - `github.com/onsi/ginkgo/v2/ginkgo`
-- [ ] `make install-tools` installs each tool from the version pinned in `go.mod` (via `go install`) into `$GOPATH/bin` or `./bin/` (decide one and document)
+- [x] `tools.go` (build tag `tools`) imports tool dependencies (versions in go.mod and Makefile). Tools included:
+  - `sigs.k8s.io/controller-tools/cmd/controller-gen` (v0.20.1)
+  - `github.com/golangci/golangci-lint/v2/cmd/golangci-lint` (v2.11.4)
+  - `go.uber.org/mock/mockgen` (v0.6.0)
+  - `github.com/onsi/ginkgo/v2/ginkgo` (v2.28.1)
+  - Note: kubebuilder deferred to P1-8 due to Go 1.26 compatibility issues
+- [x] `make install-tools` installs each tool with pinned versions from Makefile into `$GOPATH/bin`
 - [ ] `Dockerfile` is two-stage: `golang:1.21-alpine` builder → `alpine:3.18` runtime; copies only the binary; runs as UID 1000
 
 **Validation:**
@@ -242,7 +242,7 @@ go build ./...
 go vet ./...
 make help
 make install-tools
-which controller-gen kubebuilder golangci-lint mockgen ginkgo
+which controller-gen golangci-lint mockgen ginkgo  # Note: kubebuilder removed, deferred to P1-8
 docker build -t aif:test . && docker inspect aif:test | grep -i user
 ```
 
@@ -766,6 +766,7 @@ go test ./internal/manager/ -v
 **Done When:** `go test ./internal/controller/...` runs all controller tests against a single envtest instance with <60s total runtime.
 
 **Acceptance Criteria:**
+- [ ] **Re-add kubebuilder/envtest toolchain** (deferred from P0-1): verify Go 1.26 compatibility issues are resolved with latest kubebuilder/controller-runtime versions; re-add `sigs.k8s.io/kubebuilder/v3` (or v4 if available) to `tools.go` and `go.mod`; update `make install-tools` to include kubebuilder; verify `go mod tidy` and `go build ./...` succeed
 - [ ] `internal/controller/suite_test.go` matches the canonical bootstrap in `ARCHITECTURE.md §12.3 "Canonical envtest setup (P1-8 contract)"` **verbatim** (BeforeSuite + AfterSuite, Ginkgo `RegisterFailHandler` + `RunSpecs`, `envtest.Environment` with `CRDInstallOptions.Paths` + `WebhookInstallOptions.Paths` per the snippet)
 - [ ] Installs CRDs from `charts/aif-operator/crds/` via `envtest.CRDInstallOptions{Paths: []string{filepath.Join("..", "..", "charts", "aif-operator", "crds")}, ErrorIfPathMissing: true}` (the `ErrorIfPathMissing: true` is non-negotiable — silent missing CRDs would mask test failures)
 - [ ] Installs the webhook configuration from `charts/aif-operator/templates/webhook-configuration.yaml` via `WebhookInstallOptions` per §12.3
@@ -785,12 +786,16 @@ go test ./internal/manager/ -v
 
 **Validation:**
 ```bash
+# Verify kubebuilder re-added
+which kubebuilder
+go mod graph | grep kubebuilder
+# Verify envtest suite
 make envtest test-controllers
 go tool cover -func=cover.out | grep total
 ```
 
 **Agent Prompt:**
-> Implement `internal/controller/suite_test.go` per `ARCHITECTURE.md §12.3 "Canonical envtest setup (P1-8 contract)"` verbatim. Add the `make envtest` and `make test-controllers` Makefile targets per the Acceptance section. Use Ginkgo + Gomega (already in the test deps). The `setup-envtest` tool downloads `etcd` + `kube-apiserver` binaries on first run; cache them via the `--bin-dir bin/k8s` flag. Done when `make test-controllers` succeeds and the suite runs in <60s end-to-end.
+> **FIRST:** Re-add kubebuilder/envtest dependencies (deferred from P0-1 due to Go 1.26 incompatibility): check latest kubebuilder versions for Go 1.26 compatibility, add to `tools.go` and `go.mod`, update `make install-tools`, verify build. **THEN:** Implement `internal/controller/suite_test.go` per `ARCHITECTURE.md §12.3 "Canonical envtest setup (P1-8 contract)"` verbatim. Add the `make envtest` and `make test-controllers` Makefile targets per the Acceptance section. Use Ginkgo + Gomega (already in the test deps). The `setup-envtest` tool downloads `etcd` + `kube-apiserver` binaries on first run; cache them via the `--bin-dir bin/k8s` flag. Done when `make test-controllers` succeeds and the suite runs in <60s end-to-end.
 
 ---
 

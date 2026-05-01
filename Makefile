@@ -76,12 +76,12 @@ install-tools:
 	@echo "Installing development tools with pinned versions..."
 	@echo "Installing controller-gen v0.20.1..."
 	go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.20.1
-	@echo "Installing golangci-lint v1.64.8..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
-	@echo "Installing mockgen v0.4.0..."
-	go install go.uber.org/mock/mockgen@v0.4.0
-	@echo "Installing ginkgo v2.27.4..."
-	go install github.com/onsi/ginkgo/v2/ginkgo@v2.27.4
+	@echo "Installing golangci-lint v2.11.4..."
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+	@echo "Installing mockgen v0.6.0..."
+	go install go.uber.org/mock/mockgen@v0.6.0
+	@echo "Installing ginkgo v2.28.1..."
+	go install github.com/onsi/ginkgo/v2/ginkgo@v2.28.1
 	@echo ""
 	@echo "All tools installed successfully to $(GOBIN)"
 	@echo "Make sure $(GOBIN) is in your PATH"

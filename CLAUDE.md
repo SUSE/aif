@@ -72,7 +72,8 @@ make manifests                    # controller-gen → charts/aif-operator/crds/
 make generate                     # deepcopy → zz_generated.deepcopy.go
 
 # Install build tools
-make install-tools                # Installs controller-gen, kubebuilder, golangci-lint, mockgen, ginkgo
+make install-tools                # Installs controller-gen@v0.20.1, golangci-lint@v2.11.4, mockgen@v0.6.0, ginkgo@v2.28.1
+                                  # Note: kubebuilder/envtest deferred to Phase 1 (P1-8)
 
 # Docker build
 make docker-build                 # Two-stage Dockerfile, runs as UID 1000
