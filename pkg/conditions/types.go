@@ -19,8 +19,9 @@ const (
 	ReasonInvalidSpec = "InvalidSpec" // spec validation failed
 
 	// Bundle-specific
-	ReasonAwaitingDeployer = "AwaitingDeployer" // Workload waiting for deploy logic
-	ReasonSecretNotFound   = "SecretNotFound"   // Settings credential Secret missing
+	ReasonAwaitingDeployer         = "AwaitingDeployer"         // Workload waiting for deploy logic
+	ReasonSecretNotFound           = "SecretNotFound"           // Settings credential Secret missing
+	ReasonPublishedBlueprintMissing = "PublishedBlueprintMissing" // Self-healing detected missing Blueprint
 
 	// Workload-specific
 	ReasonProgressDeadlineExceeded = "ProgressDeadlineExceeded"
