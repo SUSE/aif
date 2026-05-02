@@ -21,6 +21,7 @@ const (
 	// Bundle-specific
 	ReasonAwaitingDeployer         = "AwaitingDeployer"         // Workload waiting for deploy logic
 	ReasonSecretNotFound           = "SecretNotFound"           // Settings credential Secret missing
+	ReasonInvalidSecretKey         = "InvalidSecretKey"         // Secret exists but referenced key missing
 	ReasonPublishedBlueprintMissing = "PublishedBlueprintMissing" // Self-healing detected missing Blueprint
 
 	// Workload-specific
