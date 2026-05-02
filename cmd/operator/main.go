@@ -128,6 +128,18 @@ func main() {
 	}
 	logger.Info("WorkloadReconciler registered")
 
+	// Setup SettingsReconciler
+	settingsReconciler := &controller.SettingsReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("settings-controller"),
+	}
+	if err := settingsReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error("Failed to setup SettingsReconciler", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("SettingsReconciler registered")
+
 	// Add health checks
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		logger.Error("Failed to add healthz check", "error", err)

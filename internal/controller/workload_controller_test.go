@@ -12,39 +12,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// fakeRecorder implements record.EventRecorder for testing
-type fakeRecorder struct {
-	events []string
-}
-
-func (f *fakeRecorder) Event(object runtime.Object, eventtype, reason, message string) {
-	f.events = append(f.events, eventtype+":"+reason+":"+message)
-}
-
-func (f *fakeRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
-	f.Event(object, eventtype, reason, messageFmt)
-}
-
-func (f *fakeRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
-	f.Event(object, eventtype, reason, messageFmt)
-}
-
-var _ record.EventRecorder = (*fakeRecorder)(nil)
-
-// findCondition finds a condition by type in a slice of conditions
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
-}
+// Test helpers: fakeRecorder and findCondition are in controller_test_helpers.go
 
 // TestWorkloadReconciler_ValidApp verifies that a Workload with an App source
 // is reconciled successfully: finalizer is added on first reconcile, phase is set
