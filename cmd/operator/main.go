@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
@@ -114,6 +115,18 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Manager created successfully", "webhookPort", parsePort(webhookBindAddress))
+
+	// Setup WorkloadReconciler
+	workloadReconciler := &controller.WorkloadReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("workload-controller"),
+	}
+	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error("Failed to setup WorkloadReconciler", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("WorkloadReconciler registered")
 
 	// Add health checks
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

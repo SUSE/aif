@@ -12,29 +12,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-// fakeRecorder implements record.EventRecorder for testing
-type fakeRecorder struct {
-	events []string
-}
-
-func (f *fakeRecorder) Event(object runtime.Object, eventtype, reason, message string) {
-	f.events = append(f.events, eventtype+":"+reason+":"+message)
-}
-
-func (f *fakeRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
-	f.Event(object, eventtype, reason, messageFmt)
-}
-
-func (f *fakeRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
-	f.Event(object, eventtype, reason, messageFmt)
-}
-
-var _ record.EventRecorder = (*fakeRecorder)(nil)
 
 func TestBundleReconciler_ValidBundle(t *testing.T) {
 	// Setup scheme
@@ -146,16 +126,6 @@ func TestBundleReconciler_ValidBundle(t *testing.T) {
 	if updated.Status.ObservedGeneration != 1 {
 		t.Errorf("expected observedGeneration=1, got %d", updated.Status.ObservedGeneration)
 	}
-}
-
-// Helper to find condition by type
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
 }
 
 // fakeBundleManager implements bundle.Manager for testing
