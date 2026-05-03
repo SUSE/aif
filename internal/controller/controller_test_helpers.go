@@ -28,6 +28,8 @@ func (f *fakeRecorder) AnnotatedEventf(object runtime.Object, annotations map[st
 var _ record.EventRecorder = &fakeRecorder{}
 
 // findCondition finds a condition by type in a condition list
+//
+//nolint:unused // Used in test files
 func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
 	for i := range conditions {
 		if conditions[i].Type == condType {
@@ -38,6 +40,8 @@ func findCondition(conditions []metav1.Condition, condType string) *metav1.Condi
 }
 
 // containsEventReason checks if an event string contains the given reason
+//
+//nolint:unused // Used in test files
 func containsEventReason(event, reason string) bool {
 	parts := strings.Split(event, ":")
 	if len(parts) >= 2 {

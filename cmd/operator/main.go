@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
@@ -116,11 +117,17 @@ func main() {
 	}
 	logger.Info("Manager created successfully", "webhookPort", parsePort(webhookBindAddress))
 
+	// Register API types with scheme
+	if err := aifv1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
+		logger.Error("Failed to add API types to scheme", "error", err)
+		os.Exit(1)
+	}
+
 	// Setup WorkloadReconciler
 	workloadReconciler := &controller.WorkloadReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("workload-controller"),
+		Recorder: mgr.GetEventRecorderFor("workload-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
 	}
 	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
 		logger.Error("Failed to setup WorkloadReconciler", "error", err)
@@ -132,13 +139,39 @@ func main() {
 	settingsReconciler := &controller.SettingsReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("settings-controller"),
+		Recorder: mgr.GetEventRecorderFor("settings-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
 	}
 	if err := settingsReconciler.SetupWithManager(mgr); err != nil {
 		logger.Error("Failed to setup SettingsReconciler", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("SettingsReconciler registered")
+
+	// Setup BundleReconciler
+	bundleReconciler := &controller.BundleReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("bundle-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
+		Manager:  bundleManager,
+	}
+	if err := bundleReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error("Failed to setup BundleReconciler", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("BundleReconciler registered")
+
+	// Setup BlueprintReconciler
+	blueprintReconciler := &controller.BlueprintReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("blueprint-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
+		Manager:  blueprintManager,
+	}
+	if err := blueprintReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error("Failed to setup BlueprintReconciler", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("BlueprintReconciler registered")
 
 	// Add health checks
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
