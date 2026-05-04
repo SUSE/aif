@@ -100,5 +100,5 @@ spec:
         - name: webhook-certs
           secret:
             secretName: aif-webhook-tls
-            defaultMode: 0440
+            defaultMode: 0444
         {{- end }}

@@ -173,6 +173,13 @@ func main() {
 	}
 	logger.Info("BlueprintReconciler registered")
 
+	// Setup webhooks
+	if err := manager.SetupWebhooks(mgr); err != nil {
+		logger.Error("Failed to setup webhooks", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("Webhooks registered")
+
 	// Add health checks
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		logger.Error("Failed to add healthz check", "error", err)
