@@ -58,7 +58,7 @@ webhooks:
           - UPDATE
         resources:
           - blueprints
-        scope: Namespaced
+        scope: Cluster
     admissionReviewVersions:
       - v1
     sideEffects: None
