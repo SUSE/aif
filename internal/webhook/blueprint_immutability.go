@@ -17,6 +17,12 @@ import (
 // Any UPDATE operation that modifies spec fields is denied.
 type BlueprintImmutabilityWebhook struct{}
 
+// NewBlueprintImmutability returns a new BlueprintImmutabilityWebhook handler.
+// Used by webhook.Validators() in registry.go.
+func NewBlueprintImmutability() *BlueprintImmutabilityWebhook {
+	return &BlueprintImmutabilityWebhook{}
+}
+
 // Handle implements admission.Handler interface.
 // It enforces Blueprint spec immutability by comparing old and new spec fields.
 func (w *BlueprintImmutabilityWebhook) Handle(ctx context.Context, req admission.Request) admission.Response {

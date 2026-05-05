@@ -1,12 +1,16 @@
 package manager
 
 import (
-	blueprintwh "github.com/SUSE/aif/internal/webhook"
+	aifwh "github.com/SUSE/aif/internal/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-// SetupWebhooks registers all admission webhooks with the manager's webhook server.
+// SetupWebhooks registers every admission webhook listed in
+// internal/webhook.Validators() with the manager's webhook server.
+//
+// Adding a new webhook is a one-line edit to webhook.Validators() — this
+// function does not change.
 //
 // Certificate reload behaviour:
 // The webhook server (controller-runtime) watches CertDir for file modifications
@@ -15,11 +19,9 @@ import (
 // is generated once per helm install/upgrade. For manual mode, customer updates
 // the Secret and reload happens automatically. See ARCHITECTURE.md §8.3.
 func SetupWebhooks(mgr manager.Manager) error {
-	// Register Blueprint immutability webhook
-	// Path MUST match clientConfig.service.path in charts/aif-operator/templates/webhook.yaml
-	mgr.GetWebhookServer().Register(
-		"/validate-ai-suse-com-v1alpha1-blueprint",
-		&webhook.Admission{Handler: &blueprintwh.BlueprintImmutabilityWebhook{}},
-	)
+	server := mgr.GetWebhookServer()
+	for _, v := range aifwh.Validators() {
+		server.Register(v.Path, &webhook.Admission{Handler: v.Handler})
+	}
 	return nil
 }
