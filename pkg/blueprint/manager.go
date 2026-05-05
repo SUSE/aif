@@ -25,30 +25,30 @@ func New(logger *slog.Logger) Manager {
 var strictVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?$`)
 
 // Validate is the canonical Blueprint spec validator. It is a free function
-// because validation depends only on the input — no Manager state is used.
-// Prefer this over Manager.ValidateSpec in new code.
-func Validate(bp *aifv1.Blueprint) error {
-	version := bp.Spec.Version
-	if version == "" {
+// over the pure-Go domain Blueprint — no Manager state, no aifv1 import. New
+// callers should construct a Blueprint (typically via FromCR) and call this
+// directly; Manager.ValidateSpec is preserved as a backward-compat shim.
+func Validate(bp Blueprint) error {
+	if bp.Version == "" {
 		return fmt.Errorf("version is required")
 	}
-	if !strictVersionPattern.MatchString(version) {
-		return fmt.Errorf("invalid semver version: %s", version)
+	if !strictVersionPattern.MatchString(bp.Version) {
+		return fmt.Errorf("invalid semver version: %s", bp.Version)
 	}
-	if !semver.IsValid("v" + version) {
-		return fmt.Errorf("invalid semver version: %s", version)
+	if !semver.IsValid("v" + bp.Version) {
+		return fmt.Errorf("invalid semver version: %s", bp.Version)
 	}
-	if bp.Spec.Source.Type != aifv1.BlueprintSourcePublished &&
-		bp.Spec.Source.Type != aifv1.BlueprintSourceWrapsVendorChart {
-		return fmt.Errorf("invalid source.type: %s (must be Published or WrapsVendorChart)", bp.Spec.Source.Type)
+	if bp.Source.Type != SourceTypePublished && bp.Source.Type != SourceTypeWrapsVendorChart {
+		return fmt.Errorf("invalid source.type: %s (must be Published or WrapsVendorChart)", bp.Source.Type)
 	}
 	return nil
 }
 
-// ValidateSpec is a thin shim preserved for the Manager interface; the receiver
-// is unused. New callers should use the free function Validate.
+// ValidateSpec is a backward-compat shim for the Manager interface; it converts
+// the CR to the domain type and delegates to Validate. New callers should call
+// Validate directly with a domain Blueprint.
 func (m *manager) ValidateSpec(bp *aifv1.Blueprint) error {
-	return Validate(bp)
+	return Validate(FromCR(bp))
 }
 
 // ComputeDeploymentCount counts Workloads sourced from this Blueprint

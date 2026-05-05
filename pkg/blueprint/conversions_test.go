@@ -1,0 +1,119 @@
+package blueprint
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	aifv1 "github.com/SUSE/aif/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+func TestFromCR_NilCR(t *testing.T) {
+	got := FromCR(nil)
+	if !reflect.DeepEqual(got, Blueprint{}) {
+		t.Errorf("FromCR(nil) = %#v, want zero Blueprint", got)
+	}
+}
+
+func TestFromCR_PublishedSource(t *testing.T) {
+	cr := &aifv1.Blueprint{}
+	cr.Name = "rag-with-llama.1.0.0"
+	cr.Spec = aifv1.BlueprintSpec{
+		BlueprintName: "rag-with-llama",
+		Version:       "1.0.0",
+		UseCase:       "rag",
+		Description:   "test blueprint",
+		Source: aifv1.BlueprintSource{
+			Type: aifv1.BlueprintSourcePublished,
+			PublishedFrom: &aifv1.PublishedFromRef{
+				BundleNamespace:  "alice",
+				BundleName:       "rag-iter-3",
+				BundleGeneration: 7,
+			},
+		},
+		Components: []aifv1.ComponentRef{
+			{Name: "llm", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "oci://r", Chart: "nim-llm", Version: "1.0.0"}},
+		},
+		PublishedBy: "carol",
+		PublishedAt: metav1.NewTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)),
+	}
+
+	got := FromCR(cr)
+
+	if got.Name != "rag-with-llama.1.0.0" || got.Lineage != "rag-with-llama" || got.Version != "1.0.0" {
+		t.Errorf("identity wrong: %#v", got)
+	}
+	if got.Source.Type != SourceTypePublished {
+		t.Errorf("source.type = %s, want Published", got.Source.Type)
+	}
+	if got.Source.PublishedFrom == nil || got.Source.PublishedFrom.BundleName != "rag-iter-3" {
+		t.Errorf("source.publishedFrom not converted: %#v", got.Source)
+	}
+	if got.Source.Vendor != nil {
+		t.Errorf("source.vendor unexpectedly set: %#v", got.Source.Vendor)
+	}
+	if len(got.Components) != 1 || got.Components[0].App == nil || got.Components[0].App.Chart != "nim-llm" {
+		t.Errorf("components not converted: %#v", got.Components)
+	}
+	if !got.PublishedAt.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Errorf("publishedAt = %v, want 2026-01-02T03:04:05Z", got.PublishedAt)
+	}
+}
+
+func TestFromCR_VendorSource(t *testing.T) {
+	cr := &aifv1.Blueprint{}
+	cr.Spec = aifv1.BlueprintSpec{
+		BlueprintName: "nvidia-rag",
+		Version:       "2.1.0",
+		Source: aifv1.BlueprintSource{
+			Type: aifv1.BlueprintSourceWrapsVendorChart,
+			VendorChartRef: &aifv1.VendorChartRef{
+				Provider: "nvidia",
+				Repo:     "oci://registry.suse.com/ai/charts/nvidia",
+				Chart:    "rag",
+				Version:  "2.1.0",
+			},
+		},
+	}
+
+	got := FromCR(cr)
+	if got.Source.Type != SourceTypeWrapsVendorChart {
+		t.Errorf("source.type = %s, want WrapsVendorChart", got.Source.Type)
+	}
+	if got.Source.Vendor == nil || got.Source.Vendor.Provider != "nvidia" {
+		t.Errorf("vendor not converted: %#v", got.Source.Vendor)
+	}
+	if got.Source.PublishedFrom != nil {
+		t.Errorf("publishedFrom unexpectedly set: %#v", got.Source.PublishedFrom)
+	}
+}
+
+func TestRoundtrip_Published(t *testing.T) {
+	original := &aifv1.Blueprint{}
+	original.Name = "rag-with-llama.1.0.0"
+	original.Spec = aifv1.BlueprintSpec{
+		BlueprintName: "rag-with-llama",
+		Version:       "1.0.0",
+		UseCase:       "rag",
+		Source: aifv1.BlueprintSource{
+			Type:          aifv1.BlueprintSourcePublished,
+			PublishedFrom: &aifv1.PublishedFromRef{BundleNamespace: "alice", BundleName: "b", BundleGeneration: 1},
+		},
+		Components: []aifv1.ComponentRef{
+			{Name: "x", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "v"}},
+		},
+		PublishedBy: "p",
+		PublishedAt: metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+	}
+
+	roundtrip := ToCR(FromCR(original))
+
+	// Spec must roundtrip exactly (modulo TypeMeta/ObjectMeta beyond Name).
+	if !reflect.DeepEqual(roundtrip.Spec, original.Spec) {
+		t.Errorf("spec roundtrip drift\n got:  %#v\n want: %#v", roundtrip.Spec, original.Spec)
+	}
+	if roundtrip.Name != original.Name {
+		t.Errorf("name roundtrip = %q, want %q", roundtrip.Name, original.Name)
+	}
+}
