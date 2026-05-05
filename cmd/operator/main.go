@@ -17,7 +17,6 @@ import (
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
-	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/SUSE/aif/pkg/git"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
@@ -79,7 +78,8 @@ func main() {
 	nvidiaDiscovery := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
-	bundleManager := bundle.New(logger)
+	// bundle no longer has a Manager — validation is the free function
+	// bundle.Validate; persistence is bundle.Repository (per OOP refactor B2).
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
 	// after ctrl.NewManager below (they need the manager's client). Defer
@@ -94,7 +94,6 @@ func main() {
 		"nvidiaDiscovery", nvidiaDiscovery != nil,
 		"nvidiaDeployer", nvidiaDeployer != nil,
 		"appsCatalog", appsCatalog != nil,
-		"bundleManager", bundleManager != nil,
 		"blueprintManager", blueprintManager != nil,
 		"publishWorkflow", publishWorkflow != nil,
 		"workloadManager", workloadManager != nil,
@@ -155,7 +154,6 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("bundle-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
-		Manager:  bundleManager,
 	}
 	if err := bundleReconciler.SetupWithManager(mgr); err != nil {
 		logger.Error("Failed to setup BundleReconciler", "error", err)

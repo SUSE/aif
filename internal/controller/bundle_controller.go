@@ -19,12 +19,17 @@ import (
 
 const finalizerName = "ai.suse.com/cleanup"
 
-// BundleReconciler reconciles a Bundle object
+// BundleReconciler reconciles a Bundle object.
+//
+// Validation is the deterministic free function bundle.Validate; there's no
+// Manager interface to inject because there's nothing stateful to mock — bad
+// input deterministically returns the same error. The cache-bearing
+// bundle.Manager from P1-1 was removed per user directive (memory
+// feedback_oop_directives.md); state lives in the apiserver.
 type BundleReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
-	Manager  bundle.Manager
 }
 
 // +kubebuilder:rbac:groups=ai.suse.com,resources=bundles,verbs=get;list;watch;create;update;patch;delete
@@ -90,11 +95,10 @@ func (r *BundleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *BundleReconciler) reconcile(ctx context.Context, bundleCR *aifv1.Bundle) error {
 	logger := log.FromContext(ctx)
 
-	// Convert CR to domain model
+	// Convert CR to domain model and validate
 	domainBundle := bundle.BundleFromCR(bundleCR)
 
-	// Validate via Manager
-	if err := r.Manager.Upsert(ctx, domainBundle); err != nil {
+	if err := bundle.Validate(domainBundle); err != nil {
 		// Validation failed - set Ready=False
 		r.setCondition(bundleCR, metav1.Condition{
 			Type:               conditions.TypeReady,
