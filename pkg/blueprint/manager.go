@@ -20,35 +20,35 @@ func New(logger *slog.Logger) Manager {
 	}
 }
 
-// ValidateSpec validates Blueprint spec fields
-func (m *manager) ValidateSpec(bp *aifv1.Blueprint) error {
-	// Validate semver - must have v prefix for semver.IsValid
+// strictVersionPattern enforces exactly three version parts (major.minor.patch),
+// with optional prerelease (-xxx) and metadata (+xxx). Compiled once.
+var strictVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?$`)
+
+// Validate is the canonical Blueprint spec validator. It is a free function
+// because validation depends only on the input — no Manager state is used.
+// Prefer this over Manager.ValidateSpec in new code.
+func Validate(bp *aifv1.Blueprint) error {
 	version := bp.Spec.Version
 	if version == "" {
 		return fmt.Errorf("version is required")
 	}
-
-	// Pattern to ensure exactly three version parts (major.minor.patch)
-	// Allows optional prerelease (-xxx) and metadata (+xxx)
-	// Pattern: \d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?
-	strictVersionPattern := regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?$`)
 	if !strictVersionPattern.MatchString(version) {
 		return fmt.Errorf("invalid semver version: %s", version)
 	}
-
-	// Additional validation with semver.IsValid
-	versionWithPrefix := "v" + version
-	if !semver.IsValid(versionWithPrefix) {
+	if !semver.IsValid("v" + version) {
 		return fmt.Errorf("invalid semver version: %s", version)
 	}
-
-	// Validate source.type
 	if bp.Spec.Source.Type != aifv1.BlueprintSourcePublished &&
 		bp.Spec.Source.Type != aifv1.BlueprintSourceWrapsVendorChart {
 		return fmt.Errorf("invalid source.type: %s (must be Published or WrapsVendorChart)", bp.Spec.Source.Type)
 	}
-
 	return nil
+}
+
+// ValidateSpec is a thin shim preserved for the Manager interface; the receiver
+// is unused. New callers should use the free function Validate.
+func (m *manager) ValidateSpec(bp *aifv1.Blueprint) error {
+	return Validate(bp)
 }
 
 // ComputeDeploymentCount counts Workloads sourced from this Blueprint
