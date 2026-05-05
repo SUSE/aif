@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools dev-cluster dev-cluster-down dev-install examples
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools dev-cluster dev-cluster-down dev-install dev-certs examples
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -35,7 +35,7 @@ test:
 	@echo "Running tests..."
 	go test -v ./...
 
-run:
+run: dev-certs
 	@echo "Running $(BINARY_NAME)..."
 	go run ./cmd/operator
 
@@ -111,3 +111,19 @@ examples:
 	kubectl apply -f examples/blueprint-smoke.yaml
 	kubectl apply -f examples/workload-smoke.yaml
 	@echo "Done. 'kubectl get bundles,blueprints,workloads -A' to see them."
+
+# dev-certs generates a self-signed TLS cert at controller-runtime's default
+# webhook CertDir so 'make run' (out-of-cluster) doesn't fail at startup.
+# Idempotent: regenerates only if tls.crt is missing. The cert is only used
+# for the webhook server's TLS handshake; nothing actually validates it during
+# a local run because no ValidatingWebhookConfiguration points at the laptop.
+# In-cluster installs use cert-manager or helm-hook certs (chart values).
+dev-certs:
+	@if [ ! -f /tmp/k8s-webhook-server/serving-certs/tls.crt ]; then \
+		echo "Generating self-signed webhook certs at /tmp/k8s-webhook-server/serving-certs/..."; \
+		mkdir -p /tmp/k8s-webhook-server/serving-certs; \
+		openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+			-subj "/CN=aif-operator-webhook" \
+			-keyout /tmp/k8s-webhook-server/serving-certs/tls.key \
+			-out /tmp/k8s-webhook-server/serving-certs/tls.crt 2>/dev/null; \
+	fi
