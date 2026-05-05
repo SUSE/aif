@@ -1,17 +1,22 @@
 package helm
 
-import "log/slog"
+import (
+	"log/slog"
 
-// Engine manages Helm chart operations.
-type Engine struct {
-	logger    *slog.Logger
-	chartsDir string
+	"k8s.io/client-go/rest"
+)
+
+// engine is the concrete implementation of the Engine interface.
+type engine struct {
+	logger   *slog.Logger
+	config   *rest.Config
+	settings EngineSettings
 }
 
 // New creates a new Helm engine.
-func New(logger *slog.Logger, chartsDir string) *Engine {
-	return &Engine{
-		logger:    logger,
-		chartsDir: chartsDir,
+func New(logger *slog.Logger, config *rest.Config) Engine {
+	return &engine{
+		logger: logger,
+		config: config,
 	}
 }

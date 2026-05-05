@@ -45,4 +45,11 @@ const (
 
 	// Blueprint deletion
 	ReasonBlueprintHasActiveWorkloads = "BlueprintHasActiveWorkloads" // Deletion blocked due to active Workloads
+
+	// InstallAIExtension-specific
+	ReasonUIPluginCRDMissing = "UIPluginCRDMissing"   // UIPlugin CRD not found in cluster
+	ReasonChartPullFailed    = "ChartPullFailed"       // Failed to pull Helm chart
+	ReasonInstallFailed      = "InstallFailed"         // Helm chart installation failed
+	ReasonUIPluginNotCreated = "UIPluginNotCreated"    // UIPlugin resource creation failed
+	ReasonInstalled          = "Installed"             // Extension installed successfully
 )

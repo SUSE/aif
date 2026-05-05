@@ -23,6 +23,7 @@ import (
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/workload"
+	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -73,8 +74,16 @@ func main() {
 		"logFormat", logFormat,
 	)
 
+	// Get Kubernetes config
+	k8sConfig := ctrl.GetConfigOrDie()
+
 	// Create manager components
-	helmEngine := helm.New(logger, chartsDir)
+	helmEngine := helm.New(logger, k8sConfig)
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(k8sConfig)
+	if err != nil {
+		logger.Error("failed to create discovery client", slog.Any("error", err))
+		os.Exit(1)
+	}
 	gitEngine := git.NewFleetEngine(logger, gitDir)
 	nvidiaDiscovery := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
@@ -87,6 +96,7 @@ func main() {
 	// Log manager creation (prevent unused variable warnings)
 	logger.Debug("Managers created",
 		"helmEngine", helmEngine != nil,
+		"discoveryClient", discoveryClient != nil,
 		"gitEngine", gitEngine != nil,
 		"nvidiaDiscovery", nvidiaDiscovery != nil,
 		"nvidiaDeployer", nvidiaDeployer != nil,
@@ -102,7 +112,7 @@ func main() {
 	webhookServer := webhook.NewServer(webhook.Options{
 		Port: parsePort(webhookBindAddress),
 	})
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(k8sConfig, ctrl.Options{
 		LeaderElection:         leaderElect,
 		LeaderElectionID:       "aif-operator-leader",
 		HealthProbeBindAddress: healthProbeBindAddress,
@@ -179,6 +189,21 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Webhooks registered")
+
+	// Setup InstallAIExtensionReconciler
+	installAIExtensionReconciler := &controller.InstallAIExtensionReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Logger:     logger,
+		HelmEngine: helmEngine,
+		Discovery:  discoveryClient,
+		Recorder:   mgr.GetEventRecorderFor("installaiextension-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
+	}
+	if err := installAIExtensionReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error("Failed to setup InstallAIExtensionReconciler", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("InstallAIExtensionReconciler registered")
 
 	// Add health checks
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

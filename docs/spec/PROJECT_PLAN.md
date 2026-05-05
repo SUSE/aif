@@ -317,6 +317,7 @@ grep -iE 'Conformant|Certified|Promote' api/v1alpha1/*.go && echo FAIL || echo P
 - [ ] `podDisruptionBudget.{enabled: false, minAvailable: 1}`
 - [ ] `networkPolicy.{enabled: false}` *(P7-3 implements the template.)*
 - [ ] **NOT present:** `nvidia.apiKeySecretRef`, `nvidia.aieApiKeySecretRef`, `registry.internal.*` — grep guard enforces.
+- [ ] **TODO (post-P1-6):** Add `installAIExtension.enabled` flag to control whether InstallAIExtension controller runs. Default `true` for management cluster deployments, `false` for downstream clusters (where UIPlugin installation is unnecessary since Rancher Dashboard only loads UIPlugins from the management cluster).
 
 **charts/aif-operator/templates/ — required templates:**
 - [ ] `deployment.yaml`: container with security context above, the four named ports, three emptyDir volume mounts. Probes: liveness `httpGet :8081/healthz`, readiness `:8081/readyz`, startup `:8081/healthz` with `failureThreshold: 30, periodSeconds: 10`. Image reference uses `{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}`.
@@ -1228,6 +1229,7 @@ curl -X POST http://localhost:8080/api/v1/bundles/default/my-rag/preflight | jq
 - [ ] `pkg/helm/engine.go` implements the **`Engine` interface from `ARCHITECTURE.md §6.2 Helm engine interface` verbatim** (InstallChartFromRepo, Uninstall, Status, Rollback, History, UpdateSettings; the InstallRequest, ReleaseStatus, EngineSettings struct types per §6.2)
 - [ ] InstallChartFromRepo is **idempotent**: if a release with the same name exists, performs an upgrade instead of failing (per §6.2 godoc)
 - [ ] OCI auth: pulls credentials from the `EngineSettings` struct (set via `UpdateSettings` from SettingsReconciler per `ARCHITECTURE.md §8.2.1`); does NOT read environment variables or files at runtime
+  - **NOTE (from P1-6):** `pkg/helm/engine.go` contains `TODO(P5-7)` comment in `pullChart()` method marking where registry auth configuration should be added when Settings reconciler integration is implemented
 - [ ] **`pkg/helm/values.go::MergeValues` implements the 6-layer precedence in `ARCHITECTURE.md §6.6`** with the exact map-vs-list semantics ("Maps deep-merge; lists replace wholesale"); is a **pure function** (no input mutation, deep-copies maps, returns new map per the §6.6 "MergeValues purity" subsection)
 - [ ] **Forbidden top-level keys silently dropped** before merge per the `ARCHITECTURE.md §6.6 "Forbidden top-level keys"` table — full list: `imagePullSecrets`, `nameOverride`, `fullnameOverride`, `serviceAccount.create`. Drops happen on layers 2 (Blueprint overrides) and 3 (Workload overrides) only — layer 1 (chart defaults) and layers 4–6 (operator-controlled) are trusted. Each drop is recorded as `slog.Warn("dropped forbidden override", "layer", N, "key", k)`.
 - [ ] Required after merge: `image.repository` non-empty; if absent, returns `ErrMissingImageRepository` per §6.6
@@ -2470,6 +2472,12 @@ cosign download sbom ghcr.io/suse/aif-operator:0.1.0 | jq -e '.SPDXID'
 **Depends On:** P9-4
 **Parallelizable With:** none
 **Done When:** CLAUDE.md is ≤400 lines, every section is current, and a final pass removes anything not derivable from the spec.
+
+**Post-P1-6 Documentation TODO:**
+- [ ] Document management vs downstream cluster deployment pattern in ARCHITECTURE.md or deployment guide:
+  - **Management Cluster**: Full AIF operator (including InstallAIExtension controller) → UIPlugin CR created → Dashboard sidebar appears
+  - **Downstream Clusters**: AIF operator with workload controllers only (InstallAIExtension disabled via `installAIExtension.enabled: false`) → No UIPlugin installation needed (Rancher Dashboard only loads UIPlugins from management cluster)
+  - Rationale: UIPlugin CRs created on downstream clusters are ignored by Rancher Dashboard, which runs on the management cluster
 
 ---
 
