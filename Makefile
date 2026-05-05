@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools dev-cluster dev-cluster-down dev-install examples
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -87,3 +87,27 @@ install-tools:
 	@echo "Make sure $(GOBIN) is in your PATH"
 	@echo ""
 	@echo "Note: kubebuilder/envtest setup is deferred to Phase 1 (P1-8)"
+
+dev-cluster:
+	@echo "Creating k3d cluster 'aif-dev'..."
+	k3d cluster create aif-dev \
+	  --port "8080:80@loadbalancer" \
+	  --port "8443:443@loadbalancer" \
+	  --k3s-arg "--disable=traefik@server:0"
+	@echo "Cluster ready. Use 'make dev-install' to install CRDs."
+
+dev-cluster-down:
+	@echo "Deleting k3d cluster 'aif-dev'..."
+	k3d cluster delete aif-dev
+
+dev-install:
+	@echo "Installing CRDs..."
+	kubectl apply -f charts/aif-operator/crds/
+	@echo "CRDs installed. Use 'make run' to start the operator out-of-cluster."
+
+examples:
+	@echo "Applying example CRs..."
+	kubectl apply -f examples/bundle-smoke.yaml
+	kubectl apply -f examples/blueprint-smoke.yaml
+	kubectl apply -f examples/workload-smoke.yaml
+	@echo "Done. 'kubectl get bundles,blueprints,workloads -A' to see them."

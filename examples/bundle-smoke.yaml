@@ -1,0 +1,15 @@
+apiVersion: ai.suse.com/v1alpha1
+kind: Bundle
+metadata:
+  namespace: default
+  name: smoke
+spec:
+  title: Smoke Bundle
+  targetBlueprint: smoke-blueprint
+  useCase: other
+  description: Minimal Bundle for verifying the controller reconciles cleanly.
+  components:
+    - name: dummy
+      repo: oci://example.com/charts
+      chart: demo
+      version: 0.1.0

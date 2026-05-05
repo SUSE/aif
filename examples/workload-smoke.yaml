@@ -1,0 +1,17 @@
+apiVersion: ai.suse.com/v1alpha1
+kind: Workload
+metadata:
+  namespace: default
+  name: smoke
+spec:
+  source:
+    kind: BundleTest
+    bundleRef:
+      namespace: default
+      name: smoke
+  targetCluster: local
+  components:
+    - name: dummy
+      repo: oci://example.com/charts
+      chart: demo
+      version: 0.1.0
