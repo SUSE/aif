@@ -10,6 +10,8 @@ spec:
   description: Minimal Bundle for verifying the controller reconciles cleanly.
   components:
     - name: dummy
-      repo: oci://example.com/charts
-      chart: demo
-      version: 0.1.0
+      kind: App
+      app:
+        repo: oci://example.com/charts
+        chart: demo
+        version: 0.1.0

@@ -4,14 +4,12 @@ metadata:
   namespace: default
   name: smoke
 spec:
+  name: smoke
   source:
     kind: BundleTest
-    bundleRef:
+    bundleTest:
       namespace: default
       name: smoke
+      generation: 1
   targetCluster: local
-  components:
-    - name: dummy
-      repo: oci://example.com/charts
-      chart: demo
-      version: 0.1.0
+  deployStrategy: helm

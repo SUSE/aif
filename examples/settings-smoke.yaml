@@ -6,4 +6,4 @@ metadata:
 spec:
   registryEndpoints:
     suseRegistry: registry.suse.com
-    suseAppCollection: dp.apps.rancher.io
+    applicationCollection: dp.apps.rancher.io
