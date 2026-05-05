@@ -1,15 +1,22 @@
 package nvidia
 
-import "log/slog"
+import (
+	"context"
+	"log/slog"
+)
 
-// Deployer handles NVIDIA operator and GPU operator deployment.
-type Deployer struct {
+// deployerImpl is the production Deployer. P4-4 will implement the NIM
+// sizing formulas from ARCHITECTURE.md §4.4; until then GenerateValues
+// returns ErrNotImplemented.
+type deployerImpl struct {
 	logger *slog.Logger
 }
 
-// NewDeployer creates a new NVIDIA deployer service.
-func NewDeployer(logger *slog.Logger) *Deployer {
-	return &Deployer{
-		logger: logger,
-	}
+// NewDeployer returns a Deployer bound to the given logger.
+func NewDeployer(logger *slog.Logger) Deployer {
+	return &deployerImpl{logger: logger}
+}
+
+func (d *deployerImpl) GenerateValues(_ context.Context, _ GenerateRequest) (map[string]any, error) {
+	return nil, ErrNotImplemented
 }
