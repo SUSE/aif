@@ -461,18 +461,28 @@ func TestInstallAIExtensionReconciler_UIPluginVerificationTimeout(t *testing.T) 
 	// First reconcile: adds finalizer
 	_, _ = reconciler.Reconcile(ctx, req)
 
-	// Second reconcile: Helm succeeds but UIPlugin not created, verification fails
-	// Note: UIPlugin is NOT created in the fake client, so verification will timeout
-	_, err := reconciler.Reconcile(ctx, req)
-	if err == nil {
-		t.Error("expected error from UIPlugin verification timeout")
+	// Second reconcile: Helm succeeds but UIPlugin not created
+	// Note: UIPlugin is NOT created in the fake client, so verification will return requeue
+	result, err := reconciler.Reconcile(ctx, req)
+	if err != nil {
+		t.Errorf("unexpected error from UIPlugin verification: %v", err)
+	}
+	// Should return RequeueAfter instead of error (non-blocking pattern)
+	if result.RequeueAfter != 5*time.Second {
+		t.Errorf("expected RequeueAfter=5s, got %v", result.RequeueAfter)
 	}
 
-	// Note: Status is NOT updated when reconcile returns an error
-	// This is current controller behavior - status update only happens
-	// when reconcile succeeds (line 84 in controller)
+	// Verify status was updated (reconcile returns success with requeue)
+	var updatedExt aifv1.InstallAIExtension
+	if err := fakeClient.Get(ctx, req.NamespacedName, &updatedExt); err != nil {
+		t.Fatalf("failed to get updated resource: %v", err)
+	}
+	// Phase should be Installing (not Failed) when waiting for UIPlugin
+	if updatedExt.Status.Phase != aifv1.InstallAIExtensionPhaseInstalling {
+		t.Errorf("expected phase Installing, got %s", updatedExt.Status.Phase)
+	}
 
-	// Verify event was still recorded (happens before error return)
+	// Verify event was recorded
 	found := false
 	for _, evt := range recorder.events {
 		if containsEventReason(evt, conditions.ReasonUIPluginNotCreated) {

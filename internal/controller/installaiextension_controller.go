@@ -23,6 +23,11 @@ import (
 	"github.com/SUSE/aif/pkg/helm"
 )
 
+const (
+	uiPluginNamespace   = "cattle-ui-plugin-system"
+	uiPluginReleaseName = "aif-ui"
+)
+
 // InstallAIExtensionReconciler reconciles an InstallAIExtension object
 type InstallAIExtensionReconciler struct {
 	client.Client
@@ -75,7 +80,8 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// Reconcile the extension installation
-	if err := r.reconcile(ctx, &ext); err != nil {
+	result, err := r.reconcile(ctx, &ext)
+	if err != nil {
 		logger.Error("reconciliation failed", slog.Any("error", err))
 		return ctrl.Result{}, err
 	}
@@ -86,11 +92,11 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	return result, nil
 }
 
 // reconcile performs the core reconciliation logic
-func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1.InstallAIExtension) error {
+func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1.InstallAIExtension) (ctrl.Result, error) {
 	logger := r.Logger.With(
 		slog.String("namespace", ext.Namespace),
 		slog.String("name", ext.Name),
@@ -111,7 +117,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1
 		})
 		ext.Status.Phase = aifv1.InstallAIExtensionPhaseFailed
 		r.Recorder.Event(ext, "Warning", conditions.ReasonUIPluginCRDMissing, err.Error())
-		return nil // Don't requeue - this is a permanent error
+		return ctrl.Result{}, nil // Don't requeue - this is a permanent error
 	}
 
 	// Step 2: Install Helm chart
@@ -125,7 +131,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1
 		})
 		ext.Status.Phase = aifv1.InstallAIExtensionPhaseFailed
 		r.Recorder.Event(ext, "Warning", conditions.ReasonInstallFailed, err.Error())
-		return err // Requeue to retry installation
+		return ctrl.Result{}, err // Requeue to retry installation
 	}
 
 	// Step 3: Verify UIPlugin created
@@ -134,12 +140,14 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1
 			Type:               conditions.TypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             conditions.ReasonUIPluginNotCreated,
-			Message:            fmt.Sprintf("UIPlugin verification failed: %v", err),
+			Message:            fmt.Sprintf("UIPlugin verification pending: %v", err),
 			ObservedGeneration: ext.Generation,
 		})
-		ext.Status.Phase = aifv1.InstallAIExtensionPhaseFailed
-		r.Recorder.Event(ext, "Warning", conditions.ReasonUIPluginNotCreated, err.Error())
-		return err // Requeue to retry verification
+		// Keep phase as Installing, not Failed - this is expected during async creation
+		ext.Status.Phase = aifv1.InstallAIExtensionPhaseInstalling
+		r.Recorder.Event(ext, "Normal", conditions.ReasonUIPluginNotCreated, "Waiting for UIPlugin to be created")
+		// Requeue after 5s to check again - don't use error (which triggers exponential backoff)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Success - set Ready=True
@@ -154,7 +162,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1
 	r.Recorder.Event(ext, "Normal", conditions.ReasonInstalled, "AIExtension installed successfully")
 
 	logger.Info("InstallAIExtension reconciled successfully")
-	return nil
+	return ctrl.Result{}, nil
 }
 
 // handleDeletion handles InstallAIExtension deletion
@@ -191,13 +199,13 @@ func (r *InstallAIExtensionReconciler) cleanup(ctx context.Context, ext *aifv1.I
 	logger := r.Logger.With(
 		slog.String("namespace", ext.Namespace),
 		slog.String("name", ext.Name),
-		slog.String("releaseName", ext.Spec.Helm.Name),
+		slog.String("releaseName", uiPluginReleaseName),
 	)
 
 	logger.Info("uninstalling Helm release")
 
-	// Uninstall the Helm release
-	if err := r.HelmEngine.Uninstall(ctx, ext.Namespace, ext.Spec.Helm.Name); err != nil {
+	// Uninstall the Helm release from the UI plugin namespace
+	if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, uiPluginReleaseName); err != nil {
 		logger.Error("failed to uninstall Helm release", slog.Any("error", err))
 		return fmt.Errorf("uninstall Helm release: %w", err)
 	}
@@ -231,8 +239,8 @@ func (r *InstallAIExtensionReconciler) checkUIPluginCRD(ctx context.Context, ext
 func (r *InstallAIExtensionReconciler) installChart(ctx context.Context, ext *aifv1.InstallAIExtension) error {
 	// Build Helm install request from InstallAIExtension spec
 	req := helm.InstallRequest{
-		Namespace:   "cattle-ui-plugin-system", // Hardcoded per design
-		ReleaseName: "aif-ui",                   // Hardcoded per design
+		Namespace:   uiPluginNamespace,
+		ReleaseName: uiPluginReleaseName,
 		ChartRef:    ext.Spec.Helm.URL,
 		Values:      make(map[string]any), // Empty values map
 		Wait:        true,
@@ -264,70 +272,50 @@ func (r *InstallAIExtensionReconciler) installChart(ctx context.Context, ext *ai
 	return nil
 }
 
-// verifyUIPlugin verifies that the UIPlugin resource was created successfully
+// verifyUIPlugin verifies that the UIPlugin resource was created successfully.
+// Returns error if UIPlugin not found (triggers requeue) or on fatal errors.
 func (r *InstallAIExtensionReconciler) verifyUIPlugin(ctx context.Context, ext *aifv1.InstallAIExtension) error {
-	uiPluginNamespace := "cattle-ui-plugin-system"
-	uiPluginName := "aif-ui"
-
-	// Retry with exponential backoff: 1s, 2s, 4s, 8s, 16s (~31s total)
-	backoff := []time.Duration{
-		1 * time.Second,
-		2 * time.Second,
-		4 * time.Second,
-		8 * time.Second,
-		16 * time.Second,
-	}
-
 	// Create ObjectKey for Get operation
 	key := client.ObjectKey{
 		Namespace: uiPluginNamespace,
-		Name:      uiPluginName,
+		Name:      uiPluginReleaseName,
 	}
 
-	for i, wait := range backoff {
-		time.Sleep(wait)
+	// Get UIPlugin resource
+	var plugin unstructured.Unstructured
+	plugin.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "catalog.cattle.io",
+		Version: "v1",
+		Kind:    "UIPlugin",
+	})
 
-		// Get UIPlugin resource
-		var plugin unstructured.Unstructured
-		plugin.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "catalog.cattle.io",
-			Version: "v1",
-			Kind:    "UIPlugin",
-		})
-
-		err := r.Get(ctx, key, &plugin)
-		if err == nil {
-			// Success - UIPlugin found
-			r.Logger.Info("UIPlugin verified",
-				slog.String("namespace", ext.Namespace),
-				slog.String("name", ext.Name),
-				slog.String("uiplugin", uiPluginName))
-			return nil
-		}
-
-		// Check if error is NotFound (retry) vs other error (fatal)
-		if !errors.IsNotFound(err) {
-			// Fatal error - don't retry
-			r.Logger.Error("failed to get UIPlugin",
-				slog.String("namespace", ext.Namespace),
-				slog.String("name", ext.Name),
-				slog.Any("error", err))
-			return fmt.Errorf("failed to get UIPlugin: %w", err)
-		}
-
-		r.Logger.Debug("UIPlugin not found, retrying",
+	err := r.Get(ctx, key, &plugin)
+	if err == nil {
+		// Success - UIPlugin found
+		r.Logger.Info("UIPlugin verified",
 			slog.String("namespace", ext.Namespace),
 			slog.String("name", ext.Name),
-			slog.Int("attempt", i+1),
-			slog.Int("attempts_remaining", len(backoff)-(i+1)))
+			slog.String("uiplugin", uiPluginReleaseName))
+		return nil
 	}
 
-	r.Logger.Error("UIPlugin not created after retries",
+	// Check if error is NotFound (will retry via requeue) vs other error (fatal)
+	if !errors.IsNotFound(err) {
+		// Fatal error - API server issue
+		r.Logger.Error("failed to get UIPlugin",
+			slog.String("namespace", ext.Namespace),
+			slog.String("name", ext.Name),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to get UIPlugin: %w", err)
+	}
+
+	// Not found - will be retried via controller requeue
+	r.Logger.Debug("UIPlugin not yet created, will retry",
 		slog.String("namespace", ext.Namespace),
 		slog.String("name", ext.Name),
-		slog.String("expected_uiplugin", uiPluginName))
+		slog.String("expected_uiplugin", uiPluginReleaseName))
 
-	return fmt.Errorf("UIPlugin %s not created in namespace %s", uiPluginName, uiPluginNamespace)
+	return fmt.Errorf("UIPlugin %s not yet created in namespace %s", uiPluginReleaseName, uiPluginNamespace)
 }
 
 // setCondition updates or appends a condition to the InstallAIExtension status

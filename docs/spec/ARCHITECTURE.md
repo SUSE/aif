@@ -2222,10 +2222,11 @@ The reconciler runs synchronously WRT the apply, but the handler doesn't wait fo
 
 **InstallAIExtensionReconciler**
 - Watch: `InstallAIExtension` CR
-- Checks if `UIPlugin` CRD exists in cluster; if not, sets `Failed` with reason
-- Installs referenced Helm chart via `pkg/helm`
-- Creates `UIPlugin` resource in `cattle-ui-plugin-system`
-- Sets `Installed` status with `Ready=True` condition
+- Checks if `UIPlugin` CRD exists in cluster; if not, sets `Failed` with reason `UIPluginCRDMissing`
+- Installs referenced Helm chart to `cattle-ui-plugin-system` namespace (release name `aif-ui`) via `pkg/helm`
+- Verifies `UIPlugin` resource was created in `cattle-ui-plugin-system` by the Helm chart, using non-blocking requeue pattern (`RequeueAfter: 5s` when not found)
+- Sets `phase=Installing` while waiting for UIPlugin creation, `phase=Installed` when verified
+- Sets `Ready=True` condition when UIPlugin verified
 
 ### 8.3 Validating Admission Webhook (`internal/webhook/blueprint_immutability.go`)
 
