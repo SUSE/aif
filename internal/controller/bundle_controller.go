@@ -139,9 +139,9 @@ func (r *BundleReconciler) handleDeletion(ctx context.Context, bundleCR *aifv1.B
 		return ctrl.Result{}, nil
 	}
 
-	// TODO: P3-1 will add cache cleanup via Manager.Delete()
-	// For P1-1, cache is in-memory only and will be GC'd with operator restart
-	logger.Info("Bundle deleted, cache cleanup deferred to P3-1")
+	// Bundle is deleted; the in-memory cache that previously needed cleanup
+	// has been removed (the apiserver is the source of truth now).
+	logger.Info("Bundle deleted, removing finalizer")
 
 	// Remove finalizer
 	controllerutil.RemoveFinalizer(bundleCR, finalizerName)

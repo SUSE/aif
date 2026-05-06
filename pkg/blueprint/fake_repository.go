@@ -11,7 +11,11 @@ import (
 )
 
 // FakeRepository is an in-memory implementation of Repository for unit tests.
-// Blueprint is cluster-scoped, so the keying is by name only.
+// Blueprint is cluster-scoped, so the keying is by name only. The internal
+// sync.RWMutex makes Get/List/Update/UpdateStatus safe to call from multiple
+// goroutines; the error-injection fields (GetErr, ListErr, …) are NOT
+// mutex-guarded — set them from the test goroutine before kicking off any
+// concurrent work.
 type FakeRepository struct {
 	mu    sync.RWMutex
 	items map[string]*aifv1.Blueprint

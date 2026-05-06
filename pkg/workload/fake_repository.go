@@ -12,7 +12,11 @@ import (
 )
 
 // FakeRepository is an in-memory implementation of Repository and
-// DeploymentCounter for unit tests.
+// DeploymentCounter for unit tests. The internal sync.RWMutex makes
+// Get/List/Update/UpdateStatus/CountByBlueprint safe to call from multiple
+// goroutines; the error-injection fields (GetErr, ListErr, …) are NOT
+// mutex-guarded — set them from the test goroutine before kicking off any
+// concurrent work.
 type FakeRepository struct {
 	mu    sync.RWMutex
 	items map[string]*aifv1.Workload
