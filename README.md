@@ -172,13 +172,15 @@ state — some operations are still stubs.
 |-----------------------|-----------------------------------------------------------------|
 | `make build`          | Build the operator binary to `./bin/aif-operator`.              |
 | `make run`            | Run the operator from source (`go run ./cmd/operator`).         |
-| `make test`           | Run unit tests (`go test -v ./...`).                            |
+| `make test`           | Run unit tests (`go test ./...`).                               |
+| `make test-controllers` | Run controller integration tests (envtest + Ginkgo).          |
 | `make lint`           | Run `golangci-lint`.                                            |
 | `make manifests`      | Regenerate CRD YAML into `charts/aif-operator/crds/`.           |
 | `make generate`       | Regenerate deepcopy methods.                                    |
 | `make docker-build`   | Build the operator container image.                             |
 | `make docker-push`    | Push the operator container image.                              |
-| `make install-tools`  | Install pinned dev tools (controller-gen, golangci-lint, mockgen, ginkgo). |
+| `make envtest`        | Download envtest binaries (etcd + kube-apiserver).              |
+| `make install-tools`  | Install pinned dev tools (controller-gen, golangci-lint, mockgen, ginkgo, setup-envtest). |
 
 The following targets exist but currently print "Not implemented yet" — treat
 them as placeholders until later phases land:

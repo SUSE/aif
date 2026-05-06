@@ -107,7 +107,7 @@ envtest:
 test-controllers: envtest
 	@echo "Running controller integration tests with envtest..."
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use --print path $(ENVTEST_K8S_VERSION))" \
-		go test -race ./internal/controller/... -coverprofile=cover.out
+		go test -race ./internal/controller/... ./internal/manager/... -coverprofile=cover.out
 
 dev-cluster:
 	@echo "Creating k3d cluster 'aif-dev'..."
