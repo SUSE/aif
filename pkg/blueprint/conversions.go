@@ -137,6 +137,7 @@ func statusFromCR(s aifv1.BlueprintStatus) Status {
 	out := Status{
 		Phase:              Phase(s.Phase),
 		DeploymentCount:    s.DeploymentCount,
+		Conditions:         copyConditions(s.Conditions),
 		ObservedGeneration: s.ObservedGeneration,
 	}
 	if s.Deprecation != nil {
@@ -153,6 +154,7 @@ func statusToCR(s Status) aifv1.BlueprintStatus {
 	out := aifv1.BlueprintStatus{
 		Phase:              aifv1.BlueprintPhase(s.Phase),
 		DeploymentCount:    s.DeploymentCount,
+		Conditions:         copyConditions(s.Conditions),
 		ObservedGeneration: s.ObservedGeneration,
 	}
 	if s.Deprecation != nil {
@@ -162,6 +164,15 @@ func statusToCR(s Status) aifv1.BlueprintStatus {
 			ActionedAt: metav1.NewTime(s.Deprecation.ActionedAt),
 		}
 	}
+	return out
+}
+
+func copyConditions(in []metav1.Condition) []metav1.Condition {
+	if in == nil {
+		return nil
+	}
+	out := make([]metav1.Condition, len(in))
+	copy(out, in)
 	return out
 }
 

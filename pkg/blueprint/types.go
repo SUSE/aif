@@ -6,7 +6,11 @@
 // conversions.go (the only file in this package allowed to import aifv1).
 package blueprint
 
-import "time"
+import (
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // Phase is the lifecycle status of a published Blueprint version.
 type Phase string
@@ -110,10 +114,16 @@ type BlueprintRef struct {
 }
 
 // Status captures observed Blueprint state.
+//
+// Conditions uses metav1.Condition (K8s upstream) rather than a hand-rolled
+// shape because every consumer interops with K8s conditions and reinventing
+// the type buys nothing. metav1 is K8s standard, NOT aifv1, so this does not
+// violate the layering rule that pkg/<x>/types.go must be free of aifv1.
 type Status struct {
 	Phase              Phase
 	DeploymentCount    int32
 	Deprecation        *Deprecation
+	Conditions         []metav1.Condition
 	ObservedGeneration int64
 }
 

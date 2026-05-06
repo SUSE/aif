@@ -117,3 +117,33 @@ func TestRoundtrip_Published(t *testing.T) {
 		t.Errorf("name roundtrip = %q, want %q", roundtrip.Name, original.Name)
 	}
 }
+
+// TestRoundtrip_Status guards against the conversion silently dropping the
+// Status.Conditions list (caught by the critical-review audit, finding M1).
+func TestRoundtrip_Status(t *testing.T) {
+	cr := &aifv1.Blueprint{}
+	cr.Status = aifv1.BlueprintStatus{
+		Phase:              aifv1.BlueprintPhaseDeprecated,
+		DeploymentCount:    3,
+		ObservedGeneration: 7,
+		Deprecation: &aifv1.DeprecationStatus{
+			Reason:     "superseded",
+			ActionedBy: "alice",
+			ActionedAt: metav1.NewTime(time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)),
+		},
+		Conditions: []metav1.Condition{{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "BlueprintValidated",
+			Message:            "ok",
+			ObservedGeneration: 7,
+			LastTransitionTime: metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		}},
+	}
+
+	roundtrip := ToCR(FromCR(cr))
+
+	if !reflect.DeepEqual(roundtrip.Status, cr.Status) {
+		t.Errorf("status roundtrip drift\n got:  %#v\n want: %#v", roundtrip.Status, cr.Status)
+	}
+}
