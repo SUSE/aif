@@ -130,3 +130,27 @@ func errorStatus(err error) int {
 		return http.StatusInternalServerError
 	}
 }
+
+// WriteError is the exported version of writeError. It writes a structured JSON
+// error response and is intended for use by packages outside internal/api.
+func WriteError(w http.ResponseWriter, status int, err error) {
+	writeError(w, status, err)
+}
+
+// WriteJSON is the exported version of writeJSON. It sets Content-Type to
+// application/json, writes the HTTP status code, and encodes v as JSON.
+func WriteJSON(w http.ResponseWriter, status int, v any) {
+	writeJSON(w, status, v)
+}
+
+// ErrorCode is the exported version of errorCode. It maps an error to its
+// corresponding error code string.
+func ErrorCode(err error) string {
+	return errorCode(err)
+}
+
+// ErrorStatus is the exported version of errorStatus. It maps an error to its
+// corresponding HTTP status code.
+func ErrorStatus(err error) int {
+	return errorStatus(err)
+}
