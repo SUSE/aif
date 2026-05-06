@@ -790,6 +790,7 @@ go test ./internal/manager/ -v
 - [ ] CI workflow (gated to `make test-controllers`) runs the suite with `-race`
 - [ ] Coverage report generated; CI fails when `go tool cover -func=cover.out | grep total` reports < 80% (gate enforced in P8-4)
 - [ ] Ginkgo + Gomega used (per §12.3 "Why Ginkgo + Gomega"); pure unit tests in `pkg/` may use `*testing.T` directly
+- [ ] **Deferred from P1-7:** Add integration test in `internal/manager/setup_test.go` that verifies `manager.Start(ctx)` succeeds with envtest's `rest.Config` (manager creation and controller registration are already tested without envtest)
 
 **Validation:**
 ```bash
