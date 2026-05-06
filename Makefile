@@ -66,6 +66,8 @@ charts-package:
 lint:
 	@echo "Running linters..."
 	golangci-lint run --concurrency=1 ./...
+	@echo "Checking for forbidden raw HTTP error patterns in internal/api/..."
+	@grep -rE 'http\.Error\(|w\.Write\(\[\]byte' internal/api/ | grep -v '_test\.go' && { echo "FAIL: use writeError/writeJSON instead of raw http.Error or w.Write"; exit 1; } || true
 
 manifests:
 	@echo "Generating CRD manifests..."
