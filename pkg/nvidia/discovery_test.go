@@ -260,6 +260,49 @@ func TestDiscovery_Index_IsDeterministicallyOrdered(t *testing.T) {
 	}
 }
 
+// --- Get (single-NIM lookup) ---
+
+func TestDiscovery_Get_BeforeRefresh_ReturnsNotFound(t *testing.T) {
+	d := newDiscoveryWithClient(http.DefaultClient)
+	_, err := d.Get(context.Background(), "nim-llm:1.0.0")
+	if !stderrors.Is(err, ErrNIMNotFound) {
+		t.Errorf("Get err = %v, want ErrNIMNotFound", err)
+	}
+}
+
+func TestDiscovery_Get_KnownEntry_ReturnsEntry(t *testing.T) {
+	repos := []string{"ai/charts/nvidia/nim-llm"}
+	tags := map[string][]string{"ai/charts/nvidia/nim-llm": {"1.0.0", "1.1.0"}}
+	ts := newRegistryStub(t, repos, tags)
+	d := newDiscoveryWithClient(ts.Client())
+	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
+	if err := d.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh err = %v", err)
+	}
+
+	got, err := d.Get(context.Background(), "nim-llm:1.0.0")
+	if err != nil {
+		t.Fatalf("Get err = %v, want nil", err)
+	}
+	if got.ID != "nim-llm:1.0.0" || got.Chart != "nim-llm" || got.Version != "1.0.0" {
+		t.Errorf("Get returned wrong entry: %#v", got)
+	}
+}
+
+func TestDiscovery_Get_UnknownID_ReturnsNotFound(t *testing.T) {
+	repos := []string{"ai/charts/nvidia/nim-llm"}
+	tags := map[string][]string{"ai/charts/nvidia/nim-llm": {"1.0.0"}}
+	ts := newRegistryStub(t, repos, tags)
+	d := newDiscoveryWithClient(ts.Client())
+	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
+	_ = d.Refresh(context.Background())
+
+	_, err := d.Get(context.Background(), "nim-llm:9.9.9")
+	if !stderrors.Is(err, ErrNIMNotFound) {
+		t.Errorf("Get err = %v, want ErrNIMNotFound", err)
+	}
+}
+
 // --- helpers ---
 
 func indexByID(entries []NIMEntry) map[string]NIMEntry {

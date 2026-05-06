@@ -58,6 +58,20 @@ func (d *discoveryImpl) Index(_ context.Context) ([]NIMEntry, error) {
 	return out, nil
 }
 
+// Get returns the cached NIMEntry with the given canonical ID. The cache
+// is keyed by ID natively, so this is O(1). Returns ErrNIMNotFound when
+// the ID is absent (callers branch via errors.Is).
+func (d *discoveryImpl) Get(_ context.Context, id string) (NIMEntry, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	entry, ok := d.cache[id]
+	if !ok {
+		return NIMEntry{}, ErrNIMNotFound
+	}
+	return entry, nil
+}
+
 // Refresh re-reads the SUSE Registry catalog and atomically replaces the
 // cache. Refresh holds the cache mutex only during the swap; the HTTP
 // calls run without it, so concurrent Index() calls see the previous

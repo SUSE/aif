@@ -7,13 +7,19 @@ import (
 
 // Discovery enumerates SUSE-mirrored NIM models from the SUSE Registry chart
 // index at oci://registry.suse.com/ai/charts/nvidia/. The actual fetch happens
-// out-of-band on a refresh interval; Index reads the cached result.
+// out-of-band on a refresh interval; Index/Get read the cached result.
 //
-// 3 methods (≤4 per ISP). Spec: ARCHITECTURE.md §6.2.
+// 4 methods (the ISP target, not over). Spec: ARCHITECTURE.md §6.2.
 type Discovery interface {
-	// Index returns the cached NIM catalog. Returns whatever was loaded by
-	// the last successful Refresh; never blocks on the upstream registry.
+	// Index returns the cached NIM catalog sorted by ID. Returns whatever
+	// was loaded by the last successful Refresh; never blocks on the
+	// upstream registry.
 	Index(ctx context.Context) ([]NIMEntry, error)
+
+	// Get returns a single cached NIMEntry by its canonical ID
+	// ("<chart>:<version>"). Returns ErrNIMNotFound if the ID is absent.
+	// Used by the per-model REST handler GET /api/v1/nvidia/nims/{id} (P2-6).
+	Get(ctx context.Context, id string) (NIMEntry, error)
 
 	// Refresh forces an immediate sync against the SUSE Registry chart index.
 	// Used by Settings save (P5-4) and the manual refresh button (P2-3).

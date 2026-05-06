@@ -25,4 +25,10 @@ var (
 	// the caller is invoking the discovery before settings have been
 	// reconciled.
 	ErrNotConfigured = errors.New("nvidia: discovery not configured (call UpdateSettings first)")
+
+	// ErrNIMNotFound is returned by Discovery.Get when the requested NIM ID
+	// is not in the cache. May indicate (a) a stale cache, (b) the model
+	// has been removed from SUSE Registry, or (c) the caller used the
+	// wrong ID. Distinguish via errors.Is, never via string-matching.
+	ErrNIMNotFound = errors.New("nvidia: NIM not found in cache")
 )
