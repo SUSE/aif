@@ -7,7 +7,6 @@ import (
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/conditions"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
@@ -170,13 +169,11 @@ func (r *WorkloadReconciler) handleDeletion(ctx context.Context, w *aifv1.Worklo
 	return ctrl.Result{}, nil
 }
 
-// setCondition sets or updates a condition in the Workload status
+// setCondition sets or updates a condition in the Workload status.
+// Delegates to conditions.Set so LastTransitionTime is preserved when the
+// status hasn't actually changed (pre-setting it breaks that contract).
 func (r *WorkloadReconciler) setCondition(w *aifv1.Workload, condition metav1.Condition) {
-	// Set LastTransitionTime
-	condition.LastTransitionTime = metav1.Now()
-
-	// Use meta.SetStatusCondition for proper condition management
-	meta.SetStatusCondition(&w.Status.Conditions, condition)
+	conditions.Set(&w.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager

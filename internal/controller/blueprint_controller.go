@@ -9,7 +9,6 @@ import (
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/conditions"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -180,13 +179,11 @@ func (r *BlueprintReconciler) handleDeletion(ctx context.Context, bp *aifv1.Blue
 	return ctrl.Result{}, nil
 }
 
-// setCondition sets or updates a condition in the Blueprint status
+// setCondition sets or updates a condition in the Blueprint status.
+// Delegates to conditions.Set so LastTransitionTime is preserved when the
+// status hasn't actually changed (pre-setting it breaks that contract).
 func (r *BlueprintReconciler) setCondition(bp *aifv1.Blueprint, condition metav1.Condition) {
-	// Set LastTransitionTime
-	condition.LastTransitionTime = metav1.Now()
-
-	// Use meta.SetStatusCondition for proper condition management
-	meta.SetStatusCondition(&bp.Status.Conditions, condition)
+	conditions.Set(&bp.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager

@@ -87,7 +87,10 @@ func main() {
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
 	bundleManager := bundle.New(logger)
 	blueprintManager := blueprint.New(logger)
-	publishWorkflow := publish.New(logger)
+	// publish.Workflow takes Repository ports; the Repositories are constructed
+	// after ctrl.NewManager below (they need the manager's client). Defer
+	// construction until that's available.
+	var publishWorkflow publish.Workflow
 	workloadManager := workload.New(logger)
 
 	// Log manager creation (prevent unused variable warnings)
@@ -129,6 +132,28 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Manager created successfully")
+
+	// Construct the publish.Workflow now that the controller-runtime client
+	// is available (Repositories need it). The workflow has no consumer yet —
+	// REST handlers in P3-x will pick it up via manager.Register. AllowAllAuthorizer
+	// is a stub until pkg/authz lands a SubjectAccessReview-backed impl.
+	publishWorkflow = publish.New(publish.Deps{
+		Bundles:    bundle.NewK8sRepository(mgr.GetClient()),
+		Blueprints: blueprint.NewK8sRepository(mgr.GetClient()),
+		Authz:      publish.AllowAllAuthorizer{},
+		Logger:     logger,
+	})
+	// Loud, unmissable warning: AllowAllAuthorizer approves every publisher
+	// action. Safe in dev (no REST handlers consume the Workflow yet), but the
+	// moment a P3-x handler ships, this becomes a security hole unless the
+	// authorizer is swapped. Logged at Warn so it surfaces in any log
+	// aggregator that filters above Info, and so CI smoke tests can grep for
+	// the message to ensure prod builds replace it.
+	logger.Warn(
+		"publish.Workflow wired with AllowAllAuthorizer — INSECURE, DO NOT DEPLOY TO PRODUCTION",
+		"replacement", "pkg/authz with SubjectAccessReview-backed adapter (lands with P7-5)",
+		"ready", publishWorkflow != nil,
+	)
 
 	// Setup API server
 	mux := http.NewServeMux()

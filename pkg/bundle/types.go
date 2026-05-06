@@ -16,10 +16,14 @@ type Bundle struct {
 	Review     *aifv1.ReviewStatus
 
 	// Content
+	Title           string
 	TargetBlueprint string
 	UseCase         string
 	Components      []aifv1.ComponentRef
 	ValueOverrides  map[string]string
+
+	// Reconciliation control
+	Paused bool
 
 	// Metadata
 	Description string

@@ -169,22 +169,9 @@ func TestSettingsReconciler_ValidCredentials(t *testing.T) {
 		t.Errorf("expected SettingsApplied event to be emitted, got events: %v", recorder.events)
 	}
 
-	// Assert cached credentials (stub verification)
-	if reconciler.appCollUser != "coll-user" {
-		t.Errorf("appCollUser = %s, want coll-user", reconciler.appCollUser)
-	}
-	if reconciler.appCollToken != "coll-token" {
-		t.Errorf("appCollToken = %s, want coll-token", reconciler.appCollToken)
-	}
-	if reconciler.suseRegUser != "test-user" {
-		t.Errorf("suseRegUser = %s, want test-user", reconciler.suseRegUser)
-	}
-	if reconciler.suseRegToken != "test-pass" {
-		t.Errorf("suseRegToken = %s, want test-pass", reconciler.suseRegToken)
-	}
-	if reconciler.fleetCred != "" {
-		t.Errorf("fleetCred = %s, want empty string", reconciler.fleetCred)
-	}
+	// Note: assertions on cached credential fields removed — those fields were
+	// dead state (write-only) and were dropped per OOP code-review report
+	// finding #7. Real EngineSettings propagation lands with P5-4.
 }
 
 func TestSettingsReconciler_MissingSecret_ApplicationCollection(t *testing.T) {
@@ -455,13 +442,9 @@ func TestSettingsReconciler_OptionalFields(t *testing.T) {
 		t.Error("lastApplied should be set even with nil refs")
 	}
 
-	// Assert cached credentials are empty strings
-	if reconciler.appCollUser != "" {
-		t.Errorf("appCollUser = %s, want empty", reconciler.appCollUser)
-	}
-	if reconciler.appCollToken != "" {
-		t.Errorf("appCollToken = %s, want empty", reconciler.appCollToken)
-	}
+	// Note: assertions on cached credential fields removed (dead state per
+	// OOP review finding #7). With nil refs, no Secret is read; status alone
+	// proves the reconciler ran cleanly.
 }
 
 func TestSettingsReconciler_Finalizer(t *testing.T) {
@@ -604,10 +587,9 @@ func TestSettingsReconciler_UpdateCredentials(t *testing.T) {
 	}
 	time1 := settings1.Status.LastApplied
 
-	// Verify initial credentials
-	if reconciler.appCollUser != "olduser" {
-		t.Errorf("initial appCollUser = %s, want olduser", reconciler.appCollUser)
-	}
+	// Note: assertions on cached credential fields removed (dead state per
+	// OOP review finding #7). The lastApplied/timestamp comparison below is
+	// the durable signal that the second reconcile actually saw the new value.
 
 	// Wait to ensure timestamp changes (metav1.Now() has second granularity)
 	time.Sleep(1100 * time.Millisecond)
@@ -641,13 +623,9 @@ func TestSettingsReconciler_UpdateCredentials(t *testing.T) {
 		t.Errorf("lastApplied not updated: %v -> %v", time1, time2)
 	}
 
-	// Assert credentials updated
-	if reconciler.appCollUser != "newuser" {
-		t.Errorf("updated appCollUser = %s, want newuser", reconciler.appCollUser)
-	}
-	if reconciler.appCollToken != "newtoken" {
-		t.Errorf("updated appCollToken = %s, want newtoken", reconciler.appCollToken)
-	}
+	// Note: assertions on cached credential fields removed (dead state per
+	// OOP review finding #7). lastApplied advancing is the proof the second
+	// reconcile re-read the (now-updated) Secret successfully.
 }
 
 func TestSettingsReconciler_MissingSecret_SUSERegistry(t *testing.T) {

@@ -89,18 +89,63 @@ yarn build                        # Production build
 yarn test                         # Vue component tests
 ```
 
+### Local Dev Loop
+
+```bash
+# One-time setup
+make install-tools                # Go tools (controller-gen, golangci-lint, mockgen, ginkgo)
+make dev-cluster                  # k3d cluster 'aif-dev' (requires k3d)
+make dev-install                  # kubectl apply -f charts/aif-operator/crds/
+
+# Iterate
+make run                          # operator out-of-cluster (uses your kubeconfig)
+make examples                     # apply minimal sample CRs in another shell
+kubectl get bundles,blueprints,workloads -A
+
+# Teardown
+make dev-cluster-down
+```
+
+Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
+
+**Gotchas:**
+
+- The k3d loadbalancer container (`k3d-aif-dev-serverlb`) sometimes exits on its own (`Exited (137)`); kubectl then refuses with `connection refused`. Recover with `k3d cluster start aif-dev` (no need to recreate). The k3s server stays up across these exits.
+- The Blueprint immutability webhook is REGISTERED inside the operator process, but `make run` does NOT install the `ValidatingWebhookConfiguration` (that ships in `charts/aif-operator/templates/webhook.yaml` and is created only by `helm install`). To exercise immutability end-to-end, install the chart instead of running out-of-cluster.
+
 ---
 
 ## Code Conventions
 
 ### Go
 
+- **Layering rule (hexagonal):** Imports flow ONE direction:
+  `cmd/` → `internal/{controller,api,manager,webhook}/` → `pkg/<domain>/` → `pkg/conditions/` → stdlib.
+  `pkg/*` packages MUST NOT import `internal/*`.
+  `pkg/{helm,git,nvidia,source_collection,authz}` MUST NOT import `api/v1alpha1` — they speak in their own domain types. Translation lives in the controller.
+  `pkg/{bundle,blueprint,workload,settings}` import `api/v1alpha1` from two file roles only:
+    - `conversions.go` — CR↔domain translation (the canonical home).
+    - `repository.go` — K8s adapter ports (Repository / Reader / Writer). These DO take `*aifv1.X` by design because they are the K8s adapter boundary.
+  Other files (`interface.go`, `types.go`, business-logic adapters like `manager.go` / `service.go`) SHOULD be aifv1-free so domain logic stays framework-agnostic. Two pre-existing exceptions are tracked legacy and exempt: `pkg/blueprint/interface.go`'s `Manager` interface (P1-2 acceptance) and `pkg/bundle/types.go`'s reuse of `aifv1` leaf types (P1-1 acceptance). Don't add new violations; don't unilaterally rename or refactor the legacy without amending PROJECT_PLAN.md.
+- **When to add `interface.go`:** A package gets one when (a) it has at least one I/O dependency (K8s, HTTP, Helm SDK, git), OR (b) it is consumed by a controller/handler that needs a test double. Pure-data packages (`pkg/conditions`) do not need one.
+- **Per-package file layout:** `interface.go` (ports, ≤4 methods each), `types.go` (domain structs, no `aifv1`), `<adapter>.go` (one concrete impl per adapter), `conversions.go` (CR↔domain, only file allowed to import `aifv1`), `<adapter>_test.go`.
+- **Interface size (ISP):** Target ≤4 methods per interface. If you reach 5, split by role (Reader/Writer, Discoverer/Deployer, Engine/Releaser). One interface, one reason to mock.
+- **Naming — prefer role-revealing names over `Manager` for new types.** "Manager" tells you nothing about the responsibility; pick the role: `Repository` (CRUD over a store), `Service` (orchestrates Repository + Validator), `Validator` (pure spec checks), `StateMachine` (phase transitions), `Resolver` (dereferences a ref), `Engine` (wraps an external SDK like Helm/git), `Provider` (reads from an external API like SUSE App Collection), `UseCase`/`Workflow` (multi-step business operation like publish-by-approval). The legacy `pkg/bundle.Manager` and `pkg/blueprint.Manager` interfaces are kept to satisfy P1-1 / P1-2 acceptance criteria and are exempt — do not rename them without amending PROJECT_PLAN.md.
+- **Domain types:** Domain types (the structs in `pkg/<x>/types.go`) carry behaviour. Free functions over domain structs are preferred to methods on a `Manager` struct that only holds a logger. If a struct's only field is `*slog.Logger` and the methods don't access state, those are functions, not methods.
+- **Where invariants live:**
+  - Shape (required, length, enum, regex) — `+kubebuilder:validation:*` on the CRD type. Enforced by the API server.
+  - Cross-field (discriminated unions, "exactly one of") — admission webhook in `internal/webhook/`.
+  - Business rules (e.g. "you may not publish if a Blueprint with this name+version already exists") — `pkg/<x>.Validator` called by the controller and REST handlers.
+  Do NOT duplicate kubebuilder constraints in Go validators — the API server already rejects them. Only encode what kubebuilder cannot express.
+- **Test doubles:** Hand-written fakes go in `pkg/<x>/fake_<role>.go` (e.g. `pkg/bundle/fake_repository.go`) and implement the port. Use `mockgen` only when a stable, frequently-rebuilt mock is needed (rare); generated mocks live in `pkg/<x>/mock/`. Tests in controllers MUST use the fake/mock, never `client.Client` against a real apiserver — for that, add an envtest case under `test/integration/`.
 - **Logging:** Use `log/slog` exclusively. JSON in production (`--log-format=json`), text in development. Include `request_id`, `component` in every entry. Never log credentials or PII.
 - **Errors:** Wrap with context using `fmt.Errorf("operation: %w", err)`. Use `errors.Is` and `errors.As` for comparison. No `panic` except in `init()`.
+  - Define sentinel errors per package (`pkg/<x>/errors.go`) when callers need to distinguish failure modes (e.g. `ErrSecretNotFound`, `ErrBundleNotFound`). Never let consumers `strings.Contains` on error messages.
 - **No print statements:** Never use `fmt.Println`, `log.Println`. Use `slog` or return errors.
-- **Interfaces:** Define in `interface.go` per package. Concrete implementations in separate files. Tests use fakes or mocks, never real K8s clients.
+- **Interfaces:** Define in `interface.go` per package per the layering rule above. Concrete implementations in separate files. Tests use fakes or mocks, never real K8s clients.
 - **Context:** Every I/O function accepts `context.Context` as first argument. Respect cancellation.
 - **Condition constants:** Import condition Type/Reason from `pkg/conditions/types.go`. Never use raw strings in controllers. CI enforces this with grep guards.
+- **Condition setting:** Use `conditions.Set(&status.Conditions, cond)` (built on `meta.SetStatusCondition`). Do not hand-roll condition merging in controllers; `meta.SetStatusCondition` correctly preserves `LastTransitionTime` when status hasn't changed.
 - **Phase enums:** Typed Go string constants (e.g., `type BundlePhase string; const BundlePhaseDraft BundlePhase = "Draft"`).
 - **HTTP handlers:** Never surface raw internal errors. Use `writeError(w, code, err)` helper to translate to structured JSON response.
 - **Import order:** Standard library → third-party → internal packages. Group with blank lines.
@@ -111,6 +156,10 @@ yarn test                         # Vue component tests
 - Direct NVIDIA NGC calls (`nvcr.io`, `helm.ngc.nvidia.com`, `integrate.api.nvidia.com`)
 - Hardcoded registry hostnames (use `Settings.spec.registryEndpoints`)
 - Raw condition strings in controllers (use constants from `pkg/conditions/types.go`)
+- NEW top-level type named `Manager` in `pkg/*` (use a role-revealing name; see naming rule above). The pre-existing `pkg/bundle.Manager` and `pkg/blueprint.Manager` are exempt.
+- NEW domain-logic port (Validator, Service, UseCase) in `interface.go` importing `api/v1alpha1`. K8s adapter ports in `repository.go` MAY import `aifv1` — that is the legitimate adapter boundary. The pre-existing `pkg/blueprint/interface.go` aifv1 import is exempt as legacy.
+- `pkg/{helm,git,nvidia,source_collection,authz}` importing `api/v1alpha1` at all
+- `strings.Contains(err.Error(), ...)` for error classification (use sentinel errors + `errors.Is`)
 
 ### UI (Vue 3 / Rancher Shell)
 
@@ -220,6 +269,27 @@ yarn test                         # Vue component tests
 - [ ] Event emitted with structured reason
 - [ ] UI button disabled when action invalid for current phase
 
+### A New External Integration (HTTP API, OCI registry, Git, Helm SDK, etc.)
+
+1. Create `pkg/<integration>/types.go` — pure-Go value objects. Do NOT import `api/v1alpha1`.
+2. Create `pkg/<integration>/interface.go` — port with ≤4 methods. Name it by role (`Provider`, `Engine`, `Client`).
+3. Create `pkg/<integration>/<adapter>.go` — concrete implementation (one adapter = one external system + protocol). Examples: `pkg/source_collection/api_client.go` (HTTP), `pkg/source_collection/oci_fallback.go` (registry walk).
+4. Create `pkg/<integration>/fake_<role>.go` — in-memory fake implementing the port for unit tests.
+5. Create `pkg/<integration>/errors.go` — sentinel errors (`ErrUnreachable`, `ErrNotFound`, `ErrUnauthorized`).
+6. Wire credentials: integration receives a `Settings(s EngineSettings)` push from `SettingsReconciler.applySettingsToEngines` — never reads K8s Secrets directly. See `ARCHITECTURE.md §6.2 EngineSettings` and §8.2.1.
+7. Wire instance in `cmd/operator/main.go` and inject into the consuming controller(s) via the port type, never the concrete struct.
+8. Forbidden: importing `api/v1alpha1`, calling `client.Client` directly, reading Secrets directly, hardcoding hostnames (read from `EngineSettings.RegistryEndpoints`).
+
+**Checklist:**
+- [ ] `interface.go` is free of `api/v1alpha1` imports
+- [ ] Port has ≤4 methods (split if larger)
+- [ ] Adapter file is named for the protocol/source (`api_client.go`, `oci_fallback.go`, `sdk_engine.go`)
+- [ ] `fake_<role>.go` exists and is used by at least one consumer's test
+- [ ] Sentinel errors defined; no `strings.Contains` on error messages downstream
+- [ ] Credentials arrive via `UpdateSettings`, not via direct Secret reads
+- [ ] Hostnames sourced from `EngineSettings.RegistryEndpoints`, never literals
+- [ ] Consuming controller depends on the interface, not the struct
+
 ---
 
 ## Where to Look
@@ -277,3 +347,42 @@ Between P0-0 and P9-5, all edits are append-only. P9-5 is the only story allowed
 ---
 
 **End of CLAUDE.md** — 274 lines
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
+- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
+- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
+- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview` + `list_communities`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+|------|----------|
+| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context` | Need source snippets for review — token-efficient |
+| `get_impact_radius` | Understanding blast radius of a change |
+| `get_affected_flows` | Finding which execution paths are impacted |
+| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes` | Finding functions/classes by name or keyword |
+| `get_architecture_overview` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes` for code review.
+3. Use `get_affected_flows` to understand impact.
+4. Use `query_graph` pattern="tests_for" to check coverage.

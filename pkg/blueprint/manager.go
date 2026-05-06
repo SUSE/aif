@@ -20,35 +20,35 @@ func New(logger *slog.Logger) Manager {
 	}
 }
 
-// ValidateSpec validates Blueprint spec fields
-func (m *manager) ValidateSpec(bp *aifv1.Blueprint) error {
-	// Validate semver - must have v prefix for semver.IsValid
-	version := bp.Spec.Version
-	if version == "" {
+// strictVersionPattern enforces exactly three version parts (major.minor.patch),
+// with optional prerelease (-xxx) and metadata (+xxx). Compiled once.
+var strictVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?$`)
+
+// Validate is the canonical Blueprint spec validator. It is a free function
+// over the pure-Go domain Blueprint — no Manager state, no aifv1 import. New
+// callers should construct a Blueprint (typically via FromCR) and call this
+// directly; Manager.ValidateSpec is preserved as a backward-compat shim.
+func Validate(bp Blueprint) error {
+	if bp.Version == "" {
 		return fmt.Errorf("version is required")
 	}
-
-	// Pattern to ensure exactly three version parts (major.minor.patch)
-	// Allows optional prerelease (-xxx) and metadata (+xxx)
-	// Pattern: \d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?
-	strictVersionPattern := regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?$`)
-	if !strictVersionPattern.MatchString(version) {
-		return fmt.Errorf("invalid semver version: %s", version)
+	if !strictVersionPattern.MatchString(bp.Version) {
+		return fmt.Errorf("invalid semver version: %s", bp.Version)
 	}
-
-	// Additional validation with semver.IsValid
-	versionWithPrefix := "v" + version
-	if !semver.IsValid(versionWithPrefix) {
-		return fmt.Errorf("invalid semver version: %s", version)
+	if !semver.IsValid("v" + bp.Version) {
+		return fmt.Errorf("invalid semver version: %s", bp.Version)
 	}
-
-	// Validate source.type
-	if bp.Spec.Source.Type != aifv1.BlueprintSourcePublished &&
-		bp.Spec.Source.Type != aifv1.BlueprintSourceWrapsVendorChart {
-		return fmt.Errorf("invalid source.type: %s (must be Published or WrapsVendorChart)", bp.Spec.Source.Type)
+	if bp.Source.Type != SourceTypePublished && bp.Source.Type != SourceTypeWrapsVendorChart {
+		return fmt.Errorf("invalid source.type: %s (must be Published or WrapsVendorChart)", bp.Source.Type)
 	}
-
 	return nil
+}
+
+// ValidateSpec is a backward-compat shim for the Manager interface; it converts
+// the CR to the domain type and delegates to Validate. New callers should call
+// Validate directly with a domain Blueprint.
+func (m *manager) ValidateSpec(bp *aifv1.Blueprint) error {
+	return Validate(FromCR(bp))
 }
 
 // ComputeDeploymentCount counts Workloads sourced from this Blueprint

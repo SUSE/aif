@@ -135,9 +135,9 @@ func (r *BundleReconciler) handleDeletion(ctx context.Context, bundleCR *aifv1.B
 		return ctrl.Result{}, nil
 	}
 
-	// TODO: P3-1 will add cache cleanup via Manager.Delete()
-	// For P1-1, cache is in-memory only and will be GC'd with operator restart
-	logger.Info("Bundle deleted, cache cleanup deferred to P3-1")
+	// Bundle is deleted; the in-memory cache that previously needed cleanup
+	// has been removed (the apiserver is the source of truth now).
+	logger.Info("Bundle deleted, removing finalizer")
 
 	// Remove finalizer
 	controllerutil.RemoveFinalizer(bundleCR, finalizerName)
@@ -149,21 +149,11 @@ func (r *BundleReconciler) handleDeletion(ctx context.Context, bundleCR *aifv1.B
 	return ctrl.Result{}, nil
 }
 
-// setCondition updates or appends a condition to the Bundle status
+// setCondition updates or appends a condition to the Bundle status.
+// Delegates to conditions.Set (built on meta.SetStatusCondition) so
+// LastTransitionTime is preserved when status hasn't actually changed.
 func (r *BundleReconciler) setCondition(bundleCR *aifv1.Bundle, condition metav1.Condition) {
-	// Find existing condition
-	for i := range bundleCR.Status.Conditions {
-		if bundleCR.Status.Conditions[i].Type == condition.Type {
-			// Update existing condition
-			bundleCR.Status.Conditions[i] = condition
-			bundleCR.Status.Conditions[i].LastTransitionTime = metav1.Now()
-			return
-		}
-	}
-
-	// Append new condition
-	condition.LastTransitionTime = metav1.Now()
-	bundleCR.Status.Conditions = append(bundleCR.Status.Conditions, condition)
+	conditions.Set(&bundleCR.Status.Conditions, condition)
 }
 
 // checkAndHealPartialApproval implements ARCHITECTURE.md §6.5.2 self-healing.

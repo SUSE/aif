@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"reflect"
 	"testing"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
@@ -61,6 +62,40 @@ func TestBundleFromCR(t *testing.T) {
 	}
 	if len(domain.PublishedVersions) != 1 {
 		t.Errorf("expected 1 published version, got %d", len(domain.PublishedVersions))
+	}
+	// Title is required on the CRD; previously dropped on conversion (H2).
+	if domain.Title != "Test Bundle" {
+		t.Errorf("expected title 'Test Bundle', got %q", domain.Title)
+	}
+}
+
+// TestRoundtrip_BundleSpec guards every Spec field — including Title and
+// Paused (caught by critical-review audit finding H2) — through the
+// FromCR -> ToCR roundtrip.
+func TestRoundtrip_BundleSpec(t *testing.T) {
+	original := &aifv1.Bundle{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "alice", Name: "my-bundle"},
+		Spec: aifv1.BundleSpec{
+			Title:           "RAG with Llama",
+			TargetBlueprint: "rag-with-llama",
+			UseCase:         "rag",
+			Description:     "test description",
+			Components: []aifv1.ComponentRef{
+				{Name: "llm", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "v"}},
+			},
+			ValueOverrides: map[string]string{"llm": "replicas: 2"},
+			Authors:        []string{"alice"},
+			Paused:         true,
+		},
+	}
+
+	roundtrip := &aifv1.Bundle{
+		ObjectMeta: metav1.ObjectMeta{Namespace: original.Namespace, Name: original.Name},
+	}
+	BundleToCR(BundleFromCR(original), roundtrip)
+
+	if !reflect.DeepEqual(roundtrip.Spec, original.Spec) {
+		t.Errorf("spec roundtrip drift\n got:  %#v\n want: %#v", roundtrip.Spec, original.Spec)
 	}
 }
 

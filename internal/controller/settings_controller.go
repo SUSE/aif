@@ -2,15 +2,14 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
-	"strings"
 	"time"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/conditions"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
@@ -18,6 +17,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+// Sentinel errors for Secret resolution. Callers classify failures with
+// errors.Is — never with strings.Contains on the message (that pattern is
+// in CLAUDE.md's Forbidden list).
+var (
+	ErrSecretNotFound   = stderrors.New("secret not found")
+	ErrInvalidSecretKey = stderrors.New("invalid secret key")
 )
 
 const (
@@ -29,18 +36,16 @@ const (
 	eventInvalidSecretKey  = "InvalidSecretKey"
 )
 
-// SettingsReconciler reconciles a Settings object
+// SettingsReconciler reconciles a Settings object.
+//
+// Per ARCHITECTURE.md §6.2 / §8.2.1, P5-4 will replace direct credential
+// resolution with an EngineSettings push to pkg/{apps,git,nvidia}.Engine.
+// Until then, the reconciler resolves Secrets, validates them, and discards
+// the values — the goal of P1-4 is wiring + status only, no engine state.
 type SettingsReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
-
-	// Cached credentials (P5-4 will propagate to engines)
-	suseRegUser  string
-	suseRegToken string
-	appCollUser  string
-	appCollToken string
-	fleetCred    string
 }
 
 // Reconcile handles Settings reconciliation
@@ -83,51 +88,40 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return r.reconcile(ctx, &settings)
 }
 
-// reconcile performs the main reconciliation logic
+// reconcile performs the main reconciliation logic.
+//
+// In P1-4 the resolved Secret values are validated and then discarded; P5-4
+// will replace this with an EngineSettings push to pkg/{apps,git,nvidia}.Engine
+// per ARCHITECTURE.md §6.2.
 func (r *SettingsReconciler) reconcile(ctx context.Context, settings *aifv1.Settings) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var suseRegUser, suseRegToken, appCollUser, appCollToken, fleetCred string
-
-	// Resolve SUSE Registry credentials
+	// Resolve SUSE Registry credentials (validates Secret presence + key)
 	if settings.Spec.SUSERegistry != nil {
-		user, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.UserSecretRef)
-		if err != nil {
+		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.UserSecretRef); err != nil {
 			return r.handleSecretError(ctx, settings, err, "SUSERegistry.userSecretRef")
 		}
-		token, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.TokenSecretRef)
-		if err != nil {
+		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.TokenSecretRef); err != nil {
 			return r.handleSecretError(ctx, settings, err, "SUSERegistry.tokenSecretRef")
 		}
-		suseRegUser = user
-		suseRegToken = token
 	}
 
-	// Resolve Application Collection credentials
+	// Resolve Application Collection credentials (validates Secret presence + key)
 	if settings.Spec.ApplicationCollection != nil {
-		user, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.UserSecretRef)
-		if err != nil {
+		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.UserSecretRef); err != nil {
 			return r.handleSecretError(ctx, settings, err, "ApplicationCollection.userSecretRef")
 		}
-		token, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.TokenSecretRef)
-		if err != nil {
+		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.TokenSecretRef); err != nil {
 			return r.handleSecretError(ctx, settings, err, "ApplicationCollection.tokenSecretRef")
 		}
-		appCollUser = user
-		appCollToken = token
 	}
 
-	// Resolve Fleet credentials
+	// Resolve Fleet credentials (validates Secret presence + key)
 	if settings.Spec.Fleet != nil {
-		cred, err := r.resolveSecretKeyRef(ctx, settings.Spec.Fleet.CredSecretRef)
-		if err != nil {
+		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.Fleet.CredSecretRef); err != nil {
 			return r.handleSecretError(ctx, settings, err, "Fleet.credSecretRef")
 		}
-		fleetCred = cred
 	}
-
-	// Apply settings to engines (stub in P1-4, real implementation in P5-4)
-	r.applySettingsToEngines(appCollUser, appCollToken, suseRegUser, suseRegToken, fleetCred)
 
 	// Update status
 	settings.Status.ObservedGeneration = settings.Generation
@@ -161,14 +155,14 @@ func (r *SettingsReconciler) resolveSecretKeyRef(ctx context.Context, ref *corev
 
 	if err := r.Get(ctx, secretName, &secret); err != nil {
 		if errors.IsNotFound(err) {
-			return "", fmt.Errorf("secret %s not found", ref.Name)
+			return "", fmt.Errorf("secret %s: %w", ref.Name, ErrSecretNotFound)
 		}
 		return "", fmt.Errorf("failed to get secret %s: %w", ref.Name, err)
 	}
 
 	value, ok := secret.Data[ref.Key]
 	if !ok {
-		return "", fmt.Errorf("key %s not found in secret %s", ref.Key, ref.Name)
+		return "", fmt.Errorf("key %s in secret %s: %w", ref.Key, ref.Name, ErrInvalidSecretKey)
 	}
 
 	return string(value), nil
@@ -210,28 +204,17 @@ func (r *SettingsReconciler) handleSecretError(ctx context.Context, settings *ai
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-// isSecretNotFound checks if an error indicates a missing Secret
+// isSecretNotFound checks if an error indicates a missing Secret.
+// Uses errors.Is on the package's sentinel; falls through to apierrors.IsNotFound
+// to also catch the "not yet wrapped" path (defensive, in case a caller adds a
+// new code path that returns the apiserver's NotFound directly).
 func isSecretNotFound(err error) bool {
-	return err != nil && (errors.IsNotFound(err) || strings.Contains(err.Error(), "not found"))
+	return err != nil && (stderrors.Is(err, ErrSecretNotFound) || errors.IsNotFound(err))
 }
 
-// isInvalidSecretKey checks if an error indicates a missing key in a Secret
+// isInvalidSecretKey checks if an error indicates a missing key in a Secret.
 func isInvalidSecretKey(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "key") && strings.Contains(err.Error(), "not found")
-}
-
-// applySettingsToEngines propagates credentials to external engines
-// Stub implementation for P1-4; P5-4 will add real engine calls
-func (r *SettingsReconciler) applySettingsToEngines(appCollUser, appCollToken, suseRegUser, suseRegToken, fleetCred string) {
-	r.appCollUser = appCollUser
-	r.appCollToken = appCollToken
-	r.suseRegUser = suseRegUser
-	r.suseRegToken = suseRegToken
-	r.fleetCred = fleetCred
-	// P5-4 will add:
-	// - Call pkg/apps engine with SUSE Registry + App Collection credentials
-	// - Call pkg/git engine with Fleet credentials
-	// - Call pkg/nvidia engine with SUSE Registry credentials
+	return err != nil && stderrors.Is(err, ErrInvalidSecretKey)
 }
 
 // handleDeletion handles Settings deletion
@@ -253,9 +236,10 @@ func (r *SettingsReconciler) handleDeletion(ctx context.Context, settings *aifv1
 	return ctrl.Result{}, nil
 }
 
-// setCondition updates a condition in the Settings status
+// setCondition updates a condition in the Settings status.
+// Delegates to conditions.Set (built on meta.SetStatusCondition).
 func (r *SettingsReconciler) setCondition(settings *aifv1.Settings, condType string, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&settings.Status.Conditions, metav1.Condition{
+	conditions.Set(&settings.Status.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,
 		ObservedGeneration: settings.Generation,
