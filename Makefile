@@ -91,10 +91,13 @@ install-tools:
 dev-cluster:
 	@echo "Creating k3d cluster 'aif-dev'..."
 	k3d cluster create aif-dev \
-	  --port "8080:80@loadbalancer" \
-	  --port "8443:443@loadbalancer" \
 	  --k3s-arg "--disable=traefik@server:0"
 	@echo "Cluster ready. Use 'make dev-install' to install CRDs."
+# Note: no --port flags. The operator binds :8080 (REST), :8081 (health),
+# :8082 (metrics), :9443 (webhook) on the host; publishing the k3d
+# loadbalancer to :8080/:8443 collides with that and prevents 'make run'.
+# If an in-cluster ingress is needed later, re-add ports on different
+# host numbers, e.g. --port "18080:80@loadbalancer".
 
 dev-cluster-down:
 	@echo "Deleting k3d cluster 'aif-dev'..."
