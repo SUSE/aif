@@ -317,6 +317,7 @@ grep -iE 'Conformant|Certified|Promote' api/v1alpha1/*.go && echo FAIL || echo P
 - [ ] `podDisruptionBudget.{enabled: false, minAvailable: 1}`
 - [ ] `networkPolicy.{enabled: false}` *(P7-3 implements the template.)*
 - [ ] **NOT present:** `nvidia.apiKeySecretRef`, `nvidia.aieApiKeySecretRef`, `registry.internal.*` — grep guard enforces.
+- [ ] **TODO (post-P1-6):** Add `installAIExtension.enabled` flag to control whether InstallAIExtension controller runs. Default `true` for management cluster deployments, `false` for downstream clusters (where UIPlugin installation is unnecessary since Rancher Dashboard only loads UIPlugins from the management cluster).
 
 **charts/aif-operator/templates/ — required templates:**
 - [ ] `deployment.yaml`: container with security context above, the four named ports, three emptyDir volume mounts. Probes: liveness `httpGet :8081/healthz`, readiness `:8081/readyz`, startup `:8081/healthz` with `failureThreshold: 30, periodSeconds: 10`. Image reference uses `{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}`.
@@ -714,14 +715,20 @@ kubectl patch blueprint rag-with-llama.1.0.0 --subresource=status --type=merge -
 **Effort:** M
 **Depends On:** P0-2, P0-4
 **Parallelizable With:** P1-1, P1-2, P1-3, P1-4, P1-7
-**Done When:** envtest creates an InstallAIExtension CR and observes the operator install the referenced Helm chart and create the UIPlugin.
+**Done When:** envtest creates an InstallAIExtension CR and observes the operator install the referenced Helm chart, then verify the UIPlugin was created by the chart.
 
 **Acceptance Criteria:**
 - [ ] Checks if `UIPlugin` CRD exists; if not, sets `Failed` with reason `UIPluginCRDMissing`
-- [ ] Installs referenced Helm chart via `helm.Engine.InstallChartFromRepo`
-- [ ] Creates `UIPlugin` resource in `cattle-ui-plugin-system`
-- [ ] Sets `phase=Installed`, condition `Ready=True`
+- [ ] Installs referenced Helm chart to `cattle-ui-plugin-system` namespace with release name `aif-ui` via `helm.Engine.InstallChartFromRepo` (namespace and release name are constants per design)
+- [ ] Verifies `UIPlugin` resource was created in `cattle-ui-plugin-system` by the Helm chart using non-blocking requeue pattern (`RequeueAfter: 5s` when not found, not blocking sleep)
+- [ ] Sets `phase=Installing` while waiting for UIPlugin, `phase=Installed` when verified
+- [ ] Sets condition `Ready=True` when UIPlugin verified
+- [ ] Cleanup: uninstalls Helm release from `cattle-ui-plugin-system` (not from InstallAIExtension namespace)
 - [ ] Test: envtest with stubbed Helm engine + UIPlugin CRD installed
+
+**Implementation notes:**
+- Uses constants `uiPluginNamespace = "cattle-ui-plugin-system"` and `uiPluginReleaseName = "aif-ui"` (shared across install/verify/cleanup to avoid mismatch)
+- UIPlugin verification uses controller-runtime requeue mechanism (not blocking `time.Sleep` loop)
 
 **Validation:**
 ```bash
@@ -729,7 +736,7 @@ go test ./internal/controller/ -run TestInstallAIExtension -v
 ```
 
 **Agent Prompt:**
-> Implement `internal/controller/installaiextension_controller.go`. Standard reconcile. Detect `UIPlugin` CRD via discovery; if absent, condition `Ready=False Reason=UIPluginCRDMissing`. Call `helm.Engine.InstallChartFromRepo(ctx, ext.Spec.Helm)` (stub OK — engine is implemented in P4-1). Create `UIPlugin` CR in `cattle-ui-plugin-system`. Set `phase=Installed`, condition `Ready=True`. Test with envtest using a fake helm engine. Done when test passes.
+> Implement `internal/controller/installaiextension_controller.go`. Standard reconcile with finalizer. Define constants `uiPluginNamespace = "cattle-ui-plugin-system"` and `uiPluginReleaseName = "aif-ui"`. Detect `UIPlugin` CRD via discovery; if absent, condition `Ready=False Reason=UIPluginCRDMissing`. Call `helm.Engine.InstallChartFromRepo(ctx, InstallRequest{Namespace: uiPluginNamespace, ReleaseName: uiPluginReleaseName, ChartRef: ext.Spec.Helm.URL})` (stub OK — engine is implemented in P4-1). Verify UIPlugin exists using non-blocking check (return error if not found to trigger requeue; reconcile() returns `ctrl.Result{RequeueAfter: 5s}, nil` on verification failure). Set `phase=Installing` while waiting, `phase=Installed` when verified, condition `Ready=True`. Cleanup: uninstall from `uiPluginNamespace` using `uiPluginReleaseName`. Test with envtest using a fake helm engine. Done when test passes.
 
 ---
 
@@ -783,6 +790,7 @@ go test ./internal/manager/ -v
 - [ ] CI workflow (gated to `make test-controllers`) runs the suite with `-race`
 - [ ] Coverage report generated; CI fails when `go tool cover -func=cover.out | grep total` reports < 80% (gate enforced in P8-4)
 - [ ] Ginkgo + Gomega used (per §12.3 "Why Ginkgo + Gomega"); pure unit tests in `pkg/` may use `*testing.T` directly
+- [ ] **Deferred from P1-7:** Add integration test in `internal/manager/setup_test.go` that verifies `manager.Start(ctx)` succeeds with envtest's `rest.Config` (manager creation and controller registration are already tested without envtest)
 
 **Validation:**
 ```bash
@@ -1228,6 +1236,7 @@ curl -X POST http://localhost:8080/api/v1/bundles/default/my-rag/preflight | jq
 - [ ] `pkg/helm/engine.go` implements the **`Engine` interface from `ARCHITECTURE.md §6.2 Helm engine interface` verbatim** (InstallChartFromRepo, Uninstall, Status, Rollback, History, UpdateSettings; the InstallRequest, ReleaseStatus, EngineSettings struct types per §6.2)
 - [ ] InstallChartFromRepo is **idempotent**: if a release with the same name exists, performs an upgrade instead of failing (per §6.2 godoc)
 - [ ] OCI auth: pulls credentials from the `EngineSettings` struct (set via `UpdateSettings` from SettingsReconciler per `ARCHITECTURE.md §8.2.1`); does NOT read environment variables or files at runtime
+  - **NOTE (from P1-6):** `pkg/helm/engine.go` contains `TODO(P5-7)` comment in `pullChart()` method marking where registry auth configuration should be added when Settings reconciler integration is implemented
 - [ ] **`pkg/helm/values.go::MergeValues` implements the 6-layer precedence in `ARCHITECTURE.md §6.6`** with the exact map-vs-list semantics ("Maps deep-merge; lists replace wholesale"); is a **pure function** (no input mutation, deep-copies maps, returns new map per the §6.6 "MergeValues purity" subsection)
 - [ ] **Forbidden top-level keys silently dropped** before merge per the `ARCHITECTURE.md §6.6 "Forbidden top-level keys"` table — full list: `imagePullSecrets`, `nameOverride`, `fullnameOverride`, `serviceAccount.create`. Drops happen on layers 2 (Blueprint overrides) and 3 (Workload overrides) only — layer 1 (chart defaults) and layers 4–6 (operator-controlled) are trusted. Each drop is recorded as `slog.Warn("dropped forbidden override", "layer", N, "key", k)`.
 - [ ] Required after merge: `image.repository` non-empty; if absent, returns `ErrMissingImageRepository` per §6.6
@@ -1237,6 +1246,11 @@ curl -X POST http://localhost:8080/api/v1/bundles/default/my-rag/preflight | jq
   - Each forbidden key dropped with `slog.Warn` invoked
   - Required-after-merge fails when image.repository absent
   - Pure-function check: input layers unchanged after MergeValues call (deep-equality assertion before/after)
+
+**Additional fixes from P1-6 PR review:**
+- [ ] **Chart cleanup:** `pullChart()` must clean up downloaded `.tgz` files. Current implementation leaks files on every reconcile. Fix: `defer os.Remove(chartPath)` in both `InstallChartFromRepo` and `upgradeChart` after `loader.Load()` succeeds, OR set `pullClient.DestDir` to a temp directory and clean up the entire directory.
+- [ ] **CreateNamespace flag:** `InstallChartFromRepo` must set `installClient.CreateNamespace = true` (line ~87-94 in engine.go). Current implementation fails if target namespace doesn't exist. This is critical for `cattle-ui-plugin-system` namespace in P1-6 use case.
+- [ ] **BLOCKING BUG - DestDir for read-only filesystem:** `pullChart()` must set `pullClient.DestDir` to a writable path (line ~207 in engine.go). Current implementation fails in production with `read-only file system` error because it tries to write to `/` (process working directory). Fix: `pullClient.DestDir = "/data/charts"` (emptyDir mount from deployment) or `os.TempDir()`. **This causes infinite retry loop in production and must be fixed in P4-1.**
 
 **Validation:**
 ```bash
@@ -1967,6 +1981,41 @@ curl -X POST http://localhost:8080/api/v1/settings/test-connection | jq
 
 ---
 
+**ID:** P6-11
+**Epic:** UI Extension ClusterRepo Integration
+**Story:** As a platform engineer, I want the InstallAIExtension controller to follow Rancher's container-based UI extension pattern with ClusterRepo.
+**Owner Hint:** Backend Go + UI
+**Effort:** M
+**Depends On:** P1-6, P4-1
+**Parallelizable With:** none (needs architectural confirmation)
+**Done When:** InstallAIExtension creates Deployment+Service → ClusterRepo → UIPlugin for container-based extensions (OR confirms git-based deployment model is correct).
+
+**Acceptance Criteria:**
+- [ ] **Research first:** Verify whether AIF UI extension uses container-based (needs ClusterRepo) or git-based (current impl OK) deployment model. Document findings in ADR or ARCHITECTURE.md.
+- [ ] If container-based: Helm chart (`charts/aif-ui/`) creates Deployment+Service serving `index.yaml` with available extension versions
+- [ ] If container-based: Controller creates ClusterRepo (`catalog.cattle.io/v1`) resource pointing to Service endpoint as the source for `index.yaml`
+- [ ] If container-based: UIPlugin (`catalog.cattle.io/v1`) references the specific version from ClusterRepo, with the Service as the source path to extension files
+- [ ] Test: Verify Rancher Dashboard loads extension via ClusterRepo flow in a real Rancher management cluster
+- [ ] Update P1-6 controller tests to mock ClusterRepo creation if needed
+
+**Background:**
+PR #1 review (https://github.com/SUSE/aif/pull/1#discussion_r3190614754) identified this architectural gap. Current P1-6 implementation performs direct Helm install + UIPlugin creation, skipping the ClusterRepo step. For container-based Rancher UI extensions, the expected flow is:
+1. Deploy Helm release (Deployment + Service) serving `index.yaml`
+2. Create ClusterRepo pointing to Service
+3. Create UIPlugin referencing ClusterRepo version
+
+For git-based extensions, the current implementation may be sufficient (ClusterRepo points to git repo instead of Service). This story exists to research the correct approach and implement if needed.
+
+**Validation:**
+```bash
+# Deploy to real Rancher cluster
+kubectl apply -f testdata/installaiextension-cr.yaml
+# Verify Rancher Dashboard shows AIF extension in Extensions page
+# Verify extension loads correctly in UI
+```
+
+---
+
 ## Phase 7 — Security
 
 *Goal: Production-grade security posture: tight RBAC, NetworkPolicy, container hardening, working webhook with cert-manager, publisher RBAC enforced.*
@@ -2470,6 +2519,12 @@ cosign download sbom ghcr.io/suse/aif-operator:0.1.0 | jq -e '.SPDXID'
 **Depends On:** P9-4
 **Parallelizable With:** none
 **Done When:** CLAUDE.md is ≤400 lines, every section is current, and a final pass removes anything not derivable from the spec.
+
+**Post-P1-6 Documentation TODO:**
+- [ ] Document management vs downstream cluster deployment pattern in ARCHITECTURE.md or deployment guide:
+  - **Management Cluster**: Full AIF operator (including InstallAIExtension controller) → UIPlugin CR created → Dashboard sidebar appears
+  - **Downstream Clusters**: AIF operator with workload controllers only (InstallAIExtension disabled via `installAIExtension.enabled: false`) → No UIPlugin installation needed (Rancher Dashboard only loads UIPlugins from management cluster)
+  - Rationale: UIPlugin CRs created on downstream clusters are ignored by Rancher Dashboard, which runs on the management cluster
 
 ---
 
