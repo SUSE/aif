@@ -13,7 +13,6 @@ import (
 	"time"
 
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
-	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
@@ -23,11 +22,9 @@ import (
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/workload"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 var (
@@ -107,113 +104,31 @@ func main() {
 		"workloadManager", workloadManager != nil,
 	)
 
-	// Setup controller-runtime manager
+	// Setup controller-runtime manager with all controllers and webhooks
 	logger.Info("Creating controller-runtime manager")
-	webhookServer := webhook.NewServer(webhook.Options{
-		Port: parsePort(webhookBindAddress),
-	})
-	mgr, err := ctrl.NewManager(k8sConfig, ctrl.Options{
-		LeaderElection:         leaderElect,
-		LeaderElectionID:       "aif-operator-leader",
-		HealthProbeBindAddress: healthProbeBindAddress,
-		Metrics: metricsserver.Options{
-			BindAddress: metricsBindAddress,
-		},
-		WebhookServer: webhookServer,
+	scheme := runtime.NewScheme()
+	if err := aifv1alpha1.AddToScheme(scheme); err != nil {
+		logger.Error("Failed to add API types to scheme", "error", err)
+		os.Exit(1)
+	}
+
+	mgr, err := manager.NewManager(scheme, k8sConfig, manager.Options{
+		LeaderElection:   leaderElect,
+		LeaderElectionID: "aif-operator-leader",
+		MetricsAddr:      metricsBindAddress,
+		HealthAddr:       healthProbeBindAddress,
+		WebhookPort:      parsePort(webhookBindAddress),
+		BundleManager:    bundleManager,
+		BlueprintManager: blueprintManager,
+		HelmEngine:       helmEngine,
+		Discovery:        discoveryClient,
+		Logger:           logger,
 	})
 	if err != nil {
 		logger.Error("Failed to create manager", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("Manager created successfully", "webhookPort", parsePort(webhookBindAddress))
-
-	// Register API types with scheme
-	if err := aifv1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
-		logger.Error("Failed to add API types to scheme", "error", err)
-		os.Exit(1)
-	}
-
-	// Setup WorkloadReconciler
-	workloadReconciler := &controller.WorkloadReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("workload-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
-	}
-	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
-		logger.Error("Failed to setup WorkloadReconciler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("WorkloadReconciler registered")
-
-	// Setup SettingsReconciler
-	settingsReconciler := &controller.SettingsReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("settings-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
-	}
-	if err := settingsReconciler.SetupWithManager(mgr); err != nil {
-		logger.Error("Failed to setup SettingsReconciler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("SettingsReconciler registered")
-
-	// Setup BundleReconciler
-	bundleReconciler := &controller.BundleReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("bundle-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
-		Manager:  bundleManager,
-	}
-	if err := bundleReconciler.SetupWithManager(mgr); err != nil {
-		logger.Error("Failed to setup BundleReconciler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("BundleReconciler registered")
-
-	// Setup BlueprintReconciler
-	blueprintReconciler := &controller.BlueprintReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("blueprint-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
-		Manager:  blueprintManager,
-	}
-	if err := blueprintReconciler.SetupWithManager(mgr); err != nil {
-		logger.Error("Failed to setup BlueprintReconciler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("BlueprintReconciler registered")
-
-	// Setup webhooks
-	if err := manager.SetupWebhooks(mgr); err != nil {
-		logger.Error("Failed to setup webhooks", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("Webhooks registered")
-
-	// Setup InstallAIExtensionReconciler
-	installAIExtensionReconciler := &controller.InstallAIExtensionReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Logger:     logger,
-		HelmEngine: helmEngine,
-		Discovery:  discoveryClient,
-		Recorder:   mgr.GetEventRecorderFor("installaiextension-controller"), //nolint:staticcheck // GetEventRecorderFor deprecated but required for record.EventRecorder interface
-	}
-	if err := installAIExtensionReconciler.SetupWithManager(mgr); err != nil {
-		logger.Error("Failed to setup InstallAIExtensionReconciler", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("InstallAIExtensionReconciler registered")
-
-	// Add health checks
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		logger.Error("Failed to add healthz check", "error", err)
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		logger.Error("Failed to add readyz check", "error", err)
-		os.Exit(1)
-	}
+	logger.Info("Manager created successfully")
 
 	// Setup API server
 	mux := http.NewServeMux()
