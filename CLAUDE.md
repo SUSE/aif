@@ -123,11 +123,14 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
   `cmd/` → `internal/{controller,api,manager,webhook}/` → `pkg/<domain>/` → `pkg/conditions/` → stdlib.
   `pkg/*` packages MUST NOT import `internal/*`.
   `pkg/{helm,git,nvidia,source_collection,authz}` MUST NOT import `api/v1alpha1` — they speak in their own domain types. Translation lives in the controller.
-  `pkg/{bundle,blueprint,workload,settings}` MAY import `api/v1alpha1` ONLY inside `conversions.go`. `interface.go` and `types.go` MUST be free of `aifv1` references so ports remain framework-agnostic.
+  `pkg/{bundle,blueprint,workload,settings}` import `api/v1alpha1` from two file roles only:
+    - `conversions.go` — CR↔domain translation (the canonical home).
+    - `repository.go` — K8s adapter ports (Repository / Reader / Writer). These DO take `*aifv1.X` by design because they are the K8s adapter boundary.
+  Other files (`interface.go`, `types.go`, business-logic adapters like `manager.go` / `service.go`) SHOULD be aifv1-free so domain logic stays framework-agnostic. Two pre-existing exceptions are tracked legacy and exempt: `pkg/blueprint/interface.go`'s `Manager` interface (P1-2 acceptance) and `pkg/bundle/types.go`'s reuse of `aifv1` leaf types (P1-1 acceptance). Don't add new violations; don't unilaterally rename or refactor the legacy without amending PROJECT_PLAN.md.
 - **When to add `interface.go`:** A package gets one when (a) it has at least one I/O dependency (K8s, HTTP, Helm SDK, git), OR (b) it is consumed by a controller/handler that needs a test double. Pure-data packages (`pkg/conditions`) do not need one.
 - **Per-package file layout:** `interface.go` (ports, ≤4 methods each), `types.go` (domain structs, no `aifv1`), `<adapter>.go` (one concrete impl per adapter), `conversions.go` (CR↔domain, only file allowed to import `aifv1`), `<adapter>_test.go`.
 - **Interface size (ISP):** Target ≤4 methods per interface. If you reach 5, split by role (Reader/Writer, Discoverer/Deployer, Engine/Releaser). One interface, one reason to mock.
-- **Naming — avoid `Manager`:** "Manager" is banned as a top-level type name. Pick the role: `Repository` (CRUD over a store), `Service` (orchestrates Repository + Validator), `Validator` (pure spec checks), `StateMachine` (phase transitions), `Resolver` (dereferences a ref), `Engine` (wraps an external SDK like Helm/git), `Provider` (reads from an external API like SUSE App Collection), `UseCase`/`Workflow` (multi-step business operation like publish-by-approval).
+- **Naming — prefer role-revealing names over `Manager` for new types.** "Manager" tells you nothing about the responsibility; pick the role: `Repository` (CRUD over a store), `Service` (orchestrates Repository + Validator), `Validator` (pure spec checks), `StateMachine` (phase transitions), `Resolver` (dereferences a ref), `Engine` (wraps an external SDK like Helm/git), `Provider` (reads from an external API like SUSE App Collection), `UseCase`/`Workflow` (multi-step business operation like publish-by-approval). The legacy `pkg/bundle.Manager` and `pkg/blueprint.Manager` interfaces are kept to satisfy P1-1 / P1-2 acceptance criteria and are exempt — do not rename them without amending PROJECT_PLAN.md.
 - **Domain types:** Domain types (the structs in `pkg/<x>/types.go`) carry behaviour. Free functions over domain structs are preferred to methods on a `Manager` struct that only holds a logger. If a struct's only field is `*slog.Logger` and the methods don't access state, those are functions, not methods.
 - **Where invariants live:**
   - Shape (required, length, enum, regex) — `+kubebuilder:validation:*` on the CRD type. Enforced by the API server.
@@ -153,8 +156,8 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
 - Direct NVIDIA NGC calls (`nvcr.io`, `helm.ngc.nvidia.com`, `integrate.api.nvidia.com`)
 - Hardcoded registry hostnames (use `Settings.spec.registryEndpoints`)
 - Raw condition strings in controllers (use constants from `pkg/conditions/types.go`)
-- Top-level type named `Manager` in `pkg/*` (use a role-revealing name; see naming rule above)
-- `pkg/<x>/interface.go` importing `api/v1alpha1` (move types to `pkg/<x>/types.go`)
+- NEW top-level type named `Manager` in `pkg/*` (use a role-revealing name; see naming rule above). The pre-existing `pkg/bundle.Manager` and `pkg/blueprint.Manager` are exempt.
+- NEW domain-logic port (Validator, Service, UseCase) in `interface.go` importing `api/v1alpha1`. K8s adapter ports in `repository.go` MAY import `aifv1` — that is the legitimate adapter boundary. The pre-existing `pkg/blueprint/interface.go` aifv1 import is exempt as legacy.
 - `pkg/{helm,git,nvidia,source_collection,authz}` importing `api/v1alpha1` at all
 - `strings.Contains(err.Error(), ...)` for error classification (use sentinel errors + `errors.Is`)
 
