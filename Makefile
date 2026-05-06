@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools dev-cluster dev-cluster-down dev-install dev-certs examples
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -116,6 +116,30 @@ dev-install:
 	@echo "Creating 'aif' namespace (Settings CR singleton lives here)..."
 	kubectl create namespace aif --dry-run=client -o yaml | kubectl apply -f -
 	@echo "CRDs installed. Use 'make run' to start the operator out-of-cluster."
+
+# --- pkg/nvidia (NIM Discovery) validation targets (P2-1) -------------------
+# These exercise the SUSE Registry-backed NIM discovery without depending on
+# the operator being running. test-nim is the unit-test target;
+# verify-nim-mock proves the end-to-end Refresh + Index flow against an
+# in-process OCI Distribution v2 stub; verify-nim-live runs the same flow
+# against the real registry.suse.com (creds via env vars).
+
+test-nim:
+	@echo "Running pkg/nvidia unit tests..."
+	go test -count=1 -v ./pkg/nvidia/...
+
+verify-nim-mock:
+	@echo "Demonstrating NIM Discovery against an in-process mock registry..."
+	go test -count=1 -v -run Example_discovery ./pkg/nvidia/
+
+verify-nim-live:
+	@echo "Verifying NIM Discovery against the real SUSE Registry..."
+	@if [ -z "$$SUSE_REG_USER" ] || [ -z "$$SUSE_REG_TOKEN" ]; then \
+		echo "ERROR: set SUSE_REG_USER and SUSE_REG_TOKEN in your environment first."; \
+		echo "  example: SUSE_REG_USER=alice SUSE_REG_TOKEN=... make verify-nim-live"; \
+		exit 1; \
+	fi
+	go test -count=1 -tags=live -v -run TestLive_Discovers ./pkg/nvidia/...
 
 examples:
 	@echo "Applying example CRs..."

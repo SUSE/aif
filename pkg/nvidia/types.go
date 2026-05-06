@@ -10,26 +10,45 @@ package nvidia
 
 import "time"
 
+// Type classifies a NIM by inference modality. Driven by the chart-name
+// heuristic in classifier.go (regex per ARCHITECTURE.md §13.1).
+type Type string
+
+const (
+	TypeLLM Type = "llm" // language model (default classification)
+	TypeVLM Type = "vlm" // vision-language model
+)
+
 // NIMEntry describes one NIM model available in the SUSE-mirrored catalog.
 // Spec source: ARCHITECTURE.md §6.2 (NIM discovery + deployer interfaces).
 type NIMEntry struct {
-	// ID is the canonical model identifier (e.g. "meta/llama-3.1-8b-instruct").
+	// ID is the canonical model identifier. For SUSE-Registry-discovered NIMs
+	// the format is "<chart>:<version>" (e.g. "nim-llm:1.3.0").
 	ID string
 
-	// DisplayName is the human-readable name for the UI.
+	// Chart is the chart name within registry.suse.com/ai/charts/nvidia/
+	// (e.g. "nim-llm", "nim-vlm").
+	Chart string
+
+	// Version is the chart's OCI tag (semver, no "v" prefix).
+	Version string
+
+	// DisplayName is the human-readable name for the UI. Defaults to Chart.
 	DisplayName string
 
-	// Type categorises the NIM: "llm" | "vlm" | "embed" | other.
-	Type string
+	// Type classifies the NIM (LLM / VLM). Set by the chart-name heuristic.
+	Type Type
 
 	// DefaultGPUs is the recommended GPU count for a baseline deployment.
+	// Populated by the deployer (P4-4); zero from discovery alone.
 	DefaultGPUs int32
 
-	// DefaultModel is the baseline model variant when an entry covers multiple.
+	// DefaultModel is the baseline model variant when an entry covers
+	// multiple. Populated by the deployer (P4-4); empty from discovery alone.
 	DefaultModel string
 
-	// ChartRef is the OCI reference to the nim-llm / nim-vlm chart that
-	// deploys this entry. Includes registry, repo, chart, version.
+	// ChartRef is the full OCI reference to the chart, e.g.
+	// "oci://registry.suse.com/ai/charts/nvidia/nim-llm:1.3.0".
 	ChartRef string
 }
 
