@@ -24,6 +24,7 @@ import (
 	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -110,8 +111,19 @@ func main() {
 	// Setup controller-runtime manager with all controllers and webhooks
 	logger.Info("Creating controller-runtime manager")
 	scheme := runtime.NewScheme()
+
+	// Register the standard Kubernetes built-in types (corev1, appsv1, batchv1,
+	// rbacv1, networkingv1, …). Without this, controller-runtime's typed client
+	// cannot Get/List/Watch any non-CRD object — most concretely, the
+	// SettingsReconciler's r.Get(ctx, secretName, &corev1.Secret{}) fails with
+	// "no kind is registered for the type v1.Secret in scheme".
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		logger.Error("Failed to add built-in Kubernetes types to scheme", "error", err)
+		os.Exit(1)
+	}
+	// Register the AIF CRDs.
 	if err := aifv1alpha1.AddToScheme(scheme); err != nil {
-		logger.Error("Failed to add API types to scheme", "error", err)
+		logger.Error("Failed to add AIF API types to scheme", "error", err)
 		os.Exit(1)
 	}
 
