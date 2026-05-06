@@ -106,6 +106,8 @@ dev-cluster-down:
 dev-install:
 	@echo "Installing CRDs..."
 	kubectl apply -f charts/aif-operator/crds/
+	@echo "Creating 'aif' namespace (Settings CR singleton lives here)..."
+	kubectl create namespace aif --dry-run=client -o yaml | kubectl apply -f -
 	@echo "CRDs installed. Use 'make run' to start the operator out-of-cluster."
 
 examples:
@@ -113,7 +115,8 @@ examples:
 	kubectl apply -f examples/bundle-smoke.yaml
 	kubectl apply -f examples/blueprint-smoke.yaml
 	kubectl apply -f examples/workload-smoke.yaml
-	@echo "Done. 'kubectl get bundles,blueprints,workloads -A' to see them."
+	kubectl apply -f examples/settings-smoke.yaml
+	@echo "Done. 'kubectl get bundles,blueprints,workloads,settings -A' to see them."
 
 # dev-certs generates a self-signed TLS cert at controller-runtime's default
 # webhook CertDir so 'make run' (out-of-cluster) doesn't fail at startup.

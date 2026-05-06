@@ -83,3 +83,14 @@ type Deps struct {
 // implements them. Sentinel so callers can errors.Is against it during the
 // transition window.
 var ErrNotImplemented = errors.New("publish.Workflow: method not implemented yet (lands in P3-1)")
+
+// AllowAllAuthorizer is a no-op Authorizer that approves every request. It is
+// the temporary default used by 'make run' and by tests until pkg/authz lands
+// a real SubjectAccessReview-backed implementation. Production deployments
+// MUST replace this with a SAR-backed authorizer.
+type AllowAllAuthorizer struct{}
+
+// Allowed returns (true, nil) unconditionally.
+func (AllowAllAuthorizer) Allowed(_ context.Context, _, _, _ string) (bool, error) {
+	return true, nil
+}

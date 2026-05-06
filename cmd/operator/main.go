@@ -133,6 +133,18 @@ func main() {
 	}
 	logger.Info("Manager created successfully")
 
+	// Construct the publish.Workflow now that the controller-runtime client
+	// is available (Repositories need it). The workflow has no consumer yet —
+	// REST handlers in P3-x will pick it up via manager.Register. AllowAllAuthorizer
+	// is a stub until pkg/authz lands a SubjectAccessReview-backed impl.
+	publishWorkflow = publish.New(publish.Deps{
+		Bundles:    bundle.NewK8sRepository(mgr.GetClient()),
+		Blueprints: blueprint.NewK8sRepository(mgr.GetClient()),
+		Authz:      publish.AllowAllAuthorizer{},
+		Logger:     logger,
+	})
+	logger.Info("publish.Workflow constructed", "ready", publishWorkflow != nil)
+
 	// Setup API server
 	mux := http.NewServeMux()
 	manager.Register(mux, logger, allowedOrigin)
