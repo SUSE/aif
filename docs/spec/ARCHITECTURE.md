@@ -632,6 +632,8 @@ type BundleTestRef struct {
 }
 ```
 
+**Note:** `kind` here is a source-provenance discriminator, not a Kubernetes `TypeMeta.Kind`. `App` and `Blueprint` correspond to CRDs of the same name. `BundleTest` has no corresponding CRD — it denotes a test deployment created from a Bundle via `/bundles/{ns}/{name}/test-deploy`.
+
 The `source.kind` discriminator drives the operate experience: only `Blueprint`-sourced Workloads expose an "Upgrade" action (re-deploy against a newer Blueprint version of the same lineage).
 
 #### Status Fields
@@ -2961,6 +2963,8 @@ package controller_test
 
 import (
     "context"
+    "log/slog"
+    "os"
     "path/filepath"
     "testing"
     "time"
@@ -2973,8 +2977,14 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/envtest"
     logf "sigs.k8s.io/controller-runtime/pkg/log"
     "sigs.k8s.io/controller-runtime/pkg/log/zap"
+    metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+    "sigs.k8s.io/controller-runtime/pkg/webhook"
 
     aifv1 "github.com/SUSE/aif/api/v1alpha1"
+    "github.com/SUSE/aif/internal/controller"
+    "github.com/SUSE/aif/internal/manager"
+    "github.com/SUSE/aif/pkg/blueprint"
+    "github.com/SUSE/aif/pkg/bundle"
 )
 
 var (
@@ -2984,6 +2994,9 @@ var (
 )
 
 func TestControllers(t *testing.T) {
+    if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+        t.Skip("KUBEBUILDER_ASSETS not set; skipping envtest suite (run 'make test-controllers')")
+    }
     RegisterFailHandler(Fail)
     RunSpecs(t, "Controller Suite")
 }
@@ -2998,9 +3011,10 @@ var _ = BeforeSuite(func() {
             CleanUpAfterUse:    true,
         },
         ErrorIfCRDPathMissing: true,
-        // Webhook tests load admission configs from the same chart
+        // Rendered webhook config — envtest cannot parse Helm {{ }} templates,
+        // so we keep a rendered ValidatingWebhookConfiguration in testdata/.
         WebhookInstallOptions: envtest.WebhookInstallOptions{
-            Paths: []string{filepath.Join("..", "..", "charts", "aif-operator", "templates", "webhook-configuration.yaml")},
+            Paths: []string{filepath.Join("testdata")},
         },
     }
 
@@ -3010,12 +3024,29 @@ var _ = BeforeSuite(func() {
 
     Expect(aifv1.AddToScheme(scheme.Scheme)).To(Succeed())
 
-    mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme, MetricsBindAddress: "0"})
+    mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+        Scheme: scheme.Scheme,
+        Metrics: metricsserver.Options{BindAddress: "0"},
+        WebhookServer: webhook.NewServer(webhook.Options{
+            Port:    testEnv.WebhookInstallOptions.LocalServingPort,
+            Host:    testEnv.WebhookInstallOptions.LocalServingHost,
+            CertDir: testEnv.WebhookInstallOptions.LocalServingCertDir,
+        }),
+    })
     Expect(err).NotTo(HaveOccurred())
 
-    // Register reconcilers under test
-    Expect((&BundleReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr)).To(Succeed())
+    logger := slog.New(slog.NewTextHandler(GinkgoWriter, nil))
+
+    // Register reconcilers under test (package controller_test must qualify types)
+    Expect((&controller.BundleReconciler{
+        Client:   mgr.GetClient(),
+        Scheme:   mgr.GetScheme(),
+        Recorder: mgr.GetEventRecorder("bundle-controller"),
+        Manager:  bundle.New(logger),
+    }).SetupWithManager(mgr)).To(Succeed())
     // ... other reconcilers ...
+
+    Expect(manager.SetupWebhooks(mgr)).To(Succeed())
 
     var ctx context.Context
     ctx, cancelFn = context.WithCancel(context.Background())
@@ -3034,11 +3065,16 @@ var _ = AfterSuite(func() {
 })
 ```
 
+**Package `controller_test`:** The suite uses `package controller_test` (external test package) because `internal/manager/setup.go` imports `internal/controller`, and using `package controller` would create an import cycle. Reconciler types must be qualified as `controller.BundleReconciler`, etc. Test files that use fake clients and access unexported methods (e.g. `installaiextension_controller_test.go`) remain `package controller`.
+
+**Webhook testdata:** The Helm chart template at `charts/aif-operator/templates/webhook.yaml` contains `{{ }}` syntax that envtest cannot parse. A rendered `ValidatingWebhookConfiguration` lives in `internal/controller/testdata/webhook-configuration.yaml`. envtest overrides `clientConfig` fields anyway, so the rendered copy only needs correct paths and resource rules.
+
 **CRD path resolution:** the `Paths: []string{"../../charts/aif-operator/crds"}` is relative to the test package directory. Tests in `internal/controller/` resolve to `<repo>/charts/aif-operator/crds`. P0-2 (CRD generation) MUST land before P1-8 (envtest scaffolding) because `make manifests` populates this directory.
 
 **`KUBEBUILDER_ASSETS` env var:** envtest needs the `etcd` and `kube-apiserver` binaries. The standard mechanism is:
-- Local: `make envtest` invokes `setup-envtest use 1.27.x --bin-dir bin/k8s` and exports `KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use --print path 1.27.x)`
+- Local: `make envtest` invokes `setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir bin/k8s` and exports `KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use --print path $(ENVTEST_K8S_VERSION))`
 - CI: same, gated on a build cache to avoid re-downloading per run
+- `ENVTEST_K8S_VERSION` defaults to `1.32.x` (matching the project's k8s.io v0.35.1 dependencies)
 
 **Why Ginkgo + Gomega (not just `*testing.T`):** controller tests are inherently event-driven (CR create → reconcile fires async → status update). `Eventually(...)` polling assertions fit this model; `*testing.T` requires hand-rolled polling loops. The envtest community uses Ginkgo by convention; use it for consistency. Pure unit tests (in `pkg/`) can use `*testing.T` directly.
 

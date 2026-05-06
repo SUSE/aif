@@ -60,7 +60,7 @@ make build                        # Outputs to bin/aif-operator
 
 # Run tests
 make test                         # Unit tests (go test)
-make test-integration             # Integration tests (envtest, planned for P8-5)
+make test-controllers             # Controller integration tests (envtest, Ginkgo)
 
 # Lint
 make lint                         # golangci-lint
@@ -72,8 +72,8 @@ make manifests                    # controller-gen → charts/aif-operator/crds/
 make generate                     # deepcopy → zz_generated.deepcopy.go
 
 # Install build tools
-make install-tools                # Installs controller-gen@v0.20.1, golangci-lint@v2.11.4, mockgen@v0.6.0, ginkgo@v2.28.1
-                                  # Note: kubebuilder/envtest deferred to Phase 1 (P1-8)
+make install-tools                # Installs controller-gen@v0.20.1, golangci-lint@v2.11.4, mockgen@v0.6.0, ginkgo@v2.28.1, setup-envtest@v0.24.0
+make envtest                      # Downloads envtest binaries (etcd + kube-apiserver)
 
 # Docker build
 make docker-build                 # Two-stage Dockerfile, runs as UID 1000

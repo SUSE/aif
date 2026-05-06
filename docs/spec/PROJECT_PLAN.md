@@ -773,7 +773,7 @@ go test ./internal/manager/ -v
 **Done When:** `go test ./internal/controller/...` runs all controller tests against a single envtest instance with <60s total runtime.
 
 **Acceptance Criteria:**
-- [ ] **Re-add kubebuilder/envtest toolchain** (deferred from P0-1): verify Go 1.26 compatibility issues are resolved with latest kubebuilder/controller-runtime versions; re-add `sigs.k8s.io/kubebuilder/v3` (or v4 if available) to `tools.go` and `go.mod`; update `make install-tools` to include kubebuilder; verify `go mod tidy` and `go build ./...` succeed
+- [ ] **Add setup-envtest toolchain** (deferred from P0-1): add `sigs.k8s.io/controller-runtime/tools/setup-envtest` to `tools.go` and `go.mod`; update `make install-tools` to include `setup-envtest`; verify `go mod tidy` and `go build ./...` succeed. Note: `kubebuilder` CLI is not needed — it is a scaffolding tool only; `setup-envtest` alone downloads the etcd + kube-apiserver binaries required by envtest
 - [ ] `internal/controller/suite_test.go` matches the canonical bootstrap in `ARCHITECTURE.md §12.3 "Canonical envtest setup (P1-8 contract)"` **verbatim** (BeforeSuite + AfterSuite, Ginkgo `RegisterFailHandler` + `RunSpecs`, `envtest.Environment` with `CRDInstallOptions.Paths` + `WebhookInstallOptions.Paths` per the snippet)
 - [ ] Installs CRDs from `charts/aif-operator/crds/` via `envtest.CRDInstallOptions{Paths: []string{filepath.Join("..", "..", "charts", "aif-operator", "crds")}, ErrorIfPathMissing: true}` (the `ErrorIfPathMissing: true` is non-negotiable — silent missing CRDs would mask test failures)
 - [ ] Installs the webhook configuration from `charts/aif-operator/templates/webhook-configuration.yaml` via `WebhookInstallOptions` per §12.3
@@ -794,16 +794,16 @@ go test ./internal/manager/ -v
 
 **Validation:**
 ```bash
-# Verify kubebuilder re-added
-which kubebuilder
-go mod graph | grep kubebuilder
+# Verify setup-envtest available
+which setup-envtest
+go mod graph | grep setup-envtest
 # Verify envtest suite
 make envtest test-controllers
 go tool cover -func=cover.out | grep total
 ```
 
 **Agent Prompt:**
-> **FIRST:** Re-add kubebuilder/envtest dependencies (deferred from P0-1 due to Go 1.26 incompatibility): check latest kubebuilder versions for Go 1.26 compatibility, add to `tools.go` and `go.mod`, update `make install-tools`, verify build. **THEN:** Implement `internal/controller/suite_test.go` per `ARCHITECTURE.md §12.3 "Canonical envtest setup (P1-8 contract)"` verbatim. Add the `make envtest` and `make test-controllers` Makefile targets per the Acceptance section. Use Ginkgo + Gomega (already in the test deps). The `setup-envtest` tool downloads `etcd` + `kube-apiserver` binaries on first run; cache them via the `--bin-dir bin/k8s` flag. Done when `make test-controllers` succeeds and the suite runs in <60s end-to-end.
+> **FIRST:** Add setup-envtest dependency (deferred from P0-1): add `sigs.k8s.io/controller-runtime/tools/setup-envtest` to `tools.go` and `go.mod`, update `make install-tools`, verify build. kubebuilder CLI is not needed — it is a scaffolding tool only; setup-envtest alone downloads the etcd + kube-apiserver binaries. **THEN:** Implement `internal/controller/suite_test.go` per `ARCHITECTURE.md §12.3 "Canonical envtest setup (P1-8 contract)"` verbatim. Add the `make envtest` and `make test-controllers` Makefile targets per the Acceptance section. Use Ginkgo + Gomega (already in the test deps). The `setup-envtest` tool downloads `etcd` + `kube-apiserver` binaries on first run; cache them via the `--bin-dir bin/k8s` flag. Done when `make test-controllers` succeeds and the suite runs in <60s end-to-end.
 
 ---
 

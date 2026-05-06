@@ -1,13 +1,22 @@
 package manager
 
 import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
+	"github.com/SUSE/aif/pkg/blueprint"
+	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
 func TestNewManager_NilConfig(t *testing.T) {
@@ -55,6 +64,10 @@ func TestOptions_WebhookPort_Zero(t *testing.T) {
 }
 
 func TestNewManager_Success(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") != "" {
+		t.Skip("skipping: TestNewManager_StartWithEnvtest covers this with a real kube-apiserver")
+	}
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, aifv1alpha1.AddToScheme(scheme))
 
@@ -63,4 +76,48 @@ func TestNewManager_Success(t *testing.T) {
 	mgr, err := NewManager(scheme, cfg, Options{})
 	require.NoError(t, err)
 	assert.NotNil(t, mgr)
+}
+
+func TestNewManager_StartWithEnvtest(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS not set; skipping envtest test (run 'make test-controllers')")
+	}
+
+	testEnv := &envtest.Environment{
+		CRDInstallOptions: envtest.CRDInstallOptions{
+			Paths:              []string{filepath.Join("..", "..", "charts", "aif-operator", "crds")},
+			ErrorIfPathMissing: true,
+		},
+		ErrorIfCRDPathMissing: true,
+	}
+
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	defer func() { require.NoError(t, testEnv.Stop()) }()
+
+	require.NoError(t, aifv1alpha1.AddToScheme(scheme.Scheme))
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	mgr, err := NewManager(scheme.Scheme, cfg, Options{
+		MetricsAddr:      "0",
+		HealthAddr:       "0",
+		BundleManager:    bundle.New(logger),
+		BlueprintManager: blueprint.New(nil),
+		Logger:           logger,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, mgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		assert.NoError(t, mgr.Start(ctx))
+	}()
+
+	assert.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 30*time.Second, 250*time.Millisecond)
 }

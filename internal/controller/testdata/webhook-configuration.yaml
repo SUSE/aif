@@ -1,0 +1,27 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: aif-blueprint-immutability
+webhooks:
+  - name: blueprint-immutability.ai.suse.com
+    clientConfig:
+      service:
+        name: aif-operator
+        namespace: system
+        path: /validate-ai-suse-com-v1alpha1-blueprint
+        port: 443
+    rules:
+      - apiGroups:
+          - ai.suse.com
+        apiVersions:
+          - v1alpha1
+        operations:
+          - UPDATE
+        resources:
+          - blueprints
+        scope: Cluster
+    admissionReviewVersions:
+      - v1
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 10

@@ -9,7 +9,6 @@ import (
 	_ "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
 	_ "github.com/onsi/ginkgo/v2/ginkgo"
 	_ "go.uber.org/mock/mockgen"
+	_ "sigs.k8s.io/controller-runtime/tools/setup-envtest"
 	_ "sigs.k8s.io/controller-tools/cmd/controller-gen"
-	// Note: kubebuilder/envtest setup is deferred to Phase 1 (P1-8)
-	// due to build incompatibilities with Go 1.26
 )

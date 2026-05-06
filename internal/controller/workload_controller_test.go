@@ -1,677 +1,256 @@
-package controller
+package controller_test
 
 import (
 	"context"
-	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/conditions"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// Test helpers: fakeRecorder and findCondition are in controller_test_helpers.go
+var _ = Describe("WorkloadReconciler", func() {
+	const timeout = 30 * time.Second
+	const interval = 250 * time.Millisecond
 
-// TestWorkloadReconciler_ValidApp verifies that a Workload with an App source
-// is reconciled successfully: finalizer is added on first reconcile, phase is set
-// to Pending with Ready=False/AwaitingDeployer on second reconcile, and a
-// WorkloadCreated event is recorded.
-func TestWorkloadReconciler_ValidApp(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
+	ctx := context.Background()
 
-	// Create test Workload with App source
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-app-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Test App Workload",
-			Source: aifv1.WorkloadSource{
-				Kind: aifv1.WorkloadSourceKindApp,
-				App: &aifv1.AppRef{
-					Repo:    "https://example.com/charts",
-					Chart:   "llama3",
-					Version: "1.0.0",
+	findReady := func(conds []metav1.Condition) *metav1.Condition {
+		for i := range conds {
+			if conds[i].Type == conditions.TypeReady {
+				return &conds[i]
+			}
+		}
+		return nil
+	}
+
+	It("should reconcile a valid App Workload to Pending/AwaitingDeployer", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "valid-app-workload",
+				Namespace: "default",
+			},
+			Spec: aifv1.WorkloadSpec{
+				Name: "Test App Workload",
+				Source: aifv1.WorkloadSource{
+					Kind: aifv1.WorkloadSourceKindApp,
+					App: &aifv1.AppRef{
+						Repo:    "https://example.com/charts",
+						Chart:   "llama3",
+						Version: "1.0.0",
+					},
 				},
 			},
-		},
-	}
-
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
-
-	// Create fake recorder
-	recorder := &fakeRecorder{}
-
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
-
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "test-app-workload",
-			Namespace: "default",
-		},
-	}
-
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
-
-	// Fetch Workload to verify finalizer
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added")
-
-	// Second reconcile - should perform main logic
-	result, err = reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue on success")
-
-	// Fetch Workload to verify status
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-
-	// Verify status fields
-	assert.Equal(t, aifv1.WorkloadPhasePending, fetchedW.Status.Phase, "phase should be Pending")
-	assert.Equal(t, int64(1), fetchedW.Status.ObservedGeneration, "observedGeneration should match")
-
-	// Verify Ready condition
-	readyCondition := findCondition(fetchedW.Status.Conditions, conditions.TypeReady)
-	require.NotNil(t, readyCondition, "Ready condition should exist")
-	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Ready should be False")
-	assert.Equal(t, conditions.ReasonAwaitingDeployer, readyCondition.Reason, "Reason should be AwaitingDeployer")
-
-	// Verify event was recorded
-	eventFound := false
-	for _, evt := range recorder.events {
-		if assert.Contains(t, evt, "WorkloadCreated") {
-			eventFound = true
-			break
 		}
-	}
-	assert.True(t, eventFound, "should record WorkloadCreated event")
-}
 
-// TestWorkloadReconciler_ValidBlueprint verifies that a Workload with a Blueprint source
-// is reconciled successfully: finalizer is added on first reconcile, phase is set
-// to Pending with Ready=False/AwaitingDeployer on second reconcile, and a
-// WorkloadCreated event is recorded.
-func TestWorkloadReconciler_ValidBlueprint(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	// Create test Workload with Blueprint source
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-blueprint-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Test Blueprint Workload",
-			Source: aifv1.WorkloadSource{
-				Kind: aifv1.WorkloadSourceKindBlueprint,
-				Blueprint: &aifv1.BlueprintRef{
-					Name:    "rag-stack",
-					Version: "1.0.0",
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			g.Expect(fetched.Status.Phase).To(Equal(aifv1.WorkloadPhasePending))
+			g.Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation))
+			rc := findReady(fetched.Status.Conditions)
+			g.Expect(rc).NotTo(BeNil())
+			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonAwaitingDeployer))
+		}, timeout, interval).Should(Succeed())
+
+		// Verify finalizer
+		var fetched aifv1.Workload
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+		Expect(fetched.Finalizers).To(ContainElement("ai.suse.com/cleanup"))
+	})
+
+	It("should reconcile a valid Blueprint Workload to Pending/AwaitingDeployer", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "valid-bp-workload",
+				Namespace: "default",
+			},
+			Spec: aifv1.WorkloadSpec{
+				Name: "Test Blueprint Workload",
+				Source: aifv1.WorkloadSource{
+					Kind: aifv1.WorkloadSourceKindBlueprint,
+					Blueprint: &aifv1.BlueprintRef{
+						Name:    "rag-stack",
+						Version: "1.0.0",
+					},
 				},
 			},
-		},
-	}
-
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
-
-	// Create fake recorder
-	recorder := &fakeRecorder{}
-
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
-
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "test-blueprint-workload",
-			Namespace: "default",
-		},
-	}
-
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
-
-	// Fetch Workload to verify finalizer
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added")
-
-	// Second reconcile - should perform main logic
-	result, err = reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue on success")
-
-	// Fetch Workload to verify status
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-
-	// Verify status fields
-	assert.Equal(t, aifv1.WorkloadPhasePending, fetchedW.Status.Phase, "phase should be Pending")
-	assert.Equal(t, int64(1), fetchedW.Status.ObservedGeneration, "observedGeneration should match")
-
-	// Verify Ready condition
-	readyCondition := findCondition(fetchedW.Status.Conditions, conditions.TypeReady)
-	require.NotNil(t, readyCondition, "Ready condition should exist")
-	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Ready should be False")
-	assert.Equal(t, conditions.ReasonAwaitingDeployer, readyCondition.Reason, "Reason should be AwaitingDeployer")
-
-	// Verify event was recorded
-	eventFound := false
-	for _, evt := range recorder.events {
-		if assert.Contains(t, evt, "WorkloadCreated") {
-			eventFound = true
-			break
 		}
-	}
-	assert.True(t, eventFound, "should record WorkloadCreated event")
-}
 
-// TestWorkloadReconciler_ValidBundleTest verifies that a Workload with a BundleTest source
-// is reconciled successfully: finalizer is added on first reconcile, phase is set
-// to Pending with Ready=False/AwaitingDeployer on second reconcile, and a
-// WorkloadCreated event is recorded.
-func TestWorkloadReconciler_ValidBundleTest(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	// Create test Workload with BundleTest source
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-bundletest-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Test BundleTest Workload",
-			Source: aifv1.WorkloadSource{
-				Kind: aifv1.WorkloadSourceKindBundleTest,
-				BundleTest: &aifv1.BundleTestRef{
-					Namespace:  "default",
-					Name:       "test-bundle",
-					Generation: 1,
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			g.Expect(fetched.Status.Phase).To(Equal(aifv1.WorkloadPhasePending))
+			rc := findReady(fetched.Status.Conditions)
+			g.Expect(rc).NotTo(BeNil())
+			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonAwaitingDeployer))
+		}, timeout, interval).Should(Succeed())
+	})
+
+	It("should reconcile a valid BundleTest Workload to Pending/AwaitingDeployer", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "valid-bundletest-workload",
+				Namespace: "default",
+			},
+			Spec: aifv1.WorkloadSpec{
+				Name: "Test BundleTest Workload",
+				Source: aifv1.WorkloadSource{
+					Kind: aifv1.WorkloadSourceKindBundleTest,
+					BundleTest: &aifv1.BundleTestRef{
+						Namespace:  "default",
+						Name:       "test-bundle",
+						Generation: 1,
+					},
 				},
 			},
-		},
-	}
-
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
-
-	// Create fake recorder
-	recorder := &fakeRecorder{}
-
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
-
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "test-bundletest-workload",
-			Namespace: "default",
-		},
-	}
-
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
-
-	// Fetch Workload to verify finalizer
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added")
-
-	// Second reconcile - should perform main logic
-	result, err = reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue on success")
-
-	// Fetch Workload to verify status
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-
-	// Verify status fields
-	assert.Equal(t, aifv1.WorkloadPhasePending, fetchedW.Status.Phase, "phase should be Pending")
-	assert.Equal(t, int64(1), fetchedW.Status.ObservedGeneration, "observedGeneration should match")
-
-	// Verify Ready condition
-	readyCondition := findCondition(fetchedW.Status.Conditions, conditions.TypeReady)
-	require.NotNil(t, readyCondition, "Ready condition should exist")
-	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Ready should be False")
-	assert.Equal(t, conditions.ReasonAwaitingDeployer, readyCondition.Reason, "Reason should be AwaitingDeployer")
-
-	// Verify event was recorded
-	eventFound := false
-	for _, evt := range recorder.events {
-		if assert.Contains(t, evt, "WorkloadCreated") {
-			eventFound = true
-			break
 		}
-	}
-	assert.True(t, eventFound, "should record WorkloadCreated event")
-}
 
-// TestWorkloadReconciler_InvalidSource_AppMissingField verifies that a Workload with
-// Kind=App but missing App field is marked as invalid: phase is NOT set,
-// Ready=False/InvalidSpec, message contains field name, and WorkloadInvalid event recorded.
-func TestWorkloadReconciler_InvalidSource_AppMissingField(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	// Create test Workload with App Kind but missing App field
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "invalid-app-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Invalid App Workload",
-			Source: aifv1.WorkloadSource{
-				Kind: aifv1.WorkloadSourceKindApp,
-				App:  nil, // Missing App field
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			g.Expect(fetched.Status.Phase).To(Equal(aifv1.WorkloadPhasePending))
+			rc := findReady(fetched.Status.Conditions)
+			g.Expect(rc).NotTo(BeNil())
+			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonAwaitingDeployer))
+		}, timeout, interval).Should(Succeed())
+	})
+
+	It("should set InvalidSpec when Kind=App but App field is nil", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "invalid-app-workload",
+				Namespace: "default",
 			},
-		},
-	}
-
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
-
-	// Create fake recorder
-	recorder := &fakeRecorder{}
-
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
-
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "invalid-app-workload",
-			Namespace: "default",
-		},
-	}
-
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
-
-	// Fetch Workload to verify finalizer
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added")
-
-	// Second reconcile - should mark as invalid
-	result, err = reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue on validation failure")
-
-	// Fetch Workload to verify status
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-
-	// Verify phase is NOT set (empty)
-	assert.Empty(t, fetchedW.Status.Phase, "phase should be empty for invalid Workload")
-	assert.Equal(t, int64(1), fetchedW.Status.ObservedGeneration, "observedGeneration should match")
-
-	// Verify Ready condition
-	readyCondition := findCondition(fetchedW.Status.Conditions, conditions.TypeReady)
-	require.NotNil(t, readyCondition, "Ready condition should exist")
-	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Ready should be False")
-	assert.Equal(t, conditions.ReasonInvalidSpec, readyCondition.Reason, "Reason should be InvalidSpec")
-	assert.Contains(t, readyCondition.Message, "source.app", "message should contain missing field name")
-
-	// Verify event was recorded
-	eventFound := false
-	for _, evt := range recorder.events {
-		if assert.Contains(t, evt, "WorkloadInvalid") {
-			eventFound = true
-			break
-		}
-	}
-	assert.True(t, eventFound, "should record WorkloadInvalid event")
-}
-
-// TestWorkloadReconciler_InvalidSource_BlueprintMissingField verifies that a Workload with
-// Kind=Blueprint but missing Blueprint field is marked as invalid: phase is NOT set,
-// Ready=False/InvalidSpec, message contains field name, and WorkloadInvalid event recorded.
-func TestWorkloadReconciler_InvalidSource_BlueprintMissingField(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	// Create test Workload with Blueprint Kind but missing Blueprint field
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "invalid-blueprint-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Invalid Blueprint Workload",
-			Source: aifv1.WorkloadSource{
-				Kind:      aifv1.WorkloadSourceKindBlueprint,
-				Blueprint: nil, // Missing Blueprint field
-			},
-		},
-	}
-
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
-
-	// Create fake recorder
-	recorder := &fakeRecorder{}
-
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
-
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "invalid-blueprint-workload",
-			Namespace: "default",
-		},
-	}
-
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
-
-	// Fetch Workload to verify finalizer
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added")
-
-	// Second reconcile - should mark as invalid
-	result, err = reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue on validation failure")
-
-	// Fetch Workload to verify status
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-
-	// Verify phase is NOT set (empty)
-	assert.Empty(t, fetchedW.Status.Phase, "phase should be empty for invalid Workload")
-	assert.Equal(t, int64(1), fetchedW.Status.ObservedGeneration, "observedGeneration should match")
-
-	// Verify Ready condition
-	readyCondition := findCondition(fetchedW.Status.Conditions, conditions.TypeReady)
-	require.NotNil(t, readyCondition, "Ready condition should exist")
-	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Ready should be False")
-	assert.Equal(t, conditions.ReasonInvalidSpec, readyCondition.Reason, "Reason should be InvalidSpec")
-	assert.Contains(t, readyCondition.Message, "source.blueprint", "message should contain missing field name")
-
-	// Verify event was recorded
-	eventFound := false
-	for _, evt := range recorder.events {
-		if assert.Contains(t, evt, "WorkloadInvalid") {
-			eventFound = true
-			break
-		}
-	}
-	assert.True(t, eventFound, "should record WorkloadInvalid event")
-}
-
-// TestWorkloadReconciler_InvalidSource_BundleTestMissingField verifies that a Workload with
-// Kind=BundleTest but missing BundleTest field is marked as invalid: phase is NOT set,
-// Ready=False/InvalidSpec, message contains field name, and WorkloadInvalid event recorded.
-func TestWorkloadReconciler_InvalidSource_BundleTestMissingField(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	// Create test Workload with BundleTest Kind but missing BundleTest field
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "invalid-bundletest-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Invalid BundleTest Workload",
-			Source: aifv1.WorkloadSource{
-				Kind:       aifv1.WorkloadSourceKindBundleTest,
-				BundleTest: nil, // Missing BundleTest field
-			},
-		},
-	}
-
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
-
-	// Create fake recorder
-	recorder := &fakeRecorder{}
-
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
-
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "invalid-bundletest-workload",
-			Namespace: "default",
-		},
-	}
-
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
-
-	// Fetch Workload to verify finalizer
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added")
-
-	// Second reconcile - should mark as invalid
-	result, err = reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue on validation failure")
-
-	// Fetch Workload to verify status
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-
-	// Verify phase is NOT set (empty)
-	assert.Empty(t, fetchedW.Status.Phase, "phase should be empty for invalid Workload")
-	assert.Equal(t, int64(1), fetchedW.Status.ObservedGeneration, "observedGeneration should match")
-
-	// Verify Ready condition
-	readyCondition := findCondition(fetchedW.Status.Conditions, conditions.TypeReady)
-	require.NotNil(t, readyCondition, "Ready condition should exist")
-	assert.Equal(t, metav1.ConditionFalse, readyCondition.Status, "Ready should be False")
-	assert.Equal(t, conditions.ReasonInvalidSpec, readyCondition.Reason, "Reason should be InvalidSpec")
-	assert.Contains(t, readyCondition.Message, "source.bundleTest", "message should contain missing field name")
-
-	// Verify event was recorded
-	eventFound := false
-	for _, evt := range recorder.events {
-		if assert.Contains(t, evt, "WorkloadInvalid") {
-			eventFound = true
-			break
-		}
-	}
-	assert.True(t, eventFound, "should record WorkloadInvalid event")
-}
-
-// TestWorkloadReconciler_Finalizer verifies that the Workload finalizer lifecycle
-// is handled correctly: finalizer is added on first reconcile, and removed on deletion.
-func TestWorkloadReconciler_Finalizer(t *testing.T) {
-	// Setup scheme
-	scheme := runtime.NewScheme()
-	err := aifv1.AddToScheme(scheme)
-	require.NoError(t, err)
-
-	// Create test Workload with App source
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-finalizer-workload",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: aifv1.WorkloadSpec{
-			Name: "Test Finalizer Workload",
-			Source: aifv1.WorkloadSource{
-				Kind: aifv1.WorkloadSourceKindApp,
-				App: &aifv1.AppRef{
-					Repo:    "https://example.com/charts",
-					Chart:   "llama3",
-					Version: "1.0.0",
+			Spec: aifv1.WorkloadSpec{
+				Name: "Invalid App Workload",
+				Source: aifv1.WorkloadSource{
+					Kind: aifv1.WorkloadSourceKindApp,
+					App:  nil,
 				},
 			},
-		},
-	}
+		}
 
-	// Create fake client
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(w).
-		WithStatusSubresource(w).
-		Build()
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	// Create fake recorder
-	recorder := &fakeRecorder{}
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			rc := findReady(fetched.Status.Conditions)
+			g.Expect(rc).NotTo(BeNil())
+			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonInvalidSpec))
+			g.Expect(rc.Message).To(ContainSubstring("source.app"))
+			g.Expect(fetched.Status.Phase).To(BeEmpty())
+		}, timeout, interval).Should(Succeed())
+	})
 
-	// Create reconciler
-	reconciler := &WorkloadReconciler{
-		Client:   fakeClient,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
+	It("should set InvalidSpec when Kind=Blueprint but Blueprint field is nil", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "invalid-bp-workload",
+				Namespace: "default",
+			},
+			Spec: aifv1.WorkloadSpec{
+				Name: "Invalid Blueprint Workload",
+				Source: aifv1.WorkloadSource{
+					Kind:      aifv1.WorkloadSourceKindBlueprint,
+					Blueprint: nil,
+				},
+			},
+		}
 
-	// First reconcile - should add finalizer
-	req := ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "test-finalizer-workload",
-			Namespace: "default",
-		},
-	}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	result, err := reconciler.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.True(t, result.Requeue, "should requeue after adding finalizer")
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			rc := findReady(fetched.Status.Conditions)
+			g.Expect(rc).NotTo(BeNil())
+			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonInvalidSpec))
+			g.Expect(rc.Message).To(ContainSubstring("source.blueprint"))
+		}, timeout, interval).Should(Succeed())
+	})
 
-	// Fetch Workload to verify finalizer was added
-	var fetchedW aifv1.Workload
-	err = fakeClient.Get(context.Background(), req.NamespacedName, &fetchedW)
-	require.NoError(t, err)
-	assert.Contains(t, fetchedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be added on first reconcile")
+	It("should set InvalidSpec when Kind=BundleTest but BundleTest field is nil", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "invalid-bt-workload",
+				Namespace: "default",
+			},
+			Spec: aifv1.WorkloadSpec{
+				Name: "Invalid BundleTest Workload",
+				Source: aifv1.WorkloadSource{
+					Kind:       aifv1.WorkloadSourceKindBundleTest,
+					BundleTest: nil,
+				},
+			},
+		}
 
-	// Simulate deletion by setting DeletionTimestamp directly on the object
-	// (We can't use Update because the fake client doesn't allow changing DeletionTimestamp,
-	// so we create a new reconciler with the deleted object)
-	now := metav1.Now()
-	fetchedW.DeletionTimestamp = &now
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	// Create a new fake client with the deleted Workload
-	fakeClientWithDeletion := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(&fetchedW).
-		WithStatusSubresource(&fetchedW).
-		Build()
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			rc := findReady(fetched.Status.Conditions)
+			g.Expect(rc).NotTo(BeNil())
+			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonInvalidSpec))
+			g.Expect(rc.Message).To(ContainSubstring("source.bundleTest"))
+		}, timeout, interval).Should(Succeed())
+	})
 
-	// Create a new reconciler with the updated client
-	reconcilerWithDeletion := &WorkloadReconciler{
-		Client:   fakeClientWithDeletion,
-		Scheme:   scheme,
-		Recorder: recorder,
-	}
+	It("should remove finalizer on deletion", func() {
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "finalizer-workload",
+				Namespace: "default",
+			},
+			Spec: aifv1.WorkloadSpec{
+				Name: "Finalizer Workload",
+				Source: aifv1.WorkloadSource{
+					Kind: aifv1.WorkloadSourceKindApp,
+					App: &aifv1.AppRef{
+						Repo:    "https://example.com/charts",
+						Chart:   "llama3",
+						Version: "1.0.0",
+					},
+				},
+			},
+		}
 
-	// Reconcile again - should remove finalizer
-	result, err = reconcilerWithDeletion.Reconcile(context.Background(), req)
-	require.NoError(t, err)
-	assert.False(t, result.Requeue, "should not requeue after removing finalizer")
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-	// Fetch Workload to verify finalizer was removed
-	var deletedW aifv1.Workload
-	err = fakeClientWithDeletion.Get(context.Background(), req.NamespacedName, &deletedW)
-	// Object may be gone or finalizer may be removed - either is acceptable behavior
-	if err == nil {
-		// If object still exists, finalizer should be gone
-		assert.NotContains(t, deletedW.Finalizers, "ai.suse.com/cleanup", "finalizer should be removed on deletion")
-	} else {
-		// If object is gone, that's also fine - finalizer removal allows GC
-		assert.True(t, errors.IsNotFound(err), "object should be deleted or finalizer should be removed")
-	}
-}
+		// Wait for finalizer
+		Eventually(func(g Gomega) {
+			var fetched aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
+			g.Expect(fetched.Finalizers).To(ContainElement("ai.suse.com/cleanup"))
+		}, timeout, interval).Should(Succeed())
+
+		// Delete
+		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+
+		// Wait for full deletion
+		Eventually(func() bool {
+			var fetched aifv1.Workload
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)
+			return errors.IsNotFound(err)
+		}, timeout, interval).Should(BeTrue())
+	})
+})
