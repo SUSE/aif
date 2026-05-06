@@ -632,6 +632,8 @@ type BundleTestRef struct {
 }
 ```
 
+**Note:** `kind` here is a source-provenance discriminator, not a Kubernetes `TypeMeta.Kind`. `App` and `Blueprint` correspond to CRDs of the same name. `BundleTest` has no corresponding CRD — it denotes a test deployment created from a Bundle via `/bundles/{ns}/{name}/test-deploy`.
+
 The `source.kind` discriminator drives the operate experience: only `Blueprint`-sourced Workloads expose an "Upgrade" action (re-deploy against a newer Blueprint version of the same lineage).
 
 #### Status Fields
