@@ -89,22 +89,6 @@ NVIDIA NGC directly — NIMs flow through SUSE Registry via an out-of-band
 mirror process.
 
 For the full design, see [`docs/spec/ARCHITECTURE.md`](docs/spec/ARCHITECTURE.md).
-A standalone visual rendering of the architecture is checked in at
-[`/tmp/aif-architecture.html`](file:///tmp/aif-architecture.html) for quick
-browsing during development.
-
----
-
-## Status
-
-This repository is in active development. The 10-phase plan is roughly
-**at the end of Phase 1** (CRDs and core controllers landed; admission webhook
-in place; catalog, publish workflow, deployment engine, UI extension, and
-hardening still ahead). Expect things to move; expect some Makefile targets
-to be stubs.
-
-The phase-by-phase roadmap lives in
-[`docs/spec/PROJECT_PLAN.md`](docs/spec/PROJECT_PLAN.md).
 
 ---
 
@@ -223,8 +207,8 @@ Helm charts can be lint-checked with `helm lint charts/aif-operator` and
   and can do (product manager / customer-success view).
 - [`docs/spec/ARCHITECTURE.md`](docs/spec/ARCHITECTURE.md) — how it's built
   (CRDs, REST API, Go packages, controllers, security, observability).
-- [`docs/spec/PROJECT_PLAN.md`](docs/spec/PROJECT_PLAN.md) — story-level
-  roadmap across the 10 phases (P0..P9).
+- [`docs/spec/PROJECT_PLAN.md`](docs/spec/PROJECT_PLAN.md) — engineering
+  roadmap with story-level acceptance criteria.
 - [`CLAUDE.md`](CLAUDE.md) — developer reference: code conventions, "how to
   add X" recipes, directory pointers.
 

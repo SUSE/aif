@@ -108,6 +108,11 @@ make dev-cluster-down
 
 Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
 
+**Gotchas:**
+
+- The k3d loadbalancer container (`k3d-aif-dev-serverlb`) sometimes exits on its own (`Exited (137)`); kubectl then refuses with `connection refused`. Recover with `k3d cluster start aif-dev` (no need to recreate). The k3s server stays up across these exits.
+- The Blueprint immutability webhook is REGISTERED inside the operator process, but `make run` does NOT install the `ValidatingWebhookConfiguration` (that ships in `charts/aif-operator/templates/webhook.yaml` and is created only by `helm install`). To exercise immutability end-to-end, install the chart instead of running out-of-cluster.
+
 ---
 
 ## Code Conventions
