@@ -3193,7 +3193,7 @@ AIF queries the SUSE Registry OCI catalog endpoint:
 
 - `GET https://registry.suse.com/v2/_catalog` (filtered by repo prefix `ai/charts/nvidia/`)
 - For each chart found: `GET /v2/ai/charts/nvidia/<chart>/tags/list` → enumerate versions
-- Auth: HTTP Basic with the SUSE Registry credentials from `Settings.suseRegistry.{user,token}`
+- Auth: **OCI Bearer-token exchange** (per [distribution/spec/auth/token](https://distribution.github.io/distribution/spec/auth/token/)). The registry responds to unauthenticated requests with `401 + Www-Authenticate: Bearer realm="https://scc.suse.com/api/registry/authorize",service="SUSE Linux Docker Registry",scope="..."`. The client exchanges `Settings.suseRegistry.{user,token}` for a short-lived Bearer JWT at the SCC realm, then retries the original request with `Authorization: Bearer <token>`. Tokens are not cached across requests (the scope varies per repo).
 
 There is no hardcoded model seed list. Catalog content is purely a function of what is present in SUSE Registry.
 

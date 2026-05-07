@@ -219,6 +219,122 @@ func TestRegistryClient_ListTags_404IsUnexpected(t *testing.T) {
 	}
 }
 
+// --- OCI Bearer-token exchange (RFC: distribution/spec/auth/token) ---
+
+// newBearerStubs starts two cooperating httptest servers: a "realm"
+// (token-issuer) that returns a JSON Bearer token, and a "registry"
+// that 401s the first request with a Www-Authenticate: Bearer challenge
+// pointing at the realm, then 200s the retry when the Bearer header is
+// present.
+type bearerStubs struct {
+	realm    *httptest.Server
+	registry *httptest.Server
+	// recorded
+	realmAuthHeader   string
+	registryAuthCalls []string // Authorization header on each registry call
+	tokenIssued       string
+}
+
+func newBearerStubs(t *testing.T, registryBody string) *bearerStubs {
+	t.Helper()
+	stubs := &bearerStubs{tokenIssued: "test-bearer-token-xyz"}
+
+	// realm: returns a Bearer token to anyone who authenticates with Basic.
+	stubs.realm = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stubs.realmAuthHeader = r.Header.Get("Authorization")
+		// Reject if no Basic auth provided
+		if !strings.HasPrefix(stubs.realmAuthHeader, "Basic ") {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"` + stubs.tokenIssued + `"}`))
+	}))
+	t.Cleanup(stubs.realm.Close)
+
+	// registry: 401 with Bearer challenge on first request; 200 on retry
+	// (when the Bearer header matches the issued token).
+	stubs.registry = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		stubs.registryAuthCalls = append(stubs.registryAuthCalls, auth)
+		if auth == "Bearer "+stubs.tokenIssued {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(registryBody))
+			return
+		}
+		// First request OR wrong token → 401 with challenge.
+		challenge := `Bearer realm="` + stubs.realm.URL + `",service="test-service",scope="registry:catalog:*"`
+		w.Header().Set("Www-Authenticate", challenge)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	t.Cleanup(stubs.registry.Close)
+
+	return stubs
+}
+
+func TestRegistryClient_BearerExchange_RetriesWithToken(t *testing.T) {
+	stubs := newBearerStubs(t, `{"repositories":["ai/charts/nvidia/nim-llm"]}`)
+
+	c := newRegistryClient(stubs.registry.Client(), stubs.registry.URL, "alice", "s3cr3t")
+	got, err := c.ListRepositories(context.Background())
+	if err != nil {
+		t.Fatalf("ListRepositories: unexpected error: %v", err)
+	}
+	want := []string{"ai/charts/nvidia/nim-llm"}
+	if !equalSlice(got, want) {
+		t.Errorf("ListRepositories = %v, want %v", got, want)
+	}
+	// Confirm the realm was hit with Basic auth (alice:s3cr3t).
+	if stubs.realmAuthHeader != "Basic YWxpY2U6czNjcjN0" {
+		t.Errorf("realm Authorization = %q, want Basic YWxpY2U6czNjcjN0", stubs.realmAuthHeader)
+	}
+	// Confirm the registry was called twice: first without Bearer, then with.
+	if len(stubs.registryAuthCalls) != 2 {
+		t.Fatalf("expected 2 registry calls (challenge + retry), got %d: %v",
+			len(stubs.registryAuthCalls), stubs.registryAuthCalls)
+	}
+	if stubs.registryAuthCalls[1] != "Bearer "+stubs.tokenIssued {
+		t.Errorf("retry call Authorization = %q, want Bearer %s",
+			stubs.registryAuthCalls[1], stubs.tokenIssued)
+	}
+}
+
+func TestRegistryClient_BearerExchange_NoCredentialsDoesNotRetry(t *testing.T) {
+	stubs := newBearerStubs(t, `{"repositories":[]}`)
+
+	// No credentials → no realm exchange possible → first 401 must return
+	// ErrUnauthorized without a retry loop.
+	c := newRegistryClient(stubs.registry.Client(), stubs.registry.URL, "", "")
+	_, err := c.ListRepositories(context.Background())
+	if !stderrors.Is(err, ErrUnauthorized) {
+		t.Errorf("ListRepositories err = %v, want ErrUnauthorized", err)
+	}
+	if len(stubs.registryAuthCalls) != 1 {
+		t.Errorf("expected exactly 1 registry call (no retry without creds), got %d",
+			len(stubs.registryAuthCalls))
+	}
+}
+
+func TestRegistryClient_BearerExchange_RealmRejects_ReturnsUnauthorized(t *testing.T) {
+	// Realm that always 401s — simulates wrong creds.
+	realm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad creds", http.StatusUnauthorized)
+	}))
+	t.Cleanup(realm.Close)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Www-Authenticate",
+			`Bearer realm="`+realm.URL+`",service="test",scope="registry:catalog:*"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	t.Cleanup(registry.Close)
+
+	c := newRegistryClient(registry.Client(), registry.URL, "alice", "wrong")
+	_, err := c.ListRepositories(context.Background())
+	if !stderrors.Is(err, ErrUnauthorized) {
+		t.Errorf("ListRepositories err = %v, want ErrUnauthorized", err)
+	}
+}
+
 // equalSlice is a tiny helper to keep tests free of reflect noise.
 func equalSlice[T comparable](a, b []T) bool {
 	if len(a) != len(b) {
