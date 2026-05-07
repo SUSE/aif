@@ -1277,8 +1277,8 @@ package publish
 
 type Workflow interface {
     Submit(ctx context.Context, ns, name string, req SubmitRequest) (Bundle, error)
-    Withdraw(ctx context.Context, ns, name string) (Bundle, error)
-    Approve(ctx context.Context, ns, name, approver string) (PublishedBlueprintRef, error)
+    Withdraw(ctx context.Context, ns, name string, user string) (Bundle, error)
+    Approve(ctx context.Context, ns, name string, req ApproveRequest) (PublishedBlueprintRef, error)
     RequestChanges(ctx context.Context, ns, name string, req ReviewRequest) (Bundle, error)
 }
 ```

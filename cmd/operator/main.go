@@ -87,7 +87,6 @@ func main() {
 	nvidiaDiscovery := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
-	var bundleManager bundle.Manager
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
 	// after ctrl.NewManager below (they need the manager's client). Defer
@@ -143,19 +142,14 @@ func main() {
 	}
 	logger.Info("Manager created successfully")
 
-	bundleManager = bundle.New(bundle.NewK8sRepository(mgr.GetClient()), logger)
-	logger.Debug("Deferred managers created",
-		"bundleManager", bundleManager != nil,
-		"publishWorkflow", publishWorkflow != nil,
-	)
+	// Construct Repository ports now that the controller-runtime client is
+	// available. Shared instances avoid duplicate allocations.
+	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
+	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 
-	// Construct the publish.Workflow now that the controller-runtime client
-	// is available (Repositories need it). The workflow has no consumer yet —
-	// REST handlers in P3-x will pick it up via manager.Register. AllowAllAuthorizer
-	// is a stub until pkg/authz lands a SubjectAccessReview-backed impl.
 	publishWorkflow = publish.New(publish.Deps{
-		Bundles:    bundle.NewK8sRepository(mgr.GetClient()),
-		Blueprints: blueprint.NewK8sRepository(mgr.GetClient()),
+		Bundles:    bundleRepo,
+		Blueprints: blueprintRepo,
 		Authz:      publish.AllowAllAuthorizer{},
 		Logger:     logger,
 	})
