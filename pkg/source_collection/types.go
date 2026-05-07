@@ -61,3 +61,21 @@ type apiVersionEntry struct {
 	Version    string `json:"version"`
 	AppVersion string `json:"app_version"`
 }
+
+func (a apiApplication) toApp() CatalogApp {
+	categories := make([]string, len(a.Categories))
+	for i, c := range a.Categories {
+		categories[i] = c.Name
+	}
+	chartRef := a.Helm.RepositoryURL + "/" + a.Helm.ChartName + ":" + a.LatestVersion.Version
+	return CatalogApp{
+		ID:            a.SlugName,
+		DisplayName:   a.Title,
+		Description:   a.Description,
+		Publisher:     a.PublisherName,
+		Categories:    categories,
+		ChartRef:      chartRef,
+		LatestVersion: a.LatestVersion.Version,
+		Source:        "api",
+	}
+}
