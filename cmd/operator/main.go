@@ -103,9 +103,7 @@ func main() {
 		"nvidiaDiscovery", nvidiaDiscovery != nil,
 		"nvidiaDeployer", nvidiaDeployer != nil,
 		"appsCatalog", appsCatalog != nil,
-		"bundleManager", bundleManager != nil,
 		"blueprintManager", blueprintManager != nil,
-		"publishWorkflow", publishWorkflow != nil,
 		"workloadManager", workloadManager != nil,
 	)
 
@@ -146,6 +144,10 @@ func main() {
 	logger.Info("Manager created successfully")
 
 	bundleManager = bundle.New(bundle.NewK8sRepository(mgr.GetClient()), logger)
+	logger.Debug("Deferred managers created",
+		"bundleManager", bundleManager != nil,
+		"publishWorkflow", publishWorkflow != nil,
+	)
 
 	// Construct the publish.Workflow now that the controller-runtime client
 	// is available (Repositories need it). The workflow has no consumer yet —

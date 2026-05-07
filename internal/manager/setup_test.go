@@ -10,7 +10,7 @@ import (
 
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/blueprint"
-	"github.com/SUSE/aif/pkg/bundle"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -103,7 +103,6 @@ func TestNewManager_StartWithEnvtest(t *testing.T) {
 	mgr, err := NewManager(scheme.Scheme, cfg, Options{
 		MetricsAddr:      "0",
 		HealthAddr:       "0",
-		BundleManager:    bundle.New(logger),
 		BlueprintManager: blueprint.New(nil),
 		Logger:           logger,
 	})
