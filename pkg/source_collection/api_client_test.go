@@ -19,6 +19,10 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
+func TestFakeClient_ImplementsClient(t *testing.T) {
+	var _ Client = &FakeClient{}
+}
+
 func TestUpdateSettings(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	c := NewClient(logger).(*apiClient)
