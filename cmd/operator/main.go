@@ -13,6 +13,7 @@ import (
 	"time"
 
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
+	"github.com/SUSE/aif/internal/api"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
@@ -86,7 +87,7 @@ func main() {
 	nvidiaDiscovery := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
-	bundleManager := bundle.New(logger)
+	var bundleManager bundle.Manager
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
 	// after ctrl.NewManager below (they need the manager's client). Defer
@@ -133,7 +134,6 @@ func main() {
 		MetricsAddr:      metricsBindAddress,
 		HealthAddr:       healthProbeBindAddress,
 		WebhookPort:      parsePort(webhookBindAddress),
-		BundleManager:    bundleManager,
 		BlueprintManager: blueprintManager,
 		HelmEngine:       helmEngine,
 		Discovery:        discoveryClient,
@@ -144,6 +144,8 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Manager created successfully")
+
+	bundleManager = bundle.New(bundle.NewK8sRepository(mgr.GetClient()), logger)
 
 	// Construct the publish.Workflow now that the controller-runtime client
 	// is available (Repositories need it). The workflow has no consumer yet —
@@ -167,9 +169,11 @@ func main() {
 		"ready", publishWorkflow != nil,
 	)
 
+	publishHandler := api.NewPublishHandler(publishWorkflow, logger)
+
 	// Setup API server
 	mux := http.NewServeMux()
-	manager.Register(mux, logger, allowedOrigin)
+	manager.Register(mux, logger, allowedOrigin, publishHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,
