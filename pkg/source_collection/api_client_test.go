@@ -141,3 +141,95 @@ func TestList_EmptyResults(t *testing.T) {
 		t.Fatalf("expected 0 apps, got %d", len(apps))
 	}
 }
+
+func TestList_Pagination(t *testing.T) {
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case 0:
+			page++
+			json.NewEncoder(w).Encode(apiResponse{
+				Items: []apiApplication{newTestApp("app-a", "App A", "Pub A", "1.0.0")},
+				Next:  "http://" + r.Host + "/v1/applications?packaging_format=HELM_CHART&page=2",
+			})
+		case 1:
+			page++
+			json.NewEncoder(w).Encode(apiResponse{
+				Items: []apiApplication{newTestApp("app-b", "App B", "Pub B", "2.0.0")},
+				Next:  "http://" + r.Host + "/v1/applications?packaging_format=HELM_CHART&page=3",
+			})
+		case 2:
+			json.NewEncoder(w).Encode(apiResponse{
+				Items: []apiApplication{newTestApp("app-c", "App C", "Pub C", "3.0.0")},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(apps) != 3 {
+		t.Fatalf("expected 3 apps, got %d", len(apps))
+	}
+	if apps[0].ID != "app-a" || apps[1].ID != "app-b" || apps[2].ID != "app-c" {
+		t.Errorf("unexpected app order: %v, %v, %v", apps[0].ID, apps[1].ID, apps[2].ID)
+	}
+}
+
+func TestList_Deduplication(t *testing.T) {
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case 0:
+			page++
+			json.NewEncoder(w).Encode(apiResponse{
+				Items: []apiApplication{
+					newTestApp("ollama", "Ollama", "Ollama Inc", "0.4.1"),
+					newTestApp("vllm", "vLLM", "vLLM Project", "0.6.0"),
+				},
+				Next: "http://" + r.Host + "/v1/applications?page=2",
+			})
+		case 1:
+			json.NewEncoder(w).Encode(apiResponse{
+				Items: []apiApplication{
+					newTestApp("ollama", "Ollama Duplicate", "Other Publisher", "0.5.0"),
+					newTestApp("milvus", "Milvus", "Zilliz", "2.4.0"),
+				},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(apps) != 3 {
+		t.Fatalf("expected 3 apps (deduped), got %d", len(apps))
+	}
+
+	for _, app := range apps {
+		if app.ID == "ollama" {
+			if app.Publisher != "Ollama Inc" {
+				t.Errorf("expected first-seen publisher 'Ollama Inc', got %q", app.Publisher)
+			}
+			if app.LatestVersion != "0.4.1" {
+				t.Errorf("expected first-seen version '0.4.1', got %q", app.LatestVersion)
+			}
+			return
+		}
+	}
+	t.Error("ollama not found in results")
+}
