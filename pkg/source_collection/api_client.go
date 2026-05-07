@@ -135,7 +135,7 @@ func (c *apiClient) fetchAndDecode(ctx context.Context, settings EngineSettings,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
@@ -203,7 +203,7 @@ func (c *apiClient) fetchAndDecodeVersions(ctx context.Context, settings EngineS
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
