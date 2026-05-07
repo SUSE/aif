@@ -13,6 +13,8 @@ type CatalogApp struct {
 }
 
 // ChartMetadata holds Chart.yaml metadata for a specific chart version.
+// Description and Annotations require fetching Chart.yaml from OCI (handled by P2-5);
+// the /versions API populates only Name, Version, and AppVersion.
 type ChartMetadata struct {
 	Name        string
 	Version     string

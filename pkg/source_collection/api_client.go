@@ -30,7 +30,7 @@ type apiClient struct {
 // NewClient returns a Client that talks to the SUSE Application Collection HTTP API.
 func NewClient(log *slog.Logger) Client {
 	return &apiClient{
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 		limiter:    rate.NewLimiter(rate.Every(2*time.Second), 1),
 		log:        log,
 	}
@@ -91,6 +91,8 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 
 var errRetryableStatus = errors.New("retryable HTTP status")
 
+// doGet performs a single retry with 1s fixed backoff on transient errors.
+// A circuit-breaker or exponential backoff may be warranted once real traffic patterns emerge.
 func (c *apiClient) doGet(ctx context.Context, settings EngineSettings, url string) (*apiResponse, error) {
 	resp, err := c.fetchAndDecode(ctx, settings, url)
 	if err == nil {
@@ -187,7 +189,7 @@ func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*Ch
 		nextURL = resp.Next
 	}
 
-	return nil, fmt.Errorf("version %s not found for chart %s", version, chart)
+	return nil, fmt.Errorf("%w: version %s for chart %s", ErrVersionNotFound, version, chart)
 }
 
 func (c *apiClient) fetchAndDecodeVersions(ctx context.Context, settings EngineSettings, url string) (*apiVersionsResponse, error) {

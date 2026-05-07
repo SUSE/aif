@@ -14,3 +14,6 @@ var ErrCatalogMalformed = errors.New("source_collection: malformed catalog respo
 
 // ErrUpstreamUnavailable is returned on HTTP 5xx or network errors.
 var ErrUpstreamUnavailable = errors.New("source_collection: upstream unavailable")
+
+// ErrVersionNotFound is returned when a requested chart version does not exist.
+var ErrVersionNotFound = errors.New("source_collection: version not found")

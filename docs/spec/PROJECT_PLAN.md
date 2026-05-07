@@ -904,7 +904,7 @@ grep -rE 'nvcr\.io|helm\.ngc\.nvidia\.com|integrate\.api\.nvidia\.com' pkg/nvidi
 **Effort:** M
 **Depends On:** P0-1
 **Parallelizable With:** P2-1 (P2-5 now depends on P2-1)
-**Done When:** `pkg/source_collection.Client.Sync(ctx)` returns the deduplicated list of HELM_CHART applications from `api.apps.rancher.io`.
+**Done When:** `pkg/source_collection.Client.List(ctx)` returns the deduplicated list of HELM_CHART applications from `api.apps.rancher.io`.
 
 **Acceptance Criteria:**
 - [ ] `pkg/source_collection/client.go` implements paginated GET against `api.apps.rancher.io/v1/applications?packaging_format=HELM_CHART`

@@ -420,9 +420,30 @@ func TestGetChart_VersionNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Not a sentinel — just a regular "not found" error
-	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrUpstreamUnavailable) || errors.Is(err, ErrCatalogMalformed) {
-		t.Errorf("expected non-sentinel error, got sentinel: %v", err)
+	if !errors.Is(err, ErrVersionNotFound) {
+		t.Errorf("expected ErrVersionNotFound, got %v", err)
+	}
+}
+
+func TestGetChart_ContextCancelled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiVersionsResponse{
+			Items: []apiVersionEntry{{Version: "0.3.0", AppVersion: "0.3.0"}},
+		})
+	}))
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.GetChart(ctx, "", "ollama", "0.3.0")
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
 
