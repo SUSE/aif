@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -9,6 +9,7 @@ DOCKER_IMAGE=aif
 DOCKER_TAG?=latest
 BIN_DIR=./bin
 GOBIN?=$(shell go env GOPATH)/bin
+ENVTEST_K8S_VERSION ?= 1.32.x
 
 help:
 	@echo "SUSE AI Factory - Makefile Targets"
@@ -25,6 +26,8 @@ help:
 	@echo "  manifests          Generate CRD manifests"
 	@echo "  generate           Run code generators"
 	@echo "  install-tools      Install all development tools"
+	@echo "  envtest            Download envtest binaries (etcd + kube-apiserver)"
+	@echo "  test-controllers   Run controller integration tests with envtest"
 
 build:
 	@echo "Building $(BINARY_NAME)..."
@@ -66,6 +69,8 @@ charts-package:
 lint:
 	@echo "Running linters..."
 	golangci-lint run --concurrency=1 ./...
+	@echo "Checking for forbidden raw HTTP error patterns in internal/api/..."
+	@grep -rE 'http\.Error\(|w\.Write\(\[\]byte' internal/api/ | grep -v '_test\.go' && { echo "FAIL: use writeError/writeJSON instead of raw http.Error or w.Write"; exit 1; } || true
 
 manifests:
 	@echo "Generating CRD manifests..."
@@ -89,11 +94,22 @@ install-tools:
 	go install go.uber.org/mock/mockgen@v0.6.0
 	@echo "Installing ginkgo v2.28.1..."
 	go install github.com/onsi/ginkgo/v2/ginkgo@v2.28.1
+	@echo "Installing setup-envtest..."
+	go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.0
 	@echo ""
 	@echo "All tools installed successfully to $(GOBIN)"
 	@echo "Make sure $(GOBIN) is in your PATH"
 	@echo ""
-	@echo "Note: kubebuilder/envtest setup is deferred to Phase 1 (P1-8)"
+	@echo "Run 'make envtest' to download envtest binaries for controller integration tests."
+
+envtest:
+	@echo "Downloading envtest binaries for K8s $(ENVTEST_K8S_VERSION)..."
+	@go run sigs.k8s.io/controller-runtime/tools/setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir $(BIN_DIR)/k8s
+
+test-controllers: envtest
+	@echo "Running controller integration tests with envtest..."
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use --print path $(ENVTEST_K8S_VERSION))" \
+		go test -race ./internal/controller/... ./internal/manager/... -coverprofile=cover.out
 
 dev-cluster:
 	@echo "Creating k3d cluster 'aif-dev'..."

@@ -98,7 +98,9 @@ type WorkloadSpec struct {
 // WorkloadSource is a discriminated union indicating Workload provenance
 // TODO: Add cross-field validation to ensure exactly one field is set per Kind value (requires CEL/webhook)
 type WorkloadSource struct {
-	// Kind indicates the source type
+	// Kind is a source-provenance discriminator, not a Kubernetes TypeMeta.Kind.
+	// "App" and "Blueprint" correspond to CRDs of the same name; "BundleTest" has
+	// no corresponding CRD — it denotes a test deployment created from a Bundle.
 	// +kubebuilder:validation:Enum=App;Blueprint;BundleTest
 	Kind WorkloadSourceKind `json:"kind"`
 
