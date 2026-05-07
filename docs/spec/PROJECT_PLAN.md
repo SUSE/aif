@@ -919,6 +919,8 @@ grep -rE 'nvcr\.io|helm\.ngc\.nvidia\.com|integrate\.api\.nvidia\.com' pkg/nvidi
 go test ./pkg/source_collection/ -v
 ```
 
+> **Follow-up (post-merge):** `pkg/source_collection` was brought to parity with `pkg/nvidia`'s verification ergonomics — added a `//go:build live` test against the real `api.apps.rancher.io`, an `Example_clientList` runnable demo (deterministic `// Output:` block, doubles as `make verify-appco-mock`), and Makefile targets `test-appco` / `verify-appco-mock` / `verify-appco-live` mirroring the P2-1 set. Live test uses dedicated env vars `SUSE_APPCO_USER` / `SUSE_APPCO_TOKEN`, distinct from the registry's `SUSE_REG_USER` / `SUSE_REG_TOKEN` — per `ARCHITECTURE.md §13.2` the Application Collection credentials live under `Settings.spec.applicationCollection.{user, token}`, separate from `Settings.suseRegistry.{user, token}` even when customers reuse the same value. The original P2-2 acceptance criterion that read "(per spec — same SUSE creds)" was inaccurate and is corrected here.
+
 ---
 
 **ID:** P2-3
@@ -932,11 +934,13 @@ go test ./pkg/source_collection/ -v
 
 **Acceptance Criteria:**
 - [ ] `pkg/apps/catalog.go` implements `Catalog` interface
-- [ ] Pulls NIMs from `nvidia.NIMDiscovery.List()`
-- [ ] Pulls SUSE apps from `source_collection.Client` (cached for `--catalog-refresh` interval)
-- [ ] Returns deduplicated, sorted `[]App` matching the schema in `ARCHITECTURE.md §5 Apps`
+- [ ] `pkg/apps` defines a canonical `App` value type (per `ARCHITECTURE.md §5 Apps`) and a `Source` port (`Name() string`, `List(ctx) ([]App, error)`) that both upstream catalogs implement
+- [ ] **Adapter pattern (hexagonal):** `pkg/nvidia.Discovery` and `pkg/source_collection.Client` are wrapped by thin adapters in `pkg/apps` (`NVIDIASource`, `AppCoSource`) that translate native types (`NIMEntry`, `CatalogApp`) to the canonical `App`. The source packages keep their rich source-specific surface (`Discovery.Get`, `Discovery.Refresh`, `Client.GetChart`) and remain unaware of `pkg/apps` — translation lives at the integration boundary, not inside the domain packages
+- [ ] `Catalog.List(opts)` aggregates `[]App` from every registered `Source`; deduplicated and sorted by ID
 - [ ] Filtering: `?source=nvidia|suse|all`, `?category=`
-- [ ] Background refresh goroutine respecting root context
+- [ ] Background refresh goroutine respecting root context, calling each `Source.List` on the `--catalog-refresh` cadence
+
+> **Naming reconciliation:** the bullet above replaces the older draft that said "Pulls NIMs from `nvidia.NIMDiscovery.List()`" — `pkg/nvidia` exposes `Discovery.Index(ctx) ([]NIMEntry, error)` (named per `ARCHITECTURE.md §6.2`, landed in P2-1), not `NIMDiscovery.List`. The translation `[]NIMEntry → []App` happens inside `pkg/apps.NVIDIASource.List`.
 
 ---
 

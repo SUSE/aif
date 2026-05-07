@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-appco verify-appco-mock verify-appco-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -140,6 +140,34 @@ examples:
 	kubectl apply -f examples/workload-smoke.yaml
 	kubectl apply -f examples/settings-smoke.yaml
 	@echo "Done. 'kubectl get bundles,blueprints,workloads,settings -A' to see them."
+
+# --- pkg/source_collection (SUSE Application Collection) validation targets ---
+# Mirror of the pkg/nvidia validation targets so both Phase 2 catalog clients
+# offer the same local ergonomics. test-appco is the unit-test target;
+# verify-appco-mock proves the end-to-end List flow against an in-process
+# Application Collection HTTP API stub; verify-appco-live runs the same flow
+# against the real api.apps.rancher.io (creds via env vars — same SUSE creds
+# as the registry, per ARCHITECTURE.md §13.2).
+
+test-appco:
+	@echo "Running pkg/source_collection unit tests..."
+	go test -count=1 -v ./pkg/source_collection/...
+
+verify-appco-mock:
+	@echo "Demonstrating Application Collection client against an in-process mock API..."
+	go test -count=1 -v -run Example_clientList ./pkg/source_collection/
+
+verify-appco-live:
+	@echo "Verifying Application Collection client against the real api.apps.rancher.io..."
+	@if [ -z "$$SUSE_APPCO_USER" ] || [ -z "$$SUSE_APPCO_TOKEN" ]; then \
+		echo "ERROR: set SUSE_APPCO_USER and SUSE_APPCO_TOKEN before running this target."; \
+		echo "  Note: these are SUSE Application Collection creds — distinct from"; \
+		echo "  SUSE_REG_USER/SUSE_REG_TOKEN used by 'make verify-nim-live', even"; \
+		echo "  though customers often reuse the same value (ARCHITECTURE.md §13.2)."; \
+		echo "  inline: SUSE_APPCO_USER=alice SUSE_APPCO_TOKEN=... make verify-appco-live"; \
+		exit 1; \
+	fi
+	go test -count=1 -tags=live -v -run TestLive_ListsCatalog ./pkg/source_collection/...
 
 # dev-certs generates a self-signed TLS cert at controller-runtime's default
 # webhook CertDir so 'make run' (out-of-cluster) doesn't fail at startup.
