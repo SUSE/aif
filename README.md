@@ -182,6 +182,23 @@ state — some operations are still stubs.
 | `make envtest`        | Download envtest binaries (etcd + kube-apiserver).              |
 | `make install-tools`  | Install pinned dev tools (controller-gen, golangci-lint, mockgen, ginkgo, setup-envtest). |
 
+### Local environment via `.env`
+
+The Makefile auto-loads a `.env` file at the repo root (git-ignored) and
+exports every variable it defines into recipe subprocesses. Useful for
+local credentials such as `SUSE_REG_USER` / `SUSE_REG_TOKEN` consumed by
+`make verify-nim-live`.
+
+```bash
+cp .env.example .env
+$EDITOR .env       # fill in values
+make verify-nim-live
+```
+
+Format is **Makefile syntax**, not bash: `KEY=value`, one per line, no
+quotes, no `export` prefix, no spaces around `=`. See `.env.example` for
+the canonical template.
+
 The following targets exist but currently print "Not implemented yet" — treat
 them as placeholders until later phases land:
 

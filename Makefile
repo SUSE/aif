@@ -3,6 +3,19 @@
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
 
+# --- .env loader -----------------------------------------------------------
+# If a .env file exists at the repo root, load it and export every variable
+# defined there into recipe subprocesses. Useful for local credentials such
+# as SUSE_REG_USER / SUSE_REG_TOKEN (see `make verify-nim-live`).
+#
+# Format: plain Makefile syntax — `KEY=value`, one per line. NO quotes around
+# values, NO `export` prefix, NO spaces around `=`, `#` is a comment. See
+# .env.example for a template. The file is git-ignored.
+ifneq (,$(wildcard .env))
+    include .env
+    export
+endif
+
 # Variables
 BINARY_NAME=aif-operator
 DOCKER_IMAGE=aif
@@ -151,8 +164,9 @@ verify-nim-mock:
 verify-nim-live:
 	@echo "Verifying NIM Discovery against the real SUSE Registry..."
 	@if [ -z "$$SUSE_REG_USER" ] || [ -z "$$SUSE_REG_TOKEN" ]; then \
-		echo "ERROR: set SUSE_REG_USER and SUSE_REG_TOKEN in your environment first."; \
-		echo "  example: SUSE_REG_USER=alice SUSE_REG_TOKEN=... make verify-nim-live"; \
+		echo "ERROR: set SUSE_REG_USER and SUSE_REG_TOKEN before running this target."; \
+		echo "  inline: SUSE_REG_USER=alice SUSE_REG_TOKEN=... make verify-nim-live"; \
+		echo "  or:     copy .env.example to .env and fill in the values"; \
 		exit 1; \
 	fi
 	go test -count=1 -tags=live -v -run TestLive_Discovers ./pkg/nvidia/...
