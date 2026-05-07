@@ -361,3 +361,63 @@ func TestList_ContextCancelled(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestGetChart_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/applications/ollama/versions" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiVersionsResponse{
+			Items: []apiVersionEntry{
+				{Version: "0.3.0", AppVersion: "0.3.0"},
+				{Version: "0.4.1", AppVersion: "0.4.1"},
+				{Version: "0.5.0", AppVersion: "0.5.0-beta"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "user", Token: "tok"})
+
+	meta, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "0.4.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Name != "ollama" {
+		t.Errorf("expected Name 'ollama', got %q", meta.Name)
+	}
+	if meta.Version != "0.4.1" {
+		t.Errorf("expected Version '0.4.1', got %q", meta.Version)
+	}
+	if meta.AppVersion != "0.4.1" {
+		t.Errorf("expected AppVersion '0.4.1', got %q", meta.AppVersion)
+	}
+}
+
+func TestGetChart_VersionNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apiVersionsResponse{
+			Items: []apiVersionEntry{
+				{Version: "0.3.0", AppVersion: "0.3.0"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	_, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "9.9.9")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Not a sentinel — just a regular "not found" error
+	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrUpstreamUnavailable) || errors.Is(err, ErrCatalogMalformed) {
+		t.Errorf("expected non-sentinel error, got sentinel: %v", err)
+	}
+}

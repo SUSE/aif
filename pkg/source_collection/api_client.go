@@ -155,6 +155,63 @@ func (c *apiClient) fetchAndDecode(ctx context.Context, settings EngineSettings,
 	}
 }
 
-func (c *apiClient) GetChart(_ context.Context, _, _, _ string) (*ChartMetadata, error) {
-	return nil, nil
+func (c *apiClient) GetChart(ctx context.Context, repo, chart, version string) (*ChartMetadata, error) {
+	settings := c.effectiveSettings()
+	nextURL := settings.APIURL + "/v1/applications/" + chart + "/versions"
+
+	for nextURL != "" {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter: %w", err)
+		}
+
+		resp, err := c.fetchAndDecodeVersions(ctx, settings, nextURL)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range resp.Items {
+			if entry.Version == version {
+				return &ChartMetadata{
+					Name:       chart,
+					Version:    entry.Version,
+					AppVersion: entry.AppVersion,
+				}, nil
+			}
+		}
+
+		nextURL = resp.Next
+	}
+
+	return nil, fmt.Errorf("version %s not found for chart %s", version, chart)
+}
+
+func (c *apiClient) fetchAndDecodeVersions(ctx context.Context, settings EngineSettings, url string) (*apiVersionsResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if settings.Username != "" || settings.Token != "" {
+		req.SetBasicAuth(settings.Username, settings.Token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		var result apiVersionsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrCatalogMalformed, err)
+		}
+		return &result, nil
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, fmt.Errorf("%w: HTTP %d", ErrAuthFailed, resp.StatusCode)
+	case resp.StatusCode >= 500:
+		return nil, fmt.Errorf("%w: HTTP %d", ErrUpstreamUnavailable, resp.StatusCode)
+	default:
+		return nil, fmt.Errorf("unexpected HTTP %d", resp.StatusCode)
+	}
 }
