@@ -200,8 +200,8 @@ verify-appco-live:
 	@if [ -z "$$SUSE_APPCO_USER" ] || [ -z "$$SUSE_APPCO_TOKEN" ]; then \
 		echo "ERROR: set SUSE_APPCO_USER and SUSE_APPCO_TOKEN before running this target."; \
 		echo "  Note: these are SUSE Application Collection creds — distinct from"; \
-		echo "  SUSE_REG_USER/SUSE_REG_TOKEN used by 'make verify-nim-live', even"; \
-		echo "  though customers often reuse the same value (ARCHITECTURE.md §13.2)."; \
+		echo "  SUSE_REG_USER/SUSE_REG_TOKEN used by 'make verify-nim-live'"; \
+		echo "  (ARCHITECTURE.md §13.2)."; \
 		echo "  inline: SUSE_APPCO_USER=alice SUSE_APPCO_TOKEN=... make verify-appco-live"; \
 		echo "  or:     copy .env.example to .env and fill in the values"; \
 		exit 1; \

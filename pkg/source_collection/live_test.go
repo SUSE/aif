@@ -5,11 +5,10 @@
 // test build by the //go:build live tag; run with `go test -tags=live`
 // (or `make verify-appco-live`).
 //
-// Required env vars — these are *distinct* from the SUSE Registry creds
-// used by pkg/nvidia's live test, even though customers often reuse the
-// same value (per ARCHITECTURE.md §13.2: credentials live under
-// `Settings.spec.applicationCollection.{user, token}`, separate from
-// `Settings.suseRegistry.{user, token}`):
+// Required env vars — these are distinct from the SUSE Registry creds
+// used by pkg/nvidia's live test (per ARCHITECTURE.md §13.2: credentials
+// live under `Settings.spec.applicationCollection.{user, token}`,
+// separate from `Settings.suseRegistry.{user, token}`):
 //   SUSE_APPCO_USER   — SUSE Application Collection username
 //   SUSE_APPCO_TOKEN  — SUSE Application Collection access token
 package source_collection

@@ -193,10 +193,9 @@ local credentials consumed by the live verification targets:
 | `make verify-nim-live`   | `SUSE_REG_USER`, `SUSE_REG_TOKEN`        |
 | `make verify-appco-live` | `SUSE_APPCO_USER`, `SUSE_APPCO_TOKEN`    |
 
-The two credential pairs are intentionally separate (per `ARCHITECTURE.md
-§13.2`: SUSE Registry and SUSE Application Collection are distinct
-upstream services), even though customers commonly reuse the same SCC
-value for both.
+The two credential pairs are separate per `ARCHITECTURE.md §13.2`: SUSE
+Registry and SUSE Application Collection are distinct upstream services
+with their own credential fields under `Settings.spec`.
 
 ```bash
 cp .env.example .env
