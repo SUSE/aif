@@ -155,7 +155,12 @@ func (c *apiClient) fetchAndDecode(ctx context.Context, settings EngineSettings,
 	}
 }
 
-func (c *apiClient) GetChart(ctx context.Context, repo, chart, version string) (*ChartMetadata, error) {
+// GetChart returns version metadata from the Application Collection API.
+// The repo parameter is reserved for P5-8 (OCI fallback); currently unused.
+// Annotations and Description require fetching the actual Chart.yaml from OCI,
+// which is handled by the consuming code in P2-5 — this method returns only
+// what the /versions API endpoint provides.
+func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*ChartMetadata, error) {
 	settings := c.effectiveSettings()
 	nextURL := settings.APIURL + "/v1/applications/" + chart + "/versions"
 
