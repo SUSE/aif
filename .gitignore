@@ -32,6 +32,9 @@ test-lifecycle.sh
 .DS_Store
 Thumbs.db
 
+# Local env file consumed by the Makefile (.env.example is the template).
+.env
+
 # Temporary files
 tmp/
 temp/
@@ -40,3 +43,5 @@ temp/
 dashboard/
 harvester-ui-extension/
 suse-ai-lifecycle-manager/
+# Added by code-review-graph
+.code-review-graph/

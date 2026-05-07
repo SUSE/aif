@@ -874,26 +874,34 @@ go test ./internal/manager/ -run TestRoutes -v
 **Effort:** M
 **Depends On:** P0-1
 **Parallelizable With:** P2-2 (P2-5 now depends on P2-1)
-**Done When:** `pkg/nvidia.NIMDiscovery.RefreshIndex(ctx)` returns a list of NIMs read from `oci://registry.suse.com/ai/charts/nvidia/`, with no calls to `nvcr.io`/`helm.ngc.nvidia.com`/`integrate.api.nvidia.com`.
+**Done When:** `pkg/nvidia.Discovery.Refresh(ctx)` returns successfully against `oci://registry.suse.com/ai/charts/nvidia/`, populates an in-memory cache, and `Discovery.Index(ctx)` returns the cached `[]NIMEntry`. No calls to `nvcr.io`/`helm.ngc.nvidia.com`/`integrate.api.nvidia.com`.
+
+> **Naming reconciled with `ARCHITECTURE.md §6.2` and the OOP foundations** that landed in PR #2: the port is `Discovery` (not `NIMDiscovery`), the methods are `Index` / `Get` / `Refresh` / `UpdateSettings` (not `RefreshIndex` / `List` / `Get(id) (NIMModel, bool)`), and the value type is `NIMEntry` (not `NIMModel`). `Get(ctx, id)` returns `(NIMEntry, error)` with `ErrNIMNotFound` sentinel — Repository-style, not the older `(NIMModel, bool)` shape, so callers branch with `errors.Is` (consistent with `pkg/{bundle,blueprint,workload}.Repository`). Credentials and endpoint flow in via `UpdateSettings(EngineSettings)` from `SettingsReconciler` (the EngineSettings push pattern owned by P5-4) rather than via constructor injection.
 
 **Acceptance Criteria:**
-- [ ] `pkg/nvidia/discovery.go` implements `NIMDiscovery` interface in `pkg/nvidia/interface.go`
-- [ ] `RefreshIndex(ctx)` queries `https://registry.suse.com/v2/_catalog` filtered by repo prefix `ai/charts/nvidia/`, then enumerates tags per chart
-- [ ] Auth: HTTP Basic with credentials supplied at construction time
-- [ ] In-memory map keyed by `{chart, version}`; protected by `sync.RWMutex`
-- [ ] Chart→type heuristic per `ARCHITECTURE.md §13.1` (regex match → `vlm`, else `llm`)
-- [ ] NO calls to `nvcr.io`, `helm.ngc.nvidia.com`, or `integrate.api.nvidia.com`
-- [ ] No hardcoded model seed list anywhere
-- [ ] Tests with httptest server simulating SUSE Registry catalog responses
+- [x] `pkg/nvidia/discovery.go` implements the `Discovery` interface in `pkg/nvidia/interface.go` (`Index` / `Get` / `Refresh` / `UpdateSettings`)
+- [x] `Refresh(ctx)` queries `<RegistryEndpoint>/v2/_catalog` filtered by repo prefix `ai/charts/nvidia/`, then enumerates tags per chart via `/v2/<repo>/tags/list`. Both endpoints follow `Link` rel="next" pagination
+- [x] Auth: HTTP Basic with credentials installed via `UpdateSettings(EngineSettings{Username, Token, RegistryEndpoint, RefreshInterval})`
+- [x] In-memory `map[string]NIMEntry` keyed by `<chart>:<version>`; protected by `sync.RWMutex`. Refresh builds the new map fully before swapping (atomic from `Index`'s perspective)
+- [x] Chart→type heuristic per `ARCHITECTURE.md §13.1` (case-insensitive regex `vlm|vision|kosmos|neva` → `TypeVLM`, else `TypeLLM`); pure function in `pkg/nvidia/classifier.go`
+- [x] NO calls to `nvcr.io`, `helm.ngc.nvidia.com`, or `integrate.api.nvidia.com`
+- [x] No hardcoded model seed list anywhere
+- [x] Sentinel errors in `pkg/nvidia/errors.go`: `ErrUnreachable` / `ErrUnauthorized` / `ErrUnexpectedResponse` / `ErrNotConfigured` / `ErrNIMNotFound`. No `strings.Contains(err.Error(), …)` (per CLAUDE.md Forbidden pattern)
+- [x] Hexagonal layering: `registry_client.go` (HTTP adapter), `classifier.go` (pure function), `discovery.go` (orchestrator). Each layer tested in isolation with `httptest.Server`
+- [x] Runnable end-to-end demonstration in `pkg/nvidia/example_test.go` (Example_discovery — doubles as `make verify-nim-mock`)
+- [x] Live registry test in `pkg/nvidia/live_test.go` gated by `//go:build live`; runs against `registry.suse.com` when `SUSE_REG_USER` and `SUSE_REG_TOKEN` are set
 
 **Validation:**
 ```bash
-go test ./pkg/nvidia/ -run TestNIMDiscovery -v
+make test-nim                       # unit tests (29 cases across 3 layers)
+make verify-nim-mock                # end-to-end Example_discovery output check
+make verify-nim-live                # live registry.suse.com (requires SUSE_REG_USER/TOKEN)
+golangci-lint run --concurrency=1 ./pkg/nvidia/...   # 0 issues
 grep -rE 'nvcr\.io|helm\.ngc\.nvidia\.com|integrate\.api\.nvidia\.com' pkg/nvidia/ && echo FAIL || echo PASS
 ```
 
 **Agent Prompt:**
-> Implement `pkg/nvidia/discovery.go` per `ARCHITECTURE.md §13.1`. Public API: `type NIMDiscovery interface { RefreshIndex(ctx) error; List() []NIMModel; Get(id string) (NIMModel, bool) }`. Implementation calls `GET https://registry.suse.com/v2/_catalog` (Basic auth), filters to repos prefixed `ai/charts/nvidia/`, then `GET /v2/<repo>/tags/list` for each. Stores `{chart, version, type}` in an in-memory map under `sync.RWMutex`. Apply the regex heuristic to infer `llm` vs `vlm`. Never call `nvcr.io`, `helm.ngc.nvidia.com`, or `integrate.api.nvidia.com`. Test with `httptest.Server` returning canned OCI catalog responses. Done when tests pass and the grep guard returns PASS.
+> Implement `pkg/nvidia/discovery.go` per `ARCHITECTURE.md §13.1` (mirror path + chart-type heuristic) and `§6.2` (Discovery port shape). Layer the package hexagonally: `registry_client.go` is the HTTP adapter to OCI Distribution v2 (Basic auth, `Link`-header pagination, sentinel errors); `classifier.go` is the pure chart-name → Type heuristic; `discovery.go` is the orchestrator that walks the catalog, classifies each chart, and atomically swaps the cache. Credentials arrive via `UpdateSettings(EngineSettings)` — never via constructor injection (the engine-settings push pattern from §8.2.1 lives in P5-4). Never call `nvcr.io`, `helm.ngc.nvidia.com`, or `integrate.api.nvidia.com`. Test each layer in isolation with `httptest.Server`; provide an `Example_discovery` for end-to-end documentation; provide a `//go:build live` test for the real registry. Done when all four validation commands pass.
 
 ---
 
