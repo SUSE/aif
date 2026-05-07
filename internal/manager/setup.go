@@ -6,7 +6,6 @@ import (
 
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/blueprint"
-	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/SUSE/aif/pkg/helm"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
@@ -26,7 +25,6 @@ type Options struct {
 	HealthAddr       string
 	WebhookPort      int
 
-	BundleManager    bundle.Manager
 	BlueprintManager blueprint.Manager
 	HelmEngine       helm.Engine
 	Discovery        discovery.DiscoveryInterface
@@ -116,7 +114,6 @@ func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("bundle-controller"),
-		Manager:  opts.BundleManager,
 	}
 	if err := bundleReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up BundleReconciler: %w", err)

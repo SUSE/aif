@@ -2,7 +2,6 @@ package controller_test
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,7 +22,6 @@ import (
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/blueprint"
-	"github.com/SUSE/aif/pkg/bundle"
 )
 
 var (
@@ -74,13 +72,10 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	logger := slog.New(slog.NewTextHandler(GinkgoWriter, nil))
-
 	Expect((&controller.BundleReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("bundle-controller"),
-		Manager:  bundle.New(logger),
 	}).SetupWithManager(mgr)).To(Succeed())
 
 	Expect((&controller.BlueprintReconciler{
