@@ -1377,9 +1377,14 @@ type FleetSettings struct {
 package nvidia
 
 type Discovery interface {
-    // Index returns the cached NIM catalog. Refresh runs on the operator's
-    // refreshInterval (Settings.spec.refreshInterval; default 10m).
+    // Index returns the cached NIM catalog (sorted by ID). Refresh runs on
+    // the operator's refreshInterval (Settings.spec.refreshInterval; default 10m).
     Index(ctx context.Context) ([]NIMEntry, error)
+
+    // Get returns a single cached NIMEntry by canonical ID ("<chart>:<version>").
+    // Returns ErrNIMNotFound when the ID is absent (callers branch via errors.Is).
+    // Used by GET /api/v1/nvidia/nims/{id} (P2-6).
+    Get(ctx context.Context, id string) (NIMEntry, error)
 
     // Refresh forces an immediate sync. Used by Settings save (P5-4) and
     // manual refresh (P2-3).
@@ -1394,13 +1399,22 @@ type Deployer interface {
 }
 
 type NIMEntry struct {
-    ID            string
-    DisplayName   string
-    Type          string                 // "llm" | "vlm" | "embed" | other
-    DefaultGPUs   int32
-    DefaultModel  string
-    ChartRef      string                 // OCI ref to nim-llm or nim-vlm chart
+    ID            string                 // canonical "<chart>:<version>"
+    Chart         string                 // chart name within ai/charts/nvidia/
+    Version       string                 // semver tag (no "v" prefix)
+    DisplayName   string                 // defaults to Chart
+    Type          Type                   // typed enum: TypeLLM | TypeVLM
+    DefaultGPUs   int32                  // populated by Deployer (P4-4); 0 from Discovery
+    DefaultModel  string                 // populated by Deployer (P4-4); "" from Discovery
+    ChartRef      string                 // full OCI ref: oci://<host>/ai/charts/nvidia/<chart>:<version>
 }
+
+type Type string
+
+const (
+    TypeLLM Type = "llm"
+    TypeVLM Type = "vlm"
+)
 ```
 
 #### Source collection (SUSE App Collection) interface
@@ -3215,7 +3229,7 @@ AIF queries the SUSE Registry OCI catalog endpoint:
 
 - `GET https://registry.suse.com/v2/_catalog` (filtered by repo prefix `ai/charts/nvidia/`)
 - For each chart found: `GET /v2/ai/charts/nvidia/<chart>/tags/list` → enumerate versions
-- Auth: HTTP Basic with the SUSE Registry credentials from `Settings.suseRegistry.{user,token}`
+- Auth: **OCI Bearer-token exchange** (per [distribution/spec/auth/token](https://distribution.github.io/distribution/spec/auth/token/)). The registry responds to unauthenticated requests with `401 + Www-Authenticate: Bearer realm="https://scc.suse.com/api/registry/authorize",service="SUSE Linux Docker Registry",scope="..."`. The client exchanges `Settings.suseRegistry.{user,token}` for a short-lived Bearer JWT at the SCC realm, then retries the original request with `Authorization: Bearer <token>`. Tokens are not cached across requests (the scope varies per repo).
 
 There is no hardcoded model seed list. Catalog content is purely a function of what is present in SUSE Registry.
 

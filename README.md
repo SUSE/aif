@@ -182,6 +182,32 @@ state — some operations are still stubs.
 | `make envtest`        | Download envtest binaries (etcd + kube-apiserver).              |
 | `make install-tools`  | Install pinned dev tools (controller-gen, golangci-lint, mockgen, ginkgo, setup-envtest). |
 
+### Local environment via `.env`
+
+The Makefile auto-loads a `.env` file at the repo root (git-ignored) and
+exports every variable it defines into recipe subprocesses. Useful for
+local credentials consumed by the live verification targets:
+
+| Target                   | Variables                                |
+|--------------------------|------------------------------------------|
+| `make verify-nim-live`   | `SUSE_REG_USER`, `SUSE_REG_TOKEN`        |
+| `make verify-appco-live` | `SUSE_APPCO_USER`, `SUSE_APPCO_TOKEN`    |
+
+The two credential pairs are intentionally separate (per `ARCHITECTURE.md
+§13.2`: SUSE Registry and SUSE Application Collection are distinct
+upstream services), even though customers commonly reuse the same SCC
+value for both.
+
+```bash
+cp .env.example .env
+$EDITOR .env       # fill in values
+make verify-nim-live verify-appco-live
+```
+
+Format is **Makefile syntax**, not bash: `KEY=value`, one per line, no
+quotes, no `export` prefix, no spaces around `=`. See `.env.example` for
+the canonical template.
+
 The following targets exist but currently print "Not implemented yet" — treat
 them as placeholders until later phases land:
 

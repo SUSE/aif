@@ -1,7 +1,20 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-appco verify-appco-mock verify-appco-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
+
+# --- .env loader -----------------------------------------------------------
+# If a .env file exists at the repo root, load it and export every variable
+# defined there into recipe subprocesses. Useful for local credentials such
+# as SUSE_REG_USER / SUSE_REG_TOKEN (see `make verify-nim-live`).
+#
+# Format: plain Makefile syntax — `KEY=value`, one per line. NO quotes around
+# values, NO `export` prefix, NO spaces around `=`, `#` is a comment. See
+# .env.example for a template. The file is git-ignored.
+ifneq (,$(wildcard .env))
+    include .env
+    export
+endif
 
 # Variables
 BINARY_NAME=aif-operator
@@ -133,6 +146,31 @@ dev-install:
 	kubectl create namespace aif --dry-run=client -o yaml | kubectl apply -f -
 	@echo "CRDs installed. Use 'make run' to start the operator out-of-cluster."
 
+# --- pkg/nvidia (NIM Discovery) validation targets (P2-1) -------------------
+# These exercise the SUSE Registry-backed NIM discovery without depending on
+# the operator being running. test-nim is the unit-test target;
+# verify-nim-mock proves the end-to-end Refresh + Index flow against an
+# in-process OCI Distribution v2 stub; verify-nim-live runs the same flow
+# against the real registry.suse.com (creds via env vars).
+
+test-nim:
+	@echo "Running pkg/nvidia unit tests..."
+	go test -count=1 -v ./pkg/nvidia/...
+
+verify-nim-mock:
+	@echo "Demonstrating NIM Discovery against an in-process mock registry..."
+	go test -count=1 -v -run Example_discovery ./pkg/nvidia/
+
+verify-nim-live:
+	@echo "Verifying NIM Discovery against the real SUSE Registry..."
+	@if [ -z "$$SUSE_REG_USER" ] || [ -z "$$SUSE_REG_TOKEN" ]; then \
+		echo "ERROR: set SUSE_REG_USER and SUSE_REG_TOKEN before running this target."; \
+		echo "  inline: SUSE_REG_USER=alice SUSE_REG_TOKEN=... make verify-nim-live"; \
+		echo "  or:     copy .env.example to .env and fill in the values"; \
+		exit 1; \
+	fi
+	go test -count=1 -tags=live -v -run TestLive_Discovers ./pkg/nvidia/...
+
 examples:
 	@echo "Applying example CRs..."
 	kubectl apply -f examples/bundle-smoke.yaml
@@ -165,6 +203,7 @@ verify-appco-live:
 		echo "  SUSE_REG_USER/SUSE_REG_TOKEN used by 'make verify-nim-live', even"; \
 		echo "  though customers often reuse the same value (ARCHITECTURE.md §13.2)."; \
 		echo "  inline: SUSE_APPCO_USER=alice SUSE_APPCO_TOKEN=... make verify-appco-live"; \
+		echo "  or:     copy .env.example to .env and fill in the values"; \
 		exit 1; \
 	fi
 	go test -count=1 -tags=live -v -run TestLive_ListsCatalog ./pkg/source_collection/...
