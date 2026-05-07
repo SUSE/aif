@@ -2,9 +2,19 @@ package publish
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
 )
+
+// Deps groups the constructor dependencies.
+type Deps struct {
+	Bundles    bundle.Repository
+	Blueprints blueprint.Repository
+	Authz      Authorizer
+	Logger     *slog.Logger
+}
 
 func New(d Deps) Workflow {
 	return &workflowImpl{deps: d}

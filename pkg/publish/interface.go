@@ -2,9 +2,7 @@ package publish
 
 import (
 	"context"
-	"log/slog"
 
-	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
 )
 
@@ -32,17 +30,4 @@ type ReviewRequest struct {
 
 type Authorizer interface {
 	Allowed(ctx context.Context, user, verb, resource string) (bool, error)
-}
-
-type Deps struct {
-	Bundles    bundle.Repository
-	Blueprints blueprint.Repository
-	Authz      Authorizer
-	Logger     *slog.Logger
-}
-
-type AllowAllAuthorizer struct{}
-
-func (AllowAllAuthorizer) Allowed(_ context.Context, _, _, _ string) (bool, error) {
-	return true, nil
 }
