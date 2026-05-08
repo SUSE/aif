@@ -999,15 +999,55 @@ grep -rE 'strings\.Contains.*err\.Error' pkg/apps/ && echo FAIL || echo PASS
 **Effort:** S
 **Depends On:** P2-3
 **Parallelizable With:** P2-3, P2-6
-**Done When:** `GET /api/v1/apps`, `GET /api/v1/apps/{id}`, `GET /api/v1/apps/categories` all return `200 OK` with the documented JSON shapes.
+**Done When:** `GET /api/v1/apps`, `GET /api/v1/apps/{id...}`, `GET /api/v1/apps/categories` all return `200 OK` with the documented JSON shapes; `catalog.Get` errors map to `404 NOT_FOUND` / `400 INVALID_INPUT`; the `?includeReferenceBlueprints` toggle filters Reference Blueprints out of the default response.
 
 **Acceptance Criteria:**
-- [ ] Handler in `internal/api/apps.go`
-- [ ] All three endpoints registered via `routes.Register`
-- [ ] Query parameter parsing for `?source=`, `?category=`, and `?includeReferenceBlueprints=true|false` (default `false`)
-- [ ] When `includeReferenceBlueprints=false` (default), filters out apps where `App.referenceBlueprint == true`
-- [ ] App schema includes the `referenceBlueprint: bool` field, populated from chart annotation `ai.suse.com/role` (set to `true` when value equals `reference-blueprint`; see `ARCHITECTURE.md §5 Apps` and `§13.1`)
-- [ ] HTTP integration test covers: (a) default request hides Reference Blueprints, (b) `?includeReferenceBlueprints=true` returns them, (c) per-app `referenceBlueprint` field populated correctly
+
+*Wire-format retrofit (P2-3 oversight surfaced here)*
+- [ ] `pkg/apps/types.go`: add JSON tags to `App` and `ChartRef` matching `ARCHITECTURE.md §5` keys (`id`, `name`, `displayName`, `description`, `publisher`, `version`, `logoURL`, `source`, `assetType`, `categories`, `tags`, `chartRef.{repo,chart,version}`, `projectURL`, `referenceBlueprint`). The schema in §5 is camelCase; default Go marshaling would emit `ID`, `Name`, etc.
+
+*Handler & routes*
+- [ ] `internal/api/apps.go`: `appsHandler` implements `api.Handler`; depends on `apps.Catalog` (the read-only port) — NOT on `Aggregator`. Constructor takes `(apps.Catalog, *slog.Logger)`.
+- [ ] Routes registered via `Handler.Register` using Go 1.22 `ServeMux` method-prefixed patterns:
+  - `GET /api/v1/apps`
+  - `GET /api/v1/apps/categories`  (registered BEFORE the wildcard so it wins)
+  - `GET /api/v1/apps/{id...}`     (wildcard — namespaced IDs contain `/`)
+
+*GET /api/v1/apps*
+- [ ] Query params: `?source=nvidia|suse`, `?category=`, `?includeReferenceBlueprints=true|false` (default `false`).
+- [ ] Default (`includeReferenceBlueprints=false`): filter out apps with `App.ReferenceBlueprint == true`.
+- [ ] Returns `[]App` (camelCase JSON), 200 OK; empty slice serialized as `[]` (never `null`).
+- [ ] `App.referenceBlueprint` field is populated from chart annotation `ai.suse.com/role: reference-blueprint` upstream by P2-5; this PR just passes the field through and respects the filter.
+
+*GET /api/v1/apps/{id...}*
+- [ ] Returns the single App (regardless of `referenceBlueprint`).
+- [ ] `catalog.Get` errors: `ErrAppNotFound` → `404 NOT_FOUND`; `ErrUnknownSource` → `400 INVALID_INPUT`.
+
+*GET /api/v1/apps/categories*
+- [ ] Returns deduplicated, sorted `[]string` of every category present across the unfiltered catalog. Empty list as `[]` not `null`.
+
+*Wiring*
+- [ ] `cmd/operator/main.go`: construct `apps` handler with the existing `appsCatalog` (already typed as `apps.Aggregator`, which embeds `apps.Catalog`), pass as `api.Handler` to `manager.Register`.
+
+*Verification*
+- [ ] Test cases (`httptest`):
+  - default `GET /api/v1/apps` hides RBs
+  - `?includeReferenceBlueprints=true` shows them
+  - per-app `referenceBlueprint` field populated correctly
+  - `?source=nvidia` returns only nvidia entries
+  - `?category=llm` returns only apps with `llm` in `Categories`
+  - `GET /api/v1/apps/{id}` happy path returns the App
+  - `GET /api/v1/apps/{id}` unknown id returns `404 NOT_FOUND`
+  - `GET /api/v1/apps/{id}` unknown namespace returns `400 INVALID_INPUT`
+  - `GET /api/v1/apps/categories` returns sorted dedup `[]string`
+- [ ] Makefile target `test-api-apps` runs the package tests.
+
+**Validation:**
+```bash
+go test -count=1 -v -run TestApps ./internal/api/    # all green
+golangci-lint run --concurrency=1 ./internal/api/... # 0 issues
+grep -nE 'http\.Error\(' internal/api/apps.go && echo FAIL || echo PASS
+```
 
 ---
 
