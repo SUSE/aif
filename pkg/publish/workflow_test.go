@@ -15,14 +15,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func newTestWorkflow(bundles bundle.Repository) Workflow {
+func newTestWorkflow(bundles bundle.Repository) (Workflow, *FakeEventRecorder) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	return New(Deps{
+	rec := &FakeEventRecorder{}
+	wf := New(Deps{
 		Bundles:    bundles,
 		Blueprints: blueprint.NewFakeRepository(),
 		Authz:      AllowAllAuthorizer{},
+		Recorder:   rec,
 		Logger:     logger,
 	})
+	return wf, rec
 }
 
 func draftBundle(ns, name string) *aifv1.Bundle {
@@ -58,7 +61,7 @@ func changesRequestedBundle(ns, name string) *aifv1.Bundle {
 func TestSubmit_DraftToSubmitted(t *testing.T) {
 	repo := bundle.NewFakeRepository()
 	repo.Seed(draftBundle("ns", "my-bundle"))
-	wf := newTestWorkflow(repo)
+	wf, rec := newTestWorkflow(repo)
 
 	got, err := wf.Submit(context.Background(), "ns", "my-bundle", SubmitRequest{
 		User:              "alice",
@@ -74,12 +77,15 @@ func TestSubmit_DraftToSubmitted(t *testing.T) {
 	assert.Equal(t, "alice", got.Submission.SubmittedBy)
 	assert.Equal(t, int64(3), got.Submission.GenerationAtSubmit)
 	assert.Nil(t, got.Review)
+
+	require.Len(t, rec.Events, 1)
+	assert.Contains(t, rec.Events[0], "BundleSubmitted:ns/my-bundle:alice:1.0.0")
 }
 
 func TestSubmit_ChangesRequestedToSubmitted(t *testing.T) {
 	repo := bundle.NewFakeRepository()
 	repo.Seed(changesRequestedBundle("ns", "my-bundle"))
-	wf := newTestWorkflow(repo)
+	wf, _ := newTestWorkflow(repo)
 
 	got, err := wf.Submit(context.Background(), "ns", "my-bundle", SubmitRequest{
 		User:              "alice",
@@ -99,7 +105,7 @@ func TestSubmit_AlreadySubmitted_ReturnsInvalidTransition(t *testing.T) {
 	b := draftBundle("ns", "my-bundle")
 	b.Status.Phase = aifv1.BundlePhaseSubmitted
 	repo.Seed(b)
-	wf := newTestWorkflow(repo)
+	wf, rec := newTestWorkflow(repo)
 
 	_, err := wf.Submit(context.Background(), "ns", "my-bundle", SubmitRequest{
 		User:            "alice",
@@ -108,11 +114,12 @@ func TestSubmit_AlreadySubmitted_ReturnsInvalidTransition(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrInvalidTransition))
+	assert.Empty(t, rec.Events, "no event should be recorded on failed submit")
 }
 
 func TestSubmit_BundleNotFound(t *testing.T) {
 	repo := bundle.NewFakeRepository()
-	wf := newTestWorkflow(repo)
+	wf, _ := newTestWorkflow(repo)
 
 	_, err := wf.Submit(context.Background(), "ns", "missing", SubmitRequest{
 		User:            "alice",
@@ -126,7 +133,7 @@ func TestSubmit_BundleNotFound(t *testing.T) {
 func TestSubmit_InvalidVersion(t *testing.T) {
 	repo := bundle.NewFakeRepository()
 	repo.Seed(draftBundle("ns", "my-bundle"))
-	wf := newTestWorkflow(repo)
+	wf, _ := newTestWorkflow(repo)
 
 	cases := []struct {
 		name    string
@@ -154,7 +161,7 @@ func TestSubmit_InvalidVersion(t *testing.T) {
 func TestSubmit_UserRequired(t *testing.T) {
 	repo := bundle.NewFakeRepository()
 	repo.Seed(draftBundle("ns", "my-bundle"))
-	wf := newTestWorkflow(repo)
+	wf, _ := newTestWorkflow(repo)
 
 	_, err := wf.Submit(context.Background(), "ns", "my-bundle", SubmitRequest{
 		User:            "",
@@ -166,19 +173,19 @@ func TestSubmit_UserRequired(t *testing.T) {
 
 // Keep the other ErrNotImplemented tests for methods not yet implemented.
 func TestWorkflow_Withdraw_ReturnsErrNotImplemented(t *testing.T) {
-	wf := newTestWorkflow(bundle.NewFakeRepository())
+	wf, _ := newTestWorkflow(bundle.NewFakeRepository())
 	_, err := wf.Withdraw(context.Background(), "ns", "name", "user")
 	assert.True(t, errors.Is(err, ErrNotImplemented))
 }
 
 func TestWorkflow_RequestChanges_ReturnsErrNotImplemented(t *testing.T) {
-	wf := newTestWorkflow(bundle.NewFakeRepository())
+	wf, _ := newTestWorkflow(bundle.NewFakeRepository())
 	_, err := wf.RequestChanges(context.Background(), "ns", "name", ReviewRequest{})
 	assert.True(t, errors.Is(err, ErrNotImplemented))
 }
 
 func TestWorkflow_Approve_ReturnsErrNotImplemented(t *testing.T) {
-	wf := newTestWorkflow(bundle.NewFakeRepository())
+	wf, _ := newTestWorkflow(bundle.NewFakeRepository())
 	_, err := wf.Approve(context.Background(), "ns", "name", ApproveRequest{})
 	assert.True(t, errors.Is(err, ErrNotImplemented))
 }

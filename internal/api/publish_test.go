@@ -30,6 +30,7 @@ func setupPublishTest(bundles ...*aifv1.Bundle) (*http.ServeMux, *bundle.FakeRep
 		Bundles:    repo,
 		Blueprints: blueprint.NewFakeRepository(),
 		Authz:      publish.AllowAllAuthorizer{},
+		Recorder:   &publish.FakeEventRecorder{},
 		Logger:     logger,
 	})
 
@@ -183,6 +184,7 @@ func TestSubmitHandler_RepositoryError_Returns500(t *testing.T) {
 		Bundles:    repo,
 		Blueprints: blueprint.NewFakeRepository(),
 		Authz:      publish.AllowAllAuthorizer{},
+		Recorder:   &publish.FakeEventRecorder{},
 		Logger:     logger,
 	})
 

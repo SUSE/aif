@@ -25,6 +25,7 @@ type Deps struct {
 	Bundles    bundle.Repository
 	Blueprints blueprint.Repository
 	Authz      Authorizer
+	Recorder   EventRecorder
 	Logger     *slog.Logger
 }
 
@@ -79,6 +80,10 @@ func (w *workflowImpl) Submit(ctx context.Context, namespace, name string, req S
 		"proposedVersion", req.ProposedVersion,
 		"submittedBy", req.User,
 	)
+
+	if w.deps.Recorder != nil {
+		w.deps.Recorder.BundleSubmitted(ctx, namespace, name, req.User, req.ProposedVersion)
+	}
 
 	return bundle.BundleFromCR(cr), nil
 }
