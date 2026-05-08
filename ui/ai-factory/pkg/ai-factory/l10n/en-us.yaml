@@ -10,6 +10,7 @@ aif:
     blueprints: 'Blueprints'
     bundles: 'Bundles'
     workloads: 'Workloads'
+    pendingReviews: 'Pending Reviews'
     settings: 'Settings'
 
   pages:
@@ -28,6 +29,9 @@ aif:
     workloads:
       title: 'Workloads'
       comingSoon: 'Workload monitoring coming soon'
+    pendingReviews:
+      title: 'Pending Reviews'
+      comingSoon: 'Bundle review queue coming soon'
     settings:
       title: 'Settings'
       comingSoon: 'Settings configuration coming soon'

@@ -6,12 +6,13 @@ export const PRODUCT_NAME = 'ai-factory';
 export const BLANK_CLUSTER = '_';
 
 export const PAGE_IDS = {
-  OVERVIEW: 'overview',
-  APPS: 'apps',
-  BLUEPRINTS: 'blueprints',
-  BUNDLES: 'bundles',
-  WORKLOADS: 'workloads',
-  SETTINGS: 'settings'
+  OVERVIEW:        'overview',
+  APPS:            'apps',
+  BLUEPRINTS:      'blueprints',
+  BUNDLES:         'bundles',
+  WORKLOADS:       'workloads',
+  PENDING_REVIEWS: 'pending-reviews',
+  SETTINGS:        'settings'
 } as const;
 
 export const CRD_TYPES = {

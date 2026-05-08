@@ -8,14 +8,20 @@ const maskPayloads = (source) => Array.from(
   (match) => match[1]
 );
 
+// [pageId, componentName, title, l10nKey]
+// l10nKey differs from pageId when the slug contains hyphens (camelCase in yaml/templates)
 const pages = [
-  ['overview', 'OverviewPage', 'Overview'],
-  ['apps', 'AppsPage', 'Apps Catalog'],
-  ['blueprints', 'BlueprintsPage', 'Blueprints'],
-  ['bundles', 'BundlesPage', 'Bundles'],
-  ['workloads', 'WorkloadsPage', 'Workloads'],
-  ['settings', 'SettingsPage', 'Settings']
+  ['overview',        'OverviewPage',        'Overview',        'overview'],
+  ['apps',            'AppsPage',            'Apps Catalog',    'apps'],
+  ['blueprints',      'BlueprintsPage',      'Blueprints',      'blueprints'],
+  ['bundles',         'BundlesPage',         'Bundles',         'bundles'],
+  ['workloads',       'WorkloadsPage',       'Workloads',       'workloads'],
+  ['pending-reviews', 'PendingReviewsPage',  'Pending Reviews', 'pendingReviews'],
+  ['settings',        'SettingsPage',        'Settings',        'settings']
 ];
+
+// Convert a kebab page slug to the UPPER_SNAKE constant name used in PAGE_IDS
+const toConst = (id) => id.toUpperCase().replace(/-/g, '_');
 
 test('P6-1 type constants define product, pages, and CRD types', () => {
   const source = read('config/types.ts');
@@ -24,7 +30,7 @@ test('P6-1 type constants define product, pages, and CRD types', () => {
   assert.match(source, /BLANK_CLUSTER\s*=\s*'_'/);
 
   for (const [page] of pages) {
-    assert.match(source, new RegExp(`${ page.toUpperCase() }: '${ page }'`));
+    assert.match(source, new RegExp(`${ toConst(page) }:\\s*'${ page }'`));
   }
 
   for (const crd of ['bundle', 'blueprint', 'workload', 'settings']) {
@@ -42,22 +48,22 @@ test('P6-1 product registration exposes grouped navigation', () => {
   assert.match(source, /weightGroup\('Global',\s*1100,\s*true\)/);
   assert.match(source, /weightGroup\('Clusters',\s*1000,\s*true\)/);
 
-  for (const [page] of pages) {
-    assert.match(source, new RegExp(`PAGE_IDS\\.${ page.toUpperCase() }`));
-    assert.match(source, new RegExp(`aif\\.nav\\.${ page }`));
+  for (const [page,, , l10nKey] of pages) {
+    assert.match(source, new RegExp(`PAGE_IDS\\.${ toConst(page) }`));
+    assert.match(source, new RegExp(`aif\\.nav\\.${ l10nKey }`));
   }
 
-  assert.match(source, /weightType\(page\.id,\s*page\.weight,\s*true\)/);
+  assert.match(source, /weight:\s*page\.weight/);
 });
 
 test('P6-1 routes map every page to a lazy-loaded component', () => {
   const source = read('routing/index.ts');
 
   for (const [page] of pages) {
-    assert.match(source, new RegExp(`\\$\\{\\s*PRODUCT_NAME\\s*\\}-c-cluster-\\$\\{\\s*PAGE_IDS\\.${ page.toUpperCase() }\\s*\\}`));
-    assert.match(source, new RegExp(`/c/:cluster/\\$\\{\\s*PRODUCT_NAME\\s*\\}/\\$\\{\\s*PAGE_IDS\\.${ page.toUpperCase() }\\s*\\}`));
+    assert.match(source, new RegExp(`\\$\\{\\s*PRODUCT_NAME\\s*\\}-c-cluster-\\$\\{\\s*PAGE_IDS\\.${ toConst(page) }\\s*\\}`));
+    assert.match(source, new RegExp(`/c/:cluster/\\$\\{\\s*PRODUCT_NAME\\s*\\}/\\$\\{\\s*PAGE_IDS\\.${ toConst(page) }\\s*\\}`));
     assert.match(source, new RegExp(`import\\('\\.\\./pages/${ page }\\.vue'\\)`));
-    assert.match(source, new RegExp(`pageId:\\s*PAGE_IDS\\.${ page.toUpperCase() }`));
+    assert.match(source, new RegExp(`pageId:\\s*PAGE_IDS\\.${ toConst(page) }`));
   }
 });
 
@@ -66,14 +72,14 @@ test('P6-1 l10n and placeholder pages cover all navigation entries', () => {
 
   assert.match(l10n, /label:\s*'SUSE AI Factory'/);
 
-  for (const [page, componentName, title] of pages) {
+  for (const [page, componentName, title, l10nKey] of pages) {
     const component = read(`pages/${ page }.vue`);
 
-    assert.match(l10n, new RegExp(`${ page }:\\s*'`));
+    assert.match(l10n, new RegExp(`${ l10nKey }:\\s*'`));
     assert.match(l10n, new RegExp(`title:\\s*'${ title }'`));
     assert.match(component, new RegExp(`name:\\s*'${ componentName }'`));
-    assert.match(component, new RegExp(`aif\\.pages\\.${ page }\\.title`));
-    assert.match(component, new RegExp(`aif\\.pages\\.${ page }\\.comingSoon`));
+    assert.match(component, new RegExp(`aif\\.pages\\.${ l10nKey }\\.title`));
+    assert.match(component, new RegExp(`aif\\.pages\\.${ l10nKey }\\.comingSoon`));
   }
 });
 

@@ -47,6 +47,15 @@ const routes = [
     }
   },
   {
+    name:      `${ PRODUCT_NAME }-c-cluster-${ PAGE_IDS.PENDING_REVIEWS }`,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/${ PAGE_IDS.PENDING_REVIEWS }`,
+    component: () => import('../pages/pending-reviews.vue'),
+    meta:      {
+      product: PRODUCT_NAME,
+      pageId:  PAGE_IDS.PENDING_REVIEWS
+    }
+  },
+  {
     name:      `${ PRODUCT_NAME }-c-cluster-${ PAGE_IDS.SETTINGS }`,
     path:      `/c/:cluster/${ PRODUCT_NAME }/${ PAGE_IDS.SETTINGS }`,
     component: () => import('../pages/settings.vue'),
