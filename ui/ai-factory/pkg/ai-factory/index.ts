@@ -1,6 +1,5 @@
 import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
-import * as productModule from './config/aif-product';
 import routes from './routing';
 import './style/brand.css';
 
@@ -20,7 +19,7 @@ export default function(plugin: IPlugin): void {
   };
 
   plugin.addDashboardStore('aif', SteveFactory(null, null), { namespace: 'aif', isClusterStore: true });
-  plugin.addProduct(productModule as any);
+  plugin.addProduct(require('./config/aif-product'));
   plugin.addRoutes(routes);
   plugin.addL10n('en-us', require('./l10n/en-us.yaml'));
 }

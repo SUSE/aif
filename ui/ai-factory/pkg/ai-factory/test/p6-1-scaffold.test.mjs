@@ -95,12 +95,11 @@ test('P6-1 l10n and placeholder pages cover all navigation entries', () => {
 test('P6-1 entry point wires product, routes, and localization', () => {
   const source = read('index.ts');
 
-  assert.match(source, /import \* as productModule from '\.\/config\/aif-product'/);
   assert.match(source, /import routes from '\.\/routing'/);
   assert.match(source, /import '\.\/style\/brand\.css'/);
   assert.match(source, /SteveFactory.*require\('@shell\/plugins\/steve'\)/s);
   assert.match(source, /plugin\.addDashboardStore\('aif'.*namespace:\s*'aif'/s);
-  assert.match(source, /plugin\.addProduct\(productModule/);
+  assert.match(source, /plugin\.addProduct\(require\('\.\/config\/aif-product'\)\)/);
   assert.match(source, /plugin\.addRoutes\(routes\)/);
   assert.match(source, /plugin\.addL10n\('en-us',\s*require\('\.\/l10n\/en-us\.yaml'\)\)/);
 });
