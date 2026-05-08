@@ -48,6 +48,7 @@ func (h *PublishHandler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var body submitRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", ErrInvalidInput))
@@ -60,6 +61,8 @@ func (h *PublishHandler) submit(w http.ResponseWriter, r *http.Request) {
 		ChangeDescription: body.ChangeDescription,
 	})
 	if err != nil {
+		LoggerFromContext(r.Context()).Warn("submit failed",
+			"namespace", ns, "name", name, "error", err)
 		writePublishError(w, err)
 		return
 	}
