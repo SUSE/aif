@@ -236,7 +236,7 @@ Stick to what is structurally true (field names, schema relationships, observabl
 2. Add `+kubebuilder:object:root=true`, `+kubebuilder:subresource:status`, `+kubebuilder:printcolumn` markers
 3. Use `[]metav1.Condition` for status, typed enums for phases
 4. Run `make manifests generate` to produce CRD YAML and deepcopy
-5. Create controller following [docs/dev/controller-guide.md](docs/dev/controller-guide.md)
+5. Create controller in `internal/controller/{kind}_controller.go` following [docs/dev/controller-guide.md](docs/dev/controller-guide.md)
 6. Register controller in `cmd/operator/main.go` manager setup
 7. Add REST endpoints in `internal/api/{resource}.go`
 8. Register routes in `internal/manager/routes.go`

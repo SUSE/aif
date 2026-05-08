@@ -46,9 +46,11 @@ import (
 The canonical 5-step pattern. Every controller follows this exact structure:
 
 ```go
-const finalizerName = "ai.suse.com/cleanup"
+const thingFinalizerName = "ai.suse.com/cleanup"
 
 func (r *ThingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+    // controller-runtime injects a logr.Logger into the context — this is the
+    // one exception to CLAUDE.md's "use log/slog exclusively" rule.
     logger := log.FromContext(ctx)
 
     // 1. Fetch the resource
@@ -67,8 +69,8 @@ func (r *ThingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
     }
 
     // 3. Ensure finalizer
-    if !controllerutil.ContainsFinalizer(&obj, finalizerName) {
-        controllerutil.AddFinalizer(&obj, finalizerName)
+    if !controllerutil.ContainsFinalizer(&obj, thingFinalizerName) {
+        controllerutil.AddFinalizer(&obj, thingFinalizerName)
         if err := r.Update(ctx, &obj); err != nil {
             return ctrl.Result{}, err
         }
@@ -104,13 +106,13 @@ The finalizer constant is `ai.suse.com/cleanup`. It is added on first reconcile 
 
 ```go
 func (r *ThingReconciler) handleDeletion(ctx context.Context, obj *aifv1.Thing) (ctrl.Result, error) {
-    if !controllerutil.ContainsFinalizer(obj, finalizerName) {
+    if !controllerutil.ContainsFinalizer(obj, thingFinalizerName) {
         return ctrl.Result{}, nil
     }
 
     // Run cleanup logic here (e.g. delete owned Helm releases, remove Secrets)
 
-    controllerutil.RemoveFinalizer(obj, finalizerName)
+    controllerutil.RemoveFinalizer(obj, thingFinalizerName)
     if err := r.Update(ctx, obj); err != nil {
         return ctrl.Result{}, err
     }
@@ -136,6 +138,7 @@ func (r *ThingReconciler) reconcile(ctx context.Context, obj *aifv1.Thing) error
         })
         r.Recorder.Eventf(obj, nil, "Warning", conditions.ReasonInvalidSpec,
             conditions.ActionValidating, err.Error())
+        obj.Status.ObservedGeneration = obj.Generation
         return nil // don't requeue — user must fix spec
     }
 
@@ -146,6 +149,7 @@ func (r *ThingReconciler) reconcile(ctx context.Context, obj *aifv1.Thing) error
         Message:            "Thing successfully reconciled",
         ObservedGeneration: obj.Generation,
     })
+    obj.Status.ObservedGeneration = obj.Generation
     return nil
 }
 ```
@@ -243,6 +247,15 @@ var _ = Describe("ThingReconciler", func() {
     const interval = 250 * time.Millisecond
     ctx := context.Background()
 
+    findReady := func(conds []metav1.Condition) *metav1.Condition {
+        for i := range conds {
+            if conds[i].Type == conditions.TypeReady {
+                return &conds[i]
+            }
+        }
+        return nil
+    }
+
     It("should reconcile a valid Thing to Ready=True", func() {
         obj := &aifv1.Thing{
             ObjectMeta: metav1.ObjectMeta{
@@ -256,10 +269,10 @@ var _ = Describe("ThingReconciler", func() {
         Eventually(func(g Gomega) {
             var fetched aifv1.Thing
             g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(obj), &fetched)).To(Succeed())
-            ready := findCondition(fetched.Status.Conditions, conditions.TypeReady)
-            g.Expect(ready).NotTo(BeNil())
-            g.Expect(ready.Status).To(Equal(metav1.ConditionTrue))
-            g.Expect(ready.Reason).To(Equal(conditions.ReasonReconciled))
+            rc := findReady(fetched.Status.Conditions)
+            g.Expect(rc).NotTo(BeNil())
+            g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
+            g.Expect(rc.Reason).To(Equal(conditions.ReasonReconciled))
         }, timeout, interval).Should(Succeed())
 
         // Verify finalizer was added
@@ -268,15 +281,6 @@ var _ = Describe("ThingReconciler", func() {
         Expect(fetched.Finalizers).To(ContainElement("ai.suse.com/cleanup"))
     })
 })
-
-func findCondition(conds []metav1.Condition, t string) *metav1.Condition {
-    for i := range conds {
-        if conds[i].Type == t {
-            return &conds[i]
-        }
-    }
-    return nil
-}
 ```
 
 ### Running tests
