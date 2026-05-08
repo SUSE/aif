@@ -274,6 +274,52 @@ func TestNVIDIASource_UpdateSettings_ForwardsRegistrySliceToEngine(t *testing.T)
 	}
 }
 
-// --- Compile-time: NVIDIASource implements Source ---
+// --- Compile-time: NVIDIASource implements Source AND Lifecycle ---
 
 var _ Source = (*NVIDIASource)(nil)
+var _ Lifecycle = (*NVIDIASource)(nil)
+
+// --- Behavior: Start triggers Refresh on the ticker interval ---
+
+func TestNVIDIASource_Start_TickerTriggersRefresh(t *testing.T) {
+	d := &fakeNVIDIADiscovery{indexResult: sampleNIMEntries()}
+	s := NewNVIDIASource(d, discardLogger(), 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+
+	// Wait long enough for the immediate Refresh + at least 2 ticks.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		calls := d.refreshCalls
+		d.mu.Unlock()
+		if calls >= 3 { // initial + 2 ticks
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cancel()
+	d.mu.Lock()
+	final := d.refreshCalls
+	d.mu.Unlock()
+	if final < 3 {
+		t.Errorf("expected ≥3 underlying Refresh calls (initial + ≥2 ticks) within 200ms; got %d",
+			final)
+	}
+
+	// After cancel, give the goroutine a moment to exit, then verify the
+	// count stops growing.
+	time.Sleep(20 * time.Millisecond)
+	d.mu.Lock()
+	afterCancel := d.refreshCalls
+	d.mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	d.mu.Lock()
+	stillAfter := d.refreshCalls
+	d.mu.Unlock()
+	if stillAfter > afterCancel {
+		t.Errorf("ticker continued after ctx cancel: %d → %d", afterCancel, stillAfter)
+	}
+}

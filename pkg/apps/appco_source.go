@@ -104,6 +104,32 @@ func (a *AppCoSource) Status() SourceStatus {
 	return a.status
 }
 
+// Start implements Lifecycle: spawns the per-Source ticker goroutine.
+// Refreshes immediately on launch, then on every refreshInterval tick;
+// exits when ctx is canceled. Refresh errors are deliberately not
+// propagated here — SourceStatus records LastError for diagnostics.
+func (a *AppCoSource) Start(ctx context.Context) {
+	go func() {
+		_ = a.Refresh(ctx)
+		a.mu.RLock()
+		interval := a.refreshInterval
+		a.mu.RUnlock()
+		if interval <= 0 {
+			interval = 10 * time.Minute
+		}
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = a.Refresh(ctx)
+			}
+		}
+	}()
+}
+
 func (a *AppCoSource) recordError(err error) {
 	a.mu.Lock()
 	a.status.LastError = err

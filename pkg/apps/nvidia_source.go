@@ -107,6 +107,33 @@ func (n *NVIDIASource) Status() SourceStatus {
 	return n.status
 }
 
+// Start implements Lifecycle: spawns the per-Source ticker goroutine.
+// Refreshes immediately on launch, then on every refreshInterval tick;
+// exits when ctx is canceled. Refresh errors are deliberately not
+// propagated here — the per-Source ticker is best-effort, and
+// SourceStatus already records the LastError for diagnostics.
+func (n *NVIDIASource) Start(ctx context.Context) {
+	go func() {
+		_ = n.Refresh(ctx)
+		n.mu.RLock()
+		interval := n.refreshInterval
+		n.mu.RUnlock()
+		if interval <= 0 {
+			interval = 10 * time.Minute
+		}
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = n.Refresh(ctx)
+			}
+		}
+	}()
+}
+
 // recordError updates SourceStatus.LastError without touching the
 // cache (stale-but-good).
 func (n *NVIDIASource) recordError(err error) {

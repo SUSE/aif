@@ -38,8 +38,8 @@ type Catalog interface {
 }
 
 // Source is one upstream catalog adapter (NVIDIASource, AppCoSource).
-// Each adapter owns its own cache and its own ticker goroutine; the
-// Catalog is a thin aggregator. 4 methods (within ISP target).
+// Each adapter owns its own cache; the Catalog is a thin aggregator.
+// 4 methods (within ISP target).
 type Source interface {
 	// Name returns the namespace prefix used in App.ID
 	// ("nvidia", "suse"). Stable for the lifetime of the adapter.
@@ -60,4 +60,18 @@ type Source interface {
 	// off the engine-relevant section, translates to the engine-native
 	// settings struct, and forwards to the underlying engine.
 	UpdateSettings(s EngineSettings)
+}
+
+// Lifecycle is the optional per-Source background-refresh capability
+// (decision e: per-Source tickers). Adapters that own a ticker
+// goroutine implement Lifecycle in addition to Source; Catalog.Start
+// detects the capability via type assertion and kicks off each
+// adapter's ticker. Test doubles that don't need a background loop
+// implement only Source and are safely skipped by Catalog.Start.
+type Lifecycle interface {
+	// Start spawns the adapter's background ticker goroutine. The
+	// goroutine MUST exit when ctx is canceled. Calling Start more
+	// than once is implementation-defined; production adapters expect
+	// a single Start per process.
+	Start(ctx context.Context)
 }

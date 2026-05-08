@@ -260,6 +260,7 @@ func TestAppCoSource_UpdateSettings_ForwardsAppCoSliceToEngine(t *testing.T) {
 	}
 }
 
-// --- Compile-time: AppCoSource implements Source ---
+// --- Compile-time: AppCoSource implements Source AND Lifecycle ---
 
 var _ Source = (*AppCoSource)(nil)
+var _ Lifecycle = (*AppCoSource)(nil)
