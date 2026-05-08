@@ -37,7 +37,7 @@
         "../../node_modules/@rancher/shell/*"
       ],
       "@components/*": [
-        "@rancher/components/*"
+        "../../node_modules/@rancher/shell/rancher-components/*"
       ]
     }
   },
