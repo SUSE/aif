@@ -19,11 +19,11 @@ func NewPublishHandler(w publish.Workflow, logger *slog.Logger) *PublishHandler 
 	return &PublishHandler{workflow: w, logger: logger}
 }
 
-func (h *PublishHandler) Register(mux *http.ServeMux, chain Middleware) {
-	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/submit", chain(h.submit))
-	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/withdraw", chain(h.withdraw))
-	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/approve", chain(h.approve))
-	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/request-changes", chain(h.requestChanges))
+func (h *PublishHandler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/submit", h.submit)
+	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/withdraw", h.withdraw)
+	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/approve", h.approve)
+	mux.HandleFunc("POST /api/v1/bundles/{namespace}/{name}/request-changes", h.requestChanges)
 }
 
 type submitRequest struct {

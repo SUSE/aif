@@ -184,11 +184,11 @@ func main() {
 
 	// Setup API server
 	mux := http.NewServeMux()
-	manager.Register(mux, logger, allowedOrigin, publishHandler)
+	handler := manager.Register(mux, logger, allowedOrigin, publishHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	// Setup signal handling

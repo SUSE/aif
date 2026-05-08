@@ -36,8 +36,7 @@ func setupPublishTest(bundles ...*aifv1.Bundle) (*http.ServeMux, *bundle.FakeRep
 
 	handler := NewPublishHandler(wf, logger)
 	mux := http.NewServeMux()
-	noopChain := func(next http.HandlerFunc) http.HandlerFunc { return next }
-	handler.Register(mux, noopChain)
+	handler.Register(mux)
 	return mux, repo
 }
 
@@ -190,7 +189,7 @@ func TestSubmitHandler_RepositoryError_Returns500(t *testing.T) {
 
 	handler := NewPublishHandler(wf, logger)
 	mux := http.NewServeMux()
-	handler.Register(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	handler.Register(mux)
 
 	body := `{"proposedVersion":"1.0.0"}`
 	req := httptest.NewRequest("POST", "/api/v1/bundles/ns/my-bundle/submit", bytes.NewBufferString(body))
