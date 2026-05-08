@@ -95,7 +95,7 @@ Phases 2 and 3 can start as soon as Phase 1 begins. Phase 6 can start once Phase
 |-------|-----------------|---------------|
 | 0     | P0-0 ‖ P0-1; then P0-2 ‖ P0-3 ‖ P0-5 ‖ P0-6; P0-7 after P1-5 lands | P0-4 needs P0-1 + P0-2; P0-7 needs P1-5 (the webhook itself) |
 | 1     | P1-1 ‖ P1-2 ‖ P1-3 ‖ P1-4 ‖ P1-6 ‖ P1-7 ‖ P1-10 | P1-5 needs P1-2 (webhook); P1-8 last; P1-9 after P1-8; P1-10 (HTTP API skeleton) needs P0-2 + P0-4 + P1-7 — no other Phase 1 dep |
-| 2     | P2-1 ‖ P2-2; then P2-3 ‖ P2-4 ‖ P2-5 ‖ P2-6 | P2-3 needs P2-1; P2-5 needs P2-1 (the wrapper reuses the SUSE Registry catalog client from P2-1) |
+| 2     | P2-1 ‖ P2-2; then P2-3; then P2-4; then P2-5 ‖ P2-6; then P2-7 | P2-3 needs P2-1+P2-2; P2-4 needs P2-3; P2-5 needs P2-3+P2-4 (annotation-fetching populates the field the P2-4 filter consumes); P2-7 needs P2-5 (the wrapper consumes the RB-flagged catalog) |
 | 3     | P3-2 ‖ P3-3 ‖ P3-4 ‖ P3-5 ‖ P3-8 (after P3-1) | P3-1 first; P3-6 last; P3-7 after P3-6; P3-8 also needs P5-7 + P4-6 |
 | 4     | P4-2 ‖ P4-3 ‖ P4-4 ‖ P4-6 | P4-1 first; P4-5 last; P4-6 needs P5-7 |
 | 5     | P5-1 ‖ P5-3 ‖ P5-6 ‖ P5-7 ‖ P5-8 ‖ P5-9 | P5-2 needs P5-1; P5-4 needs P1-6; P5-5 last; P5-6 only depends on P3-6; P5-8 needs P5-7; P5-9 needs P5-7 |
@@ -1012,15 +1012,15 @@ grep -rE 'strings\.Contains.*err\.Error' pkg/apps/ && echo FAIL || echo PASS
 ---
 
 **ID:** P2-5
-**Epic:** Vendor-Chart Wrapper (auto-wraps Reference Blueprint charts as AIF Blueprints)
-**Story:** As an AIF operator, I want vendor-published Reference Blueprint Helm charts (e.g., NVIDIA RAG, NVIDIA AIQ) to be auto-wrapped as immutable single-component AIF Blueprint CRs so that practitioners can discover and deploy them on the Blueprints page with full lifecycle (Active/Deprecated/Withdrawn).
-**Owner Hint:** Backend Go
-**Effort:** M (annotation-fetching landed in the engines; wrapper itself is thin)
+**Epic:** Reference Blueprint annotation detection (engines + adapters)
+**Story:** As an AIF operator, I want vendor-published Reference Blueprint Helm charts (e.g., NVIDIA RAG, NVIDIA AIQ) to be identified as Reference Blueprints in the Apps catalog so they appear correctly on the Apps page and can be filtered out of the default response (per `ARCHITECTURE.md §5` and the `?includeReferenceBlueprints` toggle from P2-4).
+**Owner Hint:** Backend Go (senior — OCI manifest handling, digest caching)
+**Effort:** M
 **Depends On:** P0-1, P2-3, P2-4
-**Parallelizable With:** P2-6
-**Done When:** Engine packages can fetch a chart's `Chart.yaml` annotations; Source adapters populate `apps.App.ReferenceBlueprint` based on `ai.suse.com/role`; `pkg/blueprint.Wrapper.WrapDetectedCharts(ctx)` consumes `apps.Catalog.List(ListOpts{...})` filtered to Reference Blueprints and creates one wrapping Blueprint CR (`source.type=WrapsVendorChart`, `spec.version` = chart version 1:1) per detected RB via `pkg/blueprint.Repository`. The pipeline is idempotent and runs on the same cadence as the catalog refresh.
+**Parallelizable With:** P2-6 (no shared files; P2-6 only reads the existing `nvidia.Discovery.Index/Get`)
+**Done When:** Both engine packages can fetch a chart's `Chart.yaml` annotations with digest-based caching; Source adapters populate `apps.App.ReferenceBlueprint` based on `ai.suse.com/role`; `apps.ListOpts` gains `IncludeReferenceBlueprints` (default false hides RBs); the P2-4 `?includeReferenceBlueprints=false` REST filter actually filters (no longer a no-op).
 
-> **Architecture amendment (post-P2-3 / P2-4):** the original P2-5 plan put annotation-fetching inside `pkg/blueprint.Wrapper`, going around `apps.Catalog`. That predates the unified Apps Catalog (P2-3) and the `?includeReferenceBlueprints` filter (P2-4) — both of which depend on `App.ReferenceBlueprint` being populated. Rather than duplicate the annotation-fetch path inside the wrapper, this amendment pushes it down into the engine packages (`pkg/nvidia.Discovery`, `pkg/source_collection.Client`) and the Source adapters (`NVIDIASource`, `AppCoSource`) — closing the P2-4 filter gap as a side effect. The wrapper then becomes a thin coordinator on top of `apps.Catalog`. See the diagram in PR #16.
+> **Architecture amendment + split (post-P2-3 / P2-4):** the original P2-5 plan put annotation-fetching inside `pkg/blueprint.Wrapper`, going around `apps.Catalog`. That predates the unified Apps Catalog (P2-3) and the `?includeReferenceBlueprints` filter (P2-4) — both of which depend on `App.ReferenceBlueprint` being populated. Rather than duplicate the annotation-fetch path inside the wrapper, this amendment pushes it down into the engine packages (`pkg/nvidia.Discovery`, `pkg/source_collection.Client`) and the Source adapters (`NVIDIASource`, `AppCoSource`) — closing the P2-4 filter gap as a side effect. The Blueprint-CR-creation half of the original story is now its own story (**P2-7**) which depends on this one. See the diagram in PR #16.
 
 **Acceptance Criteria:**
 
@@ -1038,55 +1038,44 @@ grep -rE 'strings\.Contains.*err\.Error' pkg/apps/ && echo FAIL || echo PASS
 - [ ] Annotation fetch failure for a single chart logs a warn and leaves `ReferenceBlueprint=false` for that App; never fails the whole `Refresh` (best-effort enrichment).
 - [ ] After P2-5 lands, `GET /api/v1/apps?includeReferenceBlueprints=false` (the P2-4 default) actually filters out vendor RBs.
 
-*Wrapper coordinator (the thin part)*
-- [ ] `pkg/blueprint/wrapper.go` implements `Wrapper` interface. Constructor takes `(apps.Catalog, blueprint.Repository, *slog.Logger)` — no direct dependency on `pkg/nvidia` or `pkg/source_collection`.
-- [ ] `Wrapper.WrapDetectedCharts(ctx)`:
-  1. Calls `catalog.List(ctx, ListOpts{IncludeReferenceBlueprints: true})` (or the equivalent option that exposes RBs — see "API addition" below).
-  2. For each App with `ReferenceBlueprint=true`: build a Blueprint CR per `ARCHITECTURE.md §4.3` (`metadata.name = "{chart}.{version}"`, labels `blueprint-name` / `blueprint-version` / `blueprint-source: wraps-vendor-chart`, `spec.source.type=WrapsVendorChart`, `spec.source.vendorChartRef.{provider,repo,chart,version}`, `components[]` length 1, `publishedBy="aif-system"`, `publishedAt=<now>`, `changeDescription="Auto-wrapped from <chartRef> at <ts>"`).
-  3. Persist via `blueprint.Repository.Create(ctx, bp)` — never raw `client.Client`. Repository's `AlreadyExists` error is a no-op (idempotent).
-  4. For each previously-wrapped Blueprint whose underlying App is no longer present in the catalog: flip `status.phase = Withdrawn` via `blueprint.Repository.UpdateStatus`. Spec is immutable (webhook would reject mutation); status is mutable.
-  5. Record event `BlueprintWrappedFromVendorChart` (Normal) per fresh wrap; `BlueprintWithdrawn` (Normal) per status flip.
-- [ ] **Version mapping 1:1** with chart version. Non-SemVer versions are skipped with a warn log; pre-release versions (`-rc.N`) wrapped but flagged via label `blueprint-prerelease=true`.
-- [ ] **API addition** to `apps.Catalog.List`: `ListOpts.IncludeReferenceBlueprints bool` field — when true, the response includes RBs (matching the REST handler's `?includeReferenceBlueprints=true` semantics). The wrapper uses this to enumerate just the RB subset.
+*Catalog API addition (consumed by P2-7's wrapper)*
+- [ ] `apps.ListOpts` gains `IncludeReferenceBlueprints bool` field. When `true`, `Catalog.List` returns RBs alongside non-RBs; when `false` (zero-value default) RBs are filtered out. Matches the REST handler's `?includeReferenceBlueprints=true` semantics from P2-4.
+- [ ] The P2-4 REST handler (`internal/api/apps.go`) is refactored to forward `?includeReferenceBlueprints=true` into `ListOpts.IncludeReferenceBlueprints` instead of post-filtering the response, so a single code path handles the toggle.
 
-*Hexagonal scoping (per CLAUDE.md "A New External Integration" rules)*
-- [ ] `pkg/blueprint/wrapper.go` MUST NOT import `pkg/nvidia` or `pkg/source_collection` directly — only `pkg/apps`, `pkg/blueprint` (own package types), and stdlib.
+*Hexagonal scoping*
 - [ ] `pkg/apps/nvidia_source.go` and `pkg/apps/appco_source.go` remain the SOLE files in `pkg/apps` that import the engine packages.
 - [ ] No new `strings.Contains(err.Error(), …)` anywhere; sentinel errors + `errors.Is` only.
 
-*Verification ergonomics (per CLAUDE.md)*
-- [ ] `pkg/blueprint/wrapper_example_test.go` — `Example_wrapper` builds a fake `apps.Catalog` with a mix of RB and non-RB Apps, runs `WrapDetectedCharts`, prints the resulting Blueprint CRs deterministically. Doubles as `make verify-wrapper-mock`.
-- [ ] `pkg/blueprint/wrapper_live_test.go` — `//go:build live`, runs against the real `registry.suse.com`. Asserts only that the engine's `ChartAnnotations` flow completes for at least one chart bearing the `ai.suse.com/role` annotation; the wrapper run itself is dry-run (logs the would-be Blueprint CRs without persisting). Doubles as `make verify-wrapper-live`. Reuses `SUSE_REG_*` env vars.
-- [ ] Makefile adds `test-wrapper` / `verify-wrapper-mock` / `verify-wrapper-live` to `.PHONY` and as targets.
+*Verification ergonomics (per CLAUDE.md "A New External Integration" rules)*
+- [ ] `pkg/nvidia` adds `Example_chartAnnotations` (fakes the Chart.yaml fetch against an in-process OCI stub) → `make verify-nim-mock` is extended (or a new `verify-annotations-mock` target).
+- [ ] The existing `pkg/nvidia/live_test.go` and `pkg/source_collection/live_test.go` are extended to assert `ChartAnnotations` handshake completes for at least one chart (count is informational — see "Live test caveat" below).
+- [ ] No new top-level Makefile targets if the existing `test-nim` / `test-appco` / `verify-*-live` targets cover the new methods (they should, since the methods live in the same packages).
 
 *Tests (TDD)*
 - [ ] `ChartAnnotations` happy path (200 + `Chart.yaml` body returned, annotations parsed)
 - [ ] `ChartAnnotations` 404 → `ErrChartNotFound`
+- [ ] `ChartAnnotations` returns `nil, nil` for chart with no annotations block
 - [ ] `ChartAnnotations` digest cache hit (second call → 0 upstream requests)
 - [ ] `ChartAnnotations` digest cache invalidation (different digest → re-fetch)
 - [ ] Adapter `Refresh` populates `ReferenceBlueprint=true` when annotation present
 - [ ] Adapter `Refresh` leaves `ReferenceBlueprint=false` when annotation absent
 - [ ] Adapter `Refresh` survives a per-chart annotation-fetch error (best-effort)
-- [ ] Wrapper: RB present + no existing Blueprint → creates CR (correct shape)
-- [ ] Wrapper: RB present + Blueprint already exists → no-op (idempotent)
-- [ ] Wrapper: previously-wrapped chart removed from catalog → status `Withdrawn`
-- [ ] Wrapper: non-SemVer version → warn + skip
-- [ ] Wrapper records `BlueprintWrappedFromVendorChart` event per wrap
+- [ ] Adapter `Refresh` overrides `App.DisplayName` / `App.Description` from companion annotations
+- [ ] `Catalog.List(ListOpts{IncludeReferenceBlueprints: true})` returns RBs
+- [ ] `Catalog.List(ListOpts{})` (default) hides RBs
 
 **Validation:**
 ```bash
-make test-wrapper                    # unit tests across engines + adapter + wrapper
-make verify-wrapper-mock             # Example_wrapper deterministic Output OK
-make verify-wrapper-live             # real registry.suse.com Chart.yaml fetch
-golangci-lint run --concurrency=1 ./pkg/blueprint/... ./pkg/apps/...   # 0 issues
-grep -rE 'pkg/nvidia|pkg/source_collection' pkg/blueprint/wrapper*.go && echo FAIL || echo PASS
-grep -nE 'strings\.Contains.*err\.Error' pkg/blueprint/ pkg/apps/      && echo FAIL || echo PASS
+make test-nim test-appco test-apps                                     # all green
+make verify-nim-live verify-appco-live verify-apps-live                # ChartAnnotations exercised against real upstreams
+golangci-lint run --concurrency=1 ./pkg/nvidia/... ./pkg/source_collection/... ./pkg/apps/...   # 0 issues
+grep -nE 'strings\.Contains.*err\.Error' pkg/nvidia/ pkg/source_collection/ pkg/apps/ && echo FAIL || echo PASS
 ```
 
-**Agent Prompt:**
-> Implement P2-5 in three layers. **Layer A (engines):** add `ChartAnnotations(ctx, ...) (map[string]string, error)` to both `pkg/nvidia.Discovery` and `pkg/source_collection.Client`. Fetch `Chart.yaml` from the chart's OCI manifest, parse the YAML `annotations:` block, return the map. Cache per `(chart, digest)` so a steady-state refresh is one HEAD per chart, no body bytes. **Layer B (adapters):** in `NVIDIASource.Refresh` and `AppCoSource.Refresh`, after the existing list fetch, call `ChartAnnotations` per chart and set `App.ReferenceBlueprint = (annotations["ai.suse.com/role"] == "reference-blueprint")`. Best-effort: per-chart fetch failure logs a warn and leaves `ReferenceBlueprint=false`. Also extend `apps.ListOpts` with `IncludeReferenceBlueprints bool` and have `Catalog.List` honor it (default false hides RBs, matching the P2-4 REST default). **Layer C (wrapper):** `pkg/blueprint/wrapper.go` constructor takes `(apps.Catalog, blueprint.Repository, *slog.Logger)` — NO direct engine imports. `WrapDetectedCharts(ctx)` lists `Catalog` with `IncludeReferenceBlueprints: true`, builds Blueprint CRs per `ARCHITECTURE.md §4.3` (`source.type=WrapsVendorChart`), persists via `Repository.Create` (idempotent on AlreadyExists), and flips status to `Withdrawn` for wrapped Blueprints whose chart is no longer in the catalog. Ship the standard verification trio (Example, `//go:build live` test, Makefile targets). Done when all six validation commands pass.
+**Live test caveat:** as of this writing the SUSE Registry mirror has 0 charts under `ai/charts/nvidia/` (per the live test we wrote in P2-1). The `ChartAnnotations` live path will exercise the auth + manifest fetch, but until the mirror gets populated with at least one chart bearing `ai.suse.com/role: reference-blueprint`, the "found ≥1 RB" assertion is informational — same discipline as P2-1's softened live test.
 
-> **Deferred to a Phase 3 follow-up story:** the manual escape-hatch endpoint `POST /api/v1/blueprints/wrap-vendor-chart` belongs in a Blueprints REST handler story, not here — `internal/api/blueprints.go` doesn't exist yet, and adding it would scope-creep P2-5 into REST surface work that has its own design questions (publisher RBAC check via SAR, request body schema, sync-vs-async response shape).
+**Agent Prompt:**
+> Implement P2-5 in two sub-layers (the third sub-layer is a separate story, P2-7). **Layer A (engines):** add `ChartAnnotations(ctx, ...) (map[string]string, error)` to both `pkg/nvidia.Discovery` and `pkg/source_collection.Client`. Fetch `Chart.yaml` from the chart's OCI manifest, parse the YAML `annotations:` block, return the map. Cache per `(chart, digest)` so a steady-state refresh is one HEAD per chart, no body bytes. **Layer B (adapters):** in `NVIDIASource.Refresh` and `AppCoSource.Refresh`, after the existing list fetch, call `ChartAnnotations` per chart and set `App.ReferenceBlueprint = (annotations["ai.suse.com/role"] == "reference-blueprint")`. Best-effort: per-chart fetch failure logs a warn and leaves `ReferenceBlueprint=false`. Also extend `apps.ListOpts` with `IncludeReferenceBlueprints bool` and have `Catalog.List` honor it (default false hides RBs, matching the P2-4 REST default); refactor the P2-4 REST handler to forward into `ListOpts` instead of post-filtering. Ship verification via the existing `pkg/nvidia` and `pkg/source_collection` test trios — extend rather than duplicate. Done when all four validation commands pass and the post-P2-5 reality check holds: `curl -s 'http://localhost:8080/api/v1/apps' | jq '[.[] | select(.referenceBlueprint==true)]'` returns `[]` (RBs hidden by default), and `?includeReferenceBlueprints=true` includes them.
 
 ---
 
@@ -1108,6 +1097,67 @@ grep -nE 'strings\.Contains.*err\.Error' pkg/blueprint/ pkg/apps/      && echo F
 ```bash
 grep -E '/api/v1/(ngc|nvidia/(mirror|aicr|models/sync))' internal/api/nvidia.go && echo FAIL || echo PASS
 ```
+
+---
+
+**ID:** P2-7
+**Epic:** Vendor-Chart Wrapper (creates Blueprint CRs for detected RBs)
+**Story:** As an AIF operator, I want detected Reference Blueprint charts to be auto-wrapped as immutable single-component AIF Blueprint CRs so they appear on the Blueprints page with full lifecycle (Active/Deprecated/Withdrawn) and can be deployed via the same path as approved stacks.
+**Owner Hint:** Backend Go (mid — Repository pattern + idempotency + status writes; growth task for a smart-but-junior dev with senior review)
+**Effort:** S (thin coordinator; engines + adapters did the heavy lifting in P2-5)
+**Depends On:** P2-5 (consumes the RB-flagged catalog and the new `ListOpts.IncludeReferenceBlueprints`)
+**Parallelizable With:** Phase 3 stories (different package boundaries — Phase 3 lives in `pkg/publish` and `internal/api/bundles.go`; this story lives in `pkg/blueprint/wrapper.go`)
+**Done When:** `pkg/blueprint.Wrapper.WrapDetectedCharts(ctx)` consumes `apps.Catalog.List(ListOpts{IncludeReferenceBlueprints: true})`, creates one wrapping Blueprint CR (`source.type=WrapsVendorChart`, `spec.version` = chart version 1:1) per RB via `pkg/blueprint.Repository`, idempotent on re-runs, flips status to `Withdrawn` for orphaned wrappings.
+
+> **Split rationale:** the original P2-5 bundled "detect RBs" with "create Blueprint CRs". Splitting at the layer boundary means P2-5 ships independent value (the P2-4 filter starts working) and unblocks P2-7 cleanly. P2-7's surface is small enough to be a growth task — the wrapper is a thin coordinator over `apps.Catalog` + `blueprint.Repository`, both of which already exist by the time it starts.
+
+**Acceptance Criteria:**
+
+*Wrapper coordinator*
+- [ ] `pkg/blueprint/wrapper.go` defines `Wrapper` (interface in `pkg/blueprint/interface.go`) plus a concrete impl. Constructor takes `(apps.Catalog, blueprint.Repository, *slog.Logger)` — NO direct dependency on `pkg/nvidia` or `pkg/source_collection`.
+- [ ] `Wrapper.WrapDetectedCharts(ctx)`:
+  1. Calls `catalog.List(ctx, apps.ListOpts{IncludeReferenceBlueprints: true})`.
+  2. For each App with `ReferenceBlueprint=true`: build a Blueprint CR per `ARCHITECTURE.md §4.3` (`metadata.name = "{chart}.{version}"`, labels `blueprint-name` / `blueprint-version` / `blueprint-source: wraps-vendor-chart`, `spec.source.type=WrapsVendorChart`, `spec.source.vendorChartRef.{provider,repo,chart,version}`, `components[]` length 1, `publishedBy="aif-system"`, `publishedAt=<now>`, `changeDescription="Auto-wrapped from <chartRef> at <ts>"`).
+  3. Persist via `blueprint.Repository.Create(ctx, bp)` — never raw `client.Client`. Repository's `AlreadyExists` error is a no-op (idempotent).
+  4. For each previously-wrapped Blueprint (label `blueprint-source: wraps-vendor-chart`) whose underlying App is no longer present in the RB-filtered catalog: flip `status.phase = Withdrawn` via `blueprint.Repository.UpdateStatus`. Spec is immutable (webhook would reject mutation); status is mutable. The "already Withdrawn" case is a no-op (no event re-emitted).
+  5. Record event `BlueprintWrappedFromVendorChart` (Normal) per fresh wrap; `BlueprintWithdrawn` (Normal) per status flip.
+- [ ] **Version mapping 1:1** with chart version (per `ARCHITECTURE.md §4.3 Version Mapping for Wrapped Blueprints`). Non-SemVer versions are skipped with a warn log; pre-release versions (`-rc.N`) wrapped but flagged via label `blueprint-prerelease=true`.
+
+*Hexagonal scoping (per CLAUDE.md "A New External Integration" rules)*
+- [ ] `pkg/blueprint/wrapper.go` MUST NOT import `pkg/nvidia` or `pkg/source_collection` directly — only `pkg/apps`, own-package types, and stdlib.
+- [ ] No new `strings.Contains(err.Error(), …)`; sentinel errors + `errors.Is` only.
+
+*Verification ergonomics (per CLAUDE.md)*
+- [ ] `pkg/blueprint/wrapper_example_test.go` — `Example_wrapper` builds a fake `apps.Catalog` (the package-internal `staticSource` pattern from `pkg/apps/example_test.go`) with a mix of RB and non-RB Apps, runs `WrapDetectedCharts`, prints the resulting Blueprint CRs deterministically. Doubles as `make verify-wrapper-mock`.
+- [ ] `pkg/blueprint/wrapper_live_test.go` — `//go:build live`, runs against the real `registry.suse.com` via the live `apps.Catalog`. Asserts only that the wrapper completes without error; the wrapper run is **dry-run** (logs the would-be Blueprint CRs without persisting). Doubles as `make verify-wrapper-live`. Reuses `SUSE_REG_*` and `SUSE_APPCO_*` env vars.
+- [ ] Makefile adds `test-wrapper` / `verify-wrapper-mock` / `verify-wrapper-live` to `.PHONY` and as targets.
+
+*Tests (TDD)*
+- [ ] Wrapper: RB present + no existing Blueprint → creates CR (correct `metadata.name`, labels, `spec.source.type`, `vendorChartRef`, `components` length 1)
+- [ ] Wrapper: RB present + Blueprint already exists → no-op (idempotent on `AlreadyExists`)
+- [ ] Wrapper: previously-wrapped chart removed from catalog → status `Withdrawn` + event emitted
+- [ ] Wrapper: previously-wrapped chart still in catalog → no status change, no event
+- [ ] Wrapper: chart in catalog but already-Withdrawn Blueprint → no event re-emit
+- [ ] Wrapper: non-SemVer chart version → warn + skip (no Blueprint created)
+- [ ] Wrapper: pre-release chart version (`-rc.N`) → wrap with `blueprint-prerelease=true` label
+- [ ] Wrapper: empty catalog (no RBs) → no-op, no errors
+
+**Validation:**
+```bash
+make test-wrapper                                          # unit tests pass
+make verify-wrapper-mock                                   # Example_wrapper deterministic Output OK
+make verify-wrapper-live                                   # real catalog, dry-run wrapper completes
+golangci-lint run --concurrency=1 ./pkg/blueprint/...      # 0 issues
+grep -rE 'pkg/nvidia|pkg/source_collection' pkg/blueprint/wrapper*.go && echo FAIL || echo PASS
+grep -nE 'strings\.Contains.*err\.Error' pkg/blueprint/    && echo FAIL || echo PASS
+```
+
+**Live test caveat:** as of this writing the SUSE Registry mirror has 0 charts under `ai/charts/nvidia/` and no SUSE-published RBs in the Application Collection. The dry-run live test exercises the wrapper's read+plan path against real upstreams but will likely log "0 RBs to wrap" until upstream content lands — informational, same discipline as P2-1 / P2-5.
+
+**Agent Prompt:**
+> Implement `pkg/blueprint/wrapper.go` per the design above. Constructor takes `(apps.Catalog, blueprint.Repository, *slog.Logger)`. `WrapDetectedCharts(ctx)` lists `Catalog` with `apps.ListOpts{IncludeReferenceBlueprints: true}`, builds Blueprint CRs per `ARCHITECTURE.md §4.3` (`spec.source.type=WrapsVendorChart`), persists via `Repository.Create` (idempotent on `AlreadyExists`), and flips status to `Withdrawn` for wrapped Blueprints whose chart is no longer in the catalog (via `Repository.UpdateStatus`). The "Withdrawn" diff is computed by listing existing Blueprints with label `blueprint-source: wraps-vendor-chart` and subtracting the current RB-filtered catalog. NO direct imports of `pkg/nvidia` or `pkg/source_collection` — translation already happened in P2-5. Ship the standard verification trio (`Example_wrapper`, `//go:build live` test, three Makefile targets). Done when all six validation commands pass and the eight TDD tests are green.
+
+> **Deferred to a Phase 3 follow-up story:** the manual escape-hatch endpoint `POST /api/v1/blueprints/wrap-vendor-chart` belongs in a Blueprints REST handler story, not here — `internal/api/blueprints.go` doesn't exist yet, and the endpoint has its own design questions (publisher SAR check, sync-vs-async response shape) that don't belong inside P2-7's scope.
 
 ---
 
