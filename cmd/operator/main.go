@@ -15,6 +15,7 @@ import (
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/internal/api"
 	"github.com/SUSE/aif/internal/manager"
+	internalpublish "github.com/SUSE/aif/internal/publish"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
@@ -27,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -159,10 +159,7 @@ func main() {
 	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
 	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 
-	publishRecorder := &k8sEventRecorder{
-		recorder: mgr.GetEventRecorder("publish-workflow"),
-		getter:   bundleRepo.Get,
-	}
+	publishRecorder := internalpublish.NewEventRecorder(mgr.GetEventRecorder("publish-workflow"), bundleRepo.Get)
 
 	publishWorkflow = publish.New(publish.Deps{
 		Bundles:    bundleRepo,
@@ -249,22 +246,6 @@ func main() {
 	case <-shutdownCtx.Done():
 		logger.Warn("Shutdown timeout exceeded")
 	}
-}
-
-// k8sEventRecorder adapts the controller-runtime event recorder to the
-// publish.EventRecorder port, keeping pkg/publish free of K8s types.
-type k8sEventRecorder struct {
-	recorder events.EventRecorder
-	getter   func(ctx context.Context, ns, name string) (*aifv1alpha1.Bundle, error)
-}
-
-func (r *k8sEventRecorder) BundleSubmitted(ctx context.Context, namespace, name, user, version string) {
-	obj, err := r.getter(ctx, namespace, name)
-	if err != nil {
-		slog.Default().Warn("failed to get bundle for event recording", "error", err, "namespace", namespace, "name", name)
-		return
-	}
-	r.recorder.Eventf(obj, nil, "Normal", "BundleSubmitted", "Submit", "Bundle submitted by %s with proposed version %s", user, version)
 }
 
 func setupLogger(level, format string) *slog.Logger {
