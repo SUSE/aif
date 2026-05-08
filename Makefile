@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -207,6 +207,33 @@ verify-appco-live:
 		exit 1; \
 	fi
 	go test -count=1 -tags=live -v -run TestLive_ListsCatalog ./pkg/source_collection/...
+
+# --- pkg/apps (Apps Catalog Manager) validation targets (P2-3) -------------
+# Exercise the unified Apps Catalog assembled from NVIDIASource and
+# AppCoSource adapters. test-apps is the unit-test target;
+# verify-apps-mock proves the end-to-end fan-out + dedupe + sort against
+# in-process static Sources; verify-apps-live drives the catalog against
+# both real upstreams (registry.suse.com + api.apps.rancher.io).
+
+test-apps:
+	@echo "Running pkg/apps unit tests..."
+	go test -count=1 -v ./pkg/apps/...
+
+verify-apps-mock:
+	@echo "Demonstrating Apps Catalog against in-process static Sources..."
+	go test -count=1 -v -run Example_catalog ./pkg/apps/
+
+verify-apps-live:
+	@echo "Verifying Apps Catalog against real registry.suse.com + api.apps.rancher.io..."
+	@if [ -z "$$SUSE_REG_USER" ] || [ -z "$$SUSE_REG_TOKEN" ] || [ -z "$$SUSE_APPCO_USER" ] || [ -z "$$SUSE_APPCO_TOKEN" ]; then \
+		echo "ERROR: this target needs all four credential env vars set:"; \
+		echo "  SUSE_REG_USER / SUSE_REG_TOKEN     — SUSE Registry"; \
+		echo "  SUSE_APPCO_USER / SUSE_APPCO_TOKEN — SUSE Application Collection"; \
+		echo "  inline: SUSE_REG_USER=... SUSE_REG_TOKEN=... SUSE_APPCO_USER=... SUSE_APPCO_TOKEN=... make verify-apps-live"; \
+		echo "  or:     copy .env.example to .env and fill in the values"; \
+		exit 1; \
+	fi
+	go test -count=1 -tags=live -v -run TestLive_Catalog ./pkg/apps/...
 
 # dev-certs generates a self-signed TLS cert at controller-runtime's default
 # webhook CertDir so 'make run' (out-of-cluster) doesn't fail at startup.
