@@ -300,3 +300,89 @@ func TestAppsHandler_Get_UnknownSource_Returns400(t *testing.T) {
 		t.Errorf("error code = %q, want %q", apiErr.Code, ErrCodeInvalidInput)
 	}
 }
+
+// --- GET /api/v1/apps/categories ---
+
+func TestAppsHandler_Categories_ReturnsSortedDeduplicated(t *testing.T) {
+	cat := &fakeCatalog{listResult: []apps.App{
+		{ID: "a", Categories: []string{"Vector DB", "AI"}},
+		{ID: "b", Categories: []string{"AI", "Inference"}},
+		{ID: "c", Categories: []string{"llm"}},
+		{ID: "d", Categories: []string{"AI"}}, // duplicate "AI"
+		{ID: "e", Categories: nil},            // no-cats app: must not crash
+	}}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/categories", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got []string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, rec.Body.String())
+	}
+
+	want := []string{"AI", "Inference", "Vector DB", "llm"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d categories, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("categories[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// --- GET /api/v1/apps/categories with empty catalog returns [] not null ---
+
+func TestAppsHandler_Categories_EmptyCatalog_SerializesAsEmptyArray(t *testing.T) {
+	cat := &fakeCatalog{listResult: nil}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/categories", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := strings.TrimSpace(rec.Body.String())
+	if body != "[]" {
+		t.Errorf("empty categories serialized as %q, want %q", body, "[]")
+	}
+}
+
+// --- Routing precedence: /categories must NOT be caught by /{id...} ---
+
+func TestAppsHandler_Categories_WinsOverWildcard(t *testing.T) {
+	// If /categories were caught by the wildcard, the handler would call
+	// catalog.Get("categories"). Configure the fake to verify that did
+	// NOT happen by setting a sentinel result that the categories
+	// handler would never produce.
+	cat := &fakeCatalog{
+		listResult: []apps.App{
+			{ID: "a", Categories: []string{"AI"}},
+		},
+		getResult: apps.App{ID: "TRAP/should-not-appear", Source: "trap"},
+	}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/categories", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := strings.TrimSpace(rec.Body.String())
+	// The categories handler returns []string — the trap App's ID should
+	// NEVER appear in the response.
+	if strings.Contains(body, "TRAP/should-not-appear") {
+		t.Errorf("/categories was routed to /{id...}; body=%s", body)
+	}
+	// And the response must be a JSON array of strings.
+	var asStrings []string
+	if err := json.Unmarshal([]byte(body), &asStrings); err != nil {
+		t.Errorf("/categories did not return []string; body=%s err=%v", body, err)
+	}
+}

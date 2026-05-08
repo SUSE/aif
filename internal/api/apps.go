@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 
 	"github.com/SUSE/aif/pkg/apps"
 )
@@ -26,13 +27,13 @@ func NewAppsHandler(catalog apps.Catalog, logger *slog.Logger) *AppsHandler {
 	return &AppsHandler{catalog: catalog, logger: logger}
 }
 
-// Register wires this handler's routes onto the provided mux. Three
-// patterns are registered (Go 1.22+ method-prefixed ServeMux). The
-// `/categories` literal route MUST be registered before the
-// `/{id...}` wildcard so it wins for that exact path.
+// Register wires this handler's routes onto the provided mux. Go 1.22+
+// ServeMux precedence resolves more specific patterns over wildcards
+// independently of registration order, so /categories wins over
+// /{id...} for that exact path.
 func (h *AppsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/apps", h.list)
-	// Layer 4 will add: GET /api/v1/apps/categories (registered BEFORE the wildcard)
+	mux.HandleFunc("GET /api/v1/apps/categories", h.categories)
 	mux.HandleFunc("GET /api/v1/apps/{id...}", h.get)
 }
 
@@ -110,6 +111,30 @@ func mapCatalogErr(err error, id string) error {
 	default:
 		return err
 	}
+}
+
+// categories serves GET /api/v1/apps/categories. Returns a
+// deduplicated, sorted []string of every category present in the
+// unfiltered catalog. Empty list serialized as `[]` not `null`.
+func (h *AppsHandler) categories(w http.ResponseWriter, r *http.Request) {
+	all, err := h.catalog.List(r.Context(), apps.ListOpts{})
+	if err != nil {
+		writeError(w, errorStatus(err), err)
+		return
+	}
+
+	seen := make(map[string]struct{})
+	for _, a := range all {
+		for _, c := range a.Categories {
+			seen[c] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for c := range seen {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // Compile-time guard: AppsHandler satisfies api.Handler.
