@@ -13,6 +13,7 @@ import (
 	"time"
 
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
+	"github.com/SUSE/aif/internal/api"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
@@ -184,7 +185,11 @@ func main() {
 
 	// Setup API server
 	mux := http.NewServeMux()
-	manager.Register(mux, logger, allowedOrigin)
+	// Register the /api/v1/apps* routes (P2-4) via the api.Handler
+	// interface. Future REST handlers (P2-6, P3-x) plug in the same
+	// way — pass them as additional varargs to manager.Register.
+	appsAPIHandler := api.NewAppsHandler(appsCatalog, logger)
+	manager.Register(mux, logger, allowedOrigin, appsAPIHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,
