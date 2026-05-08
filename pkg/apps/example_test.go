@@ -51,14 +51,11 @@ func Example_catalog() {
 		},
 	}
 
-	// 2. Build the Catalog and register the Sources via AddSource (the
-	//    registry pattern from decision (d): NewCatalog returns an empty
-	//    Catalog, sources are added imperatively at bootstrap).
+	// 2. Build the Aggregator and register the Sources via AddSource
+	//    (the registry pattern from decision (d): New returns an empty
+	//    Aggregator, sources are added imperatively at bootstrap).
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	catalog := apps.New(logger, 10*time.Minute).(interface {
-		apps.Catalog
-		AddSource(apps.Source)
-	})
+	catalog := apps.New(logger, 10*time.Minute)
 	catalog.AddSource(nvidia)
 	catalog.AddSource(suse)
 

@@ -21,6 +21,7 @@ import (
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
+	"github.com/SUSE/aif/pkg/source_collection"
 	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
@@ -85,7 +86,21 @@ func main() {
 	gitEngine := git.NewFleetEngine(logger, gitDir)
 	nvidiaDiscovery := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
+	appcoClient := source_collection.NewClient(logger)
+
+	// Apps Catalog assembles entries from both upstream Sources via
+	// thin adapters (P2-3 Option B hexagonal: source packages stay
+	// unaware of pkg/apps; translation lives at the integration
+	// boundary). AddSource is the bootstrap-only registry method
+	// (decision d); appsCatalog.Start fans out to per-Source ticker
+	// goroutines via the Lifecycle pattern (decision e).
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
+	appsCatalog.AddSource(apps.NewNVIDIASource(nvidiaDiscovery, logger, catalogRefreshDuration))
+	appsCatalog.AddSource(apps.NewAppCoSource(appcoClient, logger, catalogRefreshDuration))
+	// Note: appsCatalog.Start(ctx) is invoked alongside the
+	// controller-runtime manager start, below, so it shares the
+	// signal-driven cancellation lifecycle.
+
 	bundleManager := bundle.New(logger)
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
@@ -179,6 +194,13 @@ func main() {
 	// Setup signal handling
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Start the Apps Catalog per-Source ticker goroutines (decision e:
+	// each adapter owns its own ticker; Aggregator.Start fans out via
+	// the optional Lifecycle interface). The goroutines exit when ctx
+	// is canceled by SIGINT/SIGTERM.
+	logger.Info("Starting Apps Catalog (per-Source tickers)")
+	appsCatalog.Start(ctx)
 
 	// Start API server
 	go func() {

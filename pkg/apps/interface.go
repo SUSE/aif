@@ -64,14 +64,30 @@ type Source interface {
 
 // Lifecycle is the optional per-Source background-refresh capability
 // (decision e: per-Source tickers). Adapters that own a ticker
-// goroutine implement Lifecycle in addition to Source; Catalog.Start
+// goroutine implement Lifecycle in addition to Source; Aggregator.Start
 // detects the capability via type assertion and kicks off each
 // adapter's ticker. Test doubles that don't need a background loop
-// implement only Source and are safely skipped by Catalog.Start.
+// implement only Source and are safely skipped.
 type Lifecycle interface {
 	// Start spawns the adapter's background ticker goroutine. The
 	// goroutine MUST exit when ctx is canceled. Calling Start more
 	// than once is implementation-defined; production adapters expect
 	// a single Start per process.
+	Start(ctx context.Context)
+}
+
+// Aggregator is the bootstrap-time Catalog surface used by
+// cmd/operator/main.go: it is the Catalog read/control port plus
+// AddSource (registry pattern — decision d) and Start (per-Source
+// ticker fan-out — decision e). Returned by New(). Most consumers
+// (HTTP handlers, SettingsReconciler) take the narrower Catalog port
+// and don't need the bootstrap methods.
+//
+// This interface intentionally exceeds the ≤4-method ISP target — it
+// is split by *role* (the bootstrap role) from the consumer-facing
+// Catalog port, per CLAUDE.md.
+type Aggregator interface {
+	Catalog
+	AddSource(s Source)
 	Start(ctx context.Context)
 }

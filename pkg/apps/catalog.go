@@ -22,10 +22,13 @@ type catalogImpl struct {
 	sources []Source
 }
 
-// New returns a Catalog ready to receive AddSource calls. The
-// refreshInterval is the default tick cadence handed to each Source
-// when no per-Source override is provided via UpdateSettings.
-func New(logger *slog.Logger, refreshInterval time.Duration) Catalog {
+// New returns an Aggregator (Catalog plus AddSource + Start) ready to
+// be wired at bootstrap. The refreshInterval is the default tick
+// cadence handed to each Source when no per-Source override is
+// provided via UpdateSettings. Consumers downstream of bootstrap
+// (HTTP handlers, SettingsReconciler) accept the narrower Catalog
+// interface.
+func New(logger *slog.Logger, refreshInterval time.Duration) Aggregator {
 	return &catalogImpl{
 		logger:          logger,
 		refreshInterval: refreshInterval,
