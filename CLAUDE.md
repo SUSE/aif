@@ -178,6 +178,56 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
 
 ---
 
+## Workflow & contribution rules
+
+These rules apply to every PR regardless of which CRD or layer you touch.
+
+### Branch naming
+
+- **Story work:** `{StoryID}-{kebab-description}` taken from `PROJECT_PLAN.md`. Example: `P2-3-apps-catalog`, `P1-5-blueprint-immutability-webhook`.
+- **Cross-cutting / non-story work:** prefix with `fix/`, `chore/`, or `docs/` and a short kebab description. Examples: `fix/register-builtin-scheme-types`, `docs/claude-md-formalize-patterns`.
+- One branch per logically distinct change; don't bundle unrelated work to save a round-trip.
+
+### Commit & PR hygiene
+
+- Plain commit messages — **no `Co-Authored-By` trailer, no AI attribution**, no automated footers.
+- Subject ≤72 chars, imperative mood (`add X`, `fix Y`, `refactor Z` — not `added X`). Body wraps at ~72 cols and explains *why*, not just *what*.
+- One concept per commit. If a refactor and a feature land together, split them.
+- PR descriptions describe what changed, why, and how to validate — not how to read the diff.
+
+### Verify before claiming
+
+- Before claiming a target/test/feature works, **run the command and read the output**. No "expected to pass" without evidence; no "this should work" in lieu of `make test` output.
+- For UI / integration / live-upstream behavior, run the actual flow once — type-checking and unit tests verify code correctness, not feature correctness.
+- When you can't run something locally (missing creds, missing cluster, restricted environment), say so explicitly and ask the user to verify rather than asserting it works.
+
+### Manager-owned docs
+
+The following files are owned by the project manager and **must not be edited unilaterally**:
+
+- `docs/spec/PROJECT_PLAN.md`
+- `docs/spec/ARCHITECTURE.md`
+- `docs/spec/SOFTWARE_SPEC.md`
+- `CLAUDE.md` (this file)
+
+If you spot a factual error, naming inconsistency, broken example, or stale claim, **flag it to the user and ask for confirmation** before patching. Embedding learnings into PROJECT_PLAN follow-up notes (`> **Follow-up (post-merge):** …`) is encouraged once the user agrees, and is the canonical channel for "I learned X while implementing Y".
+
+Between P0-0 and P9-5, edits are append-only — never delete existing prose; add new sections / extend existing checklists.
+
+### Writing rules — don't propagate behavioral claims
+
+The spec sometimes carries assertions about how operators / customers / publishers tend to behave (e.g. "customers often reuse the same value", "publishers typically …"). These are historical context, **not verified facts**. Do NOT propagate such claims into user-facing surfaces:
+
+- READMEs
+- `.env.example` and other config templates
+- Error messages and CLI output
+- Code comments
+- Commit messages and PR descriptions
+
+Stick to what is structurally true (field names, schema relationships, observable behavior). If the spec text needs to be cited, link to it; don't paraphrase the behavioral claim.
+
+---
+
 ## How to Add...
 
 ### A New CRD
@@ -278,7 +328,12 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
 5. Create `pkg/<integration>/errors.go` — sentinel errors (`ErrUnreachable`, `ErrNotFound`, `ErrUnauthorized`).
 6. Wire credentials: integration receives a `Settings(s EngineSettings)` push from `SettingsReconciler.applySettingsToEngines` — never reads K8s Secrets directly. See `ARCHITECTURE.md §6.2 EngineSettings` and §8.2.1.
 7. Wire instance in `cmd/operator/main.go` and inject into the consuming controller(s) via the port type, never the concrete struct.
-8. Forbidden: importing `api/v1alpha1`, calling `client.Client` directly, reading Secrets directly, hardcoding hostnames (read from `EngineSettings.RegistryEndpoints`).
+8. **Verification ergonomics** — ship the same trio every external integration ships, so every package can be probed with one command:
+   - `pkg/<integration>/example_test.go` — `Example_<X>` with a deterministic `// Output:` block exercising the happy path against an in-process stub. Doubles as `make verify-<integration>-mock`.
+   - `pkg/<integration>/live_test.go` — `//go:build live`, calls the real upstream when env vars are set, skips otherwise. Asserts only that the auth handshake + happy path complete; entry counts are informational. Doubles as `make verify-<integration>-live`. Caught a real auth-scheme bug on P2-1 (HTTP Basic vs OCI Bearer) — this isn't optional.
+   - Makefile targets `test-<integration>` / `verify-<integration>-mock` / `verify-<integration>-live` mirroring the existing `nim` and `appco` trios.
+   - `.env.example` entry for each new env var the live target consumes (Makefile auto-loads `.env`; see top of `Makefile`). Use **dedicated** env-var names per upstream service (don't reuse `SUSE_REG_*` for an unrelated upstream just because the spec hints customers might).
+9. Forbidden: importing `api/v1alpha1`, calling `client.Client` directly, reading Secrets directly, hardcoding hostnames (read from `EngineSettings.RegistryEndpoints`).
 
 **Checklist:**
 - [ ] `interface.go` is free of `api/v1alpha1` imports
@@ -289,6 +344,10 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
 - [ ] Credentials arrive via `UpdateSettings`, not via direct Secret reads
 - [ ] Hostnames sourced from `EngineSettings.RegistryEndpoints`, never literals
 - [ ] Consuming controller depends on the interface, not the struct
+- [ ] `Example_<X>` exists with a deterministic `// Output:` check (verify-mock target works)
+- [ ] `live_test.go` exists with `//go:build live` and skips cleanly without creds (verify-live target works)
+- [ ] Makefile `test-<integration>` / `verify-<integration>-mock` / `verify-<integration>-live` targets added to `.PHONY` and present in the file
+- [ ] `.env.example` lists the live target's env vars with a comment pointing at the upstream service
 
 ---
 
@@ -346,7 +405,7 @@ Between P0-0 and P9-5, all edits are append-only. P9-5 is the only story allowed
 
 ---
 
-**End of CLAUDE.md** — 274 lines
+**End of CLAUDE.md** — ~447 lines (P9-5 will prune to <400)
 
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
