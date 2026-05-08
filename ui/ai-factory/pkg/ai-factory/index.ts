@@ -1,6 +1,6 @@
 import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
-import * as productModule from './config/product';
+import * as productModule from './config/aif-product';
 import routes from './routing';
 import './style/brand.css';
 
