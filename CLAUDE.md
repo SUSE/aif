@@ -236,7 +236,7 @@ Stick to what is structurally true (field names, schema relationships, observabl
 2. Add `+kubebuilder:object:root=true`, `+kubebuilder:subresource:status`, `+kubebuilder:printcolumn` markers
 3. Use `[]metav1.Condition` for status, typed enums for phases
 4. Run `make manifests generate` to produce CRD YAML and deepcopy
-5. Create controller in `internal/controller/{kind}_controller.go`
+5. Create controller in `internal/controller/{kind}_controller.go` following [docs/dev/controller-guide.md](docs/dev/controller-guide.md)
 6. Register controller in `cmd/operator/main.go` manager setup
 7. Add REST endpoints in `internal/api/{resource}.go`
 8. Register routes in `internal/manager/routes.go`
@@ -247,6 +247,9 @@ Stick to what is structurally true (field names, schema relationships, observabl
 - [ ] Controller reconciles with finalizer `ai.suse.com/cleanup`
 - [ ] Condition Types use constants from `pkg/conditions/types.go`
 - [ ] REST endpoints registered in routes.go (not main.go)
+- [ ] Controller follows reconciler skeleton from [controller-guide.md](docs/dev/controller-guide.md)
+- [ ] RBAC markers present (resource, status, finalizers, events)
+- [ ] Test file with envtest scaffold (see controller-guide.md §7)
 
 ### A New REST Endpoint
 
@@ -360,7 +363,7 @@ Stick to what is structurally true (field names, schema relationships, observabl
 | REST API contracts | §5 REST API Contract | P1-10, P3-2..P3-6, P4-2, P5-3 | — |
 | Go package architecture | §6 Go Package Architecture | P4-1, P5-1, P5-2 | — |
 | UI extension structure | §7 UI Extension Architecture | P6-0..P6-10 | — |
-| Controller design | §8 Controller Design | P1-6, P1-7, P1-8 | — |
+| Controller design | §8 Controller Design, [controller-guide.md](docs/dev/controller-guide.md) | P1-6, P1-7, P1-8, P1-9 | — |
 | Helm charts | §9 Helm Chart Specifications | P0-3, P0-6, P0-7 | — |
 | Security & RBAC | §10 Security Architecture | P7-1, P7-2, P7-3, P7-4, P7-5 | SOFTWARE_SPEC §2 Personas |
 | Observability | §11 Observability | P8-1, P8-2, P8-3 | — |
