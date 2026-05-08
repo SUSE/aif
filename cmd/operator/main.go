@@ -24,11 +24,10 @@ import (
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/source_collection"
 	"github.com/SUSE/aif/pkg/workload"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -161,7 +160,7 @@ func main() {
 	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 
 	publishRecorder := &k8sEventRecorder{
-		recorder: mgr.GetEventRecorderFor("publish-workflow"),
+		recorder: mgr.GetEventRecorder("publish-workflow"),
 		getter:   bundleRepo.Get,
 	}
 
@@ -255,7 +254,7 @@ func main() {
 // k8sEventRecorder adapts the controller-runtime event recorder to the
 // publish.EventRecorder port, keeping pkg/publish free of K8s types.
 type k8sEventRecorder struct {
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 	getter   func(ctx context.Context, ns, name string) (*aifv1alpha1.Bundle, error)
 }
 
@@ -265,7 +264,7 @@ func (r *k8sEventRecorder) BundleSubmitted(ctx context.Context, namespace, name,
 		slog.Default().Warn("failed to get bundle for event recording", "error", err, "namespace", namespace, "name", name)
 		return
 	}
-	r.recorder.Eventf(obj, corev1.EventTypeNormal, "BundleSubmitted", "Bundle submitted by %s with proposed version %s", user, version)
+	r.recorder.Eventf(obj, nil, "Normal", "BundleSubmitted", "Submit", "Bundle submitted by %s with proposed version %s", user, version)
 }
 
 func setupLogger(level, format string) *slog.Logger {
