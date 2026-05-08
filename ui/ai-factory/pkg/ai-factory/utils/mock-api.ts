@@ -24,4 +24,6 @@ export const mockAPI = {
   }
 };
 
+// VueCLI's DefinePlugin inlines process.env.USE_MOCK_API at build time — this is not a runtime toggle.
+// Set USE_MOCK_API=true in the build environment to enable; the value is frozen into the bundle.
 export const USE_MOCK_API = process.env.USE_MOCK_API === 'true';
