@@ -17,3 +17,6 @@ var ErrUpstreamUnavailable = errors.New("source_collection: upstream unavailable
 
 // ErrVersionNotFound is returned when a requested chart version does not exist.
 var ErrVersionNotFound = errors.New("source_collection: version not found")
+
+// ErrNotConfigured is returned when APIURL has not been set via UpdateSettings.
+var ErrNotConfigured = errors.New("source_collection: client not configured (APIURL is required)")

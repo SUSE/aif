@@ -19,6 +19,24 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
+func TestList_NotConfigured(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	_, err := c.List(context.Background())
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected ErrNotConfigured, got: %v", err)
+	}
+}
+
+func TestGetChart_NotConfigured(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	c := NewClient(logger)
+	_, err := c.GetChart(context.Background(), "", "ollama", "0.4.1")
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected ErrNotConfigured, got: %v", err)
+	}
+}
+
 func TestFakeClient_ImplementsClient(t *testing.T) {
 	var _ Client = &FakeClient{}
 }

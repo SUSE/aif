@@ -13,6 +13,7 @@ import (
 	"time"
 
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
+	"github.com/SUSE/aif/internal/api"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
@@ -97,11 +98,6 @@ func main() {
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
 	appsCatalog.AddSource(apps.NewNVIDIASource(nvidiaDiscovery, logger, catalogRefreshDuration))
 	appsCatalog.AddSource(apps.NewAppCoSource(appcoClient, logger, catalogRefreshDuration))
-	// Note: appsCatalog.Start(ctx) is invoked alongside the
-	// controller-runtime manager start, below, so it shares the
-	// signal-driven cancellation lifecycle.
-
-	bundleManager := bundle.New(logger)
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
 	// after ctrl.NewManager below (they need the manager's client). Defer
@@ -117,9 +113,7 @@ func main() {
 		"nvidiaDiscovery", nvidiaDiscovery != nil,
 		"nvidiaDeployer", nvidiaDeployer != nil,
 		"appsCatalog", appsCatalog != nil,
-		"bundleManager", bundleManager != nil,
 		"blueprintManager", blueprintManager != nil,
-		"publishWorkflow", publishWorkflow != nil,
 		"workloadManager", workloadManager != nil,
 	)
 
@@ -148,7 +142,6 @@ func main() {
 		MetricsAddr:      metricsBindAddress,
 		HealthAddr:       healthProbeBindAddress,
 		WebhookPort:      parsePort(webhookBindAddress),
-		BundleManager:    bundleManager,
 		BlueprintManager: blueprintManager,
 		HelmEngine:       helmEngine,
 		Discovery:        discoveryClient,
@@ -160,13 +153,14 @@ func main() {
 	}
 	logger.Info("Manager created successfully")
 
-	// Construct the publish.Workflow now that the controller-runtime client
-	// is available (Repositories need it). The workflow has no consumer yet —
-	// REST handlers in P3-x will pick it up via manager.Register. AllowAllAuthorizer
-	// is a stub until pkg/authz lands a SubjectAccessReview-backed impl.
+	// Construct Repository ports now that the controller-runtime client is
+	// available. Shared instances avoid duplicate allocations.
+	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
+	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
+
 	publishWorkflow = publish.New(publish.Deps{
-		Bundles:    bundle.NewK8sRepository(mgr.GetClient()),
-		Blueprints: blueprint.NewK8sRepository(mgr.GetClient()),
+		Bundles:    bundleRepo,
+		Blueprints: blueprintRepo,
 		Authz:      publish.AllowAllAuthorizer{},
 		Logger:     logger,
 	})
@@ -182,9 +176,11 @@ func main() {
 		"ready", publishWorkflow != nil,
 	)
 
+	publishHandler := api.NewPublishHandler(publishWorkflow, logger)
+
 	// Setup API server
 	mux := http.NewServeMux()
-	manager.Register(mux, logger, allowedOrigin)
+	manager.Register(mux, logger, allowedOrigin, publishHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,

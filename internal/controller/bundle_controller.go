@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
-	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/SUSE/aif/pkg/conditions"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +23,6 @@ type BundleReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
-	Manager  bundle.Manager
 }
 
 // +kubebuilder:rbac:groups=ai.suse.com,resources=bundles,verbs=get;list;watch;create;update;patch;delete
@@ -90,28 +88,8 @@ func (r *BundleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *BundleReconciler) reconcile(ctx context.Context, bundleCR *aifv1.Bundle) error {
 	logger := log.FromContext(ctx)
 
-	// Convert CR to domain model
-	domainBundle := bundle.BundleFromCR(bundleCR)
-
-	// Validate via Manager
-	if err := r.Manager.Upsert(ctx, domainBundle); err != nil {
-		// Validation failed - set Ready=False
-		r.setCondition(bundleCR, metav1.Condition{
-			Type:               conditions.TypeReady,
-			Status:             metav1.ConditionFalse,
-			Reason:             conditions.ReasonInvalidSpec,
-			Message:            fmt.Sprintf("Validation failed: %v", err),
-			ObservedGeneration: bundleCR.Generation,
-		})
-		r.Recorder.Eventf(bundleCR, nil, "Warning", conditions.ReasonInvalidSpec, conditions.ActionValidating, err.Error())
-		bundleCR.Status.ObservedGeneration = bundleCR.Generation
-		return nil // Don't requeue - user must fix spec
-	}
-
-	// Check for partial approval and heal if needed (ARCHITECTURE.md §6.5.2)
 	r.checkAndHealPartialApproval(ctx, bundleCR)
 
-	// Validation passed - set Ready=True
 	r.setCondition(bundleCR, metav1.Condition{
 		Type:               conditions.TypeReady,
 		Status:             metav1.ConditionTrue,

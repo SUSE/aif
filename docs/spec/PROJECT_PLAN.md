@@ -1116,6 +1116,9 @@ grep -E '/api/v1/(ngc|nvidia/(mirror|aicr|models/sync))' internal/api/nvidia.go 
   - Record event `BundleSubmitted`
 - [ ] HTTP integration test covering both Draft→Submitted and ChangesRequested→Submitted
 
+**Deferred from P3-1 review:**
+- Wrap publish routes through the middleware chain (CORS, RequestID, Logging, Metrics). Currently `PublishHandler.Register()` registers routes on the bare mux, bypassing the `api.Chain` applied to other endpoints.
+
 **Validation:**
 ```bash
 go test ./internal/api/ -run TestSubmit -v
@@ -1757,6 +1760,11 @@ go test ./pkg/source_collection/ -v
 
 **Agent Prompt:**
 > Implement the three discovery modes in `pkg/source_collection/client.go`. Read `Settings.spec.catalogDiscovery.applicationCollectionMode` (passed through SettingsReconciler) at sync time. For `api`, behave as today. For `registry-fallback`, wrap the existing API call in error handling: on connection error or HTTP 5xx, list the OCI catalog at the configured endpoint and return a degraded App list (only fields derivable from chart metadata). For `disabled`, skip the API entirely. Log mode transitions clearly. Add the metric. Tests cover all three modes with httptest + in-memory OCI catalog. Done when the test suite passes and the metric is observable.
+
+**Deferred from P2-1 / P3-1 review:**
+- Add `io.LimitReader(resp.Body, maxResponseBytes)` before `json.NewDecoder` in `fetchAndDecode` and `fetchAndDecodeVersions` to prevent OOM from unbounded upstream responses.
+- Add retry logic to `GetChart` / `fetchAndDecodeVersions` (currently only `List` retries via `doGet`).
+- Add a `maxPages` safety cap to the pagination loops in `List` and `GetChart` to prevent infinite loops from a misbehaving upstream.
 
 ---
 

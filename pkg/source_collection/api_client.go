@@ -13,11 +13,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const (
-	defaultAPIURL  = "https://api.apps.rancher.io"
-	defaultOCIHost = "dp.apps.rancher.io"
-)
-
 type apiClient struct {
 	httpClient *http.Client
 	limiter    *rate.Limiter
@@ -42,22 +37,20 @@ func (c *apiClient) UpdateSettings(s EngineSettings) {
 	c.settings = s
 }
 
-// effectiveSettings returns a copy of the current settings with defaults applied.
-func (c *apiClient) effectiveSettings() EngineSettings {
+func (c *apiClient) effectiveSettings() (EngineSettings, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	s := c.settings
-	if s.APIURL == "" {
-		s.APIURL = defaultAPIURL
+	if c.settings.APIURL == "" {
+		return EngineSettings{}, ErrNotConfigured
 	}
-	if s.OCIHost == "" {
-		s.OCIHost = defaultOCIHost
-	}
-	return s
+	return c.settings, nil
 }
 
 func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
-	settings := c.effectiveSettings()
+	settings, err := c.effectiveSettings()
+	if err != nil {
+		return nil, err
+	}
 	nextURL := settings.APIURL + "/v1/applications?packaging_format=HELM_CHART"
 	seen := make(map[string]struct{})
 	var apps []CatalogApp
@@ -163,7 +156,10 @@ func (c *apiClient) fetchAndDecode(ctx context.Context, settings EngineSettings,
 // which is handled by the consuming code in P2-5 — this method returns only
 // what the /versions API endpoint provides.
 func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*ChartMetadata, error) {
-	settings := c.effectiveSettings()
+	settings, err := c.effectiveSettings()
+	if err != nil {
+		return nil, err
+	}
 	nextURL := settings.APIURL + "/v1/applications/" + chart + "/versions"
 
 	for nextURL != "" {
