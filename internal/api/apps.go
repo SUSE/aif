@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -30,8 +32,8 @@ func NewAppsHandler(catalog apps.Catalog, logger *slog.Logger) *AppsHandler {
 // `/{id...}` wildcard so it wins for that exact path.
 func (h *AppsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/apps", h.list)
-	// Layer 3 will add: GET /api/v1/apps/{id...}
-	// Layer 4 will add: GET /api/v1/apps/categories
+	// Layer 4 will add: GET /api/v1/apps/categories (registered BEFORE the wildcard)
+	mux.HandleFunc("GET /api/v1/apps/{id...}", h.get)
 }
 
 // list serves GET /api/v1/apps. Query params:
@@ -75,9 +77,44 @@ func parseIncludeReferenceBlueprints(r *http.Request) bool {
 	return r.URL.Query().Get("includeReferenceBlueprints") == "true"
 }
 
+// get serves GET /api/v1/apps/{id...}. The wildcard pattern captures
+// the namespaced ID including the '/' separator
+// (e.g. "nvidia/nim-llm:1.0.0"). Returns the single App regardless of
+// the includeReferenceBlueprints flag (per ARCHITECTURE.md §5: "Single
+// app (returned regardless of referenceBlueprint flag)").
+//
+// Error mapping (catalog → API):
+//
+//	apps.ErrAppNotFound    → 404 NOT_FOUND
+//	apps.ErrUnknownSource  → 400 INVALID_INPUT
+//	other                  → 500 INTERNAL_ERROR
+func (h *AppsHandler) get(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	app, err := h.catalog.Get(r.Context(), id)
+	if err != nil {
+		writeError(w, errorStatus(mapCatalogErr(err, id)), mapCatalogErr(err, id))
+		return
+	}
+	writeJSON(w, http.StatusOK, app)
+}
+
+// mapCatalogErr translates pkg/apps sentinels into the api package's
+// sentinels so writeError + errorStatus + errorCode classify them
+// correctly. Unknown errors fall through unchanged (default → 500).
+func mapCatalogErr(err error, id string) error {
+	switch {
+	case errors.Is(err, apps.ErrAppNotFound):
+		return fmt.Errorf("%w: app %q", ErrNotFound, id)
+	case errors.Is(err, apps.ErrUnknownSource):
+		return fmt.Errorf("%w: id %q has unknown source prefix", ErrInvalidInput, id)
+	default:
+		return err
+	}
+}
+
 // Compile-time guard: AppsHandler satisfies api.Handler.
 var _ Handler = (*AppsHandler)(nil)
 
-// _ is an intentional reference to context to silence the unused-import
-// linter when only Layer 2 is wired; Layers 3/4 add real ctx use.
+// keep context import live (used via r.Context() in handlers; explicit
+// reference for clarity).
 var _ = context.Background

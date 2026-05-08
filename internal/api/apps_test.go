@@ -218,3 +218,85 @@ func TestAppsHandler_List_EmptyResult_SerializesAsEmptyArray(t *testing.T) {
 		t.Errorf("empty list serialized as %q, want %q", body, "[]")
 	}
 }
+
+// --- GET /api/v1/apps/{id...}: happy path ---
+
+func TestAppsHandler_Get_HappyPath_Returns200AndApp(t *testing.T) {
+	want := apps.App{
+		ID: "nvidia/nim-llm:1.0.0", Name: "nim-llm", Source: "nvidia",
+	}
+	cat := &fakeCatalog{getResult: want}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia/nim-llm:1.0.0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got apps.App
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, rec.Body.String())
+	}
+	if got.ID != want.ID || got.Name != want.Name || got.Source != want.Source {
+		t.Errorf("Get response = %+v, want %+v", got, want)
+	}
+}
+
+// --- GET /api/v1/apps/{id...}: namespaced ID with slash routes correctly ---
+
+func TestAppsHandler_Get_NamespacedID_RoutedToCatalog(t *testing.T) {
+	cat := &fakeCatalog{getResult: apps.App{ID: "suse/ollama:0.4.1", Source: "suse"}}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/suse/ollama:0.4.1", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- GET /api/v1/apps/{id...}: ErrAppNotFound → 404 NOT_FOUND ---
+
+func TestAppsHandler_Get_AppNotFound_Returns404(t *testing.T) {
+	cat := &fakeCatalog{getErr: apps.ErrAppNotFound}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia/does-not-exist:9.9.9", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	var apiErr APIError
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal APIError: %v\nbody=%s", err, rec.Body.String())
+	}
+	if apiErr.Code != ErrCodeNotFound {
+		t.Errorf("error code = %q, want %q", apiErr.Code, ErrCodeNotFound)
+	}
+}
+
+// --- GET /api/v1/apps/{id...}: ErrUnknownSource → 400 INVALID_INPUT ---
+
+func TestAppsHandler_Get_UnknownSource_Returns400(t *testing.T) {
+	cat := &fakeCatalog{getErr: apps.ErrUnknownSource}
+	h := newAppsHandlerForTest(cat)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/mystery/whatever:1.0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	var apiErr APIError
+	_ = json.Unmarshal(rec.Body.Bytes(), &apiErr)
+	if apiErr.Code != ErrCodeInvalidInput {
+		t.Errorf("error code = %q, want %q", apiErr.Code, ErrCodeInvalidInput)
+	}
+}
