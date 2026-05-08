@@ -938,15 +938,55 @@ go test ./pkg/source_collection/ -v
 **Effort:** M
 **Depends On:** P2-1, P2-2
 **Parallelizable With:** P2-4, P2-6
-**Done When:** `appsCatalog.List(opts)` returns the unified catalog; `appsCatalog.Get(id)` returns a single App.
+**Done When:** `pkg/apps.Catalog.List(ctx, opts)` returns the unified, deduplicated, namespaced-id catalog; `Get(ctx, id)` dispatches to the matching Source; per-Source background refresh keeps the in-adapter caches fresh; partial Source failure does not block reads (stale-but-good).
 
 **Acceptance Criteria:**
-- [ ] `pkg/apps/catalog.go` implements `Catalog` interface
-- [ ] `pkg/apps` defines a canonical `App` value type (per `ARCHITECTURE.md §5 Apps`) and a `Source` port (`Name() string`, `List(ctx) ([]App, error)`) that both upstream catalogs implement
-- [ ] **Adapter pattern (hexagonal):** `pkg/nvidia.Discovery` and `pkg/source_collection.Client` are wrapped by thin adapters in `pkg/apps` (`NVIDIASource`, `AppCoSource`) that translate native types (`NIMEntry`, `CatalogApp`) to the canonical `App`. The source packages keep their rich source-specific surface (`Discovery.Get`, `Discovery.Refresh`, `Client.GetChart`) and remain unaware of `pkg/apps` — translation lives at the integration boundary, not inside the domain packages
-- [ ] `Catalog.List(opts)` aggregates `[]App` from every registered `Source`; deduplicated and sorted by ID
-- [ ] Filtering: `?source=nvidia|suse|all`, `?category=`
-- [ ] Background refresh goroutine respecting root context, calling each `Source.List` on the `--catalog-refresh` cadence
+
+*Ports & types*
+- [ ] `pkg/apps/interface.go` defines two ports, each ≤4 methods (ISP):
+  - `Catalog`: `List(ctx, ListOpts) ([]App, error)` · `Get(ctx, id) (App, error)` · `Refresh(ctx) error` · `UpdateSettings(EngineSettings)`
+  - `Source`:  `Name() string` · `List(ctx) ([]App, error)` · `Refresh(ctx) error` · `UpdateSettings(EngineSettings)`
+- [ ] `pkg/apps/types.go` defines the canonical `App` value type matching `ARCHITECTURE.md §5 Apps` shape, plus `ListOpts{Source, Category}`, composite `EngineSettings{SUSERegistry{Endpoint,Username,Token}, ApplicationCollection{APIURL,OCIHost,Username,Token}, RefreshInterval}`, and `SourceStatus{LastSuccessAt, LastError, EntryCount}`.
+- [ ] `pkg/apps/errors.go` declares `ErrAppNotFound`, `ErrUnknownSource` (consumers branch via `errors.Is`).
+
+*Hexagonal adapters (one file per adapter)*
+- [ ] `pkg/apps/nvidia_source.go` — `NVIDIASource` wraps `*nvidia.Discovery`, owns its own cache + ticker goroutine, translates `NIMEntry → App` with **namespaced ID** `nvidia/<chart>:<version>`. Translation is the only file in `pkg/apps` that imports `pkg/nvidia`.
+- [ ] `pkg/apps/appco_source.go` — `AppCoSource` wraps `source_collection.Client`, owns its own cache + ticker goroutine, translates `CatalogApp → App` with **namespaced ID** `suse/<slug>:<latestVersion>`. Translation is the only file in `pkg/apps` that imports `pkg/source_collection`.
+- [ ] `pkg/nvidia` and `pkg/source_collection` MUST NOT gain any import of `pkg/apps` — translation lives at the integration boundary (per CLAUDE.md hexagonal rule and the Option B decision in PR #10).
+
+*Catalog behavior*
+- [ ] `pkg/apps/catalog.go` `catalogImpl` holds `[]Source` (added via `*catalogImpl.AddSource(s)` struct method called from `cmd/operator/main.go`; not part of the public `Catalog` interface).
+- [ ] `Catalog.List(ctx, opts)` fans out to every registered Source's cached `List()`, concatenates, **deduplicates by `App.ID`**, sorts by ID, applies `opts.Source` filter (`""` = all, otherwise match `App.Source`) and `opts.Category` filter (exact match against `App.Categories`).
+- [ ] **Stale-but-good (decision b):** `List` does NOT call `Source.Refresh`; it only reads each adapter's cache. If an adapter's last refresh failed, its cache holds the previous successful result; List logs a warn and serves it. The full call only fails if every adapter has never had a successful refresh.
+- [ ] `Catalog.Get(ctx, id)` parses the namespace prefix (`nvidia/...` | `suse/...`), dispatches to that Source's cache; returns `ErrAppNotFound` if absent, `ErrUnknownSource` if the prefix is unrecognized.
+- [ ] `Catalog.Refresh(ctx)` fans out to every Source's `Refresh`; partial failure is logged but non-fatal (returns the first error only if ALL sources failed).
+- [ ] `Catalog.UpdateSettings(s EngineSettings)` fans out — each adapter's `UpdateSettings` slices `s` into the engine-native shape (`nvidia.EngineSettings` / `source_collection.EngineSettings`) and forwards to its underlying engine.
+- [ ] `*catalogImpl.Start(ctx)` starts every adapter's per-Source ticker goroutine; goroutines exit on `ctx.Done()`. Each adapter's ticker cadence comes from `EngineSettings.RefreshInterval` (default 10m).
+
+*Verification ergonomics (per CLAUDE.md "A New External Integration" pattern, applied to a composite catalog)*
+- [ ] `pkg/apps/example_test.go` — `Example_catalog` builds a Catalog with two fake Sources, demonstrates the unified List + namespaced IDs, deterministic `// Output:`. Doubles as `make verify-apps-mock`.
+- [ ] `pkg/apps/live_test.go` — `//go:build live`, builds a Catalog with real `NVIDIASource` and `AppCoSource`, refreshes, lists; asserts the call completes without error and reports counts informationally. Doubles as `make verify-apps-live`. Reuses `SUSE_REG_*` and `SUSE_APPCO_*` env vars from `.env`.
+- [ ] `Makefile` adds `test-apps` / `verify-apps-mock` / `verify-apps-live` to `.PHONY` and as targets.
+
+*Wiring*
+- [ ] `cmd/operator/main.go` constructs `pkg/apps.NewCatalog`, wraps the existing `*nvidia.Discovery` and `source_collection.Client` instances via `NVIDIASource` / `AppCoSource` adapters, registers them with `AddSource`, and starts the lifecycle. (SettingsReconciler integration with `Catalog.UpdateSettings` waits for P5-4.)
+
+*Forbidden*
+- [ ] No new `pkg/{nvidia,source_collection}` → `pkg/apps` import (verified by grep guard in `make lint` follow-up, or manual at PR review).
+- [ ] No `strings.Contains` on error messages anywhere in `pkg/apps` (sentinel errors + `errors.Is` only).
+
+**Validation:**
+```bash
+make test-apps                       # unit tests across all layers
+make verify-apps-mock                # Example_catalog deterministic output check
+make verify-apps-live                # live registry.suse.com + api.apps.rancher.io (requires SUSE_REG_* + SUSE_APPCO_*)
+golangci-lint run --concurrency=1 ./pkg/apps/...   # 0 issues
+grep -rE 'pkg/apps' pkg/nvidia/ pkg/source_collection/ && echo FAIL || echo PASS
+grep -rE 'strings\.Contains.*err\.Error' pkg/apps/ && echo FAIL || echo PASS
+```
+
+**Agent Prompt:**
+> Implement `pkg/apps/` per the file layout above. The package owns the canonical `App` type, the `Catalog` and `Source` ports, and two adapters (`NVIDIASource`, `AppCoSource`) that wrap `pkg/nvidia.Discovery` and `pkg/source_collection.Client` respectively. **Strict hexagonal:** translation `NIMEntry → App` and `CatalogApp → App` lives ONLY in the adapter files; the underlying source packages must not learn about `pkg/apps`. Each adapter owns its own cache and its own ticker goroutine (decision e: per-Source tickers); `Catalog.Start(ctx)` kicks them off. App IDs are namespaced (`nvidia/<chart>:<version>`, `suse/<slug>:<version>`) so dedupe and source-routing are mechanical. `Catalog.List` is stale-but-good (decision b): it never calls Refresh, only reads adapter caches; a failed refresh leaves the previous result in place. `Catalog.AddSource` is a struct method (decision d: registry pattern, not constructor injection). `Catalog.UpdateSettings` fans out to each adapter, which slices the composite `EngineSettings` into its engine-native shape (decision f). Ship the standard verification trio: `Example_catalog`, `//go:build live` test, three Makefile targets. Done when all five validation commands pass.
 
 > **Naming reconciliation:** the bullet above replaces the older draft that said "Pulls NIMs from `nvidia.NIMDiscovery.List()`" — `pkg/nvidia` exposes `Discovery.Index(ctx) ([]NIMEntry, error)` (named per `ARCHITECTURE.md §6.2`, landed in P2-1), not `NIMDiscovery.List`. The translation `[]NIMEntry → []App` happens inside `pkg/apps.NVIDIASource.List`.
 
