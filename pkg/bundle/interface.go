@@ -2,14 +2,15 @@ package bundle
 
 import "context"
 
-// Manager handles Bundle business logic and in-memory caching
 type Manager interface {
-	// Upsert validates and stores a Bundle in the in-memory cache
-	// Returns error if validation fails
-	Upsert(ctx context.Context, b Bundle) error
-
-	// Get retrieves a Bundle from cache (for self-healing logic)
-	Get(ctx context.Context, namespace, name string) (Bundle, bool)
+	Create(ctx context.Context, b Bundle) (Bundle, error)
+	Get(ctx context.Context, ns, name string) (Bundle, error)
+	List(ctx context.Context, opts ListOptions) ([]Bundle, error)
+	Update(ctx context.Context, b Bundle) (Bundle, error)
+	Delete(ctx context.Context, ns, name string) error
+	ListPendingReview(ctx context.Context) ([]Bundle, error)
 }
 
-// Note: P3-1 will expand this interface with Create, List, Update, Delete, ListPendingReview
+type ListOptions struct {
+	Namespace string
+}
