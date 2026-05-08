@@ -1942,6 +1942,8 @@ curl -X POST http://localhost:8080/api/v1/settings/test-connection | jq
 - [ ] `config/aif-product.js` per §7.3 (registers `BUNDLE`, `BLUEPRINT`, `WORKLOAD`, plus virtual types `OVERVIEW`, `APPS`, `PENDING_REVIEWS`)
 - [ ] Build succeeds; sidebar product loads in Rancher
 
+> **Follow-up (post-merge):** P6-1 implementation diverged from the original §7.3 spec in three ways now reconciled in ARCHITECTURE.md: (1) `isMultiClusterApp: true` added to `product()` — required for sidebar visibility when `inStore` is not `'management'` (TopLevelMenu.vue:148 filters on this flag); (2) `CRD_TYPES.SETTINGS` added to `basicType([...])` so the singleton Settings CR is discoverable via the Steve store; (3) `isRemovable` corrected to `false` for Blueprint (publish-by-approval lifecycle only) and Workload (Uninstall action in P6-6, not raw delete), and to `false` for Settings (operator-managed singleton). Bundle retains `isRemovable: true` per spec §8.2 "Delete: available in any state". All seven nav pages (including `BLUEPRINTS`, `BUNDLES`, `WORKLOADS`, `SETTINGS`) are registered as `virtualType` entries; `PENDING_REVIEWS` was the only virtual type in the original spec sketch.
+
 ---
 
 **ID:** P6-2

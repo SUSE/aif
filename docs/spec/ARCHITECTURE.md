@@ -1933,23 +1933,32 @@ export function init(store, $plugin) {
     $plugin.DSL(store, AIF);
 
   product({
-    inStore: 'aif',
-    icon: 'ai-factory',
-    weight: 100,
-    showNamespaceFilter: true,
-    removable: false,
-    to: { name: `${AIF}-c-cluster-resource`, params: { resource: AIF_TYPES.BUNDLE } }
+    inStore:             'aif',
+    icon:                'ai-factory',
+    isMultiClusterApp:   true,
+    showClusterSwitcher: false,
+    weight:              100,
+    to: { name: `${AIF}-c-cluster-${AIF_TYPES.OVERVIEW}` }
   });
 
-  basicType([AIF_TYPES.BUNDLE, AIF_TYPES.BLUEPRINT, AIF_TYPES.WORKLOAD]);
+  basicType([AIF_TYPES.BUNDLE, AIF_TYPES.BLUEPRINT, AIF_TYPES.WORKLOAD, AIF_TYPES.SETTINGS]);
 
-  virtualType({ name: AIF_TYPES.OVERVIEW, labelKey: 'aif.nav.overview',         weight: 200, route: { name: `${AIF}-c-cluster-overview` }         });
-  virtualType({ name: AIF_TYPES.APPS,     labelKey: 'aif.nav.apps',             weight: 190, route: { name: `${AIF}-c-cluster-apps` }             });
-  virtualType({ name: AIF_TYPES.PENDING_REVIEWS, labelKey: 'aif.nav.pendingReviews', weight: 180, route: { name: `${AIF}-c-cluster-pending-reviews` } });
+  virtualType({ name: AIF_TYPES.OVERVIEW,        labelKey: 'aif.nav.overview',       weight: 600, route: { name: `${AIF}-c-cluster-${AIF_TYPES.OVERVIEW}` }        });
+  virtualType({ name: AIF_TYPES.APPS,             labelKey: 'aif.nav.apps',           weight: 500, route: { name: `${AIF}-c-cluster-${AIF_TYPES.APPS}` }            });
+  virtualType({ name: AIF_TYPES.BLUEPRINTS,       labelKey: 'aif.nav.blueprints',     weight: 400, route: { name: `${AIF}-c-cluster-${AIF_TYPES.BLUEPRINTS}` }      });
+  virtualType({ name: AIF_TYPES.BUNDLES,          labelKey: 'aif.nav.bundles',        weight: 300, route: { name: `${AIF}-c-cluster-${AIF_TYPES.BUNDLES}` }         });
+  virtualType({ name: AIF_TYPES.WORKLOADS,        labelKey: 'aif.nav.workloads',      weight: 200, route: { name: `${AIF}-c-cluster-${AIF_TYPES.WORKLOADS}` }       });
+  virtualType({ name: AIF_TYPES.PENDING_REVIEWS,  labelKey: 'aif.nav.pendingReviews', weight: 150, route: { name: `${AIF}-c-cluster-${AIF_TYPES.PENDING_REVIEWS}` } });
+  virtualType({ name: AIF_TYPES.SETTINGS,         labelKey: 'aif.nav.settings',       weight: 100, route: { name: `${AIF}-c-cluster-${AIF_TYPES.SETTINGS}` }        });
 
-  configureType(AIF_TYPES.BUNDLE,    { isCreatable: true,  isEditable: true,  canYaml: true });
-  configureType(AIF_TYPES.BLUEPRINT, { isCreatable: false, isEditable: false, canYaml: true, isRemovable: true });
-  configureType(AIF_TYPES.WORKLOAD,  { isCreatable: false, isEditable: false, isRemovable: true });
+  // Bundles: author-created, directly deletable (spec §8.2 — "Delete: available in any state").
+  // Blueprints: minted by approval workflow; only Deprecate/Withdraw/Reactivate are valid lifecycle actions.
+  // Workloads: removed via a custom Uninstall action that cleans up K8s resources, not raw delete.
+  // Settings: singleton CR managed by the operator; no delete action in spec.
+  configureType(AIF_TYPES.BUNDLE,    { isCreatable: true,  isEditable: true,  isRemovable: true,  canYaml: true });
+  configureType(AIF_TYPES.BLUEPRINT, { isCreatable: false, isEditable: false, isRemovable: false, canYaml: true });
+  configureType(AIF_TYPES.WORKLOAD,  { isCreatable: false, isEditable: false, isRemovable: false });
+  configureType(AIF_TYPES.SETTINGS,  { isCreatable: false, isEditable: true,  isRemovable: false });
 
   // Bundle headers
   const BUNDLE_PHASE     = { name: 'phase',  labelKey: 'aif.tableHeaders.phase',  value: 'status.phase', formatter: 'BundlePhaseState',     width: 140 };
