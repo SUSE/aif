@@ -1116,6 +1116,9 @@ grep -E '/api/v1/(ngc|nvidia/(mirror|aicr|models/sync))' internal/api/nvidia.go 
   - Record event `BundleSubmitted`
 - [ ] HTTP integration test covering both Draft→Submitted and ChangesRequested→Submitted
 
+**Deferred from P3-1 review:**
+- Wrap publish routes through the middleware chain (CORS, RequestID, Logging, Metrics). Currently `PublishHandler.Register()` registers routes on the bare mux, bypassing the `api.Chain` applied to other endpoints.
+
 **Validation:**
 ```bash
 go test ./internal/api/ -run TestSubmit -v
