@@ -1,5 +1,5 @@
 import type { IPlugin } from '@shell/core/types';
-import { PRODUCT_NAME, BLANK_CLUSTER, PAGE_IDS } from './types';
+import { PRODUCT_NAME, BLANK_CLUSTER, PAGE_IDS, CRD_TYPES } from './types';
 
 const routeFor = (pageId: string) => ({
   name:   `${ PRODUCT_NAME }-c-cluster-${ pageId }`,
@@ -68,6 +68,10 @@ export function init($plugin: IPlugin, store: any): void {
 
   basicType(globalPages, 'Global');
   basicType(clusterPages, 'Clusters');
+
+  // Register CRD-backed types so the Steve store discovers and watches them.
+  // These are separate from the virtualType nav entries above.
+  basicType([CRD_TYPES.BUNDLE, CRD_TYPES.BLUEPRINT, CRD_TYPES.WORKLOAD]);
 
   weightGroup('Global', 1100, true);
   weightGroup('Clusters', 1000, true);

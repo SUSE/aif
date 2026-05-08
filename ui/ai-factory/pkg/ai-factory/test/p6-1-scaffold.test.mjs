@@ -45,6 +45,7 @@ test('P6-1 product registration exposes grouped navigation', () => {
   assert.match(source, /showClusterSwitcher:\s*false/);
   assert.match(source, /basicType\(globalPages,\s*'Global'\)/);
   assert.match(source, /basicType\(clusterPages,\s*'Clusters'\)/);
+  assert.match(source, /basicType\(\[CRD_TYPES\.BUNDLE,\s*CRD_TYPES\.BLUEPRINT,\s*CRD_TYPES\.WORKLOAD\]\)/);
   assert.match(source, /weightGroup\('Global',\s*1100,\s*true\)/);
   assert.match(source, /weightGroup\('Clusters',\s*1000,\s*true\)/);
 
