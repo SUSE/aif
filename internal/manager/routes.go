@@ -33,7 +33,7 @@ func Register(mux *http.ServeMux, logger *slog.Logger, allowedOrigin string, han
 	}))
 
 	for _, h := range handlers {
-		h.Register(mux)
+		h.Register(mux, chain)
 	}
 
 	logger.Info("HTTP routes registered")

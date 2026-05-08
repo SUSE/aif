@@ -3,5 +3,5 @@ package api
 import "net/http"
 
 type Handler interface {
-	Register(mux *http.ServeMux)
+	Register(mux *http.ServeMux, chain Middleware)
 }

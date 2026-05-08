@@ -16,11 +16,11 @@ type testHandler struct {
 	registered bool
 }
 
-func (h *testHandler) Register(mux *http.ServeMux) {
+func (h *testHandler) Register(mux *http.ServeMux, chain api.Middleware) {
 	h.registered = true
-	mux.HandleFunc("GET /api/v1/test-resource", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/test-resource", chain(func(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, http.StatusOK, map[string]string{"resource": "test"})
-	})
+	}))
 }
 
 func TestRoutes_MiddlewareStack(t *testing.T) {
