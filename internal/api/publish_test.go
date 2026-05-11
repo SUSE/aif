@@ -77,6 +77,13 @@ func testSubmittedBundle(ns, name string) *aifv1.Bundle {
 func testChangesRequestedBundle(ns, name string) *aifv1.Bundle {
 	b := testDraftBundle(ns, name)
 	b.Status.Phase = aifv1.BundlePhaseChangesRequested
+	b.Status.Submission = &aifv1.SubmissionStatus{
+		ProposedVersion:    "1.0.0",
+		ChangeDescription:  "initial release",
+		SubmittedBy:        "alice",
+		SubmittedAt:        metav1.Now(),
+		GenerationAtSubmit: b.Generation,
+	}
 	b.Status.Review = &aifv1.ReviewStatus{
 		ReviewerComment: "needs work",
 		ReviewedBy:      "reviewer",

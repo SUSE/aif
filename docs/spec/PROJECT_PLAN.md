@@ -1248,6 +1248,8 @@ go test ./internal/api/ -run TestSubmit -v
   - Record event `BundleWithdrawn`
 - [ ] HTTP integration test
 
+> **Follow-up (P3-3 withdraw ownership):** P3-3 does not enforce submitter-identity on withdraw — any authenticated user can withdraw any submission in a namespace they can reach. Decide in P7-x whether to add an ownership check (`user == submission.submittedBy`) or leave it to namespace-level RBAC.
+
 ---
 
 **ID:** P3-4

@@ -52,6 +52,13 @@ func draftBundle(ns, name string) *aifv1.Bundle {
 func changesRequestedBundle(ns, name string) *aifv1.Bundle {
 	b := draftBundle(ns, name)
 	b.Status.Phase = aifv1.BundlePhaseChangesRequested
+	b.Status.Submission = &aifv1.SubmissionStatus{
+		ProposedVersion:    "1.0.0",
+		ChangeDescription:  "initial release",
+		SubmittedBy:        "alice",
+		SubmittedAt:        metav1.Now(),
+		GenerationAtSubmit: b.Generation,
+	}
 	b.Status.Review = &aifv1.ReviewStatus{
 		ReviewerComment: "needs work",
 		ReviewedBy:      "reviewer",
@@ -276,6 +283,17 @@ func TestWithdraw_ConflictOnUpdate(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPublishConflict))
 	assert.Empty(t, rec.Events, "no event should be recorded on conflict")
+}
+
+func TestWithdraw_UserRequired(t *testing.T) {
+	repo := bundle.NewFakeRepository()
+	repo.Seed(submittedBundle("ns", "my-bundle"))
+	wf, _ := newTestWorkflow(repo)
+
+	_, err := wf.Withdraw(context.Background(), "ns", "my-bundle", "")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUserRequired), "got: %v", err)
 }
 
 // Keep the other ErrNotImplemented tests for methods not yet implemented.

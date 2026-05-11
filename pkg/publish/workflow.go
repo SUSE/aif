@@ -84,6 +84,10 @@ func (w *workflowImpl) Submit(ctx context.Context, namespace, name string, req S
 }
 
 func (w *workflowImpl) Withdraw(ctx context.Context, namespace, name string, user string) (bundle.Bundle, error) {
+	if user == "" {
+		return bundle.Bundle{}, fmt.Errorf("withdraw: %w", ErrUserRequired)
+	}
+
 	cr, err := w.deps.Bundles.Get(ctx, namespace, name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
