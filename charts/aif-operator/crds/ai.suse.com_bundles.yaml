@@ -322,17 +322,18 @@ spec:
                       description: StartedAt is when the test deploy started
                       format: date-time
                       type: string
-                    targetCluster:
-                      description: TargetCluster is the cluster ID where the test
+                    targetClusters:
+                      description: TargetClusters are the cluster IDs where the test
                         was deployed
-                      type: string
+                      items:
+                        type: string
+                      type: array
                     workloadRef:
                       description: WorkloadRef is the namespace/name of the test Workload
                       type: string
                   required:
                   - result
                   - startedAt
-                  - targetCluster
                   - workloadRef
                   type: object
                 maxItems: 10
