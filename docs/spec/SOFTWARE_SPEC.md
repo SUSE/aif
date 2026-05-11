@@ -35,12 +35,14 @@ SUSE AI Factory uses four nouns, each with a distinct role:
 
 | Noun | What it is | Mutability | Scope |
 |------|------------|------------|-------|
-| **App** | A building-block AI application (NIM model, vector database, LLM serving runtime, vendor-published Reference Blueprint chart, …) — anything packaged as a Helm chart in SUSE Registry or SUSE Application Collection | Immutable; sourced from the SUSE catalog | Catalog-wide |
-| **Bundle** | A workshop where an author composes Apps and existing Blueprints into a candidate AI stack | Mutable; owned by an author or small team | Namespaced |
-| **Blueprint** *(AIF Blueprint)* | A published, immutable, versioned AI stack tied to a use case (e.g., RAG, vision pipeline) — an **AIF concept**, distinct from vendor-published Reference Blueprints (see note below) | Immutable per version; new versions are minted, never edited in place | Cluster-scoped |
-| **Workload** | A running instance of an App or a Blueprint on a target cluster | Status-only | Workload namespace |
+| **App** | A building-block AI application (NIM model, vector database, LLM serving runtime, vendor-published Reference Blueprint chart, …) — anything packaged as a Helm chart in SUSE Registry or SUSE Application Collection | Immutable; sourced from the SUSE catalog | Catalog-wide (not a CRD; discovered from registries) |
+| **Bundle** | A workshop where an author composes Apps and existing Blueprints into a candidate AI stack | Mutable; owned by an author or small team | Namespaced (CRD in author's namespace) |
+| **Blueprint** *(AIF Blueprint)* | A published, immutable, versioned AI stack tied to a use case (e.g., RAG, vision pipeline) — an **AIF concept**, distinct from vendor-published Reference Blueprints (see note below) | Immutable per version; new versions are minted, never edited in place | Cluster-scoped (CRD visible org-wide) |
+| **Workload** | A running instance of an App or a Blueprint on a target cluster | Status-only | Namespaced (CRD in workload's namespace) |
 
-Apps and Blueprints are both directly deployable. A Bundle becomes a Blueprint version through an approval workflow; the Bundle persists after publishing so the author can iterate toward the next version.
+**Scope clarification:** "Namespaced" means the resource exists within a Kubernetes namespace and is isolated per team/project. "Cluster-scoped" means the resource is visible across the entire cluster (all namespaces). Apps are not Kubernetes resources — they're catalog entries discovered from OCI registries.
+
+Apps, Blueprints, and Bundles are all deployable. Apps and Blueprints are deployed as production workloads; Bundles are test-deployed during authoring to validate the stack before submission. A Bundle becomes a Blueprint version through an approval workflow; the Bundle persists after publishing so the author can iterate toward the next version.
 
 > **A note on terminology — "Blueprint" in this document means "AIF Blueprint."** NVIDIA and other vendors publish their own "Reference Blueprints" (e.g., NVIDIA RAG, NVIDIA AIQ). Those are **Helm charts** mirrored into SUSE Registry; AIF treats each one as an App in the catalog and additionally **wraps** it as a single-component AIF Blueprint so it appears on the Blueprints page with versioning and governance. A NVIDIA Blueprint is not an AIF Blueprint — it's a chart that AIF wraps. See [§6 Blueprints](#6-blueprints) and the Glossary for details.
 

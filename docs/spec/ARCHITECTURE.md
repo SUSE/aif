@@ -140,9 +140,10 @@ These are the floors. Newer versions are supported unless explicitly called out 
   │                                     └─ Git repo (deployStrategy: gitops)
   └─ Secrets (suse-registry-creds source)
                                          (NGC is OUT OF SCOPE — assets reach
-         ↓ Fleet pull model              AIF only via the SUSE-managed
-         fleet-agents open tunnel        offline mirror process)
-         to Fleet controller here
+         ↓ Fleet CRs on mgmt cluster;    AIF only via the SUSE-managed
+         fleet-agents on downstream      offline mirror process)
+         clusters pull via Fleet
+         controller tunnel
 
   Downstream Clusters (Rancher-managed; listed in Workload.spec.targetClusters)
   ┌─ fleet-agent       (already present on every Rancher-managed cluster)
@@ -621,7 +622,7 @@ Deprecation and withdrawal never modify the immutable spec; they flip a status f
 |-------|------|----------|-------------|---------|
 | `name` | string | Yes | Workload display name | — |
 | `source` | WorkloadSource | Yes | Provenance — see below | — |
-| `targetClusters` | []string | No | Cluster IDs of the downstream Rancher-managed clusters to deploy to. WorkloadReconciler reads this field and sets `spec.targets` in the created Fleet Bundle or GitRepo CR so fleet-agents on the named clusters apply the workload. At least one entry required when deploying to a downstream cluster. | — |
+| `targetClusters` | []string | Yes | At least one entry required. Lists the downstream Rancher-managed clusters where the workload will run. WorkloadReconciler reads this field and sets `spec.targets` in the created Fleet Bundle or GitRepo CR so fleet-agents on the named clusters apply the workload. | — |
 | `valueOverrides` | map[string]string | No | Per-component Helm values overrides | — |
 | `deployStrategy` | string | No | `helm` \| `gitops` | `helm` |
 | `replicas` | int32 | No | Desired replica count (for components without their own scaling) | 1 |
@@ -967,7 +968,7 @@ type ChartRef struct {
 
 **Kind:** `InstallAIExtension` | **Plural:** `installaiextensions` | **Scope:** Namespaced
 
-Bootstrap CRD. Used by Rancher cluster admins to install the AIF UIPlugin into a downstream cluster declaratively (instead of running `helm install aif-ui` on every cluster).
+Bootstrap CRD. Used by Rancher cluster admins to install the AIF UIPlugin into the management cluster declaratively (instead of running `helm install aif-ui` manually).
 
 #### Spec Fields
 
@@ -1807,6 +1808,8 @@ This pattern applies to Workloads sourced from `Blueprint` and `BundleTest`. For
 
 When `Workload.spec.deployStrategy == "gitops"`, the operator writes a directory tree to `--git-dir` and pushes via `pkg/git/fleet.go`, then creates a `fleet.cattle.io/v1alpha1 GitRepo` CR on the management cluster pointing at that repo. The layout below is the contract; Fleet expects it exactly.
 
+**Multi-cluster workloads** (`targetClusters` with >1 entry): The operator generates one directory per cluster ID (`gitops/{clusterID}/{workloadID}/`) and creates one GitRepo CR per cluster, each with `spec.paths = ["gitops/{clusterID}/{workloadID}"]` and `spec.targets = [{clusterName: clusterID}]`. This isolates manifests per cluster and avoids Fleet's multi-cluster targeting complexity (which requires identical manifests across all targets — not suitable for workloads that may have cluster-specific value overrides in future phases).
+
 ```
 {git-dir}/
 └── gitops/
@@ -2206,7 +2209,7 @@ bp.Status.DeploymentCount = int32(count)
 - Watch: `Settings` CR
 - Reads all `SecretKeyRef` fields, resolves Secret values
 - Calls `applySettingsToEngines()` to propagate to helm, fleet, nvidia engines
-- Reconciles `suse-registry-creds` docker-config Secret into every namespace where a Workload exists
+- Reconciles `suse-registry-creds` docker-config Secret on the management cluster in namespace `aif` (the source Secret). WorkloadReconciler includes this Secret as a resource in every Fleet Bundle it creates (per P4-3b acceptance criteria), so fleet-agents apply it to the workload namespace on the downstream cluster.
 - Sets `status.lastApplied = metav1.Now()`
 
 #### 8.2.1 Settings propagation pattern (P5-4 contract)
@@ -3476,7 +3479,7 @@ The operator does not host or proxy an image registry. Workload pods pull images
 | SUSE Registry (mirrored NVIDIA NIM) | `registry.suse.com/ai/containers/nvidia/...` | `suse-registry-creds` (same Secret) |
 | SUSE Application Collection | `dp.apps.rancher.io` | `suse-registry-creds` (same Secret — single docker-config covers both hosts) |
 
-The pull-secret manifests are reconciled by the operator's `SettingsReconciler` from the credentials in the `Settings` CRD into each namespace where a Workload exists.
+The pull-secret manifests flow via: `SettingsReconciler` creates the source Secret (`suse-registry-creds`) on the management cluster in namespace `aif` from the credentials in the `Settings` CRD → WorkloadReconciler embeds this Secret as a resource in every Fleet Bundle (for `deployStrategy: helm`) or in the gitops manifest directory (for `deployStrategy: gitops`) → fleet-agents on downstream clusters apply the Secret into the workload namespace.
 
 #### Pull-secret Secret shape (P5-5 contract)
 
