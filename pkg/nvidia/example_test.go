@@ -50,7 +50,7 @@ func Example_discovery() {
 
 	// 2. Construct Discovery and configure it with the stub's address.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil)) // suppress log output for clean Example output
-	d := nvidia.NewDiscovery(logger)
+	d, _ := nvidia.NewDiscovery(logger)
 	d.UpdateSettings(nvidia.EngineSettings{
 		RegistryEndpoint: ts.URL,
 		Username:         "demo-user",

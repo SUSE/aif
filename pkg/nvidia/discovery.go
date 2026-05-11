@@ -38,16 +38,25 @@ type discoveryImpl struct {
 	cache    map[string]NIMEntry
 	settings EngineSettings
 	client   *registryClient // rebuilt in UpdateSettings; nil until first call
+
+	// annCache memoises Chart.yaml annotations per chart. Keyed by chart
+	// name; value carries the manifest digest under which it was fetched
+	// so a digest mismatch on the next HEAD triggers a re-fetch. Replaces
+	// the entry on miss — no orphaned digests, no LRU bookkeeping needed.
+	annCache map[string]annotationCacheEntry
 }
 
-// NewDiscovery returns a Discovery bound to the given logger. The HTTP
-// client uses a sensible default timeout; tests in this package construct
-// the impl directly with an injected httpClient (httptest.Server.Client()).
-func NewDiscovery(logger *slog.Logger) Discovery {
-	return &discoveryImpl{
+// NewDiscovery returns the engine bound to the given logger as both a
+// Discovery and an AnnotationReader. The same backing struct satisfies
+// both ports — Interface Segregation at the consumer boundary, single
+// shared state internally (httpClient, settings, registryClient, caches).
+func NewDiscovery(logger *slog.Logger) (Discovery, AnnotationReader) {
+	impl := &discoveryImpl{
 		logger:     logger,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		annCache:   make(map[string]annotationCacheEntry),
 	}
+	return impl, impl
 }
 
 // Index returns a snapshot of the cached NIM catalog, sorted by ID for

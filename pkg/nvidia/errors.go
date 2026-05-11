@@ -31,4 +31,7 @@ var (
 	// has been removed from SUSE Registry, or (c) the caller used the
 	// wrong ID. Distinguish via errors.Is, never via string-matching.
 	ErrNIMNotFound = errors.New("nvidia: NIM not found in cache")
+
+	// ErrChartNotFound indicates the chart's OCI manifest returned 404.
+	ErrChartNotFound = errors.New("nvidia: chart not found")
 )

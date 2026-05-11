@@ -335,3 +335,46 @@ func parseLinkNext(header string) string {
 	}
 	return ""
 }
+
+// headWithAuth performs HEAD against url with the same Bearer-token
+// challenge handling as doWithAuth (handles the 401 → token-exchange →
+// retry path). Used by the AnnotationReader to read the manifest digest
+// without pulling the body.
+func (c *registryClient) headWithAuth(ctx context.Context, url string) (*http.Response, error) {
+	resp, err := c.head(ctx, url, "")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		return resp, nil
+	}
+	challenge := parseBearerChallenge(resp.Header.Get("Www-Authenticate"))
+	if challenge.realm == "" || (c.username == "" && c.token == "") {
+		return resp, nil
+	}
+	_ = resp.Body.Close()
+
+	bearer, err := c.fetchBearerToken(ctx, challenge)
+	if err != nil {
+		return nil, err
+	}
+	return c.head(ctx, url, bearer)
+}
+
+func (c *registryClient) head(ctx context.Context, url, bearer string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	switch {
+	case bearer != "":
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	case c.username != "" || c.token != "":
+		req.SetBasicAuth(c.username, c.token)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
+	}
+	return resp, nil
+}

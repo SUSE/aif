@@ -38,6 +38,23 @@ type Deployer interface {
 	GenerateValues(ctx context.Context, req GenerateRequest) (map[string]any, error)
 }
 
+// AnnotationReader fetches a chart's Chart.yaml annotations from the OCI
+// registry. Separated from Discovery (4 mtds) to keep Discovery within
+// the ≤4 ISP target. Implemented by the same backing struct as Discovery
+// (see discovery.go); consumers receive both ports from NewDiscovery.
+type AnnotationReader interface {
+	// ChartAnnotations fetches the chart manifest, locates the Helm
+	// chart-content layer, pulls it, and returns the parsed annotations
+	// from Chart.yaml. Cached per (chart, digest); the digest is read via
+	// HEAD on the manifest, so steady-state refresh is one HEAD per chart.
+	//
+	// Returns (nil, nil) when the chart has no annotations block — common
+	// case for non-Reference-Blueprint charts. Returns ErrChartNotFound
+	// for 404, ErrUnauthorized for 401/403, ErrUnreachable for transport
+	// failures.
+	ChartAnnotations(ctx context.Context, chart, version string) (map[string]string, error)
+}
+
 // ErrNotImplemented is returned by stub method bodies until plan tasks P2-1
 // (Discovery) and P4-4 (Deployer) implement them.
 var ErrNotImplemented = errors.New("nvidia: method not implemented yet")
