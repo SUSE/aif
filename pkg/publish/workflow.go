@@ -83,8 +83,38 @@ func (w *workflowImpl) Submit(ctx context.Context, namespace, name string, req S
 	return bundle.BundleFromCR(cr), nil
 }
 
-func (w *workflowImpl) Withdraw(_ context.Context, _, _ string, _ string) (bundle.Bundle, error) {
-	return bundle.Bundle{}, ErrNotImplemented
+func (w *workflowImpl) Withdraw(ctx context.Context, namespace, name string, user string) (bundle.Bundle, error) {
+	cr, err := w.deps.Bundles.Get(ctx, namespace, name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return bundle.Bundle{}, fmt.Errorf("bundle %s/%s: %w", namespace, name, ErrBundleNotFound)
+		}
+		return bundle.Bundle{}, fmt.Errorf("get bundle: %w", err)
+	}
+
+	if cr.Status.Phase != aifv1.BundlePhaseSubmitted && cr.Status.Phase != aifv1.BundlePhaseChangesRequested {
+		return bundle.Bundle{}, fmt.Errorf(
+			"bundle %s/%s is in phase %q, must be Submitted or ChangesRequested: %w",
+			namespace, name, cr.Status.Phase, ErrInvalidTransition,
+		)
+	}
+
+	cr.Status.Phase = aifv1.BundlePhaseDraft
+	cr.Status.Submission = nil
+	cr.Status.Review = nil
+
+	if err := w.deps.Bundles.UpdateStatus(ctx, cr); err != nil {
+		if apierrors.IsConflict(err) {
+			return bundle.Bundle{}, fmt.Errorf("concurrent update on %s/%s: %w", namespace, name, ErrPublishConflict)
+		}
+		return bundle.Bundle{}, fmt.Errorf("update bundle status: %w", err)
+	}
+
+	if w.deps.Recorder != nil {
+		w.deps.Recorder.BundleWithdrawn(ctx, namespace, name, user)
+	}
+
+	return bundle.BundleFromCR(cr), nil
 }
 
 func (w *workflowImpl) RequestChanges(_ context.Context, _, _ string, _ ReviewRequest) (bundle.Bundle, error) {
