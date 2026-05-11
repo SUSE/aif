@@ -127,25 +127,37 @@ These are the floors. Newer versions are supported unless explicitly called out 
 └──────┬───────────────────────────────────────┬───────────────────┘
        │ Kubernetes API (controller-runtime)   │ External HTTPS
        ▼                                       ▼
-  Kubernetes Cluster                  ┌─ SUSE Registry
-  ┌─ CRDs (ai.suse.com)     │  registry.suse.com
-  │  Bundle (namespaced)              │   (incl. mirrored NVIDIA assets at
-  │  Blueprint (cluster-scoped)       │    ai/charts/nvidia/, ai/containers/nvidia/)
-  │  Workload (namespaced)            │
-  │  Settings (namespaced singleton)  ├─ SUSE Application Collection
-  │  InstallAIExtension (namespaced)  │  api.apps.rancher.io
-  ├─ Deployments (workload ns)        │  dp.apps.rancher.io
-  ├─ Services                         │
-  ├─ Secrets (suse-registry-creds)    └─ Git repo (Fleet/GitOps)
-  ├─ Optional VPA / HPA               
-  └─ Fleet GitRepo / Bundle (optional)   (NGC is OUT OF SCOPE — assets reach
-                                          AIF only via the SUSE-managed
-                                          offline mirror process)
+  Rancher Management Cluster             ┌─ SUSE Registry
+  ┌─ CRDs (ai.suse.com)                 │  registry.suse.com
+  │  Bundle (namespaced, per-team ns)   │   (incl. mirrored NVIDIA assets at
+  │  Blueprint (cluster-scoped)         │    ai/charts/nvidia/, ai/containers/nvidia/)
+  │  Workload (namespaced, per-team ns) │
+  │  Settings (namespaced, aif ns)      ├─ SUSE Application Collection
+  │  InstallAIExtension (namespaced)    │  api.apps.rancher.io
+  ├─ Fleet CRs (fleet.cattle.io)        │  dp.apps.rancher.io
+  │  Fleet Bundle  ← deployStrategy: helm    (AIF creates; OCI chart + values)
+  │  Fleet GitRepo ← deployStrategy: gitops  (AIF creates; points to user's repo)
+  │                                     └─ Git repo (deployStrategy: gitops)
+  └─ Secrets (suse-registry-creds source)
+                                         (NGC is OUT OF SCOPE — assets reach
+         ↓ Fleet pull model              AIF only via the SUSE-managed
+         fleet-agents open tunnel        offline mirror process)
+         to Fleet controller here
+
+  Downstream Clusters (Rancher-managed; listed in Workload.spec.targetClusters)
+  ┌─ fleet-agent       (already present on every Rancher-managed cluster)
+  ├─ Deployments/Services  (applied by fleet-agent from Fleet Bundle)
+  └─ Secrets (suse-registry-creds)  (delivered via Fleet Bundle)
+  ✗ No AIF operator   ✗ No AIF CRDs
 ```
 
 ### 2.2 Deployment Topology
 
+AIF follows Rancher's **hub-on-management-cluster** pattern. The Rancher management cluster is the single control plane. Downstream clusters are delivery targets only — they run no AIF components.
+
 ```
+=== Rancher Management Cluster ===
+
 Namespace: aif
   Deployment: aif-operator              (1 replica, expandable to ≥2 with PDB)
   Service: aif-operator                 (ClusterIP, port 8080)
@@ -167,17 +179,28 @@ Namespace: cattle-ui-plugin-system
 
 Namespace: <author-ns>                  (per-user or per-team)
   Bundle CRs                            (Drafts owned by author)
+  Workload CRs                          (management-cluster-side record; spec.targetClusters
+                                          lists the downstream clusters)
 
-(cluster-scoped)
-  Blueprint CRs                         (one CR per name+version, immutable)
+(cluster-scoped, management cluster)
+  Blueprint CRs                         (one CR per name+version, immutable, org-wide)
 
-Namespace: <workload-ns>                (operator-created from Workload CR)
-  Workload CRs
-  Deployments, Services                 (owned by Workload CRs)
-  Secret: suse-registry-creds           (docker-config; reconciled into the namespace
-                                          by SettingsReconciler whenever a Workload
-                                          referencing this namespace is created)
+Namespace: fleet-local (or per fleet workspace)
+  fleet.cattle.io/Bundle CRs            (created by WorkloadReconciler for deployStrategy: helm)
+  fleet.cattle.io/GitRepo CRs           (created by WorkloadReconciler for deployStrategy: gitops)
+
+=== Downstream Clusters (one or more; listed in Workload.spec.targetClusters) ===
+
+  fleet-agent                           (Rancher-managed; already present on every
+                                          imported cluster; opens tunnel to Fleet
+                                          controller on management cluster)
+  Deployments, Services                 (applied by fleet-agent from Fleet Bundle)
+  Secret: suse-registry-creds           (delivered as a resource inside the Fleet Bundle;
+                                          fleet-agent reconciles it into the workload namespace)
+  ✗ No AIF operator   ✗ No AIF CRDs
 ```
+
+**Cross-cluster delivery:** the AIF operator never calls downstream cluster APIs directly. WorkloadReconciler creates Fleet Bundle or GitRepo CRs on the management cluster; Fleet's own controller (also on the management cluster) communicates with fleet-agents via their existing tunnel. The operator watches Fleet CR status and mirrors it back to `Workload.status`.
 
 ### 2.3 Conceptual Model (Engineering Reference)
 
@@ -432,7 +455,7 @@ type ReviewStatus struct {
 
 type TestDeployRecord struct {
     WorkloadRef     string      `json:"workloadRef"`     // namespace/name
-    TargetCluster   string      `json:"targetCluster"`
+    TargetClusters  []string    `json:"targetClusters"`
     StartedAt       metav1.Time `json:"startedAt"`
     Result          string      `json:"result"`          // "Success" | "Failed" | "Running"
 }
@@ -598,9 +621,9 @@ Deprecation and withdrawal never modify the immutable spec; they flip a status f
 |-------|------|----------|-------------|---------|
 | `name` | string | Yes | Workload display name | — |
 | `source` | WorkloadSource | Yes | Provenance — see below | — |
-| `targetCluster` | string | No | Cluster ID (informational) | — |
+| `targetClusters` | []string | No | Cluster IDs of the downstream Rancher-managed clusters to deploy to. WorkloadReconciler reads this field and sets `spec.targets` in the created Fleet Bundle or GitRepo CR so fleet-agents on the named clusters apply the workload. At least one entry required when deploying to a downstream cluster. | — |
 | `valueOverrides` | map[string]string | No | Per-component Helm values overrides | — |
-| `deployStrategy` | string | No | `helm` \| `fleet` | `helm` |
+| `deployStrategy` | string | No | `helm` \| `gitops` | `helm` |
 | `replicas` | int32 | No | Desired replica count (for components without their own scaling) | 1 |
 | `strategy.type` | StrategyType | No | `RollingUpdate` \| `BlueGreen` \| `Canary` \| `AutomaticRecovery` | `RollingUpdate` |
 | `strategy.rollingUpdate.maxSurge` | IntOrString | No | Max surge | `"1"` |
@@ -616,6 +639,15 @@ Deprecation and withdrawal never modify the immutable spec; they flip a status f
 | `scaling.vpa.enabled` | bool | No | Enable VPA | false |
 | `scaling.vpa.updateMode` | string | No | `Auto` \| `Initial` \| `Off` | `Auto` |
 | `paused` | bool | No | Suspend reconciliation | false |
+
+**`deployStrategy` semantics:**
+
+| Value | What the WorkloadReconciler does |
+|-------|----------------------------------|
+| `helm` | Creates a `fleet.cattle.io/v1alpha1 Bundle` CR on the management cluster. The Bundle references the OCI Helm chart(s) and contains the merged values (§6.6 merge result). No git repository required. fleet-agents on `spec.targetClusters` pull and apply the Bundle. |
+| `gitops` | Creates a `fleet.cattle.io/v1alpha1 GitRepo` CR on the management cluster. Points to `Settings.spec.fleet.repoURL` / `branch`. AIF generates manifests and pushes them to that repo (via `pkg/git`); Fleet reads the repo and auto-generates a Bundle. Every reconcile that changes values results in a new git commit and re-deployment. |
+
+Both strategies use Fleet for cross-cluster delivery. The operator never calls the downstream cluster's Kubernetes API directly.
 
 ```go
 type WorkloadSource struct {
@@ -1056,7 +1088,7 @@ When fallback fires, the client emits `slog.Warn("app collection api unreachable
 | `GET` | `/api/v1/bundles/{ns}/{name}` | — | `Bundle` | Get Bundle |
 | `PATCH` | `/api/v1/bundles/{ns}/{name}` | `BundleSpec (subset)` | `Bundle` | Edit Draft (rejected if `phase != Draft`) |
 | `DELETE` | `/api/v1/bundles/{ns}/{name}` | — | 204 | Delete Bundle |
-| `POST` | `/api/v1/bundles/{ns}/{name}/test-deploy` | `{targetCluster, deployStrategy}` | `Workload` + 201 | Create a `BundleTest`-sourced Workload |
+| `POST` | `/api/v1/bundles/{ns}/{name}/test-deploy` | `{targetClusters, deployStrategy}` | `Workload` + 201 | Create a `BundleTest`-sourced Workload |
 | `POST` | `/api/v1/bundles/{ns}/{name}/preflight` | — | `{ok, missingCharts: [{component, ref}], missingImages: [{component, image}], unresolvableComponents: [{component, reason}]}` | Verifies every component's chart and image is currently resolvable in the configured registry (after image-rewrite pass — see §6.6 layer 5). Pre-publish health check used by the Bundle UI banner and the Publisher's review screen. **Informational only — does NOT block Submit or Approve.** Always returns `200 OK`. Result is cached for 60s per `(ns, name, generation)`; cache invalidates on Bundle edit. Requires `get bundles` (any bundle viewer can run it). |
 | `POST` | `/api/v1/bundles/{ns}/{name}/submit` | `{proposedVersion, changeDescription?}` | `Bundle` | Draft → Submitted (or ChangesRequested → Submitted) |
 | `POST` | `/api/v1/bundles/{ns}/{name}/withdraw` | — | `Bundle` | Submitted/ChangesRequested → Draft |
@@ -1073,13 +1105,13 @@ When fallback fires, the client emits `slog.Warn("app collection api unreachable
 | `GET` | `/api/v1/blueprints/{name}` | — | `BlueprintLineage` (with `versions[]`) | Lineage detail |
 | `GET` | `/api/v1/blueprints/{name}/versions/{version}` | — | `Blueprint` | Single version |
 | `POST` | `/api/v1/blueprints/wrap-vendor-chart` | `{provider, repo, chart, version}` | `Blueprint` + 201 | Manually wrap a specific vendor Reference Blueprint chart as an AIF Blueprint (publisher-only escape hatch when annotation-based auto-wrap hasn't fired yet, or when wrapping a chart that lacks the annotation). The auto-wrap path described in §13.1 is the primary mechanism; this endpoint is for ops-driven exception cases. |
-| `POST` | `/api/v1/blueprints/{name}/versions/{version}/deploy` | `{targetCluster, valueOverrides?, deployStrategy?}` | `Workload` + 201 | Create a `Blueprint`-sourced Workload |
+| `POST` | `/api/v1/blueprints/{name}/versions/{version}/deploy` | `{targetClusters, valueOverrides?, deployStrategy?}` | `Workload` + 201 | Create a `Blueprint`-sourced Workload |
 | `POST` | `/api/v1/blueprints/{name}/versions/{version}/deprecate` | `{reason?}` | `Blueprint` | Active → Deprecated (publisher only) |
 | `POST` | `/api/v1/blueprints/{name}/versions/{version}/withdraw` | `{reason?}` | `Blueprint` | Active → Withdrawn (publisher only) |
 | `POST` | `/api/v1/blueprints/{name}/versions/{version}/reactivate` | — | `Blueprint` | Deprecated/Withdrawn → Active (publisher only) |
 | `DELETE` | `/api/v1/blueprints/{name}/versions/{version}` | — | 204 | Delete (rejected if `status.deploymentCount > 0`) |
 
-`BlueprintLineage`: `{blueprintName, useCase, latestVersion, totalVersions, sources:[external|published|both], versions:[]Blueprint}`
+`BlueprintLineage`: `{blueprintName, useCase, latestVersion, totalVersions, sources:[wraps-vendor-chart|published|both], versions:[]Blueprint}`
 
 ---
 
@@ -1773,7 +1805,7 @@ This pattern applies to Workloads sourced from `Blueprint` and `BundleTest`. For
 
 ### 6.7 Fleet Manifest Layout
 
-When `Workload.spec.deployStrategy == "fleet"`, the operator writes a directory tree to `--git-dir` and pushes via `pkg/git/fleet.go`. The layout below is the contract; downstream Fleet controllers expect it exactly.
+When `Workload.spec.deployStrategy == "gitops"`, the operator writes a directory tree to `--git-dir` and pushes via `pkg/git/fleet.go`, then creates a `fleet.cattle.io/v1alpha1 GitRepo` CR on the management cluster pointing at that repo. The layout below is the contract; Fleet expects it exactly.
 
 ```
 {git-dir}/
@@ -1904,9 +1936,12 @@ export function init($plugin: IPlugin, store: any): void {
 
   $plugin.addProduct(require('./config/aif-product'));
 
+  // Connect the Steve store to the Rancher management cluster ('local').
+  // AIF is a hub-model product — all CRDs live on the management cluster;
+  // there is no per-downstream-cluster store switching.
   $plugin.addDashboardStore(
     'aif',
-    SteveFactory(null, null),
+    SteveFactory('local', null),
     { namespace: 'aif', isClusterStore: true },
     steveStoreInit
   );
@@ -1929,20 +1964,20 @@ import { AIF, AIF_TYPES } from './types';
 import { STATE, NAME, AGE } from '@shell/config/table-headers';
 
 export function init(store, $plugin) {
-  const { product, basicType, virtualType, configureType, headers, weightGroup, weightType } =
+  const { product, basicType, virtualType, configureType, headers } =
     $plugin.DSL(store, AIF);
 
   product({
     inStore:             'aif',
     icon:                'ai-factory',
     isMultiClusterApp:   true,
-    showClusterSwitcher: false,
+    showClusterSwitcher: false,  // hub model — no cluster switching inside AIF
     weight:              100,
     to: { name: `${AIF}-c-cluster-${AIF_TYPES.OVERVIEW}` }
   });
 
-  basicType([AIF_TYPES.BUNDLE, AIF_TYPES.BLUEPRINT, AIF_TYPES.WORKLOAD, AIF_TYPES.SETTINGS]);
-
+  // Flat navigation — no sidebar grouping. All seven pages appear in a single
+  // ordered list. Ordering is by weight (higher = higher in sidebar).
   virtualType({ name: AIF_TYPES.OVERVIEW,        labelKey: 'aif.nav.overview',       weight: 600, route: { name: `${AIF}-c-cluster-${AIF_TYPES.OVERVIEW}` }        });
   virtualType({ name: AIF_TYPES.APPS,             labelKey: 'aif.nav.apps',           weight: 500, route: { name: `${AIF}-c-cluster-${AIF_TYPES.APPS}` }            });
   virtualType({ name: AIF_TYPES.BLUEPRINTS,       labelKey: 'aif.nav.blueprints',     weight: 400, route: { name: `${AIF}-c-cluster-${AIF_TYPES.BLUEPRINTS}` }      });
@@ -1950,6 +1985,14 @@ export function init(store, $plugin) {
   virtualType({ name: AIF_TYPES.WORKLOADS,        labelKey: 'aif.nav.workloads',      weight: 200, route: { name: `${AIF}-c-cluster-${AIF_TYPES.WORKLOADS}` }       });
   virtualType({ name: AIF_TYPES.PENDING_REVIEWS,  labelKey: 'aif.nav.pendingReviews', weight: 150, route: { name: `${AIF}-c-cluster-${AIF_TYPES.PENDING_REVIEWS}` } });
   virtualType({ name: AIF_TYPES.SETTINGS,         labelKey: 'aif.nav.settings',       weight: 100, route: { name: `${AIF}-c-cluster-${AIF_TYPES.SETTINGS}` }        });
+
+  basicType([
+    AIF_TYPES.OVERVIEW, AIF_TYPES.APPS, AIF_TYPES.BLUEPRINTS, AIF_TYPES.BUNDLES,
+    AIF_TYPES.WORKLOADS, AIF_TYPES.PENDING_REVIEWS, AIF_TYPES.SETTINGS
+  ]);
+
+  // CRD-backed types — registered separately so the Steve store discovers and watches them.
+  basicType([AIF_TYPES.BUNDLE, AIF_TYPES.BLUEPRINT, AIF_TYPES.WORKLOAD, AIF_TYPES.SETTINGS]);
 
   // Bundles: author-created, directly deletable (spec §8.2 — "Delete: available in any state").
   // Blueprints: minted by approval workflow; only Deprecate/Withdraw/Reactivate are valid lifecycle actions.
@@ -1960,20 +2003,17 @@ export function init(store, $plugin) {
   configureType(AIF_TYPES.WORKLOAD,  { isCreatable: false, isEditable: false, isRemovable: false });
   configureType(AIF_TYPES.SETTINGS,  { isCreatable: false, isEditable: true,  isRemovable: false });
 
-  // Bundle headers
   const BUNDLE_PHASE     = { name: 'phase',  labelKey: 'aif.tableHeaders.phase',  value: 'status.phase', formatter: 'BundlePhaseState',     width: 140 };
   const BLUEPRINT_PHASE  = { name: 'phase',  labelKey: 'aif.tableHeaders.phase',  value: 'status.phase', formatter: 'BlueprintPhaseState',  width: 120 };
   const WORKLOAD_PHASE   = { name: 'phase',  labelKey: 'aif.tableHeaders.phase',  value: 'status.phase', formatter: 'WorkloadPhaseState',   width: 120 };
   const WORKLOAD_SOURCE  = { name: 'source', labelKey: 'aif.tableHeaders.source', value: 'spec.source',  formatter: 'WorkloadSource',       width: 220 };
+  const TARGET_CLUSTER   = { name: 'target', labelKey: 'aif.tableHeaders.targetClusters', value: 'spec.targetClusters', formatter: 'ClusterList', width: 200 };
   const TARGET_BLUEPRINT = { name: 'target', labelKey: 'aif.tableHeaders.targetBlueprint', value: 'spec.targetBlueprint', width: 180 };
   const VERSION_COL      = { name: 'version', labelKey: 'aif.tableHeaders.version', value: 'spec.version', width: 100 };
 
   headers(AIF_TYPES.BUNDLE,    [STATE, NAME, TARGET_BLUEPRINT, BUNDLE_PHASE, AGE]);
   headers(AIF_TYPES.BLUEPRINT, [STATE, NAME, VERSION_COL, BLUEPRINT_PHASE, AGE]);
-  headers(AIF_TYPES.WORKLOAD,  [STATE, NAME, WORKLOAD_SOURCE, WORKLOAD_PHASE, AGE]);
-
-  weightGroup('overview', 300, true);
-  weightType(AIF_TYPES.BUNDLE, 150, true);
+  headers(AIF_TYPES.WORKLOAD,  [STATE, NAME, WORKLOAD_SOURCE, TARGET_CLUSTER, WORKLOAD_PHASE, AGE]);
 }
 ```
 
@@ -2010,11 +2050,11 @@ export default class Bundle extends SteveModel {
       body: { comment }
     });
   }
-  async doTestDeploy(targetCluster, deployStrategy) {
+  async doTestDeploy(targetClusters, deployStrategy) {
     return this.$dispatch('aif/request', {
       url: `/api/v1/bundles/${this.metadata.namespace}/${this.metadata.name}/test-deploy`,
       method: 'POST',
-      body: { targetCluster, deployStrategy }
+      body: { targetClusters, deployStrategy }
     });
   }
 
@@ -2324,7 +2364,7 @@ rules:
     apiVersions: [v1alpha1]
     operations:  [UPDATE]            # CREATE/DELETE flow through admission.Allowed in the handler too — see contract
     resources:   [blueprints]        # NOT blueprints/status — status updates are allowed
-    scope:       Namespaced
+    scope:       Cluster
 admissionReviewVersions: [v1]
 sideEffects: None
 failurePolicy: Fail                   # NON-NEGOTIABLE: a webhook outage MUST NOT allow silent spec mutation
@@ -2542,7 +2582,7 @@ webhooks:
         apiVersions: [v1alpha1]
         operations:  [UPDATE]
         resources:   [blueprints]
-        scope:       Namespaced
+        scope:       Cluster
     admissionReviewVersions: [v1]
     sideEffects: None
     failurePolicy: Fail
@@ -3390,12 +3430,18 @@ The fallback path produces a Degraded App per §5 with `source: "suse-oci-fallba
 
 ### 13.3 Rancher Fleet (GitOps)
 
-**Generated manifest structure per Workload:**
+**Generated manifest structure per Workload** (canonical layout — see §6.7 for full details):
 
 ```
-{git-dir}/fleet/{workloadID}/
-├── fleet.yaml              # Fleet namespace, labels, Helm release name
-└── {componentName}.yaml    # HelmChart resource
+{git-dir}/
+└── gitops/
+    └── {clusterID}/
+        └── {workloadID}/
+            ├── fleet.yaml              # Fleet bundle definition
+            └── manifests/
+                ├── 00-namespace.yaml
+                ├── 10-{component-1}.yaml
+                └── ...
 ```
 
 `fleet.yaml`:
@@ -3403,6 +3449,7 @@ The fallback path produces a Degraded App per §5 with `source: "suse-oci-fallba
 namespace: aif-workloads
 labels:
   ai.suse.com/workload: "{workloadID}"
+  ai.suse.com/cluster:  "{clusterID}"
 helm:
   releaseName: "{workloadID}"
 ```
