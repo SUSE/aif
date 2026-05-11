@@ -1,7 +1,12 @@
 package nvidia_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,4 +80,57 @@ func Example_discovery() {
 	// nim-llm:1.0.0    type=llm  chart=nim-llm
 	// nim-llm:1.1.0    type=llm  chart=nim-llm
 	// nim-vlm:2.0.0    type=vlm  chart=nim-vlm
+}
+
+// Example_chartAnnotations exercises the AnnotationReader against an
+// in-process Helm OCI stub. Doubles as the contract `make verify-nim-mock`
+// runs to prove digest-cached annotation fetching works without a live
+// registry.
+func Example_chartAnnotations() {
+	chartYaml := "apiVersion: v2\nname: my-chart\nannotations:\n  ai.suse.com/role: reference-blueprint\n  ai.suse.com/use-case: rag\n"
+	var tarBuf bytes.Buffer
+	gz := gzip.NewWriter(&tarBuf)
+	tw := tar.NewWriter(gz)
+	hdr := &tar.Header{Name: "my-chart/Chart.yaml", Mode: 0o644, Size: int64(len(chartYaml))}
+	_ = tw.WriteHeader(hdr)
+	_, _ = tw.Write([]byte(chartYaml))
+	_ = tw.Close()
+	_ = gz.Close()
+	layerBytes := tarBuf.Bytes()
+	layerSum := sha256.Sum256(layerBytes)
+	layerDigest := "sha256:" + hex.EncodeToString(layerSum[:])
+	manifest := fmt.Sprintf(`{"schemaVersion":2,"layers":[{"mediaType":"application/vnd.cncf.helm.chart.content.v1.tar+gzip","digest":%q,"size":%d}]}`, layerDigest, len(layerBytes))
+	manifestSum := sha256.Sum256([]byte(manifest))
+	manifestDigest := "sha256:" + hex.EncodeToString(manifestSum[:])
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/ai/charts/nvidia/my-chart/manifests/1.0.0", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Docker-Content-Digest", manifestDigest)
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = io.WriteString(w, manifest)
+	})
+	mux.HandleFunc("/v2/ai/charts/nvidia/my-chart/blobs/"+layerDigest, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(layerBytes)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	d, ar := nvidia.NewDiscovery(logger)
+	d.UpdateSettings(nvidia.EngineSettings{RegistryEndpoint: ts.URL})
+
+	ann, err := ar.ChartAnnotations(context.Background(), "my-chart", "1.0.0")
+	if err != nil {
+		fmt.Println("err:", err)
+		return
+	}
+	fmt.Println("role:", ann["ai.suse.com/role"])
+	fmt.Println("use-case:", ann["ai.suse.com/use-case"])
+
+	// Output:
+	// role: reference-blueprint
+	// use-case: rag
 }
