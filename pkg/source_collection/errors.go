@@ -20,3 +20,6 @@ var ErrVersionNotFound = errors.New("source_collection: version not found")
 
 // ErrNotConfigured is returned when APIURL has not been set via UpdateSettings.
 var ErrNotConfigured = errors.New("source_collection: client not configured (APIURL is required)")
+
+// ErrChartNotFound indicates the chart's OCI manifest returned 404.
+var ErrChartNotFound = errors.New("source_collection: chart not found")

@@ -20,15 +20,18 @@ type apiClient struct {
 
 	mu       sync.RWMutex
 	settings EngineSettings
+	annCache map[string]annotationCacheEntry
 }
 
 // NewClient returns a Client that talks to the SUSE Application Collection HTTP API.
-func NewClient(log *slog.Logger) Client {
-	return &apiClient{
+func NewClient(log *slog.Logger) (Client, AnnotationReader) {
+	c := &apiClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		limiter:    rate.NewLimiter(rate.Every(2*time.Second), 1),
 		log:        log,
+		annCache:   make(map[string]annotationCacheEntry),
 	}
+	return c, c
 }
 
 func (c *apiClient) UpdateSettings(s EngineSettings) {

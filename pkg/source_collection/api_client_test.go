@@ -13,15 +13,18 @@ import (
 
 func TestNewClient(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, annReader := NewClient(logger)
 	if c == nil {
 		t.Fatal("expected non-nil Client")
+	}
+	if annReader == nil {
+		t.Fatal("expected non-nil AnnotationReader")
 	}
 }
 
 func TestList_NotConfigured(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	_, err := c.List(context.Background())
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got: %v", err)
@@ -30,7 +33,7 @@ func TestList_NotConfigured(t *testing.T) {
 
 func TestGetChart_NotConfigured(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	_, err := c.GetChart(context.Background(), "", "ollama", "0.4.1")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got: %v", err)
@@ -43,7 +46,8 @@ func TestFakeClient_ImplementsClient(t *testing.T) {
 
 func TestUpdateSettings(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger).(*apiClient)
+	c, _ := NewClient(logger)
+	apiC := c.(*apiClient)
 
 	s := EngineSettings{
 		APIURL:   "https://custom.example.com",
@@ -51,18 +55,18 @@ func TestUpdateSettings(t *testing.T) {
 		Username: "user",
 		Token:    "tok",
 	}
-	c.UpdateSettings(s)
+	apiC.UpdateSettings(s)
 
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.settings.APIURL != "https://custom.example.com" {
-		t.Errorf("expected APIURL 'https://custom.example.com', got %q", c.settings.APIURL)
+	apiC.mu.RLock()
+	defer apiC.mu.RUnlock()
+	if apiC.settings.APIURL != "https://custom.example.com" {
+		t.Errorf("expected APIURL 'https://custom.example.com', got %q", apiC.settings.APIURL)
 	}
-	if c.settings.Username != "user" {
-		t.Errorf("expected Username 'user', got %q", c.settings.Username)
+	if apiC.settings.Username != "user" {
+		t.Errorf("expected Username 'user', got %q", apiC.settings.Username)
 	}
-	if c.settings.Token != "tok" {
-		t.Errorf("expected Token 'tok', got %q", c.settings.Token)
+	if apiC.settings.Token != "tok" {
+		t.Errorf("expected Token 'tok', got %q", apiC.settings.Token)
 	}
 }
 
@@ -105,7 +109,7 @@ func TestList_SinglePage(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{
 		APIURL:   srv.URL,
 		Username: "testuser",
@@ -153,7 +157,7 @@ func TestList_EmptyResults(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	apps, err := c.List(context.Background())
@@ -191,7 +195,7 @@ func TestList_Pagination(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	apps, err := c.List(context.Background())
@@ -232,7 +236,7 @@ func TestList_Deduplication(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	apps, err := c.List(context.Background())
@@ -264,7 +268,7 @@ func TestList_AuthFailure401(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "bad", Token: "creds"})
 
 	_, err := c.List(context.Background())
@@ -283,7 +287,7 @@ func TestList_AuthFailure403(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "user", Token: "tok"})
 
 	_, err := c.List(context.Background())
@@ -302,7 +306,7 @@ func TestList_ServerError500(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.List(context.Background())
@@ -325,7 +329,7 @@ func TestList_MalformedJSON(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.List(context.Background())
@@ -349,7 +353,7 @@ func TestList_RateLimited429(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.List(context.Background())
@@ -372,7 +376,7 @@ func TestList_ContextCancelled(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -401,7 +405,7 @@ func TestGetChart_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "user", Token: "tok"})
 
 	meta, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "0.4.1")
@@ -431,7 +435,7 @@ func TestGetChart_VersionNotFound(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "9.9.9")
@@ -453,7 +457,7 @@ func TestGetChart_ContextCancelled(t *testing.T) {
 	defer srv.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -487,7 +491,7 @@ func TestUpdateSettings_ReflectedInList(t *testing.T) {
 	defer srv2.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c := NewClient(logger)
+	c, _ := NewClient(logger)
 	c.UpdateSettings(EngineSettings{APIURL: srv1.URL})
 
 	apps, err := c.List(context.Background())

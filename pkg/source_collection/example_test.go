@@ -57,7 +57,7 @@ func Example_clientList() {
 
 	// 2. Construct Client and configure it with the stub's address.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil)) // suppress retry logs for clean Example output
-	c := source_collection.NewClient(logger)
+	c, _ := source_collection.NewClient(logger)
 	c.UpdateSettings(source_collection.EngineSettings{
 		APIURL:   ts.URL,
 		Username: "demo-user",

@@ -13,6 +13,15 @@ type Client interface {
 	UpdateSettings(s EngineSettings)
 }
 
+// AnnotationReader fetches a chart's Chart.yaml annotations from the
+// Application Collection's OCI host. Separated from Client to keep the
+// Client interface within the ≤4 ISP target. Implemented by the same
+// backing struct as Client (see api_client.go); consumers receive both
+// ports from NewClient.
+type AnnotationReader interface {
+	ChartAnnotations(ctx context.Context, repo, chart, version string) (map[string]string, error)
+}
+
 // EngineSettings holds configuration pushed from Settings CRD.
 type EngineSettings struct {
 	APIURL   string
