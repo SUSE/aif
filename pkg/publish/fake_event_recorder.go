@@ -10,3 +10,7 @@ type FakeEventRecorder struct {
 func (f *FakeEventRecorder) BundleSubmitted(_ context.Context, namespace, name, user, version string) {
 	f.Events = append(f.Events, "BundleSubmitted:"+namespace+"/"+name+":"+user+":"+version)
 }
+
+func (f *FakeEventRecorder) BundleWithdrawn(_ context.Context, namespace, name, user string) {
+	f.Events = append(f.Events, "BundleWithdrawn:"+namespace+"/"+name+":"+user)
+}

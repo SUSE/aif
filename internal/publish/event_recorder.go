@@ -25,3 +25,11 @@ func (r *EventRecorder) BundleSubmitted(ctx context.Context, namespace, name, us
 	obj.SetGroupVersionKind(aifv1alpha1.GroupVersion.WithKind("Bundle"))
 	r.recorder.Eventf(obj, nil, "Normal", "BundleSubmitted", "Submit", "Bundle submitted by %s with proposed version %s", user, version)
 }
+
+func (r *EventRecorder) BundleWithdrawn(ctx context.Context, namespace, name, user string) {
+	obj := &aifv1alpha1.Bundle{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+	}
+	obj.SetGroupVersionKind(aifv1alpha1.GroupVersion.WithKind("Bundle"))
+	r.recorder.Eventf(obj, nil, "Normal", "BundleWithdrawn", "Withdraw", "Bundle withdrawn by %s", user)
+}

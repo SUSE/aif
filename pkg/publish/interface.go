@@ -44,4 +44,5 @@ type Authorizer interface {
 // K8s-backed adapter in internal/publish/event_recorder.go.
 type EventRecorder interface {
 	BundleSubmitted(ctx context.Context, namespace, name, user, version string)
+	BundleWithdrawn(ctx context.Context, namespace, name, user string)
 }
