@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,12 +38,13 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 		t.Skip("SUSE_APPCO_USER and SUSE_APPCO_TOKEN must both be set for live test")
 	}
 
-	c := NewClient(silentLogger())
+	c, ar := NewClient(silentLogger())
 	// Empty APIURL → effectiveSettings() applies the production default
 	// (https://api.apps.rancher.io). Same Basic-auth flow as production.
 	c.UpdateSettings(EngineSettings{
 		Username: user,
 		Token:    token,
+		OCIHost:  os.Getenv("SUSE_APPCO_OCI_HOST"), // optional; empty → ChartAnnotations returns ErrNotConfigured (skipped below)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -61,6 +63,41 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 	if len(apps) == 0 {
 		t.Log("note: zero apps came back — auth handshake still validated, but the upstream catalog may be empty under the configured filter.")
 	}
+
+	// Exercise the AnnotationReader handshake — pick the first chart (if any)
+	// and fetch its annotations. Gated on SUSE_APPCO_OCI_HOST being set,
+	// since OCI access is independent from the HTTP API auth above.
+	ociHost := os.Getenv("SUSE_APPCO_OCI_HOST")
+	if len(apps) > 0 && ociHost != "" {
+		first := apps[0]
+		repo, chart := splitAppCoChartRef(first.ChartRef, ociHost, first.LatestVersion)
+		if chart == "" {
+			t.Logf("could not parse chart ref %q against OCIHost %q; skipping annotation fetch", first.ChartRef, ociHost)
+		} else {
+			ann, err := ar.ChartAnnotations(ctx, repo, chart, first.LatestVersion)
+			if err != nil {
+				t.Fatalf("ChartAnnotations(%s/%s:%s): %v", repo, chart, first.LatestVersion, err)
+			}
+			t.Logf("annotations for %s/%s:%s = %v", repo, chart, first.LatestVersion, ann)
+		}
+	}
+}
+
+// splitAppCoChartRef parses an "oci://<host>/<repo>/<chart>:<version>"
+// reference relative to the configured OCIHost into (repo, chart). Best
+// effort — returns ("", "") if the ref doesn't match the expected shape.
+func splitAppCoChartRef(chartRef, ociHost, version string) (string, string) {
+	prefix := "oci://" + strings.TrimPrefix(strings.TrimPrefix(ociHost, "https://"), "http://") + "/"
+	rest := strings.TrimPrefix(chartRef, prefix)
+	if rest == chartRef {
+		return "", ""
+	}
+	rest = strings.TrimSuffix(rest, ":"+version)
+	idx := strings.LastIndex(rest, "/")
+	if idx < 0 {
+		return "", ""
+	}
+	return rest[:idx], rest[idx+1:]
 }
 
 func silentLogger() *slog.Logger {

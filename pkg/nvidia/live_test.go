@@ -35,7 +35,7 @@ func TestLive_DiscoversNIMs_FromSUSERegistry(t *testing.T) {
 		t.Skip("SUSE_REG_USER and SUSE_REG_TOKEN must both be set for live test")
 	}
 
-	d := NewDiscovery(silentLogger())
+	d, ar := NewDiscovery(silentLogger())
 	d.UpdateSettings(EngineSettings{
 		RegistryEndpoint: "registry.suse.com",
 		Username:         user,
@@ -60,5 +60,18 @@ func TestLive_DiscoversNIMs_FromSUSERegistry(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Log("note: zero entries is currently expected — the SUSE-managed mirror publishes only ai/containers/... today; charts will land later.")
+	}
+
+	// Exercise the AnnotationReader handshake — pick the first entry (if any)
+	// and fetch its annotations. We don't assert on contents because the
+	// SUSE-managed mirror has not yet published charts under ai/charts/nvidia/
+	// (per P2-1 caveat). Successful auth + fetch is the assertion.
+	if len(entries) > 0 {
+		first := entries[0]
+		ann, err := ar.ChartAnnotations(ctx, first.Chart, first.Version)
+		if err != nil {
+			t.Fatalf("ChartAnnotations(%s, %s): %v", first.Chart, first.Version, err)
+		}
+		t.Logf("annotations for %s:%s = %v", first.Chart, first.Version, ann)
 	}
 }
