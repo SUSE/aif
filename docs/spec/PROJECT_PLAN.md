@@ -1216,6 +1216,14 @@ grep -nE 'strings\.Contains.*err\.Error' pkg/blueprint/    && echo FAIL || echo 
 **Deferred from P3-1 review:**
 - Wrap publish routes through the middleware chain (CORS, RequestID, Logging, Metrics). Currently `PublishHandler.Register()` registers routes on the bare mux, bypassing the `api.Chain` applied to other endpoints.
 
+> **Follow-up (P3-2 implementation):** P3-2 introduces a `publish.EventRecorder` port in `Deps` for K8s event recording. This covers `BundleSubmitted` and establishes the pattern for P3-3..P3-5 events (BundleWithdrawn, ChangesRequested, BundleApproved). The port is domain-specific (not a generic K8s recorder) to keep `pkg/publish` K8s-agnostic per hexagonal layering. K8s-backed adapter lives in `internal/publish/event_recorder.go`.
+
+> **Follow-up (P3-2 middleware refactor):** Middleware is now applied at the mux level via `Register() http.Handler` instead of per-route via `Handler.Register(mux, chain)`. `Register()` returns an `http.Handler` with the full middleware stack wrapping the mux. Handlers implement the simpler `Register(mux *http.ServeMux)` — they register routes only, middleware is automatic. This follows the standard Go HTTP pattern (chi, gorilla, stdlib convention) and eliminates the risk of routes silently bypassing middleware. P3-3..P3-5 handlers benefit from this directly.
+
+> **Follow-up (P3-2 aifv1 import exemption):** `pkg/publish/workflow.go` imports `api/v1alpha1` directly because `bundle.Repository.Get` returns `*aifv1.Bundle` — the workflow necessarily operates on CRD types at the adapter boundary. Accepted pattern, consistent with the existing P1-1 (`pkg/bundle/types.go`) and P1-2 (`pkg/blueprint/interface.go`) exemptions. Don't add new violations in other `pkg/publish` files; keep `aifv1` usage confined to `workflow.go`.
+
+> **Follow-up (P3-2 EventRecorder ISP):** `publish.EventRecorder` currently has 1 method (`BundleSubmitted`). P3-3..P3-5 will add `BundleWithdrawn`, `BundleChangesRequested`, `BundleApproved` — reaching 4 methods (within the ≤4 ISP target). If P3-5 also adds `BlueprintPublished` or `BundleStatusUpdateLagged`, the interface exceeds 4 and should be split by role (e.g. `SubmissionRecorder` / `ApprovalRecorder`) or collapsed to a single `RecordEvent(ctx, WorkflowEvent)` method with a discriminated event type.
+
 **Validation:**
 ```bash
 go test ./internal/api/ -run TestSubmit -v
@@ -2387,6 +2395,8 @@ go test -race ./internal/api/ -run TestPublisherEndpointsEnforcement -v
 
 **Agent Prompt:**
 > Implement `RequirePublisher` in `internal/api/middleware.go` per the `ARCHITECTURE.md §10.1 "RequirePublisher middleware (P7-5 contract)"` snippet — copy verbatim. Include the `ExtractUser` helper from §10.1 with `sort.Strings(groups)` for cache-key determinism. Apply the middleware to ALL 8 publisher-only endpoints (full list in Acceptance). The cache key MUST include groups per §10.1 (test by simulating a user whose group membership changes). The 403 envelope uses the `ErrCodeForbidden` constant per §6.4. Tests are `-race` clean. Done when both Validation suites pass.
+
+> **Follow-up (post-merge, from P3-2 review):** Author endpoints (submit, future edit) currently have no namespace-scoped SAR check — any authenticated caller can transition any bundle in any namespace. Add a `RequireNamespaceAccess` middleware or SAR check (verb=update, resource=bundles, namespace=target) to author-facing endpoints alongside the publisher enforcement. The operator SA has cluster-wide bundle permissions, so Rancher proxy RBAC is the only current gate; a namespace-scoped SAR would enforce authorization inside the operator process.
 
 ---
 

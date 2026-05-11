@@ -38,3 +38,10 @@ type ReviewRequest struct {
 type Authorizer interface {
 	Allowed(ctx context.Context, user, verb, resource string) (bool, error)
 }
+
+// EventRecorder emits domain events for publish-workflow actions. The port is
+// domain-specific (not a generic K8s recorder) so pkg/publish stays K8s-agnostic.
+// K8s-backed adapter in internal/publish/event_recorder.go.
+type EventRecorder interface {
+	BundleSubmitted(ctx context.Context, namespace, name, user, version string)
+}

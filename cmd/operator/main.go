@@ -15,6 +15,7 @@ import (
 	aifv1alpha1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/internal/api"
 	"github.com/SUSE/aif/internal/manager"
+	internalpublish "github.com/SUSE/aif/internal/publish"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
@@ -158,10 +159,13 @@ func main() {
 	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
 	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 
+	publishRecorder := internalpublish.NewEventRecorder(mgr.GetEventRecorder("publish-workflow"))
+
 	publishWorkflow = publish.New(publish.Deps{
 		Bundles:    bundleRepo,
 		Blueprints: blueprintRepo,
 		Authz:      publish.AllowAllAuthorizer{},
+		Recorder:   publishRecorder,
 		Logger:     logger,
 	})
 	// Loud, unmissable warning: AllowAllAuthorizer approves every publisher
@@ -180,11 +184,11 @@ func main() {
 
 	// Setup API server
 	mux := http.NewServeMux()
-	manager.Register(mux, logger, allowedOrigin, publishHandler)
+	handler := manager.Register(mux, logger, allowedOrigin, publishHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	// Setup signal handling

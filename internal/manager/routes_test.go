@@ -26,9 +26,9 @@ func (h *testHandler) Register(mux *http.ServeMux) {
 func TestRoutes_MiddlewareStack(t *testing.T) {
 	mux := http.NewServeMux()
 	logger := slog.Default()
-	Register(mux, logger, "https://rancher.example.com")
+	handler := Register(mux, logger, "https://rancher.example.com")
 
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/version")
@@ -43,9 +43,9 @@ func TestRoutes_MiddlewareStack(t *testing.T) {
 func TestRoutes_HealthEndpoint(t *testing.T) {
 	mux := http.NewServeMux()
 	logger := slog.Default()
-	Register(mux, logger, "https://rancher.example.com")
+	handler := Register(mux, logger, "https://rancher.example.com")
 
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/healthz")
@@ -63,9 +63,9 @@ func TestRoutes_HealthEndpoint(t *testing.T) {
 func TestRoutes_VersionEndpoint(t *testing.T) {
 	mux := http.NewServeMux()
 	logger := slog.Default()
-	Register(mux, logger, "")
+	handler := Register(mux, logger, "")
 
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/version")
@@ -84,11 +84,11 @@ func TestRoutes_HandlerRegistration(t *testing.T) {
 	mux := http.NewServeMux()
 	logger := slog.Default()
 	h := &testHandler{}
-	Register(mux, logger, "", h)
+	handler := Register(mux, logger, "", h)
 
 	assert.True(t, h.registered)
 
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/v1/test-resource")
