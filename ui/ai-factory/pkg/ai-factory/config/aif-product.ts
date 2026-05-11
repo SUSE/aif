@@ -1,15 +1,15 @@
 import type { IPlugin } from '@shell/core/types';
-import { PRODUCT_NAME, BLANK_CLUSTER, PAGE_IDS, CRD_TYPES } from './types';
+import { PRODUCT_NAME, MANAGEMENT_CLUSTER, PAGE_IDS, CRD_TYPES } from './types';
 
 const routeFor = (pageId: string) => ({
   name:   `${ PRODUCT_NAME }-c-cluster-${ pageId }`,
   params: {
     product: PRODUCT_NAME,
-    cluster: BLANK_CLUSTER
+    cluster: MANAGEMENT_CLUSTER
   },
   meta: {
     product: PRODUCT_NAME,
-    cluster: BLANK_CLUSTER
+    cluster: MANAGEMENT_CLUSTER
   }
 });
 
@@ -31,8 +31,7 @@ export function init($plugin: IPlugin, store: any): void {
     product,
     virtualType,
     basicType,
-    configureType,
-    weightGroup
+    configureType
   } = $plugin.DSL(store, PRODUCT_NAME);
 
   product({
@@ -55,21 +54,15 @@ export function init($plugin: IPlugin, store: any): void {
     } as any);
   });
 
-  const globalPages = [
+  basicType([
     PAGE_IDS.OVERVIEW,
     PAGE_IDS.APPS,
     PAGE_IDS.BLUEPRINTS,
     PAGE_IDS.BUNDLES,
+    PAGE_IDS.WORKLOADS,
     PAGE_IDS.PENDING_REVIEWS,
     PAGE_IDS.SETTINGS
-  ];
-
-  const clusterPages = [
-    PAGE_IDS.WORKLOADS
-  ];
-
-  basicType(globalPages, 'Global');
-  basicType(clusterPages, 'Clusters');
+  ]);
 
   // Register CRD-backed types so the Steve store discovers and watches them.
   // These are separate from the virtualType nav entries above.
@@ -83,7 +76,4 @@ export function init($plugin: IPlugin, store: any): void {
   configureType(CRD_TYPES.BLUEPRINT,  { isCreatable: false, isEditable: false, isRemovable: false, canYaml: true  });
   configureType(CRD_TYPES.WORKLOAD,   { isCreatable: false, isEditable: false, isRemovable: false               });
   configureType(CRD_TYPES.SETTINGS,   { isCreatable: false, isEditable: true,  isRemovable: false               });
-
-  weightGroup('Global', 1100, true);
-  weightGroup('Clusters', 1000, true);
 }

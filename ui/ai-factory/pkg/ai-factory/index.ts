@@ -18,7 +18,7 @@ export default function(plugin: IPlugin): void {
     icon: require('./assets/logo.svg')
   };
 
-  plugin.addDashboardStore('aif', SteveFactory(null, null), { namespace: 'aif', isClusterStore: true });
+  plugin.addDashboardStore('aif', SteveFactory('local', null), { namespace: 'aif', isClusterStore: true });
   plugin.addProduct(require('./config/aif-product'));
   plugin.addRoutes(routes);
   plugin.addL10n('en-us', require('./l10n/en-us.yaml'));

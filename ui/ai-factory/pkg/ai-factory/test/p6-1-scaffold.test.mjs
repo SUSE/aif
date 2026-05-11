@@ -27,7 +27,7 @@ test('P6-1 type constants define product, pages, and CRD types', () => {
   const source = read('config/types.ts');
 
   assert.match(source, /PRODUCT_NAME\s*=\s*'ai-factory'/);
-  assert.match(source, /BLANK_CLUSTER\s*=\s*'_'/);
+  assert.match(source, /MANAGEMENT_CLUSTER\s*=\s*'local'/);
 
   for (const [page] of pages) {
     assert.match(source, new RegExp(`${ toConst(page) }:\\s*'${ page }'`));
@@ -38,15 +38,14 @@ test('P6-1 type constants define product, pages, and CRD types', () => {
   }
 });
 
-test('P6-1 product registration exposes grouped navigation', () => {
+test('P6-1 product registration exposes flat navigation', () => {
   const source = read('config/aif-product.ts');
 
   assert.match(source, /product\(\{/);
   assert.match(source, /inStore:\s*'aif'/);
   assert.match(source, /isMultiClusterApp:\s*true/);
   assert.match(source, /showClusterSwitcher:\s*false/);
-  assert.match(source, /basicType\(globalPages,\s*'Global'\)/);
-  assert.match(source, /basicType\(clusterPages,\s*'Clusters'\)/);
+  assert.match(source, /basicType\(\[\s*PAGE_IDS\.OVERVIEW/);
   assert.match(source, /basicType\(\[CRD_TYPES\.BUNDLE,\s*CRD_TYPES\.BLUEPRINT,\s*CRD_TYPES\.WORKLOAD,\s*CRD_TYPES\.SETTINGS\]\)/);
   assert.match(source, /configureType\(CRD_TYPES\.BUNDLE,\s*\{[^}]*isRemovable:\s*true/s);
   assert.match(source, /configureType\(CRD_TYPES\.BLUEPRINT,\s*\{[^}]*isCreatable:\s*false/s);
@@ -54,8 +53,7 @@ test('P6-1 product registration exposes grouped navigation', () => {
   assert.match(source, /configureType\(CRD_TYPES\.WORKLOAD,\s*\{[^}]*isCreatable:\s*false/s);
   assert.match(source, /configureType\(CRD_TYPES\.WORKLOAD,\s*\{[^}]*isRemovable:\s*false/s);
   assert.match(source, /configureType\(CRD_TYPES\.SETTINGS,\s*\{[^}]*isRemovable:\s*false/s);
-  assert.match(source, /weightGroup\('Global',\s*1100,\s*true\)/);
-  assert.match(source, /weightGroup\('Clusters',\s*1000,\s*true\)/);
+  assert.doesNotMatch(source, /weightGroup/);
 
   for (const [page,, , l10nKey] of pages) {
     assert.match(source, new RegExp(`PAGE_IDS\\.${ toConst(page) }`));
