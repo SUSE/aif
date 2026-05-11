@@ -24,32 +24,32 @@ const (
 type NIMEntry struct {
 	// ID is the canonical model identifier. For SUSE-Registry-discovered NIMs
 	// the format is "<chart>:<version>" (e.g. "nim-llm:1.3.0").
-	ID string
+	ID string `json:"id"`
 
 	// Chart is the chart name within registry.suse.com/ai/charts/nvidia/
 	// (e.g. "nim-llm", "nim-vlm").
-	Chart string
+	Chart string `json:"chart"`
 
 	// Version is the chart's OCI tag (semver, no "v" prefix).
-	Version string
+	Version string `json:"version"`
 
 	// DisplayName is the human-readable name for the UI. Defaults to Chart.
-	DisplayName string
+	DisplayName string `json:"displayName"`
 
 	// Type classifies the NIM (LLM / VLM). Set by the chart-name heuristic.
-	Type Type
+	Type Type `json:"type"`
 
 	// DefaultGPUs is the recommended GPU count for a baseline deployment.
 	// Populated by the deployer (P4-4); zero from discovery alone.
-	DefaultGPUs int32
+	DefaultGPUs int32 `json:"defaultGpus"`
 
 	// DefaultModel is the baseline model variant when an entry covers
 	// multiple. Populated by the deployer (P4-4); empty from discovery alone.
-	DefaultModel string
+	DefaultModel string `json:"defaultModel"`
 
 	// ChartRef is the full OCI reference to the chart, e.g.
 	// "oci://registry.suse.com/ai/charts/nvidia/nim-llm:1.3.0".
-	ChartRef string
+	ChartRef string `json:"chartRef"`
 }
 
 // GenerateRequest is the input to Deployer.GenerateValues. Sizing formulas
