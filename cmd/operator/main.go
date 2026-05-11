@@ -86,9 +86,9 @@ func main() {
 		os.Exit(1)
 	}
 	gitEngine := git.NewFleetEngine(logger, gitDir)
-	nvidiaDiscovery := nvidia.NewDiscovery(logger)
+	nvidiaDiscovery, nvidiaAnnReader := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
-	appcoClient := source_collection.NewClient(logger)
+	appcoClient, appcoAnnReader := source_collection.NewClient(logger)
 
 	// Apps Catalog assembles entries from both upstream Sources via
 	// thin adapters (P2-3 Option B hexagonal: source packages stay
@@ -97,8 +97,8 @@ func main() {
 	// (decision d); appsCatalog.Start fans out to per-Source ticker
 	// goroutines via the Lifecycle pattern (decision e).
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
-	appsCatalog.AddSource(apps.NewNVIDIASource(nvidiaDiscovery, logger, catalogRefreshDuration))
-	appsCatalog.AddSource(apps.NewAppCoSource(appcoClient, logger, catalogRefreshDuration))
+	appsCatalog.AddSource(apps.NewNVIDIASource(nvidiaDiscovery, nvidiaAnnReader, logger, catalogRefreshDuration))
+	appsCatalog.AddSource(apps.NewAppCoSource(appcoClient, appcoAnnReader, logger, catalogRefreshDuration))
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
 	// after ctrl.NewManager below (they need the manager's client). Defer

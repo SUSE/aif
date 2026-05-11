@@ -47,14 +47,14 @@ func TestLive_Catalog_AssemblesFromBothUpstreams(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Build the engines.
-	nvDiscovery := nvidia.NewDiscovery(logger)
+	nvDiscovery, nvAnn := nvidia.NewDiscovery(logger)
 	nvDiscovery.UpdateSettings(nvidia.EngineSettings{
 		RegistryEndpoint: "registry.suse.com",
 		Username:         regUser,
 		Token:            regToken,
 	})
 
-	appcoClient := source_collection.NewClient(logger)
+	appcoClient, appcoAnn := source_collection.NewClient(logger)
 	appcoClient.UpdateSettings(source_collection.EngineSettings{
 		Username: appcoUser,
 		Token:    appcoToken,
@@ -62,8 +62,8 @@ func TestLive_Catalog_AssemblesFromBothUpstreams(t *testing.T) {
 
 	// Build Catalog and register both adapters.
 	catalog := New(logger, 10*time.Minute).(*catalogImpl)
-	catalog.AddSource(NewNVIDIASource(nvDiscovery, nil, logger, 10*time.Minute))
-	catalog.AddSource(NewAppCoSource(appcoClient, nil, logger, 10*time.Minute))
+	catalog.AddSource(NewNVIDIASource(nvDiscovery, nvAnn, logger, 10*time.Minute))
+	catalog.AddSource(NewAppCoSource(appcoClient, appcoAnn, logger, 10*time.Minute))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
