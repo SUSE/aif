@@ -386,3 +386,41 @@ func TestCatalog_List_StableSortByID(t *testing.T) {
 		t.Error("List output is not sorted by ID")
 	}
 }
+
+func TestList_DefaultHidesReferenceBlueprints(t *testing.T) {
+	cat := New(discardLogger(), time.Minute).(*catalogImpl)
+	cat.AddSource(&fakeSource{
+		name: "nvidia",
+		apps: []App{
+			{ID: "nvidia.regular:1.0.0", Source: "nvidia"},
+			{ID: "nvidia.rb:1.0.0", Source: "nvidia", ReferenceBlueprint: true},
+		},
+	})
+
+	got, err := cat.List(context.Background(), ListOpts{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "nvidia.regular:1.0.0" {
+		t.Fatalf("expected only the non-RB app, got %v", got)
+	}
+}
+
+func TestList_IncludeReferenceBlueprintsReturnsRBs(t *testing.T) {
+	cat := New(discardLogger(), time.Minute).(*catalogImpl)
+	cat.AddSource(&fakeSource{
+		name: "nvidia",
+		apps: []App{
+			{ID: "nvidia.regular:1.0.0", Source: "nvidia"},
+			{ID: "nvidia.rb:1.0.0", Source: "nvidia", ReferenceBlueprint: true},
+		},
+	})
+
+	got, err := cat.List(context.Background(), ListOpts{IncludeReferenceBlueprints: true})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 apps, got %d", len(got))
+	}
+}

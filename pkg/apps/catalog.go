@@ -108,6 +108,9 @@ func matchesOpts(a App, opts ListOpts) bool {
 			return false
 		}
 	}
+	if !opts.IncludeReferenceBlueprints && a.ReferenceBlueprint {
+		return false
+	}
 	return true
 }
 
