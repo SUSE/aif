@@ -61,6 +61,11 @@ func (h *AppsHandler) list(w http.ResponseWriter, r *http.Request) {
 	all, err := h.catalog.List(r.Context(), opts)
 	if err != nil {
 		h.logCatalogErr(r, "List", err, "source", opts.Source, "category", opts.Category)
+		// catalog.List has no mappable sentinels today (stale-but-good
+		// design: partial source failures are logged and absorbed by
+		// the catalog itself — see P2-3 §catalog behavior). This branch
+		// is a defensive net for future error paths; until then it
+		// falls through to a generic 500.
 		writeError(w, errorStatus(err), err)
 		return
 	}
@@ -142,6 +147,9 @@ func (h *AppsHandler) categories(w http.ResponseWriter, r *http.Request) {
 	all, err := h.catalog.List(r.Context(), apps.ListOpts{})
 	if err != nil {
 		h.logCatalogErr(r, "categories.List", err)
+		// Same defensive guard as list above — catalog.List has no
+		// mappable sentinels today; future error paths fall through
+		// to a generic 500.
 		writeError(w, errorStatus(err), err)
 		return
 	}
