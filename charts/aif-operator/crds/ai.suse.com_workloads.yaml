@@ -59,7 +59,7 @@ spec:
                 description: DeployStrategy indicates the deployment method
                 enum:
                 - helm
-                - fleet
+                - gitops
                 type: string
               name:
                 description: Name is the workload display name
@@ -165,7 +165,10 @@ spec:
                     - namespace
                     type: object
                   kind:
-                    description: Kind indicates the source type
+                    description: |-
+                      Kind is a source-provenance discriminator, not a Kubernetes TypeMeta.Kind.
+                      "App" and "Blueprint" correspond to CRDs of the same name; "BundleTest" has
+                      no corresponding CRD — it denotes a test deployment created from a Bundle.
                     enum:
                     - App
                     - Blueprint
@@ -256,9 +259,11 @@ spec:
                     - AutomaticRecovery
                     type: string
                 type: object
-              targetCluster:
-                description: TargetCluster is the cluster ID (informational)
-                type: string
+              targetClusters:
+                description: TargetClusters are the cluster IDs (informational)
+                items:
+                  type: string
+                type: array
               valueOverrides:
                 additionalProperties:
                   type: string
@@ -435,7 +440,10 @@ spec:
                           - namespace
                           type: object
                         kind:
-                          description: Kind indicates the source type
+                          description: |-
+                            Kind is a source-provenance discriminator, not a Kubernetes TypeMeta.Kind.
+                            "App" and "Blueprint" correspond to CRDs of the same name; "BundleTest" has
+                            no corresponding CRD — it denotes a test deployment created from a Bundle.
                           enum:
                           - App
                           - Blueprint
