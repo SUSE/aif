@@ -69,14 +69,14 @@ func (h *PublishHandler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	LoggerFromContext(r.Context()).Info("bundle submitted",
-		"namespace", ns, "name", name,
-		"proposedVersion", body.ProposedVersion, "submittedBy", user)
-
 	if result.Submission == nil {
 		writeError(w, http.StatusInternalServerError, ErrInternal)
 		return
 	}
+
+	LoggerFromContext(r.Context()).Info("bundle submitted",
+		"namespace", ns, "name", name,
+		"proposedVersion", body.ProposedVersion, "submittedBy", user)
 
 	writeJSON(w, http.StatusOK, submitResponse{
 		Phase:             string(result.Phase),
@@ -109,8 +109,11 @@ func mapPublishErr(err error) error {
 }
 
 func writePublishError(w http.ResponseWriter, err error) {
-	apiErr := mapPublishErr(err)
-	writeError(w, errorStatus(apiErr), apiErr)
+	apiSentinel := mapPublishErr(err)
+	writeError(w, errorStatus(apiSentinel), &APIError{
+		Code:    errorCode(apiSentinel),
+		Message: err.Error(),
+	})
 }
 
 func (h *PublishHandler) withdraw(w http.ResponseWriter, r *http.Request) {
