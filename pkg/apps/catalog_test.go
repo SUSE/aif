@@ -87,15 +87,15 @@ func TestCatalog_List_TwoSources_ConcatenatedAndSortedByID(t *testing.T) {
 	cat.AddSource(&fakeSource{
 		name: "nvidia",
 		apps: []App{
-			{ID: "nvidia/nim-llm:1.0.0", Source: "nvidia"},
-			{ID: "nvidia/nim-vlm:2.0.0", Source: "nvidia"},
+			{ID: "nvidia.nim-llm:1.0.0", Source: "nvidia"},
+			{ID: "nvidia.nim-vlm:2.0.0", Source: "nvidia"},
 		},
 	})
 	cat.AddSource(&fakeSource{
 		name: "suse",
 		apps: []App{
-			{ID: "suse/ollama:0.4.1", Source: "suse"},
-			{ID: "suse/milvus:2.4.0", Source: "suse"},
+			{ID: "suse.ollama:0.4.1", Source: "suse"},
+			{ID: "suse.milvus:2.4.0", Source: "suse"},
 		},
 	})
 
@@ -104,10 +104,10 @@ func TestCatalog_List_TwoSources_ConcatenatedAndSortedByID(t *testing.T) {
 		t.Fatalf("List failed: %v", err)
 	}
 	wantIDs := []string{
-		"nvidia/nim-llm:1.0.0",
-		"nvidia/nim-vlm:2.0.0",
-		"suse/milvus:2.4.0",
-		"suse/ollama:0.4.1",
+		"nvidia.nim-llm:1.0.0",
+		"nvidia.nim-vlm:2.0.0",
+		"suse.milvus:2.4.0",
+		"suse.ollama:0.4.1",
 	}
 	if len(got) != len(wantIDs) {
 		t.Fatalf("expected %d apps, got %d", len(wantIDs), len(got))
@@ -146,11 +146,11 @@ func TestCatalog_List_FiltersBySource(t *testing.T) {
 	cat := New(discardLogger(), 10*time.Minute).(*catalogImpl)
 	cat.AddSource(&fakeSource{
 		name: "nvidia",
-		apps: []App{{ID: "nvidia/a:1", Source: "nvidia"}, {ID: "nvidia/b:1", Source: "nvidia"}},
+		apps: []App{{ID: "nvidia.a:1", Source: "nvidia"}, {ID: "nvidia.b:1", Source: "nvidia"}},
 	})
 	cat.AddSource(&fakeSource{
 		name: "suse",
-		apps: []App{{ID: "suse/c:1", Source: "suse"}},
+		apps: []App{{ID: "suse.c:1", Source: "suse"}},
 	})
 
 	got, err := cat.List(context.Background(), ListOpts{Source: "nvidia"})
@@ -172,9 +172,9 @@ func TestCatalog_List_FiltersByCategory_ExactMatch(t *testing.T) {
 	cat.AddSource(&fakeSource{
 		name: "nvidia",
 		apps: []App{
-			{ID: "nvidia/a:1", Source: "nvidia", Categories: []string{"llm"}},
-			{ID: "nvidia/b:1", Source: "nvidia", Categories: []string{"vlm"}},
-			{ID: "nvidia/c:1", Source: "nvidia", Categories: []string{"llm", "embedding"}},
+			{ID: "nvidia.a:1", Source: "nvidia", Categories: []string{"llm"}},
+			{ID: "nvidia.b:1", Source: "nvidia", Categories: []string{"vlm"}},
+			{ID: "nvidia.c:1", Source: "nvidia", Categories: []string{"llm", "embedding"}},
 		},
 	})
 
@@ -205,29 +205,29 @@ func TestCatalog_Get_DispatchesByNamespacePrefix(t *testing.T) {
 	cat := New(discardLogger(), 10*time.Minute).(*catalogImpl)
 	nvSrc := &fakeSource{
 		name: "nvidia",
-		apps: []App{{ID: "nvidia/nim-llm:1.0.0", Source: "nvidia", Name: "nim-llm"}},
+		apps: []App{{ID: "nvidia.nim-llm:1.0.0", Source: "nvidia", Name: "nim-llm"}},
 	}
 	suseSrc := &fakeSource{
 		name: "suse",
-		apps: []App{{ID: "suse/ollama:0.4.1", Source: "suse", Name: "ollama"}},
+		apps: []App{{ID: "suse.ollama:0.4.1", Source: "suse", Name: "ollama"}},
 	}
 	cat.AddSource(nvSrc)
 	cat.AddSource(suseSrc)
 
-	got, err := cat.Get(context.Background(), "nvidia/nim-llm:1.0.0")
+	got, err := cat.Get(context.Background(), "nvidia.nim-llm:1.0.0")
 	if err != nil {
-		t.Fatalf("Get(nvidia/...): %v", err)
+		t.Fatalf("Get(nvidia.nim-llm:...): %v", err)
 	}
 	if got.Name != "nim-llm" {
-		t.Errorf("Get(nvidia/nim-llm:1.0.0).Name = %q, want %q", got.Name, "nim-llm")
+		t.Errorf("Get(nvidia.nim-llm:1.0.0).Name = %q, want %q", got.Name, "nim-llm")
 	}
 
-	got, err = cat.Get(context.Background(), "suse/ollama:0.4.1")
+	got, err = cat.Get(context.Background(), "suse.ollama:0.4.1")
 	if err != nil {
-		t.Fatalf("Get(suse/...): %v", err)
+		t.Fatalf("Get(suse.ollama:...): %v", err)
 	}
 	if got.Name != "ollama" {
-		t.Errorf("Get(suse/ollama:0.4.1).Name = %q, want %q", got.Name, "ollama")
+		t.Errorf("Get(suse.ollama:0.4.1).Name = %q, want %q", got.Name, "ollama")
 	}
 }
 
@@ -245,10 +245,10 @@ func TestCatalog_Get_MissingApp_ReturnsErrAppNotFound(t *testing.T) {
 	cat := New(discardLogger(), 10*time.Minute).(*catalogImpl)
 	cat.AddSource(&fakeSource{
 		name: "nvidia",
-		apps: []App{{ID: "nvidia/nim-llm:1.0.0"}},
+		apps: []App{{ID: "nvidia.nim-llm:1.0.0"}},
 	})
 
-	_, err := cat.Get(context.Background(), "nvidia/does-not-exist:9.9.9")
+	_, err := cat.Get(context.Background(), "nvidia.does-not-exist:9.9.9")
 	if !stderrors.Is(err, ErrAppNotFound) {
 		t.Errorf("Get with missing id err = %v, want ErrAppNotFound", err)
 	}
@@ -363,22 +363,22 @@ func TestCatalog_Start_FakeSourceIsNotLifecycle(t *testing.T) {
 func TestCatalog_List_StableSortByID(t *testing.T) {
 	cat := New(discardLogger(), 10*time.Minute).(*catalogImpl)
 	// Register suse first, then nvidia. Output should still be sorted by ID
-	// (so nvidia/* comes before suse/* alphabetically).
+	// (so nvidia.* comes before suse.* alphabetically).
 	cat.AddSource(&fakeSource{
 		name: "suse",
-		apps: []App{{ID: "suse/zzz:1", Source: "suse"}},
+		apps: []App{{ID: "suse.zzz:1", Source: "suse"}},
 	})
 	cat.AddSource(&fakeSource{
 		name: "nvidia",
-		apps: []App{{ID: "nvidia/aaa:1", Source: "nvidia"}},
+		apps: []App{{ID: "nvidia.aaa:1", Source: "nvidia"}},
 	})
 
 	got, _ := cat.List(context.Background(), ListOpts{})
 	if len(got) != 2 {
 		t.Fatalf("expected 2 apps, got %d", len(got))
 	}
-	if got[0].ID != "nvidia/aaa:1" || got[1].ID != "suse/zzz:1" {
-		t.Errorf("sort order = [%s, %s], want [nvidia/aaa:1, suse/zzz:1]",
+	if got[0].ID != "nvidia.aaa:1" || got[1].ID != "suse.zzz:1" {
+		t.Errorf("sort order = [%s, %s], want [nvidia.aaa:1, suse.zzz:1]",
 			got[0].ID, got[1].ID)
 	}
 	// Sanity: confirm sort.SliceIsSorted reports it as sorted.

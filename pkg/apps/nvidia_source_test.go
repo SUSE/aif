@@ -117,8 +117,8 @@ func TestNVIDIASource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	llm := apps[0]
-	if llm.ID != "nvidia/nim-llm:1.0.0" {
-		t.Errorf("LLM ID = %q, want %q", llm.ID, "nvidia/nim-llm:1.0.0")
+	if llm.ID != "nvidia.nim-llm:1.0.0" {
+		t.Errorf("LLM ID = %q, want %q", llm.ID, "nvidia.nim-llm:1.0.0")
 	}
 	if llm.Source != "nvidia" {
 		t.Errorf("LLM Source = %q, want %q", llm.Source, "nvidia")
@@ -150,8 +150,8 @@ func TestNVIDIASource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	vlm := apps[1]
-	if vlm.ID != "nvidia/nim-vlm:2.0.0" {
-		t.Errorf("VLM ID = %q, want %q", vlm.ID, "nvidia/nim-vlm:2.0.0")
+	if vlm.ID != "nvidia.nim-vlm:2.0.0" {
+		t.Errorf("VLM ID = %q, want %q", vlm.ID, "nvidia.nim-vlm:2.0.0")
 	}
 	if len(vlm.Categories) != 1 || vlm.Categories[0] != "vlm" {
 		t.Errorf("VLM Categories = %v, want [vlm]", vlm.Categories)

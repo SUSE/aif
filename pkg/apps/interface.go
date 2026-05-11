@@ -20,9 +20,12 @@ type Catalog interface {
 	// by App.ID, sorted by ID, optionally filtered by ListOpts.
 	List(ctx context.Context, opts ListOpts) ([]App, error)
 
-	// Get returns a single App by namespaced ID. Parses the ID's
-	// "<source>/..." prefix and dispatches to the matching Source's
-	// cache. Returns ErrAppNotFound or ErrUnknownSource on miss.
+	// Get returns a single App by namespaced ID. Parses the dot-
+	// separated "<source>.<chart>:<version>" form and dispatches to
+	// the matching Source's cache. Returns ErrAppNotFound when the
+	// prefix matches a registered Source but no entry has the full
+	// ID; ErrUnknownSource when the prefix doesn't match (or the ID
+	// is missing the "." separator entirely).
 	Get(ctx context.Context, id string) (App, error)
 
 	// Refresh fans out to every Source.Refresh in parallel. Partial

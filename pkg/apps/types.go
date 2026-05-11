@@ -8,32 +8,34 @@ import "time"
 // translate engine-native types (NIMEntry, source_collection.CatalogApp)
 // into App; the engine packages remain unaware of App's existence.
 //
-// IDs are namespaced by source so dedupe and routing are mechanical:
+// IDs are namespaced by source so dedupe and routing are mechanical;
+// the dot separator is chosen so the REST surface uses a plain
+// path-segment route (`/api/v1/apps/{id}`) rather than a wildcard:
 //
-//	nvidia/<chart>:<version>     e.g. nvidia/nim-llm:1.2.0
-//	suse/<slug>:<version>        e.g. suse/ollama:0.4.1
+//	nvidia.<chart>:<version>     e.g. nvidia.nim-llm:1.2.0
+//	suse.<slug>:<version>        e.g. suse.ollama:0.4.1
 type App struct {
-	ID                 string   // namespaced; canonical key for dedupe + Get
-	Name               string   // bare chart/slug name (no namespace, no version)
-	DisplayName        string   // human-readable
-	Description        string
-	Publisher          string
-	Version            string   // chart version
-	LogoURL            string
-	Source             string   // "nvidia" | "suse"
-	AssetType          string   // "chart" today; reserved for future asset kinds
-	Categories         []string // flattened category names
-	Tags               []string
-	ChartRef           ChartRef
-	ProjectURL         string
-	ReferenceBlueprint bool // populated by P2-5; false by default
+	ID                 string   `json:"id"`                 // namespaced; canonical key for dedupe + Get
+	Name               string   `json:"name"`               // bare chart/slug name (no namespace, no version)
+	DisplayName        string   `json:"displayName"`        // human-readable
+	Description        string   `json:"description"`
+	Publisher          string   `json:"publisher"`
+	Version            string   `json:"version"`           // chart version
+	LogoURL            string   `json:"logoURL"`
+	Source             string   `json:"source"`            // "nvidia" | "suse"
+	AssetType          string   `json:"assetType"`         // "chart" today; reserved for future asset kinds
+	Categories         []string `json:"categories"`        // flattened category names
+	Tags               []string `json:"tags"`
+	ChartRef           ChartRef `json:"chartRef"`
+	ProjectURL         string   `json:"projectURL"`
+	ReferenceBlueprint bool     `json:"referenceBlueprint"` // populated by P2-5; false by default
 }
 
 // ChartRef matches ARCHITECTURE.md §5: {repo, chart, version}.
 type ChartRef struct {
-	Repo    string // OCI repository, including scheme (e.g. oci://registry.suse.com/ai/charts/nvidia)
-	Chart   string // chart name within the repo
-	Version string
+	Repo    string `json:"repo"`    // OCI repository, including scheme (e.g. oci://registry.suse.com/ai/charts/nvidia)
+	Chart   string `json:"chart"`   // chart name within the repo
+	Version string `json:"version"`
 }
 
 // ListOpts carries filters for Catalog.List. Empty fields mean no filter.

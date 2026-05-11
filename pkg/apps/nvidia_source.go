@@ -12,7 +12,7 @@ import (
 
 // NVIDIASource is the apps.Source adapter for the SUSE Registry-backed
 // NVIDIA NIM catalog (pkg/nvidia.Discovery). It owns its own cache and
-// translates NIMEntry → App with namespaced ID `nvidia/<chart>:<ver>`.
+// translates NIMEntry → App with namespaced ID `nvidia.<chart>:<ver>`.
 //
 // This file is the SOLE place in pkg/apps that imports pkg/nvidia, per
 // the Option B hexagonal contract: the engine package stays unaware of
@@ -143,13 +143,15 @@ func (n *NVIDIASource) recordError(err error) {
 }
 
 // translateNIMEntries converts the engine-native NIMEntry slice into
-// the canonical []App. ID is namespaced as `nvidia/<chart>:<version>`;
-// Type (LLM/VLM) becomes a single-element Categories slice.
+// the canonical []App. ID is namespaced as `nvidia.<chart>:<version>`
+// (single-token form chosen so the REST surface uses a plain
+// path-segment route, not a wildcard); Type (LLM/VLM) becomes a
+// single-element Categories slice.
 func translateNIMEntries(entries []nvidia.NIMEntry) []App {
 	out := make([]App, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, App{
-			ID:          "nvidia/" + e.ID,
+			ID:          "nvidia." + e.ID,
 			Name:        e.Chart,
 			DisplayName: e.DisplayName,
 			Publisher:   "NVIDIA",

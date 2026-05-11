@@ -13,7 +13,7 @@ import (
 // AppCoSource is the apps.Source adapter for the SUSE Application
 // Collection (pkg/source_collection.Client). It owns its own cache and
 // translates source_collection.CatalogApp → App with namespaced ID
-// `suse/<slug>:<latestVersion>`.
+// `suse.<slug>:<latestVersion>`.
 //
 // Unlike pkg/nvidia (whose Discovery has its own cache + Refresh), the
 // upstream Application Collection client is stateless — Client.List
@@ -137,12 +137,14 @@ func (a *AppCoSource) recordError(err error) {
 }
 
 // translateCatalogApps converts source_collection.CatalogApp slice
-// into the canonical []App. ID namespaced as `suse/<slug>:<version>`.
+// into the canonical []App. ID namespaced as `suse.<slug>:<version>`
+// (single-token form so the REST surface uses a plain path-segment
+// route, not a wildcard).
 func translateCatalogApps(upstream []source_collection.CatalogApp) []App {
 	out := make([]App, 0, len(upstream))
 	for _, u := range upstream {
 		out = append(out, App{
-			ID:          "suse/" + u.ID + ":" + u.LatestVersion,
+			ID:          "suse." + u.ID + ":" + u.LatestVersion,
 			Name:        u.ID,
 			DisplayName: u.DisplayName,
 			Description: u.Description,

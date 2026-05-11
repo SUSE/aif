@@ -39,15 +39,15 @@ func Example_catalog() {
 	nvidia := &staticSource{
 		name: "nvidia",
 		apps: []apps.App{
-			{ID: "nvidia/nim-llm:1.0.0", Source: "nvidia", Publisher: "NVIDIA"},
-			{ID: "nvidia/nim-vlm:2.0.0", Source: "nvidia", Publisher: "NVIDIA"},
+			{ID: "nvidia.nim-llm:1.0.0", Source: "nvidia", Publisher: "NVIDIA"},
+			{ID: "nvidia.nim-vlm:2.0.0", Source: "nvidia", Publisher: "NVIDIA"},
 		},
 	}
 	suse := &staticSource{
 		name: "suse",
 		apps: []apps.App{
-			{ID: "suse/ollama:0.4.1", Source: "suse", Publisher: "Ollama Inc"},
-			{ID: "suse/milvus:2.4.0", Source: "suse", Publisher: "Zilliz"},
+			{ID: "suse.ollama:0.4.1", Source: "suse", Publisher: "Ollama Inc"},
+			{ID: "suse.milvus:2.4.0", Source: "suse", Publisher: "Zilliz"},
 		},
 	}
 
@@ -70,8 +70,8 @@ func Example_catalog() {
 	}
 
 	// Output:
-	// nvidia/nim-llm:1.0.0    source=nvidia  publisher=NVIDIA
-	// nvidia/nim-vlm:2.0.0    source=nvidia  publisher=NVIDIA
-	// suse/milvus:2.4.0       source=suse    publisher=Zilliz
-	// suse/ollama:0.4.1       source=suse    publisher=Ollama Inc
+	// nvidia.nim-llm:1.0.0    source=nvidia  publisher=NVIDIA
+	// nvidia.nim-vlm:2.0.0    source=nvidia  publisher=NVIDIA
+	// suse.milvus:2.4.0       source=suse    publisher=Zilliz
+	// suse.ollama:0.4.1       source=suse    publisher=Ollama Inc
 }

@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -234,6 +234,15 @@ verify-apps-live:
 		exit 1; \
 	fi
 	go test -count=1 -tags=live -v -run TestLive_Catalog ./pkg/apps/...
+
+# --- internal/api (Apps REST handlers) validation target (P2-4) -------------
+# Runs the httptest-driven handler tests for /api/v1/apps*. No live target —
+# the handler is pure routing over the apps.Catalog port; live behavior is
+# already verified by 'make verify-apps-live'.
+
+test-api-apps:
+	@echo "Running internal/api Apps handler tests..."
+	go test -count=1 -v -run TestAppsHandler ./internal/api/
 
 # dev-certs generates a self-signed TLS cert at controller-runtime's default
 # webhook CertDir so 'make run' (out-of-cluster) doesn't fail at startup.

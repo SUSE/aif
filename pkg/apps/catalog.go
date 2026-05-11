@@ -111,14 +111,19 @@ func matchesOpts(a App, opts ListOpts) bool {
 	return true
 }
 
-// Get parses the namespace prefix in id ("<source>/...") and dispatches
-// to the matching Source's cache. Returns ErrUnknownSource when the
-// prefix doesn't match any registered Source, ErrAppNotFound when it
-// matches but the Source has no entry with that ID.
+// Get parses the namespace prefix in id ("<source>.<chart>:<version>")
+// and dispatches to the matching Source's cache. Returns
+// ErrUnknownSource when the prefix doesn't match any registered Source,
+// ErrAppNotFound when it matches but the Source has no entry with that
+// ID. Dot is the separator (NOT slash) so the REST route is a plain
+// `/api/v1/apps/{id}` path-segment match rather than a `{id...}`
+// wildcard — Helm chart names and Application Collection slug_names are
+// DNS-1123 (lowercase alphanumeric + dashes; no dots), so the prefix
+// split is unambiguous.
 func (c *catalogImpl) Get(ctx context.Context, id string) (App, error) {
-	prefix, _, ok := strings.Cut(id, "/")
+	prefix, _, ok := strings.Cut(id, ".")
 	if !ok {
-		return App{}, fmt.Errorf("%w: %q has no '/' separator", ErrUnknownSource, id)
+		return App{}, fmt.Errorf("%w: %q has no '.' separator", ErrUnknownSource, id)
 	}
 
 	for _, s := range c.snapshot() {

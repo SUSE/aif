@@ -101,8 +101,8 @@ func TestAppCoSource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	milvus := apps[0]
-	if milvus.ID != "suse/milvus:2.4.0" {
-		t.Errorf("Milvus ID = %q, want %q", milvus.ID, "suse/milvus:2.4.0")
+	if milvus.ID != "suse.milvus:2.4.0" {
+		t.Errorf("Milvus ID = %q, want %q", milvus.ID, "suse.milvus:2.4.0")
 	}
 	if milvus.Source != "suse" {
 		t.Errorf("Milvus Source = %q, want %q", milvus.Source, "suse")
@@ -141,8 +141,8 @@ func TestAppCoSource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	ollama := apps[1]
-	if ollama.ID != "suse/ollama:0.4.1" {
-		t.Errorf("Ollama ID = %q, want %q", ollama.ID, "suse/ollama:0.4.1")
+	if ollama.ID != "suse.ollama:0.4.1" {
+		t.Errorf("Ollama ID = %q, want %q", ollama.ID, "suse.ollama:0.4.1")
 	}
 }
 
