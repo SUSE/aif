@@ -1437,29 +1437,42 @@ go test -race ./pkg/helm/ -v
 
 **ID:** P4-3
 **Epic:** Fleet GitRepo Engine (`deployStrategy: gitops`)
-**Story:** As a platform engineer, I want Workloads with `deployStrategy=gitops` to create a `fleet.cattle.io/v1alpha1 GitRepo` CR on the management cluster so that Fleet reads the user's git repo and delivers the workload to the target downstream cluster via fleet-agents.
+**Story:** As a platform engineer, I want Workloads with `deployStrategy=gitops` to create `fleet.cattle.io/v1alpha1 GitRepo` CR(s) on the management cluster (one per target cluster) so that Fleet reads the user's git repo and delivers the workload to the target downstream clusters via fleet-agents.
 **Owner Hint:** Backend Go
 **Effort:** L
 **Depends On:** P4-1, P6-1-refactor
 **Parallelizable With:** P4-2, P4-4
-**Done When:** A Workload with `deployStrategy=gitops` results in a `fleet.cattle.io/v1alpha1 GitRepo` CR created on the management cluster, targeting all clusters in `Workload.spec.targetClusters`, with the repo URL and branch from `Settings.spec.fleet`.
+**Done When:** A Workload with `deployStrategy=gitops` and `targetClusters = ["cluster-a", "cluster-b"]` results in TWO `fleet.cattle.io/v1alpha1 GitRepo` CRs created on the management cluster (one per cluster), each targeting its respective cluster, with repo URL and branch from `Settings.spec.fleet`.
 
 **Acceptance Criteria:**
-- [ ] `pkg/git/fleet.go` implements a `GitRepoEngine` interface (in `pkg/git/interface.go`) with methods: `CreateOrUpdate(ctx, workload) error` · `Delete(ctx, workload) error` · `UpdateSettings(EngineSettings)`
-- [ ] `CreateOrUpdate` creates or updates a `fleet.cattle.io/v1alpha1 GitRepo` CR on the management cluster with:
-  - `metadata.name` = deterministic name derived from `{workload-ns}-{workload-name}` (DNS-1123 sanitized)
-  - `spec.repo` = `Settings.spec.fleet.repoURL`
-  - `spec.branch` = `Settings.spec.fleet.branch` (default `main`)
-  - `spec.targets` = one entry per cluster in `Workload.spec.targetClusters`: `[{clusterName: c} for c in targetClusters]`
-  - `spec.paths` = paths within the repo for this workload's manifests (per §6.7 directory layout)
-- [ ] Auth secret wired from `Settings.spec.fleet.credSecretRef` into `GitRepo.spec.clientSecretName`
-- [ ] `Delete` removes the GitRepo CR (owner-reference or explicit deletion) when the Workload is deleted
-- [ ] `WorkloadReconciler` invokes `GitRepoEngine.CreateOrUpdate` when `deployStrategy=gitops`; mirrors `GitRepo.status` back to `Workload.status` (phase: Deploying while Fleet reconciles, Running when `GitRepo.status.readyClusters == len(targetClusters)`)
-- [ ] Continues to write the manifest directory tree to git per `ARCHITECTURE.md §6.7` (same filename conventions, re-write semantics) so the GitRepo CR has content to point at
-- [ ] Unit test: GitRepo CR fields set correctly per workload and settings; idempotent on re-run
-- [ ] Integration test: GitRepo CR created in envtest cluster; `spec.targets` entries match `Workload.spec.targetClusters`
-
-> **Follow-up (post-merge, hub architecture decision 2026-05-10):** P4-3 originally described a pure git-push model with no Fleet GitRepo CR creation. The hub-on-management-cluster design (Scope-Critical Decision #11) means AIF creates Fleet CRs directly on the management cluster rather than relying on an external Fleet GitRepo watching AIF-owned git repos. The manifest-generation logic (§6.7 directory layout) remains valid — it is the content that the GitRepo points at. Update §6.7 in `ARCHITECTURE.md` to reflect the GitRepo CR shape when this story is implemented.
+- [ ] `pkg/fleet/gitrepo_engine.go` implements a `FleetGitRepoEngine` interface (in `pkg/fleet/interface.go`) with methods: `CreateOrUpdate(ctx, spec GitRepoDeploymentSpec) error` · `Delete(ctx, workloadID string) error` · `UpdateSettings(settings FleetSettings)`
+- [ ] `pkg/fleet/types.go` defines domain types:
+  ```go
+  type GitRepoDeploymentSpec struct {
+      WorkloadID      string               // namespace/name
+      TargetClusters  []string             // cluster IDs
+      RepoURL         string               // from Settings.spec.fleet.repoURL
+      Branch          string               // from Settings.spec.fleet.branch
+      AuthSecretName  string               // from Settings.spec.fleet.credSecretRef
+      Components      []ComponentManifest  // for manifest generation
+      PullSecretData  []byte               // suse-registry-creds Secret data (base64 dockerconfigjson)
+  }
+  ```
+- [ ] **One GitRepo CR per cluster** (matching §6.7): For a Workload with `targetClusters = ["cluster-a", "cluster-b"]`, `CreateOrUpdate` creates TWO `fleet.cattle.io/v1alpha1 GitRepo` CRs on the management cluster:
+  - `metadata.name` = `{workload-ns}-{workload-name}-{clusterID}` (DNS-1123 sanitized)
+  - `spec.repo` = `spec.RepoURL`
+  - `spec.branch` = `spec.Branch`
+  - `spec.targets` = `[{clusterName: clusterID}]` (single-cluster targeting per CR)
+  - `spec.paths` = `["gitops/{clusterID}/{workloadID}"]` (per §6.7 directory layout)
+  - `spec.clientSecretName` = `spec.AuthSecretName`
+  - `spec.resources[]` includes a `Secret` resource (`suse-registry-creds`) with `data[".dockerconfigjson"]` set from `spec.PullSecretData` so fleet-agents apply it to the workload namespace on the downstream cluster (secrets delivered via Fleet, NOT written to git)
+  - owner reference pointing at the Workload CR so deletion cascades
+- [ ] `pkg/git/` continues to implement pure git operations (clone/commit/push) via a `GitEngine` interface, invoked by `FleetGitRepoEngine` to write the manifest directory tree per §6.7
+- [ ] **Secret delivery for gitops strategy:** `suse-registry-creds` Secret is NOT written to git (security: no secrets in git history). Instead, `FleetGitRepoEngine` creates the Secret directly on the management cluster in a Fleet-managed namespace, and adds it to the GitRepo CR's `spec.resources[]` so Fleet delivers it to downstream clusters without it ever touching git. This matches Fleet's native secret delivery mechanism and keeps credentials out of version control.
+- [ ] `Delete` removes all GitRepo CRs for the workload (one per cluster; iterate and delete)
+- [ ] `WorkloadReconciler` translates `*aifv1.Workload` → `GitRepoDeploymentSpec` (CR→domain) and invokes `FleetGitRepoEngine.CreateOrUpdate` when `deployStrategy=gitops`; mirrors all GitRepo statuses back to `Workload.status` (phase: Deploying while any Fleet GitRepo is reconciling, Running when ALL GitRepo CRs report `status.readyClusters == 1`)
+- [ ] Unit test: GitRepo CRs created with correct fields per cluster; idempotent on re-run; multi-cluster workload creates N GitRepo CRs
+- [ ] Integration test: GitRepo CRs created in envtest cluster; verify one CR per target cluster; `spec.targets` has single entry per CR
 
 ---
 
@@ -1473,20 +1486,35 @@ go test -race ./pkg/helm/ -v
 **Done When:** A Workload with `deployStrategy=helm` (the default) results in a `fleet.cattle.io/v1alpha1 Bundle` CR on the management cluster, targeting all clusters in `Workload.spec.targetClusters`, containing the merged Helm values and OCI chart reference; fleet-agents on the target clusters pick it up and the Workload reaches `Running`.
 
 **Acceptance Criteria:**
-- [ ] `pkg/helm/fleet_bundle.go` implements a `BundleEngine` interface (in `pkg/helm/interface.go`) with methods: `CreateOrUpdate(ctx, workload, mergedValues) error` · `Delete(ctx, workload) error` · `UpdateSettings(EngineSettings)`
-- [ ] `CreateOrUpdate` creates or updates a `fleet.cattle.io/v1alpha1 Bundle` CR on the management cluster with:
-  - `metadata.name` = deterministic from `{workload-ns}-{workload-name}` (DNS-1123 sanitized)
-  - `spec.helm.chart` = OCI chart reference (`oci://{registryEndpoint}/...`)
-  - `spec.helm.values` = merged Helm values map (output of §6.6 `MergeValues`)
-  - `spec.targets` = one entry per cluster in `Workload.spec.targetClusters`: `[{clusterName: c} for c in targetClusters]`
+- [ ] `pkg/fleet/bundle_engine.go` implements a `FleetBundleEngine` interface (in `pkg/fleet/interface.go`) with methods: `CreateOrUpdate(ctx, spec BundleDeploymentSpec) error` · `Delete(ctx, workloadID string) error` · `UpdateSettings(settings FleetSettings)`
+- [ ] `pkg/fleet/types.go` defines domain types:
+  ```go
+  type BundleDeploymentSpec struct {
+      WorkloadID        string            // namespace/name
+      TargetClusters    []string          // cluster IDs
+      Components        []ComponentBundle // OCI chart ref + merged values per component
+      PullSecretData    []byte            // suse-registry-creds Secret data (base64 dockerconfigjson)
+  }
+  type ComponentBundle struct {
+      Name       string
+      ChartRef   string            // oci://{registryEndpoint}/...
+      Values     map[string]any    // merged Helm values (output of §6.6 MergeValues)
+  }
+  ```
+- [ ] **One Fleet Bundle per Workload** (explicit design, not coin-flip): `CreateOrUpdate` creates or updates a SINGLE `fleet.cattle.io/v1alpha1 Bundle` CR on the management cluster with:
+  - `metadata.name` = `{workload-ns}-{workload-name}` (DNS-1123 sanitized)
+  - `spec.helm.chart` = first component's chart reference (primary chart)
+  - `spec.helm.values` = first component's merged values
+  - `spec.helm.valuesFiles[]` = additional components' merged values (one entry per additional component) — used for multi-component Blueprints
+  - `spec.targets` = one entry per cluster in `spec.TargetClusters`: `[{clusterName: c} for c in spec.TargetClusters]`
+  - `spec.resources[]` includes a `Secret` resource (`suse-registry-creds`) with `data[".dockerconfigjson"]` set from `spec.PullSecretData` so fleet-agents apply it to the workload namespace on the downstream cluster
   - owner reference pointing at the Workload CR so deletion cascades
 - [ ] `Delete` removes the Bundle CR when the Workload is deleted (owner-reference cascade covers this if set)
-- [ ] `WorkloadReconciler` invokes `BundleEngine.CreateOrUpdate` instead of direct Helm install when `deployStrategy=helm` (the default). WorkloadReconciler watches Fleet Bundle status and mirrors it back to `Workload.status` (phase: Deploying → Running once `Bundle.status.readyClusters == 1`)
-- [ ] Multi-component Workloads (Blueprint source with N components): creates one Fleet Bundle per component, or one Bundle with `spec.helm.valuesFiles[]` per component — whichever is simpler to reconcile and status-mirror. Document the chosen approach in a comment at the top of `fleet_bundle.go`.
-- [ ] `suse-registry-creds` Secret included as a resource in `spec.resources[]` of the Fleet Bundle so fleet-agents apply it to the workload namespace on the downstream cluster (replacing the management-cluster-side pull-secret reconciler scope for workload namespaces)
-- [ ] envtest: Bundle CR created with correct chart reference, targets, and values; owner reference set; Bundle deletion triggered by Workload deletion
+- [ ] `WorkloadReconciler` translates `*aifv1.Workload` → `BundleDeploymentSpec` (CR→domain, including fetching `suse-registry-creds` Secret from `aif` namespace) and invokes `FleetBundleEngine.CreateOrUpdate` when `deployStrategy=helm` (the default). WorkloadReconciler watches Fleet Bundle status and mirrors it back to `Workload.status` (phase: Deploying → Running once `Bundle.status.readyClusters == len(targetClusters)`)
+- [ ] `pkg/helm/` continues to implement pure Helm SDK operations (chart fetching, values merging per §6.6) via the existing `HelmEngine` interface, invoked by `FleetBundleEngine` to prepare the chart refs and merged values
+- [ ] envtest: Bundle CR created with correct chart reference, targets, values, and pull-secret resource; owner reference set; Bundle deletion triggered by Workload deletion; multi-cluster workload has `len(spec.targets) == len(targetClusters)`
 
-> **Note:** This story replaces the direct Helm install path in P4-2 for the `helm` deployStrategy. P4-2's `pkg/workload/deployer.go` should be updated to delegate to `BundleEngine` instead of calling `pkg/helm.Engine` directly for cross-cluster workloads.
+> **Note:** This story replaces the direct Helm install path in P4-2 for the `helm` deployStrategy. P4-2's `pkg/workload/deployer.go` should be updated to delegate to `FleetBundleEngine` instead of calling `pkg/helm.Engine` directly for cross-cluster workloads.
 
 ---
 
@@ -1736,33 +1764,33 @@ go test -race ./internal/api/ -run TestSettingsHandler -v
 
 **ID:** P5-5
 **Epic:** Pull-Secret Reconciler
-**Story:** As an operator, I want the `suse-registry-creds` docker-config Secret created/updated in every workload namespace whenever Settings or a Workload changes.
+**Story:** As an operator, I want the `suse-registry-creds` docker-config Secret created in the `aif` namespace on the management cluster so that WorkloadReconciler can embed it in Fleet Bundles for delivery to downstream clusters.
 **Owner Hint:** Backend Go
 **Effort:** M
 **Depends On:** P5-4, P1-3
 **Parallelizable With:** none
-**Done When:** Creating a Workload in a fresh namespace results in `suse-registry-creds` appearing in that namespace within 30s.
+**Done When:** Creating or updating Settings results in `suse-registry-creds` appearing in the `aif` namespace within 30s. WorkloadReconciler can read this Secret and include it in Fleet Bundles (P4-3b) or gitops manifests (P4-3).
 
 **Acceptance Criteria:**
-- [ ] **Cross-controller Workload watch via the `ARCHITECTURE.md §13.4 "Cross-controller event source pattern (P5-5)" snippet verbatim**: `Watches(&Workload{}, EnqueueRequestsFromMapFunc(...), WithPredicates(predicate.Funcs{CreateFunc: true, DeleteFunc: false, UpdateFunc: false}))`. The `UpdateFunc: false` is the cache-invalidation key — Workload status updates fire constantly and would otherwise trigger needless Settings reconciles per §13.4.
 - [ ] **`suse-registry-creds` Secret shape matches `ARCHITECTURE.md §13.4 "Pull-secret Secret shape (P5-5 contract)" verbatim**:
   - Type `kubernetes.io/dockerconfigjson`
-  - `data["<.dockerconfigjson>"]` is base64-encoded JSON
+  - `data[".dockerconfigjson"]` is base64-encoded JSON
   - `auths` map ALWAYS contains `registry.suse.com` and `dp.apps.rancher.io` entries (canonical hostnames preserved even when overrides set)
   - When `Settings.spec.registryEndpoints.suseRegistry` is non-empty AND non-default, ADDITIONAL `auths` entry appended for that hostname
   - Both `username`/`password` AND `auth` field populated for compatibility (per §13.4)
   - Empty Settings credentials → that hostname's entry OMITTED (not included with empty values)
-- [ ] **Reconciler scope** per §13.4 "Reconciler scope (P5-5)":
-  - Trigger: Settings change, Workload create, Source Secret change, Workload deletion (no action)
-  - Iterate: for each Workload, ensure Secret in `Workload.spec.targetNamespace`
-  - Skip: namespaces with `metadata.deletionTimestamp != nil`
-- [ ] **Fail-closed condition** per §13.4: when a Settings-referenced Secret is missing, set `Settings` condition `Type=PullSecretReconcileBlocked, Reason=SourceSecretMissing, Status=True, Message="Settings.spec.suseRegistry.tokenSecretRef secret 'X' not found in namespace 'Y'"` and SKIP processing for that credential set. Other credential sets continue independently.
-- [ ] **envtest scenarios** (5 cases per §13.4):
-  1. Create Workload in fresh namespace → Secret appears within 30s with both upstream + override hosts
-  2. Update Settings → ALL existing Secrets re-stamped within 30s (verify by checking `metadata.resourceVersion` increments)
-  3. Delete a Workload → Secret stays (might be used by other Workloads)
-  4. Source Secret deleted → fail-closed condition set; partial Secret NOT written
-  5. Update Workload status (no spec change) → reconciler does NOT fire (predicate filtered)
+- [ ] **Reconciler scope**: SettingsReconciler creates/updates the source Secret (`suse-registry-creds`) in namespace `aif` on the management cluster from the credentials in `Settings.spec.{suseRegistry,applicationCollection}`. There is NO cross-controller Workload watch and NO per-workload-namespace iteration — the source Secret is a singleton in `aif` namespace; WorkloadReconciler embeds it in Fleet Bundles (P4-3b) or gitops manifests (P4-3) for delivery to downstream cluster workload namespaces by fleet-agents.
+  - Trigger: Settings change, Source Secret change (SecretKeyRef targets)
+  - Action: Reconcile `suse-registry-creds` in namespace `aif` only
+  - Skip: none (always reconcile when triggered)
+- [ ] **Fail-closed condition** per §13.4: when a Settings-referenced Secret is missing, set `Settings` condition `Type=PullSecretReconcileBlocked, Reason=SourceSecretMissing, Status=True, Message="Settings.spec.suseRegistry.tokenSecretRef secret 'X' not found in namespace 'Y'"` and SKIP processing for that credential set. Other credential sets continue independently. No `suse-registry-creds` Secret is written if ANY required credential is missing (fail-closed).
+- [ ] **envtest scenarios**:
+  1. Create or update Settings with valid credentials → `suse-registry-creds` Secret appears in `aif` namespace within 30s
+  2. Update Settings credentials → Secret in `aif` namespace re-stamped (verify `metadata.resourceVersion` increments)
+  3. Source Secret deleted → fail-closed condition set; `suse-registry-creds` NOT written/updated
+  4. Settings with registry endpoint overrides → Secret includes additional `auths` entry for override hostname
+
+> **Hub-model note (post-P4-3/P4-3b):** The source Secret lives in `aif` namespace on the management cluster. WorkloadReconciler reads it and embeds it in Fleet Bundles/GitRepo CRs via `spec.resources[]` (per P4-3b and P4-3). fleet-agents on downstream clusters apply the Secret into the workload namespace. **Security:** Secrets are NEVER written to git repositories — they flow exclusively through Fleet's `spec.resources[]` mechanism, which delivers them directly from the management cluster to downstream clusters without version control exposure. There is no management-cluster-side iteration over workload namespaces; P4-3/P4-3b handle cross-cluster delivery.
 
 **Validation:**
 ```bash

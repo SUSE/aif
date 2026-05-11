@@ -1806,9 +1806,9 @@ This pattern applies to Workloads sourced from `Blueprint` and `BundleTest`. For
 
 ### 6.7 Fleet Manifest Layout
 
-When `Workload.spec.deployStrategy == "gitops"`, the operator writes a directory tree to `--git-dir` and pushes via `pkg/git/fleet.go`, then creates a `fleet.cattle.io/v1alpha1 GitRepo` CR on the management cluster pointing at that repo. The layout below is the contract; Fleet expects it exactly.
+When `Workload.spec.deployStrategy == "gitops"`, the operator (via `pkg/fleet/gitrepo_engine.go` and `pkg/git/`) writes a directory tree to `--git-dir`, pushes it, and creates `fleet.cattle.io/v1alpha1 GitRepo` CR(s) on the management cluster pointing at that repo. The layout below is the contract; Fleet expects it exactly.
 
-**Multi-cluster workloads** (`targetClusters` with >1 entry): The operator generates one directory per cluster ID (`gitops/{clusterID}/{workloadID}/`) and creates one GitRepo CR per cluster, each with `spec.paths = ["gitops/{clusterID}/{workloadID}"]` and `spec.targets = [{clusterName: clusterID}]`. This isolates manifests per cluster and avoids Fleet's multi-cluster targeting complexity (which requires identical manifests across all targets — not suitable for workloads that may have cluster-specific value overrides in future phases).
+**Multi-cluster workloads** (`targetClusters` with >1 entry): The operator generates one directory per cluster ID (`gitops/{clusterID}/{workloadID}/`) and creates **one GitRepo CR per cluster**, each with `spec.paths = ["gitops/{clusterID}/{workloadID}"]` and `spec.targets = [{clusterName: clusterID}]` (single-cluster targeting). This isolates manifests per cluster and avoids Fleet's multi-cluster targeting complexity (which requires identical manifests across all targets — not suitable for workloads that may have cluster-specific value overrides in future phases). For a Workload targeting 3 clusters, the operator creates 3 GitRepo CRs (one per cluster) on the management cluster.
 
 ```
 {git-dir}/
@@ -1827,6 +1827,7 @@ When `Workload.spec.deployStrategy == "gitops"`, the operator writes a directory
 
 - `00-namespace.yaml` — always written (even if the namespace exists); apply is idempotent. The `00` prefix ensures it lands first in lexicographic order.
 - Component files: `1{component-index}-{sanitized-component-name}.yaml` where `component-index` is the 1-based index in `Workload.spec.components[]`. So component 0 → `10-...`, component 1 → `11-...`, component 2 → `12-...`, ..., component 9 → `19-...`, component 10 → `1-10-{name}.yaml` (the dash separator avoids `1-` prefix collision).
+- **Security boundary:** Secrets (e.g., `suse-registry-creds`) are NEVER written to this manifest directory. They are delivered via the GitRepo CR's `spec.resources[]` field, which Fleet applies directly to downstream clusters without version control exposure. No `XX-secret.yaml` files exist in the git repository.
 
 **Component name sanitization** (for filename only — the manifest's `metadata.name` uses the original): lowercase, replace any non-`[a-z0-9-]` with `-`, collapse runs of `-`, trim leading/trailing `-`. Example: `"vector-DB Store"` → `vector-db-store`.
 
@@ -2209,7 +2210,7 @@ bp.Status.DeploymentCount = int32(count)
 - Watch: `Settings` CR
 - Reads all `SecretKeyRef` fields, resolves Secret values
 - Calls `applySettingsToEngines()` to propagate to helm, fleet, nvidia engines
-- Reconciles `suse-registry-creds` docker-config Secret on the management cluster in namespace `aif` (the source Secret). WorkloadReconciler includes this Secret as a resource in every Fleet Bundle it creates (per P4-3b acceptance criteria), so fleet-agents apply it to the workload namespace on the downstream cluster.
+- Reconciles `suse-registry-creds` docker-config Secret on the management cluster in namespace `aif` (the source Secret). WorkloadReconciler includes this Secret in Fleet Bundle and GitRepo CRs via `spec.resources[]` (per P4-3b and P4-3 acceptance criteria), so fleet-agents apply it to the workload namespace on the downstream cluster. Secrets are never written to git repositories.
 - Sets `status.lastApplied = metav1.Now()`
 
 #### 8.2.1 Settings propagation pattern (P5-4 contract)
@@ -3479,7 +3480,7 @@ The operator does not host or proxy an image registry. Workload pods pull images
 | SUSE Registry (mirrored NVIDIA NIM) | `registry.suse.com/ai/containers/nvidia/...` | `suse-registry-creds` (same Secret) |
 | SUSE Application Collection | `dp.apps.rancher.io` | `suse-registry-creds` (same Secret — single docker-config covers both hosts) |
 
-The pull-secret manifests flow via: `SettingsReconciler` creates the source Secret (`suse-registry-creds`) on the management cluster in namespace `aif` from the credentials in the `Settings` CRD → WorkloadReconciler embeds this Secret as a resource in every Fleet Bundle (for `deployStrategy: helm`) or in the gitops manifest directory (for `deployStrategy: gitops`) → fleet-agents on downstream clusters apply the Secret into the workload namespace.
+The pull-secret manifests flow via: `SettingsReconciler` creates the source Secret (`suse-registry-creds`) on the management cluster in namespace `aif` from the credentials in the `Settings` CRD → WorkloadReconciler embeds this Secret in Fleet Bundle and GitRepo CRs via `spec.resources[]` (for both `deployStrategy: helm` and `deployStrategy: gitops`) → fleet-agents on downstream clusters apply the Secret into the workload namespace. **Security note:** Secrets are NEVER written to git repositories — they flow exclusively through Fleet's `spec.resources[]` mechanism to prevent credential exposure in version control history.
 
 #### Pull-secret Secret shape (P5-5 contract)
 
