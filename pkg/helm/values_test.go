@@ -430,3 +430,63 @@ func TestWalkImageRefs_DepthCap(t *testing.T) {
 		t.Errorf("did not expect deepest:2 (beyond depth cap) to be visited, got %v", visited)
 	}
 }
+
+// TestApplyImageRewrites_Spec66WorkedExample is the verbatim worked example
+// from ARCHITECTURE.md §6.6 — a top-level string image, a sidecar list with
+// one map-shaped image and one shorthand image. Locks the end-to-end
+// orchestrator behavior against the spec.
+func TestApplyImageRewrites_Spec66WorkedExample(t *testing.T) {
+	in := map[string]any{
+		"image": "registry.suse.com/ai/llm:1.0",
+		"sidecars": []any{
+			map[string]any{
+				"name": "proxy",
+				"image": map[string]any{
+					"repository": "registry.suse.com/sidecars/proxy",
+					"tag":        "2.1",
+				},
+			},
+			map[string]any{
+				"name":  "redis",
+				"image": "redis:7",
+			},
+		},
+	}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"}}
+	out := ApplyImageRewrites(in, rules)
+
+	if out["image"] != "harbor.example.com/suse/ai/llm:1.0" {
+		t.Errorf("top image: got %v", out["image"])
+	}
+	sidecars := out["sidecars"].([]any)
+	proxyImg := sidecars[0].(map[string]any)["image"].(map[string]any)
+	if proxyImg["repository"] != "harbor.example.com/suse/sidecars/proxy" {
+		t.Errorf("proxy repository: got %v", proxyImg["repository"])
+	}
+	if proxyImg["tag"] != "2.1" {
+		t.Errorf("proxy tag must be preserved: got %v", proxyImg["tag"])
+	}
+	redisImg := sidecars[1].(map[string]any)["image"]
+	if redisImg != "redis:7" {
+		t.Errorf("redis image must be unchanged (no host prefix): got %v", redisImg)
+	}
+}
+
+// TestApplyImageRewrites_PureFunction_InputsUnchanged mirrors the existing
+// TestMergeValues_PureFunction_InputsUnchanged. Snapshots the input via
+// deepCloneForTest, calls ApplyImageRewrites, and asserts the input is
+// deep-equal to the snapshot afterwards.
+func TestApplyImageRewrites_PureFunction_InputsUnchanged(t *testing.T) {
+	in := map[string]any{
+		"image": "registry.suse.com/foo:1",
+		"sidecars": []any{
+			map[string]any{"image": "registry.suse.com/bar:2"},
+		},
+	}
+	inSnap := deepCloneForTest(in)
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor/"}}
+	_ = ApplyImageRewrites(in, rules)
+	if !reflect.DeepEqual(in, inSnap) {
+		t.Errorf("input was mutated:\n  before: %v\n  after:  %v", inSnap, in)
+	}
+}

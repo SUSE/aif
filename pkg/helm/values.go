@@ -53,6 +53,24 @@ func MergeValues(in MergeInput) (map[string]any, error) {
 	return out, nil
 }
 
+// ApplyImageRewrites walks merged Helm values and rewrites image.repository
+// and image.registry fields per the configured prefix substitution rules.
+// Pure function: returns a new map; does NOT mutate input. Idempotent.
+// Safe to call when rules is nil or empty (returns a deep-copy unchanged).
+//
+// See ARCHITECTURE.md §6.6 for the full walk-rule and edge-case table; this
+// godoc summarises only the public contract. Implementation lives in two
+// helpers (walkImageRefs, applyImageRefRules) that are independently
+// testable.
+func ApplyImageRewrites(values map[string]any, rules []ImageRewriteRule) map[string]any {
+	out := deepCopyMap(values)
+	if len(rules) == 0 {
+		return out
+	}
+	walkImageRefs(out, func(s string) string { return applyImageRefRules(s, rules) })
+	return out
+}
+
 // dropForbiddenKeys removes the §6.6 forbidden top-level keys from layer
 // (mutates and returns it for chaining). Each drop emits a slog.Warn with
 // layer + key for observability. Safe on nil input (returns nil).
