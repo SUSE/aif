@@ -3,12 +3,15 @@ package api
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/SUSE/aif/pkg/nvidia"
 )
 
+// nimProfile is a placeholder until P4-4 populates profile data.
 type nimProfile struct{}
 
 type refreshResponse struct {
@@ -17,8 +20,8 @@ type refreshResponse struct {
 }
 
 // NIMHandler serves the /api/v1/nvidia/* REST endpoints. It depends on
-// nvidia.Discovery (the read-only port) — the handler reads + filters;
-// it does not start ticker goroutines. Routes are registered against a
+// nvidia.Discovery (the port interface); the handler reads + filters
+// but does not start ticker goroutines. Routes are registered against a
 // caller-supplied *http.ServeMux via Register, conforming to the
 // api.Handler interface.
 //
@@ -56,19 +59,20 @@ func (h *NIMHandler) list(w http.ResponseWriter, r *http.Request) {
 	if typeFilter == "" {
 		typeFilter = "all"
 	}
-	if typeFilter != "all" && typeFilter != "llm" && typeFilter != "vlm" {
-		writeError(w, errorStatus(ErrInvalidInput), fmt.Errorf("%w: type must be one of: all, llm, vlm", ErrInvalidInput))
+	if typeFilter != "all" && !isValidNIMType(typeFilter) {
+		valid := validNIMTypeNames()
+		writeError(w, errorStatus(ErrInvalidInput), fmt.Errorf("%w: type must be one of: all, %s", ErrInvalidInput, strings.Join(valid, ", ")))
 		return
 	}
 
 	entries, err := h.discovery.Index(r.Context())
 	if err != nil {
+		h.logDiscoveryErr(r, "Index", err)
 		mapped := mapNIMErr(err, "")
 		writeError(w, errorStatus(mapped), mapped)
 		return
 	}
 
-	// Always return a non-nil slice so JSON emits `[]` not `null`.
 	out := make([]nvidia.NIMEntry, 0, len(entries))
 	for _, e := range entries {
 		if typeFilter == "all" || string(e.Type) == typeFilter {
@@ -83,6 +87,7 @@ func (h *NIMHandler) get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	entry, err := h.discovery.Get(r.Context(), id)
 	if err != nil {
+		h.logDiscoveryErr(r, "Get", err, "id", id)
 		mapped := mapNIMErr(err, id)
 		writeError(w, errorStatus(mapped), mapped)
 		return
@@ -92,13 +97,16 @@ func (h *NIMHandler) get(w http.ResponseWriter, r *http.Request) {
 
 // mapNIMErr translates pkg/nvidia sentinels into the api package's
 // sentinels so writeError + errorStatus + errorCode classify them
-// correctly. Unknown errors fall through unchanged (default → 500).
+// correctly. The original discovery error is intentionally NOT wrapped
+// — the visible API message stays clean; logDiscoveryErr records the
+// underlying err for server-side debugging. Unknown errors fall through
+// unchanged (default → 500).
 func mapNIMErr(err error, id string) error {
 	switch {
 	case errors.Is(err, nvidia.ErrNIMNotFound):
 		return fmt.Errorf("%w: NIM %q", ErrNotFound, id)
 	case errors.Is(err, nvidia.ErrNotConfigured):
-		return fmt.Errorf("%w: NIM discovery not configured", ErrInvalidInput)
+		return fmt.Errorf("%w: NIM discovery not configured (Settings not yet reconciled)", ErrUnavailable)
 	default:
 		return err
 	}
@@ -109,6 +117,7 @@ func (h *NIMHandler) profiles(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	_, err := h.discovery.Get(r.Context(), id)
 	if err != nil {
+		h.logDiscoveryErr(r, "Get", err, "id", id)
 		mapped := mapNIMErr(err, id)
 		writeError(w, errorStatus(mapped), mapped)
 		return
@@ -119,6 +128,7 @@ func (h *NIMHandler) profiles(w http.ResponseWriter, r *http.Request) {
 // refresh serves POST /api/v1/nvidia/refresh. Forces an immediate NIM catalog refresh.
 func (h *NIMHandler) refresh(w http.ResponseWriter, r *http.Request) {
 	if err := h.discovery.Refresh(r.Context()); err != nil {
+		h.logDiscoveryErr(r, "Refresh", err)
 		mapped := mapNIMErr(err, "")
 		writeError(w, errorStatus(mapped), mapped)
 		return
@@ -126,14 +136,55 @@ func (h *NIMHandler) refresh(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.discovery.Index(r.Context())
 	if err != nil {
-		writeError(w, errorStatus(err), err)
+		h.logDiscoveryErr(r, "Index", err)
+		mapped := mapNIMErr(err, "")
+		writeError(w, errorStatus(mapped), mapped)
 		return
 	}
 
+	// LastRefresh reflects the time this manual refresh completed, not a
+	// value from Discovery. A future Discovery.LastRefresh() method would
+	// be more accurate when background tickers also refresh the cache.
 	writeJSON(w, http.StatusOK, refreshResponse{
 		Count:       len(entries),
-		LastRefresh: time.Now(),
+		LastRefresh: time.Now().UTC(),
 	})
+}
+
+// isValidNIMType checks whether s is a known nvidia.Type value. The
+// handler delegates to the domain package so it doesn't hardcode the
+// type universe.
+func isValidNIMType(s string) bool {
+	for _, t := range nvidia.ValidTypes() {
+		if string(t) == s {
+			return true
+		}
+	}
+	return false
+}
+
+// validNIMTypeNames returns the string names of all known NIM types for
+// use in error messages.
+func validNIMTypeNames() []string {
+	types := nvidia.ValidTypes()
+	names := make([]string, len(types))
+	for i, t := range types {
+		names[i] = string(t)
+	}
+	return names
+}
+
+// logDiscoveryErr emits a single Warn line per discovery-boundary error.
+// Mirrors logCatalogErr in apps.go. Uses LoggerFromContext to propagate
+// the request_id attribute set by LoggingMiddleware.
+func (h *NIMHandler) logDiscoveryErr(r *http.Request, op string, err error, kv ...any) {
+	args := []any{
+		"op", op,
+		"path", r.URL.Path,
+		slog.Any("error", err),
+	}
+	args = append(args, kv...)
+	LoggerFromContext(r.Context()).Warn("nim handler: discovery call failed", args...)
 }
 
 // Compile-time guard: NIMHandler satisfies api.Handler.

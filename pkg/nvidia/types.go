@@ -19,6 +19,11 @@ const (
 	TypeVLM Type = "vlm" // vision-language model
 )
 
+// ValidTypes returns the set of known NIM types for filter validation.
+func ValidTypes() []Type {
+	return []Type{TypeLLM, TypeVLM}
+}
+
 // NIMEntry describes one NIM model available in the SUSE-mirrored catalog.
 // Spec source: ARCHITECTURE.md §6.2 (NIM discovery + deployer interfaces).
 type NIMEntry struct {
