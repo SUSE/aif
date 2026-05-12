@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm test-helm-envtest
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -123,6 +123,17 @@ test-controllers: envtest
 	@echo "Running controller integration tests with envtest..."
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use --print path $(ENVTEST_K8S_VERSION))" \
 		go test -race ./internal/controller/... ./internal/manager/... -coverprofile=cover.out
+
+# --- pkg/helm validation targets (P4-1) -------------------------------------
+
+test-helm:
+	@echo "Running unit tests for pkg/helm..."
+	GOTOOLCHAIN=auto go test -race ./pkg/helm/ -v
+
+test-helm-envtest: envtest
+	@echo "Running pkg/helm envtest happy-path..."
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use --print path $(ENVTEST_K8S_VERSION))" \
+		GOTOOLCHAIN=auto go test -tags envtest ./pkg/helm/ -v -run TestEngine_HappyPath_Envtest
 
 dev-cluster:
 	@echo "Creating k3d cluster 'aif-dev'..."
