@@ -270,3 +270,47 @@ func TestMergeValues_RequiresImageRepository_Present(t *testing.T) {
 		t.Errorf("image.repository not preserved: %v", got)
 	}
 }
+
+func TestApplyImageRefRules_FirstMatchWins(t *testing.T) {
+	rules := []ImageRewriteRule{
+		{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"},
+		{Match: "registry.suse.com/ai/", Replace: "WRONG/"},
+	}
+	got := applyImageRefRules("registry.suse.com/ai/llm:1.0", rules)
+	want := "harbor.example.com/suse/ai/llm:1.0"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestApplyImageRefRules_NoMatch_Unchanged(t *testing.T) {
+	rules := []ImageRewriteRule{{Match: "ghcr.io/", Replace: "harbor/"}}
+	got := applyImageRefRules("registry.suse.com/foo:1", rules)
+	if got != "registry.suse.com/foo:1" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestApplyImageRefRules_EmptyMatchSkipped(t *testing.T) {
+	rules := []ImageRewriteRule{
+		{Match: "", Replace: "ANYTHING"},
+		{Match: "x/", Replace: "y/"},
+	}
+	got := applyImageRefRules("x/foo", rules)
+	if got != "y/foo" {
+		t.Errorf("got %q, want y/foo", got)
+	}
+}
+
+func TestApplyImageRefRules_EmptyRefStr(t *testing.T) {
+	rules := []ImageRewriteRule{{Match: "x/", Replace: "y/"}}
+	if got := applyImageRefRules("", rules); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestApplyImageRefRules_NilRules(t *testing.T) {
+	if got := applyImageRefRules("foo", nil); got != "foo" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}

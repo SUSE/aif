@@ -1,6 +1,9 @@
 package helm
 
-import "log/slog"
+import (
+	"log/slog"
+	"strings"
+)
 
 // MergeInput names the four input layers of §6.6 (layers 1-4). Layer 5
 // (ApplyImageRewrites) is P4-6. Layer 6 (operator-managed imagePullSecrets)
@@ -141,4 +144,24 @@ func validateMerged(merged map[string]any) error {
 		return ErrMissingImageRepository
 	}
 	return nil
+}
+
+// applyImageRefRules returns refStr with the first matching rule's Match
+// prefix replaced by the rule's Replace prefix. Rules are scanned in order;
+// first match wins; no chaining (the rewritten value is not re-scanned).
+// Returns refStr unchanged if no rule matches, refStr is empty, or rules
+// is empty. A rule with empty Match is skipped (would match everything).
+func applyImageRefRules(refStr string, rules []ImageRewriteRule) string {
+	if refStr == "" {
+		return refStr
+	}
+	for _, rule := range rules {
+		if rule.Match == "" {
+			continue
+		}
+		if strings.HasPrefix(refStr, rule.Match) {
+			return rule.Replace + refStr[len(rule.Match):]
+		}
+	}
+	return refStr
 }
