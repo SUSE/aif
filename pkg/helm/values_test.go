@@ -594,3 +594,80 @@ func TestApplyImageRewrites_Idempotency(t *testing.T) {
 		t.Errorf("not idempotent:\n  once:  %v\n  twice: %v", once, twice)
 	}
 }
+
+// §6.6 edge case: image: "" → unchanged.
+func TestApplyImageRewrites_EmptyImage_Unchanged(t *testing.T) {
+	in := map[string]any{"image": ""}
+	rules := []ImageRewriteRule{{Match: "x/", Replace: "y/"}}
+	out := ApplyImageRewrites(in, rules)
+	if out["image"] != "" {
+		t.Errorf("empty image must be unchanged, got %v", out["image"])
+	}
+}
+
+// §6.6 edge case: image: nil → unchanged.
+func TestApplyImageRewrites_NilImage_Unchanged(t *testing.T) {
+	in := map[string]any{"image": nil}
+	rules := []ImageRewriteRule{{Match: "x/", Replace: "y/"}}
+	out := ApplyImageRewrites(in, rules)
+	if out["image"] != nil {
+		t.Errorf("nil image must be unchanged, got %v", out["image"])
+	}
+}
+
+// §6.6 edge case: image as int / bool → unchanged (defensive against chart bugs).
+func TestApplyImageRewrites_NonStringNonMapImage_Unchanged(t *testing.T) {
+	cases := map[string]map[string]any{
+		"int":  {"image": 42},
+		"bool": {"image": true},
+	}
+	rules := []ImageRewriteRule{{Match: "x/", Replace: "y/"}}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := ApplyImageRewrites(in, rules)
+			if !reflect.DeepEqual(out["image"], in["image"]) {
+				t.Errorf("expected unchanged for %s, got %v", name, out["image"])
+			}
+		})
+	}
+}
+
+// §6.6 edge case: rule with empty Match is skipped (would match everything).
+func TestApplyImageRewrites_EmptyMatchRule_Skipped(t *testing.T) {
+	in := map[string]any{"image": "x/foo:1"}
+	rules := []ImageRewriteRule{
+		{Match: "", Replace: "ANYTHING"},
+		{Match: "x/", Replace: "y/"},
+	}
+	out := ApplyImageRewrites(in, rules)
+	if out["image"] != "y/foo:1" {
+		t.Errorf("empty Match rule must be skipped, got %v", out["image"])
+	}
+}
+
+// §6.6 edge case: refs with non-default port (host:5000/foo) are matched
+// only when the rule includes the port.
+func TestApplyImageRewrites_RefWithPort_RuleMustIncludePort(t *testing.T) {
+	in := map[string]any{"image": "host:5000/foo:1"}
+	// Rule without port: should NOT match (prefix differs at colon).
+	out := ApplyImageRewrites(in, []ImageRewriteRule{{Match: "host/", Replace: "harbor/"}})
+	if out["image"] != "host:5000/foo:1" {
+		t.Errorf("rule without port must not match: %v", out["image"])
+	}
+	// Rule with port: should match.
+	out = ApplyImageRewrites(in, []ImageRewriteRule{{Match: "host:5000/", Replace: "harbor/"}})
+	if out["image"] != "harbor/foo:1" {
+		t.Errorf("rule with port should rewrite, got %v", out["image"])
+	}
+}
+
+// §6.6 edge case: shorthand refs without registry (just "redis:7") are not
+// rewritten (no host prefix for any rule to match).
+func TestApplyImageRewrites_ShorthandRef_NotRewritten(t *testing.T) {
+	in := map[string]any{"image": "redis:7"}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor/"}}
+	out := ApplyImageRewrites(in, rules)
+	if out["image"] != "redis:7" {
+		t.Errorf("shorthand ref must not be rewritten, got %v", out["image"])
+	}
+}
