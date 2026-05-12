@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SUSE AI Factory - Architecture Diagrams</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #0caadc 0%, #326CE5 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        header p {
+            font-size: 1.2em;
+            opacity: 0.95;
+        }
+
+        nav {
+            background: #f8f9fa;
+            padding: 20px 40px;
+            border-bottom: 2px solid #e9ecef;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+        }
+
+        nav a {
+            color: #326CE5;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            transition: all 0.3s;
+            font-weight: 500;
+            display: block;
+        }
+
+        nav a:hover {
+            background: #326CE5;
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        main {
+            padding: 40px;
+        }
+
+        section {
+            margin-bottom: 80px;
+            scroll-margin-top: 100px;
+        }
+
+        h2 {
+            color: #326CE5;
+            font-size: 2.2em;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #326CE5;
+        }
+
+        h3 {
+            color: #667eea;
+            font-size: 1.6em;
+            margin: 40px 0 20px 0;
+        }
+
+        h4 {
+            color: #326CE5;
+            font-size: 1.2em;
+            margin: 20px 0 10px 0;
+        }
+
+        .diagram-container {
+            background: #f8f9fa;
+            padding: 40px 20px;
+            border-radius: 8px;
+            margin: 30px 0;
+            border: 1px solid #dee2e6;
+            overflow-x: auto;
+        }
+
+        .mermaid {
+            text-align: center;
+            background: white;
+            padding: 30px;
+            border-radius: 6px;
+            min-height: 300px;
+        }
+
+        .info-box {
+            background: #e7f3ff;
+            padding: 25px;
+            border-left: 5px solid #326CE5;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+
+        .info-box h4 {
+            margin-top: 0;
+        }
+
+        .info-box ul {
+            margin: 15px 0;
+            padding-left: 25px;
+        }
+
+        .info-box li {
+            margin: 8px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 30px 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        thead {
+            background: #326CE5;
+            color: white;
+        }
+
+        th, td {
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        th {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.9em;
+            letter-spacing: 0.5px;
+        }
+
+        tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        code {
+            background: #f8f9fa;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #d63384;
+        }
+
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 25px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 25px 0;
+            line-height: 1.5;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin: 30px 0;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            border-left: 4px solid #326CE5;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .card h4 {
+            margin-top: 0;
+        }
+
+        .highlight-box {
+            background: #fff3cd;
+            padding: 20px;
+            border-left: 5px solid #ffc107;
+            margin: 25px 0;
+            border-radius: 4px;
+        }
+
+        .highlight-box h4 {
+            color: #856404;
+            margin-top: 0;
+        }
+
+        .success-box {
+            background: #d4edda;
+            padding: 20px;
+            border-left: 5px solid #28a745;
+            margin: 25px 0;
+            border-radius: 4px;
+        }
+
+        .success-box h4 {
+            color: #155724;
+            margin-top: 0;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin: 5px 5px 5px 0;
+        }
+
+        .badge-primary {
+            background: #326CE5;
+            color: white;
+        }
+
+        .badge-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge-warning {
+            background: #ffc107;
+            color: #000;
+        }
+
+        .badge-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        footer {
+            background: #2d3748;
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        footer p {
+            margin: 8px 0;
+        }
+
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.8em;
+            }
+
+            nav ul {
+                flex-direction: column;
+            }
+
+            main {
+                padding: 20px;
+            }
+
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .diagram-container {
+                padding: 20px 10px;
+            }
+        }
+
+        .legend {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 25px 0;
+            border: 1px solid #dee2e6;
+        }
+
+        .legend h4 {
+            margin-top: 0;
+            color: #495057;
+        }
+
+        .legend ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .legend li {
+            padding: 8px 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .legend li::before {
+            content: "▪";
+            color: #326CE5;
+            font-weight: bold;
+            margin-right: 10px;
+            font-size: 1.2em;
+        }
+
+        .model-flow {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 8px;
+            margin: 30px 0;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 SUSE AI Factory</h1>
+            <p>C4 Architecture Diagrams - Clean & Simplified</p>
+        </header>
+
+        <nav>
+            <ul>
+                <li><a href="#context">System Context</a></li>
+                <li><a href="#container">Container View</a></li>
+                <li><a href="#component">Component View</a></li>
+                <li><a href="#code">Code Structure</a></li>
+                <li><a href="#deployment">Deployment</a></li>
+                <li><a href="#flows">Data Flows</a></li>
+                <li><a href="#principles">Principles</a></li>
+            </ul>
+        </nav>
+
+        <main>
+            <!-- System Context -->
+            <section id="context">
+                <h2>C4 Level 1 - System Context</h2>
+
+                <div class="info-box">
+                    <h4>Overview</h4>
+                    <p>SUSE AI Factory is the AI platform management layer built into Rancher. It provides a unified interface to discover AI applications, compose them into validated stacks, and deploy AI workloads across Kubernetes clusters.</p>
+                </div>
+
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph Users
+        PE[Platform Engineer]
+        AI[AI/ML Practitioner]
+        OPS[Operations Team]
+    end
+
+    AIF[SUSE AI Factory<br/>AI Platform Management]
+
+    subgraph "Rancher Ecosystem"
+        RANCH[Rancher Dashboard<br/>v2.10+]
+        FLEET[Fleet<br/>GitOps Engine]
+    end
+
+    subgraph "External Systems"
+        SUSE_REG[SUSE Registry<br/>registry.suse.com]
+        APP_COL[SUSE App Collection<br/>api.apps.rancher.io]
+        GIT[Git Repository]
+    end
+
+    subgraph "Target Infrastructure"
+        K8S[Downstream K8s Clusters]
+    end
+
+    PE --> RANCH
+    AI --> RANCH
+    OPS --> RANCH
+
+    RANCH --> AIF
+    AIF --> SUSE_REG
+    AIF --> APP_COL
+    AIF --> FLEET
+    AIF --> GIT
+
+    FLEET --> K8S
+    K8S --> SUSE_REG
+
+    style AIF fill:#326CE5,color:#fff,stroke:#0caadc,stroke-width:3px
+    style RANCH fill:#00c853,color:#fff
+    style SUSE_REG fill:#ff6b6b,color:#fff
+    style APP_COL fill:#ff6b6b,color:#fff
+    style K8S fill:#4ecdc4,color:#fff
+                    </div>
+                </div>
+
+                <div class="model-flow">
+                    App (Building Block) → Bundle (Workshop) → Blueprint (Published Stack) → Workload (Deployment)
+                </div>
+
+                <h3>Key Interactions</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Actor/System</th>
+                            <th>Interacts With</th>
+                            <th>Purpose</th>
+                            <th>Protocol</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Platform Engineer</td>
+                            <td>Rancher Dashboard</td>
+                            <td>Create Bundles, publish Blueprints</td>
+                            <td>HTTPS</td>
+                        </tr>
+                        <tr>
+                            <td>AI Practitioner</td>
+                            <td>Rancher Dashboard</td>
+                            <td>Deploy Workloads</td>
+                            <td>HTTPS</td>
+                        </tr>
+                        <tr>
+                            <td>AIF</td>
+                            <td>SUSE Registry</td>
+                            <td>Pull Helm charts, discover NIMs</td>
+                            <td>OCI/HTTPS</td>
+                        </tr>
+                        <tr>
+                            <td>AIF</td>
+                            <td>SUSE App Collection</td>
+                            <td>Discover curated AI apps</td>
+                            <td>REST API</td>
+                        </tr>
+                        <tr>
+                            <td>AIF</td>
+                            <td>Fleet</td>
+                            <td>Create deployment manifests</td>
+                            <td>K8s API</td>
+                        </tr>
+                        <tr>
+                            <td>Fleet</td>
+                            <td>Downstream Clusters</td>
+                            <td>Deploy AI workloads</td>
+                            <td>Fleet tunnel</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Container View -->
+            <section id="container">
+                <h2>C4 Level 2 - Container</h2>
+
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "Rancher Dashboard (Browser)"
+        UI[AI Factory UI Extension<br/>Vue 3 / TypeScript]
+    end
+
+    subgraph "AIF Operator Pod (namespace: aif)"
+        API[REST API Server<br/>:8080]
+        CTRL[Kubernetes Controllers<br/>5 reconcilers]
+        WEBHOOK[Admission Webhook<br/>:9443]
+        BIZ[Business Logic<br/>pkg/*]
+    end
+
+    subgraph "Data Layer"
+        CRDS[(Custom Resources<br/>Bundle, Blueprint, Workload)]
+        SECRETS[(Secrets<br/>Credentials)]
+        FLEET_CRS[(Fleet Resources<br/>Bundle, GitRepo)]
+    end
+
+    subgraph "External"
+        EXT[External Systems<br/>Registry, App Collection, Git]
+    end
+
+    UI -->|HTTPS| API
+    API --> BIZ
+    CTRL --> BIZ
+    WEBHOOK --> BIZ
+
+    BIZ --> CRDS
+    BIZ --> SECRETS
+    BIZ --> FLEET_CRS
+    BIZ --> EXT
+
+    style API fill:#667eea,color:#fff
+    style CTRL fill:#667eea,color:#fff
+    style WEBHOOK fill:#667eea,color:#fff
+    style BIZ fill:#326CE5,color:#fff,stroke-width:3px
+    style CRDS fill:#ffd700,color:#000
+                    </div>
+                </div>
+
+                <h3>Port Allocation</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Component</th>
+                            <th>Port</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>REST API Server</td>
+                            <td>8080</td>
+                            <td>HTTP endpoints for UI and external clients</td>
+                        </tr>
+                        <tr>
+                            <td>Health Probes</td>
+                            <td>8081</td>
+                            <td>/healthz, /readyz</td>
+                        </tr>
+                        <tr>
+                            <td>Metrics Server</td>
+                            <td>8082</td>
+                            <td>Prometheus metrics</td>
+                        </tr>
+                        <tr>
+                            <td>Admission Webhook</td>
+                            <td>9443</td>
+                            <td>Blueprint immutability validation</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="success-box">
+                    <h4>🏗️ Single Binary, Split Concerns</h4>
+                    <p>The operator is a single Go binary with clean separation: <code>cmd/operator/main.go</code> (≤250 lines) handles wiring, <code>internal/api</code> has HTTP handlers, <code>internal/controller</code> has reconcilers, and <code>pkg</code> has business logic.</p>
+                </div>
+            </section>
+
+            <!-- Component View -->
+            <section id="component">
+                <h2>C4 Level 3 - Component</h2>
+
+                <h3>API Layer Architecture</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph LR
+    CLIENT[HTTP Client]
+
+    subgraph "Middleware Chain"
+        CORS[CORS Handler]
+        REQ_ID[Request ID]
+        AUTH[Auth Extractor]
+    end
+
+    subgraph "Route Handlers"
+        APPS[Apps Handler<br/>GET /api/v1/apps]
+        PUBLISH[Publish Handler<br/>POST /api/v1/bundles/.../submit]
+        ERRORS[Error Translator]
+    end
+
+    subgraph "Business Logic"
+        BIZ[pkg/* interfaces]
+    end
+
+    CLIENT --> CORS
+    CORS --> REQ_ID
+    REQ_ID --> AUTH
+    AUTH --> APPS
+    AUTH --> PUBLISH
+
+    APPS --> BIZ
+    PUBLISH --> BIZ
+    APPS --> ERRORS
+    PUBLISH --> ERRORS
+
+    style APPS fill:#4ecdc4,color:#fff
+    style PUBLISH fill:#4ecdc4,color:#fff
+    style BIZ fill:#326CE5,color:#fff
+                    </div>
+                </div>
+
+                <h3>Controller Layer Architecture</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "Controllers"
+        direction TB
+        BC[BundleReconciler]
+        BPC[BlueprintReconciler]
+        WC[WorkloadReconciler]
+        SC[SettingsReconciler]
+        IC[InstallAIExtensionReconciler]
+    end
+
+    subgraph "Business Logic Packages"
+        BUNDLE[pkg/bundle<br/>Repository]
+        BLUEPRINT[pkg/blueprint<br/>Repository]
+        WORKLOAD[pkg/workload<br/>Manager]
+        ENGINES[pkg/helm, pkg/git<br/>Engines]
+    end
+
+    subgraph "Kubernetes"
+        CRDS[Custom Resources]
+        EVENTS[Events]
+    end
+
+    BC --> BUNDLE
+    BPC --> BLUEPRINT
+    WC --> WORKLOAD
+    SC --> ENGINES
+
+    BUNDLE --> CRDS
+    BLUEPRINT --> CRDS
+    WORKLOAD --> CRDS
+
+    BC --> EVENTS
+    BPC --> EVENTS
+    WC --> EVENTS
+
+    style BC fill:#95e1d3,color:#000
+    style BPC fill:#95e1d3,color:#000
+    style WC fill:#95e1d3,color:#000
+    style SC fill:#95e1d3,color:#000
+    style IC fill:#95e1d3,color:#000
+                    </div>
+                </div>
+
+                <h3>Business Logic Layer (Hexagonal Architecture)</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph LR
+    subgraph "Driving Adapters"
+        API_H[REST Handlers]
+        CONTROLLERS[Controllers]
+    end
+
+    subgraph "Core Business Logic (Ports)"
+        direction TB
+        CATALOG[apps.Catalog]
+        REPO[bundle/blueprint<br/>Repository]
+        WORKFLOW[publish.Workflow]
+        WL_MGR[workload.Manager]
+    end
+
+    subgraph "Driven Adapters"
+        K8S[K8s Client]
+        HELM[Helm Engine]
+        GIT[Git Engine]
+        NVIDIA[NVIDIA Discovery]
+        APPCO[App Collection Client]
+    end
+
+    API_H --> CATALOG
+    API_H --> WORKFLOW
+    CONTROLLERS --> REPO
+    CONTROLLERS --> WL_MGR
+
+    REPO --> K8S
+    WL_MGR --> HELM
+    WL_MGR --> GIT
+    CATALOG --> NVIDIA
+    CATALOG --> APPCO
+
+    style CATALOG fill:#326CE5,color:#fff
+    style REPO fill:#326CE5,color:#fff
+    style WORKFLOW fill:#326CE5,color:#fff
+    style WL_MGR fill:#326CE5,color:#fff
+                    </div>
+                </div>
+            </section>
+
+            <!-- Code View -->
+            <section id="code">
+                <h2>C4 Level 4 - Code Structure</h2>
+
+                <h3>Apps Package Structure</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "pkg/apps"
+        direction TB
+        CAT_IF["Catalog (interface)<br/>List(), Get(), Start()"]
+        AGG["Aggregator (concrete)<br/>Combines multiple sources"]
+        SRC_IF["Source (interface)<br/>List(), Start()"]
+    end
+
+    subgraph "Sources"
+        NVIDIA_SRC["NVIDIASource<br/>Discovers NIMs"]
+        APPCO_SRC["AppCoSource<br/>Discovers curated apps"]
+    end
+
+    subgraph "External Adapters"
+        NVIDIA_DISC["nvidia.Discovery"]
+        APPCO_CLIENT["source_collection.Client"]
+    end
+
+    CAT_IF -.implements.- AGG
+    AGG --> SRC_IF
+    SRC_IF -.implements.- NVIDIA_SRC
+    SRC_IF -.implements.- APPCO_SRC
+
+    NVIDIA_SRC --> NVIDIA_DISC
+    APPCO_SRC --> APPCO_CLIENT
+
+    style CAT_IF fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style SRC_IF fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style AGG fill:#4ecdc4,color:#fff
+                    </div>
+                </div>
+
+                <h3>Bundle & Blueprint Package Structure</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "pkg/bundle"
+        direction TB
+        BUNDLE_REPO["Repository (interface)<br/>Get(), List(), Create(), Update()"]
+        BUNDLE_K8S["K8sRepository (concrete)<br/>Kubernetes adapter"]
+        BUNDLE_MGR["Manager<br/>Validation logic"]
+    end
+
+    subgraph "pkg/blueprint"
+        direction TB
+        BP_REPO["Repository (interface)<br/>Get(), List(), Create()"]
+        BP_K8S["K8sRepository (concrete)<br/>Kubernetes adapter"]
+        BP_MGR["Manager<br/>Validation + vendor detection"]
+    end
+
+    subgraph "Kubernetes"
+        K8S_CLIENT["client.Client"]
+    end
+
+    BUNDLE_REPO -.implements.- BUNDLE_K8S
+    BP_REPO -.implements.- BP_K8S
+
+    BUNDLE_K8S --> K8S_CLIENT
+    BP_K8S --> K8S_CLIENT
+
+    style BUNDLE_REPO fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style BP_REPO fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style BUNDLE_K8S fill:#4ecdc4,color:#fff
+    style BP_K8S fill:#4ecdc4,color:#fff
+                    </div>
+                </div>
+
+                <h3>Publish Workflow Package</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "pkg/publish"
+        direction TB
+        WF_IF["Workflow (interface)<br/>Submit(), Approve(), RequestChanges()"]
+        WF_IMPL["PublishWorkflow (concrete)<br/>Business logic"]
+        AUTHZ["Authorizer (interface)<br/>CanSubmit(), CanApprove()"]
+        REC["EventRecorder (interface)<br/>Record()"]
+    end
+
+    subgraph "Dependencies"
+        BUNDLE_R["bundle.Repository"]
+        BP_R["blueprint.Repository"]
+    end
+
+    WF_IF -.implements.- WF_IMPL
+    WF_IMPL --> AUTHZ
+    WF_IMPL --> REC
+    WF_IMPL --> BUNDLE_R
+    WF_IMPL --> BP_R
+
+    style WF_IF fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style AUTHZ fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style REC fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style WF_IMPL fill:#4ecdc4,color:#fff
+                    </div>
+                </div>
+
+                <h3>Workload & Deployment Engines</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "pkg/workload"
+        WL_MGR["Manager<br/>Deploy(), GetStatus()"]
+    end
+
+    subgraph "Deployment Engines"
+        direction LR
+        HELM_IF["helm.Engine (interface)<br/>Install(), Upgrade()"]
+        HELM_IMPL["DefaultEngine<br/>Helm SDK wrapper"]
+
+        GIT_ENG["git.FleetEngine<br/>CreateBundle(), CreateGitRepo()"]
+    end
+
+    subgraph "External SDKs"
+        HELM_SDK["Helm SDK<br/>helm.sh/helm/v3"]
+        GO_GIT["go-git<br/>git operations"]
+        FLEET_API["Fleet CRDs<br/>fleet.cattle.io"]
+    end
+
+    WL_MGR --> HELM_IF
+    WL_MGR --> GIT_ENG
+
+    HELM_IF -.implements.- HELM_IMPL
+    HELM_IMPL --> HELM_SDK
+    GIT_ENG --> GO_GIT
+    GIT_ENG --> FLEET_API
+
+    style HELM_IF fill:#e7f3ff,color:#000,stroke:#326CE5,stroke-width:2px
+    style WL_MGR fill:#4ecdc4,color:#fff
+    style HELM_IMPL fill:#4ecdc4,color:#fff
+    style GIT_ENG fill:#4ecdc4,color:#fff
+                    </div>
+                </div>
+            </section>
+
+            <!-- Deployment -->
+            <section id="deployment">
+                <h2>Deployment Architecture</h2>
+
+                <h3>Hub-on-Management-Cluster Pattern</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+graph TB
+    subgraph "Rancher Management Cluster"
+        direction TB
+
+        subgraph "Namespace: aif"
+            OP[AIF Operator Pod]
+            SVC[Services]
+            PVC[PVC: aif-data]
+            SEC[Secrets]
+        end
+
+        subgraph "Namespace: cattle-ui-plugin-system"
+            UI_PLUGIN[UIPlugin: ai-factory]
+        end
+
+        subgraph "Cluster-scoped"
+            CRDS[CRDs]
+            BLUEPRINTS[Blueprint CRs]
+            WEBHOOK[Webhook Config]
+            RBAC[RBAC Resources]
+        end
+
+        subgraph "Namespace: fleet-local"
+            FLEET_BUNDLES[Fleet Bundle CRs]
+            FLEET_GITREPOS[Fleet GitRepo CRs]
+        end
+
+        subgraph "Namespace: &lt;author-ns&gt;"
+            BUNDLES[Bundle CRs]
+            WORKLOADS[Workload CRs]
+        end
+    end
+
+    subgraph "Downstream Cluster 1"
+        FA1[fleet-agent]
+        DEPLOY1[AI Workload Pods]
+    end
+
+    subgraph "Downstream Cluster N"
+        FAN[fleet-agent]
+        DEPLOYN[AI Workload Pods]
+    end
+
+    OP --> FLEET_BUNDLES
+    OP --> FLEET_GITREPOS
+
+    FLEET_BUNDLES -.Fleet tunnel.-> FA1
+    FLEET_BUNDLES -.Fleet tunnel.-> FAN
+
+    FA1 --> DEPLOY1
+    FAN --> DEPLOYN
+
+    style OP fill:#326CE5,color:#fff,stroke-width:3px
+    style DEPLOY1 fill:#4ecdc4,color:#fff
+    style DEPLOYN fill:#4ecdc4,color:#fff
+    style FLEET_BUNDLES fill:#95e1d3,color:#000
+                    </div>
+                </div>
+
+                <div class="card-grid">
+                    <div class="card">
+                        <h4>✅ Management Cluster</h4>
+                        <p><strong>Has:</strong></p>
+                        <ul>
+                            <li>AIF Operator pod</li>
+                            <li>All CRDs</li>
+                            <li>UI Plugin</li>
+                            <li>Fleet CRs</li>
+                        </ul>
+                    </div>
+                    <div class="card">
+                        <h4>❌ Downstream Clusters</h4>
+                        <p><strong>No AIF components:</strong></p>
+                        <ul>
+                            <li>No Operator</li>
+                            <li>No CRDs</li>
+                            <li>Only fleet-agent (pre-existing)</li>
+                            <li>Only workload pods</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Data Flows -->
+            <section id="flows">
+                <h2>Key Data Flows</h2>
+
+                <h3>Flow 1: Bundle Publish Workflow</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+sequenceDiagram
+    participant User
+    participant UI
+    participant API
+    participant Workflow
+    participant K8s
+
+    Note over User,K8s: Phase 1: Create Bundle
+    User->>UI: Create Bundle
+    UI->>API: POST /api/v1/bundles
+    API->>K8s: Create Bundle CR
+    K8s-->>UI: status.phase = Draft
+
+    Note over User,K8s: Phase 2: Submit for Approval
+    User->>UI: Click "Submit"
+    UI->>API: POST /bundles/{ns}/{name}/submit
+    API->>Workflow: Submit(req)
+    Workflow->>K8s: Update Bundle status
+    K8s-->>UI: status.phase = Submitted
+
+    Note over User,K8s: Phase 3: Approve & Publish
+    User->>UI: Click "Approve"
+    UI->>API: POST /bundles/{ns}/{name}/approve
+    API->>Workflow: Approve(req)
+    Workflow->>K8s: Create Blueprint CR
+    Workflow->>K8s: Update Bundle status
+    K8s-->>UI: Blueprint v1.0.0 published
+                    </div>
+                </div>
+
+                <h3>Flow 2: Workload Deployment</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+sequenceDiagram
+    participant User
+    participant UI
+    participant WorkloadCtrl
+    participant Fleet
+    participant FleetAgent
+    participant DownstreamK8s
+
+    User->>UI: Deploy Blueprint
+    UI->>WorkloadCtrl: Create Workload CR
+
+    Note over WorkloadCtrl: Resolve Blueprint components<br/>Merge Helm values
+
+    WorkloadCtrl->>Fleet: Create Fleet Bundle CR
+    Note over Fleet: Fleet Bundle contains:<br/>- Helm chart OCI ref<br/>- Values YAML<br/>- Pull secret<br/>- Target clusters
+
+    FleetAgent->>Fleet: Poll for changes
+    Fleet-->>FleetAgent: New Bundle manifest
+
+    FleetAgent->>DownstreamK8s: Apply resources<br/>(Deployment, Service, Secret)
+    DownstreamK8s-->>FleetAgent: Resources created
+
+    FleetAgent->>Fleet: Report status
+    Fleet->>WorkloadCtrl: Update Fleet Bundle status
+    WorkloadCtrl->>UI: Workload phase = Running
+                    </div>
+                </div>
+
+                <h3>Flow 3: Apps Catalog Discovery</h3>
+                <div class="diagram-container">
+                    <div class="mermaid">
+sequenceDiagram
+    participant Timer
+    participant Aggregator
+    participant NVIDIASource
+    participant AppCoSource
+    participant Cache
+    participant User
+
+    Note over Timer,Cache: Background: Every 5 minutes
+
+    Timer->>NVIDIASource: Refresh
+    NVIDIASource->>NVIDIASource: Fetch from SUSE Registry OCI
+    NVIDIASource->>Cache: Update NVIDIA Apps
+
+    Timer->>AppCoSource: Refresh
+    AppCoSource->>AppCoSource: Fetch from api.apps.rancher.io
+    AppCoSource->>Cache: Update App Collection Apps
+
+    Note over Timer,User: User Request
+
+    User->>Aggregator: GET /api/v1/apps
+    Aggregator->>Cache: Read all sources
+    Cache-->>Aggregator: Merged app list
+    Aggregator-->>User: JSON response
+                    </div>
+                </div>
+            </section>
+
+            <!-- Principles -->
+            <section id="principles">
+                <h2>Architecture Principles</h2>
+
+                <h3>Hexagonal Architecture (Ports & Adapters)</h3>
+                <pre>
+┌─────────────────────────────────────────┐
+│  Driving Adapters (Inputs)              │
+│  • REST API handlers                    │
+│  • Kubernetes controllers               │
+│  • Admission webhooks                   │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│  Business Logic Core (Ports)            │
+│  • Interfaces in pkg/*/interface.go     │
+│  • apps.Catalog                         │
+│  • bundle/blueprint.Repository          │
+│  • publish.Workflow                     │
+│  • workload.Manager                     │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│  Driven Adapters (Outputs)              │
+│  • K8s repositories                     │
+│  • Helm engine                          │
+│  • Git engine                           │
+│  • NVIDIA discovery                     │
+│  • App Collection client                │
+└─────────────────────────────────────────┘
+</pre>
+
+                <h3>Dependency Flow</h3>
+                <pre>
+cmd/operator/main.go (≤250 lines, wiring only)
+    ↓
+internal/{api,controller,webhook}/
+    ↓
+pkg/&lt;domain&gt;/{interface.go, types.go, ...}
+    ↓
+api/v1alpha1 (CRDs) — ONLY in conversions.go + repository.go
+    ↓
+stdlib, third-party (controller-runtime, Helm SDK, etc.)
+</pre>
+
+                <h3>Key Architectural Decisions</h3>
+                <div class="card-grid">
+                    <div class="card">
+                        <h4>1. Kubernetes-Native</h4>
+                        <p>All state stored as CRs. No external database. In-memory caches rebuild from CRD state on startup.</p>
+                    </div>
+                    <div class="card">
+                        <h4>2. Least Privilege</h4>
+                        <p>Fine-grained RBAC. No <code>cluster-admin</code>. Every resource explicitly listed.</p>
+                    </div>
+                    <div class="card">
+                        <h4>3. Secrets Management</h4>
+                        <p>Credentials in K8s Secrets only. Consumed via <code>secretKeyRef</code>. Never in values.yaml.</p>
+                    </div>
+                    <div class="card">
+                        <h4>4. Blueprint Immutability</h4>
+                        <p>Spec fields immutable per version. Webhook-enforced. New versions = new CR instances.</p>
+                    </div>
+                    <div class="card">
+                        <h4>5. Workload Provenance</h4>
+                        <p>Every Workload records <code>spec.source</code> (App/Blueprint/BundleTest).</p>
+                    </div>
+                    <div class="card">
+                        <h4>6. Air-Gap First-Class</h4>
+                        <p>No direct NVIDIA NGC access. All assets via SUSE Registry mirror.</p>
+                    </div>
+                </div>
+
+                <h3>Technology Stack</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Layer</th>
+                            <th>Technologies</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Language</strong></td>
+                            <td>Go 1.21+</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Frameworks</strong></td>
+                            <td>controller-runtime v0.17, Helm SDK v3.13, go-git v5</td>
+                        </tr>
+                        <tr>
+                            <td><strong>UI</strong></td>
+                            <td>Vue 3, @rancher/shell ^3.0.10, TypeScript</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Storage</strong></td>
+                            <td>Kubernetes CRDs (etcd-backed)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Observability</strong></td>
+                            <td>log/slog (JSON/text), Prometheus, K8s Events</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Security</strong></td>
+                            <td>RBAC, Admission webhooks, Secrets</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Deployment</strong></td>
+                            <td>Helm charts, Fleet (GitOps)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Testing</strong></td>
+                            <td>envtest, Ginkgo v2, go test</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Critical Constraints</h3>
+                <div class="highlight-box">
+                    <h4>⚠️ Non-Negotiable Architecture Constraints</h4>
+                    <ul>
+                        <li><strong>No internal OCI registry</strong> — AIF does not host/proxy/mirror images</li>
+                        <li><strong>No direct NVIDIA NGC access</strong> — All assets via SUSE Registry mirror</li>
+                        <li><strong>Blueprint immutability</strong> — Spec fields immutable (webhook-enforced)</li>
+                        <li><strong>Air-gap parameterization</strong> — Registry endpoints configurable via Settings</li>
+                        <li><strong>Publish-by-approval governance</strong> — Bundle → Submitted → Approved → Blueprint</li>
+                        <li><strong>Single pull-secret pattern</strong> — One docker-config Secret per workload namespace</li>
+                        <li><strong>Hub-on-management</strong> — Operator runs ONLY on Rancher management cluster</li>
+                    </ul>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p><strong>Generated:</strong> 2026-05-12</p>
+            <p><strong>Version:</strong> 2.0 (Simplified & Decluttered)</p>
+            <p><strong>Based on:</strong> AIF codebase analysis</p>
+            <p style="margin-top: 15px; opacity: 0.8;">
+                SUSE AI Factory — AI Platform Management for Rancher
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        // Initialize Mermaid with cleaner theme
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            themeVariables: {
+                primaryColor: '#326CE5',
+                primaryTextColor: '#fff',
+                primaryBorderColor: '#0caadc',
+                lineColor: '#667eea',
+                secondaryColor: '#764ba2',
+                tertiaryColor: '#f8f9fa',
+                fontSize: '16px'
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis',
+                padding: 20,
+                nodeSpacing: 80,
+                rankSpacing: 80
+            },
+            sequence: {
+                diagramMarginX: 50,
+                diagramMarginY: 10,
+                actorMargin: 80,
+                width: 150,
+                height: 65,
+                boxMargin: 10,
+                boxTextMargin: 5,
+                noteMargin: 10,
+                messageMargin: 35,
+                mirrorActors: true,
+                wrap: true
+            }
+        });
+
+        // Smooth scrolling
+        document.querySelectorAll('nav a').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Highlight active section
+        window.addEventListener('scroll', () => {
+            const sections = document.querySelectorAll('section');
+            const navLinks = document.querySelectorAll('nav a');
+
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (pageYOffset >= (sectionTop - 150)) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.style.background = '';
+                link.style.color = '';
+                if (link.getAttribute('href') === `#${current}`) {
+                    link.style.background = '#326CE5';
+                    link.style.color = 'white';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
