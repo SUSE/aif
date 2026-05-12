@@ -16,6 +16,7 @@ const (
 	ErrCodeConflict          = "CONFLICT"
 	ErrCodePublishConflict   = "PUBLISH_CONFLICT"
 	ErrCodeLineageReserved   = "LINEAGE_RESERVED"
+	ErrCodeUnavailable       = "UNAVAILABLE"
 	ErrCodeInternalError     = "INTERNAL_ERROR"
 	ErrCodeNotImplemented    = "NOT_IMPLEMENTED"
 )
@@ -30,6 +31,7 @@ var (
 	ErrConflict          = errors.New("conflict")
 	ErrPublishConflict   = errors.New("publish conflict")
 	ErrLineageReserved   = errors.New("lineage reserved")
+	ErrUnavailable       = errors.New("unavailable")
 	ErrInternal          = errors.New("internal error")
 	ErrNotImplemented    = errors.New("not implemented")
 )
@@ -92,6 +94,8 @@ func errorCode(err error) string {
 		return ErrCodeLineageReserved
 	case errors.Is(err, ErrConflict):
 		return ErrCodeConflict
+	case errors.Is(err, ErrUnavailable):
+		return ErrCodeUnavailable
 	case errors.Is(err, ErrInternal):
 		return ErrCodeInternalError
 	case errors.Is(err, ErrNotImplemented):
@@ -122,6 +126,8 @@ func errorStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrConflict):
 		return http.StatusConflict
+	case errors.Is(err, ErrUnavailable):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrNotImplemented):
 		return http.StatusNotImplemented
 	case errors.Is(err, ErrInternal):
