@@ -180,3 +180,84 @@ func TestWrapper_EmptyCatalog(t *testing.T) {
 		t.Errorf("got %d blueprints, want 0", len(bps))
 	}
 }
+
+func seedWrappedBlueprint(store *FakeRepository, source, chart, version string) {
+	bp := blueprintFromApp(apps.App{
+		ID:                 source + "." + chart + ":" + version,
+		Name:               chart,
+		Source:             source,
+		Version:            version,
+		ReferenceBlueprint: true,
+		UseCase:            "inference",
+		ChartRef: apps.ChartRef{
+			Repo:    "oci://registry.suse.com/ai/charts/" + source,
+			Chart:   chart,
+			Version: version,
+		},
+	}, source+"-"+chart+"."+version)
+	store.Create(context.Background(), bp) //nolint:errcheck
+}
+
+func TestWrapper_WithdrawsOrphaned(t *testing.T) {
+	store := NewFakeRepository()
+	emitter := &fakeEventEmitter{}
+	seedWrappedBlueprint(store, "nvidia", "nim-llm", "1.0.0")
+
+	catalog := &fakeCatalog{apps: []apps.App{}}
+	w := NewWrapper(catalog, store, emitter, discardLogger())
+
+	if err := w.WrapDetectedCharts(context.Background()); err != nil {
+		t.Fatalf("WrapDetectedCharts: %v", err)
+	}
+
+	bps, _ := store.ListWrapped(context.Background())
+	for _, bp := range bps {
+		if bp.Name == "nvidia-nim-llm.1.0.0" && bp.Status.Phase != PhaseWithdrawn {
+			t.Errorf("phase = %q, want Withdrawn", bp.Status.Phase)
+		}
+	}
+	if len(emitter.withdrawn) != 1 {
+		t.Errorf("withdrawn events = %d, want 1", len(emitter.withdrawn))
+	}
+}
+
+func TestWrapper_StillInCatalog_NoWithdraw(t *testing.T) {
+	store := NewFakeRepository()
+	emitter := &fakeEventEmitter{}
+	seedWrappedBlueprint(store, "nvidia", "nim-llm", "1.0.0")
+
+	catalog := &fakeCatalog{apps: []apps.App{rbApp("nvidia", "nim-llm", "1.0.0")}}
+	w := NewWrapper(catalog, store, emitter, discardLogger())
+
+	if err := w.WrapDetectedCharts(context.Background()); err != nil {
+		t.Fatalf("WrapDetectedCharts: %v", err)
+	}
+
+	bps, _ := store.ListWrapped(context.Background())
+	for _, bp := range bps {
+		if bp.Name == "nvidia-nim-llm.1.0.0" && bp.Status.Phase == PhaseWithdrawn {
+			t.Error("blueprint should NOT be withdrawn when still in catalog")
+		}
+	}
+	if len(emitter.withdrawn) != 0 {
+		t.Errorf("withdrawn events = %d, want 0", len(emitter.withdrawn))
+	}
+}
+
+func TestWrapper_AlreadyWithdrawn_NoEventReemit(t *testing.T) {
+	store := NewFakeRepository()
+	emitter := &fakeEventEmitter{}
+	seedWrappedBlueprint(store, "nvidia", "nim-llm", "1.0.0")
+	_ = store.Withdraw(context.Background(), "nvidia-nim-llm.1.0.0")
+
+	catalog := &fakeCatalog{apps: []apps.App{}}
+	w := NewWrapper(catalog, store, emitter, discardLogger())
+
+	if err := w.WrapDetectedCharts(context.Background()); err != nil {
+		t.Fatalf("WrapDetectedCharts: %v", err)
+	}
+
+	if len(emitter.withdrawn) != 0 {
+		t.Errorf("withdrawn events = %d, want 0 (already withdrawn)", len(emitter.withdrawn))
+	}
+}
