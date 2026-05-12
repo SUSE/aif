@@ -1459,6 +1459,35 @@ curl -X POST http://localhost:8080/api/v1/bundles/default/my-rag/preflight | jq
 go test -race ./pkg/helm/ -v
 ```
 
+> **Follow-up (post-merge, P4-1):**
+>
+> 1. **`MergeValues` signature drift from §6.6.** Implementation uses
+>    `func MergeValues(in MergeInput) (map[string]any, error)` with a named-layer
+>    struct and error return, instead of the spec's
+>    `func MergeValues(layers ...map[string]any) map[string]any`. Required to
+>    satisfy two acceptance bullets the variadic signature cannot satisfy:
+>    layer-2/3-only forbidden-key drop (variadic loses layer identity) and
+>    `ErrMissingImageRepository` post-merge validation (variadic has no error
+>    return). `ARCHITECTURE.md` §6.6 should be updated to match.
+>
+> 2. **`serviceAccount.create` interpretation.** §6.6 lists
+>    `serviceAccount.create` under "Forbidden top-level keys" but the literal
+>    key is nested. Implementation drops the `create` sub-key only and leaves
+>    the rest of the `serviceAccount` map (e.g., `name`, `annotations`)
+>    intact. `ARCHITECTURE.md` §6.6 should clarify partial-drop semantics.
+>
+> 3. **`Pull` not exercised by envtest.** Envtest cannot reach an OCI
+>    registry. The production `pullChart()` path is covered only by unit tests
+>    against `fakeRunner`; the envtest substitutes a `localChartRunner` that
+>    copies `testdata/tiny-chart` per-Pull. A future `live_test.go` (build
+>    tag `live`) could exercise real OCI pulls; out of scope for P4-1.
+>
+> 4. **Status / Rollback / History got envtest coverage.** The "Done When"
+>    line of P4-1 enumerates only Install/Upgrade/Uninstall/MergeValues for
+>    test coverage, but the primary AC says "Engine interface fully
+>    implemented" — interpreted strictly, all six methods got real envtest
+>    happy-path coverage in `engine_envtest_test.go`.
+
 ---
 
 **ID:** P4-2
