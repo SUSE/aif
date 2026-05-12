@@ -4,6 +4,8 @@ package blueprint
 // It owns the translation between the K8s CR shape and the domain shape.
 
 import (
+	"strings"
+
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -48,6 +50,23 @@ func ToCR(b Blueprint) *aifv1.Blueprint {
 		PublishedAt:       metav1.NewTime(b.PublishedAt),
 	}
 	cr.Status = statusToCR(b.Status)
+	return cr
+}
+
+// ToWrappedCR builds a fully-labelled K8s CR for a WrapsVendorChart
+// Blueprint. It calls ToCR for spec/status, then sets the required
+// labels per ARCHITECTURE.md §4.3.
+func ToWrappedCR(b Blueprint) *aifv1.Blueprint {
+	cr := ToCR(b)
+	if cr.Labels == nil {
+		cr.Labels = make(map[string]string)
+	}
+	cr.Labels["ai.suse.com/blueprint-name"] = b.Lineage
+	cr.Labels["ai.suse.com/blueprint-version"] = b.Version
+	cr.Labels["ai.suse.com/blueprint-source"] = "wraps-vendor-chart"
+	if strings.Contains(b.Version, "-") {
+		cr.Labels["ai.suse.com/blueprint-prerelease"] = "true"
+	}
 	return cr
 }
 

@@ -120,6 +120,66 @@ func TestRoundtrip_Published(t *testing.T) {
 
 // TestRoundtrip_Status guards against the conversion silently dropping the
 // Status.Conditions list (caught by the critical-review audit, finding M1).
+func TestToWrappedCR_SetsLabelsAndStatus(t *testing.T) {
+	b := Blueprint{
+		Name:    "nvidia-nim-llm.1.0.0",
+		Lineage: "nvidia-nim-llm",
+		Version: "1.0.0",
+		UseCase: "inference",
+		Source: Source{
+			Type:   SourceTypeWrapsVendorChart,
+			Vendor: &VendorChartRef{Provider: "nvidia", Repo: "oci://registry.suse.com/ai/charts/nvidia", Chart: "nim-llm", Version: "1.0.0"},
+		},
+		Components: []ComponentRef{{
+			Name: "nvidia-nim-llm",
+			Kind: ComponentKindApp,
+			App:  &AppRef{Repo: "oci://registry.suse.com/ai/charts/nvidia", Chart: "nim-llm", Version: "1.0.0"},
+		}},
+		PublishedBy: "aif-system",
+		Status:      Status{Phase: PhaseActive},
+	}
+
+	cr := ToWrappedCR(b)
+
+	if cr.Labels["ai.suse.com/blueprint-name"] != "nvidia-nim-llm" {
+		t.Errorf("blueprint-name label = %q, want %q", cr.Labels["ai.suse.com/blueprint-name"], "nvidia-nim-llm")
+	}
+	if cr.Labels["ai.suse.com/blueprint-version"] != "1.0.0" {
+		t.Errorf("blueprint-version label = %q, want %q", cr.Labels["ai.suse.com/blueprint-version"], "1.0.0")
+	}
+	if cr.Labels["ai.suse.com/blueprint-source"] != "wraps-vendor-chart" {
+		t.Errorf("blueprint-source label = %q, want %q", cr.Labels["ai.suse.com/blueprint-source"], "wraps-vendor-chart")
+	}
+	if _, ok := cr.Labels["ai.suse.com/blueprint-prerelease"]; ok {
+		t.Error("blueprint-prerelease label should not be set for stable version")
+	}
+	if cr.Status.Phase != "Active" {
+		t.Errorf("status.phase = %q, want Active", cr.Status.Phase)
+	}
+	if cr.Name != "nvidia-nim-llm.1.0.0" {
+		t.Errorf("name = %q, want %q", cr.Name, "nvidia-nim-llm.1.0.0")
+	}
+	if cr.Spec.BlueprintName != "nvidia-nim-llm" {
+		t.Errorf("blueprintName = %q, want %q", cr.Spec.BlueprintName, "nvidia-nim-llm")
+	}
+}
+
+func TestToWrappedCR_PrereleaseLabelSet(t *testing.T) {
+	b := Blueprint{
+		Name:    "nvidia-nim-llm.1.0.0-rc.1",
+		Lineage: "nvidia-nim-llm",
+		Version: "1.0.0-rc.1",
+		Source:  Source{Type: SourceTypeWrapsVendorChart, Vendor: &VendorChartRef{Provider: "nvidia"}},
+		Status:  Status{Phase: PhaseActive},
+	}
+
+	cr := ToWrappedCR(b)
+
+	if cr.Labels["ai.suse.com/blueprint-prerelease"] != "true" {
+		t.Errorf("blueprint-prerelease label = %q, want %q", cr.Labels["ai.suse.com/blueprint-prerelease"], "true")
+	}
+}
+
 func TestRoundtrip_Status(t *testing.T) {
 	cr := &aifv1.Blueprint{}
 	cr.Status = aifv1.BlueprintStatus{
