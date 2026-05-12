@@ -42,6 +42,7 @@ const (
 	// Blueprint source events
 	ReasonBlueprintPublished              = "BlueprintPublished"              // Blueprint from Published source
 	ReasonBlueprintWrappedFromVendorChart = "BlueprintWrappedFromVendorChart" // Blueprint from WrapsVendorChart source
+	ReasonBlueprintWithdrawn              = "BlueprintWithdrawn"              // Wrapped Blueprint's vendor chart removed from catalog
 
 	// Blueprint deletion
 	ReasonBlueprintHasActiveWorkloads = "BlueprintHasActiveWorkloads" // Deletion blocked due to active Workloads
