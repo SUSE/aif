@@ -11,5 +11,6 @@ spec:
       namespace: default
       name: smoke
       generation: 1
-  targetCluster: local
+  targetClusters:
+    - local
   deployStrategy: helm

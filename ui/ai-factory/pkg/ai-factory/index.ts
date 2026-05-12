@@ -1,5 +1,6 @@
 import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
+import { MANAGEMENT_CLUSTER } from './config/types';
 import routes from './routing';
 import './style/brand.css';
 
@@ -18,7 +19,7 @@ export default function(plugin: IPlugin): void {
     icon: require('./assets/logo.svg')
   };
 
-  plugin.addDashboardStore('aif', SteveFactory(null, null), { namespace: 'aif', isClusterStore: true });
+  plugin.addDashboardStore('aif', SteveFactory(MANAGEMENT_CLUSTER, null), { namespace: 'aif', isClusterStore: true });
   plugin.addProduct(require('./config/aif-product'));
   plugin.addRoutes(routes);
   plugin.addL10n('en-us', require('./l10n/en-us.yaml'));

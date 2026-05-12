@@ -40,8 +40,8 @@ const (
 type DeployStrategyType string
 
 const (
-	DeployStrategyTypeHelm  DeployStrategyType = "helm"
-	DeployStrategyTypeFleet DeployStrategyType = "fleet"
+	DeployStrategyTypeHelm   DeployStrategyType = "helm"
+	DeployStrategyTypeGitOps DeployStrategyType = "gitops"
 )
 
 // VPAUpdateMode defines the VPA update mode
@@ -63,16 +63,16 @@ type WorkloadSpec struct {
 	// Source indicates the provenance of this Workload
 	Source WorkloadSource `json:"source"`
 
-	// TargetCluster is the cluster ID (informational)
+	// TargetClusters are the cluster IDs (informational)
 	// +optional
-	TargetCluster string `json:"targetCluster,omitempty"`
+	TargetClusters []string `json:"targetClusters,omitempty"`
 
 	// ValueOverrides contains per-component Helm values overrides
 	// +optional
 	ValueOverrides map[string]string `json:"valueOverrides,omitempty"`
 
 	// DeployStrategy indicates the deployment method
-	// +kubebuilder:validation:Enum=helm;fleet
+	// +kubebuilder:validation:Enum=helm;gitops
 	// +kubebuilder:default=helm
 	// +optional
 	DeployStrategy DeployStrategyType `json:"deployStrategy,omitempty"`

@@ -3,7 +3,7 @@
  */
 
 export const PRODUCT_NAME = 'ai-factory';
-export const BLANK_CLUSTER = '_';
+export const MANAGEMENT_CLUSTER = 'local';
 
 export const PAGE_IDS = {
   OVERVIEW:        'overview',
