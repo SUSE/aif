@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -253,6 +253,33 @@ verify-apps-live:
 		exit 1; \
 	fi
 	go test -count=1 -tags=live -v -run TestLive_Catalog ./pkg/apps/...
+
+# --- pkg/blueprint Wrapper validation targets (P2-7) ----------------------
+# Exercise the Wrapper that auto-wraps detected Reference Blueprint charts
+# as immutable Blueprint CRs. test-wrapper runs unit tests;
+# verify-wrapper-mock proves the Example_wrapper deterministic output;
+# verify-wrapper-live drives the wrapper in dry-run mode against real
+# upstreams (registry.suse.com + api.apps.rancher.io).
+
+test-wrapper:
+	@echo "Running pkg/blueprint wrapper unit tests..."
+	go test -count=1 -v -run "TestWrapper_" ./pkg/blueprint/...
+
+verify-wrapper-mock:
+	@echo "Demonstrating Wrapper against in-process fake catalog..."
+	go test -count=1 -v -run Example_wrapper ./pkg/blueprint/
+
+verify-wrapper-live:
+	@echo "Verifying Wrapper dry-run against real upstreams..."
+	@if [ -z "$$SUSE_REG_USER" ] || [ -z "$$SUSE_REG_TOKEN" ] || [ -z "$$SUSE_APPCO_USER" ] || [ -z "$$SUSE_APPCO_TOKEN" ]; then \
+		echo "ERROR: this target needs all four credential env vars set:"; \
+		echo "  SUSE_REG_USER / SUSE_REG_TOKEN     — SUSE Registry"; \
+		echo "  SUSE_APPCO_USER / SUSE_APPCO_TOKEN  — SUSE Application Collection"; \
+		echo "  inline: SUSE_REG_USER=x SUSE_REG_TOKEN=y SUSE_APPCO_USER=a SUSE_APPCO_TOKEN=b make verify-wrapper-live"; \
+		echo "  or:     copy .env.example to .env and fill in the values"; \
+		exit 1; \
+	fi
+	go test -count=1 -tags=live -v -run TestWrapperLive ./pkg/blueprint/...
 
 # --- internal/api (Apps REST handlers) validation target (P2-4) -------------
 # Runs the httptest-driven handler tests for /api/v1/apps*. No live target —
