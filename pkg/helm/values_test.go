@@ -3,7 +3,6 @@ package helm
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"log/slog"
 	"reflect"
@@ -233,9 +232,6 @@ func TestMergeValues_DropsForbiddenKeys_TrustedLayersUntouched(t *testing.T) {
 		t.Error("layer 4 fullnameOverride must NOT be dropped (trusted)")
 	}
 }
-
-// _ silences the context import — added because the next task uses it.
-var _ = context.Background
 
 func TestMergeValues_RequiresImageRepository_Absent(t *testing.T) {
 	_, err := MergeValues(MergeInput{
