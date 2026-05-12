@@ -48,7 +48,7 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 	if err != nil {
 		return ReleaseStatus{}, fmt.Errorf("%w: %s: %v", ErrPullFailed, req.ChartRef, err)
 	}
-	defer os.Remove(chartPath)
+	defer os.RemoveAll(chartPath)
 
 	ch, err := loader.Load(chartPath)
 	if err != nil {
