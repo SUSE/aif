@@ -70,6 +70,12 @@ func New(logger *slog.Logger, config *rest.Config, opts ...Option) Engine {
 // snapshot returns the current settings under a read lock. Callers MUST
 // invoke this once at method entry and use the returned struct for the
 // remainder of the call; never hold the lock across SDK calls.
+//
+// Currently exercised only by helm_test.go's -race test; P5-7 will add the
+// production callers that read EngineSettings during pullChart() to wire
+// OCI registry auth.
+//
+//nolint:unused // reserved for P5-7 (Settings reconciler integration)
 func (e *engine) snapshot() EngineSettings {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

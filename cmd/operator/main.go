@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -106,16 +107,19 @@ func main() {
 	var publishWorkflow publish.Workflow
 	workloadManager := workload.New(logger)
 
-	// Log manager creation (prevent unused variable warnings)
+	// Log manager types so vars stay "used" while their consumers (later
+	// stories wire gitEngine, nvidiaDeployer, etc.) come online. Logging
+	// the values directly (rather than `x != nil`) avoids staticcheck
+	// SA4023 on always-true comparisons against constructor returns.
 	logger.Debug("Managers created",
-		"helmEngine", helmEngine != nil,
-		"discoveryClient", discoveryClient != nil,
-		"gitEngine", gitEngine != nil,
-		"nvidiaDiscovery", nvidiaDiscovery != nil,
-		"nvidiaDeployer", nvidiaDeployer != nil,
-		"appsCatalog", appsCatalog != nil,
-		"blueprintManager", blueprintManager != nil,
-		"workloadManager", workloadManager != nil,
+		"helmEngine", fmt.Sprintf("%T", helmEngine),
+		"discoveryClient", fmt.Sprintf("%T", discoveryClient),
+		"gitEngine", fmt.Sprintf("%T", gitEngine),
+		"nvidiaDiscovery", fmt.Sprintf("%T", nvidiaDiscovery),
+		"nvidiaDeployer", fmt.Sprintf("%T", nvidiaDeployer),
+		"appsCatalog", fmt.Sprintf("%T", appsCatalog),
+		"blueprintManager", fmt.Sprintf("%T", blueprintManager),
+		"workloadManager", fmt.Sprintf("%T", workloadManager),
 	)
 
 	// Setup controller-runtime manager with all controllers and webhooks
