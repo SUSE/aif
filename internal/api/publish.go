@@ -47,6 +47,14 @@ type bundleResponse struct {
 }
 
 func newBundleResponse(b bundle.Bundle) bundleResponse {
+	components := b.Components
+	if components == nil {
+		components = []aifv1.ComponentRef{}
+	}
+	versions := b.PublishedVersions
+	if versions == nil {
+		versions = []aifv1.PublishedVersionRef{}
+	}
 	return bundleResponse{
 		Namespace:         b.Namespace,
 		Name:              b.Name,
@@ -54,10 +62,10 @@ func newBundleResponse(b bundle.Bundle) bundleResponse {
 		Title:             b.Title,
 		TargetBlueprint:   b.TargetBlueprint,
 		UseCase:           b.UseCase,
-		Components:        b.Components,
+		Components:        components,
 		Submission:        b.Submission,
 		Review:            b.Review,
-		PublishedVersions: b.PublishedVersions,
+		PublishedVersions: versions,
 	}
 }
 
