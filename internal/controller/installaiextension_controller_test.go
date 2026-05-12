@@ -26,49 +26,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// fakeHelmEngine implements helm.Engine for testing
-type fakeHelmEngine struct {
-	installErr   error
-	uninstallErr error
-	installCalls []helm.InstallRequest
-	shouldRetry  bool
-}
-
-func (f *fakeHelmEngine) InstallChartFromRepo(ctx context.Context, req helm.InstallRequest) (helm.ReleaseStatus, error) {
-	f.installCalls = append(f.installCalls, req)
-	if f.installErr != nil {
-		return helm.ReleaseStatus{}, f.installErr
-	}
-	return helm.ReleaseStatus{
-		Name:     req.ReleaseName,
-		Revision: 1,
-		Status:   "deployed",
-		Updated:  time.Now(),
-	}, nil
-}
-
-func (f *fakeHelmEngine) Uninstall(ctx context.Context, namespace, releaseName string) error {
-	return f.uninstallErr
-}
-
-func (f *fakeHelmEngine) Status(ctx context.Context, namespace, releaseName string) (helm.ReleaseStatus, error) {
-	return helm.ReleaseStatus{}, errors.New("not implemented")
-}
-
-func (f *fakeHelmEngine) Rollback(ctx context.Context, namespace, releaseName string, revision int) error {
-	return errors.New("not implemented")
-}
-
-func (f *fakeHelmEngine) History(ctx context.Context, namespace, releaseName string) ([]helm.RevisionInfo, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (f *fakeHelmEngine) UpdateSettings(s helm.EngineSettings) {
-	// No-op for testing
-}
-
-var _ helm.Engine = &fakeHelmEngine{}
-
 // fakeDiscovery implements discovery.DiscoveryInterface for testing
 type fakeDiscovery struct {
 	shouldFail bool
@@ -162,7 +119,7 @@ func TestInstallAIExtensionReconciler_HappyPath(t *testing.T) {
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{}
+	fakeHelm := helm.NewFake()
 	fakeDisc := &fakeDiscovery{shouldFail: false}
 	recorder := &fakeRecorder{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -237,11 +194,12 @@ func TestInstallAIExtensionReconciler_HappyPath(t *testing.T) {
 	}
 
 	// Verify Helm was called correctly
-	if len(fakeHelm.installCalls) != 1 {
-		t.Errorf("expected 1 Helm install call, got %d", len(fakeHelm.installCalls))
+	installs := filterCalls(fakeHelm.Calls, "InstallChartFromRepo")
+	if len(installs) != 1 {
+		t.Errorf("expected 1 Helm install call, got %d", len(installs))
 	}
-	if len(fakeHelm.installCalls) > 0 {
-		call := fakeHelm.installCalls[0]
+	if len(installs) > 0 {
+		call := installs[0].Request
 		if call.Namespace != "cattle-ui-plugin-system" {
 			t.Errorf("expected namespace cattle-ui-plugin-system, got %s", call.Namespace)
 		}
@@ -281,7 +239,7 @@ func TestInstallAIExtensionReconciler_UIPluginCRDMissing(t *testing.T) {
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{}
+	fakeHelm := helm.NewFake()
 	fakeDisc := &fakeDiscovery{shouldFail: true} // UIPlugin CRD missing
 	recorder := &fakeRecorder{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -337,8 +295,9 @@ func TestInstallAIExtensionReconciler_UIPluginCRDMissing(t *testing.T) {
 	}
 
 	// Verify Helm was NOT called
-	if len(fakeHelm.installCalls) != 0 {
-		t.Errorf("expected 0 Helm install calls when CRD missing, got %d", len(fakeHelm.installCalls))
+	installs := filterCalls(fakeHelm.Calls, "InstallChartFromRepo")
+	if len(installs) != 0 {
+		t.Errorf("expected 0 Helm install calls when CRD missing, got %d", len(installs))
 	}
 
 	// Verify warning event
@@ -369,8 +328,9 @@ func TestInstallAIExtensionReconciler_HelmInstallFailed(t *testing.T) {
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{
-		installErr: errors.New("failed to pull chart"),
+	fakeHelm := helm.NewFake()
+	fakeHelm.InstallResult = func(helm.InstallRequest) (helm.ReleaseStatus, error) {
+		return helm.ReleaseStatus{}, errors.New("failed to pull chart")
 	}
 	fakeDisc := &fakeDiscovery{shouldFail: false}
 	recorder := &fakeRecorder{}
@@ -436,7 +396,7 @@ func TestInstallAIExtensionReconciler_UIPluginVerificationTimeout(t *testing.T) 
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{}
+	fakeHelm := helm.NewFake()
 	fakeDisc := &fakeDiscovery{shouldFail: false}
 	recorder := &fakeRecorder{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -510,7 +470,7 @@ func TestInstallAIExtensionReconciler_Deletion(t *testing.T) {
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{}
+	fakeHelm := helm.NewFake()
 	fakeDisc := &fakeDiscovery{shouldFail: false}
 	recorder := &fakeRecorder{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -580,7 +540,7 @@ func TestInstallAIExtensionReconciler_ResourceNotFound(t *testing.T) {
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{}
+	fakeHelm := helm.NewFake()
 	fakeDisc := &fakeDiscovery{shouldFail: false}
 	recorder := &fakeRecorder{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -677,7 +637,12 @@ func TestInstallChart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeHelm := &fakeHelmEngine{installErr: tt.helmErr}
+			fakeHelm := helm.NewFake()
+			if tt.helmErr != nil {
+				fakeHelm.InstallResult = func(helm.InstallRequest) (helm.ReleaseStatus, error) {
+					return helm.ReleaseStatus{}, tt.helmErr
+				}
+			}
 			reconciler := &InstallAIExtensionReconciler{
 				Logger:     logger,
 				HelmEngine: fakeHelm,
@@ -692,22 +657,28 @@ func TestInstallChart(t *testing.T) {
 			}
 
 			// Verify Helm was called with correct parameters
-			if !tt.expectError && len(fakeHelm.installCalls) == 1 {
-				call := fakeHelm.installCalls[0]
-				if call.Namespace != "cattle-ui-plugin-system" {
-					t.Errorf("expected namespace cattle-ui-plugin-system, got %s", call.Namespace)
+			if !tt.expectError {
+				installs := filterCalls(fakeHelm.Calls, "InstallChartFromRepo")
+				if len(installs) != 1 {
+					t.Errorf("expected 1 install call, got %d", len(installs))
 				}
-				if call.ReleaseName != "aif-ui" {
-					t.Errorf("expected release name aif-ui, got %s", call.ReleaseName)
-				}
-				if call.ChartRef != ext.Spec.Helm.URL {
-					t.Errorf("expected chart ref %s, got %s", ext.Spec.Helm.URL, call.ChartRef)
-				}
-				if !call.Wait {
-					t.Error("expected Wait=true")
-				}
-				if call.Timeout != 5*time.Minute {
-					t.Errorf("expected timeout 5m, got %v", call.Timeout)
+				if len(installs) == 1 {
+					call := installs[0].Request
+					if call.Namespace != "cattle-ui-plugin-system" {
+						t.Errorf("expected namespace cattle-ui-plugin-system, got %s", call.Namespace)
+					}
+					if call.ReleaseName != "aif-ui" {
+						t.Errorf("expected release name aif-ui, got %s", call.ReleaseName)
+					}
+					if call.ChartRef != ext.Spec.Helm.URL {
+						t.Errorf("expected chart ref %s, got %s", ext.Spec.Helm.URL, call.ChartRef)
+					}
+					if !call.Wait {
+						t.Error("expected Wait=true")
+					}
+					if call.Timeout != 5*time.Minute {
+						t.Errorf("expected timeout 5m, got %v", call.Timeout)
+					}
 				}
 			}
 		})
@@ -830,25 +801,30 @@ func TestCleanup(t *testing.T) {
 	ext := createInstallAIExtension("test-ext", "aif")
 
 	tests := []struct {
-		name        string
+		name         string
 		uninstallErr error
-		expectError bool
+		expectError  bool
 	}{
 		{
-			name:        "uninstall succeeds",
+			name:         "uninstall succeeds",
 			uninstallErr: nil,
-			expectError: false,
+			expectError:  false,
 		},
 		{
-			name:        "uninstall fails",
+			name:         "uninstall fails",
 			uninstallErr: fmt.Errorf("release not found"),
-			expectError: true,
+			expectError:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeHelm := &fakeHelmEngine{uninstallErr: tt.uninstallErr}
+			fakeHelm := helm.NewFake()
+			if tt.uninstallErr != nil {
+				fakeHelm.UninstallResult = func(string, string) error {
+					return tt.uninstallErr
+				}
+			}
 			reconciler := &InstallAIExtensionReconciler{
 				Logger:     logger,
 				HelmEngine: fakeHelm,
@@ -881,7 +857,7 @@ func TestReconcile_ObservedGeneration(t *testing.T) {
 		WithStatusSubresource(&aifv1.InstallAIExtension{}).
 		Build()
 
-	fakeHelm := &fakeHelmEngine{}
+	fakeHelm := helm.NewFake()
 	fakeDisc := &fakeDiscovery{shouldFail: false}
 	recorder := &fakeRecorder{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -930,4 +906,15 @@ func TestReconcile_ObservedGeneration(t *testing.T) {
 	if updated.Status.ObservedGeneration != ext.Generation {
 		t.Errorf("expected observedGeneration=%d, got %d", ext.Generation, updated.Status.ObservedGeneration)
 	}
+}
+
+// filterCalls filters helm.FakeCall by method name
+func filterCalls(calls []helm.FakeCall, method string) []helm.FakeCall {
+	out := []helm.FakeCall{}
+	for _, c := range calls {
+		if c.Method == method {
+			out = append(out, c)
+		}
+	}
+	return out
 }
