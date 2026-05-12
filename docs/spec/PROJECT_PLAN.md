@@ -1500,16 +1500,17 @@ go test -race ./pkg/helm/ -v
 >    and `internal/manager/setup.go` — schedule before P5-7 Settings wiring
 >    so the Configurer port can absorb the credential push.
 >
-> 6. **`pkg/helm` missing the external-integration verification trio.**
+> 6. **`pkg/helm` verification trio — half shipped, `live_test.go` deferred.**
 >    CLAUDE.md "How to Add a New External Integration" requires
 >    `example_test.go` + `live_test.go` (build tag `live`) + Makefile
->    `verify-X-mock` / `verify-X-live` targets. `pkg/source_collection`
->    and `pkg/nvidia` ship the trio; `pkg/helm` predates the rule and
->    currently substitutes `engine_envtest_test.go` for in-process
->    verification. Live OCI pulls (Pull is the only method envtest cannot
->    reach a real upstream for) are unverified end-to-end. Track adding
->    the trio when P5-7 wires real registry credentials, since the live
->    target needs an authenticated OCI endpoint.
+>    `verify-X-mock` / `verify-X-live` targets. P4-1 ships the in-process
+>    half: `pkg/helm/example_test.go` (`Example_fakeEngineLifecycle`,
+>    deterministic `// Output:` block) plus the `verify-helm-mock`
+>    Makefile target. The `live_test.go` half is deferred to P5-7: Pull
+>    is the only upstream-touching method, and its OCI auth wires through
+>    `EngineSettings.UpdateSettings` — implementing `live_test.go` before
+>    P5-7 means stubbing credentials twice. `verify-helm-live` lands
+>    alongside the P5-7 Settings reconciler integration.
 
 ---
 
