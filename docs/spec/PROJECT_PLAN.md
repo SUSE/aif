@@ -1511,6 +1511,42 @@ go test -race ./pkg/helm/ -v
 >    `EngineSettings.UpdateSettings` — implementing `live_test.go` before
 >    P5-7 means stubbing credentials twice. `verify-helm-live` lands
 >    alongside the P5-7 Settings reconciler integration.
+>
+> 7. **Reviewer-flagged production concerns deferred to consuming stories.**
+>    A second-round reviewer raised five Helm-engine production-readiness
+>    concerns. Four are out of scope for P4-1 (engine ships the
+>    primitives; recovery / scale policies belong with the consumers) and
+>    are recorded here so they aren't lost:
+>    - **`MaxHistory` on install/upgrade** — Helm defaults to 10 revision
+>      Secrets per release. Adding the knob to `InstallRequest` is a
+>      P5-2 (Workload deployer) decision, since P5-2 owns the reconcile
+>      loop that creates revisions.
+>    - **`--atomic` on install/upgrade** — atomic mode prevents broken
+>      releases on failed upgrade. Recovery policy is P5-2's charter
+>      (`ARCHITECTURE.md §4.4` "Recovery procedure"); pre-deciding
+>      atomic-by-default in `pkg/helm` would constrain that design.
+>    - **Pending-install / pending-upgrade recovery** — engine already
+>      surfaces these via `Status` (returns `release.Status.String()`
+>      verbatim per §4.4); interpretation and cleanup are reconciler
+>      decisions and belong with P5-2.
+>    - **Chart pull caching** — content-addressed cache keyed by
+>      `ref+digest`. YAGNI today (pulls happen on spec change, not per
+>      reconcile); revisit when telemetry shows pull cost matters at
+>      fleet scale.
+>
+>    The fifth concern (per-release locking) is rejected as a misdiagnosis:
+>    controller-runtime's workqueue serializes reconciles per object and
+>    leader election prevents multi-instance races; Helm's storage uses
+>    k8s API server optimistic concurrency (409 on conflict, not
+>    corruption). No engine-level mutex needed.
+>
+>    The same review surfaced two real bugs that are fixed in this PR
+>    (not deferred): `realRunner.Pull` was returning `action.Pull.Run`'s
+>    status-message string instead of the `.tgz` path (latent because
+>    only `fakeRunner` and `localChartRunner` are exercised in tests),
+>    and concurrent pulls of the same ref raced on the same `.tgz` path
+>    inside the shared `chartDir`. Both are addressed by the per-pull
+>    `MkdirTemp` + `*.tgz` glob rewrite.
 
 ---
 
