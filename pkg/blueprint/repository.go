@@ -17,3 +17,14 @@ type Repository interface {
 	Update(ctx context.Context, bp *aifv1.Blueprint) error
 	UpdateStatus(ctx context.Context, bp *aifv1.Blueprint) error
 }
+
+// WrappedBlueprintStore is the domain-typed persistence port for
+// wrapped Blueprint lifecycle. Separated from Repository (ISP) because
+// it serves a different consumer (Wrapper) and speaks domain types
+// instead of aifv1 — wrapper.go cannot import aifv1 per the layering
+// rule. The same k8sRepository struct implements both.
+type WrappedBlueprintStore interface {
+	ListWrapped(ctx context.Context) ([]Blueprint, error)
+	Create(ctx context.Context, b Blueprint) (created bool, err error)
+	Withdraw(ctx context.Context, name string) error
+}
