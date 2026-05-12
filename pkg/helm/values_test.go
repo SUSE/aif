@@ -490,3 +490,107 @@ func TestApplyImageRewrites_PureFunction_InputsUnchanged(t *testing.T) {
 		t.Errorf("input was mutated:\n  before: %v\n  after:  %v", inSnap, in)
 	}
 }
+
+// §6.6 required scenario 1: empty rules → input unchanged (deep-equal).
+func TestApplyImageRewrites_EmptyRules_InputUnchanged(t *testing.T) {
+	in := map[string]any{
+		"image": "registry.suse.com/foo:1",
+	}
+	out := ApplyImageRewrites(in, nil)
+	if !reflect.DeepEqual(out, in) {
+		t.Errorf("expected output to equal input when rules is nil:\n  in:  %v\n  out: %v", in, out)
+	}
+}
+
+// §6.6 required scenario 2: top-level string image is rewritten.
+func TestApplyImageRewrites_StringImage_Rewritten(t *testing.T) {
+	in := map[string]any{"image": "registry.suse.com/foo:1"}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"}}
+	out := ApplyImageRewrites(in, rules)
+	if out["image"] != "harbor.example.com/suse/foo:1" {
+		t.Errorf("expected rewritten, got %v", out["image"])
+	}
+}
+
+// §6.6 required scenario 3: map image with repository sub-key is rewritten.
+func TestApplyImageRewrites_MapImageRepository_Rewritten(t *testing.T) {
+	in := map[string]any{
+		"image": map[string]any{
+			"repository": "registry.suse.com/sidecars/proxy",
+			"tag":        "2.1",
+		},
+	}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"}}
+	out := ApplyImageRewrites(in, rules)
+	img := out["image"].(map[string]any)
+	if img["repository"] != "harbor.example.com/suse/sidecars/proxy" {
+		t.Errorf("repository not rewritten: %v", img["repository"])
+	}
+	if img["tag"] != "2.1" {
+		t.Errorf("tag must be preserved: %v", img["tag"])
+	}
+}
+
+// §6.6 required scenario 4: nested-in-list walking.
+func TestApplyImageRewrites_NestedInList_Walked(t *testing.T) {
+	in := map[string]any{
+		"sidecars": []any{
+			map[string]any{
+				"name":  "proxy",
+				"image": map[string]any{"repository": "registry.suse.com/sidecars/proxy", "tag": "2.1"},
+			},
+			map[string]any{
+				"name":  "redis",
+				"image": "redis:7",
+			},
+		},
+	}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"}}
+	out := ApplyImageRewrites(in, rules)
+	sidecars := out["sidecars"].([]any)
+	proxy := sidecars[0].(map[string]any)["image"].(map[string]any)
+	if proxy["repository"] != "harbor.example.com/suse/sidecars/proxy" {
+		t.Errorf("proxy image not rewritten: %v", proxy)
+	}
+	redis := sidecars[1].(map[string]any)
+	if redis["image"] != "redis:7" {
+		t.Errorf("redis image must be unchanged (no host prefix): %v", redis["image"])
+	}
+}
+
+// §6.6 required scenario 5: digest preservation (foo@sha256:... pattern).
+func TestApplyImageRewrites_DigestPreserved(t *testing.T) {
+	in := map[string]any{"image": "registry.suse.com/foo@sha256:abc123"}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"}}
+	out := ApplyImageRewrites(in, rules)
+	want := "harbor.example.com/suse/foo@sha256:abc123"
+	if out["image"] != want {
+		t.Errorf("got %v, want %v", out["image"], want)
+	}
+}
+
+// §6.6 required scenario 6: first match wins, no chaining (rule 2 must NOT
+// see rule 1's output).
+func TestApplyImageRewrites_FirstMatchWins_NoChaining(t *testing.T) {
+	in := map[string]any{"image": "a/foo:1"}
+	rules := []ImageRewriteRule{
+		{Match: "a/", Replace: "b/"},
+		{Match: "b/", Replace: "WRONG/"},
+	}
+	out := ApplyImageRewrites(in, rules)
+	if out["image"] != "b/foo:1" {
+		t.Errorf("expected first-rule output 'b/foo:1' (no chaining), got %v", out["image"])
+	}
+}
+
+// §6.6 required scenario 7: idempotency. Calling ApplyImageRewrites twice
+// with the same rules produces the same output.
+func TestApplyImageRewrites_Idempotency(t *testing.T) {
+	in := map[string]any{"image": "registry.suse.com/foo:1"}
+	rules := []ImageRewriteRule{{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"}}
+	once := ApplyImageRewrites(in, rules)
+	twice := ApplyImageRewrites(once, rules)
+	if !reflect.DeepEqual(once, twice) {
+		t.Errorf("not idempotent:\n  once:  %v\n  twice: %v", once, twice)
+	}
+}
