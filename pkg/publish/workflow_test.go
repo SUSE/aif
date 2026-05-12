@@ -49,6 +49,8 @@ func draftBundle(ns, name string) *aifv1.Bundle {
 	}
 }
 
+// changesRequestedBundle returns a Bundle in ChangesRequested phase with both Submission and Review set,
+// since ChangesRequested implies a prior submission that was reviewed.
 func changesRequestedBundle(ns, name string) *aifv1.Bundle {
 	b := draftBundle(ns, name)
 	b.Status.Phase = aifv1.BundlePhaseChangesRequested

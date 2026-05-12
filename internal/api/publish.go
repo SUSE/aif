@@ -39,7 +39,9 @@ type submitResponse struct {
 }
 
 type withdrawResponse struct {
-	Phase string `json:"phase"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Phase     string `json:"phase"`
 }
 
 func (h *PublishHandler) submit(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +144,9 @@ func (h *PublishHandler) withdraw(w http.ResponseWriter, r *http.Request) {
 		"namespace", ns, "name", name, "withdrawnBy", user)
 
 	writeJSON(w, http.StatusOK, withdrawResponse{
-		Phase: string(result.Phase),
+		Namespace: result.Namespace,
+		Name:      result.Name,
+		Phase:     string(result.Phase),
 	})
 }
 
