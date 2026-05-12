@@ -165,3 +165,59 @@ func applyImageRefRules(refStr string, rules []ImageRewriteRule) string {
 	}
 	return refStr
 }
+
+// maxWalkDepth bounds walkImageRefs recursion against pathological inputs
+// (per ARCHITECTURE.md §6.6 godoc — "Recursion depth limit: 16").
+const maxWalkDepth = 16
+
+// walkImageRefs walks values recursively (depth-capped at maxWalkDepth).
+// For every image-bearing field it finds, calls visit(refStr) and writes
+// back the returned replacement. Mutates the input tree IN PLACE — callers
+// MUST pass a deep copy if the input is shared.
+//
+// Image-bearing fields (per ARCHITECTURE.md §6.6 walk rules):
+//   - any key named "image" with a string value
+//   - any key named "image" with a map[string]any value: only the submap's
+//     "repository" and "registry" string sub-keys are visited; the image
+//     submap is otherwise treated as a leaf (sibling fields like "tag" or
+//     "pullPolicy" are preserved untouched)
+//   - non-string, non-map values for "image" are left alone (defensive
+//     against chart bugs that put an int / bool / nil there)
+//
+// Knows nothing about rules.
+func walkImageRefs(values map[string]any, visit func(string) string) {
+	walkValuesNode(values, visit, 0)
+}
+
+// walkValuesNode is the recursive worker. Accepts any so it can recurse
+// uniformly through maps and lists.
+func walkValuesNode(node any, visit func(string) string, depth int) {
+	if depth >= maxWalkDepth {
+		return
+	}
+	switch n := node.(type) {
+	case map[string]any:
+		for k, v := range n {
+			if k == "image" {
+				switch iv := v.(type) {
+				case string:
+					n[k] = visit(iv)
+				case map[string]any:
+					if rs, ok := iv["repository"].(string); ok {
+						iv["repository"] = visit(rs)
+					}
+					if rs, ok := iv["registry"].(string); ok {
+						iv["registry"] = visit(rs)
+					}
+				}
+				// Non-string, non-map image values: leave unchanged.
+				continue
+			}
+			walkValuesNode(v, visit, depth+1)
+		}
+	case []any:
+		for _, elem := range n {
+			walkValuesNode(elem, visit, depth+1)
+		}
+	}
+}

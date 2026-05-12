@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -312,5 +313,120 @@ func TestApplyImageRefRules_EmptyRefStr(t *testing.T) {
 func TestApplyImageRefRules_NilRules(t *testing.T) {
 	if got := applyImageRefRules("foo", nil); got != "foo" {
 		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestWalkImageRefs_StringImage(t *testing.T) {
+	visited := []string{}
+	v := map[string]any{
+		"image": "registry.suse.com/foo:1",
+	}
+	walkImageRefs(v, func(s string) string {
+		visited = append(visited, s)
+		return s + "-rewritten"
+	})
+	if len(visited) != 1 || visited[0] != "registry.suse.com/foo:1" {
+		t.Errorf("expected one visit on the image string, got %v", visited)
+	}
+	if v["image"] != "registry.suse.com/foo:1-rewritten" {
+		t.Errorf("expected rewrite to be written back, got %v", v["image"])
+	}
+}
+
+func TestWalkImageRefs_MapImage(t *testing.T) {
+	visited := []string{}
+	v := map[string]any{
+		"image": map[string]any{
+			"repository": "r/foo",
+			"registry":   "g.example.com",
+			"tag":        "1.0",
+		},
+	}
+	walkImageRefs(v, func(s string) string {
+		visited = append(visited, s)
+		return s + "!"
+	})
+	sort.Strings(visited)
+	want := []string{"g.example.com", "r/foo"}
+	if !reflect.DeepEqual(visited, want) {
+		t.Errorf("expected visits %v, got %v", want, visited)
+	}
+	img := v["image"].(map[string]any)
+	if img["repository"] != "r/foo!" {
+		t.Errorf("repository not rewritten: %v", img["repository"])
+	}
+	if img["registry"] != "g.example.com!" {
+		t.Errorf("registry not rewritten: %v", img["registry"])
+	}
+	if img["tag"] != "1.0" {
+		t.Errorf("tag must not be visited or modified, got %v", img["tag"])
+	}
+}
+
+func TestWalkImageRefs_NestedInList(t *testing.T) {
+	visited := []string{}
+	v := map[string]any{
+		"sidecars": []any{
+			map[string]any{"name": "proxy", "image": "p/img:1"},
+			map[string]any{"name": "redis", "image": "r/img:2"},
+		},
+	}
+	walkImageRefs(v, func(s string) string {
+		visited = append(visited, s)
+		return "X"
+	})
+	sort.Strings(visited)
+	if len(visited) != 2 || visited[0] != "p/img:1" || visited[1] != "r/img:2" {
+		t.Errorf("expected p/img:1 and r/img:2 visited, got %v", visited)
+	}
+	sidecars := v["sidecars"].([]any)
+	for _, s := range sidecars {
+		if s.(map[string]any)["image"] != "X" {
+			t.Errorf("sidecar image not written back: %v", s)
+		}
+	}
+}
+
+func TestWalkImageRefs_NonStringNonMapImage_Unchanged(t *testing.T) {
+	visited := []string{}
+	v := map[string]any{
+		"image": 42,
+	}
+	walkImageRefs(v, func(s string) string {
+		visited = append(visited, s)
+		return "WRONG"
+	})
+	if len(visited) != 0 {
+		t.Errorf("expected no visits for non-string/non-map image, got %v", visited)
+	}
+	if v["image"] != 42 {
+		t.Errorf("expected unchanged, got %v", v["image"])
+	}
+}
+
+func TestWalkImageRefs_DepthCap(t *testing.T) {
+	// Build a 20-deep nested map with an image at depth 0 and another at depth 20+.
+	deep := map[string]any{"image": "shallow:1"}
+	cur := deep
+	for i := 0; i < 20; i++ {
+		next := map[string]any{}
+		cur["nested"] = next
+		cur = next
+	}
+	cur["image"] = "deepest:2"
+	visited := []string{}
+	walkImageRefs(deep, func(s string) string {
+		visited = append(visited, s)
+		return s
+	})
+	found := map[string]bool{}
+	for _, s := range visited {
+		found[s] = true
+	}
+	if !found["shallow:1"] {
+		t.Errorf("expected shallow:1 to be visited, got %v", visited)
+	}
+	if found["deepest:2"] {
+		t.Errorf("did not expect deepest:2 (beyond depth cap) to be visited, got %v", visited)
 	}
 }
