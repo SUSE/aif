@@ -1,6 +1,8 @@
 // pkg/helm/values.go
 package helm
 
+import "log/slog"
+
 // MergeInput names the four input layers of §6.6 (layers 1-4). Layer 5
 // (ApplyImageRewrites) is P4-6. Layer 6 (operator-managed imagePullSecrets)
 // is added by the deployer.
@@ -15,22 +17,63 @@ type MergeInput struct {
 	NIMGenerated       map[string]any // layer 4 (trusted)
 }
 
+// forbiddenTopLevelKeys are the keys silently dropped from layer 2 (Blueprint
+// overrides) and layer 3 (Workload overrides) per §6.6 "Forbidden top-level
+// keys". serviceAccount.create is a sub-key — handled separately below.
+var forbiddenTopLevelKeys = []string{
+	"imagePullSecrets",
+	"nameOverride",
+	"fullnameOverride",
+}
+
 // MergeValues implements §6.6 layers 1-4. Pure function: deep-copies all
 // inputs, returns a new map, never mutates inputs. Maps deep-merge; lists
 // replace wholesale.
 //
 // Validation:
 //   - Forbidden top-level keys silently dropped from layers 2 and 3 only,
-//     each drop logged via slog.Warn (see Task 3).
+//     each drop logged via slog.Warn.
 //   - image.repository must be non-empty post-merge (see Task 4),
 //     else returns ErrMissingImageRepository.
 func MergeValues(in MergeInput) (map[string]any, error) {
+	bp := dropForbiddenKeys(deepCopyMap(in.BlueprintOverrides), 2)
+	wl := dropForbiddenKeys(deepCopyMap(in.WorkloadOverrides), 3)
+
 	out := map[string]any{}
 	out = mergeMap(out, deepCopyMap(in.ChartDefaults))
-	out = mergeMap(out, deepCopyMap(in.BlueprintOverrides))
-	out = mergeMap(out, deepCopyMap(in.WorkloadOverrides))
+	out = mergeMap(out, bp)
+	out = mergeMap(out, wl)
 	out = mergeMap(out, deepCopyMap(in.NIMGenerated))
 	return out, nil
+}
+
+// dropForbiddenKeys removes the §6.6 forbidden top-level keys from layer
+// (mutates and returns it for chaining). Each drop emits a slog.Warn with
+// layer + key for observability. Safe on nil input (returns nil).
+func dropForbiddenKeys(layer map[string]any, layerIndex int) map[string]any {
+	if layer == nil {
+		return nil
+	}
+	for _, k := range forbiddenTopLevelKeys {
+		if _, present := layer[k]; present {
+			slog.Warn("dropped forbidden override",
+				slog.Int("layer", layerIndex),
+				slog.String("key", k))
+			delete(layer, k)
+		}
+	}
+	// serviceAccount.create is a sub-key; drop it without removing the rest
+	// of the serviceAccount map so that legitimate fields (name, annotations)
+	// survive. Spec §6.6 lists "serviceAccount.create" as forbidden.
+	if sa, ok := layer["serviceAccount"].(map[string]any); ok {
+		if _, present := sa["create"]; present {
+			slog.Warn("dropped forbidden override",
+				slog.Int("layer", layerIndex),
+				slog.String("key", "serviceAccount.create"))
+			delete(sa, "create")
+		}
+	}
+	return layer
 }
 
 // mergeMap merges src into dst. Maps deep-merge recursively; lists and
