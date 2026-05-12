@@ -1270,6 +1270,8 @@ go test ./internal/api/ -run TestSubmit -v
   - Record event `BundleChangesRequested`
 - [ ] HTTP integration test (success + RBAC denial)
 
+> **Follow-up (P3-3 test fixture duplication):** `submittedBundle`/`changesRequestedBundle` helpers are duplicated between `pkg/publish/workflow_test.go` and `internal/api/publish_test.go` (same pattern as the existing `draftBundle`/`testDraftBundle` split). Extract a shared `internal/testutil/` package at the start of P3-4, before adding a third consumer.
+
 ---
 
 **ID:** P3-5
@@ -1318,6 +1320,8 @@ go test -race ./internal/controller/ -run TestBundleReconcilerHealsLaggedStatus 
 
 **Agent Prompt:**
 > Implement `pkg/publish/workflow.go::Approve` and `internal/api/publish.go::approve` per the **atomicity sequence in `ARCHITECTURE.md §6.5.1`** (8 numbered steps + recovery branch). DO NOT shortcut step 6 → step 7 ordering: the Blueprint CREATE must succeed BEFORE the Bundle status UPDATE. The per-Bundle mutex pattern is documented in §6.5.1 — implement it as `map[types.NamespacedName]*sync.Mutex` guarded by an outer mutex; entries persist forever (memory cost is negligible). Use `apierrors.IsAlreadyExists` and `apierrors.IsConflict` from `k8s.io/apimachinery/pkg/api/errors` to discriminate. The recovery branch (status update conflict) re-reads the Bundle, re-validates phase, retries 3× with 50ms backoff, and on terminal failure returns 200 — the partial-failure window is self-healing via the BundleReconciler (§6.5.2). Implement the reconciler healing too (in `internal/controller/bundle_controller.go`): on every reconcile of a `Submitted` Bundle, check whether a matching Blueprint already exists; if yes, perform the deferred status reset. The forward failure direction (Blueprint missing for a Bundle that thinks it published) MUST set `Ready=False Reason=PublishedBlueprintMissing` and emit an event — never auto-mint. Tests MUST be `-race` clean. Concurrent test must spawn 5 goroutines and assert exactly-one-success semantics. Done when all five test commands in Validation pass cleanly.
+
+> **Follow-up (P3-2 EventRecorder ISP — action required in P3-5):** `publish.EventRecorder` is at 2 methods after P3-3 (`BundleSubmitted`, `BundleWithdrawn`). P3-4 adds `BundleChangesRequested` (3), P3-5 adds `BundleApproved` (4). If P3-5 also needs `BlueprintPublished` or `BundleStatusUpdateLagged`, the interface exceeds the ≤4 ISP target — split by role (e.g. `BundleEventRecorder` / `BlueprintEventRecorder`) or collapse to a single `RecordEvent(ctx, WorkflowEvent)` with a discriminated event type. Decide before adding the 5th method.
 
 ---
 
