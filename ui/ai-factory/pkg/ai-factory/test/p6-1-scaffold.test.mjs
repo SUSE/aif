@@ -15,8 +15,8 @@ const pages = [
   ['apps',            'AppsPage',            'Apps Catalog',    'apps'],
   ['blueprints',      'BlueprintsPage',      'Blueprints',      'blueprints'],
   ['bundles',         'BundlesPage',         'Bundles',         'bundles'],
-  ['workloads',       'WorkloadsPage',       'Workloads',       'workloads'],
   ['pending-reviews', 'PendingReviewsPage',  'Pending Reviews', 'pendingReviews'],
+  ['workloads',       'WorkloadsPage',       'Workloads',       'workloads'],
   ['settings',        'SettingsPage',        'Settings',        'settings']
 ];
 

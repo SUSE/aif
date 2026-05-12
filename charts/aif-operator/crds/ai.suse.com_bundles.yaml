@@ -334,6 +334,7 @@ spec:
                   required:
                   - result
                   - startedAt
+                  - targetClusters
                   - workloadRef
                   type: object
                 maxItems: 10

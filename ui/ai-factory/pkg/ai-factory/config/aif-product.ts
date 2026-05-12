@@ -18,8 +18,8 @@ const pageNav = [
   { id: PAGE_IDS.APPS,            labelKey: 'aif.nav.apps',            weight: 500 },
   { id: PAGE_IDS.BLUEPRINTS,      labelKey: 'aif.nav.blueprints',      weight: 400 },
   { id: PAGE_IDS.BUNDLES,         labelKey: 'aif.nav.bundles',         weight: 300 },
-  { id: PAGE_IDS.WORKLOADS,       labelKey: 'aif.nav.workloads',       weight: 200 },
-  { id: PAGE_IDS.PENDING_REVIEWS, labelKey: 'aif.nav.pendingReviews',  weight: 150 },
+  { id: PAGE_IDS.PENDING_REVIEWS, labelKey: 'aif.nav.pendingReviews',  weight: 200 },
+  { id: PAGE_IDS.WORKLOADS,       labelKey: 'aif.nav.workloads',       weight: 150 },
   { id: PAGE_IDS.SETTINGS,        labelKey: 'aif.nav.settings',        weight: 100 }
 ];
 
@@ -59,8 +59,8 @@ export function init($plugin: IPlugin, store: any): void {
     PAGE_IDS.APPS,
     PAGE_IDS.BLUEPRINTS,
     PAGE_IDS.BUNDLES,
-    PAGE_IDS.WORKLOADS,
     PAGE_IDS.PENDING_REVIEWS,
+    PAGE_IDS.WORKLOADS,
     PAGE_IDS.SETTINGS
   ]);
 

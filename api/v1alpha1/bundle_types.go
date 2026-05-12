@@ -132,8 +132,7 @@ type TestDeployRecord struct {
 	WorkloadRef string `json:"workloadRef"`
 
 	// TargetClusters are the cluster IDs where the test was deployed
-	// +optional
-	TargetClusters []string `json:"targetClusters,omitempty"`
+	TargetClusters []string `json:"targetClusters"`
 
 	// StartedAt is when the test deploy started
 	StartedAt metav1.Time `json:"startedAt"`
