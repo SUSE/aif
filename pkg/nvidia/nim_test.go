@@ -2,6 +2,7 @@ package nvidia
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"reflect"
@@ -100,5 +101,127 @@ func TestGenerateValues_VLM_2GPU(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out["resources"], wantResources) {
 		t.Errorf("resources: got %v, want %v", out["resources"], wantResources)
+	}
+}
+
+func TestGenerateValues_GPUExplicitPositive_Used(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM, DefaultGPUs: 2},
+		Replicas: 1,
+		GPUs:     ptrInt32(4),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res := out["resources"].(map[string]any)["requests"].(map[string]any)
+	if res["nvidia.com/gpu"] != "4" {
+		t.Errorf("expected explicit GPUs=4 to win over DefaultGPUs=2, got %v", res["nvidia.com/gpu"])
+	}
+}
+
+func TestGenerateValues_GPUExplicitZero_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(0),
+	})
+	if !errors.Is(err, ErrInvalidGPUCount) {
+		t.Fatalf("expected ErrInvalidGPUCount, got %v", err)
+	}
+}
+
+func TestGenerateValues_GPUExplicitNegative_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(-1),
+	})
+	if !errors.Is(err, ErrInvalidGPUCount) {
+		t.Fatalf("expected ErrInvalidGPUCount, got %v", err)
+	}
+}
+
+func TestGenerateValues_GPUNilWithDefault_UsesDefault(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM, DefaultGPUs: 2},
+		Replicas: 1,
+		GPUs:     nil,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res := out["resources"].(map[string]any)["requests"].(map[string]any)
+	if res["nvidia.com/gpu"] != "2" {
+		t.Errorf("expected fallback to DefaultGPUs=2, got %v", res["nvidia.com/gpu"])
+	}
+}
+
+func TestGenerateValues_GPUNilNoDefault_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM, DefaultGPUs: 0},
+		Replicas: 1,
+		GPUs:     nil,
+	})
+	if !errors.Is(err, ErrMissingGPUCount) {
+		t.Fatalf("expected ErrMissingGPUCount, got %v", err)
+	}
+}
+
+// §4.4: gpuCount > maxGPUs-on-largest-node is the SCHEDULER's call, not ours.
+// We generate values without complaining; Kubernetes surfaces Unschedulable.
+func TestGenerateValues_GPUExceedsMaxNode_GeneratesAnyway(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(99),
+	})
+	if err != nil {
+		t.Fatalf("expected no error for large gpuCount (scheduler decides), got %v", err)
+	}
+	res := out["resources"].(map[string]any)["requests"].(map[string]any)
+	if res["nvidia.com/gpu"] != "99" {
+		t.Errorf("expected nvidia.com/gpu=99, got %v", res["nvidia.com/gpu"])
+	}
+}
+
+func TestGenerateValues_EmptyChart_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+}
+
+func TestGenerateValues_EmptyVersion_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("expected ErrInvalidRequest, got %v", err)
+	}
+}
+
+func TestGenerateValues_ZeroReplicas_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 0,
+		GPUs:     ptrInt32(1),
+	})
+	if !errors.Is(err, ErrInvalidReplicas) {
+		t.Fatalf("expected ErrInvalidReplicas, got %v", err)
 	}
 }
