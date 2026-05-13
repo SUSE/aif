@@ -2,7 +2,6 @@ package nvidia
 
 import (
 	"context"
-	"errors"
 )
 
 // Discovery enumerates SUSE-mirrored NIM models from the SUSE Registry chart
@@ -61,7 +60,3 @@ type AnnotationReader interface {
 	// failures.
 	ChartAnnotations(ctx context.Context, chart, version string) (map[string]string, error)
 }
-
-// ErrNotImplemented is returned by stub method bodies until plan tasks P2-1
-// (Discovery) and P4-4 (Deployer) implement them.
-var ErrNotImplemented = errors.New("nvidia: method not implemented yet")

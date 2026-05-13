@@ -34,4 +34,23 @@ var (
 
 	// ErrChartNotFound indicates the chart's OCI manifest returned 404.
 	ErrChartNotFound = errors.New("nvidia: chart not found")
+
+	// ErrInvalidRequest is returned by Deployer.GenerateValues when a required
+	// field on GenerateRequest is missing — currently Entry.Chart or
+	// Entry.Version. P4-5 translates to HTTP 400.
+	ErrInvalidRequest = errors.New("nvidia: invalid GenerateRequest")
+
+	// ErrInvalidReplicas is returned by Deployer.GenerateValues when
+	// GenerateRequest.Replicas is zero or negative.
+	ErrInvalidReplicas = errors.New("nvidia: invalid replica count")
+
+	// ErrInvalidGPUCount is returned by Deployer.GenerateValues when an explicit
+	// GenerateRequest.GPUs value is zero or negative. NIMs are GPU-bound; zero
+	// is misconfiguration, not a CPU fallback.
+	ErrInvalidGPUCount = errors.New("nvidia: invalid GPU count")
+
+	// ErrMissingGPUCount is returned by Deployer.GenerateValues when
+	// GenerateRequest.GPUs is nil and Entry.DefaultGPUs is 0. Engineer must
+	// specify; we won't guess.
+	ErrMissingGPUCount = errors.New("nvidia: GPU count required")
 )
