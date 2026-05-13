@@ -2,7 +2,6 @@
 .github
 .claude
 bin
-build
 charts
 docs
 examples

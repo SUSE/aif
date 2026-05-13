@@ -25,7 +25,6 @@ jobs:
           case "$ref" in
             refs/tags/aif-operator-v*)
               VERSION="${ref#refs/tags/aif-operator-v}"
-              IMAGE_TAGS="$VERSION"
 
               {
                 echo "METADATA_TAGS<<EOF"
@@ -40,7 +39,6 @@ jobs:
               ;;
             *)
               VERSION="${{ github.sha }}"
-              IMAGE_TAGS="$VERSION"
 
               {
                 echo "METADATA_TAGS<<EOF"
@@ -52,7 +50,6 @@ jobs:
               ;;
           esac
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "IMAGE_TAGS=$IMAGE_TAGS" >> "$GITHUB_OUTPUT"
           echo "PUBLISH=$PUBLISH" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
