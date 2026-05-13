@@ -34,4 +34,69 @@ aif:
       comingSoon: 'Bundle review queue coming soon'
     settings:
       title: 'Settings'
-      comingSoon: 'Settings configuration coming soon'
+
+      header:
+        advancedToggle: 'Advanced'
+        customEndpointsChip: 'Custom registry endpoints active'
+
+      catalogRefresh:
+        label: 'Catalog Refresh Interval'
+        description: 'How often to refresh both the SUSE Application Collection and NVIDIA NIM catalogs'
+        placeholder: '10m'
+
+      sections:
+        fleet:
+          title: 'Fleet / GitOps'
+          repoURL: 'Repository URL'
+          repoURLPlaceholder: 'https://github.com/org/repo.git'
+          branch: 'Branch'
+          branchPlaceholder: 'main'
+          authType: 'Auth Type'
+          authTypeToken: 'Token'
+          authTypeSSH: 'SSH'
+          authTypeBasic: 'Basic'
+          credentials: 'Credentials'
+
+        appCollection:
+          title: 'SUSE Application Collection'
+          username: 'Username'
+          accessToken: 'Access Token'
+          categories: 'Categories'
+          categoriesDescription: 'Select categories to sync'
+
+        suseRegistry:
+          title: 'SUSE Registry'
+          username: 'Username'
+          accessToken: 'Access Token'
+
+        imagePullSecrets:
+          title: 'Image Pull Secrets'
+          description: 'The operator reconciles this pull secret into each workload namespace'
+          commandLabel: 'Equivalent kubectl command:'
+          secretName: 'suse-registry-creds'
+
+        advanced:
+          title: 'Registry Endpoints (Advanced)'
+          description: 'Override upstream defaults for air-gapped deployments'
+          suseRegistryEndpoint: 'SUSE Registry Endpoint'
+          suseRegistryEndpointPlaceholder: 'registry.suse.com'
+          appCollectionEndpoint: 'SUSE Application Collection Endpoint'
+          appCollectionEndpointPlaceholder: 'dp.apps.rancher.io'
+          appCollectionAPI: 'SUSE Application Collection API'
+          appCollectionAPIPlaceholder: 'https://api.apps.rancher.io'
+          catalogDiscoveryMode: 'Catalog Discovery Mode'
+          catalogDiscoveryModeAPI: 'API (default)'
+          catalogDiscoveryModeRegistryFallback: 'Registry Fallback (air-gap)'
+          catalogDiscoveryModeDisabled: 'Disabled (OCI catalog only)'
+          imageRewriteRules: 'Image Rewrite Rules'
+          addRule: 'Add Rule'
+          matchPrefix: 'Match Prefix'
+          replaceWith: 'Replace With'
+          testConnection: 'Test Connection'
+
+      errors:
+        settingsNotFound: 'No settings found. Please contact your administrator to ensure the AIF operator is installed correctly.'
+
+      save: 'Save Settings'
+      cancel: 'Cancel'
+      reset: 'Reset'
