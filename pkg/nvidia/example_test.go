@@ -134,3 +134,33 @@ func Example_chartAnnotations() {
 	// role: reference-blueprint
 	// use-case: rag
 }
+
+// Example_deployerGenerateValues demonstrates the Deployer.GenerateValues
+// happy path against an in-process deployerImpl (no upstream dep). Doubles
+// as the contract `make verify-nim-mock` runs to prove the package's
+// public surface works without hitting registry.suse.com.
+//
+// Spec hooks: ARCHITECTURE.md §4.4 (NIM Resource Sizing Formulas) and
+// §6.2 (nvidia.Deployer interface).
+func Example_deployerGenerateValues() {
+	d := nvidia.NewDeployer(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gpus := int32(1)
+	out, _ := d.GenerateValues(context.Background(), nvidia.GenerateRequest{
+		Entry: nvidia.NIMEntry{
+			Chart:   "nim-llm",
+			Version: "1.3.0",
+			Type:    nvidia.TypeLLM,
+		},
+		Replicas: 1,
+		GPUs:     &gpus,
+	})
+	img := out["image"].(map[string]any)
+	res := out["resources"].(map[string]any)["requests"].(map[string]any)
+	fmt.Printf("repository=%s\n", img["repository"])
+	fmt.Printf("tag=%s\n", img["tag"])
+	fmt.Printf("cpu=%s memory=%s gpus=%s\n", res["cpu"], res["memory"], res["nvidia.com/gpu"])
+	// Output:
+	// repository=registry.suse.com/ai/containers/nvidia/nim-llm
+	// tag=1.3.0
+	// cpu=8 memory=32Gi gpus=1
+}

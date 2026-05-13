@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -281,4 +282,146 @@ func TestGenerateValues_ModelWithSlash_TreatedAsSubpath(t *testing.T) {
 	if repo != want {
 		t.Errorf("got %q, want %q", repo, want)
 	}
+}
+
+// §4.4: requests == limits exactly (Guaranteed QoS).
+func TestGenerateValues_GuaranteedQoS_RequestsEqualLimits(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(4),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res := out["resources"].(map[string]any)
+	if !reflect.DeepEqual(res["requests"], res["limits"]) {
+		t.Errorf("requests must deep-equal limits (Guaranteed QoS):\n  requests: %v\n  limits:   %v", res["requests"], res["limits"])
+	}
+}
+
+// §4.4: the toleration block + nodeSelector are emitted unchanged for every
+// valid request.
+func TestGenerateValues_AlwaysEmitsTolerationsAndNodeSelector(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantTolerations := []any{
+		map[string]any{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+	}
+	if !reflect.DeepEqual(out["tolerations"], wantTolerations) {
+		t.Errorf("tolerations: got %v, want %v", out["tolerations"], wantTolerations)
+	}
+	wantNodeSelector := map[string]any{"nvidia.com/gpu.present": "true"}
+	if !reflect.DeepEqual(out["nodeSelector"], wantNodeSelector) {
+		t.Errorf("nodeSelector: got %v, want %v", out["nodeSelector"], wantNodeSelector)
+	}
+}
+
+// §4.4: imagePullSecrets is layer-6 (operator-managed). The deployer (layer 4)
+// does NOT emit it. Locks the rule against the contradicting yaml example.
+func TestGenerateValues_DoesNotEmitImagePullSecrets(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, present := out["imagePullSecrets"]; present {
+		t.Errorf("imagePullSecrets must NOT be present (layer-6 owns it); got %v", out["imagePullSecrets"])
+	}
+}
+
+// Top-level replicas key must equal req.Replicas.
+func TestGenerateValues_EmitsReplicas(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 3,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out["replicas"] != int32(3) {
+		t.Errorf("expected replicas=3, got %v (%T)", out["replicas"], out["replicas"])
+	}
+}
+
+// §4.4: VLM uses 64Gi/GPU; LLM uses 32Gi/GPU. Subsumed by the worked-example
+// tests but worth a parameterised confirmation that Type drives the choice.
+func TestGenerateValues_VLMTypeUses64Gi(t *testing.T) {
+	d := newTestDeployer(t)
+	cases := map[string]struct {
+		typ      Type
+		gpuCount int32
+		wantMem  string
+	}{
+		"LLM 1 GPU": {TypeLLM, 1, "32Gi"},
+		"VLM 1 GPU": {TypeVLM, 1, "64Gi"},
+		"LLM 4 GPU": {TypeLLM, 4, "128Gi"},
+		"VLM 4 GPU": {TypeVLM, 4, "256Gi"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			gpus := tc.gpuCount
+			out, err := d.GenerateValues(context.Background(), GenerateRequest{
+				Entry:    NIMEntry{Chart: "nim-x", Version: "1.0", Type: tc.typ},
+				Replicas: 1,
+				GPUs:     &gpus,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			res := out["resources"].(map[string]any)["requests"].(map[string]any)
+			if res["memory"] != tc.wantMem {
+				t.Errorf("memory: got %v, want %v", res["memory"], tc.wantMem)
+			}
+		})
+	}
+}
+
+// TestDeployer_UpdateSettings_Race hammers UpdateSettings concurrently with
+// GenerateValues. Must be run under -race; matches the race test on
+// helm.engine for the same sole-writer pattern.
+func TestDeployer_UpdateSettings_Race(t *testing.T) {
+	d := newTestDeployer(t)
+	const writers = 8
+	const readers = 8
+	const iters = 1000
+
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iters; j++ {
+				d.UpdateSettings(EngineSettings{RegistryEndpoint: "r"})
+			}
+		}()
+	}
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iters; j++ {
+				_, _ = d.GenerateValues(context.Background(), GenerateRequest{
+					Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+					Replicas: 1,
+					GPUs:     ptrInt32(1),
+				})
+			}
+		}()
+	}
+	wg.Wait()
 }
