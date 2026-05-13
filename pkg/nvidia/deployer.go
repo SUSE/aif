@@ -20,3 +20,8 @@ func NewDeployer(logger *slog.Logger) Deployer {
 func (d *deployerImpl) GenerateValues(_ context.Context, _ GenerateRequest) (map[string]any, error) {
 	return nil, ErrNotImplemented
 }
+
+// UpdateSettings is a no-op until Task 3 fleshes out the struct with a
+// settings field; placeholder to satisfy the Deployer interface during
+// the staged rollout.
+func (d *deployerImpl) UpdateSettings(_ EngineSettings) {}
