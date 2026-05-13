@@ -1,19 +1,19 @@
 <template>
   <div class="settings-section">
-    <h2>{{ t('settings.suseAppCollection.title') }}</h2>
+    <h2>{{ t('aif.pages.settings.sections.appCollection.title') }}</h2>
     <p class="mb-20">
-      {{ t('settings.suseAppCollection.description') }}
+      {{ t('aif.pages.settings.sections.appCollection.description') }}
     </p>
 
     <div class="row mb-20">
       <div class="col span-6">
         <LabeledInput
-          :value="value.endpoint"
-          :label="t('settings.suseAppCollection.endpoint.label')"
-          :placeholder="t('settings.suseAppCollection.endpoint.placeholder')"
-          :tooltip="t('settings.suseAppCollection.endpoint.tooltip')"
+          :model-value="modelValue.endpoint"
+          :label="t('aif.pages.settings.sections.appCollection.endpoint.label')"
+          :placeholder="t('aif.pages.settings.sections.appCollection.endpoint.placeholder')"
+          :tooltip="t('aif.pages.settings.sections.appCollection.endpoint.tooltip')"
           :mode="mode"
-          @input="updateField('endpoint', $event)"
+          @update:model-value="updateField('endpoint', $event)"
         />
       </div>
     </div>
@@ -21,13 +21,13 @@
     <div class="row mb-20">
       <div class="col span-6">
         <Checkbox
-          :value="value.enabled"
-          :label="t('settings.suseAppCollection.enabled.label')"
+          :model-value="modelValue.enabled"
+          :label="t('aif.pages.settings.sections.appCollection.enabled.label')"
           :mode="mode"
-          @input="updateField('enabled', $event)"
+          @update:model-value="updateField('enabled', $event)"
         />
         <p class="text-muted mt-5">
-          {{ t('settings.suseAppCollection.enabled.detail') }}
+          {{ t('aif.pages.settings.sections.appCollection.enabled.detail') }}
         </p>
       </div>
     </div>
@@ -36,9 +36,9 @@
       <div class="col span-6">
         <UnitInput
           v-model:value="refreshInterval"
-          :label="t('settings.suseAppCollection.refreshInterval.label')"
-          :placeholder="t('settings.suseAppCollection.refreshInterval.placeholder')"
-          :tooltip="t('settings.suseAppCollection.refreshInterval.tooltip')"
+          :label="t('aif.pages.settings.sections.appCollection.refreshInterval.label')"
+          :placeholder="t('aif.pages.settings.sections.appCollection.refreshInterval.placeholder')"
+          :tooltip="t('aif.pages.settings.sections.appCollection.refreshInterval.tooltip')"
           :mode="mode"
           :input-exponent="0"
           :increment="1"
@@ -46,7 +46,7 @@
           suffix="m"
         />
         <p class="text-muted mt-5">
-          {{ t('settings.suseAppCollection.refreshInterval.detail') }}
+          {{ t('aif.pages.settings.sections.appCollection.refreshInterval.detail') }}
         </p>
       </div>
     </div>
@@ -54,17 +54,17 @@
     <div class="row">
       <div class="col span-6">
         <Checkbox
-          :value="value.skipTLSVerify"
-          :label="t('settings.suseAppCollection.skipTLSVerify.label')"
+          :model-value="modelValue.skipTLSVerify"
+          :label="t('aif.pages.settings.sections.appCollection.skipTLSVerify.label')"
           :mode="mode"
-          @input="updateField('skipTLSVerify', $event)"
+          @update:model-value="updateField('skipTLSVerify', $event)"
         />
         <Banner
-          v-if="value.skipTLSVerify"
+          v-if="modelValue.skipTLSVerify"
           color="warning"
           class="mt-10"
         >
-          {{ t('settings.suseAppCollection.skipTLSVerify.warning') }}
+          {{ t('aif.pages.settings.sections.appCollection.skipTLSVerify.warning') }}
         </Banner>
       </div>
     </div>
@@ -88,7 +88,7 @@ export default {
   },
 
   props: {
-    value: {
+    modelValue: {
       type:     Object,
       required: true
     },
@@ -98,10 +98,12 @@ export default {
     }
   },
 
+  emits: ['update:modelValue'],
+
   computed: {
     refreshInterval: {
       get() {
-        return this.value.refreshInterval || 30;
+        return this.modelValue.refreshInterval || 30;
       },
       set(val) {
         this.updateField('refreshInterval', val);
@@ -111,7 +113,7 @@ export default {
 
   methods: {
     updateField(field, value) {
-      this.$emit('input', { ...this.value, [field]: value });
+      this.$emit('update:modelValue', { ...this.modelValue, [field]: value });
     }
   }
 };
