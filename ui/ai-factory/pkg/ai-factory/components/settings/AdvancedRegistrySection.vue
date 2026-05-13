@@ -1,35 +1,35 @@
 <template>
   <div class="settings-section advanced">
-    <h2>{{ t('settings.advancedRegistry.title') }}</h2>
+    <h2>{{ t('aif.pages.settings.sections.advanced.title') }}</h2>
     <p class="mb-20">
-      {{ t('settings.advancedRegistry.description') }}
+      {{ t('aif.pages.settings.sections.advanced.description') }}
     </p>
 
     <Banner
       color="warning"
       class="mb-20"
     >
-      {{ t('settings.advancedRegistry.warning') }}
+      {{ t('aif.pages.settings.sections.advanced.warning') }}
     </Banner>
 
     <!-- Registry Endpoints Override -->
     <div class="subsection mb-30">
       <h3 class="mb-10">
-        {{ t('settings.advancedRegistry.registryEndpoints.title') }}
+        {{ t('aif.pages.settings.sections.advanced.registryEndpoints.title') }}
       </h3>
       <p class="text-muted mb-15">
-        {{ t('settings.advancedRegistry.registryEndpoints.description') }}
+        {{ t('aif.pages.settings.sections.advanced.registryEndpoints.description') }}
       </p>
 
       <div class="row mb-10">
         <div class="col span-6">
           <LabeledInput
-            :value="registryEndpoints.suseAppCollection"
-            :label="t('settings.advancedRegistry.registryEndpoints.suseAppCollection.label')"
-            :placeholder="t('settings.advancedRegistry.registryEndpoints.suseAppCollection.placeholder')"
-            :tooltip="t('settings.advancedRegistry.registryEndpoints.suseAppCollection.tooltip')"
+            :model-value="registryEndpoints.suseAppCollection"
+            :label="t('aif.pages.settings.sections.advanced.registryEndpoints.suseAppCollection.label')"
+            :placeholder="t('aif.pages.settings.sections.advanced.registryEndpoints.suseAppCollection.placeholder')"
+            :tooltip="t('aif.pages.settings.sections.advanced.registryEndpoints.suseAppCollection.tooltip')"
             :mode="mode"
-            @input="updateRegistryEndpoint('suseAppCollection', $event)"
+            @update:model-value="updateRegistryEndpoint('suseAppCollection', $event)"
           />
         </div>
       </div>
@@ -37,12 +37,12 @@
       <div class="row mb-10">
         <div class="col span-6">
           <LabeledInput
-            :value="registryEndpoints.suseRegistry"
-            :label="t('settings.advancedRegistry.registryEndpoints.suseRegistry.label')"
-            :placeholder="t('settings.advancedRegistry.registryEndpoints.suseRegistry.placeholder')"
-            :tooltip="t('settings.advancedRegistry.registryEndpoints.suseRegistry.tooltip')"
+            :model-value="registryEndpoints.suseRegistry"
+            :label="t('aif.pages.settings.sections.advanced.registryEndpoints.suseRegistry.label')"
+            :placeholder="t('aif.pages.settings.sections.advanced.registryEndpoints.suseRegistry.placeholder')"
+            :tooltip="t('aif.pages.settings.sections.advanced.registryEndpoints.suseRegistry.tooltip')"
             :mode="mode"
-            @input="updateRegistryEndpoint('suseRegistry', $event)"
+            @update:model-value="updateRegistryEndpoint('suseRegistry', $event)"
           />
         </div>
       </div>
@@ -50,12 +50,12 @@
       <div class="row">
         <div class="col span-6">
           <LabeledInput
-            :value="registryEndpoints.nvidiaChartsProxy"
-            :label="t('settings.advancedRegistry.registryEndpoints.nvidiaChartsProxy.label')"
-            :placeholder="t('settings.advancedRegistry.registryEndpoints.nvidiaChartsProxy.placeholder')"
-            :tooltip="t('settings.advancedRegistry.registryEndpoints.nvidiaChartsProxy.tooltip')"
+            :model-value="registryEndpoints.nvidiaChartsProxy"
+            :label="t('aif.pages.settings.sections.advanced.registryEndpoints.nvidiaChartsProxy.label')"
+            :placeholder="t('aif.pages.settings.sections.advanced.registryEndpoints.nvidiaChartsProxy.placeholder')"
+            :tooltip="t('aif.pages.settings.sections.advanced.registryEndpoints.nvidiaChartsProxy.tooltip')"
             :mode="mode"
-            @input="updateRegistryEndpoint('nvidiaChartsProxy', $event)"
+            @update:model-value="updateRegistryEndpoint('nvidiaChartsProxy', $event)"
           />
         </div>
       </div>
@@ -64,22 +64,22 @@
     <!-- Image Rewrite Rules -->
     <div class="subsection mb-30">
       <h3 class="mb-10">
-        {{ t('settings.advancedRegistry.imageRewrite.title') }}
+        {{ t('aif.pages.settings.sections.advanced.imageRewrite.title') }}
       </h3>
       <p class="text-muted mb-15">
-        {{ t('settings.advancedRegistry.imageRewrite.description') }}
+        {{ t('aif.pages.settings.sections.advanced.imageRewrite.description') }}
       </p>
 
       <div class="row mb-10">
         <div class="col span-6">
           <Checkbox
-            :value="imageRewrite.enabled"
-            :label="t('settings.advancedRegistry.imageRewrite.enabled.label')"
+            :model-value="imageRewrite.enabled"
+            :label="t('aif.pages.settings.sections.advanced.imageRewrite.enabled.label')"
             :mode="mode"
-            @input="updateImageRewrite('enabled', $event)"
+            @update:model-value="updateImageRewrite('enabled', $event)"
           />
           <p class="text-muted mt-5">
-            {{ t('settings.advancedRegistry.imageRewrite.enabled.detail') }}
+            {{ t('aif.pages.settings.sections.advanced.imageRewrite.enabled.detail') }}
           </p>
         </div>
       </div>
@@ -91,12 +91,12 @@
         <div class="row mb-10">
           <div class="col span-6">
             <LabeledInput
-              :value="imageRewrite.defaultRegistry"
-              :label="t('settings.advancedRegistry.imageRewrite.defaultRegistry.label')"
-              :placeholder="t('settings.advancedRegistry.imageRewrite.defaultRegistry.placeholder')"
-              :tooltip="t('settings.advancedRegistry.imageRewrite.defaultRegistry.tooltip')"
+              :model-value="imageRewrite.defaultRegistry"
+              :label="t('aif.pages.settings.sections.advanced.imageRewrite.defaultRegistry.label')"
+              :placeholder="t('aif.pages.settings.sections.advanced.imageRewrite.defaultRegistry.placeholder')"
+              :tooltip="t('aif.pages.settings.sections.advanced.imageRewrite.defaultRegistry.tooltip')"
               :mode="mode"
-              @input="updateImageRewrite('defaultRegistry', $event)"
+              @update:model-value="updateImageRewrite('defaultRegistry', $event)"
             />
           </div>
         </div>
@@ -104,15 +104,15 @@
         <div class="row">
           <div class="col span-6">
             <LabeledInput
-              :value="imageRewrite.imagePrefix"
-              :label="t('settings.advancedRegistry.imageRewrite.imagePrefix.label')"
-              :placeholder="t('settings.advancedRegistry.imageRewrite.imagePrefix.placeholder')"
-              :tooltip="t('settings.advancedRegistry.imageRewrite.imagePrefix.tooltip')"
+              :model-value="imageRewrite.imagePrefix"
+              :label="t('aif.pages.settings.sections.advanced.imageRewrite.imagePrefix.label')"
+              :placeholder="t('aif.pages.settings.sections.advanced.imageRewrite.imagePrefix.placeholder')"
+              :tooltip="t('aif.pages.settings.sections.advanced.imageRewrite.imagePrefix.tooltip')"
               :mode="mode"
-              @input="updateImageRewrite('imagePrefix', $event)"
+              @update:model-value="updateImageRewrite('imagePrefix', $event)"
             />
             <p class="text-muted mt-5">
-              {{ t('settings.advancedRegistry.imageRewrite.imagePrefix.detail') }}
+              {{ t('aif.pages.settings.sections.advanced.imageRewrite.imagePrefix.detail') }}
             </p>
           </div>
         </div>
@@ -122,20 +122,20 @@
     <!-- Catalog Discovery Mode -->
     <div class="subsection">
       <h3 class="mb-10">
-        {{ t('settings.advancedRegistry.catalogDiscovery.title') }}
+        {{ t('aif.pages.settings.sections.advanced.catalogDiscovery.title') }}
       </h3>
       <p class="text-muted mb-15">
-        {{ t('settings.advancedRegistry.catalogDiscovery.description') }}
+        {{ t('aif.pages.settings.sections.advanced.catalogDiscovery.description') }}
       </p>
 
       <div class="row mb-10">
         <div class="col span-6">
           <RadioGroup
-            :value="catalogDiscovery.mode"
+            :model-value="catalogDiscovery.mode"
             :name="'catalogDiscoveryMode'"
             :options="catalogDiscoveryModeOptions"
             :mode="mode"
-            @input="updateCatalogDiscovery('mode', $event)"
+            @update:model-value="updateCatalogDiscovery('mode', $event)"
           />
         </div>
       </div>
@@ -149,7 +149,7 @@
             color="info"
             class="mt-10"
           >
-            {{ t('settings.advancedRegistry.catalogDiscovery.ociFallbackNote') }}
+            {{ t('aif.pages.settings.sections.advanced.catalogDiscovery.ociFallbackNote') }}
           </Banner>
         </div>
       </div>
@@ -196,11 +196,11 @@ export default {
     catalogDiscoveryModeOptions() {
       return [
         {
-          label: this.t('settings.advancedRegistry.catalogDiscovery.modes.api.label'),
+          label: this.t('aif.pages.settings.sections.advanced.catalogDiscovery.modes.api.label'),
           value: 'api'
         },
         {
-          label: this.t('settings.advancedRegistry.catalogDiscovery.modes.ociFallback.label'),
+          label: this.t('aif.pages.settings.sections.advanced.catalogDiscovery.modes.ociFallback.label'),
           value: 'oci-fallback'
         }
       ];
