@@ -91,12 +91,12 @@
 import CruResource from '@shell/components/CruResource';
 import Banner from '@components/Banner';
 import Checkbox from '@components/Form/Checkbox';
-import CatalogRefreshInterval from '@/components/settings/CatalogRefreshInterval';
-import FleetSection from '@/components/settings/FleetSection';
-import SUSEAppCollectionSection from '@/components/settings/SUSEAppCollectionSection';
-import SUSERegistrySection from '@/components/settings/SUSERegistrySection';
-import ImagePullSecretsSection from '@/components/settings/ImagePullSecretsSection';
-import AdvancedRegistrySection from '@/components/settings/AdvancedRegistrySection';
+import CatalogRefreshInterval from '../components/settings/CatalogRefreshInterval';
+import FleetSection from '../components/settings/FleetSection';
+import SUSEAppCollectionSection from '../components/settings/SUSEAppCollectionSection';
+import SUSERegistrySection from '../components/settings/SUSERegistrySection';
+import ImagePullSecretsSection from '../components/settings/ImagePullSecretsSection';
+import AdvancedRegistrySection from '../components/settings/AdvancedRegistrySection';
 
 export default {
   name: 'SettingsPage',
