@@ -12,7 +12,7 @@ const maskPayloads = (source) => Array.from(
 // l10nKey differs from pageId when the slug contains hyphens (camelCase in yaml/templates)
 const pages = [
   ['overview',        'OverviewPage',        'Overview',        'overview'],
-  ['apps',            'AppsPage',            'Apps Catalog',    'apps'],
+  ['apps',            'AppsPage',            'Apps',            'apps'],
   ['blueprints',      'BlueprintsPage',      'Blueprints',      'blueprints'],
   ['bundles',         'BundlesPage',         'Bundles',         'bundles'],
   ['pending-reviews', 'PendingReviewsPage',  'Pending Reviews', 'pendingReviews'],
