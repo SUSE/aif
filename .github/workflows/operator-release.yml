@@ -1,0 +1,97 @@
+name: AI Factory Operator Release
+
+on:
+  push:
+    tags: ['aif-operator-v*']
+
+env:
+  CONTAINER_REGISTRY: ghcr.io/suse/aif-operator
+
+jobs:
+  container:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Calculate tags
+        id: tags
+        shell: bash
+        run: |
+          ref=${{ github.ref }}
+          case "$ref" in
+            refs/tags/aif-operator-v*)
+              VERSION="${ref#refs/tags/aif-operator-v}"
+              IMAGE_TAGS="$VERSION"
+
+              {
+                echo "METADATA_TAGS<<EOF"
+                echo "$VERSION"
+                if [[ "$VERSION" != *"-"* ]]; then
+                  echo "latest"
+                fi
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+
+              PUBLISH=true
+              ;;
+            *)
+              VERSION="${{ github.sha }}"
+              IMAGE_TAGS="$VERSION"
+
+              {
+                echo "METADATA_TAGS<<EOF"
+                echo "$VERSION"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+
+              PUBLISH=false
+              ;;
+          esac
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_TAGS=$IMAGE_TAGS" >> "$GITHUB_OUTPUT"
+          echo "PUBLISH=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        if: steps.tags.outputs.PUBLISH == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        if: steps.tags.outputs.PUBLISH == 'true'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Setup Docker Buildx
+        if: steps.tags.outputs.PUBLISH == 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Get Docker Metadata
+        id: meta
+        if: steps.tags.outputs.PUBLISH == 'true'
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.CONTAINER_REGISTRY }}
+          tags: |
+            ${{ steps.tags.outputs.METADATA_TAGS }}
+
+      - name: Build Docker Container
+        id: push
+        if: steps.tags.outputs.PUBLISH == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: build/operator/Dockerfile
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          push: true
+          platforms: linux/arm64,linux/amd64
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
