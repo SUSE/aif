@@ -2,8 +2,20 @@ package nvidia
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
+)
+
+// §4.4 constants. Unexported — these are implementation details of the
+// formula, not a public knob.
+const (
+	cpuPerGPU           = 8     // cores per GPU (LLM and VLM)
+	memGiPerGPU_LLM     = 32    // GiB per GPU for LLM (memoryPerGPU_LLM = "32Gi")
+	memGiPerGPU_VLM     = 64    // GiB per GPU for VLM (memoryPerGPU_VLM = "64Gi")
+	suseRegistryDefault = "registry.suse.com"
+	nimImagePathPrefix  = "ai/containers/nvidia"
 )
 
 // deployerImpl is the production Deployer. P4-4 implements GenerateValues
@@ -43,9 +55,83 @@ func (d *deployerImpl) snapshot() EngineSettings {
 	return d.settings
 }
 
-// GenerateValues is implemented in Task 5. Currently returns
-// ErrInvalidRequest as a placeholder so the file compiles after
-// ErrNotImplemented was removed in errors.go.
-func (d *deployerImpl) GenerateValues(_ context.Context, _ GenerateRequest) (map[string]any, error) {
-	return nil, ErrInvalidRequest
+// GenerateValues produces the layer-4 Helm values block for a single NIM
+// deployment per ARCHITECTURE.md §4.4. Pure once validation passes; never
+// reads K8s or upstream. Returns a sentinel error on validation failure
+// (see pkg/nvidia/errors.go) so HTTP handlers can translate to 400.
+func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (map[string]any, error) {
+	if req.Entry.Chart == "" {
+		return nil, fmt.Errorf("validate Entry.Chart: %w", ErrInvalidRequest)
+	}
+	if req.Entry.Version == "" {
+		return nil, fmt.Errorf("validate Entry.Version: %w", ErrInvalidRequest)
+	}
+	if req.Replicas <= 0 {
+		return nil, fmt.Errorf("validate Replicas: %w", ErrInvalidReplicas)
+	}
+
+	gpuCount, err := resolveGPUCount(req.GPUs, req.Entry.DefaultGPUs)
+	if err != nil {
+		return nil, err
+	}
+
+	memGi := memGiPerGPU_LLM
+	if req.Entry.Type == TypeVLM {
+		memGi = memGiPerGPU_VLM
+	}
+
+	s := d.snapshot()
+	registry := s.RegistryEndpoint
+	if registry == "" {
+		registry = suseRegistryDefault
+	}
+
+	resources := buildResourceMap(gpuCount, memGi)
+
+	return map[string]any{
+		"replicas": req.Replicas,
+		"image": map[string]any{
+			"repository": fmt.Sprintf("%s/%s/%s", registry, nimImagePathPrefix, req.Entry.Chart),
+			"tag":        req.Entry.Version,
+		},
+		"resources": map[string]any{
+			"requests": resources,
+			"limits":   buildResourceMap(gpuCount, memGi), // separate map so caller mutations don't alias requests
+		},
+		"tolerations": []any{
+			map[string]any{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+		},
+		"nodeSelector": map[string]any{"nvidia.com/gpu.present": "true"},
+	}, nil
+}
+
+// resolveGPUCount applies §4.4's GPU resolution table:
+//   - GPUs nil + DefaultGPUs > 0  → DefaultGPUs
+//   - GPUs nil + DefaultGPUs == 0 → ErrMissingGPUCount
+//   - GPUs *v == 0                → ErrInvalidGPUCount
+//   - GPUs *v < 0                 → ErrInvalidGPUCount
+//   - GPUs *v > 0                 → *v (overrides default)
+func resolveGPUCount(gpus *int32, defaultGPUs int32) (int32, error) {
+	if gpus == nil {
+		if defaultGPUs <= 0 {
+			return 0, fmt.Errorf("resolve GPU count: %w", ErrMissingGPUCount)
+		}
+		return defaultGPUs, nil
+	}
+	if *gpus <= 0 {
+		return 0, fmt.Errorf("resolve GPU count: %w", ErrInvalidGPUCount)
+	}
+	return *gpus, nil
+}
+
+// buildResourceMap constructs the cpu/memory/nvidia.com/gpu trio used in
+// both requests and limits (Guaranteed QoS). Called twice per GenerateValues
+// so requests and limits are distinct map objects (caller mutations don't
+// alias).
+func buildResourceMap(gpuCount int32, memGi int) map[string]any {
+	return map[string]any{
+		"cpu":            strconv.Itoa(int(gpuCount) * cpuPerGPU),
+		"memory":         fmt.Sprintf("%dGi", int(gpuCount)*memGi),
+		"nvidia.com/gpu": strconv.Itoa(int(gpuCount)),
+	}
 }
