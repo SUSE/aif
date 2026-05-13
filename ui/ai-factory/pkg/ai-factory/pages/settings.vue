@@ -43,8 +43,8 @@
           <div class="settings-section">
             <h2>{{ t('aif.pages.settings.fleet.title') }}</h2>
             <FleetSection
-              :value="value.spec.fleet"
-              @input="value.spec.fleet = $event"
+              v-model="value.spec.fleet"
+              :mode="mode"
             />
           </div>
 
@@ -63,7 +63,10 @@
           <!-- Section 5: Image Pull Secrets (Read-only) -->
           <div class="settings-section">
             <h2>{{ t('aif.pages.settings.imagePullSecrets.title') }}</h2>
-            <ImagePullSecretsSection />
+            <ImagePullSecretsSection
+              :model-value="value.spec.imagePullSecrets || {}"
+              :mode="mode"
+            />
           </div>
 
           <!-- Section 6: Advanced Registry Endpoints (conditionally shown) -->
@@ -143,8 +146,7 @@ export default {
         suseRegistry:              'registry.suse.com',
         applicationCollection:     'dp.apps.rancher.io',
         applicationCollectionAPI:  'https://api.apps.rancher.io',
-        mode:                      'api',
-        rewriteRules:              []
+        mode:                      'api'
       };
 
       const endpoints = this.value?.spec?.registryEndpoints || {};
@@ -152,11 +154,11 @@ export default {
       const catalogDiscovery = this.value?.spec?.catalogDiscovery || {};
 
       return (
-        endpoints.suseRegistry !== defaults.suseRegistry ||
-        endpoints.applicationCollection !== defaults.applicationCollection ||
-        endpoints.applicationCollectionAPI !== defaults.applicationCollectionAPI ||
-        catalogDiscovery.applicationCollectionMode !== defaults.mode ||
-        (imageRewrite.rules?.length > 0)
+        (endpoints.suseRegistry || defaults.suseRegistry) !== defaults.suseRegistry ||
+        (endpoints.applicationCollection || defaults.applicationCollection) !== defaults.applicationCollection ||
+        (endpoints.applicationCollectionAPI || defaults.applicationCollectionAPI) !== defaults.applicationCollectionAPI ||
+        (catalogDiscovery.applicationCollectionMode || defaults.mode) !== defaults.mode ||
+        (imageRewrite.enabled === true)
       );
     }
   },
