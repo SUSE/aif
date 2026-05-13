@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sort"
+	"strconv"
 	"testing"
 )
 
@@ -669,5 +670,73 @@ func TestApplyImageRewrites_ShorthandRef_NotRewritten(t *testing.T) {
 	out := ApplyImageRewrites(in, rules)
 	if out["image"] != "redis:7" {
 		t.Errorf("shorthand ref must not be rewritten, got %v", out["image"])
+	}
+}
+
+// TestWalkImageRefs_DepthCap_Boundary pins the exact maxWalkDepth boundary.
+// Builds a chain of nested maps with one image per depth: the walker must
+// visit images at depths 0..15 (in-cap) and skip the image at depth 16
+// (out-of-cap). Complements the looser depth-20 test by locking the off-by-one
+// behavior at the boundary itself.
+func TestWalkImageRefs_DepthCap_Boundary(t *testing.T) {
+	leaf := map[string]any{"image": "depth16"}
+	cur := leaf
+	for i := 15; i >= 0; i-- {
+		cur = map[string]any{"image": "depth" + strconv.Itoa(i), "nested": cur}
+	}
+	visited := map[string]bool{}
+	walkImageRefs(cur, func(s string) string {
+		visited[s] = true
+		return s
+	})
+	for i := 0; i <= 15; i++ {
+		want := "depth" + strconv.Itoa(i)
+		if !visited[want] {
+			t.Errorf("depth %d image must be visited (within maxWalkDepth=16), missing from %v", i, visited)
+		}
+	}
+	if visited["depth16"] {
+		t.Errorf("depth 16 image must NOT be visited (beyond maxWalkDepth), got %v", visited)
+	}
+}
+
+// TestWalkImageRefs_NestedInMap exercises subchart-style nesting where an
+// image lives several map keys deep without any list in between. Mirrors
+// TestWalkImageRefs_NestedInList for the map traversal path so failures
+// localize to the right code path (map descent vs list descent).
+func TestWalkImageRefs_NestedInMap(t *testing.T) {
+	visited := []string{}
+	v := map[string]any{
+		"subchart": map[string]any{
+			"image": "subchart/img:1",
+		},
+		"another": map[string]any{
+			"deep": map[string]any{
+				"image": map[string]any{
+					"repository": "registry.suse.com/x",
+					"tag":        "2",
+				},
+			},
+		},
+	}
+	walkImageRefs(v, func(s string) string {
+		visited = append(visited, s)
+		return s + "!"
+	})
+	sort.Strings(visited)
+	want := []string{"registry.suse.com/x", "subchart/img:1"}
+	if !reflect.DeepEqual(visited, want) {
+		t.Errorf("expected visits %v, got %v", want, visited)
+	}
+	sub := v["subchart"].(map[string]any)
+	if sub["image"] != "subchart/img:1!" {
+		t.Errorf("subchart.image not rewritten: %v", sub["image"])
+	}
+	deep := v["another"].(map[string]any)["deep"].(map[string]any)["image"].(map[string]any)
+	if deep["repository"] != "registry.suse.com/x!" {
+		t.Errorf("another.deep.image.repository not rewritten: %v", deep["repository"])
+	}
+	if deep["tag"] != "2" {
+		t.Errorf("another.deep.image.tag must be preserved: %v", deep["tag"])
 	}
 }
