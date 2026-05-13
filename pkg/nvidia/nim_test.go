@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -223,5 +224,61 @@ func TestGenerateValues_ZeroReplicas_Rejected(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidReplicas) {
 		t.Fatalf("expected ErrInvalidReplicas, got %v", err)
+	}
+}
+
+// Default registry path: never called UpdateSettings → image.repository
+// starts with "registry.suse.com/" (the in-code default per §4.5).
+func TestGenerateValues_DefaultRegistry_WhenSettingsEmpty(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	repo := out["image"].(map[string]any)["repository"].(string)
+	if !strings.HasPrefix(repo, "registry.suse.com/") {
+		t.Errorf("expected default registry, got %q", repo)
+	}
+}
+
+// Override path: UpdateSettings(EngineSettings{RegistryEndpoint: ...}) is
+// reflected on the next GenerateValues call.
+func TestGenerateValues_OverridesRegistry_WhenSettingsSet(t *testing.T) {
+	d := newTestDeployer(t)
+	d.UpdateSettings(EngineSettings{RegistryEndpoint: "harbor.example.com"})
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	repo := out["image"].(map[string]any)["repository"].(string)
+	if !strings.HasPrefix(repo, "harbor.example.com/") {
+		t.Errorf("expected overridden registry, got %q", repo)
+	}
+}
+
+// §4.4: model identifier is passed through as-is; slashes treated as
+// sub-paths under containers/nvidia/.
+func TestGenerateValues_ModelWithSlash_TreatedAsSubpath(t *testing.T) {
+	d := newTestDeployer(t)
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nvidia/llama-3-70b", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(8),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	repo := out["image"].(map[string]any)["repository"].(string)
+	want := "registry.suse.com/ai/containers/nvidia/nvidia/llama-3-70b"
+	if repo != want {
+		t.Errorf("got %q, want %q", repo, want)
 	}
 }
