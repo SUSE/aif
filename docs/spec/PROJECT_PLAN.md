@@ -2894,6 +2894,15 @@ hack/e2e-smoke.sh   # runs locally against a kind cluster; same script the workf
 docker manifest inspect ghcr.io/suse/aif-operator:0.1.0 | jq '.manifests[].platform'
 ```
 
+> **Follow-up (post-merge): Implementation deviations from story spec**
+>
+> 1. **Single image (`aif-operator`) instead of 5.** Only `aif-operator` has a Dockerfile. The other 4 (`aif-ui`, `nim-llm`, `nim-vlm`, `generic-container`) either deploy vendor images, user-supplied images, or have no SUSE-built container image. See design spec for full analysis.
+> 2. **Per-component tag prefix (`aif-operator-v*`) instead of bare `v*`.** Operator and UI have separate pipelines (different languages, different caches, different release cadences). Tag prefix follows Rancher convention (dash separator + `v` prefix). Workflow file is `operator-release.yml`, not `build-and-sign.yml`.
+> 3. **Dockerfile moved to `build/operator/Dockerfile`** instead of repo root. Supports future per-component Dockerfiles (e.g. `build/ui/Dockerfile`). Makefile `docker-build` target updated with `-f` flag.
+> 4. **SUSE BCI base images** instead of Docker Hub. Builder uses `registry.suse.com/bci/golang:1.26`, runtime uses `registry.suse.com/bci/bci-micro:15.7`. Aligns with SUSE product stack. `ca-certificates` install removed since `bci-micro` includes `ca-certificates-mozilla-prebuilt`.
+> 5. **Simplified runtime stage.** Removed `adduser` (UID 1000 set via `USER` directive only), removed `mkdir` and `/opt/aif/bin/` path (binary placed at `/aif-operator`).
+> 6. **UID 1000 kept as-is** but flagged for review. Industry standard for operators is 65532 (Kubebuilder/Operator SDK) or 65534 (Rancher/Flux). No code dependency on 1000 exists. Discussion tracked in `tmp/CICD-GAPS.md`.
+
 ---
 
 **ID:** P9-2
