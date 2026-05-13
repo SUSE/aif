@@ -1,28 +1,28 @@
 <template>
   <div class="settings-section">
-    <h2>{{ t('settings.imagePullSecrets.title') }}</h2>
+    <h2>{{ t('aif.pages.settings.sections.imagePullSecrets.title') }}</h2>
     <p class="mb-20">
-      {{ t('settings.imagePullSecrets.description') }}
+      {{ t('aif.pages.settings.sections.imagePullSecrets.description') }}
     </p>
 
     <Banner
       color="info"
       class="mb-20"
     >
-      {{ t('settings.imagePullSecrets.reconciliationNote') }}
+      {{ t('aif.pages.settings.sections.imagePullSecrets.reconciliationNote') }}
     </Banner>
 
     <div class="row mb-20">
       <div class="col span-6">
         <LabeledInput
-          :value="value.secretName"
-          :label="t('settings.imagePullSecrets.secretName.label')"
-          :tooltip="t('settings.imagePullSecrets.secretName.tooltip')"
+          :model-value="modelValue.secretName"
+          :label="t('aif.pages.settings.sections.imagePullSecrets.secretName.label')"
+          :tooltip="t('aif.pages.settings.sections.imagePullSecrets.secretName.tooltip')"
           :mode="'view'"
           :disabled="true"
         />
         <p class="text-muted mt-5">
-          {{ t('settings.imagePullSecrets.secretName.detail') }}
+          {{ t('aif.pages.settings.sections.imagePullSecrets.secretName.detail') }}
         </p>
       </div>
     </div>
@@ -30,17 +30,17 @@
     <div class="row">
       <div class="col span-12">
         <h3 class="mb-10">
-          {{ t('settings.imagePullSecrets.namespaces.title') }}
+          {{ t('aif.pages.settings.sections.imagePullSecrets.namespaces.title') }}
         </h3>
         <p class="text-muted mb-10">
-          {{ t('settings.imagePullSecrets.namespaces.description') }}
+          {{ t('aif.pages.settings.sections.imagePullSecrets.namespaces.description') }}
         </p>
         <div
-          v-if="value.namespaces && value.namespaces.length > 0"
+          v-if="modelValue.namespaces && modelValue.namespaces.length > 0"
           class="namespace-list"
         >
           <div
-            v-for="ns in value.namespaces"
+            v-for="ns in modelValue.namespaces"
             :key="ns"
             class="namespace-item"
           >
@@ -52,7 +52,7 @@
           v-else
           class="text-muted"
         >
-          {{ t('settings.imagePullSecrets.namespaces.empty') }}
+          {{ t('aif.pages.settings.sections.imagePullSecrets.namespaces.empty') }}
         </div>
       </div>
     </div>
@@ -72,7 +72,7 @@ export default {
   },
 
   props: {
-    value: {
+    modelValue: {
       type:     Object,
       required: true
     },
