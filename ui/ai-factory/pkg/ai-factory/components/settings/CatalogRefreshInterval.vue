@@ -6,11 +6,10 @@
     </p>
 
     <UnitInput
-      v-model="internalValue"
+      v-model:value="internalValue"
       :mode="mode"
-      :label="t('aif.pages.settings.catalogRefresh.label')"
       :placeholder="t('aif.pages.settings.catalogRefresh.placeholder')"
-      suffix="m"
+      suffix="min"
       :input-exponent="0"
     />
   </div>
@@ -41,7 +40,7 @@ export default {
   computed: {
     internalValue: {
       get() {
-        return this.modelValue || 10;
+        return this.modelValue ?? 10;
       },
       set(val) {
         this.$emit('update:modelValue', val);
