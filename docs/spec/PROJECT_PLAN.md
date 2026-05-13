@@ -1759,6 +1759,32 @@ go test ./pkg/helm/ -run TestApplyImageRewrites -v
 **Agent Prompt:**
 > Implement `pkg/helm/values.go::ApplyImageRewrites` per `ARCHITECTURE.md §6.6` layer 5. The function takes `map[string]any` (the merged Helm values) and `[]ImageRewriteRule`; returns the (possibly mutated) map. Walk recursively: visit every map, every list. When you encounter a map with a key `image` whose value is a string, treat it as a Docker image reference and apply rules; when you encounter a key `image` whose value is a map with `repository` and/or `registry` keys, apply rules to those fields. Apply rules in order; first match wins per field. Idempotent: re-running on the same values produces the same result. Update `pkg/workload/deployer.go` to call `ApplyImageRewrites` after `MergeValues` and after NIM generation. Tests cover the five scenarios above. Done when test suite passes and a smoke deploy with rules `registry.suse.com/` → `harbor.example.com/suse/` produces a Helm release whose pod manifests reference the rewritten registry.
 
+> **Follow-up (post-merge, P4-6):**
+>
+> 1. **Deployer-wiring acceptance bullets shipped via P4-2.** Two AC bullets
+>    require a caller in `pkg/workload/deployer.go`:
+>    - "When `Settings.spec.imageRewrite.enabled == false`, the deployer
+>      does NOT call `ApplyImageRewrites` (skip layer 5 entirely)"
+>    - "Workload deployer (`pkg/workload/deployer.go`) calls
+>      `ApplyImageRewrites` after `MergeValues` and after NIM generation,
+>      before Helm install"
+>
+>    `pkg/workload/deployer.go` does not exist yet — that file is P4-2's
+>    deliverable. Both bullets land alongside P4-2's deployer (the natural
+>    place to wire layer 5). P4-6 ships the primitive only; P4-2 adds the
+>    `enabled`-gated invocation in the merge-precedence pipeline. P4-2's
+>    AC list should be amended to enumerate these two bullets when P4-2
+>    starts.
+>
+> 2. **`Depends On: P4-1, P5-7` line is incorrect.** P4-6 depends only on
+>    `P4-1` (which defined `pkg/helm.ImageRewriteRule` in `interface.go`).
+>    P5-7 is the *consumer* of the rule slice (the Settings reconciler
+>    populates `EngineSettings.ImageRewrite.Rules` and pushes them to
+>    engines), not a producer P4-6 depends on. The correct dependency
+>    direction is P5-7 depends on P4-6, not the other way round. Replace
+>    `Depends On: P4-1 (Helm engine), P5-7 (Settings imageRewrite fields)`
+>    with `Depends On: P4-1 (Helm engine — defines ImageRewriteRule type)`.
+
 ---
 
 ## Phase 5 — Workload Runtime + Settings Wiring
