@@ -1,11 +1,12 @@
 <template>
-  <div class="fleet-section mb-20">
-    <h3>{{ t('aif.pages.settings.sections.fleet.title') }}</h3>
+  <div class="settings-section mb-20">
+    <h2>{{ t('aif.pages.settings.sections.fleet.title') }}</h2>
 
     <div class="row mb-20">
       <div class="col span-6">
         <LabeledInput
-          v-model="internalValue.repoURL"
+          :value="internalValue.repoURL"
+          @input="updateField('repoURL', $event)"
           :mode="mode"
           :label="t('aif.pages.settings.sections.fleet.repoURL')"
           :placeholder="t('aif.pages.settings.sections.fleet.repoURLPlaceholder')"
@@ -14,7 +15,8 @@
 
       <div class="col span-6">
         <LabeledInput
-          v-model="internalValue.branch"
+          :value="internalValue.branch"
+          @input="updateField('branch', $event)"
           :mode="mode"
           :label="t('aif.pages.settings.sections.fleet.branch')"
           :placeholder="t('aif.pages.settings.sections.fleet.branchPlaceholder')"
@@ -25,7 +27,8 @@
     <div class="row mb-20">
       <div class="col span-6">
         <LabeledSelect
-          v-model="internalValue.authType"
+          :value="internalValue.authType"
+          @input="updateField('authType', $event)"
           :mode="mode"
           :label="t('aif.pages.settings.sections.fleet.authType')"
           :options="authTypeOptions"
@@ -76,16 +79,25 @@ export default {
         { label: this.t('aif.pages.settings.sections.fleet.authTypeBasic'), value: 'basic' }
       ];
     }
+  },
+
+  methods: {
+    updateField(field, value) {
+      this.$emit('update:modelValue', {
+        ...this.internalValue,
+        [field]: value
+      });
+    }
   }
 };
 </script>
 
 <style lang="scss" scoped>
-.fleet-section {
+.settings-section {
   border-bottom: 1px solid var(--border);
   padding-bottom: 20px;
 
-  h3 {
+  h2 {
     margin-bottom: 20px;
   }
 }
