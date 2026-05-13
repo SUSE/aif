@@ -1,19 +1,19 @@
 <template>
   <div class="settings-section">
-    <h2>{{ t('settings.suseRegistry.title') }}</h2>
+    <h2>{{ t('aif.pages.settings.sections.suseRegistry.title') }}</h2>
     <p class="mb-20">
-      {{ t('settings.suseRegistry.description') }}
+      {{ t('aif.pages.settings.sections.suseRegistry.description') }}
     </p>
 
     <div class="row mb-20">
       <div class="col span-6">
         <LabeledInput
-          :value="value.endpoint"
-          :label="t('settings.suseRegistry.endpoint.label')"
-          :placeholder="t('settings.suseRegistry.endpoint.placeholder')"
-          :tooltip="t('settings.suseRegistry.endpoint.tooltip')"
+          :model-value="modelValue.endpoint"
+          :label="t('aif.pages.settings.sections.suseRegistry.endpoint.label')"
+          :placeholder="t('aif.pages.settings.sections.suseRegistry.endpoint.placeholder')"
+          :tooltip="t('aif.pages.settings.sections.suseRegistry.endpoint.tooltip')"
           :mode="mode"
-          @input="updateField('endpoint', $event)"
+          @update:model-value="updateField('endpoint', $event)"
         />
       </div>
     </div>
@@ -21,17 +21,17 @@
     <div class="row">
       <div class="col span-6">
         <Checkbox
-          :value="value.skipTLSVerify"
-          :label="t('settings.suseRegistry.skipTLSVerify.label')"
+          :model-value="modelValue.skipTLSVerify"
+          :label="t('aif.pages.settings.sections.suseRegistry.skipTLSVerify.label')"
           :mode="mode"
-          @input="updateField('skipTLSVerify', $event)"
+          @update:model-value="updateField('skipTLSVerify', $event)"
         />
         <Banner
-          v-if="value.skipTLSVerify"
+          v-if="modelValue.skipTLSVerify"
           color="warning"
           class="mt-10"
         >
-          {{ t('settings.suseRegistry.skipTLSVerify.warning') }}
+          {{ t('aif.pages.settings.sections.suseRegistry.skipTLSVerify.warning') }}
         </Banner>
       </div>
     </div>
@@ -53,7 +53,7 @@ export default {
   },
 
   props: {
-    value: {
+    modelValue: {
       type:     Object,
       required: true
     },
@@ -63,9 +63,11 @@ export default {
     }
   },
 
+  emits: ['update:modelValue'],
+
   methods: {
     updateField(field, value) {
-      this.$emit('input', { ...this.value, [field]: value });
+      this.$emit('update:modelValue', { ...this.modelValue, [field]: value });
     }
   }
 };
