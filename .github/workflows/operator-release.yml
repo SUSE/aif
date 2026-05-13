@@ -5,7 +5,7 @@ on:
     tags: ['aif-operator-v*']
 
 env:
-  CONTAINER_REGISTRY: ghcr.io/suse/aif-operator
+  CONTAINER_IMAGE: ghcr.io/suse/aif-operator
 
 jobs:
   container:
@@ -20,8 +20,10 @@ jobs:
       - name: Calculate tags
         id: tags
         shell: bash
+        env:
+          GH_REF: ${{ github.ref }}
         run: |
-          ref=${{ github.ref }}
+          ref="$GH_REF"
           case "$ref" in
             refs/tags/aif-operator-v*)
               VERSION="${ref#refs/tags/aif-operator-v}"
@@ -38,7 +40,7 @@ jobs:
               PUBLISH=true
               ;;
             *)
-              VERSION="${{ github.sha }}"
+              VERSION="${GITHUB_SHA}"
 
               {
                 echo "METADATA_TAGS<<EOF"
@@ -73,7 +75,7 @@ jobs:
         if: steps.tags.outputs.PUBLISH == 'true'
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.CONTAINER_REGISTRY }}
+          images: ${{ env.CONTAINER_IMAGE }}
           tags: |
             ${{ steps.tags.outputs.METADATA_TAGS }}
 
@@ -87,7 +89,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           push: true
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
           cache-from: type=gha

@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM registry.suse.com/bci/golang:1.26 AS builder
 
 WORKDIR /workspace
-COPY go.mod go.sum* ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd/ cmd/
