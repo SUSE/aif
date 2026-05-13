@@ -58,17 +58,23 @@ type NIMEntry struct {
 }
 
 // GenerateRequest is the input to Deployer.GenerateValues. Sizing formulas
-// per ARCHITECTURE.md §4.4 NIM Sizing land in plan task P4-4; for now this
-// shape is the minimum needed for the port to be defined.
+// live in ARCHITECTURE.md §4.4; the deployer translates this request into
+// the layer-4 Helm values block (per §6.6).
 type GenerateRequest struct {
 	// Entry identifies which NIM to deploy.
 	Entry NIMEntry
 
-	// Replicas is the desired pod count.
+	// Replicas is the desired pod count. Must be > 0; 0 or negative is
+	// rejected with ErrInvalidReplicas.
 	Replicas int32
 
-	// GPUs is the per-pod GPU count; 0 means "use Entry.DefaultGPUs".
-	GPUs int32
+	// GPUs is the per-pod GPU count.
+	//   nil   = unset; fall back to Entry.DefaultGPUs (rejects with
+	//           ErrMissingGPUCount if Entry.DefaultGPUs is 0)
+	//   >0    = use as-is (overrides Entry.DefaultGPUs)
+	//   <=0   = reject with ErrInvalidGPUCount (NIMs are GPU-bound;
+	//           zero is misconfiguration, not CPU fallback)
+	GPUs *int32
 }
 
 // EngineSettings is the slice of cluster-wide Settings that this engine
