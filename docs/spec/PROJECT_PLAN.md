@@ -2902,6 +2902,15 @@ docker manifest inspect ghcr.io/suse/aif-operator:0.1.0 | jq '.manifests[].platf
 > 4. **SUSE BCI base images** instead of Docker Hub. Builder uses `registry.suse.com/bci/golang:1.26`, runtime uses `registry.suse.com/bci/bci-micro:15.7`. Aligns with SUSE product stack. `ca-certificates` install removed since `bci-micro` includes `ca-certificates-mozilla-prebuilt`.
 > 5. **Simplified runtime stage.** Removed `adduser` (UID 1000 set via `USER` directive only), removed `mkdir` and `/opt/aif/bin/` path (binary placed at `/aif-operator`).
 > 6. **UID 1000 kept as-is** but flagged for review. Industry standard for operators is 65532 (Kubebuilder/Operator SDK) or 65534 (Rancher/Flux). No code dependency on 1000 exists. Discussion tracked in `tmp/CICD-GAPS.md`.
+> 7. **`tools.go` excluded from container build.** The file has `//go:build tools` and only pins dev dependencies (golangci-lint, mockgen, ginkgo, etc.). Removing it from the Dockerfile avoids downloading ~170 unnecessary transitive dependencies during image builds.
+> 8. **Chart deployment command path aligned.** The chart template referenced `/opt/aif/bin/operator` but the Dockerfile places the binary at `/aif-operator`. Updated `charts/aif-operator/templates/deployment.yaml` to match. Discovered during in-cluster testing (CrashLoopBackOff).
+> 9. **Script injection hardened.** `${{ github.ref }}` moved to step-level `env:` block and referenced as `"$GH_REF"` to prevent GitHub Actions script injection. `${{ github.sha }}` replaced with pre-set `$GITHUB_SHA`.
+> 10. **No build matrix.** Spec called for a 5-image strategy matrix with `fail-fast: false`. Replaced with a single-job workflow since only one image exists. Matrix can be reintroduced if more SUSE-built images are added later.
+> 11. **No multi-arch manifest verification step.** Spec required `docker manifest inspect | jq` post-push. Removed — `docker/build-push-action` with `platforms:` guarantees multi-arch manifests, and the verification step would need separate GHCR auth setup. Standard practice in Rancher ecosystem workflows.
+> 12. **SHA-pinned GitHub Actions.** Spec used floating tags (`@v3`, `@v5`). Implementation pins to full commit SHAs with version comments (e.g., `@34e1148... # v4`) for supply-chain security.
+> 13. **`docker/metadata-action` for OCI labels.** Not in the original spec. Adds standard OCI labels (source, revision, created) to images automatically.
+> 14. **Pre-release tag logic.** Tags containing `-` (e.g., `0.2.0-rc1`) skip the `latest` tag. Only stable versions get tagged `latest`.
+> 15. **`Dockerfile.dockerignore`** (BuildKit per-Dockerfile convention) instead of root `.dockerignore`. Supports future per-component ignore files.
 
 ---
 
