@@ -221,11 +221,11 @@ func walkValuesNode(node any, visit func(string) string, depth int) {
 				case string:
 					n[k] = visit(iv)
 				case map[string]any:
-					if rs, ok := iv["repository"].(string); ok {
-						iv["repository"] = visit(rs)
+					if repo, ok := iv["repository"].(string); ok {
+						iv["repository"] = visit(repo)
 					}
-					if rs, ok := iv["registry"].(string); ok {
-						iv["registry"] = visit(rs)
+					if reg, ok := iv["registry"].(string); ok {
+						iv["registry"] = visit(reg)
 					}
 				}
 				// Non-string, non-map image values: leave unchanged.
