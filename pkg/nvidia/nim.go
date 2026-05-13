@@ -44,8 +44,8 @@ func (d *deployerImpl) snapshot() EngineSettings {
 }
 
 // GenerateValues is implemented in Task 5. Currently returns
-// ErrNotImplemented so the Deployer interface compiles before the
-// formula logic lands.
+// ErrInvalidRequest as a placeholder so the file compiles after
+// ErrNotImplemented was removed in errors.go.
 func (d *deployerImpl) GenerateValues(_ context.Context, _ GenerateRequest) (map[string]any, error) {
-	return nil, ErrNotImplemented
+	return nil, ErrInvalidRequest
 }
