@@ -28,7 +28,7 @@ spec:
           image: {{ include "aif-operator.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /opt/aif/bin/operator
+            - /aif-operator
           args:
             - --log-level={{ .Values.operator.logLevel }}
             - --log-format={{ .Values.operator.logFormat }}
