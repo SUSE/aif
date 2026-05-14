@@ -45,8 +45,8 @@
         </button>
         <button
           class="btn role-primary"
-          :disabled="!canConfirm || saving"
-          @click="onConfirm"
+          disabled
+          :title="t('aif.pages.apps.dialog.notYetAvailable')"
         >
           <i v-if="saving" class="icon icon-spinner icon-spin" />
           {{ t('aif.pages.apps.dialog.confirm') }}
@@ -57,7 +57,7 @@
 </template>
 
 <script>
-import { defineComponent, ref, computed, onMounted, inject, getCurrentInstance } from 'vue';
+import { defineComponent, ref, computed, inject, getCurrentInstance } from 'vue';
 import ModalWithCard from '@shell/components/ModalWithCard';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import LabeledInput from '@components/Form/LabeledInput/LabeledInput.vue';
@@ -169,17 +169,7 @@ export default defineComponent({
       }
     };
 
-    onMounted(async () => {
-      try {
-        const allBundles = await store.dispatch('aif/findAll', { type: CRD_TYPES.BUNDLE });
-
-        draftBundles.value = (allBundles || []).filter(
-          (b) => !b.status?.phase || b.status.phase === 'Draft'
-        );
-      } catch {
-        draftBundles.value = [];
-      }
-    });
+    // Bundle store queries disabled until Bundle CRD integration is wired (P3-x stories)
 
     return {
       mode,

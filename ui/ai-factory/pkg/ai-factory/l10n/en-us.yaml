@@ -63,6 +63,7 @@ aif:
         newBundleName: 'Bundle name'
         cancel: 'Cancel'
         confirm: 'Add'
+        notYetAvailable: 'Bundle workflow not yet available'
         success: 'Added {app} to bundle {bundle}'
         errorAdd: 'Failed to add app to bundle'
     blueprints:
