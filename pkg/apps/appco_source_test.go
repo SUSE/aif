@@ -54,6 +54,7 @@ func sampleCatalogApps() []source_collection.CatalogApp {
 			ChartRef:      "oci://dp.apps.rancher.io/charts/ollama:0.4.1",
 			LatestVersion: "0.4.1",
 			Source:        "api",
+			LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
 		},
 		{
 			ID:            "milvus",
@@ -64,6 +65,7 @@ func sampleCatalogApps() []source_collection.CatalogApp {
 			ChartRef:      "oci://dp.apps.rancher.io/charts/milvus:2.4.0",
 			LatestVersion: "2.4.0",
 			Source:        "api",
+			LastUpdatedAt: "2026-03-15T10:00:00Z",
 		},
 	}
 }
@@ -391,6 +393,58 @@ func TestAppCoSource_Refresh_ShortCircuitsOnNotConfigured(t *testing.T) {
 		if a.ReferenceBlueprint {
 			t.Errorf("%s: expected ReferenceBlueprint=false when not configured", a.ID)
 		}
+	}
+}
+
+// --- Behavior: LastUpdatedAt mapping ---
+
+func TestAppCoSource_Refresh_MapsLastUpdatedAt(t *testing.T) {
+	upstream := []source_collection.CatalogApp{
+		{
+			ID:            "ollama",
+			DisplayName:   "Ollama",
+			Publisher:     "Ollama Inc",
+			LatestVersion: "0.4.1",
+			ChartRef:      "oci://dp.apps.rancher.io/charts/ollama:0.4.1",
+			LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
+		},
+	}
+	c := &fakeAppCoClient{listResult: upstream}
+	s := NewAppCoSource(c, &fakeAppcoAnnotationReader{}, discardLogger(), time.Minute)
+	if err := s.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	apps, _ := s.List(context.Background())
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+	a := apps[0]
+	if a.LastUpdatedAt == nil {
+		t.Fatal("expected LastUpdatedAt to be non-nil")
+	}
+	if a.LastUpdatedAt.Year() != 2026 || a.LastUpdatedAt.Month() != time.April || a.LastUpdatedAt.Day() != 30 {
+		t.Errorf("unexpected LastUpdatedAt: %v", a.LastUpdatedAt)
+	}
+}
+
+func TestAppCoSource_Refresh_LastUpdatedAt_NilWhenEmpty(t *testing.T) {
+	upstream := []source_collection.CatalogApp{
+		{
+			ID:            "milvus",
+			DisplayName:   "Milvus",
+			Publisher:     "Zilliz",
+			LatestVersion: "2.4.0",
+			ChartRef:      "oci://dp.apps.rancher.io/charts/milvus:2.4.0",
+		},
+	}
+	c := &fakeAppCoClient{listResult: upstream}
+	s := NewAppCoSource(c, &fakeAppcoAnnotationReader{}, discardLogger(), time.Minute)
+	if err := s.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	apps, _ := s.List(context.Background())
+	if apps[0].LastUpdatedAt != nil {
+		t.Errorf("expected LastUpdatedAt=nil when empty, got %v", apps[0].LastUpdatedAt)
 	}
 }
 

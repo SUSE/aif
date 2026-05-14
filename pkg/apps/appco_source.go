@@ -149,16 +149,17 @@ func translateCatalogApps(upstream []source_collection.CatalogApp) []App {
 	out := make([]App, 0, len(upstream))
 	for _, u := range upstream {
 		out = append(out, App{
-			ID:          "suse." + u.ID + ":" + u.LatestVersion,
-			Name:        u.ID,
-			DisplayName: u.DisplayName,
-			Description: u.Description,
-			Publisher:   u.Publisher,
-			Version:     u.LatestVersion,
-			Source:      "suse",
-			AssetType:   "chart",
-			Categories:  append([]string(nil), u.Categories...),
-			ChartRef:    parseAppCoChartRef(u),
+			ID:            "suse." + u.ID + ":" + u.LatestVersion,
+			Name:          u.ID,
+			DisplayName:   u.DisplayName,
+			Description:   u.Description,
+			Publisher:     u.Publisher,
+			Version:       u.LatestVersion,
+			Source:        "suse",
+			AssetType:     "chart",
+			Categories:    append([]string(nil), u.Categories...),
+			ChartRef:      parseAppCoChartRef(u),
+			LastUpdatedAt: parseTimePtr(u.LastUpdatedAt),
 		})
 	}
 	return out

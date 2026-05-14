@@ -83,7 +83,6 @@ type SourceStatus struct {
 	EntryCount    int
 }
 
-//nolint:unused // used by source adapters in subsequent tasks
 func parseTimePtr(s string) *time.Time {
 	if s == "" {
 		return nil
