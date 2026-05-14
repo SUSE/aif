@@ -103,7 +103,7 @@ Phases 2 and 3 can start as soon as Phase 1 begins. Phase 6 can start once Phase
 | 6     | P6-0 ‖ P6-1; then P6-2 ‖ P6-3; then P6-4 ‖ P6-5 ‖ P6-6; then P6-7 ‖ P6-8 ‖ P6-9 ‖ P6-10 | UI-internal chain only |
 | 7     | All five (P7-1..P7-5) parallel | Each only needs its Phase 0 prereq |
 | 8     | P8-1 ‖ P8-2 ‖ P8-3 ‖ P8-6; P8-4 ‖ P8-5 | P8-6 needs Phase 6 done |
-| 9     | P9-1 ‖ P9-2 ‖ P9-3 ‖ P9-4 ‖ P9-6 ‖ P9-7 | P9-5 last (final polish); P9-6 needs P9-1, P9-2, P0-6, P0-7; P9-7 needs P9-6, P5-7 |
+| 9     | P9-1 ‖ P9-1a ‖ P9-1b ‖ P9-1c ‖ P9-2 ‖ P9-3 ‖ P9-4 ‖ P9-6 ‖ P9-7 | P9-1a needs P6-1; P9-1b needs P9-1 + P9-1a; P9-1c needs P9-1 + P9-1a; P9-5 last (final polish); P9-6 needs P9-1, P9-2, P0-6, P0-7; P9-7 needs P9-6, P5-7 |
 
 A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on UI/DevOps, with Tests + Docs interleaved. A 4-agent fleet should saturate Phase 1 (multiple parallel controllers) and Phase 7 (all 5 parallel) easily.
 
@@ -2919,6 +2919,77 @@ hack/e2e-smoke.sh   # runs locally against a kind cluster; same script the workf
 # Verify multi-arch manifests:
 docker manifest inspect ghcr.io/suse/aif-operator:0.1.0 | jq '.manifests[].platform'
 ```
+
+---
+
+**ID:** P9-1a
+**Epic:** UI Extension Release Pipeline
+**Story:** As a DevOps engineer, I want a CI workflow that builds and publishes the AIF UI extension on tag push, so that the UI has the same release automation as the operator.
+**Owner Hint:** DevOps
+**Effort:** M
+**Depends On:** P9-1 (pattern), P6-1 (UI extension scaffold)
+**Parallelizable With:** P9-1b, P9-2, P9-3
+**Done When:** `.github/workflows/ui-release.yml` builds and publishes the AIF UI extension on every git tag matching `aif-ui-v*`; the extension is published as a multi-arch OCI container image to `ghcr.io/suse/aif-ui:{version}` and extension assets to the `gh-pages` branch.
+
+**Acceptance Criteria:**
+- [ ] `.github/workflows/ui-release.yml` created
+- [ ] **Workflow trigger** gated to tag push: `on: push: tags: ['aif-ui-v*']`
+- [ ] **No Dockerfile** — uses Rancher's `yarn publish-pkgs` to build the container image (same pattern as `suse-ai-lifecycle-manager`)
+- [ ] **Multi-arch build** using native arch runners (`ubuntu-24.04` for amd64, `ubuntu-24.04-arm` for arm64) — no QEMU emulation
+- [ ] **Multi-arch manifest** created via `docker buildx imagetools create` combining per-arch images
+- [ ] **OCI container image** pushed to `ghcr.io/suse/aif-ui:{version}`
+- [ ] **gh-pages branch** publish with assets, charts, extensions, and `index.yaml` for GitHub Pages hosting (release tags only, not dev)
+- [ ] **GHCR auth** via `GITHUB_TOKEN` with `packages: write`
+- [ ] **SHA-pinned Actions** following P9-1 conventions
+- [ ] **Pre-release tag logic**: tags containing `-` skip the `latest` tag and skip gh-pages publish
+
+---
+
+**ID:** P9-1b
+**Epic:** Helm Charts Release Pipeline
+**Story:** As a platform engineer, I want all Helm charts published to an OCI registry as part of the release process, so that users can install AIF components via `helm pull` from GHCR.
+**Owner Hint:** DevOps
+**Effort:** M
+**Depends On:** P9-1, P9-1a, P0-3
+**Parallelizable With:** P9-2, P9-3
+**Done When:** All 5 Helm charts are published to `oci://ghcr.io/suse/charts/` via CI; operator chart published on `aif-operator-v*` tags; UI chart published on `aif-ui-v*` tags; infrastructure charts published on `aif-infra-charts-v*` tags; all charts available via `helm pull oci://ghcr.io/suse/charts/<name> --version <version>`.
+
+**Acceptance Criteria:**
+- [ ] **Operator chart** (`aif-operator`): extend `operator-release.yml` to `helm package charts/aif-operator` + `helm push` to `oci://ghcr.io/suse/charts/` on the same `aif-operator-v*` tag
+- [ ] **UI chart** (`aif-ui`): extend `ui-release.yml` (P9-1a) to `helm package charts/aif-ui` + `helm push` to `oci://ghcr.io/suse/charts/` on the same `aif-ui-v*` tag
+- [ ] **Infrastructure charts** (`nim-llm`, `nim-vlm`, `generic-container`): new `.github/workflows/infra-charts-release.yml` triggered by `aif-infra-charts-v*` tags; packages and pushes all 3 charts
+- [ ] **Chart version** sourced from each chart's `Chart.yaml` (not from the git tag)
+- [ ] **Chart.yaml `appVersion`** updated to match the release version before packaging (operator and UI charts)
+- [ ] **GHCR auth** via `GITHUB_TOKEN` with `packages: write`
+- [ ] **SHA-pinned Actions** following P9-1 conventions
+- [ ] **Verification**: `helm show chart oci://ghcr.io/suse/charts/<name> --version <version>` succeeds for each published chart
+
+> **Note:** The infrastructure charts grouping (`aif-infra-charts-v*` shared tag for nim-llm, nim-vlm, generic-container) is provisional and may be revised to per-chart tags depending on team decision.
+
+---
+
+**ID:** P9-1c
+**Epic:** Dev Container Builds
+**Story:** As a developer, I want container images built and pushed automatically during the development cycle, tagged to the upcoming release version, so that I can test incremental changes in a cluster without cutting a release.
+**Owner Hint:** DevOps
+**Effort:** S
+**Depends On:** P9-1, P9-1a
+**Parallelizable With:** P9-1b, P9-2
+**Done When:** A dev build workflow produces `amd64`-only operator and UI extension images tagged `<version>-dev.<identifier>` to GHCR; images are not tagged `latest` and do not create git tags, GitHub releases, or gh-pages updates.
+
+**Acceptance Criteria:**
+- [ ] `.github/workflows/dev-build.yml` created
+- [ ] **Builds both operator and UI extension** images to GHCR
+- [ ] **amd64-only** build (no QEMU, faster CI); multi-arch is release-only (P9-1, P9-1a)
+- [ ] **No `latest` tag** — dev images must not overwrite release tags
+- [ ] **No git tags, no GitHub releases, no gh-pages publish** — container images only
+- [ ] **GHCR auth** via `GITHUB_TOKEN` with `packages: write`
+- [ ] **SHA-pinned Actions** following P9-1 conventions
+
+> **Open decisions (to be resolved in PR review):**
+>
+> 1. **Build trigger flow:** Should dev images be built on PR open/update (tested before merge, deleted after) or on push to main (tested after merge, persistent)? See `tmp/dev-build-flows.md` for comparison diagrams.
+> 2. **Version source:** Should the upcoming version be read from a `VERSION` file at repo root, from `package.json` (UI), from `Chart.yaml`, or from another source? Operator and UI may use different version sources. To be aligned with the team.
 
 ---
 
