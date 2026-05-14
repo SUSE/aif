@@ -228,6 +228,30 @@ func TestGenerateValues_ZeroReplicas_Rejected(t *testing.T) {
 	}
 }
 
+// Entry.Type must be one of the documented constants. Empty or unknown
+// values are rejected to prevent silent fall-through to LLM memory sizing
+// (e.g., a JSON caller passing "vlm-llama" intending VLM → 32GiB pod →
+// OOM under load).
+func TestGenerateValues_UnknownType_Rejected(t *testing.T) {
+	cases := map[string]Type{
+		"empty":   "",
+		"unknown": "vlm-llama",
+	}
+	for name, typ := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := newTestDeployer(t)
+			_, err := d.GenerateValues(context.Background(), GenerateRequest{
+				Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: typ},
+				Replicas: 1,
+				GPUs:     ptrInt32(1),
+			})
+			if !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("expected ErrInvalidRequest for Type=%q, got %v", typ, err)
+			}
+		})
+	}
+}
+
 // Default registry path: never called UpdateSettings → image.repository
 // starts with "registry.suse.com/" (the in-code default per §4.5).
 func TestGenerateValues_DefaultRegistry_WhenSettingsEmpty(t *testing.T) {
