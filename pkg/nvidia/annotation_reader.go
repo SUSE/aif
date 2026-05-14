@@ -17,14 +17,17 @@ type annotationCacheEntry struct {
 	annotations map[string]string
 }
 
-// ChartAnnotations fetches the chart's OCI manifest, finds the Helm
-// chart-content layer, pulls the layer, extracts Chart.yaml from the
-// tarball, and returns its annotations map. Per-chart digest cache
-// short-circuits the GET when the manifest hasn't changed.
+// ChartAnnotations fetches the chart's OCI manifest and the chart
+// tarball layer, then merges annotations from both sources: OCI
+// manifest-level annotations (set by `helm push`, e.g.
+// org.opencontainers.image.created) and Chart.yaml annotations (set
+// by the chart author, e.g. ai.suse.com/role). Chart.yaml annotations
+// take precedence on key collisions. Per-chart digest cache
+// short-circuits when the manifest hasn't changed.
 //
-// Returns (nil, nil) when the chart has no annotations block — common
-// for non-Reference-Blueprint charts. Returns ErrChartNotFound on 404,
-// ErrUnauthorized on 401/403, ErrUnreachable on transport errors.
+// Returns (nil, nil) when neither source has annotations. Returns
+// ErrChartNotFound on 404, ErrUnauthorized on 401/403, ErrUnreachable
+// on transport errors.
 func (d *discoveryImpl) ChartAnnotations(ctx context.Context, chart, version string) (map[string]string, error) {
 	d.mu.RLock()
 	client := d.client
@@ -52,6 +55,12 @@ func (d *discoveryImpl) ChartAnnotations(ctx context.Context, chart, version str
 	if err != nil {
 		return nil, err
 	}
+
+	manifestAnns, err := helm_oci.ExtractManifestAnnotations(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("nvidia: %w", err)
+	}
+
 	layerDigest, err := helm_oci.FindChartLayerDigest(manifest)
 	if err != nil {
 		return nil, fmt.Errorf("nvidia: %w", err)
@@ -60,9 +69,24 @@ func (d *discoveryImpl) ChartAnnotations(ctx context.Context, chart, version str
 	if err != nil {
 		return nil, err
 	}
-	annotations, err := helm_oci.ExtractChartYamlAnnotations(bytes.NewReader(body))
+	chartAnns, err := helm_oci.ExtractChartYamlAnnotations(bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("nvidia: %w", err)
+	}
+
+	if len(manifestAnns) == 0 && len(chartAnns) == 0 {
+		d.mu.Lock()
+		d.annCache[chart] = annotationCacheEntry{digest: digest}
+		d.mu.Unlock()
+		return nil, nil
+	}
+
+	annotations := make(map[string]string, len(manifestAnns)+len(chartAnns))
+	for k, v := range manifestAnns {
+		annotations[k] = v
+	}
+	for k, v := range chartAnns {
+		annotations[k] = v
 	}
 
 	d.mu.Lock()

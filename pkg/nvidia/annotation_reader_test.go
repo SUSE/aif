@@ -139,6 +139,141 @@ func TestAnnotationReader_404_ReturnsErrChartNotFound(t *testing.T) {
 	}
 }
 
+// helmOCIStubWithManifestAnns extends helmOCIStub to include manifest-level annotations.
+type helmOCIStubWithManifestAnns struct {
+	helmOCIStub
+	manifestAnnotations map[string]string
+}
+
+func (s *helmOCIStubWithManifestAnns) manifestBytes() []byte {
+	anns := "{"
+	i := 0
+	for k, v := range s.manifestAnnotations {
+		if i > 0 {
+			anns += ","
+		}
+		anns += fmt.Sprintf("%q:%q", k, v)
+		i++
+	}
+	anns += "}"
+	return []byte(fmt.Sprintf(`{
+		"schemaVersion": 2,
+		"layers": [
+			{ "mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "digest": %q, "size": %d }
+		],
+		"annotations": %s
+	}`, s.layerDigest(), len(s.layerBytes()), anns))
+}
+
+func (s *helmOCIStubWithManifestAnns) manifestDigest() string {
+	sum := sha256.Sum256(s.manifestBytes())
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func (s *helmOCIStubWithManifestAnns) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/manifests/"+s.version) && r.Method == http.MethodHead:
+		w.Header().Set("Docker-Content-Digest", s.manifestDigest())
+		w.WriteHeader(http.StatusOK)
+	case strings.HasSuffix(r.URL.Path, "/manifests/"+s.version) && r.Method == http.MethodGet:
+		w.Header().Set("Docker-Content-Digest", s.manifestDigest())
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		_, _ = w.Write(s.manifestBytes())
+	case strings.Contains(r.URL.Path, "/blobs/"+s.layerDigest()):
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(s.layerBytes())
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func TestAnnotationReader_MergesManifestAndChartYamlAnnotations(t *testing.T) {
+	stub := &helmOCIStubWithManifestAnns{
+		helmOCIStub: helmOCIStub{
+			chart:   "nim-llm",
+			version: "1.0.0",
+			chartYaml: `apiVersion: v2
+name: nim-llm
+annotations:
+  ai.suse.com/role: reference-blueprint
+`,
+		},
+		manifestAnnotations: map[string]string{
+			"org.opencontainers.image.created": "2026-03-04T10:05:02Z",
+			"org.opencontainers.image.title":   "nim-llm",
+		},
+	}
+	ts := httptest.NewServer(stub)
+	defer ts.Close()
+
+	d := readerWith(ts)
+	got, err := d.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["org.opencontainers.image.created"] != "2026-03-04T10:05:02Z" {
+		t.Errorf("manifest annotation missing: got %q", got["org.opencontainers.image.created"])
+	}
+	if got["ai.suse.com/role"] != "reference-blueprint" {
+		t.Errorf("chart.yaml annotation missing: got %q", got["ai.suse.com/role"])
+	}
+	if got["org.opencontainers.image.title"] != "nim-llm" {
+		t.Errorf("manifest title missing: got %q", got["org.opencontainers.image.title"])
+	}
+}
+
+func TestAnnotationReader_ChartYamlOverridesManifest(t *testing.T) {
+	stub := &helmOCIStubWithManifestAnns{
+		helmOCIStub: helmOCIStub{
+			chart:   "nim-llm",
+			version: "1.0.0",
+			chartYaml: `apiVersion: v2
+name: nim-llm
+annotations:
+  license: Apache-2.0
+`,
+		},
+		manifestAnnotations: map[string]string{
+			"license": "MIT",
+		},
+	}
+	ts := httptest.NewServer(stub)
+	defer ts.Close()
+
+	d := readerWith(ts)
+	got, err := d.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["license"] != "Apache-2.0" {
+		t.Errorf("Chart.yaml should override manifest: got %q, want %q", got["license"], "Apache-2.0")
+	}
+}
+
+func TestAnnotationReader_ManifestAnnotationsOnly(t *testing.T) {
+	stub := &helmOCIStubWithManifestAnns{
+		helmOCIStub: helmOCIStub{
+			chart:     "nim-llm",
+			version:   "1.0.0",
+			chartYaml: "apiVersion: v2\nname: nim-llm\n",
+		},
+		manifestAnnotations: map[string]string{
+			"org.opencontainers.image.created": "2026-03-04T10:05:02Z",
+		},
+	}
+	ts := httptest.NewServer(stub)
+	defer ts.Close()
+
+	d := readerWith(ts)
+	got, err := d.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["org.opencontainers.image.created"] != "2026-03-04T10:05:02Z" {
+		t.Errorf("expected manifest annotation, got %v", got)
+	}
+}
+
 func TestAnnotationReader_NoAnnotationsBlock_ReturnsNilNil(t *testing.T) {
 	stub := &helmOCIStub{
 		chart:     "plain-chart",

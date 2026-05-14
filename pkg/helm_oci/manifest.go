@@ -13,7 +13,8 @@ const chartContentMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+gz
 // Other fields (schemaVersion, config, mediaType, annotations) are
 // intentionally ignored — we only need the chart-content layer's digest.
 type ociManifest struct {
-	Layers []ociLayer `json:"layers"`
+	Layers      []ociLayer        `json:"layers"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 type ociLayer struct {
@@ -36,4 +37,17 @@ func FindChartLayerDigest(manifest []byte) (string, error) {
 		}
 	}
 	return "", ErrChartLayerMissing
+}
+
+// ExtractManifestAnnotations parses an OCI manifest and returns its
+// top-level annotations map. Returns (nil, nil) when the manifest has
+// no annotations. These are distinct from Chart.yaml annotations —
+// they are set by `helm push` and include standard OCI fields like
+// org.opencontainers.image.created.
+func ExtractManifestAnnotations(manifest []byte) (map[string]string, error) {
+	var m ociManifest
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrManifestMalformed, err)
+	}
+	return m.Annotations, nil
 }
