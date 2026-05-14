@@ -143,6 +143,16 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
   - Define sentinel errors per package (`pkg/<x>/errors.go`) when callers need to distinguish failure modes (e.g. `ErrSecretNotFound`, `ErrBundleNotFound`). Never let consumers `strings.Contains` on error messages.
 - **No print statements:** Never use `fmt.Println`, `log.Println`. Use `slog` or return errors.
 - **Interfaces:** Define in `interface.go` per package per the layering rule above. Concrete implementations in separate files. Tests use fakes or mocks, never real K8s clients.
+- **Where ports live.** By default, ports live with their consumers — the consuming package defines the interface narrowly tailored to what it needs, and the provider exports a struct that satisfies it. This is the standard Go-community refinement of hexagonal architecture and prevents speculative provider-defined interfaces.
+
+  **Exemption: bounded-context ports.** A port models a *domain concept* worth its own bounded context — and therefore deserves its own package — when at least one of:
+    1. **Multiple consumers exist or are imminent** (not speculatively, but with a documented next consumer in the project plan).
+    2. **The domain has rich invariants/value objects beyond the port itself** (the package would carry meaningful types and rules, not just one interface and one struct).
+    3. **The port crosses a clear conceptual boundary** that the codebase already recognizes (e.g., the boundary mirrors a bounded context already factored as a package elsewhere).
+
+  When the exemption applies, the port lives in its own package (e.g., `pkg/<domain>/`), the producer and consumer both import it, and the bus/orchestrator implementation lives at the wiring layer (`internal/manager/` or `cmd/operator/`).
+
+  **Default to the consumer-defined rule.** When in doubt, start with consumer-defined; extract to a domain package when the second consumer arrives or when the domain's value-object hygiene grows beyond the port itself. Don't speculate.
 - **Context:** Every I/O function accepts `context.Context` as first argument. Respect cancellation.
 - **Condition constants:** Import condition Type/Reason from `pkg/conditions/types.go`. Never use raw strings in controllers. CI enforces this with grep guards.
 - **Condition setting:** Use `conditions.Set(&status.Conditions, cond)` (built on `meta.SetStatusCondition`). Do not hand-roll condition merging in controllers; `meta.SetStatusCondition` correctly preserves `LastTransitionTime` when status hasn't changed.
