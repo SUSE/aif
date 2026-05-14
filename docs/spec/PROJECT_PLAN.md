@@ -1734,6 +1734,22 @@ grep 'nvcr.io' pkg/nvidia/nim.go && echo FAIL || echo PASS
 >    source_collection.Client pattern. `ARCHITECTURE.md §6.2 NIM discovery
 >    + deployer interfaces` should be updated to reflect the new method on
 >    `Deployer`.
+>
+> 5. **AC naming is stale post-implementation.** Two stale references
+>    inside the AC body don't match the shipped code:
+>    a. The validation block runs
+>       `go test ./pkg/nvidia/ -run TestGenerateNIMValues -v`, but the
+>       implementation correctly named the function `GenerateValues`
+>       (matching the `Deployer.GenerateValues` interface from §6.2). All
+>       shipped tests are `TestGenerateValues_*`. The validation `-run`
+>       regex (and the `pkg/nvidia/nim.go::GenerateNIMValues` reference
+>       in the first AC bullet) should be updated to the interface name.
+>    b. The "Model name sanitization" AC bullet references
+>       `pkg/nvidia/discovery.LookupModel`, but the `Discovery` interface
+>       method (`pkg/nvidia/interface.go`) is
+>       `Get(ctx, id) (NIMEntry, error)`. Existence enforcement is
+>       correctly deferred to `Discovery.Get` (returns `ErrNIMNotFound`);
+>       the AC bullet should be re-worded to match the shipped name.
 
 ---
 
