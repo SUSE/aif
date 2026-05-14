@@ -11,9 +11,9 @@ import (
 // §4.4 constants. Unexported — these are implementation details of the
 // formula, not a public knob.
 const (
-	cpuPerGPU           = 8     // cores per GPU (LLM and VLM)
-	memGiPerGPU_LLM     = 32    // GiB per GPU for LLM (memoryPerGPU_LLM = "32Gi")
-	memGiPerGPU_VLM     = 64    // GiB per GPU for VLM (memoryPerGPU_VLM = "64Gi")
+	cpuPerGPU           = 8  // cores per GPU (LLM and VLM)
+	memGiPerGPULLM      = 32 // GiB per GPU for LLM (memoryPerGPU_LLM = "32Gi")
+	memGiPerGPUVLM      = 64 // GiB per GPU for VLM (memoryPerGPU_VLM = "64Gi")
 	suseRegistryDefault = "registry.suse.com"
 	nimImagePathPrefix  = "ai/containers/nvidia"
 )
@@ -88,9 +88,9 @@ func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (m
 		return nil, err
 	}
 
-	memGi := memGiPerGPU_LLM
+	memGi := memGiPerGPULLM
 	if req.Entry.Type == TypeVLM {
-		memGi = memGiPerGPU_VLM
+		memGi = memGiPerGPUVLM
 	}
 
 	s := d.snapshot()
@@ -99,8 +99,6 @@ func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (m
 		registry = suseRegistryDefault
 	}
 
-	resources := buildResourceMap(gpuCount, memGi)
-
 	return map[string]any{
 		"replicas": req.Replicas,
 		"image": map[string]any{
@@ -108,8 +106,11 @@ func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (m
 			"tag":        req.Entry.Version,
 		},
 		"resources": map[string]any{
-			"requests": resources,
-			"limits":   buildResourceMap(gpuCount, memGi), // separate map so caller mutations don't alias requests
+			// Two distinct buildResourceMap calls so caller mutations
+			// on requests don't alias limits (Guaranteed QoS pairs the
+			// two maps deep-equal but they MUST be separate objects).
+			"requests": buildResourceMap(gpuCount, memGi),
+			"limits":   buildResourceMap(gpuCount, memGi),
 		},
 		"tolerations": []any{
 			map[string]any{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
