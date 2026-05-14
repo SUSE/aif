@@ -228,6 +228,18 @@ func TestGenerateValues_ZeroReplicas_Rejected(t *testing.T) {
 	}
 }
 
+func TestGenerateValues_NegativeReplicas_Rejected(t *testing.T) {
+	d := newTestDeployer(t)
+	_, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: -1,
+		GPUs:     ptrInt32(1),
+	})
+	if !errors.Is(err, ErrInvalidReplicas) {
+		t.Fatalf("expected ErrInvalidReplicas, got %v", err)
+	}
+}
+
 // Entry.Type must be one of the documented constants. Empty or unknown
 // values are rejected to prevent silent fall-through to LLM memory sizing
 // (e.g., a JSON caller passing "vlm-llama" intending VLM → 32GiB pod →
