@@ -3,8 +3,12 @@
     <Banner
       v-if="loadError"
       color="error"
-      :label="t('aif.pages.settings.errorLoading')"
-    />
+    >
+      {{ t('aif.pages.settings.errors.settingsNotFound') }}
+    </Banner>
+    <div v-else-if="!value" class="loading">
+      Loading Settings...
+    </div>
     <CruResource
       v-else
       :resource="value"
@@ -115,7 +119,7 @@ export default {
 
   async fetch() {
     try {
-      this.value = await this.$store.dispatch('ai-factory/find', {
+      this.value = await this.$store.dispatch('management/find', {
         type: 'ai.suse.com.settings',
         id:   'aif/aif-settings'
       });

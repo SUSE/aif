@@ -36,7 +36,7 @@ export function init($plugin: IPlugin, store: any): void {
 
   product({
     icon:                'ai-factory',
-    inStore:             'aif',
+    inStore:             'management',
     isMultiClusterApp:   true,
     showClusterSwitcher: false,
     weight:              100,

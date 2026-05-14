@@ -1940,21 +1940,11 @@ export function init($plugin: IPlugin, store: any): void {
 
   $plugin.addProduct(require('./config/aif-product'));
 
-  // Connect the Steve store to the Rancher management cluster ('local').
-  // AIF is a hub-model product — all CRDs live on the management cluster;
-  // there is no per-downstream-cluster store switching.
-  $plugin.addDashboardStore(
-    'aif',
-    SteveFactory('local', null),
-    { namespace: 'aif', isClusterStore: true },
-    steveStoreInit
-  );
-
-  $plugin.addDashboardStore(
-    'aif-common',
-    require('./store/aif-common').default.specifics,
-    require('./store/aif-common').default.config
-  );
+  // Note: AI Factory uses the 'management' store for all CRD resources
+  // (Bundles, Blueprints, Workloads, Settings). The management store
+  // auto-discovers all CRDs via Steve API. No custom store needed.
+  // If custom actions/getters are needed in the future, add a custom
+  // store via addDashboardStore() here.
 
   $plugin.addRoutes(require('./routing/aif-routing').default);
   $plugin.addL10n('en-us', require('./l10n/en-us.yaml'));
@@ -1972,7 +1962,7 @@ export function init(store, $plugin) {
     $plugin.DSL(store, AIF);
 
   product({
-    inStore:             'aif',
+    inStore:             'management',  // Use management store for CRD auto-discovery
     icon:                'ai-factory',
     isMultiClusterApp:   true,
     showClusterSwitcher: false,  // hub model — no cluster switching inside AIF
@@ -2082,14 +2072,9 @@ These follow the standard `@rancher/shell` patterns documented by Harvester. See
 
 ### 7.6 Store Architecture
 
-**`store/index.ts`** — `SteveFactory` store for AIF CRDs (Bundle, Blueprint, Workload, Settings). Talks to the Kubernetes API server via the Rancher Steve proxy.
+**`management` store** — All AIF CRD resources (Bundle, Blueprint, Workload, Settings) use Rancher's built-in `management` store. The management store auto-discovers all CRDs via Steve API and provides standard CRUD operations. No custom store is needed for basic CRD operations.
 
-**`store/aif-common.js`** — Vuex store for non-CRD state:
-- Catalog Apps list (from `/api/v1/apps`)
-- NIM models (from `/api/v1/nvidia/nims`)
-- Platform settings
-- Sync job status
-- Pending review queue (from `/api/v1/bundles/pending-review`)
+**Future custom store** — If custom actions, getters, or mutations are needed (e.g., bulk operations, computed cross-resource properties, optimistic updates), add a custom store via `addDashboardStore()` in `index.ts`. For now, the management store handles all requirements.
 
 ### 7.7 i18n Rules
 
