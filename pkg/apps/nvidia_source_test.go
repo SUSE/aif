@@ -459,3 +459,58 @@ func TestNVIDIASource_Refresh_ShortCircuitsOnNotConfigured(t *testing.T) {
 		}
 	}
 }
+
+func TestNVIDIASource_Refresh_SetsLastUpdatedAtFromAnnotation(t *testing.T) {
+	disc := &fakeNVIDIADiscovery{
+		indexResult: []nvidia.NIMEntry{
+			{ID: "nim-llm:1.0.0", Chart: "nim-llm", Version: "1.0.0", DisplayName: "nim-llm",
+				Type: nvidia.TypeLLM, ChartRef: "oci://example/ai/charts/nvidia/nim-llm:1.0.0"},
+		},
+	}
+	annReader := &fakeNvidiaAnnotationReader{
+		annotations: map[string]map[string]string{
+			"nim-llm:1.0.0": {
+				"org.opencontainers.image.created": "2026-03-04T10:05:02Z",
+			},
+		},
+	}
+	src := NewNVIDIASource(disc, annReader, discardLogger(), time.Minute)
+	if err := src.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	apps, _ := src.List(context.Background())
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+	a := apps[0]
+	if a.LastUpdatedAt == nil {
+		t.Fatal("expected LastUpdatedAt to be non-nil")
+	}
+	if a.LastUpdatedAt.Year() != 2026 || a.LastUpdatedAt.Month() != time.March || a.LastUpdatedAt.Day() != 4 {
+		t.Errorf("unexpected LastUpdatedAt: %v", a.LastUpdatedAt)
+	}
+}
+
+func TestNVIDIASource_Refresh_LastUpdatedAt_NilWhenAnnotationAbsent(t *testing.T) {
+	disc := &fakeNVIDIADiscovery{
+		indexResult: []nvidia.NIMEntry{
+			{ID: "nim-llm:1.0.0", Chart: "nim-llm", Version: "1.0.0",
+				ChartRef: "oci://example/ai/charts/nvidia/nim-llm:1.0.0"},
+		},
+	}
+	annReader := &fakeNvidiaAnnotationReader{
+		annotations: map[string]map[string]string{
+			"nim-llm:1.0.0": {
+				"ai.suse.com/display-name": "Some NIM",
+			},
+		},
+	}
+	src := NewNVIDIASource(disc, annReader, discardLogger(), time.Minute)
+	if err := src.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	apps, _ := src.List(context.Background())
+	if apps[0].LastUpdatedAt != nil {
+		t.Errorf("expected LastUpdatedAt=nil when annotation absent, got %v", apps[0].LastUpdatedAt)
+	}
+}

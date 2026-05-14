@@ -225,6 +225,9 @@ func (n *NVIDIASource) enrichWithAnnotations(ctx context.Context, apps []App) {
 			if v, ok := ann["ai.suse.com/use-case"]; ok {
 				apps[i].UseCase = v
 			}
+			if v, ok := ann["org.opencontainers.image.created"]; ok {
+				apps[i].LastUpdatedAt = parseTimePtr(v)
+			}
 			return nil
 		})
 	}
