@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -96,7 +97,10 @@ func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (m
 	}
 
 	s := d.snapshot()
-	registry := s.RegistryEndpoint
+	// Strip any scheme (image refs are scheme-less) and trim a trailing
+	// slash so a misconfigured "https://harbor/" doesn't produce a
+	// malformed repository like "https://harbor//ai/...".
+	registry := strings.TrimRight(stripScheme(s.RegistryEndpoint), "/")
 	if registry == "" {
 		registry = suseRegistryDefault
 	}

@@ -301,6 +301,47 @@ func TestGenerateValues_OverridesRegistry_WhenSettingsSet(t *testing.T) {
 	}
 }
 
+// A trailing slash on RegistryEndpoint must not produce a double slash in
+// the resulting image repository (defends against operator misconfig in
+// Settings.spec.registryEndpoints.suseRegistry).
+func TestGenerateValues_NormalizesRegistryTrailingSlash(t *testing.T) {
+	d := newTestDeployer(t)
+	d.UpdateSettings(EngineSettings{RegistryEndpoint: "harbor.example.com/"})
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	repo := out["image"].(map[string]any)["repository"].(string)
+	want := "harbor.example.com/ai/containers/nvidia/nim-llm"
+	if repo != want {
+		t.Errorf("got %q, want %q", repo, want)
+	}
+}
+
+// A scheme prefix on RegistryEndpoint (https:// or http://) must be stripped
+// before concatenation; image references are scheme-less.
+func TestGenerateValues_NormalizesRegistryScheme(t *testing.T) {
+	d := newTestDeployer(t)
+	d.UpdateSettings(EngineSettings{RegistryEndpoint: "https://harbor.example.com"})
+	out, err := d.GenerateValues(context.Background(), GenerateRequest{
+		Entry:    NIMEntry{Chart: "nim-llm", Version: "1.0", Type: TypeLLM},
+		Replicas: 1,
+		GPUs:     ptrInt32(1),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	repo := out["image"].(map[string]any)["repository"].(string)
+	want := "harbor.example.com/ai/containers/nvidia/nim-llm"
+	if repo != want {
+		t.Errorf("got %q, want %q", repo, want)
+	}
+}
+
 // §4.4: model identifier is passed through as-is; slashes treated as
 // sub-paths under containers/nvidia/.
 func TestGenerateValues_ModelWithSlash_TreatedAsSubpath(t *testing.T) {
