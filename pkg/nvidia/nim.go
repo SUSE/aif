@@ -40,10 +40,16 @@ func NewDeployer(logger *slog.Logger) Deployer {
 }
 
 // UpdateSettings replaces the current settings snapshot. Sole writer.
+// Logs the resolved registry endpoint at Info so ops can confirm the
+// SettingsReconciler push landed (mirrors helm.engine.UpdateSettings).
 func (d *deployerImpl) UpdateSettings(s EngineSettings) {
 	d.mu.Lock()
 	d.settings = s
 	d.mu.Unlock()
+
+	d.logger.Info("nvidia deployer settings updated",
+		slog.String("component", "nvidia.deployer"),
+		slog.String("registry_endpoint", s.RegistryEndpoint))
 }
 
 // snapshot returns the current settings under a read lock. Callers MUST
