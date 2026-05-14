@@ -11,9 +11,9 @@ import (
 // §4.4 constants. Unexported — these are implementation details of the
 // formula, not a public knob.
 const (
-	cpuPerGPU           = 8  // cores per GPU (LLM and VLM)
-	memGiPerGPULLM      = 32 // GiB per GPU for LLM (memoryPerGPU_LLM = "32Gi")
-	memGiPerGPUVLM      = 64 // GiB per GPU for VLM (memoryPerGPU_VLM = "64Gi")
+	cpuPerGPU           = 8  // cores per GPU (LLM and VLM); spec: cpuPerGPU
+	memGiPerGPULLM      = 32 // GiB per GPU for LLM; spec: memoryPerGPU_LLM = "32Gi"
+	memGiPerGPUVLM      = 64 // GiB per GPU for VLM; spec: memoryPerGPU_VLM = "64Gi"
 	suseRegistryDefault = "registry.suse.com"
 	nimImagePathPrefix  = "ai/containers/nvidia"
 )
