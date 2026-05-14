@@ -2911,6 +2911,7 @@ docker manifest inspect ghcr.io/suse/aif-operator:0.1.0 | jq '.manifests[].platf
 > 13. **`docker/metadata-action` for OCI labels.** Not in the original spec. Adds standard OCI labels (source, revision, created) to images automatically.
 > 14. **Pre-release tag logic.** Tags containing `-` (e.g., `0.2.0-rc1`) skip the `latest` tag. Only stable versions get tagged `latest`.
 > 15. **`Dockerfile.dockerignore`** (BuildKit per-Dockerfile convention) instead of root `.dockerignore`. Supports future per-component ignore files.
+> 16. **P9-2 dependency note.** P9-2's spec references `build-and-sign.yml` for adding the cosign signing + SBOM steps. The actual workflow file is `operator-release.yml` (see deviation #2). P9-2 implementer should target that filename.
 
 ---
 
