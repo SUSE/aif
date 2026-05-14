@@ -2130,10 +2130,23 @@ kubectl get settings -n aif -o yaml | grep -A20 'spec:'
 >    chain that consumes them ships with P4-2's Workload deployer.
 >
 > 3. **`SettingsApplier` port lives in `internal/controller/`** per the
->    rule refinement landed in CLAUDE.md (commit `31d699f`). Single
->    consumer + thin domain → no exemption. Trigger for `pkg/settings/`
->    extraction is P3-8 preflight (consumer #2, reads
->    `imageRewrite` + `registryEndpoints` for air-gap-aware HEAD checks).
+>    refined "ports live with consumers" rule landed in CLAUDE.md
+>    (commit `31d699f`). The bounded-context exemption was considered
+>    and judged not to fire here:
+>    - Settings is a *control-plane configuration surface*, not a domain
+>      entity with aggregates / lifecycle / state machines. The pkg/<entity>/
+>      pattern in this codebase (pkg/blueprint, pkg/bundle, pkg/workload)
+>      applies to domain entities; Settings doesn't pattern-match.
+>    - The "domain" today is one pure translation function plus a
+>      defaults-applied snapshot — not the rich invariants/value-object
+>      hygiene criterion 2 asks for.
+>    - SettingsApplier has exactly one consumer (the SettingsReconciler);
+>      criterion 1 (multiple consumers, imminent or actual) doesn't fire.
+>    Trigger for re-evaluating extraction: P3-8 preflight (consumer #2,
+>    reads `imageRewrite` + `registryEndpoints` for air-gap-aware HEAD
+>    checks). At that point the domain has two consumers AND likely grows
+>    air-gap-aware image-ref helpers worth value-object treatment — both
+>    criteria 1 and 2 fire and `pkg/settings/` extraction earns its keep.
 >
 > 4. **`BlueprintClassification` overrides parsed but not pushed.** CR
 >    field exists per §4.5; snapshot stores it (`BlueprintForceReference`,
@@ -2157,6 +2170,27 @@ kubectl get settings -n aif -o yaml | grep -A20 'spec:'
 >    (tri-state nullable). §4.5 should be updated to drop the
 >    empty-string-disables wording in the `RegistryEndpoints` row, OR
 >    the CRD should adopt the pointer type — manager's call.
+>
+> 6. **§8.2.1 step 4 (post-push background `Refresh`) deferred for
+>    encapsulation.** The spec's example calls `nvidiaDiscovery.Refresh`
+>    and `appCollClient.Refresh` from the reconciler/bus inside a
+>    goroutine after `UpdateSettings` returns. Implementing this in
+>    `engineBus.Apply` would couple the bus to engine-specific methods
+>    that go beyond the `UpdateSettings` port — `Refresh` exists on
+>    `nvidia.Discovery` but not on `helm.Engine`/`nvidia.Deployer`/
+>    `source_collection.Client` — accumulating asymmetric per-engine
+>    knowledge that hexagonal architecture warns against. Deferred to
+>    keep the bus a pure projection. Mitigations already in place:
+>    `nvidia.Discovery` has its own per-Source ticker (default 5 min via
+>    `Settings.spec.suseRegistry.refreshIntervalMinutes`) that picks up
+>    the new endpoint on next tick; the manual refresh REST endpoint
+>    (P2-3) lets users trigger immediate refresh. Trade-off: an air-gap
+>    operator who changes the registry endpoint sees stale NIM discovery
+>    for up to one refresh interval. ARCHITECTURE.md §8.2.1 should be
+>    updated to either reflect the encapsulation choice (move the
+>    goroutine into each engine's `UpdateSettings` if the engine wants
+>    self-refresh) or document that lazy refresh via existing tickers
+>    satisfies the contract. Manager's call.
 
 ---
 
