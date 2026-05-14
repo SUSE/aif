@@ -46,6 +46,11 @@ type SettingsReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
+
+	// Applier propagates the deref'd Settings snapshot to all settings-aware
+	// engines on every reconcile. Production: internal/manager.engineBus.
+	// Tests: controller.FakeSettingsApplier.
+	Applier SettingsApplier
 }
 
 // Reconcile handles Settings reconciliation
@@ -96,30 +101,55 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *SettingsReconciler) reconcile(ctx context.Context, settings *aifv1.Settings) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Resolve SUSE Registry credentials (validates Secret presence + key)
+	// Resolve SUSE Registry credentials (validates Secret presence + key,
+	// captures the resolved (user, token) pair for the snapshot).
+	var suseCreds Credentials
 	if settings.Spec.SUSERegistry != nil {
-		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.UserSecretRef); err != nil {
+		user, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.UserSecretRef)
+		if err != nil {
 			return r.handleSecretError(ctx, settings, err, "SUSERegistry.userSecretRef")
 		}
-		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.TokenSecretRef); err != nil {
+		token, err := r.resolveSecretKeyRef(ctx, settings.Spec.SUSERegistry.TokenSecretRef)
+		if err != nil {
 			return r.handleSecretError(ctx, settings, err, "SUSERegistry.tokenSecretRef")
 		}
+		suseCreds = Credentials{User: user, Token: token}
 	}
 
-	// Resolve Application Collection credentials (validates Secret presence + key)
+	// Resolve Application Collection credentials.
+	var appCoCreds Credentials
 	if settings.Spec.ApplicationCollection != nil {
-		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.UserSecretRef); err != nil {
+		user, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.UserSecretRef)
+		if err != nil {
 			return r.handleSecretError(ctx, settings, err, "ApplicationCollection.userSecretRef")
 		}
-		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.TokenSecretRef); err != nil {
+		token, err := r.resolveSecretKeyRef(ctx, settings.Spec.ApplicationCollection.TokenSecretRef)
+		if err != nil {
 			return r.handleSecretError(ctx, settings, err, "ApplicationCollection.tokenSecretRef")
 		}
+		appCoCreds = Credentials{User: user, Token: token}
 	}
 
-	// Resolve Fleet credentials (validates Secret presence + key)
+	// Resolve Fleet credentials (validates Secret presence + key; not pushed
+	// via the bus today — Fleet is git-deployment infra, not a settings-aware
+	// engine in P5-7's scope).
 	if settings.Spec.Fleet != nil {
 		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.Fleet.CredSecretRef); err != nil {
 			return r.handleSecretError(ctx, settings, err, "Fleet.credSecretRef")
+		}
+	}
+
+	// Push the snapshot to engines via the bus. Skipped if Applier is nil
+	// (e.g., test setup that doesn't care about engine state).
+	if r.Applier != nil {
+		snap := translateSettings(settings, suseCreds, appCoCreds)
+		if err := r.Applier.Apply(ctx, snap); err != nil {
+			logger.Error(err, "applier returned error")
+			r.setCondition(settings, conditions.TypeReady, metav1.ConditionFalse, conditions.ReasonReconcileFailed, "engine push failed: "+err.Error())
+			if updateErr := r.Status().Update(ctx, settings); updateErr != nil {
+				logger.Error(updateErr, "failed to update status after applier error")
+			}
+			return ctrl.Result{}, err
 		}
 	}
 

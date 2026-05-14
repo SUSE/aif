@@ -15,8 +15,9 @@ const (
 // Condition Reasons used across controllers
 const (
 	// Generic
-	ReasonReconciled  = "Reconciled"  // happy-path success
-	ReasonInvalidSpec = "InvalidSpec" // spec validation failed
+	ReasonReconciled       = "Reconciled"       // happy-path success
+	ReasonReconcileFailed  = "ReconcileFailed"  // reconciliation encountered an error
+	ReasonInvalidSpec      = "InvalidSpec"      // spec validation failed
 
 	// Bundle-specific
 	ReasonAwaitingDeployer         = "AwaitingDeployer"         // Workload waiting for deploy logic
