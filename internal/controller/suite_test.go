@@ -119,3 +119,13 @@ var _ = AfterSuite(func() {
 	cancelFn()
 	Expect(testEnv.Stop()).To(Succeed())
 })
+
+// BeforeEach at suite level: clear the recording applier between every spec
+// across every Describe block. Without this, leftover snapshots from one
+// block could leak into another's introspection — load-bearing on Ginkgo
+// declaration order otherwise.
+var _ = BeforeEach(func() {
+	if settingsApplier != nil {
+		settingsApplier.Reset()
+	}
+})

@@ -395,8 +395,11 @@ var _ = Describe("Settings air-gap propagation (P5-7)", func() {
 	// pkg/source_collection/. Keeping the envtest scope to "snapshot
 	// correctly reaches the bus through the real apiserver + reconcile
 	// loop" avoids scope creep into engine internals.
+	// applier reset moved to suite-level BeforeEach in suite_test.go so
+	// every Describe block gets a clean applier without each having to
+	// remember (Ginkgo declaration-order is otherwise load-bearing for
+	// the original SettingsReconciler block, which wasn't resetting).
 	BeforeEach(func() {
-		settingsApplier.Reset()
 		// Ensure aif namespace exists (Settings is singleton in aif).
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "aif"}}
 		if err := k8sClient.Create(ctx, ns); err != nil && !errors.IsAlreadyExists(err) {
