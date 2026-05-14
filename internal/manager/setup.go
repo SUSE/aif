@@ -29,6 +29,11 @@ type Options struct {
 	HelmEngine       helm.Engine
 	Discovery        discovery.DiscoveryInterface
 	Logger           *slog.Logger
+
+	// EngineBus pushes Settings snapshots to all settings-aware engines on
+	// every reconcile. Constructed in cmd/operator/main.go via NewEngineBus
+	// (P5-7).
+	EngineBus controller.SettingsApplier
 }
 
 func (o Options) leaderElectionID() string {
@@ -105,6 +110,7 @@ func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("settings-controller"),
+		Applier:  opts.EngineBus,
 	}
 	if err := settingsReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up SettingsReconciler: %w", err)

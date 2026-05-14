@@ -107,6 +107,9 @@ func main() {
 	var publishWorkflow publish.Workflow
 	workloadManager := workload.New(logger)
 
+	// Bus that propagates Settings to all engines on every reconcile (P5-7).
+	engineBus := manager.NewEngineBus(helmEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
+
 	// Log manager types so vars stay "used" while their consumers (later
 	// stories wire gitEngine, nvidiaDeployer, etc.) come online. Logging
 	// the values directly (rather than `x != nil`) avoids staticcheck
@@ -120,6 +123,7 @@ func main() {
 		"appsCatalog", fmt.Sprintf("%T", appsCatalog),
 		"blueprintManager", fmt.Sprintf("%T", blueprintManager),
 		"workloadManager", fmt.Sprintf("%T", workloadManager),
+		"engineBus", fmt.Sprintf("%T", engineBus),
 	)
 
 	// Setup controller-runtime manager with all controllers and webhooks
@@ -151,6 +155,7 @@ func main() {
 		HelmEngine:       helmEngine,
 		Discovery:        discoveryClient,
 		Logger:           logger,
+		EngineBus:        engineBus,
 	})
 	if err != nil {
 		logger.Error("Failed to create manager", "error", err)
