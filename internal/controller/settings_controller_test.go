@@ -382,3 +382,102 @@ var _ = Describe("SettingsReconciler", func() {
 		}, timeout, interval).Should(Succeed())
 	})
 })
+
+var _ = Describe("Settings air-gap propagation (P5-7)", func() {
+	const timeout = 30 * time.Second
+	const interval = 250 * time.Millisecond
+
+	ctx := context.Background()
+
+	// Each scenario asserts that a Settings CR change reaches the bus
+	// (recorded via FakeSettingsApplier). Engine-side consumption is
+	// covered by per-engine UpdateSettings tests in pkg/helm/, pkg/nvidia/,
+	// pkg/source_collection/. Keeping the envtest scope to "snapshot
+	// correctly reaches the bus through the real apiserver + reconcile
+	// loop" avoids scope creep into engine internals.
+	BeforeEach(func() {
+		settingsApplier.Reset()
+		// Ensure aif namespace exists (Settings is singleton in aif).
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "aif"}}
+		if err := k8sClient.Create(ctx, ns); err != nil && !errors.IsAlreadyExists(err) {
+			Expect(err).NotTo(HaveOccurred())
+		}
+	})
+
+	AfterEach(func() {
+		// Delete the Settings CR so subsequent tests start clean.
+		s := &aifv1.Settings{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "aif"}}
+		_ = k8sClient.Delete(ctx, s)
+	})
+
+	Context("(a) Registry endpoint override propagates", func() {
+		It("delivers SUSERegistry override to the bus snapshot", func() {
+			settings := &aifv1.Settings{
+				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "aif"},
+				Spec: aifv1.SettingsSpec{
+					RegistryEndpoints: &aifv1.RegistryEndpointsSpec{
+						SUSERegistry: "harbor.example.com",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, settings)).To(Succeed())
+
+			Eventually(func() string {
+				calls := settingsApplier.Snapshot()
+				if len(calls) == 0 {
+					return ""
+				}
+				return calls[len(calls)-1].SUSERegistry
+			}, timeout, interval).Should(Equal("harbor.example.com"))
+		})
+	})
+
+	Context("(b) Image rewrite rules propagate", func() {
+		It("delivers ImageRewrite enabled+rules to the bus snapshot", func() {
+			settings := &aifv1.Settings{
+				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "aif"},
+				Spec: aifv1.SettingsSpec{
+					ImageRewrite: &aifv1.ImageRewriteSpec{
+						Enabled: true,
+						Rules: []aifv1.ImageRewriteRule{
+							{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, settings)).To(Succeed())
+
+			Eventually(func() bool {
+				calls := settingsApplier.Snapshot()
+				if len(calls) == 0 {
+					return false
+				}
+				last := calls[len(calls)-1]
+				return last.ImageRewriteEnabled && len(last.ImageRewriteRules) == 1 &&
+					last.ImageRewriteRules[0].Match == "registry.suse.com/"
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	Context("(c) AppCo mode=disabled propagates", func() {
+		It("delivers ApplicationCollectionMode=disabled to the bus snapshot", func() {
+			settings := &aifv1.Settings{
+				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "aif"},
+				Spec: aifv1.SettingsSpec{
+					CatalogDiscovery: &aifv1.CatalogDiscoverySpec{
+						ApplicationCollectionMode: "disabled",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, settings)).To(Succeed())
+
+			Eventually(func() string {
+				calls := settingsApplier.Snapshot()
+				if len(calls) == 0 {
+					return ""
+				}
+				return calls[len(calls)-1].AppCollectionMode
+			}, timeout, interval).Should(Equal("disabled"))
+		})
+	})
+})

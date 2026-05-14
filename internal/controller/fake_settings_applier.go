@@ -24,3 +24,22 @@ func (f *FakeSettingsApplier) Apply(_ context.Context, s SettingsSnapshot) error
 	f.Calls = append(f.Calls, s)
 	return f.ApplyErr
 }
+
+// Reset clears the recorded calls. Used by Ginkgo BeforeEach to isolate
+// tests when multiple Describe blocks share one suite-level applier.
+func (f *FakeSettingsApplier) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Calls = nil
+	f.ApplyErr = nil
+}
+
+// Snapshot returns a copy of Calls for safe reads by test assertions.
+// Protects against data races when the reconciler is appending concurrently.
+func (f *FakeSettingsApplier) Snapshot() []SettingsSnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SettingsSnapshot, len(f.Calls))
+	copy(out, f.Calls)
+	return out
+}
