@@ -40,8 +40,10 @@ func NewDeployer(logger *slog.Logger) Deployer {
 }
 
 // UpdateSettings replaces the current settings snapshot. Sole writer.
-// Logs the resolved registry endpoint at Info so ops can confirm the
-// SettingsReconciler push landed (mirrors helm.engine.UpdateSettings).
+// Logs the configured registry endpoint at Info (raw value as received
+// from SettingsReconciler — empty string means "use the in-code default
+// at GenerateValues time") so ops can confirm the push landed. Mirrors
+// helm.engine.UpdateSettings.
 func (d *deployerImpl) UpdateSettings(s EngineSettings) {
 	d.mu.Lock()
 	d.settings = s
