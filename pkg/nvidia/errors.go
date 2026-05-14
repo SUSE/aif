@@ -35,9 +35,10 @@ var (
 	// ErrChartNotFound indicates the chart's OCI manifest returned 404.
 	ErrChartNotFound = errors.New("nvidia: chart not found")
 
-	// ErrInvalidRequest is returned by Deployer.GenerateValues when a required
-	// field on GenerateRequest is missing — currently Entry.Chart or
-	// Entry.Version. P4-5 translates to HTTP 400.
+	// ErrInvalidRequest is returned by Deployer.GenerateValues when a
+	// required field on GenerateRequest is missing or invalid — currently
+	// empty Entry.Chart, empty Entry.Version, or an Entry.Type that is not
+	// TypeLLM/TypeVLM. P4-5 translates to HTTP 400.
 	ErrInvalidRequest = errors.New("nvidia: invalid GenerateRequest")
 
 	// ErrInvalidReplicas is returned by Deployer.GenerateValues when
