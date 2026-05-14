@@ -60,6 +60,16 @@ export async function fetchApps(params?: FetchAppsParams): Promise<App[]> {
 }
 
 export async function fetchApp(id: string): Promise<App> {
+  if (USE_MOCK_API) {
+    const app = mockAPI.apps.list({ includeReferenceBlueprints: true }).find((a) => a.id === id);
+
+    if (!app) {
+      throw new Error(`App not found: ${ id }`);
+    }
+
+    return app;
+  }
+
   const url = `${ getApiBase() }/api/v1/apps/${ encodeURIComponent(id) }`;
   const res = await fetch(url);
 

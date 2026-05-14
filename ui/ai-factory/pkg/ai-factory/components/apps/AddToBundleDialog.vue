@@ -163,7 +163,7 @@ export default defineComponent({
 
         emit('added', { bundle: bundleName, mode: mode.value });
       } catch (err) {
-        errorMsg.value = err.message || 'Failed to add app to bundle';
+        errorMsg.value = err.message || t('aif.pages.apps.dialog.errorAdd');
       } finally {
         saving.value = false;
       }

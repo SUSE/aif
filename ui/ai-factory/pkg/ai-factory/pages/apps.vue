@@ -4,6 +4,7 @@
     <div class="apps-page__header">
       <h1>{{ t('aif.pages.apps.title') }}</h1>
       <div class="apps-page__counts">
+        <span class="apps-page__pill">{{ t('aif.pages.apps.header.total', { count: apps.length }) }}</span>
         <span class="apps-page__pill apps-page__pill--nvidia">{{ t('aif.pages.apps.header.nvidia', { count: nvidiaCount }) }}</span>
         <span class="apps-page__pill apps-page__pill--suse">{{ t('aif.pages.apps.header.suse', { count: suseCount }) }}</span>
       </div>
@@ -106,7 +107,7 @@
               <td>
                 <span :class="['publisher-badge', `publisher-badge--${app.source}`]">{{ app.publisher }}</span>
               </td>
-              <td>{{ (app.categories || [])[0] || '—' }}</td>
+              <td>{{ (app.categories || []).join(', ') || '—' }}</td>
               <td>{{ app.version }}</td>
               <td class="text-right col-actions">
                 <button class="btn btn-sm role-primary" disabled :title="t('aif.pages.apps.card.installDisabled')" @click.stop="onInstall(app)">
@@ -201,7 +202,7 @@ export default defineComponent({
           includeReferenceBlueprints: includeRefBlueprints.value
         });
       } catch (err) {
-        error.value = err.message || 'Failed to load applications';
+        error.value = err.message || t('aif.pages.apps.empty.error');
         apps.value = [];
       } finally {
         loading.value = false;
