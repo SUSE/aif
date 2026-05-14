@@ -75,6 +75,13 @@ func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (m
 	if req.Replicas <= 0 {
 		return nil, fmt.Errorf("validate Replicas: %w", ErrInvalidReplicas)
 	}
+	if req.Entry.Type != TypeLLM && req.Entry.Type != TypeVLM {
+		// Defensive: an unknown Type would silently fall through to LLM
+		// memory sizing, hiding misconfiguration (e.g., a JSON caller
+		// passing "vlm-llama" instead of "vlm" → a 32GiB pod intended
+		// for a 64GiB workload → OOM at load time).
+		return nil, fmt.Errorf("validate Entry.Type: %w", ErrInvalidRequest)
+	}
 
 	gpuCount, err := resolveGPUCount(req.GPUs, req.Entry.DefaultGPUs)
 	if err != nil {
