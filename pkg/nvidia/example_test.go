@@ -145,7 +145,7 @@ func Example_chartAnnotations() {
 func Example_deployerGenerateValues() {
 	d := nvidia.NewDeployer(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	gpus := int32(1)
-	out, _ := d.GenerateValues(context.Background(), nvidia.GenerateRequest{
+	out, err := d.GenerateValues(context.Background(), nvidia.GenerateRequest{
 		Entry: nvidia.NIMEntry{
 			Chart:   "nim-llm",
 			Version: "1.3.0",
@@ -154,6 +154,10 @@ func Example_deployerGenerateValues() {
 		Replicas: 1,
 		GPUs:     &gpus,
 	})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
 	img := out["image"].(map[string]any)
 	res := out["resources"].(map[string]any)["requests"].(map[string]any)
 	fmt.Printf("repository=%s\n", img["repository"])
