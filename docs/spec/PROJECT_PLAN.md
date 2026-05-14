@@ -2896,7 +2896,10 @@ docker manifest inspect ghcr.io/suse/aif-operator:0.1.0 | jq '.manifests[].platf
 
 > **Follow-up (post-merge): Implementation deviations from story spec**
 >
-> 1. **Single image (`aif-operator`) instead of 5.** Only `aif-operator` has a Dockerfile. The other 4 (`aif-ui`, `nim-llm`, `nim-vlm`, `generic-container`) either deploy vendor images, user-supplied images, or have no SUSE-built container image. See design spec for full analysis.
+> 1. **Single image (`aif-operator`) instead of 5.** Only `aif-operator` is built by this workflow. The other 4 images are out of scope for the following reasons:
+>    - **`aif-ui`**: Built by Rancher's `yarn publish-pkgs` toolchain, not a Dockerfile. Covered by P9-1a.
+>    - **`nim-llm`**, **`nim-vlm`**: NVIDIA-owned vendor images mirrored through SUSE Registry. This repo does not own their source code or build process.
+>    - **`generic-container`**: User-supplied images specified at deploy time. No SUSE-built container image exists.
 > 2. **Per-component tag prefix (`aif-operator-v*`) instead of bare `v*`.** Operator and UI have separate pipelines (different languages, different caches, different release cadences). Tag prefix follows Rancher convention (dash separator + `v` prefix). Workflow file is `operator-release.yml`, not `build-and-sign.yml`.
 > 3. **Dockerfile moved to `build/operator/Dockerfile`** instead of repo root. Supports future per-component Dockerfiles (e.g. `build/ui/Dockerfile`). Makefile `docker-build` target updated with `-f` flag.
 > 4. **SUSE BCI base images** instead of Docker Hub. Builder uses `registry.suse.com/bci/golang:1.26`, runtime uses `registry.suse.com/bci/bci-micro:15.7`. Aligns with SUSE product stack. `ca-certificates` install removed since `bci-micro` includes `ca-certificates-mozilla-prebuilt`.
