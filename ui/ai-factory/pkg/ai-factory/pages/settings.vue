@@ -25,13 +25,13 @@
             <div class="header-controls">
               <Checkbox
                 v-model="showAdvanced"
-                :label="t('aif.pages.settings.showAdvanced')"
+                :label="t('aif.pages.settings.header.advancedToggle')"
                 class="advanced-toggle"
               />
               <Banner
                 v-if="customEndpointsActive"
                 color="info"
-                :label="t('aif.pages.settings.customEndpointsActive')"
+                :label="t('aif.pages.settings.header.customEndpointsChip')"
                 class="custom-endpoints-chip"
               />
             </div>
@@ -39,13 +39,13 @@
 
           <!-- Section 1: Catalog Refresh Interval -->
           <div class="settings-section">
-            <h2>{{ t('aif.pages.settings.catalogRefresh.title') }}</h2>
+            <h2>{{ t('aif.pages.settings.catalogRefresh.label') }}</h2>
             <CatalogRefreshInterval v-model="value.spec.catalogRefreshIntervalMinutes" />
           </div>
 
           <!-- Section 2: Fleet -->
           <div class="settings-section">
-            <h2>{{ t('aif.pages.settings.fleet.title') }}</h2>
+            <h2>{{ t('aif.pages.settings.sections.fleet.title') }}</h2>
             <FleetSection
               v-model="value.spec.fleet"
               :mode="mode"
@@ -54,19 +54,19 @@
 
           <!-- Section 3: SUSE Application Collection -->
           <div class="settings-section">
-            <h2>{{ t('aif.pages.settings.suseAppCollection.title') }}</h2>
+            <h2>{{ t('aif.pages.settings.sections.appCollection.title') }}</h2>
             <SUSEAppCollectionSection v-model="value.spec.applicationCollection" />
           </div>
 
           <!-- Section 4: SUSE Registry -->
           <div class="settings-section">
-            <h2>{{ t('aif.pages.settings.suseRegistry.title') }}</h2>
+            <h2>{{ t('aif.pages.settings.sections.suseRegistry.title') }}</h2>
             <SUSERegistrySection v-model="value.spec.suseRegistry" />
           </div>
 
           <!-- Section 5: Image Pull Secrets (Read-only) -->
           <div class="settings-section">
-            <h2>{{ t('aif.pages.settings.imagePullSecrets.title') }}</h2>
+            <h2>{{ t('aif.pages.settings.sections.imagePullSecrets.title') }}</h2>
             <ImagePullSecretsSection
               :model-value="value.spec.imagePullSecrets || {}"
               :mode="mode"
@@ -78,7 +78,7 @@
             v-if="showAdvanced"
             class="settings-section advanced-section"
           >
-            <h2>{{ t('aif.pages.settings.advancedRegistry.title') }}</h2>
+            <h2>{{ t('aif.pages.settings.sections.advanced.title') }}</h2>
             <AdvancedRegistrySection
               v-model:registry-endpoints="value.spec.registryEndpoints"
               v-model:image-rewrite="value.spec.imageRewrite"
