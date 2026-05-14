@@ -2,7 +2,6 @@ package nvidia
 
 import (
 	"context"
-	"errors"
 )
 
 // Discovery enumerates SUSE-mirrored NIM models from the SUSE Registry chart
@@ -33,9 +32,16 @@ type Discovery interface {
 // Deployer produces the Helm values block for a NIM deployment. It is
 // deliberately a separate port from Discovery — they have nothing in common.
 // Spec: ARCHITECTURE.md §6.2 + §4.4 NIM Sizing Formulas (lands in P4-4).
+//
+// 2 methods (well under the ≤4 ISP target).
 type Deployer interface {
 	// GenerateValues produces the values map handed to the Helm engine.
 	GenerateValues(ctx context.Context, req GenerateRequest) (map[string]any, error)
+
+	// UpdateSettings receives a credential/endpoint push from
+	// SettingsReconciler. Synchronous; never reads Secrets directly.
+	// Mirror of Discovery.UpdateSettings.
+	UpdateSettings(s EngineSettings)
 }
 
 // AnnotationReader fetches a chart's Chart.yaml annotations from the OCI
@@ -54,7 +60,3 @@ type AnnotationReader interface {
 	// failures.
 	ChartAnnotations(ctx context.Context, chart, version string) (map[string]string, error)
 }
-
-// ErrNotImplemented is returned by stub method bodies until plan tasks P2-1
-// (Discovery) and P4-4 (Deployer) implement them.
-var ErrNotImplemented = errors.New("nvidia: method not implemented yet")

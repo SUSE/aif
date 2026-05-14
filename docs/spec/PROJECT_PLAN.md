@@ -1703,6 +1703,54 @@ go test ./pkg/nvidia/ -run TestGenerateNIMValues -v
 grep 'nvcr.io' pkg/nvidia/nim.go && echo FAIL || echo PASS
 ```
 
+> **Follow-up (post-merge, P4-4):**
+>
+> 1. **§4.4 spec contradiction on `imagePullSecrets`.** The §4.4 example
+>    yaml shows `imagePullSecrets: [{name: suse-registry-creds}]` in the
+>    layer-4 generated block, but the explanatory paragraph "**`imagePullSecrets`
+>    insertion**" and the P4-4 AC bullet "**`imagePullSecrets` NOT emitted**
+>    by this function" both explicitly say the deployer does NOT emit it
+>    (layer 6 owns it via P5-5). Implementation follows the explicit rule;
+>    `TestGenerateValues_DoesNotEmitImagePullSecrets` locks the absence.
+>    The §4.4 example yaml should be updated to drop the `imagePullSecrets`
+>    lines.
+>
+> 2. **One AC bullet ships via P4-2 (deployer wiring).** The bullet
+>    "Workload `valueOverrides.gpuCount` … the NIM Deployer reads
+>    `valueOverrides.gpuCount` from Workload spec; falls back to model
+>    default" is the *caller*'s reading. `GenerateRequest.GPUs` already
+>    models the resolved value; the Workload-spec → request-field
+>    translation lives in P4-2 (`pkg/workload/deployer.go`, which doesn't
+>    exist yet). P4-4 ships the primitive only; P4-2 wires the call site.
+>
+> 3. **`GenerateRequest.GPUs` type changed from `int32` to `*int32`.**
+>    `pkg/nvidia/types.go` shipped `GPUs int32` with the comment "0 means
+>    use Entry.DefaultGPUs", but §4.4 wants explicit-zero rejected and
+>    nil-with-default → use default. Pointer type cleanly distinguishes;
+>    the field comment is updated to match.
+>
+> 4. **`Deployer` interface gains `UpdateSettings(s EngineSettings)`.**
+>    Goes from 1 method to 2; matches the Discovery / helm.Engine /
+>    source_collection.Client pattern. `ARCHITECTURE.md §6.2 NIM discovery
+>    + deployer interfaces` should be updated to reflect the new method on
+>    `Deployer`.
+>
+> 5. **AC naming is stale post-implementation.** Two stale references
+>    inside the AC body don't match the shipped code:
+>    a. The validation block runs
+>       `go test ./pkg/nvidia/ -run TestGenerateNIMValues -v`, but the
+>       implementation correctly named the function `GenerateValues`
+>       (matching the `Deployer.GenerateValues` interface from §6.2). All
+>       shipped tests are `TestGenerateValues_*`. The validation `-run`
+>       regex (and the `pkg/nvidia/nim.go::GenerateNIMValues` reference
+>       in the first AC bullet) should be updated to the interface name.
+>    b. The "Model name sanitization" AC bullet references
+>       `pkg/nvidia/discovery.LookupModel`, but the `Discovery` interface
+>       method (`pkg/nvidia/interface.go`) is
+>       `Get(ctx, id) (NIMEntry, error)`. Existence enforcement is
+>       correctly deferred to `Discovery.Get` (returns `ErrNIMNotFound`);
+>       the AC bullet should be re-worded to match the shipped name.
+
 ---
 
 **ID:** P4-5

@@ -177,8 +177,8 @@ test-nim:
 	go test -count=1 -v ./pkg/nvidia/...
 
 verify-nim-mock:
-	@echo "Demonstrating NIM Discovery against an in-process mock registry..."
-	go test -count=1 -v -run Example_discovery ./pkg/nvidia/
+	@echo "Demonstrating NIM Discovery + Deployer ergonomics against in-process stubs..."
+	go test -count=1 -v -run "Example_(discovery|deployerGenerateValues)" ./pkg/nvidia/
 
 verify-nim-live:
 	@echo "Verifying NIM Discovery against the real SUSE Registry..."
