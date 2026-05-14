@@ -10,6 +10,7 @@ type CatalogApp struct {
 	ChartRef      string
 	LatestVersion string
 	Source        string
+	LastUpdatedAt string
 }
 
 // ChartMetadata holds Chart.yaml metadata for a specific chart version.
@@ -38,6 +39,7 @@ type apiApplication struct {
 	LogoURL       string        `json:"logo_url"`
 	Helm          apiHelm       `json:"helm"`
 	LatestVersion apiVersion    `json:"latest_version"`
+	LastUpdatedAt string        `json:"last_updated_at"`
 }
 
 type apiCategory struct {
@@ -79,5 +81,6 @@ func (a apiApplication) toApp() CatalogApp {
 		ChartRef:      chartRef,
 		LatestVersion: a.LatestVersion.Version,
 		Source:        "api",
+		LastUpdatedAt: a.LastUpdatedAt,
 	}
 }

@@ -84,6 +84,7 @@ func newTestApp(slug, title, publisher, version string) apiApplication {
 			ChartName:     slug,
 		},
 		LatestVersion: apiVersion{Version: version},
+		LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
 	}
 }
 
@@ -145,6 +146,9 @@ func TestList_SinglePage(t *testing.T) {
 	}
 	if app.Source != "api" {
 		t.Errorf("expected Source 'api', got %q", app.Source)
+	}
+	if app.LastUpdatedAt != "2026-04-30T23:56:07.607227Z" {
+		t.Errorf("expected LastUpdatedAt '2026-04-30T23:56:07.607227Z', got %q", app.LastUpdatedAt)
 	}
 }
 
@@ -510,5 +514,34 @@ func TestUpdateSettings_ReflectedInList(t *testing.T) {
 	}
 	if len(apps) != 1 || apps[0].ID != "from-srv2" {
 		t.Fatalf("expected from-srv2, got %v", apps)
+	}
+}
+
+func TestToApp_MapsLastUpdatedAt(t *testing.T) {
+	app := apiApplication{
+		SlugName:      "ollama",
+		Title:         "Ollama",
+		PublisherName: "Ollama Inc",
+		Helm:          apiHelm{RepositoryURL: "oci://dp.apps.rancher.io/charts", ChartName: "ollama"},
+		LatestVersion: apiVersion{Version: "0.4.1"},
+		LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
+	}
+	got := app.toApp()
+	if got.LastUpdatedAt != "2026-04-30T23:56:07.607227Z" {
+		t.Errorf("LastUpdatedAt = %q, want %q", got.LastUpdatedAt, "2026-04-30T23:56:07.607227Z")
+	}
+}
+
+func TestToApp_LastUpdatedAt_EmptyWhenAbsent(t *testing.T) {
+	app := apiApplication{
+		SlugName:      "milvus",
+		Title:         "Milvus",
+		PublisherName: "Zilliz",
+		Helm:          apiHelm{RepositoryURL: "oci://dp.apps.rancher.io/charts", ChartName: "milvus"},
+		LatestVersion: apiVersion{Version: "2.4.0"},
+	}
+	got := app.toApp()
+	if got.LastUpdatedAt != "" {
+		t.Errorf("LastUpdatedAt = %q, want empty", got.LastUpdatedAt)
 	}
 }
