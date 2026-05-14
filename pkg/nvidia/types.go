@@ -31,8 +31,14 @@ type NIMEntry struct {
 	// the format is "<chart>:<version>" (e.g. "nim-llm:1.3.0").
 	ID string `json:"id"`
 
-	// Chart is the chart name within registry.suse.com/ai/charts/nvidia/
-	// (e.g. "nim-llm", "nim-vlm").
+	// Chart is the chart-name-equals-image-name identifier under the SUSE
+	// Registry mirror layout. The same identifier appears as the path
+	// component in BOTH the OCI Helm chart ref
+	// (oci://{registry}/ai/charts/nvidia/{Chart}) AND the container image
+	// repository (template `{registry}/ai/containers/nvidia/{Chart}` per
+	// ARCHITECTURE.md §4.4 — what §4.4 calls `{model}` is this same
+	// `Chart` string in this package). Examples: "nim-llm", "nim-vlm",
+	// "nvidia/llama-3-70b" (slashes are sub-paths under both prefixes).
 	Chart string `json:"chart"`
 
 	// Version is the chart's OCI tag (semver, no "v" prefix).
