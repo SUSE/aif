@@ -257,13 +257,7 @@ export default {
     <Loading v-else-if="!value" />
 
     <div v-else>
-      <div class="top-bar">
-        <h1>{{ t('aif.pages.settings.title') }}</h1>
-        <AsyncButton
-          :action-label="t('aif.pages.settings.apply')"
-          @click="save"
-        />
-      </div>
+      <h1>{{ t('aif.pages.settings.title') }}</h1>
 
       <Banner
         v-for="(err, i) in errors"
@@ -591,16 +585,22 @@ export default {
           </template>
         </div>
       </div>
+
+      <div class="footer-bar">
+        <AsyncButton
+          :action-label="t('aif.pages.settings.apply')"
+          @click="save"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.top-bar {
+.footer-bar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
+  justify-content: flex-end;
+  margin-top: 20px;
 }
 
 .accordion-header {
