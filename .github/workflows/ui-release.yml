@@ -4,6 +4,10 @@ on:
   push:
     tags: ['aif-ui-v*']
 
+concurrency:
+  group: ui-release-gh-pages
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: ghcr.io/suse/aif-ui
   GH_BRANCH: gh-pages
@@ -45,6 +49,7 @@ jobs:
   build-container:
     needs: prepare
     strategy:
+      fail-fast: false
       matrix:
         arch:
           - amd64
@@ -61,7 +66,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -137,6 +142,8 @@ jobs:
 
           done <<< "$METADATA_TAGS"
 
+  # publish-gh-pages builds extension assets independently of container images;
+  # yarn publish-pkgs in "charts" mode does not need images in GHCR.
   publish-gh-pages:
     name: Publish to GitHub Pages
     needs: prepare
@@ -144,10 +151,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write
+      actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -155,13 +162,6 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-
-      - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -191,7 +191,7 @@ jobs:
         run: yarn publish-pkgs -s "${{ github.repository }}" -b "${{ env.GH_BRANCH }}" -t "$RELEASE_TAG" -f
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@v7
         with:
           name: gh-pages-assets
           path: ui/ai-factory/tmp
@@ -216,12 +216,14 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
       - name: Download build artifact
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@v8
         with:
           name: gh-pages-assets
 
       - name: Commit and push
+        env:
+          VERSION: ${{ needs.prepare.outputs.VERSION }}
         run: |
           git add ./{assets,charts,extensions,index.yaml}
-          git commit -a -m "release: aif-ui v${{ needs.prepare.outputs.VERSION }}"
+          git diff --staged --quiet || git commit -m "release: aif-ui v${VERSION}"
           git push
