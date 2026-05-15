@@ -99,7 +99,7 @@ Phases 2 and 3 can start as soon as Phase 1 begins. Phase 6 can start once Phase
 | 2     | P2-1 ‖ P2-2; then P2-3; then P2-4; then P2-5 ‖ P2-6; then P2-7 | P2-3 needs P2-1+P2-2; P2-4 needs P2-3; P2-5 needs P2-3+P2-4 (annotation-fetching populates the field the P2-4 filter consumes); P2-7 needs P2-5 (the wrapper consumes the RB-flagged catalog) |
 | 3     | P3-2 ‖ P3-3 ‖ P3-4 ‖ P3-5 ‖ P3-8 (after P3-1) | P3-1 first; P3-6 last; P3-7 after P3-6; P3-8 also needs P5-7 + P4-6 |
 | 4     | P4-2 ‖ P4-3 ‖ P4-4 ‖ P4-6 | P4-1 first; P4-5 last; P4-6 needs P5-7 |
-| 5     | P5-1 ‖ P5-3 ‖ P5-6 ‖ P5-7 ‖ P5-8 ‖ P5-9 | P5-2 needs P5-1; P5-4 needs P1-6; P5-5 last; P5-6 only depends on P3-6; P5-8 needs P5-7; P5-9 needs P5-7 |
+| 5     | P5-1 ‖ P5-3 ‖ P5-4a ‖ P5-6 ‖ P5-7 ‖ P5-8 ‖ P5-9 | P5-2 needs P5-1; P5-4a needs P1-10 (handler skeleton); P5-4b needs P4-3 + P4-3b (after P5-4a); P5-5 last; P5-6 only depends on P3-6; P5-8 needs P5-7; P5-9 needs P5-7 |
 | 6     | P6-0 ‖ P6-1; then P6-2 ‖ P6-3; then P6-4 ‖ P6-5 ‖ P6-6; then P6-7 ‖ P6-8 ‖ P6-9 ‖ P6-10 | UI-internal chain only |
 | 7     | All five (P7-1..P7-5) parallel | Each only needs its Phase 0 prereq |
 | 8     | P8-1 ‖ P8-2 ‖ P8-3 ‖ P8-6; P8-4 ‖ P8-5 | P8-6 needs Phase 6 done |
@@ -114,7 +114,7 @@ A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on U
 | File | Touched by | Mitigation |
 |------|-----------|------------|
 | `cmd/operator/main.go` | P0-4 only after that | Keep main ≤250 lines. Route registration moves into `internal/manager/routes.go` after P0-4. Each handler story adds one `mux.HandleFunc` line via that file, not main. |
-| `internal/manager/routes.go` | P3-2..P3-6, P4-2, P4-3, P4-5, P5-2, P5-3, P5-4, P5-5, P7-5, P8-1, P8-2 | Each handler story adds one `mux.HandleFunc` line — no rewrites of existing lines. |
+| `internal/manager/routes.go` | P3-2..P3-6, P4-2, P4-3, P4-5, P5-2, P5-3, P5-4a, P5-5, P7-5, P8-1, P8-2 | Each handler story adds one `mux.HandleFunc` line — no rewrites of existing lines. |
 | `charts/aif-operator/templates/deployment.yaml` | P0-3, P7-2, P7-3, P9-3 | P0-3 lands a complete-but-minimal template. P7-* and P9-3 are surgical patches. |
 | `charts/aif-operator/templates/rbac.yaml` | P0-3, P7-1, P8-3 | Generate from `//+kubebuilder:rbac` markers via `make manifests`. Don't hand-edit after P0-3. |
 | `charts/aif-operator/templates/webhook.yaml` | P1-5, P7-4 | Created in P1-5; P7-4 may add CA bundle injection details. |
@@ -131,8 +131,9 @@ A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on U
 | `pkg/helm/values.go` | P4-1 (engine + MergeValues), P4-6 (ApplyImageRewrites) | P4-1 lands `MergeValues`; P4-6 adds `ApplyImageRewrites` as a separate function called after `MergeValues` and after NIM generation. No edits to existing function signatures. |
 | `api/v1alpha1/settings_types.go` | P0-2 (initial), P5-7 (air-gap fields) | P5-7 adds `registryEndpoints`, `imageRewrite`, `catalogDiscovery`, `blueprintClassification` as additive optional field groups — no removal of existing fields. |
 | `charts/aif-operator/values.yaml`, `templates/deployment.yaml`, `templates/webhook*.yaml` | P0-3 (initial), P0-6 (image.registry), P0-7 (webhook.tlsMode), P7-2, P7-3, P7-4 | P0-6 adds `image.registry` field; P0-7 adds `webhook.tlsMode` enum + `webhook-tls-helm-hook.yaml` template logic. Both are additive, default values preserve existing behaviour. |
-| `internal/api/settings.go`, `internal/api/bundles.go` | P5-4 (settings CRUD), P5-9 (test-connection), P3-8 (preflight) | P5-9 adds the `/api/v1/settings/test-connection` handler; P3-8 adds the `/api/v1/bundles/{ns}/{name}/preflight` handler. Both register independent HandleFunc lines via `routes.Register`. |
-| `api/v1alpha1/settings_types.go` (air-gap fields specifically) | P5-7 (defines), then consumed by P3-8, P4-6, P5-4, P5-8, P5-9, P6-9, P7-2, P9-6 | **P5-7 is a cross-phase prerequisite.** Promote its scheduling: implement P5-7 immediately after P0-2 (CRD scaffolding) so air-gap-aware stories in Phase 3, 4, 6, 7, 9 can take a hard dependency. Each consumer story's `Depends On` must explicitly list P5-7. |
+| `internal/api/settings.go`, `internal/api/bundles.go` | P5-4a (settings CRUD handler), P5-9 (test-connection), P3-8 (preflight) | P5-4a creates `internal/api/settings.go` with `GET`/`PUT /api/v1/settings`; P5-9 adds `/api/v1/settings/test-connection`; P3-8 adds `/api/v1/bundles/{ns}/{name}/preflight`. All register independent HandleFunc lines via `routes.Register`. |
+| `internal/manager/engine_bus.go` | P5-7 (created), P5-4b (Fleet engine wiring) | P5-7 created the bus with helm/nvidia/appco engines. P5-4b adds the Fleet engine field + `projectFleet` projection — purely additive. |
+| `api/v1alpha1/settings_types.go` (air-gap fields specifically) | P5-7 (defines), then consumed by P3-8, P4-6, P5-4a, P5-8, P5-9, P6-9, P7-2, P9-6 | **P5-7 is a cross-phase prerequisite.** Promote its scheduling: implement P5-7 immediately after P0-2 (CRD scaffolding) so air-gap-aware stories in Phase 3, 4, 6, 7, 9 can take a hard dependency. Each consumer story's `Depends On` must explicitly list P5-7. |
 
 ---
 
@@ -847,7 +848,7 @@ go tool cover -func=cover.out | grep total
   - `writeJSON(w http.ResponseWriter, status int, v any)` — writes typed JSON response
   - Error code constants: `NOT_FOUND`, `INVALID_INPUT`, `INVALID_TRANSITION`, `IMMUTABLE`, `FORBIDDEN`, `CONFLICT`, `INTERNAL_ERROR`, `NOT_IMPLEMENTED`
 - [ ] `internal/manager/routes.go` provides `Register(mux *http.ServeMux, handlers ...Handler)` that wraps each handler with the standard middleware stack
-- [ ] All Phase 3+ handler stories (P3-2..P3-6, P3-8, P5-3, P5-4, P5-6, P5-9, P7-5) consume this skeleton; their acceptance criteria reference this story (P1-10) as a dependency
+- [ ] All Phase 3+ handler stories (P3-2..P3-6, P3-8, P5-3, P5-4a, P5-6, P5-9, P7-5) consume this skeleton; their acceptance criteria reference this story (P1-10) as a dependency
 - [ ] Unit tests cover: CORS denial for wrong origin; request_id present in every response header; auth-extracted user populates context; error envelope format matches §6.4
 - [ ] HTTP integration test using `httptest.NewServer` validates middleware stack end-to-end
 
@@ -971,7 +972,7 @@ go test ./pkg/source_collection/ -v
 - [ ] `Makefile` adds `test-apps` / `verify-apps-mock` / `verify-apps-live` to `.PHONY` and as targets.
 
 *Wiring*
-- [ ] `cmd/operator/main.go` constructs `pkg/apps.NewCatalog`, wraps the existing `*nvidia.Discovery` and `source_collection.Client` instances via `NVIDIASource` / `AppCoSource` adapters, registers them with `AddSource`, and starts the lifecycle. (SettingsReconciler integration with `Catalog.UpdateSettings` waits for P5-4.)
+- [ ] `cmd/operator/main.go` constructs `pkg/apps.NewCatalog`, wraps the existing `*nvidia.Discovery` and `source_collection.Client` instances via `NVIDIASource` / `AppCoSource` adapters, registers them with `AddSource`, and starts the lifecycle. (SettingsReconciler integration with `Catalog.UpdateSettings` was implemented in P5-7 via `engineBus.Apply` — no further action needed here.)
 
 *Forbidden*
 - [ ] No new `pkg/{nvidia,source_collection}` → `pkg/apps` import (verified by grep guard in `make lint` follow-up, or manual at PR review).
@@ -1962,31 +1963,60 @@ go test -race ./internal/api/ -run TestWorkloadUpgrade -v
 
 ---
 
-**ID:** P5-4
-**Epic:** Settings Propagation + Persistence
-**Story:** As a platform engineer, I want Settings changes to immediately update the Helm engine, Fleet engine, and NIM discovery clients.
+**ID:** P5-4a
+**Epic:** Settings REST API Handler
+**Story:** As a platform engineer, I want `GET /api/v1/settings` and `PUT /api/v1/settings` REST endpoints so that the Settings page UI can load and persist platform configuration without blocking on the reconcile loop.
 **Owner Hint:** Backend Go
-**Effort:** M
-**Depends On:** P1-4, P2-1, P4-1, P4-3
-**Parallelizable With:** P5-5
-**Done When:** Saving Settings via `PUT /api/v1/settings` causes the operator's engines to use the new credentials within one reconcile loop.
+**Effort:** S
+**Depends On:** P1-4, P1-10, P5-7
+**Parallelizable With:** P5-1, P5-3, P5-5, P5-6, P5-7, P5-8, P5-9
+**Done When:** `GET /api/v1/settings` returns the current Settings CR and `PUT /api/v1/settings` saves changes and returns `200 OK` immediately; the Settings page UI (P6-9) can load and save successfully.
 
 **Acceptance Criteria:**
-- [ ] `SettingsReconciler.applySettingsToEngines` matches the **`ARCHITECTURE.md §8.2.1 "Settings propagation pattern (P5-4 contract)"` snippet verbatim** — 4-step sequence: resolve credentials → build per-engine settings structs → push via `UpdateSettings` to each engine → trigger background syncs in a goroutine with 5min timeout.
-- [ ] **Each engine implements `UpdateSettings(s EngineSettings)`** per the §8.2.1 "Per-engine UpdateSettings contract" pattern: brief `e.mu.Lock()`, struct swap, no syscalls under lock. Each engine's `snapshot()` method returns a copy under `RLock`. The `mu sync.RWMutex` is OWNED by the engine (NOT a global lock); SettingsReconciler does NOT hold any cross-engine lock.
-- [ ] **Settings save = synchronous CRD apply + async engine sync.** HTTP handler `PUT /api/v1/settings` (in `internal/api/settings.go`) validates the body, calls `client.Apply` on the Settings CR, and returns `200 OK` with the saved Settings. The HTTP handler does NOT wait for the SettingsReconciler reconcile or the background catalog syncs — those happen async per §8.2.1 "HTTP API behaviour for Settings save".
-- [ ] **Background syncs are best-effort** (per §8.2.1): `go func()` with 5min timeout, errors logged via `slog.Warn`, never propagated to the HTTP response.
-- [ ] **Fail-closed credential resolution** per §8.2.1 step 1: if any required Secret reference can't be resolved, the reconciler does NOT push partial config — it sets Settings condition `Type=Ready, Status=False, Reason=SecretNotFound` and returns the error. This prevents engines from running with half-updated config.
-- [ ] HTTP integration test covers: (a) valid Settings → 200 OK + reconciler observes change; (b) Settings with missing Secret ref → 200 OK + Settings condition shows `Ready=False Reason=SecretNotFound`; (c) Settings save returns immediately without waiting for catalog sync (test by mocking the engines and asserting handler return time < 100ms even when sync would take seconds)
+- [ ] `internal/api/settings.go` implements `SettingsHandler` with constructor `NewSettingsHandler(client client.Client, logger *slog.Logger) *SettingsHandler`; conforms to `api.Handler` interface (`Register(mux *http.ServeMux)`)
+- [ ] Handler wired in `cmd/operator/main.go` after `mgr.GetClient()` is available; added as a vararg to `manager.Register(...)`
+- [ ] `GET /api/v1/settings` — reads the singleton Settings CR (`namespace="aif"`, `name="settings"`); returns full CR JSON on `200 OK`; returns `404` with structured error envelope when the CR does not exist
+- [ ] `PUT /api/v1/settings` — parses request body `{ "spec": { ... } }`; fills fixed metadata (`namespace="aif"`, `name="settings"`, `apiVersion="ai.suse.com/v1alpha1"`, `kind="Settings"`); applies via `client.Apply(ctx, &settings, client.ForceOwnership, client.FieldOwner("aif-operator-api"))`; returns full updated CR JSON on `200 OK`
+- [ ] Uses `LoggerFromContext(r.Context())` for structured logging; errors translated via `writeError(w, code, err)` — no raw internal errors in responses
+- [ ] **Background-goroutine step deferred**: the §8.2.1 step-4 post-push background sync is inherited-deferred from P5-7 follow-up note 6 — do NOT add goroutines; existing per-engine tickers satisfy the contract
+- [ ] **Fail-closed credential resolution** is already implemented in the SettingsReconciler (P1-4 + P5-7) — the HTTP handler is not responsible for credential resolution; it only applies the CR
+- [ ] Integration tests (envtest): (a) GET returns `200` with current Settings spec; (b) GET returns `404` when no Settings CR exists; (c) PUT → `200` + CR updated in cluster; (d) PUT handler returns without calling the SettingsApplier — confirm by injecting a `FakeSettingsApplier` and asserting zero calls after a successful PUT (reconcile is async; the handler must not drive the bus)
 
 **Validation:**
 ```bash
-go test -race ./internal/controller/ -run TestSettingsReconcilerPropagation -v
 go test -race ./internal/api/ -run TestSettingsHandler -v
 ```
 
 **Agent Prompt:**
-> Implement `SettingsReconciler.applySettingsToEngines` per `ARCHITECTURE.md §8.2.1` verbatim. The 4-step sequence is non-negotiable: credentials → build → push → async sync. Each engine implements `UpdateSettings` with per-engine RWMutex (the engine's own; NOT a global lock). HTTP handler in `internal/api/settings.go` returns immediately after `client.Apply` — does NOT wait for engine effects. Background catalog syncs run in a goroutine with 5min timeout, errors logged at WARN. Fail-closed on missing Secret refs (no partial push). Done when both `-race` test suites pass.
+> Implement `internal/api/settings.go` following the `AppsHandler` pattern (constructor, `Register`, per-method functions). `GET /api/v1/settings` reads the singleton CR from namespace `"aif"` name `"settings"` via `client.Client.Get`; return `404` via `writeError` if not found. `PUT /api/v1/settings` parses `{ spec: ... }` from the request body, fills fixed metadata, and applies via `client.Apply` with field owner `"aif-operator-api"`. Wire into `cmd/operator/main.go` after `mgr.GetClient()` — pass the client to the constructor, add the handler to `manager.Register(...)` varargs. Do NOT add goroutines (background-goroutine step deferred per P5-7 follow-up note 6). Test (d) must inject a `FakeSettingsApplier` and assert zero Apply calls after a successful PUT — the handler must not synchronously drive the reconcile bus. Done when envtest integration tests (a)–(d) pass under `-race`.
+
+---
+
+**ID:** P5-4b
+**Epic:** Fleet Engine Settings Wiring
+**Story:** As an operator, I want Settings changes to propagate to the Fleet engine so that gitops and helm workload deployments pick up the latest fleet repo URL, branch, auth type, and credential secret without a restart.
+**Owner Hint:** Backend Go
+**Effort:** S
+**Depends On:** P5-4a, P4-3, P4-3b
+**Parallelizable With:** none
+**Done When:** Saving Settings with `spec.fleet` populated causes the Fleet engine's `UpdateSettings` to receive the updated configuration within one reconcile loop.
+
+**Acceptance Criteria:**
+- [ ] `controller.SettingsSnapshot` extended with four Fleet fields: `FleetRepoURL string`, `FleetBranch string`, `FleetAuthType string`, `FleetCredSecretName string` — `FleetCredSecretName` carries `spec.fleet.credSecretRef.Name` (the Secret name, NOT the resolved credential value; Fleet reads the Secret directly from the cluster)
+- [ ] `translateSettings` populates the four Fleet fields from `spec.fleet` when non-nil; leaves them as empty strings when `spec.fleet` is nil; the existing fail-closed guard (returns error when the referenced Secret is missing) is unchanged — the only new behavior is one line that sets `FleetCredSecretName` from `spec.fleet.credSecretRef.Name` after the nil guard passes
+- [ ] `SettingsReconciler.reconcile` fleet-cred block (currently discards the resolved value with `_`) updated to capture the value for fail-closed validation only; `FleetCredSecretName` in the snapshot is set from `spec.fleet.credSecretRef.Name`, not the resolved token — **nil guard required**: `spec.fleet.credSecretRef` is `*corev1.SecretKeySelector` (pointer); only set `FleetCredSecretName` when `spec.fleet.credSecretRef != nil` (the existing nil guard on `spec.fleet` itself does not cover a nil inner pointer)
+- [ ] `internal/manager/engine_bus.go`: `engineBus` gains two Fleet engine fields — `fleetGitRepo` (port type `fleet.GitRepoEngine`, defined by P4-3, used for gitops workloads) and `fleetBundle` (port type `fleet.BundleEngine`, defined by P4-3b, used for helm workloads); `Apply` calls `UpdateSettings` on both; `projectFleet(s SettingsSnapshot) fleet.FleetSettings` maps the four Fleet snapshot fields to the Fleet engine's settings type (shared by both engines)
+- [ ] `NewEngineBus(...)` in `cmd/operator/main.go` updated to accept and store both Fleet engine instances (GitRepoEngine from P4-3, BundleEngine from P4-3b); additive to whatever P4-3/P4-3b already added to `main.go`
+- [ ] Integration test: Settings change with `spec.fleet.repoURL` set → Fleet engine's `UpdateSettings` receives the updated URL within one reconcile loop; use a `FakeFleetEngine` analogous to `FakeSettingsApplier`
+
+**Validation:**
+```bash
+go test -race ./internal/controller/ -run TestSettingsReconcilerFleetPropagation -v
+go test -race ./internal/manager/ -run TestEngineBusFleet -v
+```
+
+**Agent Prompt:**
+> Extend `controller.SettingsSnapshot` with four Fleet fields (`FleetRepoURL`, `FleetBranch`, `FleetAuthType`, `FleetCredSecretName`). Update `translateSettings` to populate them from `spec.fleet` (nil guard on `spec.fleet` AND on `spec.fleet.credSecretRef` before accessing `.Name` — both are pointers). The existing fail-closed guard in the reconciler fleet-cred block is unchanged; only add one line to set `FleetCredSecretName = spec.fleet.credSecretRef.Name` after the nil checks pass. Add TWO Fleet engine fields to `engineBus`: `fleetGitRepo` (port `fleet.GitRepoEngine` from P4-3, gitops workloads) and `fleetBundle` (port `fleet.BundleEngine` from P4-3b, helm workloads); `Apply` calls `UpdateSettings` on both. Update `NewEngineBus` in `cmd/operator/main.go` to accept both engine instances. Add or reuse whatever `FakeFleetEngine` P4-3/P4-3b ships. Done when both `-race` test suites pass.
 
 ---
 
@@ -1995,7 +2025,7 @@ go test -race ./internal/api/ -run TestSettingsHandler -v
 **Story:** As an operator, I want the `suse-registry-creds` docker-config Secret created in the `aif` namespace on the management cluster so that WorkloadReconciler can embed it in Fleet Bundles for delivery to downstream clusters.
 **Owner Hint:** Backend Go
 **Effort:** M
-**Depends On:** P5-4, P1-3
+**Depends On:** P5-4a, P1-3
 **Parallelizable With:** none
 **Done When:** Creating or updating Settings results in `suse-registry-creds` appearing in the `aif` namespace within 30s. WorkloadReconciler can read this Secret and include it in Fleet Bundles (P4-3b) or gitops manifests (P4-3).
 
@@ -2036,7 +2066,7 @@ go test -race ./internal/controller/ -run TestPullSecretReconciler -v
 **Owner Hint:** Backend Go
 **Effort:** S
 **Depends On:** P3-6
-**Parallelizable With:** P5-1, P5-2, P5-3, P5-4
+**Parallelizable With:** P5-1, P5-2, P5-3, P5-4a
 **Done When:** `GET /api/v1/auth/publishers` returns the documented JSON shape; HTTP integration test covers (a) zero bound publishers, (b) bound publisher who is the caller, (c) bound publisher who is not the caller.
 
 **Acceptance Criteria:**
@@ -2516,7 +2546,7 @@ yarn serve-pkgs
 **Story:** As a platform engineer, I want a Settings page that calls custom REST API endpoints (`GET /api/v1/settings`, `PUT /api/v1/settings`) to load and persist Settings configuration, with four accordion sections including an optional Advanced section, so that I can configure AIF for both connected and air-gapped deployments.
 **Owner Hint:** UI Vue
 **Effort:** M
-**Depends On:** P6-1 (UI scaffold), P5-4 (Settings REST API endpoints), P5-7 (air-gap fields in Settings CRD)
+**Depends On:** P6-1 (UI scaffold), P5-4a (Settings REST API endpoints), P5-7 (air-gap fields in Settings CRD)
 **Parallelizable With:** P6-7, P6-8, P6-10
 **Done When:** Settings page loads Settings via `getSettings()` REST API call, renders four accordion sections (SUSE Application Collection, SUSE Registry, Fleet/GitOps, Advanced Registry Endpoints), persists via `putSettings()` REST API call with Apply button, and Vitest tests cover spec transformation logic (`buildSpec`, `buildCrdSpec`). Settings CR must exist (created via `kubectl apply` or by operator); page displays error banner on 404.
 
@@ -2607,7 +2637,7 @@ yarn serve-pkgs
 - [ ] NO component-level tests (page not tested with mount/shallowMount) — tests focus on pure transformation logic only
 
 **Dependencies Clarification:**
-- [ ] **DOES depend on P5-4** (custom REST API) — uses `getSettings()` / `putSettings()` which call `GET /api/v1/settings` and `PUT /api/v1/settings`
+- [ ] **DOES depend on P5-4a** (custom REST API) — uses `getSettings()` / `putSettings()` which call `GET /api/v1/settings` and `PUT /api/v1/settings`
 - [ ] **Does NOT depend on P5-9** (test-connection endpoint) — Test Connection button NOT implemented in this story
 - [ ] **Depends on P5-7** (air-gap fields) — reads `spec.registryEndpoints`, `imageRewrite`, `catalogDiscovery` from CRD
 
@@ -3020,7 +3050,7 @@ go tool cover -func=cover.out | grep total
 **Story:** As a tester, I want HTTP integration coverage for EVERY endpoint listed in `ARCHITECTURE.md §5`, with positive + negative + auth-failure cases per endpoint.
 **Owner Hint:** Tests
 **Effort:** L
-**Depends On:** P3-6, P4-5, P5-3, P5-4, P7-5 (RequirePublisher middleware)
+**Depends On:** P3-6, P4-5, P5-3, P5-4a, P7-5 (RequirePublisher middleware)
 **Parallelizable With:** P8-4
 **Done When:** Every endpoint listed in `ARCHITECTURE.md §5` has at least one positive AND one negative AND (for publisher-only endpoints) one auth-failure test; the test matrix is checked in at `hack/api-test-matrix.md` and CI verifies every row maps to an executed test.
 
