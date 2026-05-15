@@ -31,12 +31,13 @@ export function init($plugin: IPlugin, store: any): void {
     product,
     virtualType,
     basicType,
-    configureType
-  } = $plugin.DSL(store, PRODUCT_NAME);
+    configureType,
+    ignoreType
+  } = $plugin.DSL(store, PRODUCT_NAME) as any;
 
   product({
     icon:                'ai-factory',
-    inStore:             'aif',
+    inStore:             'management',
     isMultiClusterApp:   true,
     showClusterSwitcher: false,
     weight:              100,
@@ -64,9 +65,15 @@ export function init($plugin: IPlugin, store: any): void {
     PAGE_IDS.SETTINGS
   ]);
 
-  // Register CRD-backed types so the Steve store discovers and watches them.
-  // These are separate from the virtualType nav entries above.
   basicType([CRD_TYPES.BUNDLE, CRD_TYPES.BLUEPRINT, CRD_TYPES.WORKLOAD, CRD_TYPES.SETTINGS]);
+
+  // Suppress auto-generated nav items for raw CRD types — navigation is handled
+  // by the virtualType entries above. ignoreType hides from the sidebar tree only;
+  // it does not prevent direct store dispatches used by the custom pages.
+  ignoreType(CRD_TYPES.BUNDLE);
+  ignoreType(CRD_TYPES.BLUEPRINT);
+  ignoreType(CRD_TYPES.WORKLOAD);
+  ignoreType(CRD_TYPES.SETTINGS);
 
   // Bundles: author-created, directly deletable (spec §8.2 — "Delete: available in any state").
   // Blueprints: minted by approval workflow; only Deprecate/Withdraw/Reactivate are valid lifecycle actions.

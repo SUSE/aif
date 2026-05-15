@@ -42,7 +42,7 @@ test('P6-1 product registration exposes flat navigation', () => {
   const source = read('config/aif-product.ts');
 
   assert.match(source, /product\(\{/);
-  assert.match(source, /inStore:\s*'aif'/);
+  assert.match(source, /inStore:\s*'management'/);
   assert.match(source, /isMultiClusterApp:\s*true/);
   assert.match(source, /showClusterSwitcher:\s*false/);
 
@@ -89,7 +89,6 @@ test('P6-1 l10n and placeholder pages cover all navigation entries', () => {
     assert.match(l10n, new RegExp(`title:\\s*'${ title }'`));
     assert.match(component, new RegExp(`name:\\s*'${ componentName }'`));
     assert.match(component, new RegExp(`aif\\.pages\\.${ l10nKey }\\.title`));
-    assert.match(component, new RegExp(`aif\\.pages\\.${ l10nKey }\\.comingSoon`));
   }
 });
 
@@ -98,8 +97,6 @@ test('P6-1 entry point wires product, routes, and localization', () => {
 
   assert.match(source, /import routes from '\.\/routing'/);
   assert.match(source, /import '\.\/style\/brand\.css'/);
-  assert.match(source, /SteveFactory.*require\('@shell\/plugins\/steve'\)/s);
-  assert.match(source, /plugin\.addDashboardStore\('aif'.*namespace:\s*'aif'/s);
   assert.match(source, /plugin\.addProduct\(require\('\.\/config\/aif-product'\)\)/);
   assert.match(source, /plugin\.addRoutes\(routes\)/);
   assert.match(source, /plugin\.addL10n\('en-us',\s*require\('\.\/l10n\/en-us\.yaml'\)\)/);

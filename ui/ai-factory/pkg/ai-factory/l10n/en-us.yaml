@@ -34,4 +34,90 @@ aif:
       comingSoon: 'Bundle review queue coming soon'
     settings:
       title: 'Settings'
-      comingSoon: 'Settings configuration coming soon'
+      apply: 'Apply'
+
+      sections:
+        fleet:
+          title: 'Fleet / GitOps'
+          repoURL:
+            label: 'Repository URL'
+            placeholder: 'https://github.com/org/repo.git'
+          branch:
+            label: 'Branch'
+            placeholder: 'main'
+          authType:
+            label: 'Auth Type'
+            options:
+              none: 'None'
+              ssh: 'SSH'
+              token: 'Token'
+              basic: 'Basic'
+          credSecretRef:
+            label: 'Git Credentials'
+            secretNameLabel: 'Credential Secret'
+            keyNameLabel: 'Secret Key'
+
+        appCollection:
+          title: 'SUSE Application Collection'
+          userSecretRef:
+            label: 'Username Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          tokenSecretRef:
+            label: 'Access Token Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          categories:
+            label: 'Categories'
+            placeholder: 'ai, nlp, vision'
+
+        suseRegistry:
+          title: 'SUSE Registry'
+          userSecretRef:
+            label: 'Username Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          tokenSecretRef:
+            label: 'Access Token Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          refreshIntervalMinutes:
+            label: 'NIM Index Refresh (minutes)'
+
+        advanced:
+          title: 'Advanced'
+          warning: 'Advanced settings for air-gapped or custom deployments only. Modify with care.'
+          registryEndpoints:
+            title: 'Registry Endpoints'
+            suseRegistry:
+              label: 'SUSE Registry'
+              placeholder: 'registry.suse.com'
+            applicationCollection:
+              label: 'Application Collection (OCI)'
+              placeholder: 'dp.apps.rancher.io'
+            applicationCollectionAPI:
+              label: 'Application Collection API'
+              placeholder: 'https://api.apps.rancher.io'
+          catalogDiscovery:
+            title: 'Catalog Discovery'
+            applicationCollectionMode:
+              label: 'Discovery Mode'
+              options:
+                api: 'API (default)'
+                registryFallback: 'Registry Fallback (air-gap)'
+                disabled: 'Disabled'
+          imageRewrite:
+            title: 'Image Rewrite Rules'
+            enabled:
+              label: 'Enable image rewriting'
+            rules:
+              match:
+                label: 'Match Prefix'
+                placeholder: 'nvcr.io'
+              replace:
+                label: 'Replace With'
+                placeholder: 'registry.suse.com/ai'
+              add: 'Add Rule'
+
+      errors:
+        settingsNotFound: 'No settings found. Please ensure the AIF operator is installed correctly.'

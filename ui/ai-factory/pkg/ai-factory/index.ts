@@ -1,10 +1,7 @@
 import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
-import { MANAGEMENT_CLUSTER } from './config/types';
 import routes from './routing';
 import './style/brand.css';
-
-const { SteveFactory } = require('@shell/plugins/steve');
 
 /**
  * SUSE AI Factory UI extension entry point.
@@ -19,7 +16,9 @@ export default function(plugin: IPlugin): void {
     icon: require('./assets/logo.svg')
   };
 
-  plugin.addDashboardStore('aif', SteveFactory(MANAGEMENT_CLUSTER, null), { namespace: 'aif', isClusterStore: true });
+  // Note: AI Factory uses the 'management' store for all CRD resources
+  // (Bundles, Blueprints, Workloads, Settings). The management store
+  // auto-discovers all CRDs via Steve API. No custom store needed.
   plugin.addProduct(require('./config/aif-product'));
   plugin.addRoutes(routes);
   plugin.addL10n('en-us', require('./l10n/en-us.yaml'));
