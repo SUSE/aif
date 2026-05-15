@@ -30,6 +30,11 @@ jobs:
         run: |
           VERSION="${GH_REF#refs/tags/aif-ui-v}"
 
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)*(\+[a-zA-Z0-9.]+)*$ ]]; then
+            echo "::error::Invalid semver: $VERSION"
+            exit 1
+          fi
+
           if [[ "$VERSION" == *"-"* ]]; then
             METADATA_TAGS="$VERSION"
             PUBLISH_GH_PAGES=false
