@@ -83,9 +83,11 @@ function buildCrdSpec(spec) {
 
   const sr = spec.suseRegistry;
 
-  out.suseRegistry = { refreshIntervalMinutes: sr.refreshIntervalMinutes };
-  if (sr.userSecretRef?.name) out.suseRegistry.userSecretRef = sr.userSecretRef;
-  if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
+  if (sr.userSecretRef?.name || sr.tokenSecretRef?.name || sr.refreshIntervalMinutes !== 10) {
+    out.suseRegistry = { refreshIntervalMinutes: sr.refreshIntervalMinutes };
+    if (sr.userSecretRef?.name) out.suseRegistry.userSecretRef = sr.userSecretRef;
+    if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
+  }
 
   const re = spec.registryEndpoints;
 
@@ -237,10 +239,29 @@ describe('buildCrdSpec', () => {
     expect(out.fleet.credSecretRef).toStrictEqual({ name: 'git-creds', key: 'token' });
   });
 
-  it('always writes suseRegistry.refreshIntervalMinutes', () => {
+  it('omits suseRegistry when all fields are at their defaults', () => {
     const spec = emptySpec();
     const out = buildCrdSpec(spec);
 
+    expect(out.suseRegistry).toBeUndefined();
+  });
+
+  it('writes suseRegistry when refreshIntervalMinutes differs from default', () => {
+    const spec = emptySpec();
+
+    spec.suseRegistry.refreshIntervalMinutes = 30;
+    const out = buildCrdSpec(spec);
+
+    expect(out.suseRegistry.refreshIntervalMinutes).toBe(30);
+  });
+
+  it('writes suseRegistry when a secret ref is set', () => {
+    const spec = emptySpec();
+
+    spec.suseRegistry.userSecretRef = { name: 'reg-user', key: 'username' };
+    const out = buildCrdSpec(spec);
+
+    expect(out.suseRegistry.userSecretRef).toStrictEqual({ name: 'reg-user', key: 'username' });
     expect(out.suseRegistry.refreshIntervalMinutes).toBe(10);
   });
 

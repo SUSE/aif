@@ -48,6 +48,7 @@ aif:
           authType:
             label: 'Auth Type'
             options:
+              none: 'None'
               ssh: 'SSH'
               token: 'Token'
               basic: 'Basic'

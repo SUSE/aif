@@ -7,8 +7,7 @@ import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
-
-const SETTINGS_NAMESPACE = 'aif';
+import { OPERATOR_NAMESPACE } from '../config/types';
 
 export default {
   name: 'SettingsPage',
@@ -35,6 +34,7 @@ export default {
       } else {
         this.fetchErrorMessage = e?.message || String(e);
       }
+      this.loaded = true;
     }
   },
 
@@ -64,11 +64,12 @@ export default {
 
   computed: {
     settingsNamespace() {
-      return SETTINGS_NAMESPACE;
+      return OPERATOR_NAMESPACE;
     },
 
     authTypeOptions() {
       return [
+        { label: this.t('aif.pages.settings.sections.fleet.authType.options.none'), value: '' },
         { label: this.t('aif.pages.settings.sections.fleet.authType.options.ssh'), value: 'ssh' },
         { label: this.t('aif.pages.settings.sections.fleet.authType.options.token'), value: 'token' },
         { label: this.t('aif.pages.settings.sections.fleet.authType.options.basic'), value: 'basic' },
@@ -171,9 +172,11 @@ export default {
 
       const sr = spec.suseRegistry;
 
-      out.suseRegistry = { refreshIntervalMinutes: sr.refreshIntervalMinutes };
-      if (sr.userSecretRef?.name) out.suseRegistry.userSecretRef = sr.userSecretRef;
-      if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
+      if (sr.userSecretRef?.name || sr.tokenSecretRef?.name || sr.refreshIntervalMinutes !== 10) {
+        out.suseRegistry = { refreshIntervalMinutes: sr.refreshIntervalMinutes };
+        if (sr.userSecretRef?.name) out.suseRegistry.userSecretRef = sr.userSecretRef;
+        if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
+      }
 
       const re = spec.registryEndpoints;
 
@@ -388,7 +391,7 @@ export default {
                 type="number"
                 :min="1"
                 :mode="mode"
-                @update:value="spec.suseRegistry.refreshIntervalMinutes = Number($event)"
+                @update:value="spec.suseRegistry.refreshIntervalMinutes = Number($event) || 10"
               />
             </div>
           </div>
@@ -396,7 +399,7 @@ export default {
       </div>
 
       <!-- Fleet / GitOps -->
-      <div class="box mt-20">
+      <div class="box mt-10">
         <div
           class="accordion-header"
           role="button"
