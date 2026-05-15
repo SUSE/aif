@@ -284,7 +284,7 @@ The UI extension imports exclusively from `@rancher/shell` and `@components/`. T
 | ResourceFetch mixin | `@shell/mixins/resource-fetch` | `dashboard/shell/mixins/resource-fetch.js` |
 | `allHash` helper | `@shell/utils/promise` | `dashboard/shell/utils/promise.js` |
 | SteveModel | `@shell/plugins/steve/steve-class` | `dashboard/shell/plugins/steve/steve-class.js` |
-| SteveFactory + steveStoreInit | `@shell/plugins/steve` | `dashboard/shell/plugins/steve/index.js` |
+| SteveFactory + steveStoreInit | `@shell/plugins/steve` | `dashboard/shell/plugins/steve/index.js` | Not used by AIF — the AIF extension uses the built-in management store rather than a custom Steve store. Listed here for reference only. |
 | Plugin/IPlugin types | `@shell/core/types` | `dashboard/shell/core/types.ts` |
 | Auto-import models | `@rancher/auto-import` | `dashboard/dev/auto-import/index.ts` |
 
@@ -301,7 +301,7 @@ The Harvester extension (`harvester-ui-extension/`) is the most complete real-wo
 | List page | `pkg/ai-factory/list/ai.suse.com.bundle.vue` | `pkg/harvester/pages/c/_cluster/_resource/index.vue` |
 | Detail page (Tabbed) | `pkg/ai-factory/detail/ai.suse.com.bundle/index.vue` | `pkg/harvester/detail/harvesterhci.io.host/index.vue` |
 | Edit page (CruResource) | `pkg/ai-factory/edit/ai.suse.com.bundle.vue` | `pkg/harvester/edit/harvesterhci.io.addon/index.vue` |
-| Steve store | `pkg/ai-factory/store/index.ts` | `pkg/harvester/store/harvester-store/index.ts` |
+| Operator API client | `pkg/ai-factory/utils/operator-api.ts` | (no Harvester equivalent — AIF-specific fetch wrapper for the operator REST API) |
 | Routing | `pkg/ai-factory/routing/aif-routing.js` | `pkg/harvester/routing/harvester-routing.js` |
 | Validators | `pkg/ai-factory/validators/index.js` | `pkg/harvester/validators/index.js` |
 | l10n | `pkg/ai-factory/l10n/en-us.yaml` | `pkg/harvester/l10n/en-us.yaml` |
@@ -1917,15 +1917,24 @@ ui/ai-factory/
     │   ├── BlueprintPhaseState.vue     # Active / Deprecated / Withdrawn
     │   ├── WorkloadPhaseState.vue
     │   └── WorkloadSource.vue          # NEW: renders App / Blueprint / Bundle (test) provenance
-    ├── store/
-    │   ├── index.ts                    # SteveFactory store for AIF CRDs
-    │   └── aif-common.js               # Apps catalog, NIM index, settings, sync status
     ├── routing/
     │   └── aif-routing.js
     ├── utils/
-    │   └── api.js                      # REST client for non-K8s /api/v1/* endpoints
+    │   └── operator-api.ts             # Typed fetch wrapper; routes all operator REST calls through Rancher k8s-proxy to aif-operator:8080
     └── l10n/
         └── en-us.yaml
+```
+
+Unit tests live outside `pkg/ai-factory/` at the workspace root:
+
+```
+ui/ai-factory/
+├── tests/
+│   └── unit/
+│       ├── setup.js                    # Vitest global setup (happy-dom environment)
+│       └── pages/
+│           └── settings.spec.js        # Vitest unit tests for settings.vue pure logic
+└── vitest.config.js                    # Vitest configuration
 ```
 
 ### 7.2 Entry Point (`index.ts`)
@@ -1933,18 +1942,15 @@ ui/ai-factory/
 ```typescript
 import { IPlugin } from '@shell/core/types';
 import { importTypes } from '@rancher/auto-import';
-import { SteveFactory, steveStoreInit } from '@shell/plugins/steve';
-
 export function init($plugin: IPlugin, store: any): void {
   importTypes($plugin);
 
   $plugin.addProduct(require('./config/aif-product'));
 
-  // Note: AI Factory uses the 'management' store for all CRD resources
-  // (Bundles, Blueprints, Workloads, Settings). The management store
-  // auto-discovers all CRDs via Steve API. No custom store needed.
-  // If custom actions/getters are needed in the future, add a custom
-  // store via addDashboardStore() here.
+  // AI Factory uses the built-in 'management' store for all CRD resources
+  // (Bundles, Blueprints, Workloads, Settings). No custom Steve store is needed.
+  // Operator-specific REST calls (Settings read/write, Apps list, etc.) go through
+  // utils/operator-api.ts, not through the store.
 
   $plugin.addRoutes(require('./routing/aif-routing').default);
   $plugin.addL10n('en-us', require('./l10n/en-us.yaml'));
@@ -1958,8 +1964,8 @@ import { AIF, AIF_TYPES } from './types';
 import { STATE, NAME, AGE } from '@shell/config/table-headers';
 
 export function init(store, $plugin) {
-  const { product, basicType, virtualType, configureType, headers } =
-    $plugin.DSL(store, AIF);
+  const { product, basicType, virtualType, configureType, headers, ignoreType } =
+    $plugin.DSL(store, AIF) as any;
 
   product({
     inStore:             'management',  // Use management store for CRD auto-discovery
@@ -1985,8 +1991,15 @@ export function init(store, $plugin) {
     AIF_TYPES.WORKLOADS, AIF_TYPES.PENDING_REVIEWS, AIF_TYPES.SETTINGS
   ]);
 
-  // CRD-backed types — registered separately so the Steve store discovers and watches them.
+  // CRD-backed types — registered so the management store discovers and watches them.
   basicType([AIF_TYPES.BUNDLE, AIF_TYPES.BLUEPRINT, AIF_TYPES.WORKLOAD, AIF_TYPES.SETTINGS]);
+
+  // Suppress auto-generated sidebar nav entries for raw CRD types.
+  // ignoreType hides from the nav tree only; direct store dispatches still work.
+  ignoreType(AIF_TYPES.BUNDLE);
+  ignoreType(AIF_TYPES.BLUEPRINT);
+  ignoreType(AIF_TYPES.WORKLOAD);
+  ignoreType(AIF_TYPES.SETTINGS);
 
   // Bundles: author-created, directly deletable (spec §8.2 — "Delete: available in any state").
   // Blueprints: minted by approval workflow; only Deprecate/Withdraw/Reactivate are valid lifecycle actions.
@@ -2029,34 +2042,29 @@ export default class Bundle extends SteveModel {
   get canTestDeploy()     { return true; }
 
   async doSubmit(proposedVersion, changeDescription) {
-    return this.$dispatch('aif/request', {
-      url: `/api/v1/bundles/${this.metadata.namespace}/${this.metadata.name}/submit`,
-      method: 'POST',
-      body: { proposedVersion, changeDescription }
-    });
+    const { submitBundle } = await import('../utils/operator-api');
+
+    return submitBundle(this.metadata.namespace, this.metadata.name, { proposedVersion, changeDescription });
   }
-  async doWithdraw()       { return this._lifecycleAction('withdraw'); }
-  async doApprove()        { return this._lifecycleAction('approve'); }
+  async doWithdraw() {
+    const { withdrawBundle } = await import('../utils/operator-api');
+
+    return withdrawBundle(this.metadata.namespace, this.metadata.name);
+  }
+  async doApprove() {
+    const { approveBundle } = await import('../utils/operator-api');
+
+    return approveBundle(this.metadata.namespace, this.metadata.name);
+  }
   async doRequestChanges(comment) {
-    return this.$dispatch('aif/request', {
-      url: `/api/v1/bundles/${this.metadata.namespace}/${this.metadata.name}/request-changes`,
-      method: 'POST',
-      body: { comment }
-    });
+    const { requestChangesBundle } = await import('../utils/operator-api');
+
+    return requestChangesBundle(this.metadata.namespace, this.metadata.name, { comment });
   }
   async doTestDeploy(targetClusters, deployStrategy) {
-    return this.$dispatch('aif/request', {
-      url: `/api/v1/bundles/${this.metadata.namespace}/${this.metadata.name}/test-deploy`,
-      method: 'POST',
-      body: { targetClusters, deployStrategy }
-    });
-  }
+    const { testDeployBundle } = await import('../utils/operator-api');
 
-  _lifecycleAction(action) {
-    return this.$dispatch('aif/request', {
-      url: `/api/v1/bundles/${this.metadata.namespace}/${this.metadata.name}/${action}`,
-      method: 'POST'
-    });
+    return testDeployBundle(this.metadata.namespace, this.metadata.name, { targetClusters, deployStrategy });
   }
 }
 ```
@@ -2074,7 +2082,9 @@ These follow the standard `@rancher/shell` patterns documented by Harvester. See
 
 **`management` store** — All AIF CRD resources (Bundle, Blueprint, Workload, Settings) use Rancher's built-in `management` store. The management store auto-discovers all CRDs via Steve API and provides standard CRUD operations. No custom store is needed for basic CRD operations.
 
-**Future custom store** — If custom actions, getters, or mutations are needed (e.g., bulk operations, computed cross-resource properties, optimistic updates), add a custom store via `addDashboardStore()` in `index.ts`. For now, the management store handles all requirements.
+**Operator REST API client (`utils/operator-api.ts`)** — Non-CRD data (Apps catalog, NIM index, pending-review queue) and all operator-specific actions (Settings read/write, workflow lifecycle actions) are fetched directly from the operator via a typed `fetch` wrapper. The wrapper routes through the Rancher Kubernetes service proxy at `/k8s/clusters/local/api/v1/namespaces/aif/services/http:aif-operator:8080/proxy`. Service coordinates (`OPERATOR_NAMESPACE`, `OPERATOR_SERVICE`, `OPERATOR_PORT`) are constants exported from `config/types.ts`. Page components call exported functions (`getSettings`, `putSettings`, `listApps`, `listBundles`, etc.) directly; no Vuex dispatch is involved for these calls.
+
+**Future custom store** — If custom actions, getters, or mutations are needed (e.g., bulk operations, computed cross-resource properties, optimistic updates), add a custom store via `addDashboardStore()` in `index.ts`. For now, the management store and `operator-api.ts` handle all requirements.
 
 ### 7.7 i18n Rules
 
@@ -3146,7 +3156,8 @@ var _ = AfterSuite(func() {
 ### 12.6 UI Tests
 
 - **Framework:** Vitest + Vue Test Utils
-- **Pattern:** Mock `api.js` with `vi.mock`. Mount components. Assert rendered output and emitted events.
+- **Pattern:** Mock `utils/operator-api.ts` with `vi.mock`. Mount components. Assert rendered output and emitted events. Pure-logic helpers (e.g., `buildSpec`, `buildCrdSpec`) may be tested without mounting by duplicating them in the test file.
+- **Test file location:** Unit tests live at `ui/ai-factory/tests/unit/` (workspace-root `tests/` tree, run by Vitest). Both `tests/unit/` and `pkg/ai-factory/components/__tests__/` are picked up by `vitest.config.js`. Vitest config: `ui/ai-factory/vitest.config.js`. Global setup: `tests/unit/setup.js` (configures happy-dom environment).
 - **Critical scenarios:** Bundle wizard validation; PublishReviewQueue interaction; BlueprintVersionPicker switching.
 
 #### 12.6.1 Test setup pattern
@@ -3160,7 +3171,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import BundleSubmitDialog from '../BundleSubmitDialog.vue';
 
 // Mock the REST client
-vi.mock('../utils/api', () => ({
+vi.mock('../utils/operator-api', () => ({
   submitBundle: vi.fn().mockResolvedValue({ phase: 'Submitted' }),
 }));
 
@@ -3194,11 +3205,11 @@ describe('BundleSubmitDialog', () => {
 
 | Surface | Mock pattern |
 |---|---|
-| REST client (`utils/api.js`) | `vi.mock('../utils/api', () => ({ ... }))` returning resolved/rejected Promises |
+| REST client (`utils/operator-api.ts`) | `vi.mock('../utils/operator-api', () => ({ ... }))` returning resolved/rejected Promises |
 | `@shell/*` components | `globalStubs: { ResourceTable: true, Loading: true, ... }` — render as `<resource-table-stub />` |
 | Steve store | `mocks: { $store: { dispatch: vi.fn(), getters: {...} } }` |
-| Plugin DSL (`$plugin.DSL`) | Provide a fake plugin object with stub methods (`product`, `basicType`, `virtualType`, `headers`) |
-| Steve model methods (`model.$dispatch('aif/request', ...)`) | Mock the model's `$dispatch` directly, not the store |
+| Plugin DSL (`$plugin.DSL`) | Provide a fake plugin object with stub methods (`product`, `basicType`, `virtualType`, `headers`, `ignoreType`) |
+| Steve model action methods | Import the relevant `operator-api.ts` function and mock with `vi.mock('../utils/operator-api', ...)` |
 | Router (`this.$router.push`) | `mocks: { $router: { push: vi.fn() } }` |
 | i18n (`this.t('aif.something')`) | `mocks: { t: (key) => key }` (returns key as label) |
 
@@ -3233,7 +3244,7 @@ jobs:
   coverage: fail if coverage < 80%
   build:    go build ./...
   helm-lint: helm lint charts/*
-  ui-test:  cd ui/ai-factory && yarn install && yarn test
+  ui-test:  cd ui/ai-factory && yarn install && yarn test && yarn test:unit
   docker:   docker buildx build (no push on PR)
   e2e:      kind cluster + helm install + smoke tests (main branch only)
 ```

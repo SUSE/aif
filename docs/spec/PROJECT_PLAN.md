@@ -124,8 +124,9 @@ A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on U
 | `pkg/nvidia/discovery.go` | P2-1, P5-5 | The NIM index is read from SUSE Registry only. Any new code that touches `nvcr.io`, `helm.ngc.nvidia.com`, or `integrate.api.nvidia.com` is a bug — the mirror process is external to AIF. |
 | `pkg/workload/manager.go` | P5-1, P5-2, P8-1 | Interface frozen in P5-1. |
 | `internal/api/middleware.go` | P0-4, P7-5, P8-1, P8-2 | Keep middleware composable — each story adds a separate function. |
-| `ui/ai-factory/pkg/ai-factory/index.ts` | P6-1, P6-2, P6-3, P6-4 | P6-1 lands skeleton. Subsequent stories add lines for `addProduct`, `addDashboardStore`, `addRoutes`, `addL10n` — no rewrites. |
-| `ui/ai-factory/pkg/ai-factory/utils/api.js` | P6-3..P6-10 | All UI stories add new exports only — never modify existing function signatures after P6-3. |
+| `ui/ai-factory/pkg/ai-factory/index.ts` | P6-1, P6-2, P6-3, P6-4 | P6-1 lands skeleton. Subsequent stories add lines for `addProduct`, `addRoutes`, `addL10n` — no rewrites. > **Follow-up (post-merge, P6-9):** `addDashboardStore('aif', ...)` removed — the custom Steve store was dropped in favour of the built-in `management` store. Future stories must not re-add it unless a concrete need arises. |
+| `ui/ai-factory/pkg/ai-factory/utils/operator-api.ts` | P6-9 (created), P6-3..P6-10 (consumed) | Replaces the originally planned `utils/api.js`. Typed `fetch` wrapper routing all operator REST calls through the Rancher k8s-proxy. All UI stories that need operator REST calls import from this module. Never modify existing function signatures after P6-9. |
+| `ui/ai-factory/pkg/ai-factory/utils/api.js` | (superseded by `utils/operator-api.ts`) | Original plan; replaced by `operator-api.ts` in P6-9. If future needs differ from the operator REST pattern, this file may be created separately; for now, treat `operator-api.ts` as the canonical REST client module. |
 | `CLAUDE.md` | P0-0, P1-9, P3-7, P6-0, P9-5 | Append-only edits between P0-0 and P9-5. P9-5 is the only story allowed to delete content. |
 | `pkg/helm/values.go` | P4-1 (engine + MergeValues), P4-6 (ApplyImageRewrites) | P4-1 lands `MergeValues`; P4-6 adds `ApplyImageRewrites` as a separate function called after `MergeValues` and after NIM generation. No edits to existing function signatures. |
 | `api/v1alpha1/settings_types.go` | P0-2 (initial), P5-7 (air-gap fields) | P5-7 adds `registryEndpoints`, `imageRewrite`, `catalogDiscovery`, `blueprintClassification` as additive optional field groups — no removal of existing fields. |
@@ -2452,6 +2453,7 @@ yarn serve-pkgs
 - [ ] Save / Reset buttons + toast feedback
 - [ ] Vitest covers save flow, validation, the Advanced toggle, the Test Connection button, the chip visibility, and the rules add/remove flow
 
+> **Follow-up (post-merge, P6-9):** Delivered: four accordion sections (SUSE Application Collection, SUSE Registry, Fleet/GitOps, Advanced) with correct CRD field bindings; `getSettings`/`putSettings` calls via `utils/operator-api.ts`; Apply button (bottom-right); Vitest unit tests covering `buildSpec`/`buildCrdSpec`/`toSelectorValue`/`fromSelectorValue` logic (33 tests). Not delivered as they are no longer required for MVP1: Section 4 (Image Pull Secrets informational panel + `kubectl create secret docker-registry` helper); page-header Advanced toggle (implemented as an in-form accordion panel instead, which is functionally equivalent but visually differs from the spec); "Custom registry endpoints active" chip; Test Connection button (`POST /api/v1/settings/test-connection`); Reset button; save/error toast feedback. The operator REST API endpoints (`GET /api/v1/settings`, `PUT /api/v1/settings`) are not yet implemented in the operator — the UI client is written against the spec'd contract.
 ---
 
 **ID:** P6-10

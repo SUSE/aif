@@ -86,7 +86,10 @@ make charts-package               # Package all charts to .tgz
 # UI (requires Node 18+ and yarn)
 cd ui/ai-factory && yarn install
 yarn build                        # Production build
-yarn test                         # Vue component tests
+yarn test                         # Scaffold smoke tests (Node --test runner, pkg/ai-factory/test/)
+yarn test:unit                    # Vitest unit tests (tests/unit/)
+yarn test:unit:ui                 # Vitest UI — interactive browser test runner
+yarn test:coverage                # Vitest with coverage report
 ```
 
 ### Local Dev Loop
@@ -165,7 +168,7 @@ Sample CRs live in `examples/`. Each is the minimal valid CR for its CRD.
 
 - **Imports:** Only from `@rancher/shell` and `@components/`. See `ARCHITECTURE.md §3.1` Imports Reference Table for allowed paths.
 - **l10n:** All user-facing strings via `labelKey` from `pkg/ai-factory/l10n/en-us.yaml`. No hardcoded English text.
-- **Steve store:** Use `this.$store.dispatch('ai-factory/findAll', {type})` for resource lists. Never raw API calls in components.
+- **Steve store:** Use `this.$store.dispatch('management/findAll', {type})` for CRD resource lists (Bundles, Blueprints, Workloads, Settings). For operator-specific reads and writes (Settings, Apps, NIM index, workflow lifecycle actions), use the typed functions in `utils/operator-api.ts` instead. Never call `fetch()` directly in component code — route all operator calls through `operator-api.ts`.
 - **Component structure:** List pages use `ResourceList` wrapper, detail pages use `ResourceDetail`, edit pages use `CruResource`.
 - **Validators:** Custom validation in `pkg/ai-factory/validators/index.js`, registered via `validators.js` DSL.
 - **Routing:** All routes registered in `pkg/ai-factory/routing/aif-routing.js`.
