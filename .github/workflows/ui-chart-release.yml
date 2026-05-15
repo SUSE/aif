@@ -1,0 +1,32 @@
+name: AI Factory UI Chart Release
+
+on:
+  push:
+    tags: ['aif-ui-v*']
+
+jobs:
+  prepare:
+    outputs:
+      VERSION: ${{ steps.tags.outputs.VERSION }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: tags
+        shell: bash
+        env:
+          GH_REF: ${{ github.ref }}
+        run: |
+          VERSION="${GH_REF#refs/tags/aif-ui-v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+  chart:
+    needs: prepare
+    uses: ./.github/workflows/helm-publish.yml
+    with:
+      chart-path: charts/aif-ui
+      app-version: ${{ needs.prepare.outputs.VERSION }}
+      update-app-version: true
+      image-name: ghcr.io/suse/aif-ui
+    permissions:
+      contents: read
+      packages: write

@@ -1,0 +1,80 @@
+name: Publish Helm Chart (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      chart-path:
+        description: Path to the chart directory (e.g. charts/aif-operator)
+        required: true
+        type: string
+      app-version:
+        description: Release version for appVersion update
+        required: true
+        type: string
+      update-app-version:
+        description: Whether to update Chart.yaml appVersion before packaging
+        required: false
+        type: boolean
+        default: false
+      image-name:
+        description: Container image name for helm.sh/images annotation (e.g. ghcr.io/suse/aif-operator). Skipped when empty.
+        required: false
+        type: string
+        default: ''
+      registry:
+        description: OCI registry to push charts to
+        required: false
+        type: string
+        default: oci://ghcr.io/suse/charts
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update appVersion
+        if: inputs.update-app-version
+        env:
+          VERSION: ${{ inputs.version }}
+          CHART_PATH: ${{ inputs.chart-path }}
+        run: |
+          yq -i '.appVersion = env(VERSION)' "$CHART_PATH/Chart.yaml"
+          echo "Updated appVersion to $VERSION"
+          yq '.version, .appVersion' "$CHART_PATH/Chart.yaml"
+
+      - name: Update image annotations
+        if: inputs.image-name != ''
+        env:
+          VERSION: ${{ inputs.version }}
+          CHART_PATH: ${{ inputs.chart-path }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+        run: |
+          yq -i ".annotations.\"helm.sh/images\" = \"- image: ${IMAGE_NAME}:${VERSION}\n  name: ${IMAGE_NAME##*/}\"" "$CHART_PATH/Chart.yaml"
+          echo "Updated helm.sh/images annotation"
+          yq '.annotations' "$CHART_PATH/Chart.yaml"
+
+      - name: Package chart
+        id: package
+        env:
+          CHART_PATH: ${{ inputs.chart-path }}
+        run: |
+          chart_package=$(helm package "$CHART_PATH" --destination . | awk '{print $NF}')
+          echo "chart_package=$chart_package" >> "$GITHUB_OUTPUT"
+          echo "Packaged: $chart_package"
+
+      - name: Push chart
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: helm push "${{ steps.package.outputs.chart_package }}" "$REGISTRY"

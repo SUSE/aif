@@ -1,0 +1,32 @@
+name: AI Factory Operator Chart Release
+
+on:
+  push:
+    tags: ['aif-operator-v*']
+
+jobs:
+  prepare:
+    outputs:
+      VERSION: ${{ steps.tags.outputs.VERSION }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: tags
+        shell: bash
+        env:
+          GH_REF: ${{ github.ref }}
+        run: |
+          VERSION="${GH_REF#refs/tags/aif-operator-v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+  chart:
+    needs: prepare
+    uses: ./.github/workflows/helm-publish.yml
+    with:
+      chart-path: charts/aif-operator
+      app-version: ${{ needs.prepare.outputs.VERSION }}
+      update-app-version: true
+      image-name: ghcr.io/suse/aif-operator
+    permissions:
+      contents: read
+      packages: write

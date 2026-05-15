@@ -1,0 +1,51 @@
+name: AI Factory Infrastructure Charts Release
+
+on:
+  push:
+    tags: ['aif-infra-charts-v*']
+  workflow_dispatch:
+    inputs:
+      chart:
+        description: Which chart to publish
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - nim-llm
+          - nim-vlm
+          - generic-container
+
+jobs:
+  nim-llm:
+    if: inputs.chart == 'all' || inputs.chart == 'nim-llm' || github.event_name == 'push'
+    uses: ./.github/workflows/helm-publish.yml
+    with:
+      chart-path: charts/nim-llm
+      app-version: ''
+      update-app-version: false
+    permissions:
+      contents: read
+      packages: write
+
+  nim-vlm:
+    if: inputs.chart == 'all' || inputs.chart == 'nim-vlm' || github.event_name == 'push'
+    uses: ./.github/workflows/helm-publish.yml
+    with:
+      chart-path: charts/nim-vlm
+      app-version: ''
+      update-app-version: false
+    permissions:
+      contents: read
+      packages: write
+
+  generic-container:
+    if: inputs.chart == 'all' || inputs.chart == 'generic-container' || github.event_name == 'push'
+    uses: ./.github/workflows/helm-publish.yml
+    with:
+      chart-path: charts/generic-container
+      app-version: ''
+      update-app-version: false
+    permissions:
+      contents: read
+      packages: write
