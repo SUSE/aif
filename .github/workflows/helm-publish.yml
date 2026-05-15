@@ -9,8 +9,9 @@ on:
         type: string
       app-version:
         description: Release version for appVersion update
-        required: true
+        required: false
         type: string
+        default: ''
       update-app-version:
         description: Whether to update Chart.yaml appVersion before packaging
         required: false
@@ -55,7 +56,7 @@ jobs:
           yq '.version, .appVersion' "$CHART_PATH/Chart.yaml"
 
       - name: Update image annotations
-        if: inputs.image-name != ''
+        if: inputs.image-name != '' && inputs.app-version != ''
         env:
           VERSION: ${{ inputs.app-version }}
           CHART_PATH: ${{ inputs.chart-path }}
@@ -77,4 +78,5 @@ jobs:
       - name: Push chart
         env:
           REGISTRY: ${{ inputs.registry }}
-        run: helm push "${{ steps.package.outputs.chart_package }}" "$REGISTRY"
+          CHART_PACKAGE: ${{ steps.package.outputs.chart_package }}
+        run: helm push "$CHART_PACKAGE" "$REGISTRY"

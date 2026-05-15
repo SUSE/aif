@@ -8,6 +8,8 @@ jobs:
   prepare:
     outputs:
       VERSION: ${{ steps.tags.outputs.VERSION }}
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Extract version
@@ -17,6 +19,12 @@ jobs:
           GH_REF: ${{ github.ref }}
         run: |
           VERSION="${GH_REF#refs/tags/aif-operator-v}"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)*(\+[a-zA-Z0-9.]+)*$ ]]; then
+            echo "::error::Invalid semver: $VERSION"
+            exit 1
+          fi
+
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
   chart:
