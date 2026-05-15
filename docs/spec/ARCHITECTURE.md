@@ -284,9 +284,11 @@ The UI extension imports exclusively from `@rancher/shell` and `@components/`. T
 | ResourceFetch mixin | `@shell/mixins/resource-fetch` | `dashboard/shell/mixins/resource-fetch.js` |
 | `allHash` helper | `@shell/utils/promise` | `dashboard/shell/utils/promise.js` |
 | SteveModel | `@shell/plugins/steve/steve-class` | `dashboard/shell/plugins/steve/steve-class.js` |
-| SteveFactory + steveStoreInit | `@shell/plugins/steve` | `dashboard/shell/plugins/steve/index.js` | Not used by AIF — the AIF extension uses the built-in management store rather than a custom Steve store. Listed here for reference only. |
+| SteveFactory + steveStoreInit† | `@shell/plugins/steve` | `dashboard/shell/plugins/steve/index.js` |
 | Plugin/IPlugin types | `@shell/core/types` | `dashboard/shell/core/types.ts` |
 | Auto-import models | `@rancher/auto-import` | `dashboard/dev/auto-import/index.ts` |
+
+† Not used by AIF — the AIF extension uses the built-in management store rather than a custom Steve store. Listed here for reference only.
 
 ### 3.2 Reused-from-Harvester Reference Files
 
@@ -301,8 +303,8 @@ The Harvester extension (`harvester-ui-extension/`) is the most complete real-wo
 | List page | `pkg/ai-factory/list/ai.suse.com.bundle.vue` | `pkg/harvester/pages/c/_cluster/_resource/index.vue` |
 | Detail page (Tabbed) | `pkg/ai-factory/detail/ai.suse.com.bundle/index.vue` | `pkg/harvester/detail/harvesterhci.io.host/index.vue` |
 | Edit page (CruResource) | `pkg/ai-factory/edit/ai.suse.com.bundle.vue` | `pkg/harvester/edit/harvesterhci.io.addon/index.vue` |
-| Operator API client | `pkg/ai-factory/utils/operator-api.ts` | `No custome store for now` |
-| Routing | `pkg/ai-factory/routing/aif-routing.js` | `pkg/harvester/routing/harvester-routing.js` |
+| Operator API client | `pkg/ai-factory/utils/operator-api.ts` | `No custom store for now` |
+| Routing | `pkg/ai-factory/routing/index.ts` | `pkg/harvester/routing/harvester-routing.js` |
 | Validators | `pkg/ai-factory/validators/index.js` | `pkg/harvester/validators/index.js` |
 | l10n | `pkg/ai-factory/l10n/en-us.yaml` | `pkg/harvester/l10n/en-us.yaml` |
 
@@ -1917,13 +1919,10 @@ ui/ai-factory/
     │   ├── BlueprintPhaseState.vue     # Active / Deprecated / Withdrawn
     │   ├── WorkloadPhaseState.vue
     │   └── WorkloadSource.vue          # NEW: renders App / Blueprint / Bundle (test) provenance
-    ├── store/
-    │   ├── index.ts                    # SteveFactory store for AIF CRDs
-    │   └── aif-common.js               # Apps catalog, NIM index, settings, sync status
     ├── routing/
-    │   └── aif-routing.js
+    │   └── index.ts                    # Route registration
     ├── utils/
-    │   └── api.js                      # REST client for non-K8s /api/v1/* endpoints
+    │   └── operator-api.ts             # Typed REST client for operator endpoints (/api/v1/*)
     └── l10n/
         └── en-us.yaml
 ```
@@ -1942,7 +1941,7 @@ export function init($plugin: IPlugin, store: any): void {
   // Operator-specific REST calls (Settings read/write, Apps list, etc.) go through
   // utils/operator-api.ts, not through the store.
 
-  $plugin.addRoutes(require('./routing/aif-routing').default);
+  $plugin.addRoutes(require('./routing').default);
   $plugin.addL10n('en-us', require('./l10n/en-us.yaml'));
 }
 ```

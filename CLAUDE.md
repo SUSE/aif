@@ -273,7 +273,7 @@ Stick to what is structurally true (field names, schema relationships, observabl
 1. Create `ui/ai-factory/pkg/ai-factory/list/{crd}.vue`
 2. Import `ResourceList` from `@shell/components/ResourceList`
 3. Define table headers in `config/table-headers.js`
-4. Register route in `routing/aif-routing.js`
+4. Register route in `routing/index.ts`
 5. Add resource type constant in `config/types.ts`
 6. Create l10n keys in `l10n/en-us.yaml`
 
