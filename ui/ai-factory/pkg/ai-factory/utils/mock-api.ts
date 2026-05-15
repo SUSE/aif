@@ -2,9 +2,26 @@
  * Mock API responses for UI development before backend integration is ready.
  */
 
-import type { App } from '../services/apps-api';
+interface MockApp {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  publisher: string;
+  version: string;
+  logoURL: string;
+  source: string;
+  assetType: string;
+  categories: string[];
+  tags: string[];
+  chartRef: { repo: string; chart: string; version: string };
+  projectURL: string;
+  referenceBlueprint: boolean;
+  useCase?: string;
+  lastUpdatedAt?: string;
+}
 
-const MOCK_APPS: App[] = [
+const MOCK_APPS: MockApp[] = [
   {
     id:                 'nvidia.nim-llm:1.2.0',
     name:               'nim-llm',
@@ -160,7 +177,7 @@ export const mockAPI = {
   },
 
   apps: {
-    list(params?: { source?: string; category?: string; includeReferenceBlueprints?: boolean }): App[] {
+    list(params?: { source?: string; category?: string; includeReferenceBlueprints?: boolean }): MockApp[] {
       let result = MOCK_APPS;
 
       if (params?.source && params.source !== 'all') {
