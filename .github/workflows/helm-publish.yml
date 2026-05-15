@@ -35,10 +35,10 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -47,17 +47,17 @@ jobs:
       - name: Update appVersion
         if: inputs.update-app-version
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ inputs.app-version }}
           CHART_PATH: ${{ inputs.chart-path }}
         run: |
-          yq -i '.appVersion = env(VERSION)' "$CHART_PATH/Chart.yaml"
+          yq -i ".appVersion = \"${VERSION}\"" "$CHART_PATH/Chart.yaml"
           echo "Updated appVersion to $VERSION"
           yq '.version, .appVersion' "$CHART_PATH/Chart.yaml"
 
       - name: Update image annotations
         if: inputs.image-name != ''
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ inputs.app-version }}
           CHART_PATH: ${{ inputs.chart-path }}
           IMAGE_NAME: ${{ inputs.image-name }}
         run: |
