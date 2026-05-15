@@ -9,6 +9,17 @@ import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { OPERATOR_NAMESPACE } from '../config/types';
 
+function createEmptySpec() {
+  return {
+    fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
+    applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
+    suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
+    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '' },
+    catalogDiscovery:      { applicationCollectionMode: 'api' },
+    imageRewrite:          { enabled: false, rules: [] },
+  };
+}
+
 export default {
   name: 'SettingsPage',
 
@@ -41,14 +52,7 @@ export default {
   data() {
     return {
       loaded:    false,
-      spec: {
-        fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
-        applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
-        suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
-        registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '' },
-        catalogDiscovery:      { applicationCollectionMode: 'api' },
-        imageRewrite:          { enabled: false, rules: [] },
-      },
+      spec:      createEmptySpec(),
       loadError:         false,
       fetchErrorMessage: null,
       errors:            [],
@@ -98,14 +102,7 @@ export default {
 
   methods: {
     emptySpec() {
-      return {
-        fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
-        applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
-        suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
-        registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '' },
-        catalogDiscovery:      { applicationCollectionMode: 'api' },
-        imageRewrite:          { enabled: false, rules: [] },
-      };
+      return createEmptySpec();
     },
 
     buildSpec(crdSpec = {}) {
@@ -443,7 +440,10 @@ export default {
               />
             </div>
           </div>
-          <div class="row">
+          <div
+            v-if="spec.fleet.authType"
+            class="row"
+          >
             <div class="col span-8">
               <p class="text-label mb-5">
                 {{ t('aif.pages.settings.sections.fleet.credSecretRef.label') }}

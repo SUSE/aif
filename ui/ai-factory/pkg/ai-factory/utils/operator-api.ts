@@ -18,7 +18,8 @@ async function operatorFetch(path: string, options: RequestInit = {}): Promise<a
   const res = await fetch(`${ BASE_URL }${ path }`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...(options.headers || {}),
     },
   });
