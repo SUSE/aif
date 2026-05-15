@@ -142,7 +142,7 @@ func TestApp_JSONRoundTrip_PreservesAllFields(t *testing.T) {
 }
 
 func TestParseTimePtr_ValidRFC3339Nano(t *testing.T) {
-	got := parseTimePtr("2026-04-30T23:56:07.607227Z")
+	got := parseTimePtr(nil, "2026-04-30T23:56:07.607227Z")
 	if got == nil {
 		t.Fatal("expected non-nil *time.Time")
 	}
@@ -152,19 +152,19 @@ func TestParseTimePtr_ValidRFC3339Nano(t *testing.T) {
 }
 
 func TestParseTimePtr_EmptyString(t *testing.T) {
-	if got := parseTimePtr(""); got != nil {
+	if got := parseTimePtr(nil, ""); got != nil {
 		t.Errorf("expected nil for empty string, got %v", got)
 	}
 }
 
 func TestParseTimePtr_Malformed(t *testing.T) {
-	if got := parseTimePtr("not-a-date"); got != nil {
+	if got := parseTimePtr(nil, "not-a-date"); got != nil {
 		t.Errorf("expected nil for malformed input, got %v", got)
 	}
 }
 
 func TestParseTimePtr_RFC3339NoFraction(t *testing.T) {
-	got := parseTimePtr("2026-03-04T10:05:02Z")
+	got := parseTimePtr(nil, "2026-03-04T10:05:02Z")
 	if got == nil {
 		t.Fatal("expected non-nil *time.Time")
 	}

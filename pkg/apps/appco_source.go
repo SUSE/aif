@@ -68,7 +68,7 @@ func (a *AppCoSource) Refresh(ctx context.Context) error {
 		a.recordError(err)
 		return err
 	}
-	apps := translateCatalogApps(upstream)
+	apps := translateCatalogApps(a.logger, upstream)
 	a.enrichWithAnnotations(ctx, apps)
 	a.mu.Lock()
 	a.cache = apps
@@ -145,7 +145,7 @@ func (a *AppCoSource) recordError(err error) {
 // into the canonical []App. ID namespaced as `suse.<slug>:<version>`
 // (single-token form so the REST surface uses a plain path-segment
 // route, not a wildcard).
-func translateCatalogApps(upstream []source_collection.CatalogApp) []App {
+func translateCatalogApps(logger *slog.Logger, upstream []source_collection.CatalogApp) []App {
 	out := make([]App, 0, len(upstream))
 	for _, u := range upstream {
 		out = append(out, App{
@@ -159,7 +159,7 @@ func translateCatalogApps(upstream []source_collection.CatalogApp) []App {
 			AssetType:     "chart",
 			Categories:    append([]string(nil), u.Categories...),
 			ChartRef:      parseAppCoChartRef(u),
-			LastUpdatedAt: parseTimePtr(u.LastUpdatedAt),
+			LastUpdatedAt: parseTimePtr(logger, u.LastUpdatedAt),
 		})
 	}
 	return out
@@ -181,6 +181,10 @@ func parseAppCoChartRef(u source_collection.CatalogApp) ChartRef {
 // parallelism (limit 8); per-chart failures log a warn and leave the app
 // at ReferenceBlueprint=false. ErrNotConfigured short-circuits the rest
 // of the fan-out via context cancel and emits a single warn.
+//
+// LastUpdatedAt is NOT read from annotations here — the AppCo API supplies
+// it directly (see translateCatalogApps). The NVIDIA path reads it from
+// OCI manifest annotations because the registry has no equivalent API field.
 func (a *AppCoSource) enrichWithAnnotations(ctx context.Context, apps []App) {
 	if a.annReader == nil {
 		return

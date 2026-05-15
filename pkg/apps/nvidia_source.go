@@ -226,7 +226,7 @@ func (n *NVIDIASource) enrichWithAnnotations(ctx context.Context, apps []App) {
 				apps[i].UseCase = v
 			}
 			if v, ok := ann["org.opencontainers.image.created"]; ok {
-				apps[i].LastUpdatedAt = parseTimePtr(v)
+				apps[i].LastUpdatedAt = parseTimePtr(n.logger, v)
 			}
 			return nil
 		})

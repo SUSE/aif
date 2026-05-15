@@ -30,7 +30,7 @@ type App struct {
 	ProjectURL         string     `json:"projectURL"`
 	ReferenceBlueprint bool       `json:"referenceBlueprint"` // populated by P2-5; false by default
 	UseCase            string     `json:"useCase,omitempty"`  // populated from ai.suse.com/use-case (consumed by P2-7)
-	LastUpdatedAt      *time.Time `json:"lastUpdatedAt,omitempty"`
+	LastUpdatedAt      *time.Time `json:"lastUpdatedAt,omitempty"` // *time.Time validates at parse time; nil when the source has no timestamp
 }
 
 // ChartRef matches ARCHITECTURE.md §5: {repo, chart, version}.
@@ -83,13 +83,3 @@ type SourceStatus struct {
 	EntryCount    int
 }
 
-func parseTimePtr(s string) *time.Time {
-	if s == "" {
-		return nil
-	}
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		return nil
-	}
-	return &t
-}
