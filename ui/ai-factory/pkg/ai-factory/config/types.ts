@@ -5,6 +5,12 @@
 export const PRODUCT_NAME = 'ai-factory';
 export const MANAGEMENT_CLUSTER = 'local';
 
+// Operator service coordinates used to build the Rancher proxy base URL.
+// Adjust OPERATOR_SERVICE to match your Helm release name if it differs from 'aif-operator'.
+export const OPERATOR_NAMESPACE = 'aif';
+export const OPERATOR_SERVICE   = 'aif-operator';
+export const OPERATOR_PORT      = 8080;
+
 export const PAGE_IDS = {
   OVERVIEW:        'overview',
   APPS:            'apps',

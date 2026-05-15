@@ -1,14 +1,14 @@
 <script>
-import AsyncButton    from '@shell/components/AsyncButton';
-import { Banner }     from '@components/Banner';
-import Loading        from '@shell/components/Loading';
+import AsyncButton      from '@shell/components/AsyncButton';
+import { Banner }       from '@components/Banner';
+import Loading          from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
-import LabeledSelect  from '@shell/components/form/LabeledSelect';
-import { Checkbox }   from '@components/Form/Checkbox';
-import SecretSelector from '@shell/components/form/SecretSelector';
+import LabeledSelect    from '@shell/components/form/LabeledSelect';
+import { Checkbox }     from '@components/Form/Checkbox';
+import SecretSelector   from '@shell/components/form/SecretSelector';
+import { getSettings, putSettings } from '../utils/operator-api';
 
 const SETTINGS_NAMESPACE = 'aif';
-const SETTINGS_ID        = 'aif/aif-settings';
 
 export default {
   name: 'SettingsPage',
@@ -25,13 +25,10 @@ export default {
 
   async fetch() {
     try {
-      this.value = await this.$store.dispatch('management/find', {
-        type: 'ai.suse.com.settings',
-        id:   SETTINGS_ID,
-      });
-      this.spec = this.buildSpec(this.value.spec);
-      this.loadError = false;
-      this.fetchErrorMessage = null;
+      const data = await getSettings();
+
+      this.spec   = this.buildSpec(data.spec);
+      this.loaded = true;
     } catch (e) {
       if (e?.status === 404) {
         this.loadError = true;
@@ -43,7 +40,7 @@ export default {
 
   data() {
     return {
-      value:     null,
+      loaded:    false,
       spec: {
         fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
         applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
@@ -226,11 +223,13 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
-        this.value.spec = this.buildCrdSpec(this.spec);
-        await this.value.save();
+        const data = await putSettings(this.buildCrdSpec(this.spec));
+
+        this.spec = this.buildSpec(data.spec);
         buttonDone(true);
       } catch (e) {
-        const msg = e?.message || e?.data?.message || e?.response?.data?.message || String(e);
+        const msg = e?.message || String(e);
+
         this.errors = [msg];
         buttonDone(false);
       }
@@ -254,7 +253,7 @@ export default {
       :label="fetchErrorMessage"
     />
 
-    <Loading v-else-if="!value" />
+    <Loading v-else-if="!loaded" />
 
     <div v-else>
       <h1>{{ t('aif.pages.settings.title') }}</h1>
