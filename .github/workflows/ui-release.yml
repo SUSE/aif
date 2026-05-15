@@ -18,9 +18,6 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
       - name: Calculate tags
         id: tags
         shell: bash
@@ -91,20 +88,21 @@ jobs:
         working-directory: ui/ai-factory
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: aif-ui-${{ needs.prepare.outputs.VERSION }}
+          RELEASE_TAG: ai-factory-${{ needs.prepare.outputs.VERSION }}
         run: yarn parse-tag-name "$RELEASE_TAG" "${{ github.run_id }}" "catalog"
 
       - name: Build and publish per-arch image
         working-directory: ui/ai-factory
         env:
-          RELEASE_TAG: aif-ui-${{ needs.prepare.outputs.VERSION }}
+          RELEASE_TAG: ai-factory-${{ needs.prepare.outputs.VERSION }}
         run: yarn publish-pkgs -c -i '' -r ghcr.io -o 'suse' -t "$RELEASE_TAG"
 
       - name: Tag and push per-arch image
         env:
           VERSION: ${{ needs.prepare.outputs.VERSION }}
+          RELEASE_TAG: "ghcr.io/suse/ai-factory"
         run: |
-          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:$VERSION-${{ matrix.arch }}"
+          docker tag "$RELEASE_TAG:$VERSION" "$IMAGE_NAME:$VERSION-${{ matrix.arch }}"
           docker push "$IMAGE_NAME:$VERSION-${{ matrix.arch }}"
 
   manifest:
@@ -183,13 +181,13 @@ jobs:
         working-directory: ui/ai-factory
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: "aif-ui-${{ needs.prepare.outputs.VERSION }}"
+          RELEASE_TAG: "ai-factory-${{ needs.prepare.outputs.VERSION }}"
         run: yarn parse-tag-name "$RELEASE_TAG" "${{ github.run_id }}" "charts"
 
       - name: Build extension assets
         working-directory: ui/ai-factory
         env:
-          RELEASE_TAG: "aif-ui-${{ needs.prepare.outputs.VERSION }}"
+          RELEASE_TAG: "ai-factory-${{ needs.prepare.outputs.VERSION }}"
         run: yarn publish-pkgs -s "${{ github.repository }}" -b "${{ env.GH_BRANCH }}" -t "$RELEASE_TAG" -f
 
       - name: Upload build artifact
