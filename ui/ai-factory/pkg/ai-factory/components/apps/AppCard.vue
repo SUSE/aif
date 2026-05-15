@@ -50,7 +50,7 @@
       </button>
       <button
         class="btn role-secondary btn-sm"
-        @click.stop="$emit('add-to-bundle', app)"
+        @click.stop="$event.currentTarget.blur(); $emit('add-to-bundle', app)"
       >
         {{ t('aif.pages.apps.card.addToBundle') }}
       </button>

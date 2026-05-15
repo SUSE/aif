@@ -36,7 +36,7 @@
       </label>
 
       <div class="apps-page__toolbar-right">
-        <button class="btn role-primary btn-sm apps-page__refresh" :disabled="loading" @click="refresh">
+        <button class="btn role-primary btn-sm apps-page__refresh" :disabled="loading" @click="$event.currentTarget.blur(); refresh()">
           <i v-if="loading" class="icon icon-spinner icon-spin" />
           <i v-else class="icon icon-refresh" />
           {{ t('aif.pages.apps.toolbar.refresh') }}
@@ -115,7 +115,7 @@
                 <button class="btn btn-sm role-primary" disabled :title="t('aif.pages.apps.card.installDisabled')" @click.stop="onInstall(app)">
                   {{ t('aif.pages.apps.card.install') }}
                 </button>
-                <button class="btn btn-sm role-secondary" @click.stop="onAddToBundle(app)">
+                <button class="btn btn-sm role-secondary" @click.stop="$event.currentTarget.blur(); onAddToBundle(app)">
                   {{ t('aif.pages.apps.card.addToBundle') }}
                 </button>
               </td>
@@ -146,10 +146,10 @@
 </template>
 
 <script>
-import { defineComponent, ref, computed, onMounted } from 'vue';
+import { defineComponent, ref, computed, onMounted, getCurrentInstance } from 'vue';
 import AppCard from '../components/apps/AppCard.vue';
 import AddToBundleDialog from '../components/apps/AddToBundleDialog.vue';
-import { fetchApps, fetchCategories } from '../services/apps-api';
+import { listApps, listCategories } from '../utils/operator-api';
 import Banner from '@components/Banner/Banner.vue';
 
 const STORAGE_KEY = 'aif-include-reference-blueprints';
@@ -164,6 +164,9 @@ export default defineComponent({
   components: { AppCard, AddToBundleDialog, Banner },
 
   setup() {
+    const instance = getCurrentInstance();
+    const store = instance?.proxy?.$store;
+
     const loading = ref(true);
     const error = ref('');
     const apps = ref([]);
@@ -198,7 +201,7 @@ export default defineComponent({
       error.value = '';
 
       try {
-        apps.value = await fetchApps({
+        apps.value = await listApps({
           source:                     sourceFilter.value,
           category:                   categoryFilter.value || undefined,
           includeReferenceBlueprints: includeRefBlueprints.value
@@ -213,7 +216,7 @@ export default defineComponent({
 
     const loadCategories = async () => {
       try {
-        categories.value = await fetchCategories();
+        categories.value = await listCategories();
       } catch {
         categories.value = [];
       }
@@ -237,9 +240,18 @@ export default defineComponent({
       showAddToBundleDialog.value = true;
     };
 
-    const onBundleAdded = (_result) => {
+    const onBundleAdded = (result) => {
+      const appName = dialogApp.value?.displayName || dialogApp.value?.name || '';
+
       showAddToBundleDialog.value = false;
       dialogApp.value = null;
+
+      const title = result.mode === 'new' ? 'Bundle created' : 'App added to bundle';
+
+      instance?.proxy?.$store?.dispatch('growl/success', {
+        title,
+        message: `Added ${ appName } to bundle ${ result.bundle }`
+      });
     };
 
     const formatDate = (iso) => {

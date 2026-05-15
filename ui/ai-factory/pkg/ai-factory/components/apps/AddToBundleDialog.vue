@@ -1,8 +1,10 @@
 <template>
   <ModalWithCard
-    :title="t('aif.pages.apps.dialog.title')"
+    name="add-to-bundle"
+    width="450"
     @close="$emit('cancel')"
   >
+    <template #title>{{ t('aif.pages.apps.dialog.title') }}</template>
     <template #content>
       <div class="add-to-bundle-dialog">
         <div class="add-to-bundle-dialog__modes">
@@ -17,20 +19,28 @@
         </div>
 
         <div v-if="mode === 'existing'" class="add-to-bundle-dialog__existing">
-          <LabeledSelect
-            v-model="selectedBundle"
-            :label="t('aif.pages.apps.dialog.selectBundle')"
-            :options="draftBundleOptions"
+          <label class="add-to-bundle-dialog__label">{{ t('aif.pages.apps.dialog.selectBundle') }}</label>
+          <select
+            :value="selectedBundle || ''"
+            class="add-to-bundle-dialog__select"
             :disabled="!draftBundleOptions.length"
-            :placeholder="draftBundleOptions.length ? '' : t('aif.pages.apps.dialog.noDrafts')"
-          />
+            @change="selectedBundle = $event.target.value"
+          >
+            <option value="" disabled>
+              {{ draftBundleOptions.length ? t('aif.pages.apps.dialog.selectBundle') : t('aif.pages.apps.dialog.noDrafts') }}
+            </option>
+            <option v-for="opt in draftBundleOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
         </div>
 
         <div v-if="mode === 'new'" class="add-to-bundle-dialog__new">
           <LabeledInput
-            v-model="newBundleName"
+            :value="newBundleName"
             :label="t('aif.pages.apps.dialog.newBundleName')"
             required
+            @input="newBundleName = typeof $event === 'string' ? $event : ($event?.target?.value || '')"
           />
         </div>
 
@@ -45,8 +55,8 @@
         </button>
         <button
           class="btn role-primary"
-          disabled
-          :title="t('aif.pages.apps.dialog.notYetAvailable')"
+          :disabled="!canConfirm || saving"
+          @click="onConfirm"
         >
           <i v-if="saving" class="icon icon-spinner icon-spin" />
           {{ t('aif.pages.apps.dialog.confirm') }}
@@ -57,9 +67,8 @@
 </template>
 
 <script>
-import { defineComponent, ref, computed, inject, getCurrentInstance } from 'vue';
+import { defineComponent, ref, computed, inject, getCurrentInstance, onMounted } from 'vue';
 import ModalWithCard from '@shell/components/ModalWithCard';
-import LabeledSelect from '@shell/components/form/LabeledSelect';
 import LabeledInput from '@components/Form/LabeledInput/LabeledInput.vue';
 import Banner from '@components/Banner/Banner.vue';
 import { CRD_TYPES } from '../../config/types';
@@ -69,7 +78,6 @@ export default defineComponent({
 
   components: {
     ModalWithCard,
-    LabeledSelect,
     LabeledInput,
     Banner
   },
@@ -97,9 +105,19 @@ export default defineComponent({
 
     const draftBundleOptions = computed(() => {
       return draftBundles.value.map((b) => ({
-        label: `${b.metadata.namespace}/${b.metadata.name} — ${b.spec.title}`,
-        value: b
+        label: `${b.metadata.namespace}/${b.metadata.name}`,
+        value: `${b.metadata.namespace}/${b.metadata.name}`
       }));
+    });
+
+    const selectedBundleObj = computed(() => {
+      if (!selectedBundle.value) {
+        return null;
+      }
+
+      return draftBundles.value.find(
+        (b) => `${b.metadata.namespace}/${b.metadata.name}` === selectedBundle.value
+      );
     });
 
     const canConfirm = computed(() => {
@@ -121,8 +139,11 @@ export default defineComponent({
     });
 
     const addToExistingBundle = async () => {
-      const bundle = selectedBundle.value;
+      const bundle = selectedBundleObj.value;
 
+      if (!bundle) {
+        throw new Error('No bundle selected');
+      }
       if (!bundle.spec.components) {
         bundle.spec.components = [];
       }
@@ -135,6 +156,7 @@ export default defineComponent({
     const createNewBundle = async () => {
       const name = newBundleName.value.trim();
       const bundleData = {
+        type:       CRD_TYPES.BUNDLE,
         apiVersion: 'ai.suse.com/v1alpha1',
         kind:       'Bundle',
         metadata:   { name, namespace: 'default' },
@@ -146,7 +168,7 @@ export default defineComponent({
         }
       };
 
-      const created = await store.dispatch('aif/create', bundleData);
+      const created = await store.dispatch('management/create', bundleData);
       await created.save();
 
       return name;
@@ -169,7 +191,17 @@ export default defineComponent({
       }
     };
 
-    // Bundle store queries disabled until Bundle CRD integration is wired (P3-x stories)
+    onMounted(async() => {
+      try {
+        const allBundles = await store.dispatch('management/findAll', { type: CRD_TYPES.BUNDLE });
+
+        draftBundles.value = (allBundles || []).filter(
+          (b) => !b.status?.phase || b.status.phase === 'Draft'
+        );
+      } catch {
+        draftBundles.value = [];
+      }
+    });
 
     return {
       mode,
@@ -192,6 +224,7 @@ export default defineComponent({
   flex-direction: column;
   gap: 16px;
   min-width: 400px;
+  min-height: 140px;
 }
 
 .add-to-bundle-dialog__modes {
@@ -207,9 +240,28 @@ export default defineComponent({
   cursor: pointer;
 }
 
+.add-to-bundle-dialog__label {
+  font-size: 13px;
+  color: var(--input-label);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.add-to-bundle-dialog__select {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--border-radius);
+  background: var(--input-bg);
+  color: var(--body-text);
+  font-size: 14px;
+}
+
 .add-to-bundle-dialog__footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  width: 100%;
 }
 </style>
