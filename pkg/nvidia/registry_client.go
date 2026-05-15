@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// ociManifestMediaType is required by the OCI Distribution Spec for manifest
+// HEAD/GET requests. SUSE Registry returns 404 without it.
+const ociManifestMediaType = "application/vnd.oci.image.manifest.v1+json"
+
 // registryClient is a thin HTTP adapter over the OCI Distribution v2 API.
 // It is unexported because consumers depend on the Discovery port, not on
 // the raw catalog client.
@@ -171,6 +175,7 @@ func (c *registryClient) do(ctx context.Context, url, bearer string) (*http.Resp
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
+	req.Header.Set("Accept", ociManifestMediaType)
 	switch {
 	case bearer != "":
 		req.Header.Set("Authorization", "Bearer "+bearer)
@@ -366,6 +371,7 @@ func (c *registryClient) head(ctx context.Context, url, bearer string) (*http.Re
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
+	req.Header.Set("Accept", ociManifestMediaType)
 	switch {
 	case bearer != "":
 		req.Header.Set("Authorization", "Bearer "+bearer)
