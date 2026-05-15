@@ -1,405 +1,394 @@
-import { mount, flushPromises } from '@vue/test-utils';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { defineComponent, h, ref, computed, onMounted, watch } from 'vue';
+import { describe, it, expect } from 'vitest';
 
-// Mock Settings Page component for testing
-const SettingsPage = defineComponent({
-  name: 'SettingsPage',
-  setup() {
-    const value = ref(null);
-    const showAdvanced = ref(false);
-    const loadError = ref(false);
-    const errors = ref([]);
-    const mode = ref('edit');
-    const doneRoute = ref({ name: 'ai-factory-settings' });
+// Pure-logic helpers mirrored from settings.vue for isolated unit testing.
+// Keep these in sync with the implementation in pages/settings.vue.
+//
+// Design intent:
+//   buildSpec  → always initialises ALL sections so form fields always have a value to bind.
+//   buildCrdSpec → omits sections whose fields are all blank/default so the saved CRD stays clean.
+//   This asymmetry is intentional; buildCrdSpec is the canonical output gate.
 
-    const DEFAULT_REGISTRY_ENDPOINTS = {
-      suseRegistry: 'registry.suse.com',
-      nvidiaGpuOperator: 'nvcr.io/nvidia',
-      nvidiaHelm: 'https://helm.ngc.nvidia.com/nvidia'
+function emptySpec() {
+  return {
+    fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
+    applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
+    suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
+    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '' },
+    catalogDiscovery:      { applicationCollectionMode: 'api' },
+    imageRewrite:          { enabled: false, rules: [] },
+  };
+}
+
+function buildSpec(crdSpec = {}) {
+  const s = emptySpec();
+
+  if (crdSpec.fleet) {
+    s.fleet = {
+      repoURL:       crdSpec.fleet.repoURL || '',
+      branch:        crdSpec.fleet.branch || 'main',
+      authType:      crdSpec.fleet.authType || '',
+      credSecretRef: crdSpec.fleet.credSecretRef || null,
     };
+  }
+  if (crdSpec.applicationCollection) {
+    s.applicationCollection = {
+      userSecretRef:  crdSpec.applicationCollection.userSecretRef || null,
+      tokenSecretRef: crdSpec.applicationCollection.tokenSecretRef || null,
+      categories:     crdSpec.applicationCollection.categories || [],
+    };
+  }
+  if (crdSpec.suseRegistry) {
+    s.suseRegistry = {
+      userSecretRef:          crdSpec.suseRegistry.userSecretRef || null,
+      tokenSecretRef:         crdSpec.suseRegistry.tokenSecretRef || null,
+      refreshIntervalMinutes: crdSpec.suseRegistry.refreshIntervalMinutes ?? 10,
+    };
+  }
+  if (crdSpec.registryEndpoints) {
+    s.registryEndpoints = { ...s.registryEndpoints, ...crdSpec.registryEndpoints };
+  }
+  if (crdSpec.catalogDiscovery) {
+    s.catalogDiscovery.applicationCollectionMode =
+      crdSpec.catalogDiscovery.applicationCollectionMode || 'api';
+  }
+  if (crdSpec.imageRewrite) {
+    s.imageRewrite = {
+      enabled: !!crdSpec.imageRewrite.enabled,
+      rules:   (crdSpec.imageRewrite.rules || []).map((r) => ({ match: r.match, replace: r.replace })),
+    };
+  }
 
-    const hasCustomEndpoints = computed(() => {
-      const endpoints = value.value?.spec?.registryEndpoints;
-      if (!endpoints) {
-        return false;
-      }
-      return endpoints.suseRegistry !== DEFAULT_REGISTRY_ENDPOINTS.suseRegistry ||
-             endpoints.nvidiaGpuOperator !== DEFAULT_REGISTRY_ENDPOINTS.nvidiaGpuOperator ||
-             endpoints.nvidiaHelm !== DEFAULT_REGISTRY_ENDPOINTS.nvidiaHelm;
+  return s;
+}
+
+function buildCrdSpec(spec) {
+  const out = {};
+
+  if (spec.fleet.repoURL || spec.fleet.credSecretRef?.name) {
+    out.fleet = {};
+    if (spec.fleet.repoURL) out.fleet.repoURL = spec.fleet.repoURL;
+    if (spec.fleet.branch) out.fleet.branch = spec.fleet.branch;
+    if (spec.fleet.authType) out.fleet.authType = spec.fleet.authType;
+    if (spec.fleet.credSecretRef?.name) out.fleet.credSecretRef = spec.fleet.credSecretRef;
+  }
+
+  const ac = spec.applicationCollection;
+
+  if (ac.userSecretRef?.name || ac.tokenSecretRef?.name || ac.categories.length) {
+    out.applicationCollection = {};
+    if (ac.userSecretRef?.name) out.applicationCollection.userSecretRef = ac.userSecretRef;
+    if (ac.tokenSecretRef?.name) out.applicationCollection.tokenSecretRef = ac.tokenSecretRef;
+    if (ac.categories.length) out.applicationCollection.categories = ac.categories;
+  }
+
+  const sr = spec.suseRegistry;
+
+  out.suseRegistry = { refreshIntervalMinutes: sr.refreshIntervalMinutes };
+  if (sr.userSecretRef?.name) out.suseRegistry.userSecretRef = sr.userSecretRef;
+  if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
+
+  const re = spec.registryEndpoints;
+
+  if (re.suseRegistry || re.applicationCollection || re.applicationCollectionAPI) {
+    out.registryEndpoints = {};
+    if (re.suseRegistry) out.registryEndpoints.suseRegistry = re.suseRegistry;
+    if (re.applicationCollection) out.registryEndpoints.applicationCollection = re.applicationCollection;
+    if (re.applicationCollectionAPI) out.registryEndpoints.applicationCollectionAPI = re.applicationCollectionAPI;
+  }
+
+  if (spec.catalogDiscovery.applicationCollectionMode !== 'api') {
+    out.catalogDiscovery = { applicationCollectionMode: spec.catalogDiscovery.applicationCollectionMode };
+  }
+
+  if (spec.imageRewrite.enabled || spec.imageRewrite.rules.length) {
+    out.imageRewrite = {
+      enabled: spec.imageRewrite.enabled,
+      rules:   spec.imageRewrite.rules.filter((r) => r.match && r.replace),
+    };
+  }
+
+  return out;
+}
+
+function toSelectorValue(ref) {
+  if (!ref?.name) return undefined;
+
+  return { valueFrom: { secretKeyRef: ref } };
+}
+
+function fromSelectorValue(val) {
+  return val?.valueFrom?.secretKeyRef || null;
+}
+
+// ─── buildSpec ─────────────────────────────────────────────────────────────
+
+describe('buildSpec', () => {
+  it('returns emptySpec defaults when given empty object', () => {
+    const s = buildSpec({});
+
+    expect(s.fleet.branch).toBe('main');
+    expect(s.fleet.repoURL).toBe('');
+    expect(s.suseRegistry.refreshIntervalMinutes).toBe(10);
+    expect(s.catalogDiscovery.applicationCollectionMode).toBe('api');
+    expect(s.imageRewrite.enabled).toBe(false);
+  });
+
+  it('maps fleet fields from CRD', () => {
+    const s = buildSpec({
+      fleet: {
+        repoURL:       'https://github.com/org/repo.git',
+        branch:        'develop',
+        authType:      'ssh',
+        credSecretRef: { name: 'git-creds', key: 'token' },
+      },
     });
 
-    return {
-      value,
-      showAdvanced,
-      loadError,
-      errors,
-      mode,
-      doneRoute,
-      hasCustomEndpoints
-    };
-  },
-  async created() {
-    // Fetch settings on mount
-    try {
-      this.value = await this.$store.dispatch('ai-factory/find', {
-        type: 'ai.suse.com.settings',
-        id: 'aif-system/default'
-      });
-      this.loadError = false;
-    } catch (e) {
-      this.loadError = true;
-      this.errors.push(e);
-    }
+    expect(s.fleet.repoURL).toBe('https://github.com/org/repo.git');
+    expect(s.fleet.branch).toBe('develop');
+    expect(s.fleet.authType).toBe('ssh');
+    expect(s.fleet.credSecretRef).toStrictEqual({ name: 'git-creds', key: 'token' });
+  });
 
-    // Load showAdvanced from localStorage
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem('aif-settings-show-advanced');
-      if (stored === 'true') {
-        this.showAdvanced = true;
-      }
-    }
-  },
-  watch: {
-    showAdvanced(val) {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('aif-settings-show-advanced', String(val));
-      }
-    }
-  },
-  render() {
-    if (this.loadError) {
-      return h('div', [
-        h('div', { class: 'banner' }, 'aif.settings.errors.notFound')
-      ]);
-    }
+  it('maps applicationCollection from CRD', () => {
+    const s = buildSpec({
+      applicationCollection: {
+        userSecretRef:  { name: 'appcol-user', key: 'username' },
+        tokenSecretRef: { name: 'appcol-token', key: 'token' },
+        categories:     ['ai', 'nlp'],
+      },
+    });
 
-    return h('div', { class: 'cru-resource' }, [
-      h('div', { class: 'settings-page' }, [
-        h('div', { class: 'page-header' }, [
-          h('input', {
-            class: 'advanced-toggle',
-            type: 'checkbox',
-            checked: this.showAdvanced,
-            onInput: (e) => {
-              this.showAdvanced = e.target.checked;
-            }
-          }),
-          this.hasCustomEndpoints ? h('div', { class: 'custom-endpoints-chip' }, 'Custom endpoints active') : null
-        ]),
-        this.showAdvanced ? h('div', { class: 'advanced-registry-section' }, 'Advanced Section') : null,
-        h('div', { class: 'tabbed' }, 'Tabbed content')
-      ])
-    ]);
-  }
+    expect(s.applicationCollection.userSecretRef).toStrictEqual({ name: 'appcol-user', key: 'username' });
+    expect(s.applicationCollection.tokenSecretRef).toStrictEqual({ name: 'appcol-token', key: 'token' });
+    expect(s.applicationCollection.categories).toStrictEqual(['ai', 'nlp']);
+  });
+
+  it('maps suseRegistry from CRD', () => {
+    const s = buildSpec({
+      suseRegistry: {
+        userSecretRef:          { name: 'reg-user', key: 'username' },
+        tokenSecretRef:         { name: 'reg-token', key: 'token' },
+        refreshIntervalMinutes: 30,
+      },
+    });
+
+    expect(s.suseRegistry.refreshIntervalMinutes).toBe(30);
+    expect(s.suseRegistry.userSecretRef).toStrictEqual({ name: 'reg-user', key: 'username' });
+  });
+
+  it('uses refreshIntervalMinutes default of 10 when field is absent', () => {
+    const s = buildSpec({ suseRegistry: {} });
+
+    expect(s.suseRegistry.refreshIntervalMinutes).toBe(10);
+  });
+
+  it('maps registryEndpoints from CRD (partial override)', () => {
+    const s = buildSpec({
+      registryEndpoints: { suseRegistry: 'my-registry.internal' },
+    });
+
+    expect(s.registryEndpoints.suseRegistry).toBe('my-registry.internal');
+    expect(s.registryEndpoints.applicationCollection).toBe('');
+  });
+
+  it('maps imageRewrite rules from CRD', () => {
+    const s = buildSpec({
+      imageRewrite: {
+        enabled: true,
+        rules:   [{ match: 'nvcr.io', replace: 'registry.suse.com' }],
+      },
+    });
+
+    expect(s.imageRewrite.enabled).toBe(true);
+    expect(s.imageRewrite.rules).toStrictEqual([{ match: 'nvcr.io', replace: 'registry.suse.com' }]);
+  });
 });
 
-describe('Settings Page', () => {
-  let wrapper;
-  let mockStore;
-  let localStorageMock;
+// ─── buildCrdSpec ──────────────────────────────────────────────────────────
 
-  const createMockSettingsResource = () => ({
-    metadata: {
-      name: 'default',
-      namespace: 'aif-system'
-    },
-    spec: {
-      registryEndpoints: {
-        suseRegistry: 'registry.suse.com',
-        nvidiaGpuOperator: 'nvcr.io/nvidia',
-        nvidiaHelm: 'https://helm.ngc.nvidia.com/nvidia'
-      },
-      imageRewrite: {
-        enabled: false,
-        rules: []
-      },
-      catalogDiscovery: {
-        mode: 'pull',
-        ociIndexRef: ''
-      },
-      publisherRoleBinding: {
-        subjects: []
-      }
-    }
+describe('buildCrdSpec', () => {
+  it('omits fleet when repoURL and credSecretRef are both blank', () => {
+    const spec = emptySpec();
+    const out = buildCrdSpec(spec);
+
+    expect(out.fleet).toBeUndefined();
   });
 
-  const createWrapper = (options = {}) => {
-    const {
-      settingsResource = createMockSettingsResource(),
-      storeError = null,
-      localStorageValue = null
-    } = options;
+  it('includes fleet when repoURL is set', () => {
+    const spec = emptySpec();
 
-    // Setup localStorage mock
-    localStorageMock = {
-      getItem: vi.fn((key) => {
-        if (key === 'aif-settings-show-advanced') {
-          return localStorageValue;
-        }
-        return null;
-      }),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-      clear: vi.fn()
-    };
-    global.localStorage = localStorageMock;
+    spec.fleet.repoURL = 'https://github.com/org/repo.git';
+    spec.fleet.branch = 'main';
+    spec.fleet.authType = 'token';
+    const out = buildCrdSpec(spec);
 
-    // Setup store mock
-    mockStore = {
-      dispatch: vi.fn(async (action, params) => {
-        if (action === 'ai-factory/find') {
-          if (storeError) {
-            throw storeError;
-          }
-          return settingsResource;
-        }
-        return null;
-      }),
-      getters: {
-        'ai-factory/byId': vi.fn(() => settingsResource)
-      }
-    };
+    expect(out.fleet.repoURL).toBe('https://github.com/org/repo.git');
+    expect(out.fleet.branch).toBe('main');
+    expect(out.fleet.authType).toBe('token');
+  });
 
-    return mount(SettingsPage, {
-      global: {
-        mocks: {
-          t: (key) => key,
-          $store: mockStore,
-          $route: {
-            params: {
-              cluster: 'local'
-            }
-          }
-        }
-      }
+  it('includes fleet.credSecretRef only when name is set', () => {
+    const spec = emptySpec();
+
+    spec.fleet.repoURL = 'https://github.com/org/repo.git';
+    spec.fleet.credSecretRef = { name: 'git-creds', key: 'token' };
+    const out = buildCrdSpec(spec);
+
+    expect(out.fleet.credSecretRef).toStrictEqual({ name: 'git-creds', key: 'token' });
+  });
+
+  it('always writes suseRegistry.refreshIntervalMinutes', () => {
+    const spec = emptySpec();
+    const out = buildCrdSpec(spec);
+
+    expect(out.suseRegistry.refreshIntervalMinutes).toBe(10);
+  });
+
+  it('includes applicationCollection when only userSecretRef is set', () => {
+    const spec = emptySpec();
+
+    spec.applicationCollection.userSecretRef = { name: 'user-secret', key: 'username' };
+    const out = buildCrdSpec(spec);
+
+    expect(out.applicationCollection.userSecretRef).toStrictEqual({ name: 'user-secret', key: 'username' });
+    expect(out.applicationCollection.tokenSecretRef).toBeUndefined();
+  });
+
+  it('omits registryEndpoints when all are blank', () => {
+    const spec = emptySpec();
+    const out = buildCrdSpec(spec);
+
+    expect(out.registryEndpoints).toBeUndefined();
+  });
+
+  it('includes registryEndpoints when any field is set', () => {
+    const spec = emptySpec();
+
+    spec.registryEndpoints.suseRegistry = 'my-registry.internal';
+    const out = buildCrdSpec(spec);
+
+    expect(out.registryEndpoints.suseRegistry).toBe('my-registry.internal');
+    expect(out.registryEndpoints.applicationCollection).toBeUndefined();
+  });
+
+  it('omits catalogDiscovery when mode is default api', () => {
+    const spec = emptySpec();
+    const out = buildCrdSpec(spec);
+
+    expect(out.catalogDiscovery).toBeUndefined();
+  });
+
+  it('includes catalogDiscovery when mode is non-default', () => {
+    const spec = emptySpec();
+
+    spec.catalogDiscovery.applicationCollectionMode = 'registry-fallback';
+    const out = buildCrdSpec(spec);
+
+    expect(out.catalogDiscovery.applicationCollectionMode).toBe('registry-fallback');
+  });
+
+  it('omits imageRewrite when disabled and no rules', () => {
+    const spec = emptySpec();
+    const out = buildCrdSpec(spec);
+
+    expect(out.imageRewrite).toBeUndefined();
+  });
+
+  it('includes imageRewrite when enabled', () => {
+    const spec = emptySpec();
+
+    spec.imageRewrite.enabled = true;
+    spec.imageRewrite.rules = [{ match: 'nvcr.io', replace: 'registry.suse.com' }];
+    const out = buildCrdSpec(spec);
+
+    expect(out.imageRewrite.enabled).toBe(true);
+    expect(out.imageRewrite.rules).toStrictEqual([{ match: 'nvcr.io', replace: 'registry.suse.com' }]);
+  });
+
+  it('filters imageRewrite rules with blank match or replace', () => {
+    const spec = emptySpec();
+
+    spec.imageRewrite.enabled = true;
+    spec.imageRewrite.rules = [
+      { match: 'nvcr.io', replace: 'registry.suse.com' },
+      { match: '', replace: 'registry.suse.com' },
+      { match: 'nvcr.io', replace: '' },
+    ];
+    const out = buildCrdSpec(spec);
+
+    expect(out.imageRewrite.rules).toHaveLength(1);
+    expect(out.imageRewrite.rules[0].match).toBe('nvcr.io');
+  });
+});
+
+// ─── categoriesString ──────────────────────────────────────────────────────
+
+describe('categoriesString computed', () => {
+  function joinCategories(categories) {
+    return (categories || []).join(', ');
+  }
+
+  function splitCategories(val) {
+    return val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  }
+
+  it('joins array to comma-separated string', () => {
+    expect(joinCategories(['ai', 'nlp', 'vision'])).toBe('ai, nlp, vision');
+  });
+
+  it('returns empty string for empty array', () => {
+    expect(joinCategories([])).toBe('');
+  });
+
+  it('splits comma-separated string to array', () => {
+    expect(splitCategories('ai, nlp, vision')).toStrictEqual(['ai', 'nlp', 'vision']);
+  });
+
+  it('trims whitespace from entries', () => {
+    expect(splitCategories('  ai  ,  nlp  ')).toStrictEqual(['ai', 'nlp']);
+  });
+
+  it('filters blank entries', () => {
+    expect(splitCategories('ai,,vision')).toStrictEqual(['ai', 'vision']);
+  });
+
+  it('returns empty array for empty string', () => {
+    expect(splitCategories('')).toStrictEqual([]);
+  });
+});
+
+// ─── SecretSelector format conversion ─────────────────────────────────────
+
+describe('toSelectorValue / fromSelectorValue', () => {
+  it('wraps a CRD SecretKeySelector into SecretSelector format', () => {
+    const ref = { name: 'my-secret', key: 'token' };
+
+    expect(toSelectorValue(ref)).toStrictEqual({
+      valueFrom: { secretKeyRef: { name: 'my-secret', key: 'token' } },
     });
-  };
-
-  beforeEach(() => {
-    wrapper = null;
-    vi.clearAllMocks();
   });
 
-  afterEach(() => {
-    if (wrapper) {
-      wrapper.unmount();
-    }
-    vi.restoreAllMocks();
+  it('returns undefined when ref is null', () => {
+    expect(toSelectorValue(null)).toBeUndefined();
   });
 
-  it('fetches Settings resource on mount', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    expect(mockStore.dispatch).toHaveBeenCalledWith('ai-factory/find', {
-      type: 'ai.suse.com.settings',
-      id: 'aif-system/default'
-    });
+  it('returns undefined when ref has no name', () => {
+    expect(toSelectorValue({ name: '', key: 'token' })).toBeUndefined();
   });
 
-  it('shows error banner when Settings CR not found', async () => {
-    const notFoundError = new Error('NotFound');
-    notFoundError.statusCode = 404;
+  it('extracts CRD SecretKeySelector from SecretSelector output', () => {
+    const selectorVal = { valueFrom: { secretKeyRef: { name: 'my-secret', key: 'token' } } };
 
-    wrapper = createWrapper({ storeError: notFoundError });
-    await flushPromises();
-
-    expect(wrapper.vm.loadError).toBeTruthy();
-    const banner = wrapper.find('.banner');
-    expect(banner.exists()).toBe(true);
-    expect(banner.text()).toContain('aif.settings.errors.notFound');
+    expect(fromSelectorValue(selectorVal)).toStrictEqual({ name: 'my-secret', key: 'token' });
   });
 
-  it('advanced toggle controls AdvancedRegistrySection visibility', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    // Initially hidden (showAdvanced defaults to false)
-    expect(wrapper.vm.showAdvanced).toBe(false);
-    let advancedSection = wrapper.find('.advanced-registry-section');
-    expect(advancedSection.exists()).toBe(false);
-
-    // Toggle to show
-    const checkbox = wrapper.find('.advanced-toggle');
-    await checkbox.setValue(true);
-    await wrapper.vm.$nextTick();
-
-    expect(wrapper.vm.showAdvanced).toBe(true);
-    advancedSection = wrapper.find('.advanced-registry-section');
-    expect(advancedSection.exists()).toBe(true);
-
-    // Toggle to hide
-    await checkbox.setValue(false);
-    await wrapper.vm.$nextTick();
-
-    expect(wrapper.vm.showAdvanced).toBe(false);
-    advancedSection = wrapper.find('.advanced-registry-section');
-    expect(advancedSection.exists()).toBe(false);
+  it('returns null when SecretSelector value is undefined', () => {
+    expect(fromSelectorValue(undefined)).toBeNull();
   });
 
-  it('loads advanced toggle state from localStorage on mount', async () => {
-    wrapper = createWrapper({ localStorageValue: 'true' });
-    await flushPromises();
+  it('round-trips: toSelectorValue then fromSelectorValue returns original ref', () => {
+    const ref = { name: 'my-secret', key: 'token' };
 
-    expect(localStorageMock.getItem).toHaveBeenCalledWith('aif-settings-show-advanced');
-    expect(wrapper.vm.showAdvanced).toBe(true);
-
-    const advancedSection = wrapper.find('.advanced-registry-section');
-    expect(advancedSection.exists()).toBe(true);
-  });
-
-  it('saves advanced toggle state to localStorage when changed', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    expect(wrapper.vm.showAdvanced).toBe(false);
-
-    // Toggle to true
-    const checkbox = wrapper.find('.advanced-toggle');
-    await checkbox.setValue(true);
-    await wrapper.vm.$nextTick();
-
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('aif-settings-show-advanced', 'true');
-
-    // Toggle to false
-    await checkbox.setValue(false);
-    await wrapper.vm.$nextTick();
-
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('aif-settings-show-advanced', 'false');
-  });
-
-  it('custom endpoints chip shows when SUSE Registry differs from default', async () => {
-    const customSettings = createMockSettingsResource();
-    customSettings.spec.registryEndpoints.suseRegistry = 'custom-registry.example.com';
-
-    wrapper = createWrapper({ settingsResource: customSettings });
-    await flushPromises();
-
-    expect(wrapper.vm.hasCustomEndpoints).toBe(true);
-    const chip = wrapper.find('.custom-endpoints-chip');
-    expect(chip.exists()).toBe(true);
-  });
-
-  it('custom endpoints chip shows when NVIDIA GPU Operator differs from default', async () => {
-    const customSettings = createMockSettingsResource();
-    customSettings.spec.registryEndpoints.nvidiaGpuOperator = 'custom-nvidia.example.com';
-
-    wrapper = createWrapper({ settingsResource: customSettings });
-    await flushPromises();
-
-    expect(wrapper.vm.hasCustomEndpoints).toBe(true);
-    const chip = wrapper.find('.custom-endpoints-chip');
-    expect(chip.exists()).toBe(true);
-  });
-
-  it('custom endpoints chip shows when NVIDIA Helm differs from default', async () => {
-    const customSettings = createMockSettingsResource();
-    customSettings.spec.registryEndpoints.nvidiaHelm = 'https://custom-helm.example.com';
-
-    wrapper = createWrapper({ settingsResource: customSettings });
-    await flushPromises();
-
-    expect(wrapper.vm.hasCustomEndpoints).toBe(true);
-    const chip = wrapper.find('.custom-endpoints-chip');
-    expect(chip.exists()).toBe(true);
-  });
-
-  it('custom endpoints chip hidden when all fields match defaults', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    expect(wrapper.vm.hasCustomEndpoints).toBe(false);
-    const chip = wrapper.find('.custom-endpoints-chip');
-    expect(chip.exists()).toBe(false);
-  });
-
-  it('custom endpoints chip shows when multiple fields differ from defaults', async () => {
-    const customSettings = createMockSettingsResource();
-    customSettings.spec.registryEndpoints.suseRegistry = 'custom-suse.example.com';
-    customSettings.spec.registryEndpoints.nvidiaGpuOperator = 'custom-nvidia.example.com';
-    customSettings.spec.registryEndpoints.nvidiaHelm = 'https://custom-helm.example.com';
-
-    wrapper = createWrapper({ settingsResource: customSettings });
-    await flushPromises();
-
-    expect(wrapper.vm.hasCustomEndpoints).toBe(true);
-    const chip = wrapper.find('.custom-endpoints-chip');
-    expect(chip.exists()).toBe(true);
-  });
-
-  it('handles missing registryEndpoints gracefully', async () => {
-    const settingsWithoutEndpoints = createMockSettingsResource();
-    settingsWithoutEndpoints.spec.registryEndpoints = undefined;
-
-    wrapper = createWrapper({ settingsResource: settingsWithoutEndpoints });
-    await flushPromises();
-
-    expect(wrapper.vm.loadError).toBeFalsy();
-    expect(wrapper.vm.hasCustomEndpoints).toBe(false);
-  });
-
-  it('updates resource when registry endpoints change', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    const newEndpoints = {
-      suseRegistry: 'new-registry.example.com',
-      nvidiaGpuOperator: 'nvcr.io/nvidia',
-      nvidiaHelm: 'https://helm.ngc.nvidia.com/nvidia'
-    };
-
-    wrapper.vm.value.spec.registryEndpoints = newEndpoints;
-    await wrapper.vm.$nextTick();
-
-    expect(wrapper.vm.value.spec.registryEndpoints.suseRegistry).toBe('new-registry.example.com');
-    expect(wrapper.vm.hasCustomEndpoints).toBe(true);
-  });
-
-  it('initializes with proper default values when Settings CR exists', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    expect(wrapper.vm.value).toBeTruthy();
-    expect(wrapper.vm.value.spec.registryEndpoints.suseRegistry).toBe('registry.suse.com');
-    expect(wrapper.vm.value.spec.imageRewrite.enabled).toBe(false);
-    expect(wrapper.vm.value.spec.catalogDiscovery.mode).toBe('pull');
-  });
-
-  it('preserves all spec fields when fetched from store', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    expect(wrapper.vm.value.spec.registryEndpoints).toBeDefined();
-    expect(wrapper.vm.value.spec.imageRewrite).toBeDefined();
-    expect(wrapper.vm.value.spec.catalogDiscovery).toBeDefined();
-    expect(wrapper.vm.value.spec.publisherRoleBinding).toBeDefined();
-  });
-
-  it('handles localStorage being unavailable gracefully', async () => {
-    // Simulate localStorage not available
-    global.localStorage = undefined;
-
-    wrapper = createWrapper();
-    await flushPromises();
-
-    // Should not crash, should use default value
-    expect(wrapper.vm.showAdvanced).toBe(false);
-  });
-
-  it('renders CruResource wrapper with correct props', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    const cruResource = wrapper.find('.cru-resource');
-    expect(cruResource.exists()).toBe(true);
-  });
-
-  it('renders tabbed interface', async () => {
-    wrapper = createWrapper();
-    await flushPromises();
-
-    const tabbed = wrapper.find('.tabbed');
-    expect(tabbed.exists()).toBe(true);
+    expect(fromSelectorValue(toSelectorValue(ref))).toStrictEqual(ref);
   });
 });

@@ -34,141 +34,89 @@ aif:
       comingSoon: 'Bundle review queue coming soon'
     settings:
       title: 'Settings'
-
-      header:
-        advancedToggle: 'Advanced'
-        customEndpointsChip: 'Custom registry endpoints active'
-
-      catalogRefresh:
-        label: 'Catalog Refresh Interval'
-        description: 'How often to refresh both the SUSE Application Collection and NVIDIA NIM catalogs'
-        placeholder: '10m'
+      apply: 'Apply'
 
       sections:
         fleet:
           title: 'Fleet / GitOps'
-          repoURL: 'Repository URL'
-          repoURLPlaceholder: 'https://github.com/org/repo.git'
-          branch: 'Branch'
-          branchPlaceholder: 'main'
-          authType: 'Auth Type'
-          authTypeToken: 'Token'
-          authTypeSSH: 'SSH'
-          authTypeBasic: 'Basic'
-          credentials: 'Credentials'
+          repoURL:
+            label: 'Repository URL'
+            placeholder: 'https://github.com/org/repo.git'
+          branch:
+            label: 'Branch'
+            placeholder: 'main'
+          authType:
+            label: 'Auth Type'
+            options:
+              ssh: 'SSH'
+              token: 'Token'
+              basic: 'Basic'
+          credSecretRef:
+            label: 'Git Credentials'
+            secretNameLabel: 'Credential Secret'
+            keyNameLabel: 'Secret Key'
 
         appCollection:
           title: 'SUSE Application Collection'
-          description: 'Configure connection to the SUSE Application Collection catalog'
-          username: 'Username'
-          accessToken: 'Access Token'
-          categories: 'Categories'
-          categoriesDescription: 'Select categories to sync'
-          endpoint:
-            label: 'API Endpoint'
-            placeholder: 'https://api.apps.rancher.io'
-            tooltip: 'SUSE Application Collection API endpoint'
-          enabled:
-            label: 'Enable SUSE Application Collection'
-            detail: 'Sync apps from the SUSE Application Collection catalog'
-          refreshInterval:
-            label: 'Refresh Interval'
-            placeholder: '30'
-            tooltip: 'How often to refresh the catalog (in minutes)'
-            detail: 'Catalog will refresh automatically at this interval'
-          skipTLSVerify:
-            label: 'Skip TLS Verification'
-            warning: 'Skipping TLS verification is not recommended for production environments'
+          userSecretRef:
+            label: 'Username Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          tokenSecretRef:
+            label: 'Access Token Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          categories:
+            label: 'Categories'
+            placeholder: 'ai, nlp, vision'
 
         suseRegistry:
           title: 'SUSE Registry'
-          description: 'Configure credentials for the SUSE container registry'
-          username: 'Username'
-          accessToken: 'Access Token'
-          endpoint:
-            label: 'Registry Endpoint'
-            placeholder: 'registry.suse.com'
-            tooltip: 'SUSE Registry hostname'
-          skipTLSVerify:
-            label: 'Skip TLS Verification'
-            warning: 'Skipping TLS verification is not recommended for production environments'
-
-        imagePullSecrets:
-          title: 'Image Pull Secrets'
-          description: 'The operator reconciles this pull secret into each workload namespace'
-          reconciliationNote: 'The operator automatically manages this secret across workload namespaces'
-          commandLabel: 'Equivalent kubectl command:'
-          secretName:
-            label: 'Secret Name'
-            tooltip: 'Name of the image pull secret'
-            detail: 'This secret is automatically reconciled by the operator'
-          namespaces:
-            title: 'Target Namespaces'
-            description: 'Namespaces where the pull secret is reconciled'
-            empty: 'No namespaces configured yet'
+          userSecretRef:
+            label: 'Username Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          tokenSecretRef:
+            label: 'Access Token Secret'
+            secretNameLabel: 'Secret Name'
+            keyNameLabel: 'Secret Key'
+          refreshIntervalMinutes:
+            label: 'NIM Index Refresh (minutes)'
 
         advanced:
-          title: 'Registry Endpoints (Advanced)'
-          description: 'Override upstream defaults for air-gapped deployments'
-          warning: 'Advanced settings should only be modified for air-gapped or custom deployments'
-          suseRegistryEndpoint: 'SUSE Registry Endpoint'
-          suseRegistryEndpointPlaceholder: 'registry.suse.com'
-          appCollectionEndpoint: 'SUSE Application Collection Endpoint'
-          appCollectionEndpointPlaceholder: 'dp.apps.rancher.io'
-          appCollectionAPI: 'SUSE Application Collection API'
-          appCollectionAPIPlaceholder: 'https://api.apps.rancher.io'
-          catalogDiscoveryMode: 'Catalog Discovery Mode'
-          catalogDiscoveryModeAPI: 'API (default)'
-          catalogDiscoveryModeRegistryFallback: 'Registry Fallback (air-gap)'
-          catalogDiscoveryModeDisabled: 'Disabled (OCI catalog only)'
-          imageRewriteRules: 'Image Rewrite Rules'
-          addRule: 'Add Rule'
-          matchPrefix: 'Match Prefix'
-          replaceWith: 'Replace With'
-          testConnection: 'Test Connection'
+          title: 'Advanced'
+          warning: 'Advanced settings for air-gapped or custom deployments only. Modify with care.'
           registryEndpoints:
             title: 'Registry Endpoints'
-            description: 'Configure custom registry endpoints for air-gapped deployments'
-            suseAppCollection:
-              label: 'SUSE Application Collection Endpoint'
-              placeholder: 'dp.apps.rancher.io'
-              tooltip: 'OCI registry endpoint for SUSE Application Collection'
             suseRegistry:
-              label: 'SUSE Registry Endpoint'
+              label: 'SUSE Registry'
               placeholder: 'registry.suse.com'
-              tooltip: 'Container registry endpoint for SUSE images'
-            nvidiaChartsProxy:
-              label: 'NVIDIA Charts Proxy Endpoint'
-              placeholder: 'registry.suse.com/ai/charts/nvidia'
-              tooltip: 'OCI endpoint for mirrored NVIDIA Helm charts'
+            applicationCollection:
+              label: 'Application Collection (OCI)'
+              placeholder: 'dp.apps.rancher.io'
+            applicationCollectionAPI:
+              label: 'Application Collection API'
+              placeholder: 'https://api.apps.rancher.io'
+          catalogDiscovery:
+            title: 'Catalog Discovery'
+            applicationCollectionMode:
+              label: 'Discovery Mode'
+              options:
+                api: 'API (default)'
+                registryFallback: 'Registry Fallback (air-gap)'
+                disabled: 'Disabled'
           imageRewrite:
             title: 'Image Rewrite Rules'
-            description: 'Configure image path rewriting for air-gapped registries'
             enabled:
-              label: 'Enable Image Rewriting'
-              detail: 'Automatically rewrite image references to use custom registry paths'
-            defaultRegistry:
-              label: 'Default Registry'
-              placeholder: 'my-registry.internal'
-              tooltip: 'Default registry hostname for rewritten images'
-            imagePrefix:
-              label: 'Image Path Prefix'
-              placeholder: 'ai-factory'
-              tooltip: 'Path prefix to prepend to image names'
-              detail: 'Example: my-registry.internal/ai-factory/nvidia/nim-llm:1.0.0'
-          catalogDiscovery:
-            title: 'Catalog Discovery Mode'
-            description: 'Configure how the operator discovers available applications'
-            modes:
-              api:
-                label: 'API (default) - Use SUSE Application Collection API'
-              ociFallback:
-                label: 'Registry Fallback - Scan OCI registry when API unavailable'
-            ociFallbackNote: 'Registry fallback mode will scan the OCI registry for available charts. This is slower than API mode but works in air-gapped environments.'
+              label: 'Enable image rewriting'
+            rules:
+              match:
+                label: 'Match Prefix'
+                placeholder: 'nvcr.io'
+              replace:
+                label: 'Replace With'
+                placeholder: 'registry.suse.com/ai'
+              add: 'Add Rule'
 
       errors:
-        settingsNotFound: 'No settings found. Please contact your administrator to ensure the AIF operator is installed correctly.'
-
-      save: 'Save Settings'
-      cancel: 'Cancel'
-      reset: 'Reset'
+        settingsNotFound: 'No settings found. Please ensure the AIF operator is installed correctly.'
