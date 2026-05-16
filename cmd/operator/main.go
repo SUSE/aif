@@ -191,6 +191,7 @@ func main() {
 	)
 
 	publishHandler := api.NewPublishHandler(publishWorkflow, logger)
+	settingsHandler := api.NewSettingsHandler(mgr.GetClient())
 
 	// Setup API server
 	mux := http.NewServeMux()
@@ -199,7 +200,7 @@ func main() {
 	// plug in the same way — pass them as additional varargs.
 	appsAPIHandler := api.NewAppsHandler(appsCatalog)
 	nimHandler := api.NewNIMHandler(nvidiaDiscovery)
-	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler)
+	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler, settingsHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,

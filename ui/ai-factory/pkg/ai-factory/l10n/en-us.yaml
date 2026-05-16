@@ -119,5 +119,4 @@ aif:
                 placeholder: 'registry.suse.com/ai'
               add: 'Add Rule'
 
-      errors:
-        settingsNotFound: 'No settings found. Please ensure the AIF operator is installed correctly.'
+      notConfigured: 'No settings configured yet. Fill in the form and save to create them.'
