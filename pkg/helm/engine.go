@@ -62,21 +62,26 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, fmt.Errorf("failed to load chart: %w", err)
 	}
 
+	merged, mergeErr := MergeValues(MergeInput{
+		ChartDefaults:      ch.Values,
+		BlueprintOverrides: req.Overrides.Blueprint,
+		WorkloadOverrides:  req.Overrides.Workload,
+		NIMGenerated:       req.Overrides.NIMGenerated,
+	})
+	if mergeErr != nil {
+		return ReleaseStatus{}, mergeErr
+	}
+
 	timeout := req.Timeout
 	if timeout == 0 {
 		timeout = defaultInstallTimeout
 	}
 
-	// TODO (Task 9): merge layers 1-4 via MergeValues; for now pass layer 3
-	// (Workload) directly to maintain existing test behavior. Task 9 will
-	// replace this with chartutil.CoalesceValues + layers 2,3,4.
-	values := req.Overrides.Workload
-
 	if exists {
 		rel, err := e.runner.Upgrade(ctx, cfg, req.ReleaseName, upgradeArgs{
 			Namespace: req.Namespace,
 			Chart:     ch,
-			Values:    values,
+			Values:    merged,
 			Wait:      req.Wait,
 			Timeout:   timeout,
 		})
@@ -90,7 +95,7 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		Namespace:       req.Namespace,
 		ReleaseName:     req.ReleaseName,
 		Chart:           ch,
-		Values:          values,
+		Values:          merged,
 		Wait:            req.Wait,
 		Timeout:         timeout,
 		CreateNamespace: true,

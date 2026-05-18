@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -34,14 +35,21 @@ type fakeRunner struct {
 	rollbackErr  error
 
 	calls []string // method names, in order
+
+	// Recording support for Task 9 (layer-1 merge tests).
+	lastInstallArgs *installArgs
+	lastUpgradeArgs *upgradeArgs
+	chartDefaults   map[string]any
 }
 
-func (f *fakeRunner) Install(_ context.Context, _ *action.Configuration, _ installArgs) (*helmrelease.Release, error) {
+func (f *fakeRunner) Install(_ context.Context, _ *action.Configuration, args installArgs) (*helmrelease.Release, error) {
 	f.calls = append(f.calls, "Install")
+	f.lastInstallArgs = &args
 	return f.installRel, f.installErr
 }
-func (f *fakeRunner) Upgrade(_ context.Context, _ *action.Configuration, _ string, _ upgradeArgs) (*helmrelease.Release, error) {
+func (f *fakeRunner) Upgrade(_ context.Context, _ *action.Configuration, _ string, args upgradeArgs) (*helmrelease.Release, error) {
 	f.calls = append(f.calls, "Upgrade")
+	f.lastUpgradeArgs = &args
 	return f.upgradeRel, f.upgradeErr
 }
 func (f *fakeRunner) Uninstall(_ context.Context, _ *action.Configuration, _ string) error {
@@ -109,6 +117,43 @@ func writeTinyChart(t *testing.T, dir string) string {
 	return chartDir
 }
 
+// writeTinyChartWithValues extends writeTinyChart to allow injecting custom
+// values.yaml content (for Task 9 layer-1 merge tests).
+func writeTinyChartWithValues(t *testing.T, dir string, values map[string]any) string {
+	t.Helper()
+	chartDir := dir + "/tiny"
+	if err := os.MkdirAll(chartDir+"/templates", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(chartDir+"/Chart.yaml",
+		[]byte("apiVersion: v2\nname: tiny\nversion: 0.0.1\n"), 0o644); err != nil {
+		t.Fatalf("write Chart.yaml: %v", err)
+	}
+
+	// Convert map to YAML manually for minimal values (avoids yaml dep in test).
+	// Only supports string and int leaf types + nested maps (enough for Task 9).
+	var valuesYAML string
+	for k, v := range values {
+		switch tv := v.(type) {
+		case map[string]any:
+			valuesYAML += k + ":\n"
+			for sk, sv := range tv {
+				valuesYAML += "  " + sk + ": " + fmt.Sprint(sv) + "\n"
+			}
+		default:
+			valuesYAML += k + ": " + fmt.Sprint(v) + "\n"
+		}
+	}
+
+	if err := os.WriteFile(chartDir+"/values.yaml", []byte(valuesYAML), 0o644); err != nil {
+		t.Fatalf("write values.yaml: %v", err)
+	}
+	if err := os.WriteFile(chartDir+"/templates/_helpers.tpl", []byte(""), 0o644); err != nil {
+		t.Fatalf("write helpers: %v", err)
+	}
+	return chartDir
+}
+
 func testRelease(name string, rev int) *helmrelease.Release {
 	return &helmrelease.Release{
 		Name:    name,
@@ -133,8 +178,13 @@ func equalStrings(a, b []string) bool {
 }
 
 func TestInstallChartFromRepo_NoExistingRelease_CallsInstall(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image": map[string]any{
+			"repository": "registry.example.com/app",
+		},
+	}
 	fr := &fakeRunner{
-		pullPath:   writeTinyChart(t, t.TempDir()),
+		pullPath:   writeTinyChartWithValues(t, t.TempDir(), chartDefaults),
 		installRel: testRelease("ext", 1),
 	}
 	e := newTestEngine(t, fr)
@@ -156,9 +206,14 @@ func TestInstallChartFromRepo_NoExistingRelease_CallsInstall(t *testing.T) {
 }
 
 func TestInstallChartFromRepo_ReleaseExists_CallsUpgrade(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image": map[string]any{
+			"repository": "registry.example.com/app",
+		},
+	}
 	fr := &fakeRunner{
 		exists:     map[string]bool{"ext": true},
-		pullPath:   writeTinyChart(t, t.TempDir()),
+		pullPath:   writeTinyChartWithValues(t, t.TempDir(), chartDefaults),
 		upgradeRel: testRelease("ext", 2),
 	}
 	e := newTestEngine(t, fr)
@@ -312,4 +367,86 @@ func TestInstallChartFromRepo_PullFailure_PreservesUnderlyingError(t *testing.T)
 	if !errors.Is(err, underlying) {
 		t.Errorf("expected underlying error preserved in chain, got %v", err)
 	}
+}
+
+func TestInstallChartFromRepo_MergesChartDefaultsAsLayer1(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image": map[string]any{
+			"repository": "registry.suse.com/ai/llm",
+			"tag":        "1.0",
+		},
+		"replicaCount": 2,
+	}
+	wlOverrides := map[string]any{
+		"replicaCount": 5,
+	}
+
+	fr := newRecordingRunner(t,
+		withChartDefaults(chartDefaults),
+		withInstallSucceeds(),
+	)
+	e := newTestEngine(t, fr)
+
+	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
+		Namespace:   "ns",
+		ReleaseName: "rel",
+		ChartRef:    "oci://registry.suse.com/ai/charts/llm:1.0",
+		Overrides:   Overrides{Workload: wlOverrides},
+	})
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// Engine should pass MERGED values to Helm: layer 1 (defaults) +
+	// layer 3 (Workload). image.repository from defaults survives;
+	// replicaCount overridden by Workload.
+	got := fr.lastInstallValues()
+	image, ok := got["image"].(map[string]any)
+	if !ok {
+		t.Fatalf("merged values missing image map; got=%v", got)
+	}
+	if image["repository"] != "registry.suse.com/ai/llm" {
+		t.Errorf("image.repository=%v, want registry.suse.com/ai/llm", image["repository"])
+	}
+	if got["replicaCount"] != 5 {
+		t.Errorf("replicaCount=%v, want 5 (Workload override)", got["replicaCount"])
+	}
+}
+
+// Recording runner helpers for Task 9 layer-1 merge tests.
+
+type runnerOption func(*fakeRunner)
+
+func withChartDefaults(defaults map[string]any) runnerOption {
+	return func(fr *fakeRunner) {
+		fr.chartDefaults = defaults
+	}
+}
+
+func withInstallSucceeds() runnerOption {
+	return func(fr *fakeRunner) {
+		fr.installRel = testRelease("rel", 1)
+	}
+}
+
+func newRecordingRunner(t *testing.T, opts ...runnerOption) *fakeRunner {
+	t.Helper()
+	fr := &fakeRunner{
+		pullPath: writeTinyChartWithValues(t, t.TempDir(), nil),
+	}
+	for _, opt := range opts {
+		opt(fr)
+	}
+	// If chartDefaults are provided, rewrite the chart on disk to contain them.
+	if fr.chartDefaults != nil {
+		fr.pullPath = writeTinyChartWithValues(t, t.TempDir(), fr.chartDefaults)
+	}
+	return fr
+}
+
+func (f *fakeRunner) lastInstallValues() map[string]any {
+	if f.lastInstallArgs == nil {
+		return nil
+	}
+	return f.lastInstallArgs.Values
 }
