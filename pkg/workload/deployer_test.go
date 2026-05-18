@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -705,5 +706,48 @@ func TestTeardown_EmptyReleases_ReturnsNil(t *testing.T) {
 	d := newTestDeployer(t)
 	if err := d.Teardown(context.Background(), "ns", nil); err != nil {
 		t.Errorf("Teardown(nil)=%v, want nil", err)
+	}
+}
+
+func TestDeploy_Idempotent_SameInputProducesSameHelmCalls(t *testing.T) {
+	d := newTestDeployer(t)
+	// FakeEngine default returns Status="deployed", Revision=1 — no override needed.
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wid", SpecName: "n",
+		Source:    SourceRef{Kind: SourceKindApp, App: &AppRef{Repo: "r", Chart: "milvus", Version: "1"}},
+		Overrides: map[string]string{"n": "replicaCount: 5"},
+	}
+
+	helmEng := d.helm.(*helm.FakeEngine)
+
+	r1, err := d.Deploy(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first Deploy: %v", err)
+	}
+	firstCount := len(filterInstallCalls(helmEng.Calls))
+	first := append([]helm.FakeCall(nil), filterInstallCalls(helmEng.Calls)...)
+
+	r2, err := d.Deploy(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second Deploy: %v", err)
+	}
+	allInstalls := filterInstallCalls(helmEng.Calls)
+	if len(allInstalls) != firstCount*2 {
+		t.Fatalf("after 2nd call, install count=%d, want %d", len(allInstalls), firstCount*2)
+	}
+	second := allInstalls[firstCount:]
+
+	if len(second) != len(first) {
+		t.Fatalf("second call count=%d, want %d", len(second), len(first))
+	}
+	for i := range first {
+		if first[i].Request.ReleaseName != second[i].Request.ReleaseName ||
+			first[i].Request.ChartRef != second[i].Request.ChartRef {
+			t.Errorf("call[%d] differs: first=%+v second=%+v", i, first[i].Request, second[i].Request)
+		}
+	}
+	if !reflect.DeepEqual(r1.Components, r2.Components) {
+		t.Errorf("results differ:\nfirst:  %+v\nsecond: %+v", r1.Components, r2.Components)
 	}
 }
