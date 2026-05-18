@@ -567,3 +567,16 @@ func TestInstallChartFromRepo_OverridesPullSecretEntry_StillEmits(t *testing.T) 
 		t.Errorf("imagePullSecrets[0]=%v, want {name: suse-registry-creds}", ips[0])
 	}
 }
+
+func TestInstallChartFromRepo_ReturnsErrMissingImageRepository(t *testing.T) {
+	chartDefaults := map[string]any{} // no image at all
+	runner := newRecordingRunner(t, withChartDefaults(chartDefaults))
+	e := newTestEngine(t, runner)
+
+	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
+		Namespace: "ns", ReleaseName: "rel", ChartRef: "oci://x/y:1",
+	})
+	if !errors.Is(err, ErrMissingImageRepository) {
+		t.Errorf("err=%v, want ErrMissingImageRepository", err)
+	}
+}
