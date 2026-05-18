@@ -2,6 +2,7 @@
   <ModalWithCard
     name="add-to-bundle"
     width="450"
+    custom-class="add-to-bundle-modal"
     @close="$emit('cancel')"
   >
     <template #title>{{ t('aif.pages.apps.dialog.title') }}</template>
@@ -37,10 +38,15 @@
 
         <div v-if="mode === 'new'" class="add-to-bundle-dialog__new">
           <LabeledInput
-            :value="newBundleName"
+            v-model:value="newBundleName"
             :label="t('aif.pages.apps.dialog.newBundleName')"
             required
-            @input="newBundleName = typeof $event === 'string' ? $event : ($event?.target?.value || '')"
+          />
+          <LabeledSelect
+            v-model:value="newBundleNamespace"
+            :label="t('aif.pages.apps.dialog.newBundleNamespace')"
+            :options="namespaceOptions"
+            required
           />
         </div>
 
@@ -70,7 +76,9 @@
 import { defineComponent, ref, computed, inject, getCurrentInstance, onMounted } from 'vue';
 import ModalWithCard from '@shell/components/ModalWithCard';
 import LabeledInput from '@components/Form/LabeledInput/LabeledInput.vue';
+import LabeledSelect from '@shell/components/form/LabeledSelect';
 import Banner from '@components/Banner/Banner.vue';
+import { NAMESPACE } from '@shell/config/types';
 import { CRD_TYPES } from '../../config/types';
 
 export default defineComponent({
@@ -79,6 +87,7 @@ export default defineComponent({
   components: {
     ModalWithCard,
     LabeledInput,
+    LabeledSelect,
     Banner
   },
 
@@ -99,9 +108,24 @@ export default defineComponent({
     const mode = ref('existing');
     const selectedBundle = ref(null);
     const newBundleName = ref(`${props.app.name}-bundle`);
+    const newBundleNamespace = ref('default');
     const saving = ref(false);
     const errorMsg = ref('');
     const draftBundles = ref([]);
+    const namespaces = ref([]);
+
+    const namespaceOptions = computed(() => {
+      const names = namespaces.value
+        .filter((n) => !n.isSystem)
+        .map((n) => n.metadata?.name)
+        .filter(Boolean);
+
+      if (!names.includes('default')) {
+        names.unshift('default');
+      }
+
+      return names;
+    });
 
     const draftBundleOptions = computed(() => {
       return draftBundles.value.map((b) => ({
@@ -125,7 +149,7 @@ export default defineComponent({
         return !!selectedBundle.value;
       }
 
-      return newBundleName.value.trim().length > 0;
+      return newBundleName.value.trim().length > 0 && !!newBundleNamespace.value;
     });
 
     const buildComponentRef = () => ({
@@ -155,11 +179,12 @@ export default defineComponent({
 
     const createNewBundle = async () => {
       const name = newBundleName.value.trim();
+      const namespace = newBundleNamespace.value || 'default';
       const bundleData = {
         type:       CRD_TYPES.BUNDLE,
         apiVersion: 'ai.suse.com/v1alpha1',
         kind:       'Bundle',
-        metadata:   { name, namespace: 'default' },
+        metadata:   { name, namespace },
         spec:       {
           title:           name,
           targetBlueprint: name,
@@ -201,15 +226,23 @@ export default defineComponent({
       } catch {
         draftBundles.value = [];
       }
+
+      try {
+        namespaces.value = await store.dispatch('management/findAll', { type: NAMESPACE }) || [];
+      } catch {
+        namespaces.value = [];
+      }
     });
 
     return {
       mode,
       selectedBundle,
       newBundleName,
+      newBundleNamespace,
       saving,
       errorMsg,
       draftBundleOptions,
+      namespaceOptions,
       canConfirm,
       onConfirm,
       t
@@ -217,6 +250,12 @@ export default defineComponent({
   }
 });
 </script>
+
+<style lang="scss">
+.add-to-bundle-modal.modal-container {
+  overflow: visible;
+}
+</style>
 
 <style lang="scss" scoped>
 .add-to-bundle-dialog {
@@ -238,6 +277,12 @@ export default defineComponent({
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+
+.add-to-bundle-dialog__new {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .add-to-bundle-dialog__label {

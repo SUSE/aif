@@ -68,3 +68,19 @@ test('AddToBundleDialog.vue has bundle name input for new mode', () => {
   assert.match(source, /LabeledInput|labeled-input/);
   assert.match(source, /aif\.pages\.apps\.dialog\.newBundleName/);
 });
+
+test('AddToBundleDialog.vue has namespace picker (no hardcoded default)', () => {
+  const source = read('components/apps/AddToBundleDialog.vue');
+
+  assert.match(source, /LabeledSelect/);
+  assert.match(source, /aif\.pages\.apps\.dialog\.newBundleNamespace/);
+  assert.match(source, /newBundleNamespace/);
+  assert.doesNotMatch(source, /namespace:\s*'default'/);
+});
+
+test('AddToBundleDialog.vue fetches namespaces via management store', () => {
+  const source = read('components/apps/AddToBundleDialog.vue');
+
+  assert.match(source, /import.*NAMESPACE.*from.*@shell\/config\/types/);
+  assert.match(source, /findAll.*NAMESPACE|type:\s*NAMESPACE/s);
+});
