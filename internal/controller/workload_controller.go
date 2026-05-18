@@ -9,6 +9,7 @@ import (
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/conditions"
 	"github.com/SUSE/aif/pkg/workload"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -206,8 +207,24 @@ func (r *WorkloadReconciler) handleDeletion(ctx context.Context, w *aifv1.Worklo
 		return ctrl.Result{}, nil
 	}
 
-	// No cleanup needed in P1-3 (no Helm releases yet - Phase 4/5)
-	// Just remove finalizer
+	// P4-2: call Deployer.Teardown before removing the finalizer.
+	// Project status.componentReleases into the domain type the Deployer
+	// understands. On failure, keep the finalizer and requeue.
+	previous := make([]workload.ComponentRelease, 0, len(w.Status.ComponentReleases))
+	for _, c := range w.Status.ComponentReleases {
+		previous = append(previous, workload.ComponentRelease{
+			Name:        c.Name,
+			ReleaseName: c.ReleaseName,
+			Status:      c.Status,
+			Revision:    c.Revision,
+		})
+	}
+	if err := r.Deployer.Teardown(ctx, w.Namespace, previous); err != nil {
+		r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "TeardownFailed",
+			conditions.ActionDeleting, "Failed to teardown releases: %v", err)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	controllerutil.RemoveFinalizer(w, workloadFinalizerName)
 	if err := r.Update(ctx, w); err != nil {
 		return ctrl.Result{}, err

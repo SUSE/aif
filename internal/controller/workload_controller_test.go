@@ -364,6 +364,112 @@ var _ = Describe("Workload deployer error → condition mapping (P4-2)", func() 
 	})
 })
 
+var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
+	const timeout = 30 * time.Second
+	const interval = 250 * time.Millisecond
+	ctx := context.Background()
+
+	It("calls Deployer.Teardown on delete and removes finalizer when Teardown succeeds", func() {
+		fakeDeployer.TeardownErr = nil
+		fakeDeployer.DeployResult = workload.DeployResult{
+			Phase: workload.PhaseRunning,
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "wid-fin-n", Status: "deployed"},
+			},
+		}
+
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{Name: "wid-fin-" + randomSuffix(), Namespace: "default"},
+			Spec: aifv1.WorkloadSpec{
+				Name: "n",
+				Source: aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+		key := client.ObjectKeyFromObject(w)
+
+		// Wait for finalizer to be added AND ComponentReleases populated.
+		Eventually(func(g Gomega) {
+			var got aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, key, &got)).To(Succeed())
+			g.Expect(got.Finalizers).To(ContainElement("ai.suse.com/cleanup"))
+			g.Expect(got.Status.ComponentReleases).To(HaveLen(1))
+		}, timeout, interval).Should(Succeed())
+
+		teardownCallsBefore := len(fakeDeployer.TeardownCalls)
+		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+
+		// Teardown should be called eventually with the recorded release.
+		Eventually(func() int {
+			return len(fakeDeployer.TeardownCalls)
+		}, timeout, interval).Should(BeNumerically(">", teardownCallsBefore))
+
+		last := fakeDeployer.TeardownCalls[len(fakeDeployer.TeardownCalls)-1]
+		Expect(last.Namespace).To(Equal("default"))
+		Expect(last.Releases).To(HaveLen(1))
+		Expect(last.Releases[0].ReleaseName).To(Equal("wid-fin-n"))
+
+		// Eventually the Workload should be gone (finalizer removed).
+		Eventually(func() bool {
+			var got aifv1.Workload
+			err := k8sClient.Get(ctx, key, &got)
+			return errors.IsNotFound(err)
+		}, timeout, interval).Should(BeTrue())
+	})
+
+	It("keeps finalizer when Teardown fails (Workload not deleted until success)", func() {
+		fakeDeployer.DeployResult = workload.DeployResult{
+			Phase: workload.PhaseRunning,
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "wid-fin2-n", Status: "deployed"},
+			},
+		}
+
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{Name: "wid-fin2-" + randomSuffix(), Namespace: "default"},
+			Spec: aifv1.WorkloadSpec{
+				Name: "n",
+				Source: aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+		key := client.ObjectKeyFromObject(w)
+
+		Eventually(func(g Gomega) {
+			var got aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, key, &got)).To(Succeed())
+			g.Expect(got.Finalizers).To(ContainElement("ai.suse.com/cleanup"))
+			g.Expect(got.Status.ComponentReleases).To(HaveLen(1))
+		}, timeout, interval).Should(Succeed())
+
+		// Set TeardownErr right before deletion to avoid interference with Deploy phase
+		fakeDeployer.TeardownErr = stderrors.New("teardown boom")
+		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+
+		// First, wait for the reconciler to attempt deletion (DeletionTimestamp set)
+		Eventually(func() bool {
+			var got aifv1.Workload
+			err := k8sClient.Get(ctx, key, &got)
+			return err == nil && got.DeletionTimestamp != nil
+		}, timeout, interval).Should(BeTrue())
+
+		// Workload should NOT disappear; finalizer holds while Teardown errors.
+		Consistently(func() bool {
+			var got aifv1.Workload
+			err := k8sClient.Get(ctx, key, &got)
+			return err == nil && got.DeletionTimestamp != nil && len(got.Finalizers) > 0
+		}, "3s", interval).Should(BeTrue())
+
+		// Clear the err and let it succeed, so test cleanup completes.
+		fakeDeployer.TeardownErr = nil
+		Eventually(func() bool {
+			var got aifv1.Workload
+			err := k8sClient.Get(ctx, key, &got)
+			return errors.IsNotFound(err)
+		}, timeout, interval).Should(BeTrue())
+	})
+})
+
 // randomSuffix returns a short random string suitable for unique resource
 // names within a single test suite. Avoids cross-spec name collision since
 // each spec creates a Workload that persists until the AfterEach removes
