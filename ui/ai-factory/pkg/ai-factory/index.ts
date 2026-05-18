@@ -7,8 +7,10 @@ import './style/brand.css';
  * SUSE AI Factory UI extension entry point.
  */
 export default function(plugin: IPlugin): void {
+  // Auto-import model, detail, edit from the folders
   importTypes(plugin);
 
+  // Provide plugin metadata from package.json and resolve the local tile icon.
   plugin.metadata = {
     ...require('./package.json'),
     icon: require('./assets/logo.svg')

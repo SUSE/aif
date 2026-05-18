@@ -150,13 +150,11 @@ import { defineComponent, ref, computed, onMounted, getCurrentInstance } from 'v
 import AppCard from '../components/apps/AppCard.vue';
 import AddToBundleDialog from '../components/apps/AddToBundleDialog.vue';
 import { listApps, listCategories } from '../utils/operator-api';
+import { formatDate } from '../utils/date';
+import { FALLBACK_LOGO } from '../config/constants';
 import Banner from '@components/Banner/Banner.vue';
 
 const STORAGE_KEY = 'aif-include-reference-blueprints';
-
-const FALLBACK_LOGO = 'data:image/svg+xml,' + encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#e0e0e0"/><text x="20" y="25" text-anchor="middle" font-size="14" fill="#999">AI</text></svg>'
-);
 
 export default defineComponent({
   name: 'AppsPage',
@@ -166,6 +164,7 @@ export default defineComponent({
   setup() {
     const instance = getCurrentInstance();
     const store = instance?.proxy?.$store;
+    const t = instance?.proxy?.t || ((key) => key);
 
     const loading = ref(true);
     const error = ref('');
@@ -254,15 +253,6 @@ export default defineComponent({
       });
     };
 
-    const formatDate = (iso) => {
-      if (!iso) {
-        return '—';
-      }
-      const d = new Date(iso);
-
-      return isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
-    };
-
     const onImgError = (event) => {
       event.target.src = FALLBACK_LOGO;
     };
@@ -299,7 +289,8 @@ export default defineComponent({
       onAddToBundle,
       onBundleAdded,
       formatDate,
-      onImgError
+      onImgError,
+      t
     };
   }
 });

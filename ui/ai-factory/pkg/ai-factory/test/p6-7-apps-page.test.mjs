@@ -138,3 +138,17 @@ test('apps.vue handles add-to-bundle dialog show/hide', () => {
 
   assert.match(source, /showAddToBundleDialog|showDialog|dialogApp/);
 });
+
+test('apps.vue persists includeRefBlueprints toggle to localStorage', () => {
+  const source = read('pages/apps.vue');
+
+  assert.match(source, /const STORAGE_KEY = 'aif-include-reference-blueprints'/);
+  assert.match(source, /localStorage\.getItem\(STORAGE_KEY\)/);
+  assert.match(source, /localStorage\.setItem\(STORAGE_KEY/);
+});
+
+test('apps.vue injects t() into setup so error path does not throw', () => {
+  const source = read('pages/apps.vue');
+
+  assert.match(source, /const t = instance\?\.proxy\?\.t/);
+});

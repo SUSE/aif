@@ -60,10 +60,8 @@
 
 <script>
 import { defineComponent, computed } from 'vue';
-
-const FALLBACK_LOGO = 'data:image/svg+xml,' + encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#e0e0e0"/><text x="20" y="25" text-anchor="middle" font-size="14" fill="#999">AI</text></svg>'
-);
+import { formatDate } from '../../utils/date';
+import { FALLBACK_LOGO } from '../../config/constants';
 
 export default defineComponent({
   name: 'AppCard',
@@ -81,12 +79,9 @@ export default defineComponent({
     const fallbackLogo = FALLBACK_LOGO;
 
     const formattedDate = computed(() => {
-      if (!props.app.lastUpdatedAt) {
-        return '';
-      }
-      const d = new Date(props.app.lastUpdatedAt);
+      const formatted = formatDate(props.app.lastUpdatedAt);
 
-      return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+      return formatted === '—' ? '' : formatted;
     });
 
     const displayTags = computed(() => {
