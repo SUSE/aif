@@ -89,12 +89,7 @@ func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult,
 		// Successful uninstall: orphan is implicitly dropped (not appended to components).
 	}
 
-	// Phase aggregation is Task 22; placeholder behavior here so tests can
-	// distinguish "empty/error" from "non-empty/no-error".
-	phase := PhasePending
-	if len(components) > 0 {
-		phase = PhaseRunning
-	}
+	phase := aggregatePhase(components)
 
 	return DeployResult{
 		Components:               components,
@@ -300,4 +295,47 @@ func detectOrphans(previous []ComponentRelease, desired []desiredComponent) []Co
 		}
 	}
 	return orphans
+}
+
+// aggregatePhase computes the Workload-level Phase from per-component
+// release statuses per spec §5.2 step 5:
+//
+//	any "failed"                                          → PhaseFailed
+//	any pending/upgrading/uninstalling/orphan-failed      → PhaseDeploying
+//	all "deployed"                                        → PhaseRunning
+//	empty desired set                                     → PhasePending
+//
+// "Failed" wins over "Deploying" because a failed release won't progress
+// without action; surfacing Failed lets the user act.
+func aggregatePhase(components []ComponentRelease) Phase {
+	if len(components) == 0 {
+		return PhasePending
+	}
+	hasFailed := false
+	hasPending := false
+	allDeployed := true
+	for _, c := range components {
+		switch c.Status {
+		case "failed":
+			hasFailed = true
+			allDeployed = false
+		case "pending-install", "pending-upgrade", "uninstalling", "orphan-uninstall-failed":
+			hasPending = true
+			allDeployed = false
+		case "deployed":
+			// no-op
+		default:
+			allDeployed = false
+			hasPending = true // unknown statuses treated as in-flight
+		}
+	}
+	switch {
+	case hasFailed:
+		return PhaseFailed
+	case hasPending:
+		return PhaseDeploying
+	case allDeployed:
+		return PhaseRunning
+	}
+	return PhasePending
 }

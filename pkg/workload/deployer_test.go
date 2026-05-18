@@ -565,3 +565,47 @@ func newTestDeployer(t *testing.T) *deployer {
 		logger:         logger,
 	}
 }
+
+func TestAggregatePhase_AllDeployed_Running(t *testing.T) {
+	got := aggregatePhase([]ComponentRelease{
+		{Status: "deployed"}, {Status: "deployed"},
+	})
+	if got != PhaseRunning {
+		t.Errorf("phase=%q, want Running", got)
+	}
+}
+
+func TestAggregatePhase_AnyFailed_Failed(t *testing.T) {
+	got := aggregatePhase([]ComponentRelease{
+		{Status: "deployed"}, {Status: "failed"},
+	})
+	if got != PhaseFailed {
+		t.Errorf("phase=%q, want Failed", got)
+	}
+}
+
+func TestAggregatePhase_AnyPending_Deploying(t *testing.T) {
+	for _, status := range []string{"pending-install", "pending-upgrade", "uninstalling", "orphan-uninstall-failed"} {
+		got := aggregatePhase([]ComponentRelease{
+			{Status: "deployed"}, {Status: status},
+		})
+		if got != PhaseDeploying {
+			t.Errorf("status=%q → phase=%q, want Deploying", status, got)
+		}
+	}
+}
+
+func TestAggregatePhase_Empty_Pending(t *testing.T) {
+	if got := aggregatePhase(nil); got != PhasePending {
+		t.Errorf("empty → phase=%q, want Pending", got)
+	}
+}
+
+func TestAggregatePhase_FailedOverridesPending(t *testing.T) {
+	got := aggregatePhase([]ComponentRelease{
+		{Status: "pending-install"}, {Status: "failed"},
+	})
+	if got != PhaseFailed {
+		t.Errorf("phase=%q, want Failed (failed beats pending)", got)
+	}
+}
