@@ -45,6 +45,12 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate app-version input
+        if: inputs.update-app-version && inputs.app-version == ''
+        run: |
+          echo "update-app-version is true but app-version is empty"
+          exit 1
+
       - name: Update appVersion
         if: inputs.update-app-version
         env:
