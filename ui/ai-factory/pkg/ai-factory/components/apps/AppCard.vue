@@ -59,7 +59,7 @@
 </template>
 
 <script>
-import { defineComponent, computed } from 'vue';
+import { defineComponent, computed, getCurrentInstance } from 'vue';
 import { formatDate } from '../../utils/date';
 import { FALLBACK_LOGO } from '../../config/constants';
 
@@ -76,6 +76,8 @@ export default defineComponent({
   emits: ['install', 'add-to-bundle'],
 
   setup(props) {
+    const instance = getCurrentInstance();
+    const t = instance?.proxy?.t?.bind(instance.proxy) || ((key) => key);
     const fallbackLogo = FALLBACK_LOGO;
 
     const formattedDate = computed(() => {
@@ -95,7 +97,7 @@ export default defineComponent({
       event.target.src = FALLBACK_LOGO;
     };
 
-    return { fallbackLogo, formattedDate, displayTags, onImgError };
+    return { fallbackLogo, formattedDate, displayTags, onImgError, t };
   }
 });
 </script>

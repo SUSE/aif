@@ -19,7 +19,6 @@ aif:
       comingSoon: 'Overview dashboard coming soon'
     apps:
       title: 'Apps'
-      comingSoon: 'Apps catalog coming soon'
       toolbar:
         search: 'Search apps...'
         sourceAll: 'All Sources'

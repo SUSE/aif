@@ -73,7 +73,7 @@
 </template>
 
 <script>
-import { defineComponent, ref, computed, inject, getCurrentInstance, onMounted } from 'vue';
+import { defineComponent, ref, computed, getCurrentInstance, onMounted } from 'vue';
 import ModalWithCard from '@shell/components/ModalWithCard';
 import LabeledInput from '@components/Form/LabeledInput/LabeledInput.vue';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
@@ -102,7 +102,7 @@ export default defineComponent({
 
   setup(props, { emit }) {
     const instance = getCurrentInstance();
-    const store = inject('$store') || instance?.proxy?.$store;
+    const store = instance?.proxy?.$store;
     const t = instance?.proxy?.t?.bind(instance.proxy) || ((key) => key);
 
     const mode = ref('existing');

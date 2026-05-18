@@ -69,13 +69,19 @@ test('AddToBundleDialog.vue has bundle name input for new mode', () => {
   assert.match(source, /aif\.pages\.apps\.dialog\.newBundleName/);
 });
 
-test('AddToBundleDialog.vue has namespace picker (no hardcoded default)', () => {
+test('AddToBundleDialog.vue uses the picker value as bundle namespace (not a hardcoded literal)', () => {
   const source = read('components/apps/AddToBundleDialog.vue');
 
+  // Picker exists and is wired to the namespace ref.
   assert.match(source, /LabeledSelect/);
   assert.match(source, /aif\.pages\.apps\.dialog\.newBundleNamespace/);
   assert.match(source, /newBundleNamespace/);
-  assert.doesNotMatch(source, /namespace:\s*'default'/);
+
+  // Bundle metadata uses a `namespace` variable (shorthand or reference),
+  // not a string literal. This catches regressions like `namespace: 'default'`
+  // or any other hardcoded value inside the metadata object.
+  assert.match(source, /metadata:\s*\{[^}]*\bnamespace\b[^}]*\}/);
+  assert.doesNotMatch(source, /metadata:\s*\{[^}]*namespace:\s*['"]/);
 });
 
 test('AddToBundleDialog.vue fetches namespaces via management store', () => {
