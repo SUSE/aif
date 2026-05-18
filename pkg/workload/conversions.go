@@ -7,6 +7,8 @@
 package workload
 
 import (
+	"fmt"
+
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 )
 
@@ -76,4 +78,42 @@ func ApplyDeployResult(w *aifv1.Workload, r DeployResult) {
 			Revision:    c.Revision,
 		})
 	}
+}
+
+// blueprintCRName encodes (lineage, version) as the CR's metadata.name.
+// Blueprint CRs are cluster-scoped, immutable per version, named by joining
+// lineage and version with a hyphen.
+func blueprintCRName(name, version string) string {
+	return name + "-" + version
+}
+
+// componentsFromCRComponents translates aifv1.ComponentRef[] into the
+// internal desiredComponent[]. Rejects nested Blueprints per P4-2 spec
+// (recursive expansion is a future-story concern; sentinel surfaces as
+// Ready=False Reason=UnsupportedComposition in the reconciler).
+//
+// Returns (components, observedGen=0, nil) on success.
+// Returns ErrNestedBlueprintNotSupported on first nested-Blueprint child.
+// Returns ErrSourceNotResolved on missing App ref.
+//
+// overrides may be nil; when present, overrides[componentName] is copied
+// into desiredComponent.blueprintOverride.
+func componentsFromCRComponents(refs []aifv1.ComponentRef, overrides map[string]string) ([]desiredComponent, int64, error) {
+	out := make([]desiredComponent, 0, len(refs))
+	for _, r := range refs {
+		if r.Kind == aifv1.ComponentKindBlueprint {
+			return nil, 0, fmt.Errorf("%w: child %q has Kind=Blueprint", ErrNestedBlueprintNotSupported, r.Name)
+		}
+		if r.App == nil {
+			return nil, 0, fmt.Errorf("%w: child %q missing App ref", ErrSourceNotResolved, r.Name)
+		}
+		out = append(out, desiredComponent{
+			name:              r.Name,
+			repo:              r.App.Repo,
+			chart:             r.App.Chart,
+			version:           r.App.Version,
+			blueprintOverride: overrides[r.Name],
+		})
+	}
+	return out, 0, nil
 }

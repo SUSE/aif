@@ -2,6 +2,7 @@ package workload
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/SUSE/aif/pkg/blueprint"
@@ -90,8 +91,14 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 		}}, 0, nil
 
 	case SourceKindBlueprint:
-		// Task 16 implements this branch.
-		return nil, 0, ErrSourceNotResolved
+		if req.Source.Blueprint == nil {
+			return nil, 0, ErrSourceNotResolved
+		}
+		bp, err := d.blueprintRepo.Get(ctx, blueprintCRName(req.Source.Blueprint.Name, req.Source.Blueprint.Version))
+		if err != nil {
+			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
+		}
+		return componentsFromCRComponents(bp.Spec.Components, bp.Spec.ValueOverrides)
 
 	case SourceKindBundleTest:
 		// Task 17 implements this branch.
