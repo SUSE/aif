@@ -544,6 +544,48 @@ func filterUninstallCalls(calls []helm.FakeCall) []helm.FakeCall {
 	return out
 }
 
+func TestDeploy_PartialFailure_ContinuesAndJoins(t *testing.T) {
+	d := newTestDeployer(t)
+
+	bpRepo := d.blueprintRepo.(*blueprint.FakeRepository)
+	bpRepo.Seed(&aifv1.Blueprint{
+		ObjectMeta: metav1.ObjectMeta{Name: "x-1.0"},
+		Spec: aifv1.BlueprintSpec{
+			Components: []aifv1.ComponentRef{
+				{Name: "a", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "ca", Version: "1"}},
+				{Name: "b", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "cb", Version: "1"}},
+				{Name: "c", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "cc", Version: "1"}},
+			},
+		},
+	})
+
+	helmEng := d.helm.(*helm.FakeEngine)
+	helmEng.InstallByRelease = map[string]helm.InstallOutcome{
+		ComposeReleaseName("wid", "a"): {Status: helm.ReleaseStatus{Status: "deployed", Revision: 1}},
+		ComposeReleaseName("wid", "b"): {Err: helm.ErrPullFailed},
+		ComposeReleaseName("wid", "c"): {Status: helm.ReleaseStatus{Status: "deployed", Revision: 1}},
+	}
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wid",
+		Source: SourceRef{Kind: SourceKindBlueprint, Blueprint: &BlueprintRef{Name: "x", Version: "1.0"}},
+	}
+
+	result, err := d.Deploy(context.Background(), req)
+	if !errors.Is(err, ErrComponentInstallFailed) {
+		t.Errorf("err=%v, want ErrComponentInstallFailed", err)
+	}
+	if !errors.Is(err, helm.ErrPullFailed) {
+		t.Errorf("err=%v, want chain to helm.ErrPullFailed", err)
+	}
+	if len(result.Components) != 3 {
+		t.Fatalf("Components len=%d, want 3 (all attempted, even after b failed)", len(result.Components))
+	}
+	if result.Phase != PhaseFailed {
+		t.Errorf("Phase=%q, want Failed", result.Phase)
+	}
+}
+
 // newTestDeployer is a helper used by all deployer_test.go tests.
 // Builds a real *deployer with fakes for every dependency.
 //
