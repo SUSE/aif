@@ -7,6 +7,7 @@ import (
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/helm"
+	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
@@ -34,6 +35,10 @@ type Options struct {
 	// every reconcile. Constructed in cmd/operator/main.go via NewEngineBus
 	// (P5-7).
 	EngineBus controller.SettingsApplier
+
+	// WorkloadDeployer is the production Deployer wired into WorkloadReconciler.
+	// Constructed in cmd/operator/main.go via workload.NewDeployer (P4-2).
+	WorkloadDeployer workload.Deployer
 }
 
 func (o Options) leaderElectionID() string {
@@ -101,6 +106,7 @@ func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("workload-controller"),
+		Deployer: opts.WorkloadDeployer,
 	}
 	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up WorkloadReconciler: %w", err)
