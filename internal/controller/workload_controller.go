@@ -6,6 +6,7 @@ import (
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/conditions"
+	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +26,7 @@ type WorkloadReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
+	Deployer workload.Deployer // P4-2: Helm deployment engine
 }
 
 // +kubebuilder:rbac:groups=ai.suse.com,resources=workloads,verbs=get;list;watch;update;patch
@@ -135,14 +137,28 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 		w.Status.Phase = aifv1.WorkloadPhasePending
 	}
 
-	// Set Ready=False Reason=AwaitingDeployer
-	r.setCondition(w, metav1.Condition{
+	// P4-2: Translate to DeployRequest, call Deployer, apply result.
+	req := workload.WorkloadToDeployRequest(w)
+	result, deployErr := r.Deployer.Deploy(ctx, req)
+	workload.ApplyDeployResult(w, result)
+
+	// Error → condition mapping is implemented in Task 27. For now, set a
+	// minimal condition so the build is green and existing tests can be
+	// updated incrementally.
+	ready := metav1.Condition{
 		Type:               conditions.TypeReady,
-		Status:             metav1.ConditionFalse,
-		Reason:             conditions.ReasonAwaitingDeployer,
-		Message:            "Workload validated, waiting for deployment logic (Phase 4/5)",
 		ObservedGeneration: w.Generation,
-	})
+	}
+	if deployErr == nil {
+		ready.Status = metav1.ConditionTrue
+		ready.Reason = conditions.ReasonInstalled
+		ready.Message = "All components deployed"
+	} else {
+		ready.Status = metav1.ConditionFalse
+		ready.Reason = conditions.ReasonReconcileFailed
+		ready.Message = deployErr.Error()
+	}
+	r.setCondition(w, ready)
 
 	// Record success event
 	r.Recorder.Eventf(w, nil, "Normal", "WorkloadCreated", conditions.ActionValidating, "Workload validated successfully")

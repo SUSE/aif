@@ -22,6 +22,7 @@ import (
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/internal/manager"
 	"github.com/SUSE/aif/pkg/blueprint"
+	"github.com/SUSE/aif/pkg/workload"
 )
 
 var (
@@ -29,6 +30,7 @@ var (
 	k8sClient       client.Client
 	cancelFn        context.CancelFunc
 	settingsApplier *controller.FakeSettingsApplier // P5-7: assert snapshot propagation
+	fakeDeployer    *workload.FakeDeployer          // P4-2: Workload deployment test double
 )
 
 func TestControllers(t *testing.T) {
@@ -86,10 +88,12 @@ var _ = BeforeSuite(func() {
 		Manager:  blueprint.New(nil),
 	}).SetupWithManager(mgr)).To(Succeed())
 
+	fakeDeployer = &workload.FakeDeployer{}
 	Expect((&controller.WorkloadReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("workload-controller"),
+		Deployer: fakeDeployer,
 	}).SetupWithManager(mgr)).To(Succeed())
 
 	settingsApplier = &controller.FakeSettingsApplier{}
@@ -127,5 +131,8 @@ var _ = AfterSuite(func() {
 var _ = BeforeEach(func() {
 	if settingsApplier != nil {
 		settingsApplier.Reset()
+	}
+	if fakeDeployer != nil {
+		fakeDeployer.Reset()
 	}
 })

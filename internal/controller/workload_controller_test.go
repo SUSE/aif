@@ -12,6 +12,7 @@ import (
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/conditions"
+	"github.com/SUSE/aif/pkg/workload"
 )
 
 var _ = Describe("WorkloadReconciler", func() {
@@ -29,7 +30,7 @@ var _ = Describe("WorkloadReconciler", func() {
 		return nil
 	}
 
-	It("should reconcile a valid App Workload to Pending/AwaitingDeployer", func() {
+	It("should reconcile a valid App Workload to Pending/Installed", func() {
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "valid-app-workload",
@@ -48,6 +49,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
+		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhasePending}
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -57,8 +59,8 @@ var _ = Describe("WorkloadReconciler", func() {
 			g.Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation))
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
-			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonAwaitingDeployer))
+			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
 		}, timeout, interval).Should(Succeed())
 
 		// Verify finalizer
@@ -67,7 +69,7 @@ var _ = Describe("WorkloadReconciler", func() {
 		Expect(fetched.Finalizers).To(ContainElement("ai.suse.com/cleanup"))
 	})
 
-	It("should reconcile a valid Blueprint Workload to Pending/AwaitingDeployer", func() {
+	It("should reconcile a valid Blueprint Workload to Pending/Installed", func() {
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "valid-bp-workload",
@@ -85,6 +87,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
+		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhasePending}
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -93,12 +96,12 @@ var _ = Describe("WorkloadReconciler", func() {
 			g.Expect(fetched.Status.Phase).To(Equal(aifv1.WorkloadPhasePending))
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
-			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonAwaitingDeployer))
+			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
 		}, timeout, interval).Should(Succeed())
 	})
 
-	It("should reconcile a valid BundleTest Workload to Pending/AwaitingDeployer", func() {
+	It("should reconcile a valid BundleTest Workload to Pending/Installed", func() {
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "valid-bundletest-workload",
@@ -117,6 +120,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
+		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhasePending}
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -125,8 +129,8 @@ var _ = Describe("WorkloadReconciler", func() {
 			g.Expect(fetched.Status.Phase).To(Equal(aifv1.WorkloadPhasePending))
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
-			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonAwaitingDeployer))
+			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
 		}, timeout, interval).Should(Succeed())
 	})
 
