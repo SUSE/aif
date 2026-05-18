@@ -173,6 +173,36 @@ func TestResolveSource_BundleTest_NotFound_ReturnsErrSourceNotResolved(t *testin
 	}
 }
 
+func TestDetectOrphans_ReturnsRemovedComponents(t *testing.T) {
+	previous := []ComponentRelease{
+		{Name: "a", ReleaseName: "wid-a"},
+		{Name: "b", ReleaseName: "wid-b"},
+		{Name: "c", ReleaseName: "wid-c"},
+	}
+	desired := []desiredComponent{
+		{name: "a"}, {name: "c"},
+	}
+	got := detectOrphans(previous, desired)
+	if len(got) != 1 || got[0].Name != "b" {
+		t.Errorf("orphans=%+v, want [b]", got)
+	}
+}
+
+func TestDetectOrphans_EmptyPrevious_ReturnsEmpty(t *testing.T) {
+	got := detectOrphans(nil, []desiredComponent{{name: "a"}})
+	if len(got) != 0 {
+		t.Errorf("orphans=%+v, want empty", got)
+	}
+}
+
+func TestDetectOrphans_EmptyDesired_ReturnsAllPrevious(t *testing.T) {
+	previous := []ComponentRelease{{Name: "a"}, {Name: "b"}}
+	got := detectOrphans(previous, nil)
+	if len(got) != 2 {
+		t.Errorf("orphans=%+v, want all 2", got)
+	}
+}
+
 // newTestDeployer is a helper used by all deployer_test.go tests.
 // Builds a real *deployer with fakes for every dependency.
 //

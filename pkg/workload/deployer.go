@@ -116,3 +116,20 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 	}
 	return nil, 0, ErrSourceNotResolved
 }
+
+// detectOrphans returns previous-component entries whose Name is not in
+// desired. Used for drift cleanup: caller invokes helm.Engine.Uninstall
+// on each returned entry.
+func detectOrphans(previous []ComponentRelease, desired []desiredComponent) []ComponentRelease {
+	desiredNames := make(map[string]struct{}, len(desired))
+	for _, d := range desired {
+		desiredNames[d.name] = struct{}{}
+	}
+	var orphans []ComponentRelease
+	for _, p := range previous {
+		if _, kept := desiredNames[p.Name]; !kept {
+			orphans = append(orphans, p)
+		}
+	}
+	return orphans
+}
