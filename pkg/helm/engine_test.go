@@ -450,3 +450,58 @@ func (f *fakeRunner) lastInstallValues() map[string]any {
 	}
 	return f.lastInstallArgs.Values
 }
+
+func TestInstallChartFromRepo_AppliesImageRewriteFromEngineSettings(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image": map[string]any{"repository": "registry.suse.com/ai/llm", "tag": "1.0"},
+	}
+	runner := newRecordingRunner(t, withChartDefaults(chartDefaults), withInstallSucceeds())
+	e := newTestEngine(t, runner)
+
+	e.UpdateSettings(EngineSettings{
+		ImageRewrite: ImageRewriteConfig{
+			Enabled: true,
+			Rules: []ImageRewriteRule{
+				{Match: "registry.suse.com/", Replace: "harbor.example.com/suse/"},
+			},
+		},
+	})
+
+	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
+		Namespace: "ns", ReleaseName: "rel", ChartRef: "oci://x/y:1",
+	})
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	got := runner.lastInstallValues()
+	image, ok := got["image"].(map[string]any)
+	if !ok {
+		t.Fatalf("image map missing: %v", got)
+	}
+	if image["repository"] != "harbor.example.com/suse/ai/llm" {
+		t.Errorf("image.repository=%v, want harbor.example.com/suse/ai/llm", image["repository"])
+	}
+}
+
+func TestInstallChartFromRepo_NoRewrite_WhenRulesEmpty(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image": map[string]any{"repository": "registry.suse.com/ai/llm", "tag": "1.0"},
+	}
+	runner := newRecordingRunner(t, withChartDefaults(chartDefaults), withInstallSucceeds())
+	e := newTestEngine(t, runner)
+
+	// No UpdateSettings call → ImageRewrite zero-value → no rewrite.
+
+	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
+		Namespace: "ns", ReleaseName: "rel", ChartRef: "oci://x/y:1",
+	})
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	image := runner.lastInstallValues()["image"].(map[string]any)
+	if image["repository"] != "registry.suse.com/ai/llm" {
+		t.Errorf("image.repository=%v, want unchanged", image["repository"])
+	}
+}

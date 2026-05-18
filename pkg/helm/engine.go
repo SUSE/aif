@@ -72,6 +72,12 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, mergeErr
 	}
 
+	// Layer 5: image rewrite from EngineSettings (P4-6 + P5-7).
+	settings := e.snapshot()
+	if settings.ImageRewrite.Enabled && len(settings.ImageRewrite.Rules) > 0 {
+		merged = ApplyImageRewrites(merged, settings.ImageRewrite.Rules)
+	}
+
 	timeout := req.Timeout
 	if timeout == 0 {
 		timeout = defaultInstallTimeout
@@ -201,6 +207,13 @@ func (e *engine) UpdateSettings(s EngineSettings) {
 		slog.String("component", "helm.engine"),
 		slog.String("suse_registry", s.RegistryEndpoints.SUSERegistry),
 		slog.Bool("image_rewrite_enabled", s.ImageRewrite.Enabled))
+}
+
+// snapshot reads the current settings under a read lock per §8.2.1.
+func (e *engine) snapshot() EngineSettings {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.settings
 }
 
 func toReleaseStatus(rel *release.Release) ReleaseStatus {
