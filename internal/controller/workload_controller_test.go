@@ -53,7 +53,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhaseRunning}
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -91,7 +91,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhaseRunning}
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -124,7 +124,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhaseRunning}
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -310,56 +310,56 @@ var _ = Describe("Workload deployer error → condition mapping (P4-2)", func() 
 	}
 
 	It("maps ErrNestedBlueprintNotSupported to UnsupportedComposition (terminal)", func() {
-		fakeDeployer.DeployErr = workload.ErrNestedBlueprintNotSupported
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhaseFailed}
+		fakeDeployer.SetDeployErr(workload.ErrNestedBlueprintNotSupported)
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseFailed})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonUnsupportedComposition))
 	})
 
 	It("maps ErrSourceNotResolved to SourceNotResolved", func() {
-		fakeDeployer.DeployErr = workload.ErrSourceNotResolved
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhasePending}
+		fakeDeployer.SetDeployErr(workload.ErrSourceNotResolved)
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhasePending})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonSourceNotResolved))
 	})
 
 	It("maps ErrComponentInstallFailed to ComponentInstallFailed", func() {
-		fakeDeployer.DeployErr = workload.ErrComponentInstallFailed
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhaseFailed}
+		fakeDeployer.SetDeployErr(workload.ErrComponentInstallFailed)
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseFailed})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonComponentInstallFailed))
 	})
 
 	It("maps ErrComponentUninstallFailed to OrphanCleanupPending", func() {
-		fakeDeployer.DeployErr = workload.ErrComponentUninstallFailed
-		fakeDeployer.DeployResult = workload.DeployResult{Phase: workload.PhaseDeploying}
+		fakeDeployer.SetDeployErr(workload.ErrComponentUninstallFailed)
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseDeploying})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonOrphanCleanupPending))
 	})
 
 	It("maps unclassified errors to ReconcileFailed", func() {
-		fakeDeployer.DeployErr = stderrors.New("some unexpected error")
-		fakeDeployer.DeployResult = workload.DeployResult{}
+		fakeDeployer.SetDeployErr(stderrors.New("some unexpected error"))
+		fakeDeployer.SetDeployResult(workload.DeployResult{})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonReconcileFailed))
 	})
 
 	It("sets Ready=True Reason=Installed when Deploy succeeds and Phase=Running", func() {
-		fakeDeployer.DeployErr = nil
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetDeployErr(nil)
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase:      workload.PhaseRunning,
 			Components: []workload.ComponentRelease{{Name: "n", Status: "deployed"}},
-		}
+		})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonInstalled))
 	})
 
 	It("sets Reason=Installing when Deploy returns nil but Phase=Deploying", func() {
-		fakeDeployer.DeployErr = nil
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetDeployErr(nil)
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase:      workload.PhaseDeploying,
 			Components: []workload.ComponentRelease{{Name: "n", Status: "pending-install"}},
-		}
+		})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonInstalling))
 	})
@@ -371,13 +371,13 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 	ctx := context.Background()
 
 	It("calls Deployer.Teardown on delete and removes finalizer when Teardown succeeds", func() {
-		fakeDeployer.TeardownErr = nil
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetTeardownErr(nil)
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: "wid-fin-n", Status: "deployed"},
 			},
-		}
+		})
 
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{Name: "wid-fin-" + randomSuffix(), Namespace: "default"},
@@ -397,15 +397,16 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 			g.Expect(got.Status.ComponentReleases).To(HaveLen(1))
 		}, timeout, interval).Should(Succeed())
 
-		teardownCallsBefore := len(fakeDeployer.TeardownCalls)
+		teardownCallsBefore := len(fakeDeployer.GetTeardownCalls())
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
 
 		// Teardown should be called eventually with the recorded release.
 		Eventually(func() int {
-			return len(fakeDeployer.TeardownCalls)
+			return len(fakeDeployer.GetTeardownCalls())
 		}, timeout, interval).Should(BeNumerically(">", teardownCallsBefore))
 
-		last := fakeDeployer.TeardownCalls[len(fakeDeployer.TeardownCalls)-1]
+		calls := fakeDeployer.GetTeardownCalls()
+		last := calls[len(calls)-1]
 		Expect(last.Namespace).To(Equal("default"))
 		Expect(last.Releases).To(HaveLen(1))
 		Expect(last.Releases[0].ReleaseName).To(Equal("wid-fin-n"))
@@ -419,12 +420,12 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 	})
 
 	It("keeps finalizer when Teardown fails (Workload not deleted until success)", func() {
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: "wid-fin2-n", Status: "deployed"},
 			},
-		}
+		})
 
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{Name: "wid-fin2-" + randomSuffix(), Namespace: "default"},
@@ -444,7 +445,7 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 		}, timeout, interval).Should(Succeed())
 
 		// Set TeardownErr right before deletion to avoid interference with Deploy phase
-		fakeDeployer.TeardownErr = stderrors.New("teardown boom")
+		fakeDeployer.SetTeardownErr(stderrors.New("teardown boom"))
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
 
 		// First, wait for the reconciler to attempt deletion (DeletionTimestamp set)
@@ -462,7 +463,7 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 		}, "3s", interval).Should(BeTrue())
 
 		// Clear the err and let it succeed, so test cleanup completes.
-		fakeDeployer.TeardownErr = nil
+		fakeDeployer.SetTeardownErr(nil)
 		Eventually(func() bool {
 			var got aifv1.Workload
 			err := k8sClient.Get(ctx, key, &got)
@@ -490,10 +491,10 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 
 	It("emits Running event on Deploying→Running transition", func() {
 		// First reconcile: Deploying.
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase:      workload.PhaseDeploying,
 			Components: []workload.ComponentRelease{{Name: "n", Status: "pending-install"}},
-		}
+		})
 
 		name := "wid-evt-" + randomSuffix()
 		w := &aifv1.Workload{
@@ -510,10 +511,10 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 		}, timeout, interval).Should(Succeed())
 
 		// Switch fake to Running.
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase:      workload.PhaseRunning,
 			Components: []workload.ComponentRelease{{Name: "n", Status: "deployed"}},
-		}
+		})
 
 		// Touch the Workload so the reconciler re-runs (status update doesn't auto-trigger a re-reconcile in envtest).
 		Eventually(func(g Gomega) {
@@ -544,11 +545,11 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 	})
 
 	It("emits BundleTestGenerationDrift when observed != recorded", func() {
-		fakeDeployer.DeployResult = workload.DeployResult{
+		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Phase:                    workload.PhaseRunning,
 			ObservedBundleGeneration: 9, // recorded was 5
 			Components:               []workload.ComponentRelease{{Name: "c", Status: "deployed"}},
-		}
+		})
 
 		name := "wid-drift-" + randomSuffix()
 		w := &aifv1.Workload{
