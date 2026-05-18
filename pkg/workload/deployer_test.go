@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
@@ -649,5 +650,60 @@ func TestAggregatePhase_FailedOverridesPending(t *testing.T) {
 	})
 	if got != PhaseFailed {
 		t.Errorf("phase=%q, want Failed (failed beats pending)", got)
+	}
+}
+
+func TestTeardown_HappyPath(t *testing.T) {
+	d := newTestDeployer(t)
+	helmEng := d.helm.(*helm.FakeEngine)
+
+	releases := []ComponentRelease{
+		{Name: "a", ReleaseName: "wid-a"},
+		{Name: "b", ReleaseName: "wid-b"},
+	}
+
+	if err := d.Teardown(context.Background(), "ns", releases); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+	uninstalls := filterUninstallCalls(helmEng.Calls)
+	if len(uninstalls) != 2 {
+		t.Errorf("UninstallCalls=%d, want 2", len(uninstalls))
+	}
+}
+
+func TestTeardown_PartialFailure_ReturnsJoined(t *testing.T) {
+	d := newTestDeployer(t)
+	helmEng := d.helm.(*helm.FakeEngine)
+	helmEng.UninstallResult = func(ns, release string) error {
+		if release == "wid-b" {
+			return errors.New("can't uninstall b")
+		}
+		return nil
+	}
+
+	releases := []ComponentRelease{
+		{Name: "a", ReleaseName: "wid-a"},
+		{Name: "b", ReleaseName: "wid-b"},
+		{Name: "c", ReleaseName: "wid-c"},
+	}
+
+	err := d.Teardown(context.Background(), "ns", releases)
+	if err == nil {
+		t.Fatal("Teardown returned nil, want error")
+	}
+	if !strings.Contains(err.Error(), "can't uninstall b") {
+		t.Errorf("err=%v, want chain to 'can't uninstall b'", err)
+	}
+	// All three should have been attempted (no early exit).
+	uninstalls := filterUninstallCalls(helmEng.Calls)
+	if len(uninstalls) != 3 {
+		t.Errorf("UninstallCalls=%d, want 3 (all attempted)", len(uninstalls))
+	}
+}
+
+func TestTeardown_EmptyReleases_ReturnsNil(t *testing.T) {
+	d := newTestDeployer(t)
+	if err := d.Teardown(context.Background(), "ns", nil); err != nil {
+		t.Errorf("Teardown(nil)=%v, want nil", err)
 	}
 }

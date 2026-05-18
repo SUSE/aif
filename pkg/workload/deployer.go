@@ -188,10 +188,23 @@ func composeChartRef(repo, chart, version string) string {
 	return fmt.Sprintf("%s/%s:%s", repo, chart, version)
 }
 
-// Teardown is implemented in task 24.
-func (d *deployer) Teardown(_ context.Context, _ string, _ []ComponentRelease) error {
-	// Task 24 fills this in.
-	return nil
+// Teardown uninstalls all component releases in the provided slice.
+// Called by WorkloadReconciler's finalizer block on Workload deletion.
+//
+// Continues past errors, accumulating failures via errors.Join — gives full
+// attempt coverage before surfacing failures to the caller (mirroring Deploy's
+// install loop semantics from Task 19).
+func (d *deployer) Teardown(ctx context.Context, namespace string, releases []ComponentRelease) error {
+	if len(releases) == 0 {
+		return nil
+	}
+	var errs []error
+	for _, r := range releases {
+		if err := d.helm.Uninstall(ctx, namespace, r.ReleaseName); err != nil {
+			errs = append(errs, fmt.Errorf("uninstall %q: %w", r.ReleaseName, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // extractGPUCount looks for an int-typed "gpuCount" key in the parsed
