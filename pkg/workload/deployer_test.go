@@ -130,6 +130,49 @@ func TestResolveSource_Blueprint_RejectsNestedBlueprint(t *testing.T) {
 	}
 }
 
+func TestResolveSource_BundleTest_RecordsObservedGeneration(t *testing.T) {
+	d := newTestDeployer(t)
+
+	bnRepo := d.bundleRepo.(*bundle.FakeRepository)
+	bnRepo.Seed(&aifv1.Bundle{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "b1", Generation: 7},
+		Spec: aifv1.BundleSpec{
+			Components: []aifv1.ComponentRef{
+				{Name: "c1", Kind: aifv1.ComponentKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+			},
+		},
+	})
+
+	req := DeployRequest{
+		Source: SourceRef{
+			Kind: SourceKindBundleTest,
+			BundleTest: &BundleTestRef{Namespace: "ns", Name: "b1", Generation: 5},
+		},
+	}
+
+	components, observedGen, err := d.resolveSource(context.Background(), req)
+	if err != nil {
+		t.Fatalf("resolveSource: %v", err)
+	}
+	if observedGen != 7 {
+		t.Errorf("observedGen=%d, want 7 (current bundle.metadata.generation)", observedGen)
+	}
+	if len(components) != 1 {
+		t.Errorf("components=%+v", components)
+	}
+}
+
+func TestResolveSource_BundleTest_NotFound_ReturnsErrSourceNotResolved(t *testing.T) {
+	d := newTestDeployer(t)
+	req := DeployRequest{
+		Source: SourceRef{Kind: SourceKindBundleTest, BundleTest: &BundleTestRef{Namespace: "ns", Name: "nope", Generation: 1}},
+	}
+	_, _, err := d.resolveSource(context.Background(), req)
+	if !errors.Is(err, ErrSourceNotResolved) {
+		t.Errorf("err=%v, want ErrSourceNotResolved", err)
+	}
+}
+
 // newTestDeployer is a helper used by all deployer_test.go tests.
 // Builds a real *deployer with fakes for every dependency.
 //

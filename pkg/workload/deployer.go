@@ -101,8 +101,18 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 		return componentsFromCRComponents(bp.Spec.Components, bp.Spec.ValueOverrides)
 
 	case SourceKindBundleTest:
-		// Task 17 implements this branch.
-		return nil, 0, ErrSourceNotResolved
+		if req.Source.BundleTest == nil {
+			return nil, 0, ErrSourceNotResolved
+		}
+		b, err := d.bundleRepo.Get(ctx, req.Source.BundleTest.Namespace, req.Source.BundleTest.Name)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
+		}
+		components, _, cerr := componentsFromCRComponents(b.Spec.Components, b.Spec.ValueOverrides)
+		if cerr != nil {
+			return nil, 0, cerr
+		}
+		return components, b.Generation, nil
 	}
 	return nil, 0, ErrSourceNotResolved
 }
