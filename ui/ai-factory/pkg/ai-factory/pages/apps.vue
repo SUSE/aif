@@ -152,7 +152,7 @@ import AddToBundleDialog from '../components/apps/AddToBundleDialog.vue';
 import { listApps, listCategories } from '../utils/operator-api';
 import { formatDate } from '../utils/date';
 import { FALLBACK_LOGO } from '../config/constants';
-import Banner from '@components/Banner/Banner.vue';
+import { Banner } from '@components/Banner';
 
 const STORAGE_KEY = 'aif-include-reference-blueprints';
 
@@ -245,11 +245,13 @@ export default defineComponent({
       showAddToBundleDialog.value = false;
       dialogApp.value = null;
 
-      const title = result.mode === 'new' ? 'Bundle created' : 'App added to bundle';
+      const title = result.mode === 'new'
+        ? t('aif.pages.apps.dialog.successNew')
+        : t('aif.pages.apps.dialog.successExisting');
 
       instance?.proxy?.$store?.dispatch('growl/success', {
         title,
-        message: `Added ${ appName } to bundle ${ result.bundle }`
+        message: t('aif.pages.apps.dialog.successMessage', { app: appName, bundle: result.bundle })
       });
     };
 

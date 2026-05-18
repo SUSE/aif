@@ -77,7 +77,7 @@ import { defineComponent, ref, computed, inject, getCurrentInstance, onMounted }
 import ModalWithCard from '@shell/components/ModalWithCard';
 import LabeledInput from '@components/Form/LabeledInput/LabeledInput.vue';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
-import Banner from '@components/Banner/Banner.vue';
+import { Banner } from '@components/Banner';
 import { NAMESPACE } from '@shell/config/types';
 import { CRD_TYPES } from '../../config/types';
 

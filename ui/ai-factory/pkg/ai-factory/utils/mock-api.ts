@@ -1,27 +1,9 @@
 /**
  * Mock API responses for UI development before backend integration is ready.
  */
+import type { App } from './operator-api';
 
-interface MockApp {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string;
-  publisher: string;
-  version: string;
-  logoURL: string;
-  source: string;
-  assetType: string;
-  categories: string[];
-  tags: string[];
-  chartRef: { repo: string; chart: string; version: string };
-  projectURL: string;
-  referenceBlueprint: boolean;
-  useCase?: string;
-  lastUpdatedAt?: string;
-}
-
-const MOCK_APPS: MockApp[] = [
+const MOCK_APPS: App[] = [
   {
     id:                 'nvidia.nim-llm:1.2.0',
     name:               'nim-llm',
@@ -31,7 +13,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '1.2.0',
     logoURL:            '',
     source:             'nvidia',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Inference', 'LLM'],
     tags:               ['gpu', 'tensorrt', 'triton'],
     chartRef:           { repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-llm', version: '1.2.0' },
@@ -49,7 +31,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '1.0.0',
     logoURL:            '',
     source:             'nvidia',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Inference', 'VLM'],
     tags:               ['gpu', 'vision', 'multimodal'],
     chartRef:           { repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-vlm', version: '1.0.0' },
@@ -67,7 +49,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '1.2.0',
     logoURL:            '',
     source:             'nvidia',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Reference Blueprint', 'LLM'],
     tags:               ['gpu', 'validated', 'stack'],
     chartRef:           { repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-llm', version: '1.2.0' },
@@ -85,7 +67,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '24.9.0',
     logoURL:            '',
     source:             'suse',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Infrastructure', 'GPU'],
     tags:               ['gpu', 'driver', 'operator'],
     chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'gpu-operator', version: '24.9.0' },
@@ -102,7 +84,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '24.7.0',
     logoURL:            '',
     source:             'suse',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Infrastructure', 'Networking'],
     tags:               ['rdma', 'gpudirect', 'sriov'],
     chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'network-operator', version: '24.7.0' },
@@ -119,7 +101,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '0.5.4',
     logoURL:            '',
     source:             'suse',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Inference', 'LLM'],
     tags:               ['llm', 'local', 'gpu'],
     chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'ollama', version: '0.5.4' },
@@ -136,7 +118,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '0.6.5',
     logoURL:            '',
     source:             'suse',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Application', 'Chat'],
     tags:               ['ui', 'chat', 'rag'],
     chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'open-webui', version: '0.6.5' },
@@ -153,7 +135,7 @@ const MOCK_APPS: MockApp[] = [
     version:            '2.4.0',
     logoURL:            '',
     source:             'suse',
-    assetType:          'helm-chart',
+    assetType:          'chart',
     categories:         ['Data', 'Vector DB'],
     tags:               ['vector', 'embeddings', 'rag'],
     chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'milvus', version: '2.4.0' },
@@ -177,7 +159,7 @@ export const mockAPI = {
   },
 
   apps: {
-    list(params?: { source?: string; category?: string; includeReferenceBlueprints?: boolean }): MockApp[] {
+    list(params?: { source?: string; category?: string; includeReferenceBlueprints?: boolean }): App[] {
       let result = MOCK_APPS;
 
       if (params?.source && params.source !== 'all') {
