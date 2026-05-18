@@ -107,6 +107,27 @@ func (d *deployer) installComponent(ctx context.Context, req DeployRequest, dc d
 				fmt.Errorf("parse workload override for %q: %w", dc.name, err))
 	}
 
+	// NIM detection: ask Discovery whether this chart:version is a known NIM.
+	// Found → call GenerateValues with resolved GPU count; layer 4 = result.
+	// Not found (ErrNIMNotFound or any error) → non-NIM, layer 4 stays nil.
+	var nimGenerated map[string]any
+	if entry, derr := d.nvidiaDisc.Get(ctx, fmt.Sprintf("%s:%s", dc.chart, dc.version)); derr == nil {
+		// gpuCount is a deployer-protocol field, read ONLY from workloadOverrides
+		// per P4-4 follow-up note 2. Blueprint overrides cannot influence NIM
+		// sizing (their job is Helm-native chart values).
+		gpuCount := extractGPUCount(wlOverrides)
+		generated, gerr := d.nvidiaDeployer.GenerateValues(ctx, nvidia.GenerateRequest{
+			Entry:    entry,
+			Replicas: req.Replicas,
+			GPUs:     gpuCount,
+		})
+		if gerr != nil {
+			return ComponentRelease{Name: dc.name, Status: "failed"},
+				errors.Join(ErrComponentInstallFailed, fmt.Errorf("nvidia.GenerateValues for %q: %w", dc.name, gerr))
+		}
+		nimGenerated = generated
+	}
+
 	chartRef := composeChartRef(dc.repo, dc.chart, dc.version)
 	releaseName := ComposeReleaseName(req.ID, dc.name)
 
@@ -115,9 +136,9 @@ func (d *deployer) installComponent(ctx context.Context, req DeployRequest, dc d
 		ReleaseName: releaseName,
 		ChartRef:    chartRef,
 		Overrides: helm.Overrides{
-			Blueprint: bpOverrides,
-			Workload:  wlOverrides,
-			// NIMGenerated added in Task 20.
+			Blueprint:    bpOverrides,
+			Workload:     wlOverrides,
+			NIMGenerated: nimGenerated,
 		},
 		Wait:    false,
 		Timeout: 5 * time.Minute,
@@ -160,6 +181,37 @@ func composeChartRef(repo, chart, version string) string {
 // Teardown is implemented in task 24.
 func (d *deployer) Teardown(_ context.Context, _ string, _ []ComponentRelease) error {
 	// Task 24 fills this in.
+	return nil
+}
+
+// extractGPUCount looks for an int-typed "gpuCount" key in the parsed
+// Workload override map. Returns nil if absent or not numeric.
+//
+// Per P4-4 follow-up note 2, gpuCount is read ONLY from workloadOverrides
+// (NOT blueprintOverrides) — it's a deployer-protocol field, not a Helm
+// chart value. Blueprint authors who want to influence NIM sizing do so
+// via Helm-native fields (resources.limits.nvidia.com/gpu etc).
+//
+// YAML decoding via sigs.k8s.io/yaml routes through JSON, so integer
+// literals decode as float64; handle that case too.
+func extractGPUCount(wlOverrides map[string]any) *int32 {
+	v, ok := wlOverrides["gpuCount"]
+	if !ok {
+		return nil
+	}
+	switch n := v.(type) {
+	case int:
+		out := int32(n)
+		return &out
+	case int32:
+		return &n
+	case int64:
+		out := int32(n)
+		return &out
+	case float64:
+		out := int32(n)
+		return &out
+	}
 	return nil
 }
 

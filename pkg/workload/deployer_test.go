@@ -301,6 +301,116 @@ func TestDeploy_Blueprint_3Components_InstallsInOrder(t *testing.T) {
 	}
 }
 
+func TestDeploy_NIM_GeneratesValuesAndPassesAsLayer4(t *testing.T) {
+	d := newTestDeployer(t)
+
+	disc := d.nvidiaDisc.(*stubDiscovery)
+	disc.SetEntry("nim-llm:1.0", nvidia.NIMEntry{
+		ID: "nim-llm:1.0", Chart: "nim-llm", Version: "1.0", Type: nvidia.TypeLLM, DefaultGPUs: 2,
+	})
+
+	nimDep := d.nvidiaDeployer.(*stubNvidiaDeployer)
+	nimDep.GenerateResult = map[string]any{
+		"resources": map[string]any{"limits": map[string]any{"nvidia.com/gpu": "2"}},
+	}
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wid", SpecName: "my-llm", Replicas: 3,
+		Source: SourceRef{Kind: SourceKindApp, App: &AppRef{Repo: "oci://r", Chart: "nim-llm", Version: "1.0"}},
+	}
+
+	_, err := d.Deploy(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	if len(nimDep.Calls) != 1 {
+		t.Fatalf("nvidia.Deployer.GenerateValues called %d times, want 1", len(nimDep.Calls))
+	}
+	gr := nimDep.Calls[0]
+	if gr.Entry.ID != "nim-llm:1.0" {
+		t.Errorf("Entry.ID=%q, want nim-llm:1.0", gr.Entry.ID)
+	}
+	if gr.Replicas != 3 {
+		t.Errorf("Replicas=%d, want 3 (from req.Replicas)", gr.Replicas)
+	}
+	if gr.GPUs != nil {
+		t.Errorf("GPUs=%v, want nil (no override → fall back to Entry.DefaultGPUs)", gr.GPUs)
+	}
+
+	helmEng := d.helm.(*helm.FakeEngine)
+	installs := filterInstallCalls(helmEng.Calls)
+	if len(installs) != 1 {
+		t.Fatalf("helm installs=%d", len(installs))
+	}
+	if installs[0].Request.Overrides.NIMGenerated == nil {
+		t.Errorf("NIMGenerated=nil, want layer-4 block")
+	}
+}
+
+func TestDeploy_NIM_ExtractsGPUCountFromWorkloadOverrides(t *testing.T) {
+	d := newTestDeployer(t)
+	disc := d.nvidiaDisc.(*stubDiscovery)
+	disc.SetEntry("nim-llm:1.0", nvidia.NIMEntry{ID: "nim-llm:1.0", Chart: "nim-llm", Version: "1.0", DefaultGPUs: 1})
+	nimDep := d.nvidiaDeployer.(*stubNvidiaDeployer)
+	nimDep.GenerateResult = map[string]any{}
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wid", SpecName: "my-llm", Replicas: 1,
+		Source:    SourceRef{Kind: SourceKindApp, App: &AppRef{Repo: "r", Chart: "nim-llm", Version: "1.0"}},
+		Overrides: map[string]string{"my-llm": "gpuCount: 4\nreplicaCount: 5"},
+	}
+
+	if _, err := d.Deploy(context.Background(), req); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	gr := nimDep.Calls[0]
+	if gr.GPUs == nil || *gr.GPUs != 4 {
+		t.Errorf("GPUs=%v, want &4", gr.GPUs)
+	}
+}
+
+func TestDeploy_NIM_InvalidGPUCount_WrapsErrComponentInstallFailed(t *testing.T) {
+	d := newTestDeployer(t)
+	disc := d.nvidiaDisc.(*stubDiscovery)
+	disc.SetEntry("nim-llm:1.0", nvidia.NIMEntry{ID: "nim-llm:1.0", Chart: "nim-llm", Version: "1.0"})
+	nimDep := d.nvidiaDeployer.(*stubNvidiaDeployer)
+	nimDep.GenerateErr = nvidia.ErrInvalidGPUCount
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wid", SpecName: "my-llm", Replicas: 1,
+		Source:    SourceRef{Kind: SourceKindApp, App: &AppRef{Repo: "r", Chart: "nim-llm", Version: "1.0"}},
+		Overrides: map[string]string{"my-llm": "gpuCount: 0"},
+	}
+
+	_, err := d.Deploy(context.Background(), req)
+	if !errors.Is(err, ErrComponentInstallFailed) {
+		t.Errorf("err=%v, want ErrComponentInstallFailed", err)
+	}
+	if !errors.Is(err, nvidia.ErrInvalidGPUCount) {
+		t.Errorf("err=%v, want chain to nvidia.ErrInvalidGPUCount", err)
+	}
+}
+
+func TestDeploy_NonNIM_DoesNotCallGenerateValues(t *testing.T) {
+	d := newTestDeployer(t)
+	// stubDiscovery default returns ErrNIMNotFound for anything not seeded.
+	nimDep := d.nvidiaDeployer.(*stubNvidiaDeployer)
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wid", SpecName: "my-app",
+		Source: SourceRef{Kind: SourceKindApp, App: &AppRef{Repo: "r", Chart: "milvus", Version: "1.0"}},
+	}
+
+	if _, err := d.Deploy(context.Background(), req); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if len(nimDep.Calls) != 0 {
+		t.Errorf("GenerateValues called %d times, want 0", len(nimDep.Calls))
+	}
+}
+
 // filterInstallCalls returns only the InstallChartFromRepo entries from the
 // FakeEngine call log — there's no per-method slice; the fake records all
 // methods in one Calls slice.
@@ -314,6 +424,49 @@ func filterInstallCalls(calls []helm.FakeCall) []helm.FakeCall {
 	return out
 }
 
+// stubDiscovery is a controllable Discovery for the deployer tests.
+// Maps[id]NIMEntry; .Get returns the entry if present, else nvidia.ErrNIMNotFound.
+// Only Get is exercised by the deployer; other methods are no-ops/stubs.
+type stubDiscovery struct {
+	entries map[string]nvidia.NIMEntry
+}
+
+func newStubDiscovery() *stubDiscovery {
+	return &stubDiscovery{entries: map[string]nvidia.NIMEntry{}}
+}
+
+func (s *stubDiscovery) SetEntry(id string, e nvidia.NIMEntry) {
+	s.entries[id] = e
+}
+
+func (s *stubDiscovery) Get(_ context.Context, id string) (nvidia.NIMEntry, error) {
+	if e, ok := s.entries[id]; ok {
+		return e, nil
+	}
+	return nvidia.NIMEntry{}, nvidia.ErrNIMNotFound
+}
+
+func (s *stubDiscovery) Index(_ context.Context) ([]nvidia.NIMEntry, error) { return nil, nil }
+func (s *stubDiscovery) Refresh(_ context.Context) error                    { return nil }
+func (s *stubDiscovery) UpdateSettings(_ nvidia.EngineSettings)             {}
+
+// stubNvidiaDeployer is a controllable Deployer for the deployer tests.
+type stubNvidiaDeployer struct {
+	GenerateResult map[string]any
+	GenerateErr    error
+	Calls          []nvidia.GenerateRequest
+}
+
+func (s *stubNvidiaDeployer) GenerateValues(_ context.Context, req nvidia.GenerateRequest) (map[string]any, error) {
+	s.Calls = append(s.Calls, req)
+	if s.GenerateErr != nil {
+		return nil, s.GenerateErr
+	}
+	return s.GenerateResult, nil
+}
+
+func (s *stubNvidiaDeployer) UpdateSettings(_ nvidia.EngineSettings) {}
+
 // newTestDeployer is a helper used by all deployer_test.go tests.
 // Builds a real *deployer with fakes for every dependency.
 //
@@ -326,13 +479,12 @@ func filterInstallCalls(calls []helm.FakeCall) []helm.FakeCall {
 func newTestDeployer(t *testing.T) *deployer {
 	t.Helper()
 	logger := slog.Default()
-	disc, _ := nvidia.NewDiscovery(logger)
 	return &deployer{
 		helm:           helm.NewFake(),
 		blueprintRepo:  blueprint.NewFakeRepository(),
 		bundleRepo:     bundle.NewFakeRepository(),
-		nvidiaDisc:     disc,
-		nvidiaDeployer: nvidia.NewDeployer(logger),
+		nvidiaDisc:     newStubDiscovery(),
+		nvidiaDeployer: &stubNvidiaDeployer{},
 		logger:         logger,
 	}
 }
