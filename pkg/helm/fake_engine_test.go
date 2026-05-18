@@ -12,6 +12,7 @@ func TestFakeEngine_RecordsCallsInOrder(t *testing.T) {
 
 	if _, err := f.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "r1", ChartRef: "oci://x:1",
+		Overrides: Overrides{},
 	}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -42,6 +43,7 @@ func TestFakeEngine_DefaultInstallReturnsDeployedRev1(t *testing.T) {
 	f := NewFake()
 	got, err := f.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "r1", ChartRef: "oci://x:1",
+		Overrides: Overrides{},
 	})
 	if err != nil {
 		t.Fatalf("Install: %v", err)
@@ -60,6 +62,7 @@ func TestFakeEngine_StubOverridesDefault(t *testing.T) {
 
 	_, err := f.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "r1", ChartRef: "oci://x:1",
+		Overrides: Overrides{},
 	})
 	if !errors.Is(err, stubErr) {
 		t.Errorf("expected stubbed error, got %v", err)
@@ -82,7 +85,7 @@ func TestFakeEngine_ConcurrentCalls_NoRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = f.InstallChartFromRepo(context.Background(), InstallRequest{Namespace: "ns", ReleaseName: "r"})
+			_, _ = f.InstallChartFromRepo(context.Background(), InstallRequest{Namespace: "ns", ReleaseName: "r", Overrides: Overrides{}})
 			_ = f.Uninstall(context.Background(), "ns", "r")
 		}()
 	}

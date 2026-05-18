@@ -242,7 +242,7 @@ func (r *InstallAIExtensionReconciler) installChart(ctx context.Context, ext *ai
 		Namespace:   uiPluginNamespace,
 		ReleaseName: uiPluginReleaseName,
 		ChartRef:    ext.Spec.Helm.URL,
-		Values:      make(map[string]any), // Empty values map
+		Overrides:   helm.Overrides{}, // Empty overrides
 		Wait:        true,
 		Timeout:     5 * time.Minute,
 	}

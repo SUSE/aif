@@ -29,6 +29,7 @@ func Example_fakeEngineLifecycle() {
 		Namespace:   "ns",
 		ReleaseName: "ext",
 		ChartRef:    "oci://example/ext:1.0",
+		Overrides:   helm.Overrides{},
 	}); err != nil {
 		fmt.Println("install error:", err)
 		return

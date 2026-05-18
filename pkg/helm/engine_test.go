@@ -141,6 +141,7 @@ func TestInstallChartFromRepo_NoExistingRelease_CallsInstall(t *testing.T) {
 
 	got, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "ext", ChartRef: "oci://x/y:1",
+		Overrides: Overrides{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -164,6 +165,7 @@ func TestInstallChartFromRepo_ReleaseExists_CallsUpgrade(t *testing.T) {
 
 	got, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "ext", ChartRef: "oci://x/y:1",
+		Overrides: Overrides{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -183,6 +185,7 @@ func TestInstallChartFromRepo_PullFailure_WrapsErrPullFailed(t *testing.T) {
 
 	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "ext", ChartRef: "oci://x/y:1",
+		Overrides: Overrides{},
 	})
 	if !errors.Is(err, ErrPullFailed) {
 		t.Fatalf("expected ErrPullFailed, got %v", err)
@@ -301,6 +304,7 @@ func TestInstallChartFromRepo_PullFailure_PreservesUnderlyingError(t *testing.T)
 
 	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
 		Namespace: "ns", ReleaseName: "ext", ChartRef: "oci://x/y:1",
+		Overrides: Overrides{},
 	})
 	if !errors.Is(err, ErrPullFailed) {
 		t.Errorf("expected ErrPullFailed in chain, got %v", err)
