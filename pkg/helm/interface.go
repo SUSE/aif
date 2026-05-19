@@ -61,6 +61,12 @@ type InstallRequest struct {
 	Overrides   Overrides
 	Wait        bool          // block until release reaches deployed
 	Timeout     time.Duration // default 5min
+
+	// RequireImageRepository: when true, the engine validates that the
+	// post-merge values contain a non-empty `image.repository` and returns
+	// ErrMissingImageRepository otherwise. AI-workload deployers (pkg/workload)
+	// set this; non-image charts like UIPlugin extensions leave it false.
+	RequireImageRepository bool
 }
 
 // ReleaseStatus represents the current state of a Helm release.

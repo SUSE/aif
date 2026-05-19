@@ -574,7 +574,10 @@ func TestInstallChartFromRepo_ReturnsErrMissingImageRepository(t *testing.T) {
 	e := newTestEngine(t, runner)
 
 	_, err := e.InstallChartFromRepo(context.Background(), InstallRequest{
-		Namespace: "ns", ReleaseName: "rel", ChartRef: "oci://x/y:1",
+		Namespace:              "ns",
+		ReleaseName:            "rel",
+		ChartRef:               "oci://x/y:1",
+		RequireImageRepository: true,
 	})
 	if !errors.Is(err, ErrMissingImageRepository) {
 		t.Errorf("err=%v, want ErrMissingImageRepository", err)

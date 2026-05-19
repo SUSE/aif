@@ -35,8 +35,9 @@ var forbiddenTopLevelKeys = []string{
 // Validation:
 //   - Forbidden top-level keys silently dropped from layers 2 and 3 only,
 //     each drop logged via slog.Warn.
-//   - image.repository must be non-empty post-merge (see Task 4),
-//     else returns ErrMissingImageRepository.
+//
+// No longer validates image.repository presence; that check moved to the
+// engine's InstallChartFromRepo gated by InstallRequest.RequireImageRepository.
 func MergeValues(in MergeInput) (map[string]any, error) {
 	bp := dropForbiddenKeys(deepCopyMap(in.BlueprintOverrides), 2)
 	wl := dropForbiddenKeys(deepCopyMap(in.WorkloadOverrides), 3)
@@ -47,9 +48,6 @@ func MergeValues(in MergeInput) (map[string]any, error) {
 	out = mergeMap(out, wl)
 	out = mergeMap(out, deepCopyMap(in.NIMGenerated))
 
-	if err := validateMerged(out); err != nil {
-		return nil, err
-	}
 	return out, nil
 }
 

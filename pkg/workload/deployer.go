@@ -150,8 +150,9 @@ func (d *deployer) installComponent(ctx context.Context, req DeployRequest, dc d
 			Workload:     wlOverrides,
 			NIMGenerated: nimGenerated,
 		},
-		Wait:    false,
-		Timeout: 5 * time.Minute,
+		Wait:                   false,
+		Timeout:                5 * time.Minute,
+		RequireImageRepository: true,
 	})
 	rel := ComponentRelease{
 		Name:        dc.name,

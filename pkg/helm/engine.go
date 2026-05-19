@@ -72,6 +72,15 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, mergeErr
 	}
 
+	// §6.6 invariant: validate image.repository presence when the caller
+	// requires it (AI workload deployers set RequireImageRepository true;
+	// non-image callers like InstallAIExtension leave it false).
+	if req.RequireImageRepository {
+		if err := validateMerged(merged); err != nil {
+			return ReleaseStatus{}, err
+		}
+	}
+
 	// Layer 5: image rewrite from EngineSettings (P4-6 + P5-7).
 	settings := e.snapshot()
 	if settings.ImageRewrite.Enabled && len(settings.ImageRewrite.Rules) > 0 {
