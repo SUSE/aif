@@ -16,6 +16,11 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// componentInstallTimeout matches helm.defaultInstallTimeout (5min). Kept
+// here so the deployer doesn't import an unexported helm constant; if the
+// helm engine ever exposes a public DefaultInstallTimeout, prefer that.
+const componentInstallTimeout = 5 * time.Minute
+
 // deployer is the production Deployer. Pure orchestrator: holds
 // constant refs to its dependency ports; no mutable state.
 type deployer struct {
@@ -55,7 +60,10 @@ func NewDeployer(
 	}
 }
 
-// Deploy is implemented incrementally in tasks 15-25.
+// Deploy resolves the workload's source into components, helm-installs each
+// with layered overrides, cleans up orphans from drift, and returns a typed
+// result the reconciler can apply to status. Idempotent: re-invocation with
+// the same DeployRequest converges to the same cluster state.
 func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult, error) {
 	desired, observedGen, err := d.resolveSource(ctx, req)
 	if err != nil {
@@ -77,11 +85,11 @@ func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult,
 	// Orphan cleanup: uninstall releases that were previously installed but
 	// are no longer in the desired set. Failures keep the orphan visible in
 	// status with marker status; phase aggregation (Task 22) will see
-	// "orphan-uninstall-failed" and surface phase=Deploying until clean.
+	// ComponentStatusOrphanUninstallFailed and surface phase=Deploying until clean.
 	orphans := detectOrphans(req.Previous, desired)
 	for _, orphan := range orphans {
 		if uerr := d.helm.Uninstall(ctx, req.Namespace, orphan.ReleaseName); uerr != nil {
-			orphan.Status = "orphan-uninstall-failed"
+			orphan.Status = ComponentStatusOrphanUninstallFailed
 			components = append(components, orphan)
 			errs = append(errs, errors.Join(ErrComponentUninstallFailed,
 				fmt.Errorf("orphan %q: %w", orphan.Name, uerr)))
@@ -158,7 +166,7 @@ func (d *deployer) installComponent(ctx context.Context, req DeployRequest, dc d
 			NIMGenerated: nimGenerated,
 		},
 		Wait:                   false,
-		Timeout:                5 * time.Minute,
+		Timeout:                componentInstallTimeout,
 		RequireImageRepository: true,
 	})
 	rel := ComponentRelease{
@@ -233,6 +241,9 @@ func extractGPUCount(wlOverrides map[string]any) *int32 {
 	if !ok {
 		return nil
 	}
+	// In practice only the float64 arm fires (sigs.k8s.io/yaml decodes numeric
+	// literals via JSON). The int/int32/int64 arms are forward-compat for
+	// callers that pre-parse YAML using a different library.
 	switch n := v.(type) {
 	case int:
 		out := int32(n)
@@ -331,6 +342,13 @@ func detectOrphans(previous []ComponentRelease, desired []desiredComponent) []Co
 //
 // "Failed" wins over "Deploying" because a failed release won't progress
 // without action; surfacing Failed lets the user act.
+//
+// Per spec §4.4, the phase rules will evolve in P5-1/P5-2:
+//   - Single-component "failed" → PhaseDegraded (not PhaseFailed)
+//   - PhaseFailed reserved for ProgressDeadlineExceeded on the aggregate
+//   - PhaseRecoveryInProgress added for automatic rollback
+// P4-2 maps any "failed" → PhaseFailed as the conservative early-action
+// signal; P5-1 will reshape when the watch on owned Deployments lands.
 func aggregatePhase(components []ComponentRelease) Phase {
 	if len(components) == 0 {
 		return PhasePending
@@ -343,7 +361,7 @@ func aggregatePhase(components []ComponentRelease) Phase {
 		case "failed":
 			hasFailed = true
 			allDeployed = false
-		case "pending-install", "pending-upgrade", "uninstalling", "orphan-uninstall-failed":
+		case "pending-install", "pending-upgrade", "uninstalling", ComponentStatusOrphanUninstallFailed:
 			hasPending = true
 			allDeployed = false
 		case "deployed":

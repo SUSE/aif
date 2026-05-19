@@ -25,8 +25,9 @@ Expected after a few seconds (verified against the running operator on
 - `kubectl get blueprint smoke-blueprint.0.1.0 -o jsonpath='{.status}'`
   → `phase: Active`, condition `Ready=True, reason: BlueprintValidated`.
 - `kubectl get workload -n default smoke -o jsonpath='{.status}'`
-  → `phase: Pending`, condition `Ready=False, reason: AwaitingDeployer`.
-  Deploy logic lands in Phases 4–5 (see PROJECT_PLAN.md).
+  → After applying, the WorkloadReconciler will resolve the source, install
+  each component via Helm, and surface `status.phase` (Pending → Deploying
+  → Running, or Failed) with a corresponding `Ready` condition.
 
 If validation fails, check the operator log and the resource's
 `status.conditions` for the failure reason.

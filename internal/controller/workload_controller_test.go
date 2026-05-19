@@ -880,6 +880,48 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 		fakeDeployer.SetDeployErr(nil)
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
 	})
+
+	It("orphan uninstall failure surfaces Phase=Deploying", func() {
+		name := "wid-orphan-fail-" + randomSuffix()
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Phase: workload.PhaseDeploying,
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: name + "-n", Status: "deployed"},
+				{Name: "old", ReleaseName: name + "-old", Status: workload.ComponentStatusOrphanUninstallFailed},
+			},
+		})
+		fakeDeployer.SetDeployErr(workload.ErrComponentUninstallFailed)
+
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: aifv1.WorkloadSpec{
+				Name: "n",
+				Source: aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+		key := client.ObjectKeyFromObject(w)
+
+		Eventually(func() aifv1.WorkloadPhase {
+			var got aifv1.Workload
+			_ = k8sClient.Get(ctx, key, &got)
+			return got.Status.Phase
+		}, timeout, interval).Should(Equal(aifv1.WorkloadPhaseDeploying))
+
+		Eventually(func() string {
+			var got aifv1.Workload
+			_ = k8sClient.Get(ctx, key, &got)
+			for _, c := range got.Status.Conditions {
+				if c.Type == conditions.TypeReady {
+					return c.Reason
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal(conditions.ReasonOrphanCleanupPending))
+
+		fakeDeployer.SetDeployErr(nil)
+		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+	})
 })
 
 // randomSuffix returns a short random string suitable for unique resource

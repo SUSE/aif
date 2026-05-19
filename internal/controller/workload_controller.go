@@ -113,8 +113,8 @@ func (r *WorkloadReconciler) validateSource(w *aifv1.Workload) error {
 }
 
 // mapDeployError translates a Deployer error into (reason, requeueAfter,
-// terminal) per spec §6.3. Returns ("", 0, false) for nil errors — caller
-// handles the success path separately.
+// terminal) per P4-2 design spec §6.3 (docs/superpowers/specs/2026-05-15-p4-2-workload-deployer-design.md).
+// Returns ("", 0, false) for nil errors — caller handles the success path separately.
 func mapDeployError(err error) (reason string, requeueAfter time.Duration, terminal bool) {
 	switch {
 	case err == nil:
@@ -169,11 +169,11 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 	result, deployErr := r.Deployer.Deploy(ctx, req)
 	workload.ApplyDeployResult(w, result)
 
-	// Phase-preservation invariant (spec §6.3): un-classified errors must not
-	// lower the user-visible phase. The mapped error path for known sentinels
-	// (UnsupportedComposition, SourceNotResolved, etc.) intentionally sets a
-	// specific Phase via the deployer's DeployResult; only the catch-all branch
-	// needs preservation.
+	// Phase-preservation invariant (P4-2 design spec §6.3): un-classified
+	// errors must not lower the user-visible phase. The mapped error path for
+	// known sentinels (UnsupportedComposition, SourceNotResolved, etc.)
+	// intentionally sets a specific Phase via the deployer's DeployResult; only
+	// the catch-all branch needs preservation.
 	if deployErr != nil {
 		reason, _, _ := mapDeployError(deployErr)
 		if reason == conditions.ReasonReconcileFailed && w.Status.Phase == "" {
@@ -181,10 +181,10 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 		}
 	}
 
-	// §6.4 events
+	// P4-2 design spec §6.4 events
 	r.emitDeployEvents(w, priorPhase, result, deployErr)
 
-	// Map deployer error/result to Ready condition per spec §6.3
+	// Map deployer error/result to Ready condition per P4-2 design spec §6.3
 	ready := metav1.Condition{
 		Type:               conditions.TypeReady,
 		ObservedGeneration: w.Generation,
@@ -258,8 +258,8 @@ func (r *WorkloadReconciler) setCondition(w *aifv1.Workload, condition metav1.Co
 	conditions.Set(&w.Status.Conditions, condition)
 }
 
-// emitDeployEvents emits §6.4 events for the deploy result. Stateless —
-// EventRecorder aggregates duplicate Reason/Message within a window.
+// emitDeployEvents emits P4-2 design spec §6.4 events for the deploy result.
+// Stateless — EventRecorder aggregates duplicate Reason/Message within a window.
 func (r *WorkloadReconciler) emitDeployEvents(
 	w *aifv1.Workload,
 	priorPhase aifv1.WorkloadPhase,

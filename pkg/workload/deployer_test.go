@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
-	"strings"
 	"testing"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
@@ -529,8 +528,8 @@ func TestDeploy_OrphanUninstallFails_RecordsStatus(t *testing.T) {
 			foundOld = &result.Components[i]
 		}
 	}
-	if foundOld == nil || foundOld.Status != "orphan-uninstall-failed" {
-		t.Errorf("expected 'old' with Status=orphan-uninstall-failed, got %+v", foundOld)
+	if foundOld == nil || foundOld.Status != ComponentStatusOrphanUninstallFailed {
+		t.Errorf("expected 'old' with Status=%s, got %+v", ComponentStatusOrphanUninstallFailed, foundOld)
 	}
 }
 
@@ -629,7 +628,7 @@ func TestAggregatePhase_AnyFailed_Failed(t *testing.T) {
 }
 
 func TestAggregatePhase_AnyPending_Deploying(t *testing.T) {
-	for _, status := range []string{"pending-install", "pending-upgrade", "uninstalling", "orphan-uninstall-failed"} {
+	for _, status := range []string{"pending-install", "pending-upgrade", "uninstalling", ComponentStatusOrphanUninstallFailed, "weird-helm-status"} {
 		got := aggregatePhase([]ComponentRelease{
 			{Status: "deployed"}, {Status: status},
 		})
@@ -675,9 +674,10 @@ func TestTeardown_HappyPath(t *testing.T) {
 func TestTeardown_PartialFailure_ReturnsJoined(t *testing.T) {
 	d := newTestDeployer(t)
 	helmEng := d.helm.(*helm.FakeEngine)
+	var teardownBoom = errors.New("can't uninstall b")
 	helmEng.UninstallResult = func(ns, release string) error {
 		if release == "wid-b" {
-			return errors.New("can't uninstall b")
+			return teardownBoom
 		}
 		return nil
 	}
@@ -692,8 +692,8 @@ func TestTeardown_PartialFailure_ReturnsJoined(t *testing.T) {
 	if err == nil {
 		t.Fatal("Teardown returned nil, want error")
 	}
-	if !strings.Contains(err.Error(), "can't uninstall b") {
-		t.Errorf("err=%v, want chain to 'can't uninstall b'", err)
+	if !errors.Is(err, teardownBoom) {
+		t.Errorf("err=%v, want chain to teardownBoom", err)
 	}
 	// All three should have been attempted (no early exit).
 	uninstalls := filterUninstallCalls(helmEng.Calls)

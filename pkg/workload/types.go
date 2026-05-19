@@ -27,6 +27,17 @@ const (
 	PhaseFailed    Phase = "Failed"
 )
 
+// ComponentStatus values that may appear in ComponentRelease.Status beyond
+// the verbatim helm release statuses. Helm releases use lower-case kebab
+// ("deployed", "failed", "pending-install", "pending-upgrade", "uninstalling");
+// the deployer adds the following marker statuses.
+const (
+	// ComponentStatusOrphanUninstallFailed marks an orphan that the
+	// deployer attempted to uninstall but failed; phase aggregation
+	// treats it as in-flight (Deploying) until cleanup succeeds.
+	ComponentStatusOrphanUninstallFailed = "orphan-uninstall-failed"
+)
+
 // AppRef points at a Helm chart in an OCI repository.
 // Mirrors aifv1.AppRef; translation in conversions.go.
 type AppRef struct {
@@ -103,8 +114,8 @@ type ComponentRelease struct {
 	ChartRef string
 
 	// Status is the helm release status verbatim ("deployed", "failed",
-	// "pending-install", "pending-upgrade", "uninstalling", or
-	// "orphan-uninstall-failed" for drift-cleanup failures).
+	// "pending-install", "pending-upgrade", "uninstalling") or the deployer
+	// marker ComponentStatusOrphanUninstallFailed for drift-cleanup failures.
 	Status string
 
 	// Revision is the helm revision counter.

@@ -25,7 +25,9 @@ var dns1123InvalidChar = regexp.MustCompile(`[^a-z0-9-]+`)
 func ComposeReleaseName(workloadID, componentName string) string {
 	raw := strings.ToLower(workloadID + "-" + componentName)
 	sanitized := dns1123InvalidChar.ReplaceAllString(raw, "-")
-	// Collapse consecutive hyphens to a single hyphen
+	// strings.ReplaceAll does ONE pass; "wid--comp" → "wid-comp", but
+	// "wid---comp" → "wid--comp" (overlapping). Loop until stable to collapse
+	// runs of 3+ hyphens introduced by joining sanitized parts.
 	for strings.Contains(sanitized, "--") {
 		sanitized = strings.ReplaceAll(sanitized, "--", "-")
 	}
