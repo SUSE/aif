@@ -4,6 +4,38 @@ import {
   OPERATOR_SERVICE,
   OPERATOR_PORT,
 } from '../config/types';
+import { mockAPI, USE_MOCK_API } from './mock-api';
+
+export interface ChartRef {
+  repo: string;
+  chart: string;
+  version: string;
+}
+
+export interface App {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  publisher: string;
+  version: string;
+  logoURL: string;
+  source: string;
+  assetType: string;
+  categories: string[];
+  tags: string[];
+  chartRef: ChartRef;
+  projectURL: string;
+  referenceBlueprint: boolean;
+  useCase?: string;
+  lastUpdatedAt?: string;
+}
+
+export interface ListAppsParams {
+  source?: 'nvidia' | 'suse' | 'all';
+  category?: string;
+  includeReferenceBlueprints?: boolean;
+}
 
 // Rancher proxies service traffic through the Kubernetes API server:
 // /k8s/clusters/<cluster>/api/v1/namespaces/<ns>/services/http:<svc>:<port>/proxy/
@@ -52,17 +84,47 @@ export function putSettings(spec: any): Promise<any> {
 
 // ── Apps ──────────────────────────────────────────────────────────────────────
 
-export function listApps(params: Record<string, string> = {}): Promise<any> {
-  const qs = new URLSearchParams(params).toString();
+export async function listApps(params?: ListAppsParams): Promise<App[]> {
+  if (USE_MOCK_API) {
+    return mockAPI.apps.list(params);
+  }
+
+  const query: Record<string, string> = {};
+
+  if (params?.source && params.source !== 'all') {
+    query.source = params.source;
+  }
+  if (params?.category) {
+    query.category = params.category;
+  }
+  if (params?.includeReferenceBlueprints !== undefined) {
+    query.includeReferenceBlueprints = String(params.includeReferenceBlueprints);
+  }
+
+  const qs = new URLSearchParams(query).toString();
 
   return operatorFetch(`/api/v1/apps${ qs ? `?${ qs }` : '' }`);
 }
 
-export function getApp(id: string): Promise<any> {
+export async function getApp(id: string): Promise<App> {
+  if (USE_MOCK_API) {
+    const app = mockAPI.apps.list({ includeReferenceBlueprints: true }).find((a) => a.id === id);
+
+    if (!app) {
+      throw new Error(`App not found: ${ id }`);
+    }
+
+    return app;
+  }
+
   return operatorFetch(`/api/v1/apps/${ encodeURIComponent(id) }`);
 }
 
-export function listAppCategories(): Promise<string[]> {
+export async function listCategories(): Promise<string[]> {
+  if (USE_MOCK_API) {
+    return mockAPI.apps.categories();
+  }
+
   return operatorFetch('/api/v1/apps/categories');
 }
 
