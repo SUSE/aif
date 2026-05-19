@@ -6,7 +6,9 @@ import (
 
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/blueprint"
+	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/SUSE/aif/pkg/helm"
+	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
@@ -36,9 +38,10 @@ type Options struct {
 	// (P5-7).
 	EngineBus controller.SettingsApplier
 
-	// WorkloadDeployer is the production Deployer wired into WorkloadReconciler.
-	// Constructed in cmd/operator/main.go via workload.NewDeployer (P4-2).
-	WorkloadDeployer workload.Deployer
+	// Engine ports needed to construct the production WorkloadDeployer
+	// inside setupControllers (post-manager so repos use mgr.GetClient()).
+	NvidiaDiscovery nvidia.Discovery
+	NvidiaDeployer  nvidia.Deployer
 }
 
 func (o Options) leaderElectionID() string {
@@ -102,11 +105,25 @@ func NewManager(scheme *runtime.Scheme, cfg *rest.Config, opts Options) (ctrlman
 }
 
 func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
+	// Construct repos + Deployer post-manager so they use the cached client.
+	// Repos are stateless adapter structs; constructing them here (for the
+	// Deployer) and again in main.go (for publishWorkflow) is safe.
+	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
+	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
+	workloadDeployer := workload.NewDeployer(
+		opts.HelmEngine,
+		blueprintRepo,
+		bundleRepo,
+		opts.NvidiaDiscovery,
+		opts.NvidiaDeployer,
+		opts.Logger,
+	)
+
 	workloadReconciler := &controller.WorkloadReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("workload-controller"),
-		Deployer: opts.WorkloadDeployer,
+		Deployer: workloadDeployer,
 	}
 	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up WorkloadReconciler: %w", err)

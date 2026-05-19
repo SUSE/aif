@@ -25,12 +25,10 @@ import (
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/source_collection"
-	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -145,28 +143,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Construct Repository ports before NewManager so they can be injected into
-	// both the workloadDeployer (via manager.Options) and the publishWorkflow.
-	// The controller-runtime client is created directly from k8sConfig rather
-	// than reusing mgr.GetClient() to break the circular dependency.
-	k8sClient, err := client.New(k8sConfig, client.Options{Scheme: scheme})
-	if err != nil {
-		logger.Error("Failed to create Kubernetes client", "error", err)
-		os.Exit(1)
-	}
-	bundleRepo := bundle.NewK8sRepository(k8sClient)
-	blueprintRepo := blueprint.NewK8sRepository(k8sClient)
-
-	// P4-2: production Workload Deployer (wired into WorkloadReconciler via manager.Options)
-	workloadDeployer := workload.NewDeployer(
-		helmEngine,
-		blueprintRepo,
-		bundleRepo,
-		nvidiaDiscovery,
-		nvidiaDeployer,
-		logger,
-	)
-
 	mgr, err := manager.NewManager(scheme, k8sConfig, manager.Options{
 		LeaderElection:   leaderElect,
 		LeaderElectionID: "aif-operator-leader",
@@ -178,13 +154,19 @@ func main() {
 		Discovery:        discoveryClient,
 		Logger:           logger,
 		EngineBus:        engineBus,
-		WorkloadDeployer: workloadDeployer,
+		NvidiaDiscovery:  nvidiaDiscovery,
+		NvidiaDeployer:   nvidiaDeployer,
 	})
 	if err != nil {
 		logger.Error("Failed to create manager", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("Manager created successfully")
+
+	// Repos for the publish workflow use the cached client from mgr.GetClient()
+	// so reads go through the informer cache rather than the API server.
+	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
+	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 
 	publishRecorder := internalpublish.NewEventRecorder(mgr.GetEventRecorder("publish-workflow"))
 
