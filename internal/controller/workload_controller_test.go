@@ -758,6 +758,64 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 		fakeDeployer.SetDeployErr(nil)
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
 	})
+
+	It("Source not yet present → SourceNotResolved; later available → Running", func() {
+		name := "wid-e2e5-" + randomSuffix()
+		fakeDeployer.SetDeployErr(workload.ErrSourceNotResolved)
+		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhasePending})
+
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: aifv1.WorkloadSpec{
+				Name: "rag",
+				Source: aifv1.WorkloadSource{
+					Kind:      aifv1.WorkloadSourceKindBlueprint,
+					Blueprint: &aifv1.BlueprintRef{Name: "missing", Version: "1.0"},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+		key := client.ObjectKeyFromObject(w)
+
+		Eventually(func() string {
+			var got aifv1.Workload
+			_ = k8sClient.Get(ctx, key, &got)
+			for _, c := range got.Status.Conditions {
+				if c.Type == conditions.TypeReady {
+					return c.Reason
+				}
+			}
+			return ""
+		}, timeout, interval).Should(Equal(conditions.ReasonSourceNotResolved))
+
+		// Source becomes available — fake transitions to Running.
+		fakeDeployer.SetDeployErr(nil)
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Phase: workload.PhaseRunning,
+			Components: []workload.ComponentRelease{
+				{Name: "rag", ReleaseName: name + "-rag", Status: "deployed"},
+			},
+		})
+
+		// Trigger reconcile via annotation touch.
+		Eventually(func(g Gomega) {
+			var got aifv1.Workload
+			g.Expect(k8sClient.Get(ctx, key, &got)).To(Succeed())
+			if got.Annotations == nil {
+				got.Annotations = map[string]string{}
+			}
+			got.Annotations["touch"] = randomSuffix()
+			g.Expect(k8sClient.Update(ctx, &got)).To(Succeed())
+		}, timeout, interval).Should(Succeed())
+
+		Eventually(func() aifv1.WorkloadPhase {
+			var got aifv1.Workload
+			_ = k8sClient.Get(ctx, key, &got)
+			return got.Status.Phase
+		}, timeout, interval).Should(Equal(aifv1.WorkloadPhaseRunning))
+
+		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+	})
 })
 
 // randomSuffix returns a short random string suitable for unique resource
