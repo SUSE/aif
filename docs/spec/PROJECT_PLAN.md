@@ -1588,6 +1588,57 @@ go test -race ./pkg/helm/ -v
 - [ ] WorkloadReconciler invokes `Deploy` instead of returning `AwaitingDeployer`
 - [ ] envtest verifies App-source workload reaches `Running`
 
+> **Follow-up (post-merge, P4-2):**
+>
+> 1. **NIM detection via `Discovery.Get` is a runtime O(1) lookup.**
+>    The deployer queries `nvidia.Discovery.Get` per component to decide
+>    whether to call `Deployer.GenerateValues`. The Discovery cache is
+>    populated at boot + refresh interval; cold-start may return
+>    `ErrNIMNotFound` for legitimate NIMs until the first refresh
+>    completes — in that case layer 4 stays nil and the chart's own
+>    values apply. Acceptable today (NIM charts have sensible defaults);
+>    revisit when NIM-required overrides become non-default.
+>
+> 2. **`status.observedBundleGeneration` is a new CRD field** added in
+>    P4-2. Schema change requires `make manifests generate` and a Helm
+>    chart re-install. Documented as informational — not consumed by
+>    anything in P4-2; published for UI / `kubectl describe` visibility.
+>
+> 3. **`InstallRequest` contract change is a breaking refactor of the
+>    P4-1 helm engine.** `Values map[string]any` → `Overrides Overrides`.
+>    Migration is in-tree (only the InstallAIExtension caller had to be
+>    updated at the time of refactor), so no compatibility shim.
+>    Documented here for git-archeology readers.
+>
+> 4. **Multi-cluster routing deferred** — `Workload.spec.targetClusters`
+>    is currently ignored by the deployer. P4-3b's note in
+>    PROJECT_PLAN.md:1670–1672 already states "P4-2's
+>    `pkg/workload/deployer.go` should be updated to delegate to
+>    `FleetBundleEngine` instead". P4-2 leaves the targetClusters field
+>    present in the CRD for forward-compat; the deployer reads it as
+>    informational and does nothing.
+>
+> 5. **Recursive Blueprint composition rejected by sentinel.** Today no
+>    validation prevents publishing a Bundle with a `Kind=Blueprint`
+>    component into a Blueprint version, but the deployer rejects at
+>    deploy time with `ErrNestedBlueprintNotSupported`. A future story
+>    (no owner today) should either implement recursive expansion or add
+>    a publish-time validator. Pre-conditions for the future story:
+>    cycle detection design, depth cap, recursive value-override
+>    semantics.
+>
+> 6. **`ReasonAwaitingDeployer` constant removed** in Task 36 after the
+>    deployer wiring went in. No callers remain. Any future "deferred to
+>    a later phase" Reason should use a more specific name.
+>
+> 7. **`Deploy(ctx, workload) error` → `Deploy(ctx, DeployRequest) (DeployResult, error)`.**
+>    The acceptance checklist says `Deploy(ctx, workload) error`. The
+>    shipped signature returns a structured `DeployResult` so the
+>    reconciler can write status via `ApplyDeployResult` without the
+>    deployer knowing about CRs. Deviation deliberate; documented in the
+>    design spec §4.1 / §4.2 (`docs/superpowers/specs/2026-05-15-p4-2-workload-deployer-design.md`).
+>    Flagged on PR #43 review.
+
 ---
 
 **ID:** P4-3

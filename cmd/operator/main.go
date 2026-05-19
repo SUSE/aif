@@ -25,7 +25,6 @@ import (
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/source_collection"
-	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -105,7 +104,6 @@ func main() {
 	// after ctrl.NewManager below (they need the manager's client). Defer
 	// construction until that's available.
 	var publishWorkflow publish.Workflow
-	workloadManager := workload.New(logger)
 
 	// Bus that propagates Settings to all engines on every reconcile (P5-7).
 	engineBus := manager.NewEngineBus(helmEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
@@ -124,7 +122,6 @@ func main() {
 		"nvidiaDeployer", fmt.Sprintf("%T", nvidiaDeployer),
 		"appsCatalog", fmt.Sprintf("%T", appsCatalog),
 		"blueprintManager", fmt.Sprintf("%T", blueprintManager),
-		"workloadManager", fmt.Sprintf("%T", workloadManager),
 	)
 
 	// Setup controller-runtime manager with all controllers and webhooks
@@ -157,6 +154,8 @@ func main() {
 		Discovery:        discoveryClient,
 		Logger:           logger,
 		EngineBus:        engineBus,
+		NvidiaDiscovery:  nvidiaDiscovery,
+		NvidiaDeployer:   nvidiaDeployer,
 	})
 	if err != nil {
 		logger.Error("Failed to create manager", "error", err)
@@ -164,8 +163,8 @@ func main() {
 	}
 	logger.Info("Manager created successfully")
 
-	// Construct Repository ports now that the controller-runtime client is
-	// available. Shared instances avoid duplicate allocations.
+	// Repos for the publish workflow use the cached client from mgr.GetClient()
+	// so reads go through the informer cache rather than the API server.
 	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
 	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 

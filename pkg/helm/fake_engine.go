@@ -15,6 +15,13 @@ type FakeCall struct {
 	Revision  int    // populated for Rollback only
 }
 
+// InstallOutcome bundles the (status, err) tuple for per-release routing
+// via InstallByRelease. Either field may be zero-valued.
+type InstallOutcome struct {
+	Status ReleaseStatus
+	Err    error
+}
+
 // FakeEngine is a recording fake satisfying Engine. Pass it to controllers
 // and HTTP handlers under test; assert on Calls afterwards.
 //
@@ -31,6 +38,12 @@ type FakeEngine struct {
 	HistoryResult   func(ns, name string) ([]RevisionInfo, error)
 	RollbackResult  func(ns, name string, rev int) error
 
+	// InstallByRelease overrides the InstallResult callback for matching
+	// release names. Lookup happens in InstallChartFromRepo BEFORE
+	// InstallResult — useful for tests that want per-release outcomes
+	// without re-implementing the callback.
+	InstallByRelease map[string]InstallOutcome
+
 	Settings EngineSettings // last applied
 }
 
@@ -45,6 +58,10 @@ func (f *FakeEngine) InstallChartFromRepo(_ context.Context, req InstallRequest)
 		Namespace: req.Namespace,
 		Name:      req.ReleaseName,
 	})
+	if outcome, ok := f.InstallByRelease[req.ReleaseName]; ok {
+		f.mu.Unlock()
+		return outcome.Status, outcome.Err
+	}
 	stub := f.InstallResult
 	f.mu.Unlock()
 

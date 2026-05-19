@@ -20,7 +20,6 @@ const (
 	ReasonInvalidSpec      = "InvalidSpec"      // spec validation failed
 
 	// Bundle-specific
-	ReasonAwaitingDeployer         = "AwaitingDeployer"         // Workload waiting for deploy logic
 	ReasonSecretNotFound           = "SecretNotFound"           // Settings credential Secret missing
 	ReasonInvalidSecretKey         = "InvalidSecretKey"         // Secret exists but referenced key missing
 	ReasonPublishedBlueprintMissing = "PublishedBlueprintMissing" // Self-healing detected missing Blueprint
@@ -28,6 +27,14 @@ const (
 	// Workload-specific
 	ReasonProgressDeadlineExceeded = "ProgressDeadlineExceeded"
 	ReasonRollbackExhausted        = "RollbackExhausted"
+
+	// P4-2: Workload deployer reasons (ReasonInstalled is shared with InstallAIExtension below).
+	ReasonInstalling             = "Installing"             // Ready=False, transient (deploy in progress)
+	ReasonInstalled              = "Installed"              // Resource installed successfully (used by InstallAIExtension and Workload)
+	ReasonComponentInstallFailed = "ComponentInstallFailed" // Ready=False, recoverable
+	ReasonOrphanCleanupPending   = "OrphanCleanupPending"   // Ready=False, transient (drift cleanup)
+	ReasonSourceNotResolved      = "SourceNotResolved"      // Ready=False, recoverable (source CR not yet present)
+	ReasonUnsupportedComposition = "UnsupportedComposition" // Ready=False, terminal until spec change
 
 	// Webhook / immutability
 	ReasonImmutableSpec = "ImmutableSpec" // Blueprint spec mutation attempted
@@ -49,9 +56,9 @@ const (
 	ReasonBlueprintHasActiveWorkloads = "BlueprintHasActiveWorkloads" // Deletion blocked due to active Workloads
 
 	// InstallAIExtension-specific
-	ReasonUIPluginCRDMissing = "UIPluginCRDMissing"   // UIPlugin CRD not found in cluster
-	ReasonChartPullFailed    = "ChartPullFailed"       // Failed to pull Helm chart
-	ReasonInstallFailed      = "InstallFailed"         // Helm chart installation failed
-	ReasonUIPluginNotCreated = "UIPluginNotCreated"    // UIPlugin resource creation failed
-	ReasonInstalled          = "Installed"             // Extension installed successfully
+	ReasonUIPluginCRDMissing = "UIPluginCRDMissing" // UIPlugin CRD not found in cluster
+	ReasonChartPullFailed    = "ChartPullFailed"    // Failed to pull Helm chart
+	ReasonInstallFailed      = "InstallFailed"      // Helm chart installation failed
+	ReasonUIPluginNotCreated = "UIPluginNotCreated" // UIPlugin resource creation failed
+	// ReasonInstalled is defined above (shared with Workload)
 )

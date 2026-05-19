@@ -64,7 +64,7 @@ func TestEngine_HappyPath_Envtest(t *testing.T) {
 		Namespace:   ns,
 		ReleaseName: rel,
 		ChartRef:    "oci://ignored",
-		Values:      map[string]any{"message": "v1"},
+		Overrides:   Overrides{Workload: map[string]any{"message": "v1"}},
 		Wait:        false,
 		Timeout:     30 * time.Second,
 	})
@@ -80,7 +80,7 @@ func TestEngine_HappyPath_Envtest(t *testing.T) {
 		Namespace:   ns,
 		ReleaseName: rel,
 		ChartRef:    "oci://ignored",
-		Values:      map[string]any{"message": "v2"},
+		Overrides:   Overrides{Workload: map[string]any{"message": "v2"}},
 		Timeout:     30 * time.Second,
 	})
 	if err != nil {

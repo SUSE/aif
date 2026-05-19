@@ -62,6 +62,42 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, fmt.Errorf("failed to load chart: %w", err)
 	}
 
+	merged, mergeErr := MergeValues(MergeInput{
+		ChartDefaults:      ch.Values,
+		BlueprintOverrides: req.Overrides.Blueprint,
+		WorkloadOverrides:  req.Overrides.Workload,
+		NIMGenerated:       req.Overrides.NIMGenerated,
+	})
+	if mergeErr != nil {
+		return ReleaseStatus{}, mergeErr
+	}
+
+	// Layer 5: image rewrite from EngineSettings (P4-6 + P5-7).
+	settings := e.snapshot()
+	if settings.ImageRewrite.Enabled && len(settings.ImageRewrite.Rules) > 0 {
+		merged = ApplyImageRewrites(merged, settings.ImageRewrite.Rules)
+	}
+
+	// §6.6 invariant: validate image.repository presence when the caller
+	// requires it (AI workload deployers set RequireImageRepository true;
+	// non-image callers like InstallAIExtension leave it false). Validate
+	// AFTER all layered transforms so a misconfigured rewrite rule that
+	// produces an empty image.repository is caught.
+	if req.RequireImageRepository {
+		if err := validateMerged(merged); err != nil {
+			return ReleaseStatus{}, err
+		}
+	}
+
+	// Layer 6: operator-managed imagePullSecrets (always last; user overrides
+	// of this top-level key were dropped in MergeValues per §6.6).
+	// TODO(P5-7/P5-5): make this configurable via EngineSettings.PullSecretName
+	// once the pull-secret reconciler (P5-5) owns the Secret lifecycle.
+	const operatorPullSecretName = "suse-registry-creds"
+	merged["imagePullSecrets"] = []any{
+		map[string]any{"name": operatorPullSecretName},
+	}
+
 	timeout := req.Timeout
 	if timeout == 0 {
 		timeout = defaultInstallTimeout
@@ -71,7 +107,7 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		rel, err := e.runner.Upgrade(ctx, cfg, req.ReleaseName, upgradeArgs{
 			Namespace: req.Namespace,
 			Chart:     ch,
-			Values:    req.Values,
+			Values:    merged,
 			Wait:      req.Wait,
 			Timeout:   timeout,
 		})
@@ -85,7 +121,7 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		Namespace:       req.Namespace,
 		ReleaseName:     req.ReleaseName,
 		Chart:           ch,
-		Values:          req.Values,
+		Values:          merged,
 		Wait:            req.Wait,
 		Timeout:         timeout,
 		CreateNamespace: true,
@@ -191,6 +227,13 @@ func (e *engine) UpdateSettings(s EngineSettings) {
 		slog.String("component", "helm.engine"),
 		slog.String("suse_registry", s.RegistryEndpoints.SUSERegistry),
 		slog.Bool("image_rewrite_enabled", s.ImageRewrite.Enabled))
+}
+
+// snapshot reads the current settings under a read lock per §8.2.1.
+func (e *engine) snapshot() EngineSettings {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.settings
 }
 
 func toReleaseStatus(rel *release.Release) ReleaseStatus {

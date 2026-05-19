@@ -242,7 +242,7 @@ func (r *InstallAIExtensionReconciler) installChart(ctx context.Context, ext *ai
 		Namespace:   uiPluginNamespace,
 		ReleaseName: uiPluginReleaseName,
 		ChartRef:    ext.Spec.Helm.URL,
-		Values:      make(map[string]any), // Empty values map
+		Overrides:   helm.Overrides{}, // Empty overrides
 		Wait:        true,
 		Timeout:     5 * time.Minute,
 	}
@@ -320,7 +320,6 @@ func (r *InstallAIExtensionReconciler) verifyUIPlugin(ctx context.Context, ext *
 
 // setCondition updates or appends a condition to the InstallAIExtension status
 func (r *InstallAIExtensionReconciler) setCondition(ext *aifv1.InstallAIExtension, condition metav1.Condition) {
-	condition.LastTransitionTime = metav1.Now()
 	meta.SetStatusCondition(&ext.Status.Conditions, condition)
 }
 

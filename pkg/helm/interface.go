@@ -31,14 +31,42 @@ type Engine interface {
 	UpdateSettings(s EngineSettings)
 }
 
-// InstallRequest specifies parameters for installing a Helm chart from an OCI repository.
+// Overrides carries §6.6 layers 2-4 — the user-author and NIM-generated
+// inputs to the merge. The engine internalises layer 1 (chart defaults
+// from loader.Load) and layers 5-6 (image rewrite + imagePullSecrets);
+// callers MUST NOT pre-merge.
+//
+// Each field is map[string]any (parsed YAML). Nil maps are treated as
+// empty and are safe.
+type Overrides struct {
+	// Blueprint is layer 2: Blueprint.spec.valueOverrides[componentName]
+	// parsed from YAML. Nil for App and BundleTest sources.
+	Blueprint map[string]any
+	// Workload is layer 3: Workload.spec.valueOverrides[componentName]
+	// parsed from YAML. Nil when the user supplied no overrides.
+	Workload map[string]any
+	// NIMGenerated is layer 4: nvidia.Deployer.GenerateValues output.
+	// Nil for non-NIM components.
+	NIMGenerated map[string]any
+}
+
+// InstallRequest is the consumer-facing input to InstallChartFromRepo.
+// The engine merges Overrides with chart defaults, applies image rewrites
+// from EngineSettings.ImageRewrite.Rules, and appends imagePullSecrets
+// — callers do not need to pre-merge.
 type InstallRequest struct {
 	Namespace   string
 	ReleaseName string
-	ChartRef    string         // OCI ref, e.g. "oci://registry.suse.com/ai/charts/nim-llm:1.2.0"
-	Values      map[string]any // post-merge, post-image-rewrite values per §6.6
-	Wait        bool           // block until release reaches deployed
-	Timeout     time.Duration  // default 5min
+	ChartRef    string        // OCI ref, e.g. "oci://registry.suse.com/ai/charts/nim-llm:1.2.0"
+	Overrides   Overrides
+	Wait        bool          // block until release reaches deployed
+	Timeout     time.Duration // default 5min
+
+	// RequireImageRepository: when true, the engine validates that the
+	// post-merge values contain a non-empty `image.repository` and returns
+	// ErrMissingImageRepository otherwise. AI-workload deployers (pkg/workload)
+	// set this; non-image charts like UIPlugin extensions leave it false.
+	RequireImageRepository bool
 }
 
 // ReleaseStatus represents the current state of a Helm release.

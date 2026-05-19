@@ -468,6 +468,15 @@ spec:
                   type: object
                 maxItems: 100
                 type: array
+              observedBundleGeneration:
+                description: |-
+                  ObservedBundleGeneration records the Bundle.metadata.generation observed
+                  at deploy time when source.kind=BundleTest. Zero for App and Blueprint
+                  sources. Surfaces drift between source.bundleTest.generation and the
+                  current Bundle spec without requiring an Event read. P4-2 records;
+                  drift-driven auto-redeploy is a future story.
+                format: int64
+                type: integer
               observedGeneration:
                 description: ObservedGeneration is the generation observed by the
                   controller

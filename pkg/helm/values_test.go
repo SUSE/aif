@@ -2,7 +2,6 @@ package helm
 
 import (
 	"bytes"
-	"errors"
 	"log/slog"
 	"reflect"
 	"sort"
@@ -234,30 +233,43 @@ func TestMergeValues_DropsForbiddenKeys_TrustedLayersUntouched(t *testing.T) {
 	}
 }
 
+// MergeValues no longer validates image.repository presence (moved to engine
+// layer gated by InstallRequest.RequireImageRepository). These tests verify
+// MergeValues succeeds unconditionally; engine_test.go covers validation.
+
 func TestMergeValues_RequiresImageRepository_Absent(t *testing.T) {
-	_, err := MergeValues(MergeInput{
+	out, err := MergeValues(MergeInput{
 		ChartDefaults: map[string]any{"replicas": 3}, // no image
 	})
-	if !errors.Is(err, ErrMissingImageRepository) {
-		t.Fatalf("expected ErrMissingImageRepository, got %v", err)
+	if err != nil {
+		t.Fatalf("MergeValues should succeed without image, got %v", err)
+	}
+	if out["replicas"] != 3 {
+		t.Errorf("replicas not merged: %v", out)
 	}
 }
 
 func TestMergeValues_RequiresImageRepository_Empty(t *testing.T) {
-	_, err := MergeValues(MergeInput{
+	out, err := MergeValues(MergeInput{
 		ChartDefaults: map[string]any{"image": map[string]any{"repository": ""}},
 	})
-	if !errors.Is(err, ErrMissingImageRepository) {
-		t.Fatalf("expected ErrMissingImageRepository, got %v", err)
+	if err != nil {
+		t.Fatalf("MergeValues should succeed with empty repository, got %v", err)
+	}
+	if out["image"] == nil {
+		t.Errorf("image key not merged")
 	}
 }
 
 func TestMergeValues_RequiresImageRepository_NotAMap(t *testing.T) {
-	_, err := MergeValues(MergeInput{
+	out, err := MergeValues(MergeInput{
 		ChartDefaults: map[string]any{"image": "not-a-map"},
 	})
-	if !errors.Is(err, ErrMissingImageRepository) {
-		t.Fatalf("expected ErrMissingImageRepository when image is not a map, got %v", err)
+	if err != nil {
+		t.Fatalf("MergeValues should succeed when image is not a map, got %v", err)
+	}
+	if out["image"] != "not-a-map" {
+		t.Errorf("image not merged: %v", out)
 	}
 }
 

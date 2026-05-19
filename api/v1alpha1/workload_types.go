@@ -275,6 +275,14 @@ type WorkloadStatus struct {
 	// ObservedGeneration is the generation observed by the controller
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// ObservedBundleGeneration records the Bundle.metadata.generation observed
+	// at deploy time when source.kind=BundleTest. Zero for App and Blueprint
+	// sources. Surfaces drift between source.bundleTest.generation and the
+	// current Bundle spec without requiring an Event read. P4-2 records;
+	// drift-driven auto-redeploy is a future story.
+	// +optional
+	ObservedBundleGeneration int64 `json:"observedBundleGeneration,omitempty"`
 }
 
 // ComponentReleaseStatus tracks a single component's Helm release status
