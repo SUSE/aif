@@ -1630,6 +1630,14 @@ go test -race ./pkg/helm/ -v
 > 6. **`ReasonAwaitingDeployer` constant removed** in Task 36 after the
 >    deployer wiring went in. No callers remain. Any future "deferred to
 >    a later phase" Reason should use a more specific name.
+>
+> 7. **`Deploy(ctx, workload) error` → `Deploy(ctx, DeployRequest) (DeployResult, error)`.**
+>    The acceptance checklist says `Deploy(ctx, workload) error`. The
+>    shipped signature returns a structured `DeployResult` so the
+>    reconciler can write status via `ApplyDeployResult` without the
+>    deployer knowing about CRs. Deviation deliberate; documented in the
+>    design spec §4.1 / §4.2 (`docs/superpowers/specs/2026-05-15-p4-2-workload-deployer-design.md`).
+>    Flagged on PR #43 review.
 
 ---
 
