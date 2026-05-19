@@ -41,19 +41,21 @@ export default {
       this.loaded = true;
     } catch (e) {
       if (e?.status === 404) {
-        this.loadError = true;
+        // No Settings CR yet. Show the empty form — PUT will create it via SSA.
+        this.notFound = true;
+        this.loaded = true;
       } else {
         this.fetchErrorMessage = e?.message || String(e);
+        this.loaded = true;
       }
-      this.loaded = true;
     }
   },
 
   data() {
     return {
-      loaded:    false,
-      spec:      createEmptySpec(),
-      loadError:         false,
+      loaded:            false,
+      notFound:          false,
+      spec:              createEmptySpec(),
       fetchErrorMessage: null,
       errors:            [],
       mode:      'edit',
@@ -241,14 +243,7 @@ export default {
 <template>
   <div>
     <Banner
-      v-if="loadError"
-      color="error"
-    >
-      {{ t('aif.pages.settings.errors.settingsNotFound') }}
-    </Banner>
-
-    <Banner
-      v-else-if="fetchErrorMessage"
+      v-if="fetchErrorMessage"
       color="error"
       :label="fetchErrorMessage"
     />
@@ -257,6 +252,13 @@ export default {
 
     <div v-else>
       <h1>{{ t('aif.pages.settings.title') }}</h1>
+
+      <Banner
+        v-if="notFound"
+        color="info"
+        :label="t('aif.pages.settings.notConfigured')"
+        class="mb-10"
+      />
 
       <Banner
         v-for="(err, i) in errors"

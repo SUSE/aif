@@ -1,0 +1,13 @@
+apiVersion: ai.suse.com/v1alpha1
+kind: Settings
+metadata:
+  name: settings
+  namespace: aif
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    # keep: the CR survives helm uninstall so user-applied settings persist.
+    # Helm's three-way merge protects user-added spec fields on upgrade (they
+    # exist in live state but not in chart manifests).
+    helm.sh/resource-policy: keep
+spec: {}

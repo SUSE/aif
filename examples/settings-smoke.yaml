@@ -2,7 +2,7 @@ apiVersion: ai.suse.com/v1alpha1
 kind: Settings
 metadata:
   namespace: aif
-  name: aif
+  name: settings
 spec:
   registryEndpoints:
     suseRegistry: registry.suse.com
