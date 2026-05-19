@@ -28,17 +28,10 @@ func WorkloadToDeployRequest(w *aifv1.Workload) DeployRequest {
 		Replicas:  1,
 		Overrides: w.Spec.ValueOverrides,
 		Source:    sourceRefFromCR(w.Spec.Source),
+		Previous:  ComponentReleasesFromCR(w.Status.ComponentReleases),
 	}
 	if w.Spec.Replicas != nil {
 		req.Replicas = *w.Spec.Replicas
-	}
-	for _, prior := range w.Status.ComponentReleases {
-		req.Previous = append(req.Previous, ComponentRelease{
-			Name:        prior.Name,
-			ReleaseName: prior.ReleaseName,
-			Status:      prior.Status,
-			Revision:    prior.Revision,
-		})
 	}
 	return req
 }
@@ -85,6 +78,48 @@ func ApplyDeployResult(w *aifv1.Workload, r DeployResult) {
 // lineage and version with a hyphen.
 func blueprintCRName(name, version string) string {
 	return name + "-" + version
+}
+
+// ComponentReleasesFromCR projects a slice of aifv1.ComponentReleaseStatus
+// into the framework-agnostic ComponentRelease type. Used by both
+// WorkloadToDeployRequest (for req.Previous) and the reconciler's
+// finalizer block (for Teardown input).
+func ComponentReleasesFromCR(crs []aifv1.ComponentReleaseStatus) []ComponentRelease {
+	if len(crs) == 0 {
+		return nil
+	}
+	out := make([]ComponentRelease, 0, len(crs))
+	for _, c := range crs {
+		out = append(out, ComponentRelease{
+			Name:        c.Name,
+			ReleaseName: c.ReleaseName,
+			Status:      c.Status,
+			Revision:    c.Revision,
+		})
+	}
+	return out
+}
+
+// ComponentsFromBlueprintCR projects a Blueprint CR's components +
+// per-component value overrides into the deployer's internal
+// desiredComponent slice. Returns (nil, 0, ErrNestedBlueprintNotSupported)
+// on first nested-Blueprint child, (nil, 0, ErrSourceNotResolved) on
+// missing App ref. The int64 return is always 0 for Blueprints (kept
+// for symmetry with ComponentsFromBundleCR).
+func ComponentsFromBlueprintCR(bp *aifv1.Blueprint) ([]desiredComponent, int64, error) {
+	return componentsFromCRComponents(bp.Spec.Components, bp.Spec.ValueOverrides)
+}
+
+// ComponentsFromBundleCR projects a Bundle CR's components + per-component
+// value overrides + current generation into the deployer's internal
+// projection. The Generation is recorded as observedGen for BundleTest
+// drift detection.
+func ComponentsFromBundleCR(b *aifv1.Bundle) ([]desiredComponent, int64, error) {
+	components, _, err := componentsFromCRComponents(b.Spec.Components, b.Spec.ValueOverrides)
+	if err != nil {
+		return nil, 0, err
+	}
+	return components, b.Generation, nil
 }
 
 // componentsFromCRComponents translates aifv1.ComponentRef[] into the

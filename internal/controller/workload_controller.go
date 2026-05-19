@@ -150,7 +150,7 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 		})
 
 		// Record event
-		r.Recorder.Eventf(w, nil, "Warning", "WorkloadInvalid", conditions.ActionValidating, err.Error())
+		r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "WorkloadInvalid", conditions.ActionValidating, err.Error())
 
 		// Set ObservedGeneration
 		w.Status.ObservedGeneration = w.Generation
@@ -207,11 +207,6 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 	}
 	r.setCondition(w, ready)
 
-	// Record success event
-	if deployErr == nil {
-		r.Recorder.Eventf(w, nil, "Normal", "WorkloadCreated", conditions.ActionValidating, "Workload validated successfully")
-	}
-
 	// Set ObservedGeneration
 	w.Status.ObservedGeneration = w.Generation
 
@@ -228,15 +223,7 @@ func (r *WorkloadReconciler) handleDeletion(ctx context.Context, w *aifv1.Worklo
 	// P4-2: call Deployer.Teardown before removing the finalizer.
 	// Project status.componentReleases into the domain type the Deployer
 	// understands. On failure, keep the finalizer and requeue.
-	previous := make([]workload.ComponentRelease, 0, len(w.Status.ComponentReleases))
-	for _, c := range w.Status.ComponentReleases {
-		previous = append(previous, workload.ComponentRelease{
-			Name:        c.Name,
-			ReleaseName: c.ReleaseName,
-			Status:      c.Status,
-			Revision:    c.Revision,
-		})
-	}
+	previous := workload.ComponentReleasesFromCR(w.Status.ComponentReleases)
 	if err := r.Deployer.Teardown(ctx, w.Namespace, previous); err != nil {
 		r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "TeardownFailed",
 			conditions.ActionDeleting, "Failed to teardown releases: %v", err)

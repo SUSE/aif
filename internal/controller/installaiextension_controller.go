@@ -320,7 +320,6 @@ func (r *InstallAIExtensionReconciler) verifyUIPlugin(ctx context.Context, ext *
 
 // setCondition updates or appends a condition to the InstallAIExtension status
 func (r *InstallAIExtensionReconciler) setCondition(ext *aifv1.InstallAIExtension, condition metav1.Condition) {
-	condition.LastTransitionTime = metav1.Now()
 	meta.SetStatusCondition(&ext.Status.Conditions, condition)
 }
 

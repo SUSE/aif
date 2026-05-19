@@ -296,7 +296,7 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 		if err != nil {
 			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
 		}
-		return componentsFromCRComponents(bp.Spec.Components, bp.Spec.ValueOverrides)
+		return ComponentsFromBlueprintCR(bp)
 
 	case SourceKindBundleTest:
 		if req.Source.BundleTest == nil {
@@ -306,11 +306,7 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 		if err != nil {
 			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
 		}
-		components, _, cerr := componentsFromCRComponents(b.Spec.Components, b.Spec.ValueOverrides)
-		if cerr != nil {
-			return nil, 0, cerr
-		}
-		return components, b.Generation, nil
+		return ComponentsFromBundleCR(b)
 	}
 	return nil, 0, ErrSourceNotResolved
 }
