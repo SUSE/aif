@@ -576,6 +576,56 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 	})
 })
 
+var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
+	const timeout = 30 * time.Second
+	const interval = 250 * time.Millisecond
+	ctx := context.Background()
+
+	It("App-source workload reaches Running", func() {
+		name := "wid-e2e1-" + randomSuffix()
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Phase: workload.PhaseRunning,
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: name + "-n", ChartRef: "oci://r/c:1", Status: "deployed", Revision: 1},
+			},
+		})
+
+		w := &aifv1.Workload{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: aifv1.WorkloadSpec{
+				Name: "n",
+				Source: aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+		key := client.ObjectKeyFromObject(w)
+
+		Eventually(func() aifv1.WorkloadPhase {
+			var got aifv1.Workload
+			_ = k8sClient.Get(ctx, key, &got)
+			return got.Status.Phase
+		}, timeout, interval).Should(Equal(aifv1.WorkloadPhaseRunning))
+
+		Eventually(func() metav1.ConditionStatus {
+			var got aifv1.Workload
+			_ = k8sClient.Get(ctx, key, &got)
+			for _, c := range got.Status.Conditions {
+				if c.Type == conditions.TypeReady {
+					return c.Status
+				}
+			}
+			return metav1.ConditionUnknown
+		}, timeout, interval).Should(Equal(metav1.ConditionTrue))
+
+		var got aifv1.Workload
+		Expect(k8sClient.Get(ctx, key, &got)).To(Succeed())
+		Expect(got.Status.ComponentReleases).To(HaveLen(1))
+		Expect(got.Status.ComponentReleases[0].Status).To(Equal("deployed"))
+
+		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+	})
+})
+
 // randomSuffix returns a short random string suitable for unique resource
 // names within a single test suite. Avoids cross-spec name collision since
 // each spec creates a Workload that persists until the AfterEach removes
