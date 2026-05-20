@@ -40,15 +40,7 @@
 <script>
 import { defineComponent } from 'vue';
 import BlueprintPhasePill from './BlueprintPhasePill.vue';
-
-function formatDate(iso) {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleDateString();
-  } catch {
-    return iso;
-  }
-}
+import { formatDate } from '../../utils/blueprint';
 
 export default defineComponent({
   name: 'BlueprintVersionsPanel',

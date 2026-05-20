@@ -106,16 +106,7 @@
 import { defineComponent, ref, computed, watch } from 'vue';
 import BlueprintPhasePill from './BlueprintPhasePill.vue';
 import BlueprintVersionPicker from './BlueprintVersionPicker.vue';
-import { selectDefaultVersion } from '../../utils/blueprint';
-
-function formatDate(iso) {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleDateString();
-  } catch {
-    return iso;
-  }
-}
+import { formatDate, selectDefaultVersion } from '../../utils/blueprint';
 
 export default defineComponent({
   name: 'BlueprintCard',
@@ -142,7 +133,7 @@ export default defineComponent({
   setup(props) {
     const selectedId = ref(selectDefaultVersion(props.lineage).id);
     const selected = computed(() =>
-      props.lineage.versions.find((v) => v.id === selectedId.value) ?? selectDefaultVersion(props.lineage)
+      props.lineage.versions.find((v) => v.id === selectedId.value)
     );
 
     watch(() => props.lineage, (next) => {

@@ -134,6 +134,17 @@ export function readUnreachable(settingsCR: any): boolean {
   );
 }
 
+// Locale-aware date formatting for publishedAt fields. Falls back to '—' for
+// missing input and the raw string when Date parsing throws.
+export function formatDate(iso: string | undefined | null): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString();
+  } catch {
+    return iso;
+  }
+}
+
 // P5-6 will replace this with a call to /api/v1/auth/publishers. Until then
 // publisher status defaults to false; a localStorage override exists for QA.
 export function useIsPublisher(): { value: boolean } {
