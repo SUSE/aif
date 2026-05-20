@@ -36,7 +36,7 @@ VLM containers require 120+ seconds to load model weights before becoming ready.
 | `nodeSelector` | object | `{nvidia.com/gpu.present: "true"}` | Node selector labels |
 | `imagePullSecrets` | list | `[{name: suse-registry-creds}]` | Image pull secrets |
 | `podSecurityContext.runAsNonRoot` | boolean | `true` | Run as non-root |
-| `podSecurityContext.runAsUser` | integer | `1000` | Container UID |
+| `podSecurityContext.runAsUser` | integer | — | Container UID (omitted by default; uses container image UID) |
 | `podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
 | `containerSecurityContext.allowPrivilegeEscalation` | boolean | `false` | Disallow privilege escalation |
 | `containerSecurityContext.capabilities.drop` | list | `[ALL]` | Linux capabilities to drop |

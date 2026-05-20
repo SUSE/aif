@@ -76,6 +76,8 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Note: with replicaCount=1 and minAvailable=1, PDB blocks all voluntary evictions.
+# Set replicaCount >= 2 when enabling PDB.
 podDisruptionBudget:
   enabled: false
   minAvailable: 1

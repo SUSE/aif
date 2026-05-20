@@ -39,7 +39,6 @@ imagePullSecrets:
 
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
   seccompProfile:
     type: RuntimeDefault
 
@@ -61,6 +60,8 @@ extraVolumeMounts: []
 
 priorityClassName: ""
 
+# Note: with replicaCount=1 and minAvailable=1, PDB blocks all voluntary evictions.
+# Set replicaCount >= 2 when enabling PDB.
 podDisruptionBudget:
   enabled: false
   minAvailable: 1

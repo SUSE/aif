@@ -82,15 +82,20 @@ Merges global.imagePullSecrets and per-chart imagePullSecrets.
 */}}
 {{- define "aif-operator.imagePullSecrets" -}}
 {{- $secrets := list }}
+{{- $seen := dict }}
 {{- range .Values.imagePullSecrets }}
   {{- $secrets = append $secrets . }}
+  {{- $seen = set $seen .name "true" }}
 {{- end }}
 {{- if .Values.global }}
   {{- range .Values.global.imagePullSecrets }}
+    {{- $entry := . }}
     {{- if kindIs "string" . }}
-      {{- $secrets = append $secrets (dict "name" .) }}
-    {{- else }}
-      {{- $secrets = append $secrets . }}
+      {{- $entry = dict "name" . }}
+    {{- end }}
+    {{- if not (hasKey $seen $entry.name) }}
+      {{- $secrets = append $secrets $entry }}
+      {{- $seen = set $seen $entry.name "true" }}
     {{- end }}
   {{- end }}
 {{- end }}

@@ -78,6 +78,7 @@
         },
         "limits": {
           "type": "object",
+          "description": "Resource limits including GPU allocation (e.g. nvidia.com/gpu)",
           "additionalProperties": { "type": "string" }
         }
       }
@@ -108,7 +109,7 @@
       "description": "Pod-level security context",
       "properties": {
         "runAsNonRoot": { "type": "boolean", "default": true, "description": "Run as non-root" },
-        "runAsUser": { "type": "integer", "default": 1000, "description": "Container UID" },
+        "runAsUser": { "type": "integer", "description": "Container UID (omitted by default; uses the container image UID)" },
         "seccompProfile": {
           "type": "object",
           "description": "Seccomp profile configuration",
