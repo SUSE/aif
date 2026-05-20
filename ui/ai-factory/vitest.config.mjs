@@ -26,6 +26,6 @@ export default defineConfig({
       '@shell': path.resolve(__dirname, './node_modules/@rancher/shell'),
       '@components': path.resolve(__dirname, './node_modules/@rancher/shell/components')
     },
-    extensions: ['.js', '.vue', '.json']
+    extensions: ['.js', '.ts', '.vue', '.json']
   }
 });
