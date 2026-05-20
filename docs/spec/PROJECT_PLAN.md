@@ -1904,12 +1904,12 @@ go test ./pkg/helm/ -run TestApplyImageRewrites -v
 **Done When:** A Workload's `status.phase` is computed by `pkg/workload/manager.RecomputePhase` per `ARCHITECTURE.md §4.4 "Phase computation rules"` and transitions correctly through all 6 phases under simulated component-release inputs.
 
 **Acceptance Criteria:**
-- [ ] `pkg/workload/manager.go` exposes:
-  - `Manager` interface — `Get`, `List`, `Delete`, `Upgrade` (Upgrade body owned by P5-3; this story stubs the signature)
-  - `RecomputePhase(w *Workload) WorkloadPhase` — **PURE function**: no `ctx`, no client calls, no logging side-effects. Deterministic given the same `Workload` input.
+- [ ] `pkg/workload/phase.go` exposes `RecomputePhase(PhaseInput) Phase` — **PURE function**: no `ctx`, no client calls, no logging, no clock. Deterministic given the same `PhaseInput`. The `PhaseInput` projection (built by `conversions.PhaseInputFromCR`) keeps `phase.go` aifv1-free per CLAUDE.md layering rules.
+- [ ] `pkg/workload/upgrade_service.go` exposes `UpgradeService` port (`Upgrade`, `Rollback`); implementation deferred to P5-6 (Recovery procedure). P5-1 declares the seam; CLAUDE.md forbids new `Manager` types.
 - [ ] `RecomputePhase` implements the 6 ordered rules from `ARCHITECTURE.md §4.4 "Phase computation rules"` **verbatim** — first match wins, in the documented order. The only side-input is the constants table (`RecoveryFailureThreshold=3`).
+- [ ] P5-1 implements the `FailureThreshold` *rule* — single `failed` component yields Degraded until `RecoveryFailureCount >= FailureThreshold`, then Failed. P5-2 wires the `ProgressDeadlineExceeded` Event source that increments the counter on real cluster events; P5-1 increments on the Degraded-entry transition only.
 - [ ] `ComponentReleaseStatus.Status` field carries Helm's release status string verbatim per `helm.sh/helm/v3/pkg/release` (`pending-install`, `pending-upgrade`, `pending-rollback`, `deployed`, `failed`, `superseded`, `uninstalling`). NO custom translation layer.
-- [ ] `Workload.status.recoveryFailureCount int32` field added to the Status struct (P0-2 scope is the spec; this story extends Status). Increments only on the Degraded-entry transition documented in §4.4 Phase computation; resets on Running-entry. The increment logic lives in WorkloadReconciler (NOT in `RecomputePhase`).
+- [ ] `Workload.status.recoveryFailureCount int32` is added (CRD printcolumn `Failures` priority=1). Increments only on the Degraded-entry transition (the controller helper `computePhaseWithTransitions` owns this); resets on Running-entry; resets on spec-change-from-Failed (so users can recover by editing the CR). The defaulting path lives in `conversions.PhaseInputFromCR` for envtest (where the defaulting webhook isn't installed).
 - [ ] WorkloadReconciler calls `RecomputePhase(w)` after each deploy/sync attempt and BEFORE the status write. The reconciler is responsible for the `recoveryFailureCount` increment/reset side effects (as the only writer of status).
 - [ ] Requeue cadence per the §4.4 constants table:
   - `Pending` / `Deploying` → `RequeueAfter: 30s`
@@ -1935,6 +1935,10 @@ go test -race ./internal/controller/ -run TestWorkloadReconcilerPhaseTransitions
 
 **Agent Prompt:**
 > Implement `pkg/workload/manager.go` per `ARCHITECTURE.md §4.4 "Phase computation rules"`. The `RecomputePhase` function MUST be pure — its signature is `func RecomputePhase(w *Workload) WorkloadPhase` (no context, no client). All side effects (recoveryFailureCount increment/reset, status write, requeue scheduling) live in the WorkloadReconciler in `internal/controller/workload_controller.go`. Implement the 6 rules in the documented order; do NOT collapse or reorder them — the order matters (rule 3 must fire before rule 4 to handle mixed-state during rollouts). Write a table-driven test covering every rule and the rule-ordering edge cases. Add `recoveryFailureCount int32` to the Workload Status struct in `api/v1alpha1/workload_types.go`. Done when both Validation tests pass with the race detector.
+
+> **Follow-up (post-merge):** Phase computation is a pure function `RecomputePhase(PhaseInput) Phase` in `pkg/workload/phase.go`. It takes a domain projection `PhaseInput` (built by `conversions.PhaseInputFromCR`) rather than `*aifv1.Workload`, so the phase file is aifv1-free per the DDD/hexagonal layering rules. All counter mutations (increment-on-Degraded-entry, reset-on-Running-entry, reset on spec-change-from-Failed) live in the controller helper `computePhaseWithTransitions` — RecomputePhase itself is stateless. The deployer no longer writes `Phase`: `pkg/workload.DeployResult.Phase` and `pkg/workload.aggregatePhase` were removed (clean cut; the controller is now the single source of truth for `status.phase`).
+>
+> Approval citation: user message dated 2026-05-20 in the P5-1 brainstorm, answers Q1 ("Strict §4.4 rules"), Q3 ("Remove both, clean cut"), Q4 ("Top-level aggregate fields"), Q5 ("Rename to role-revealing name"), and explicit grant "You have permission to edit the spec."
 
 ---
 
