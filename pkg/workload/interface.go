@@ -33,3 +33,20 @@ type Deployer interface {
 	// returns nil for missing releases per its contract).
 	Teardown(ctx context.Context, namespace string, releases []ComponentRelease) error
 }
+
+// Upgrader is the workflow port for the P5-3 upgrade action. It runs the 5
+// validation rules from PROJECT_PLAN.md §P5-3, emits a UpgradeStarted event
+// via UpgradeEventRecorder, and persists the spec change via Repository.Patch
+// (merge-patch, optimistic concurrency).
+//
+// aifv1-free per the layering rule (this is interface.go).
+type Upgrader interface {
+	Upgrade(ctx context.Context, namespace, name, toBlueprintVersion, user string) (UpgradeResult, error)
+}
+
+// UpgradeEventRecorder emits domain events for the upgrade workflow. The port
+// keeps pkg/workload free of k8s.io/client-go/tools/events. The production
+// adapter lives in internal/workload/event_recorder.go.
+type UpgradeEventRecorder interface {
+	UpgradeStarted(ctx context.Context, namespace, name, oldVersion, newVersion string)
+}

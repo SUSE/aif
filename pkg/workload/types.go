@@ -181,3 +181,14 @@ type PhaseInput struct {
 	// the RecoveryInProgress exit path.
 	PriorPhase Phase
 }
+
+// UpgradeResult is the success-return value of Upgrader.Upgrade. It carries
+// enough context for the HTTP handler to construct a response body and an
+// audit log line without needing to re-read the Workload CR.
+type UpgradeResult struct {
+	Namespace     string
+	Name          string
+	BlueprintName string
+	OldVersion    string
+	NewVersion    string
+}
