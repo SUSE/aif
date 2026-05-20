@@ -70,7 +70,41 @@ aif:
         errorAdd: 'Failed to add app to bundle'
     blueprints:
       title: 'Blueprints'
-      comingSoon: 'Blueprints gallery coming soon'
+      header:
+        lineages: '{count} blueprints'
+        versions: '{count} versions'
+      toolbar:
+        search: 'Search blueprints'
+        useCaseAll: 'All use cases'
+        showWithdrawn: 'Show withdrawn versions'
+      card:
+        useCase: 'Use case'
+        version: 'Version'
+        origin:
+          published: 'Published from Bundle'
+          wrapsVendorChart: 'Wraps vendor chart'
+        components: 'Components'
+        publishedBy: 'Published by {user} on {date}'
+        viewVersions: 'View versions'
+      actions:
+        deploy: 'Deploy'
+        deployComingSoon: 'Available once the Install & Deploy wizard ships (P6-8)'
+        startBundle: 'Start Bundle from Blueprint'
+        startBundleComingSoon: 'Available once the Bundle compose flow ships (P6-3)'
+        deprecate: 'Deprecate'
+        withdraw: 'Withdraw'
+        reactivate: 'Reactivate'
+        publisherEndpointComingSoon: 'Backend endpoint not yet available'
+        publisherRoleRequired: 'Requires the Blueprint Publisher role'
+      versionsPanel:
+        title: 'Versions of {lineage}'
+        changeDescription: 'Change description'
+        empty: 'No published versions.'
+      empty:
+        none: 'No blueprints available yet. Sync the catalog from Settings to wrap vendor Reference Blueprint charts as AIF Blueprints, or compose and publish a Bundle to create your first internally-authored Blueprint.'
+        noResults: 'No blueprints match your search.'
+        unreachable: 'Cannot refresh wrapped Reference Blueprints from the configured registry. Vendor-chart auto-wrapping is paused. Existing Blueprints (both vendor-wrapped and internally published) remain visible and deployable from the cached state. Check Settings → Advanced → Registry Endpoints.'
+        loadError: 'Failed to load Blueprints: {message}'
     bundles:
       title: 'Bundles'
       comingSoon: 'Bundle management coming soon'
