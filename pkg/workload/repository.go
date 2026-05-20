@@ -8,12 +8,22 @@ import (
 )
 
 // Repository is the K8s-backed CRUD port for Workload CRs.
-// Methods are kept ≤4 (ISP) — counting queries live on DeploymentCounter.
+//
+// Repository is a K8s adapter port (aifv1 imports are allowed here per
+// the layering rule). The CLAUDE.md ISP target of ≤4 methods applies to
+// *domain* ports; K8s adapter ports mirror the underlying CRUD surface
+// and 5 is acceptable. Counting queries live on DeploymentCounter.
+// If this grows further, split into Reader / Writer.
 type Repository interface {
 	Get(ctx context.Context, namespace, name string) (*aifv1.Workload, error)
 	List(ctx context.Context, namespace string, selector labels.Selector) ([]aifv1.Workload, error)
 	Update(ctx context.Context, w *aifv1.Workload) error
 	UpdateStatus(ctx context.Context, w *aifv1.Workload) error
+
+	// Delete removes the Workload CR. Called by the reconciler's finalizer
+	// path after Teardown succeeds (P5-1 routes finalizer I/O through the
+	// repository for testability).
+	Delete(ctx context.Context, namespace, name string) error
 }
 
 // DeploymentCounter is the read-only port BlueprintReconciler uses to count

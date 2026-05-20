@@ -68,7 +68,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
 			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
 		}, timeout, interval).Should(Succeed())
 
 		// Verify finalizer
@@ -109,7 +109,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
 			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
 		}, timeout, interval).Should(Succeed())
 	})
 
@@ -146,7 +146,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
 			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
 		}, timeout, interval).Should(Succeed())
 	})
 
@@ -364,22 +364,22 @@ var _ = Describe("Workload deployer error → condition mapping (P4-2)", func() 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonReconcileFailed))
 	})
 
-	It("sets Ready=True Reason=Installed when Deploy succeeds and components are all deployed", func() {
+	It("sets Ready=True Reason=WorkloadRunning when Deploy succeeds and components are all deployed", func() {
 		fakeDeployer.SetDeployErr(nil)
 		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Components: []workload.ComponentRelease{{Name: "n", ReleaseName: "n-1", Status: "deployed"}},
 		})
 
-		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonInstalled))
+		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonWorkloadRunning))
 	})
 
-	It("sets Reason=Installing when Deploy returns nil but components are in-flight", func() {
+	It("sets Reason=WorkloadDeploying when Deploy returns nil but components are in-flight", func() {
 		fakeDeployer.SetDeployErr(nil)
 		fakeDeployer.SetDeployResult(workload.DeployResult{
 			Components: []workload.ComponentRelease{{Name: "n", ReleaseName: "n-1", Status: "pending-install"}},
 		})
 
-		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonInstalling))
+		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonWorkloadDeploying))
 	})
 })
 

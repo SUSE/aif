@@ -24,12 +24,18 @@ const (
 	workloadFinalizerName = "ai.suse.com/cleanup"
 )
 
-// WorkloadReconciler reconciles a Workload object
+// WorkloadReconciler reconciles a Workload object.
+//
+// Repository is the K8s-backed CRUD port for Workload CRs. P5-1 routes
+// finalizer I/O through it for testability; the cached client.Client is
+// kept embedded for the watch setup and convenience reads in non-test
+// contexts (suite_test.go wires a FakeRepository).
 type WorkloadReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
-	Deployer workload.Deployer // P4-2: Helm deployment engine
+	Scheme     *runtime.Scheme
+	Recorder   events.EventRecorder
+	Deployer   workload.Deployer   // P4-2: Helm deployment engine
+	Repository workload.Repository // P5-1: CR CRUD via the port
 }
 
 // +kubebuilder:rbac:groups=ai.suse.com,resources=workloads,verbs=get;list;watch;update;patch
@@ -41,49 +47,47 @@ type WorkloadReconciler struct {
 func (r *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Fetch the Workload
-	var w aifv1.Workload
-	if err := r.Get(ctx, req.NamespacedName, &w); err != nil {
+	// Fetch the Workload via the repository.
+	w, err := r.Repository.Get(ctx, req.Namespace, req.Name)
+	if err != nil {
 		if errors.IsNotFound(err) {
-			// Workload was deleted, nothing to do
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "failed to get Workload")
 		return ctrl.Result{}, err
 	}
 
-	// Handle deletion
+	// Handle deletion.
 	if !w.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, &w)
+		return r.handleDeletion(ctx, w)
 	}
 
-	// Add finalizer if missing
-	if !controllerutil.ContainsFinalizer(&w, workloadFinalizerName) {
-		controllerutil.AddFinalizer(&w, workloadFinalizerName)
-		if err := r.Update(ctx, &w); err != nil {
+	// Add finalizer if missing.
+	if !controllerutil.ContainsFinalizer(w, workloadFinalizerName) {
+		controllerutil.AddFinalizer(w, workloadFinalizerName)
+		if err := r.Repository.Update(ctx, w); err != nil {
 			logger.Error(err, "failed to add finalizer")
 			return ctrl.Result{}, err
 		}
-		// Return and requeue to continue reconciliation with finalizer present
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Main reconciliation
-	deployErr := r.reconcile(ctx, &w)
+	// Main reconciliation.
+	deployErr := r.reconcile(ctx, w)
 
-	// Update status
-	if err := r.Status().Update(ctx, &w); err != nil {
+	// Persist status via the repository.
+	if err := r.Repository.UpdateStatus(ctx, w); err != nil {
 		logger.Error(err, "failed to update status")
 		return ctrl.Result{}, err
 	}
 
-	// Calculate requeue interval from deployer error
-	var requeueAfter time.Duration
-	if deployErr != nil {
-		_, requeueAfter, _ = mapDeployError(deployErr)
-	}
-
-	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	// Phase-driven requeue cadence (deployErr is folded into Phase upstream
+	// via applyErrorPhaseOverrides; requeueForPhase reads the persisted
+	// Status.Phase).
+	_ = deployErr // intentionally discarded: phase + Ready Condition already
+	// encode the failure; controller-runtime should not see it
+	// and trigger an exponential backoff on top of our cadence.
+	return requeueForPhase(w.Status.Phase), nil
 }
 
 // validateSource validates the Workload source discriminated union
@@ -132,15 +136,14 @@ func mapDeployError(err error) (reason string, requeueAfter time.Duration, termi
 	}
 }
 
-// reconcile performs the core reconciliation logic
+// reconcile performs the core reconciliation logic.
 func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) error {
 	logger := log.FromContext(ctx)
+	priorPhase := w.Status.Phase
 
-	// Validate source
+	// Validate source.
 	if err := r.validateSource(w); err != nil {
 		logger.Info("Workload validation failed", "error", err)
-
-		// Set Ready=False
 		r.setCondition(w, metav1.Condition{
 			Type:               conditions.TypeReady,
 			Status:             metav1.ConditionFalse,
@@ -148,81 +151,35 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 			Message:            fmt.Sprintf("Validation failed: %v", err),
 			ObservedGeneration: w.Generation,
 		})
-
-		// Record event
 		r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "WorkloadInvalid", conditions.ActionValidating, err.Error())
-
-		// Set ObservedGeneration
 		w.Status.ObservedGeneration = w.Generation
-
-		return nil // Don't return error - status has been updated
+		return nil
 	}
 
-	// Set phase to Pending if not already set
+	// Bootstrap Phase=Pending on first reconcile so emitDeployEvents has a
+	// stable prior phase to compare against.
 	if w.Status.Phase == "" {
 		w.Status.Phase = aifv1.WorkloadPhasePending
 	}
 
-	// P4-2: Translate to DeployRequest, call Deployer, apply result.
-	priorPhase := w.Status.Phase
+	// Translate to DeployRequest, call Deployer, project per-component
+	// outcome back into status (NOT Phase — controller owns that below).
 	req := workload.WorkloadToDeployRequest(w)
 	result, deployErr := r.Deployer.Deploy(ctx, req)
 	workload.ApplyDeployResult(w, result)
 
-	// P5-1: controller owns Phase. Compute it from the freshly-written
-	// Components via the canonical pipeline (PhaseInputFromCR feeds
-	// RecomputePhase). The fuller controller rewrite — including counter
-	// mutations, threshold promotion, and Degraded/RecoveryInProgress
-	// transitions — lands in commit 5 (Tasks 17-21). This commit only
-	// performs the minimal bridge required to keep the build green after
-	// DeployResult.Phase is removed.
-	phase := workload.RecomputePhase(workload.PhaseInputFromCR(w))
-	w.Status.Phase = workload.PhaseToCR(phase)
+	// Controller-owned phase computation. computePhaseWithTransitions does
+	// the increment/reset side effects on Status.RecoveryFailureCount.
+	newPhase := computePhaseWithTransitions(w, result, deployErr)
+	applyErrorPhaseOverrides(w, &newPhase, deployErr)
+	w.Status.Phase = workload.PhaseToCR(newPhase)
 
-	// Phase-preservation invariant (P4-2 design spec §6.3, latent-bug-fixed
-	// per P5-1 spec §3): un-classified errors must not lower the
-	// user-visible phase. RecomputePhase always returns at least PhasePending
-	// (so the original *phase == "" guard never fires); preserve whenever
-	// prior is non-empty and the error is unclassified. Commit 5's
-	// applyErrorPhaseOverrides formalises this.
-	if deployErr != nil {
-		reason, _, _ := mapDeployError(deployErr)
-		if reason == conditions.ReasonReconcileFailed && priorPhase != "" {
-			w.Status.Phase = priorPhase
-		}
-	}
-
-	// P4-2 design spec §6.4 events
+	// Events + Ready condition. emitDeployEvents reads w.Status.Phase
+	// (post-override) so the event matches the persisted phase.
 	r.emitDeployEvents(w, priorPhase, result, deployErr)
+	r.setReadyCondition(w, deployErr)
 
-	// Map deployer error/result to Ready condition per P4-2 design spec §6.3.
-	// Phase post-preservation drives the success-path Ready Reason.
-	ready := metav1.Condition{
-		Type:               conditions.TypeReady,
-		ObservedGeneration: w.Generation,
-	}
-	if deployErr == nil {
-		if w.Status.Phase == aifv1.WorkloadPhaseRunning {
-			ready.Status = metav1.ConditionTrue
-			ready.Reason = conditions.ReasonInstalled
-			ready.Message = "All components deployed"
-		} else {
-			ready.Status = metav1.ConditionFalse
-			ready.Reason = conditions.ReasonInstalling
-			ready.Message = fmt.Sprintf("Workload phase %q", w.Status.Phase)
-		}
-	} else {
-		reason, _, _ := mapDeployError(deployErr)
-		ready.Status = metav1.ConditionFalse
-		ready.Reason = reason
-		ready.Message = deployErr.Error()
-	}
-	r.setCondition(w, ready)
-
-	// Set ObservedGeneration
 	w.Status.ObservedGeneration = w.Generation
-
-	// Return deployErr for requeue calculation (caller handles mapping)
 	return deployErr
 }
 
@@ -243,7 +200,7 @@ func (r *WorkloadReconciler) handleDeletion(ctx context.Context, w *aifv1.Worklo
 	}
 
 	controllerutil.RemoveFinalizer(w, workloadFinalizerName)
-	if err := r.Update(ctx, w); err != nil {
+	if err := r.Repository.Update(ctx, w); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -278,6 +235,13 @@ func (r *WorkloadReconciler) emitDeployEvents(
 		case aifv1.WorkloadPhaseRunning:
 			r.Recorder.Eventf(w, nil, corev1.EventTypeNormal, "Running",
 				conditions.ActionReconciling, "All components deployed")
+		case aifv1.WorkloadPhaseDegraded:
+			r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "Degraded",
+				conditions.ActionReconciling, "Workload degraded (recovery failure count %d)",
+				w.Status.RecoveryFailureCount)
+		case aifv1.WorkloadPhaseRecoveryInProgress:
+			r.Recorder.Eventf(w, nil, corev1.EventTypeNormal, "RecoveryInProgress",
+				conditions.ActionReconciling, "Workload recovery in progress")
 		case aifv1.WorkloadPhaseFailed:
 			r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "ComponentInstallFailed",
 				conditions.ActionInstalling, "One or more components failed: %v", deployErr)
@@ -304,6 +268,145 @@ func (r *WorkloadReconciler) emitDeployEvents(
 		r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "NestedBlueprintRejected",
 			conditions.ActionValidating, "%v", deployErr)
 	}
+}
+
+// computePhaseWithTransitions runs RecomputePhase, performs the counter
+// mutations on Status.RecoveryFailureCount (increment-on-Degraded-entry,
+// reset-on-Running-entry, reset-on-spec-change-from-Failed), and re-runs
+// RecomputePhase if the counter changed so a threshold-crossing promotes
+// Degraded → Failed in the same reconcile pass.
+//
+// All counter side effects are confined here; RecomputePhase itself is pure.
+func computePhaseWithTransitions(w *aifv1.Workload, _ workload.DeployResult, _ error) workload.Phase {
+	priorPhase := workload.Phase(w.Status.Phase)
+	priorCount := w.Status.RecoveryFailureCount
+
+	// Spec-change-from-Failed: reset the counter so the user can recover
+	// by editing the CR. Without this, a Failed Workload stays Failed
+	// forever even after spec edits (e.g., bumping chart version).
+	if priorPhase == workload.PhaseFailed && w.Generation != w.Status.ObservedGeneration {
+		w.Status.RecoveryFailureCount = 0
+	}
+
+	candidate := workload.RecomputePhase(workload.PhaseInputFromCR(w))
+
+	// Increment on Degraded entry (transition into Degraded, not stay).
+	if candidate == workload.PhaseDegraded && priorPhase != workload.PhaseDegraded {
+		w.Status.RecoveryFailureCount++
+	}
+	// Reset on Running entry.
+	if candidate == workload.PhaseRunning && priorPhase != workload.PhaseRunning {
+		w.Status.RecoveryFailureCount = 0
+	}
+
+	// Re-run RecomputePhase if the counter changed — pure function, so
+	// safe; the threshold may now promote Degraded → Failed in this pass.
+	if w.Status.RecoveryFailureCount != priorCount {
+		candidate = workload.RecomputePhase(workload.PhaseInputFromCR(w))
+	}
+	return candidate
+}
+
+// applyErrorPhaseOverrides folds terminal/transient deploy errors into the
+// computed phase. Terminal sentinels (nested Blueprint) force Failed;
+// unclassified errors preserve the prior phase so transient cluster I/O
+// failures don't flap the user-visible phase.
+//
+// Note (latent-bug fix from spec §3.3): the spec proposed checking
+// `*phase == ""` to restore prior phase, but RecomputePhase always returns
+// at least PhasePending — that check never fires. Preserve prior phase
+// whenever the prior is non-empty AND the error is unclassified.
+func applyErrorPhaseOverrides(w *aifv1.Workload, phase *workload.Phase, err error) {
+	if err == nil {
+		return
+	}
+	if stderrors.Is(err, workload.ErrNestedBlueprintNotSupported) {
+		*phase = workload.PhaseFailed
+		return
+	}
+	// Classified-but-recoverable errors (ErrSourceNotResolved,
+	// ErrComponentInstallFailed, ErrComponentUninstallFailed) are NOT
+	// overridden — the rule-driven phase from RecomputePhase already
+	// reflects the per-component status those errors caused.
+	reason, _, _ := mapDeployError(err)
+	if reason == conditions.ReasonReconcileFailed && w.Status.Phase != "" {
+		*phase = workload.Phase(w.Status.Phase)
+	}
+}
+
+// requeueForPhase picks the per-phase requeue cadence from
+// pkg/workload/constants.go.
+func requeueForPhase(p aifv1.WorkloadPhase) ctrl.Result {
+	switch p {
+	case aifv1.WorkloadPhasePending, aifv1.WorkloadPhaseDeploying:
+		return ctrl.Result{RequeueAfter: workload.RequeuePending}
+	case aifv1.WorkloadPhaseRunning:
+		return ctrl.Result{RequeueAfter: workload.RequeueRunning}
+	case aifv1.WorkloadPhaseDegraded:
+		return ctrl.Result{RequeueAfter: workload.RequeueDegraded}
+	case aifv1.WorkloadPhaseFailed, aifv1.WorkloadPhaseRecoveryInProgress:
+		return ctrl.Result{}
+	default:
+		// Unknown phase (shouldn't happen — enum is validated at admission).
+		// Default to the Running cadence as a conservative fallback.
+		return ctrl.Result{RequeueAfter: workload.RequeueRunning}
+	}
+}
+
+// setReadyCondition drives the Ready Condition from the persisted Phase.
+// Each phase maps to a Status + Reason from pkg/conditions/types.go;
+// CI's grep-guard against raw condition strings stays green because all
+// reasons are constants.
+//
+// When deployErr is non-nil and unclassified, ReasonReconcileFailed wins
+// (set inline here rather than via Phase→Reason mapping) so the user can
+// distinguish transient errors from phase-driven Ready=False states.
+func (r *WorkloadReconciler) setReadyCondition(w *aifv1.Workload, deployErr error) {
+	cond := metav1.Condition{
+		Type:               conditions.TypeReady,
+		ObservedGeneration: w.Generation,
+	}
+
+	if deployErr != nil {
+		reason, _, _ := mapDeployError(deployErr)
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = reason
+		cond.Message = deployErr.Error()
+		r.setCondition(w, cond)
+		return
+	}
+
+	switch w.Status.Phase {
+	case aifv1.WorkloadPhaseRunning:
+		cond.Status = metav1.ConditionTrue
+		cond.Reason = conditions.ReasonWorkloadRunning
+		cond.Message = "All components deployed and ready"
+	case aifv1.WorkloadPhasePending:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = conditions.ReasonWorkloadPending
+		cond.Message = "Workload reconciliation pending"
+	case aifv1.WorkloadPhaseDeploying:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = conditions.ReasonWorkloadDeploying
+		cond.Message = "Workload deployment in progress"
+	case aifv1.WorkloadPhaseDegraded:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = conditions.ReasonWorkloadDegraded
+		cond.Message = fmt.Sprintf("Workload degraded (recovery failure count %d)", w.Status.RecoveryFailureCount)
+	case aifv1.WorkloadPhaseRecoveryInProgress:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = conditions.ReasonWorkloadRecoveryInProgress
+		cond.Message = "Workload recovery in progress"
+	case aifv1.WorkloadPhaseFailed:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = conditions.ReasonWorkloadFailed
+		cond.Message = "Workload failed; spec change required to recover"
+	default:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = conditions.ReasonReconcileFailed
+		cond.Message = fmt.Sprintf("Workload in unknown phase %q", w.Status.Phase)
+	}
+	r.setCondition(w, cond)
 }
 
 // SetupWithManager sets up the controller with the Manager

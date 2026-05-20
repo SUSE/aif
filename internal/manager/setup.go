@@ -120,10 +120,11 @@ func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
 	)
 
 	workloadReconciler := &controller.WorkloadReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("workload-controller"),
-		Deployer: workloadDeployer,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorder("workload-controller"),
+		Deployer:   workloadDeployer,
+		Repository: workload.NewK8sRepository(mgr.GetClient()).AsRepository(),
 	}
 	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up WorkloadReconciler: %w", err)

@@ -57,6 +57,13 @@ func (r *k8sRepository) UpdateStatus(ctx context.Context, w *aifv1.Workload) err
 	return r.c.Status().Update(ctx, w)
 }
 
+func (r *k8sRepository) Delete(ctx context.Context, namespace, name string) error {
+	w := &aifv1.Workload{}
+	w.Namespace = namespace
+	w.Name = name
+	return r.c.Delete(ctx, w)
+}
+
 // CountByBlueprint counts Workloads whose source.kind is Blueprint and whose
 // source.blueprint matches (name, version). Today this is implemented as a
 // cluster-wide List + filter; plan task E1 replaces it with a label-selector
