@@ -7,16 +7,19 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-// Repository is the K8s-backed CRUD port for Workload CRs.
 //
 // Repository is a K8s adapter port — aifv1 imports are allowed here per the
-// layering rule. Counting queries live on DeploymentCounter so this stays
-// at the ISP target of ≤4 methods.
+// layering rule. Counting queries live on DeploymentCounter.
+//
+// Patch was added in P5-3 for the upgrade action: MergeFrom-based optimistic
+// concurrency surfaces field-level conflicts as apierrors.IsConflict, which
+// callers map to HTTP 409. Update remains for full-spec replacements.
 type Repository interface {
 	Get(ctx context.Context, namespace, name string) (*aifv1.Workload, error)
 	List(ctx context.Context, namespace string, selector labels.Selector) ([]aifv1.Workload, error)
 	Update(ctx context.Context, w *aifv1.Workload) error
 	UpdateStatus(ctx context.Context, w *aifv1.Workload) error
+	Patch(ctx context.Context, w, orig *aifv1.Workload) error
 }
 
 // DeploymentCounter is the read-only port BlueprintReconciler uses to count

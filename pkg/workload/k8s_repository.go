@@ -57,6 +57,15 @@ func (r *k8sRepository) UpdateStatus(ctx context.Context, w *aifv1.Workload) err
 	return r.c.Status().Update(ctx, w)
 }
 
+// Patch performs an optimistic-concurrency merge patch. The diff is computed
+// between w and orig via client.MergeFrom, so only fields that actually
+// changed are sent — and the apiserver returns a Conflict (apierrors.IsConflict)
+// only if those specific fields were also concurrently mutated. P5-3 upgrade
+// handler maps that conflict to HTTP 409.
+func (r *k8sRepository) Patch(ctx context.Context, w, orig *aifv1.Workload) error {
+	return r.c.Patch(ctx, w, client.MergeFrom(orig))
+}
+
 // CountByBlueprint counts Workloads whose source.kind is Blueprint and whose
 // source.blueprint matches (name, version). Today this is implemented as a
 // cluster-wide List + filter; plan task E1 replaces it with a label-selector
