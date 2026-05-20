@@ -96,6 +96,7 @@ aif:
         reactivate: 'Reactivate'
         publisherEndpointComingSoon: 'Backend endpoint not yet available'
         publisherRoleRequired: 'Requires the Blueprint Publisher role'
+        publisherLabel: 'Publisher'
       versionsPanel:
         title: 'Versions of {lineage}'
         changeDescription: 'Change description'

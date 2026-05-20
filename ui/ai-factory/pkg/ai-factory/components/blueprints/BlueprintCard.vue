@@ -68,36 +68,39 @@
       >
         {{ t('aif.pages.blueprints.card.viewVersions') }}
       </button>
+    </div>
 
-      <template v-if="isPublisher">
-        <button
-          v-if="selected.phase === 'Active'"
-          type="button"
-          class="btn btn-sm role-secondary bp-card__publisher-action"
-          :disabled="true"
-          :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
-        >
-          {{ t('aif.pages.blueprints.actions.deprecate') }}
-        </button>
-        <button
-          v-if="selected.phase === 'Active'"
-          type="button"
-          class="btn btn-sm role-secondary bp-card__publisher-action"
-          :disabled="true"
-          :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
-        >
-          {{ t('aif.pages.blueprints.actions.withdraw') }}
-        </button>
-        <button
-          v-if="selected.phase === 'Deprecated' || selected.phase === 'Withdrawn'"
-          type="button"
-          class="btn btn-sm role-secondary bp-card__publisher-action"
-          :disabled="true"
-          :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
-        >
-          {{ t('aif.pages.blueprints.actions.reactivate') }}
-        </button>
-      </template>
+    <div v-if="isPublisher" class="bp-card__publisher-actions">
+      <span class="bp-card__publisher-label">
+        {{ t('aif.pages.blueprints.actions.publisherLabel') }}
+      </span>
+      <button
+        v-if="selected.phase === 'Active'"
+        type="button"
+        class="btn btn-sm role-secondary"
+        :disabled="true"
+        :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
+      >
+        {{ t('aif.pages.blueprints.actions.deprecate') }}
+      </button>
+      <button
+        v-if="selected.phase === 'Active'"
+        type="button"
+        class="btn btn-sm role-secondary"
+        :disabled="true"
+        :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
+      >
+        {{ t('aif.pages.blueprints.actions.withdraw') }}
+      </button>
+      <button
+        v-if="selected.phase === 'Deprecated' || selected.phase === 'Withdrawn'"
+        type="button"
+        class="btn btn-sm role-secondary"
+        :disabled="true"
+        :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
+      >
+        {{ t('aif.pages.blueprints.actions.reactivate') }}
+      </button>
     </div>
   </div>
 </template>
@@ -222,8 +225,22 @@ export default defineComponent({
     gap:        6px;
     margin-top: 6px;
   }
-  &__publisher-action {
-    margin-left: auto;
+  &__publisher-actions {
+    display:        flex;
+    flex-wrap:      wrap;
+    align-items:    center;
+    justify-content: flex-end;
+    gap:            6px;
+    margin-top:     10px;
+    padding-top:    10px;
+    border-top:     1px dashed var(--border);
+  }
+  &__publisher-label {
+    color:          var(--muted);
+    font-size:      0.75em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right:   2px;
   }
 }
 </style>
