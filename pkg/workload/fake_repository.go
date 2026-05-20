@@ -26,7 +26,6 @@ type FakeRepository struct {
 	UpdateErr          error
 	UpdateStatusErr    error
 	CountByBlueprintErr error
-	DeleteErr          error
 }
 
 // NewFakeRepository returns an empty FakeRepository.
@@ -96,19 +95,6 @@ func (f *FakeRepository) UpdateStatus(_ context.Context, w *aifv1.Workload) erro
 		return apierrors.NewNotFound(schema.GroupResource{Group: "ai.suse.com", Resource: "workloads"}, w.Name)
 	}
 	existing.Status = *w.Status.DeepCopy()
-	return nil
-}
-
-func (f *FakeRepository) Delete(_ context.Context, namespace, name string) error {
-	if f.DeleteErr != nil {
-		return f.DeleteErr
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.items[key(namespace, name)]; !ok {
-		return apierrors.NewNotFound(schema.GroupResource{Group: "ai.suse.com", Resource: "workloads"}, name)
-	}
-	delete(f.items, key(namespace, name))
 	return nil
 }
 

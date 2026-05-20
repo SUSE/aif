@@ -1947,6 +1947,10 @@ go test -race ./internal/controller/ -run TestWorkloadReconcilerPhaseTransitions
 > **Out-of-scope additions deferred to P5-6:** initial commits in this branch introduced `pkg/workload/upgrade_service.go` (an `UpgradeService` port with no consumer in P5-1) and a `Repository.Delete` method (no caller — the finalizer drop uses `Repository.Update`). Both were removed before PR merge to comply with CLAUDE.md's "extract to a domain package when the second consumer arrives" rule. They will be re-introduced in P5-6 alongside the actual consumer (the recovery procedure).
 >
 > Approval citation: user message dated 2026-05-20 in the P5-1 brainstorm, answers Q1 ("Strict §4.4 rules"), Q3 ("Remove both, clean cut"), Q4 ("Top-level aggregate fields"), Q5 ("Rename to role-revealing name"), and explicit grant "You have permission to edit the spec."
+>
+> **Follow-up (post-merge):** The original P5-1 PR (#46) included two speculative additions that were removed in fix-up commits because they had no first consumer in scope:
+> - `pkg/workload/upgrade_service.go` (`UpgradeService` port for a future recovery flow) — deleted. Re-introduce in **P5-3 (recovery loop)** with the actual helm-upgrade consumer wired alongside.
+> - `Repository.Delete(ctx, namespace, name)` — removed from the port + K8sRepository + FakeRepository. Re-introduce in **P5-6 (Workload finalizer)** when the finalizer path actually needs CR-side delete plumbing. The matching invented "K8s adapter port may have 5 methods" comment in `pkg/workload/repository.go` was deleted with it; the canonical ISP rule (≤4 methods) stands.
 
 ---
 
