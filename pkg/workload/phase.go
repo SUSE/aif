@@ -10,20 +10,24 @@ package workload
 // Safe to call twice in one reconcile (for example, before and after
 // incrementing RecoveryFailureCount) because it has no side effects.
 //
-// Rules per ARCHITECTURE.md §4.4 "Phase computation rules", first match wins:
+// Rules per ARCHITECTURE.md §4.4 "Phase computation rules" (lines 723–729),
+// first match wins:
 //
 //  1. No components yet                                       → Pending
-//  2. Any component in pending-install / pending-upgrade /
-//     uninstalling / orphan-uninstall-failed / unknown status → Deploying
-//  3. Any component failed:
+//  2. Any component failed:
 //     if RecoveryFailureCount >= FailureThreshold           → Failed
 //     else                                                  → Degraded
+//     (P5-2 will add the AutomaticRecovery branch that routes to
+//     RecoveryInProgress between Degraded and Failed.)
+//  3. Any component in pending-install / pending-upgrade /
+//     pending-rollback / uninstalling / superseded /
+//     orphan-uninstall-failed / unknown status               → Deploying
 //  4. All components deployed AND ReadyReplicas >= DesiredReplicas
 //     → Running
 //  5. All components deployed AND ReadyReplicas < DesiredReplicas
 //     → Degraded
 //  6. Otherwise, preserve PriorPhase. The RecoveryInProgress path survives
-//     across reconciles until rule 4 promotes it to Running or rule 3
+//     across reconciles until rule 4 promotes it to Running or rule 2
 //     demotes it to Degraded/Failed; P5-2 owns entry via the PDE watch.
 func RecomputePhase(in PhaseInput) Phase {
 	// Rule 1
@@ -41,33 +45,37 @@ func RecomputePhase(in PhaseInput) Phase {
 			allDeployed = false
 		case "deployed":
 			// no-op
-		case "pending-install", "pending-upgrade", "uninstalling", ComponentStatusOrphanUninstallFailed:
+		case "pending-install", "pending-upgrade", "pending-rollback",
+			"uninstalling", "superseded", ComponentStatusOrphanUninstallFailed:
+			// Helm release statuses named in ARCHITECTURE.md §4.4 rule 3,
+			// plus the AIF-internal orphan-uninstall-failed marker. All
+			// classify as in-flight.
 			hasInFlight = true
 			allDeployed = false
 		default:
-			// Unknown helm statuses treated as in-flight.
+			// Unknown helm statuses treated as in-flight defensively.
 			hasInFlight = true
 			allDeployed = false
 		}
 	}
 
-	// Rule 2 — in-flight wins over failed when no failure has actually
-	// landed yet (matches the existing P4-2 ordering: pending beats deployed,
-	// failed beats pending). But rule 3 in the spec says "any component
-	// failed" → Degraded/Failed; the spec's first-match-wins ordering puts
-	// rule 2 (pending) ahead of rule 3 (failed), so we honor that here:
-	// in-flight surfaces as Deploying even if another component is failed,
-	// because the in-flight one may resolve and clear the failure.
-	if hasInFlight {
-		return PhaseDeploying
-	}
-
-	// Rule 3
+	// Rule 2 (ARCHITECTURE.md §4.4 line 724) — failure beats in-flight.
+	// First-match-wins ordering puts rule 2 (any failed) ahead of rule 3
+	// (any pending-*), so a {failed, pending-install} mix surfaces as
+	// Degraded/Failed, not Deploying. We do NOT wait for the in-flight
+	// release to resolve before reporting the failure.
 	if hasFailed {
 		if in.RecoveryFailureCount >= in.FailureThreshold {
 			return PhaseFailed
 		}
 		return PhaseDegraded
+	}
+
+	// Rule 3 (ARCHITECTURE.md §4.4 lines 727–729) — any pending-*,
+	// uninstalling, superseded, orphan-uninstall-failed, or unknown
+	// status surfaces as Deploying when no component has failed outright.
+	if hasInFlight {
+		return PhaseDeploying
 	}
 
 	// Rules 4 & 5
