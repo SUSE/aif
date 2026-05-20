@@ -1,0 +1,39 @@
+name: Helm Charts Validate
+
+on:
+  pull_request:
+    paths: ['charts/**']
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Lint all charts
+        run: |
+          for chart in aif-operator aif-ui generic-container nim-llm nim-vlm; do
+            echo "--- Linting $chart ---"
+            helm lint --strict "charts/$chart"
+          done
+
+      - name: Template all charts (default values)
+        run: |
+          for chart in aif-operator aif-ui generic-container nim-llm nim-vlm; do
+            echo "--- Templating $chart ---"
+            helm template test "charts/$chart" > /dev/null
+          done
+
+      - name: Template with value overrides
+        run: |
+          echo "--- generic-container: gpu.enabled=true ---"
+          helm template test charts/generic-container --set gpu.enabled=true > /dev/null
+
+          echo "--- aif-operator: webhook.enabled=false ---"
+          helm template test charts/aif-operator --set webhook.enabled=false > /dev/null
+
+          echo "--- aif-operator: persistence.enabled=false ---"
+          helm template test charts/aif-operator --set persistence.enabled=false > /dev/null
