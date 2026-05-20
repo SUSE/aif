@@ -10,7 +10,7 @@ Verify the pod is running:
 
 The model container needs time to load weights before becoming ready.
 Monitor readiness:
-  kubectl -n {{ .Release.Namespace }} wait --for=condition=ready pod -l {{ include "nim-llm.selectorLabelsString" . }} --timeout=300s
+  kubectl -n {{ .Release.Namespace }} wait --for=condition=ready pod -l {{ include "nim-llm.selectorLabelsString" . }} --timeout=600s
 
 Once ready, test the API:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "nim-llm.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}

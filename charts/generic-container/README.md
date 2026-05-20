@@ -44,3 +44,7 @@ Set `gpu.enabled=true` to request GPU resources. The chart injects `gpu.type` (d
 | `env` | list | `[]` | Environment variables |
 | `ports` | list | `[]` | Additional container ports |
 | `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
+
+## Labels
+
+All resources include the standard `app.kubernetes.io/component: workload` label for filtering.

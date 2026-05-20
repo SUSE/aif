@@ -49,3 +49,7 @@ VLM containers require 120+ seconds to load model weights before becoming ready.
 | `priorityClassName` | string | `""` | PriorityClass name for GPU workload scheduling |
 | `podDisruptionBudget.enabled` | boolean | `false` | Enable PodDisruptionBudget |
 | `podDisruptionBudget.minAvailable` | integer | `1` | Minimum available pods during disruption |
+
+## Labels
+
+All resources include the standard `app.kubernetes.io/component: inference` label for filtering.

@@ -77,4 +77,8 @@ This produces a Deployment with:
 | `podDisruptionBudget.enabled` | boolean | `false` | Enable PodDisruptionBudget |
 | `podDisruptionBudget.minAvailable` | integer | `1` | Minimum available pods during disruption |
 
+## Labels
+
+All resources include the standard `app.kubernetes.io/component: controller` label for filtering.
+
 > **Note:** NetworkPolicy support (P7-3) and additional webhook TLS modes (P7-4) are deferred and will be added post-MVP.
