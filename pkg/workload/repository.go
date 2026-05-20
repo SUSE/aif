@@ -7,9 +7,12 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-//
-// Repository is a K8s adapter port — aifv1 imports are allowed here per the
-// layering rule. Counting queries live on DeploymentCounter.
+// Repository is the K8s-backed CRUD port for Workload CRs. It is a K8s
+// adapter port — aifv1 imports are allowed here per the layering rule.
+// ISP target is ≤4 methods; Repository carries 5 (Get/List/Update/Update­Status/Patch)
+// because the CRUD cluster naturally coheres at this adapter boundary. Splitting
+// to WorkloadReader / WorkloadWriter is deferred until a second consumer needs
+// Reader-only access. Counting queries live on DeploymentCounter.
 //
 // Patch was added in P5-3 for the upgrade action: MergeFrom-based optimistic
 // concurrency surfaces field-level conflicts as apierrors.IsConflict, which
