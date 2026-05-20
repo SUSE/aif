@@ -15,16 +15,19 @@ const (
 	SourceKindBundleTest SourceKind = "BundleTest"
 )
 
-// Phase is the deployer-domain phase. Mirrors a subset of
-// aifv1.WorkloadPhase reachable in P4-2 (Pending/Deploying/Running/Failed).
-// Degraded and RecoveryInProgress are deferred to P5-1/P5-2/P5-6.
+// Phase is the workload-domain phase. Mirrors aifv1.WorkloadPhase across
+// all six states (Pending/Deploying/Running/Degraded/Failed/RecoveryInProgress).
+// Computed by RecomputePhase in phase.go from a PhaseInput projection;
+// the controller is the single source of truth for status.phase.
 type Phase string
 
 const (
-	PhasePending   Phase = "Pending"
-	PhaseDeploying Phase = "Deploying"
-	PhaseRunning   Phase = "Running"
-	PhaseFailed    Phase = "Failed"
+	PhasePending            Phase = "Pending"
+	PhaseDeploying          Phase = "Deploying"
+	PhaseRunning            Phase = "Running"
+	PhaseDegraded           Phase = "Degraded"           // P5-1
+	PhaseFailed             Phase = "Failed"
+	PhaseRecoveryInProgress Phase = "RecoveryInProgress" // P5-1
 )
 
 // ComponentStatus values that may appear in ComponentRelease.Status beyond
@@ -135,4 +138,31 @@ type DeployResult struct {
 
 	// Phase is the aggregate phase computed from Components statuses.
 	Phase Phase
+}
+
+// PhaseInput is the domain projection consumed by RecomputePhase.
+// Built by conversions.PhaseInputFromCR; keeps phase.go aifv1-free.
+type PhaseInput struct {
+	// Components is the per-component release outcome list.
+	Components []ComponentRelease
+
+	// DesiredReplicas mirrors workload.spec.replicas (defaulted to 1).
+	DesiredReplicas int32
+
+	// ReadyReplicas mirrors workload.status.readyReplicas. P5-2 populates
+	// this via the pod informer; P5-1 always sees 0 from envtest, so rule 4
+	// "ready >= desired" is effectively "0 >= 0 → Running" until P5-2 lands.
+	ReadyReplicas int32
+
+	// RecoveryFailureCount mirrors workload.status.recoveryFailureCount.
+	RecoveryFailureCount int32
+
+	// FailureThreshold is the defaulted threshold (DefaultFailureThreshold
+	// if spec.strategy.automaticRecovery.failureThreshold is nil/zero).
+	FailureThreshold int32
+
+	// PriorPhase is workload.status.phase before this reconcile pass.
+	// Used by rule 6 (preserve prior phase when no rule matches) and by
+	// the RecoveryInProgress exit path.
+	PriorPhase Phase
 }
