@@ -36,6 +36,14 @@ const (
 	ReasonSourceNotResolved      = "SourceNotResolved"      // Ready=False, recoverable (source CR not yet present)
 	ReasonUnsupportedComposition = "UnsupportedComposition" // Ready=False, terminal until spec change
 
+	// P5-1: Workload phase-driven Ready condition reasons (one per phase).
+	ReasonWorkloadRunning            = "WorkloadRunning"
+	ReasonWorkloadPending            = "WorkloadPending"
+	ReasonWorkloadDeploying          = "WorkloadDeploying"
+	ReasonWorkloadDegraded           = "WorkloadDegraded"
+	ReasonWorkloadRecoveryInProgress = "WorkloadRecoveryInProgress"
+	ReasonWorkloadFailed             = "WorkloadFailed"
+
 	// Webhook / immutability
 	ReasonImmutableSpec = "ImmutableSpec" // Blueprint spec mutation attempted
 

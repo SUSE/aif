@@ -283,6 +283,13 @@ type WorkloadStatus struct {
 	// drift-driven auto-redeploy is a future story.
 	// +optional
 	ObservedBundleGeneration int64 `json:"observedBundleGeneration,omitempty"`
+
+	// RecoveryFailureCount is the number of consecutive times this
+	// Workload has entered Degraded since last reaching Running.
+	// Reset to zero on Running. When >= spec.strategy.automaticRecovery.failureThreshold,
+	// phase transitions to Failed.
+	// +optional
+	RecoveryFailureCount int32 `json:"recoveryFailureCount,omitempty"`
 }
 
 // ComponentReleaseStatus tracks a single component's Helm release status
@@ -330,6 +337,7 @@ type DeploymentRecord struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.status.replicas`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
+// +kubebuilder:printcolumn:name="Failures",type=integer,JSONPath=`.status.recoveryFailureCount`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Workload is the Schema for the workloads API

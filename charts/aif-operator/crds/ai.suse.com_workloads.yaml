@@ -26,6 +26,10 @@ spec:
     - jsonPath: .status.readyReplicas
       name: Ready
       type: integer
+    - jsonPath: .status.recoveryFailureCount
+      name: Failures
+      priority: 1
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -494,6 +498,14 @@ spec:
                 type: string
               readyReplicas:
                 description: ReadyReplicas is the replicas passing readiness check
+                format: int32
+                type: integer
+              recoveryFailureCount:
+                description: |-
+                  RecoveryFailureCount is the number of consecutive times this
+                  Workload has entered Degraded since last reaching Running.
+                  Reset to zero on Running. When >= spec.strategy.automaticRecovery.failureThreshold,
+                  phase transitions to Failed.
                 format: int32
                 type: integer
               replicas:
