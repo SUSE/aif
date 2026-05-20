@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["endpoint", "plugin"],
+  "properties": {
+    "endpoint": {
+      "type": "string",
+      "default": "http://aif-operator.aif.svc.cluster.local:8080/ui",
+      "description": "AIF operator UI endpoint URL"
+    },
+    "plugin": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "default": "ai-factory",
+          "description": "UIPlugin name registered in Rancher"
+        },
+        "version": {
+          "type": "string",
+          "default": "1.0.0",
+          "description": "Plugin version"
+        },
+        "noCache": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable browser caching of plugin assets"
+        }
+      }
+    }
+  }
+}

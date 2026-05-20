@@ -1,18 +1,21 @@
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
 image:
-  repository: registry.suse.com/ai/containers/nvidia/llava-v1.6-mistral-7b
+  registry: "registry.suse.com"
+  repository: ai/containers/nvidia/llava-v1.6-mistral-7b
   tag: latest
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
+strategy:
+  type: Recreate
+
 service:
   port: 8000
   type: ClusterIP
-
-gpu:
-  enabled: true
-  count: "2"
-  type: nvidia.com/gpu
 
 resources:
   requests:
@@ -34,8 +37,30 @@ nodeSelector:
 imagePullSecrets:
   - name: suse-registry-creds
 
-securityContext:
+podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
 
 env: []
+
+affinity: {}
+
+podAnnotations: {}
+
+extraVolumes: []
+extraVolumeMounts: []
+
+priorityClassName: ""
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

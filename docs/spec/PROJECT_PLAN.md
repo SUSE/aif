@@ -2682,20 +2682,59 @@ yarn test:unit:ui
 
 **ID:** P6-11
 **Epic:** UI Extension ClusterRepo Integration
-**Story:** As a platform engineer, I want the InstallAIExtension controller to follow Rancher's container-based UI extension pattern with ClusterRepo.
+**Story:** As a platform engineer, I want the InstallAIExtension controller to follow Rancher's container-based UI extension pattern with ClusterRepo, supporting both Helm and git source modes.
 **Owner Hint:** Backend Go + UI
 **Effort:** M
 **Depends On:** P1-6, P4-1
 **Parallelizable With:** none (needs architectural confirmation)
-**Done When:** InstallAIExtension creates Deployment+Service → ClusterRepo → UIPlugin for container-based extensions (OR confirms git-based deployment model is correct).
+**Done When:** InstallAIExtension creates Deployment+Service → ClusterRepo → UIPlugin for container-based extensions (OR confirms git-based deployment model is correct). Controller follows operator best practices (owner references, watches, drift detection, multi-condition status).
 
 **Acceptance Criteria:**
+
+*Research:*
 - [ ] **Research first:** Verify whether AIF UI extension uses container-based (needs ClusterRepo) or git-based (current impl OK) deployment model. Document findings in ADR or ARCHITECTURE.md.
-- [ ] If container-based: Helm chart (`charts/aif-ui/`) creates Deployment+Service serving `index.yaml` with available extension versions
-- [ ] If container-based: Controller creates ClusterRepo (`catalog.cattle.io/v1`) resource pointing to Service endpoint as the source for `index.yaml`
-- [ ] If container-based: UIPlugin (`catalog.cattle.io/v1`) references the specific version from ClusterRepo, with the Service as the source path to extension files
+
+*CRD spec redesign:*
+- [ ] `InstallAIExtensionSpec` gains a `source` discriminated union: `source.type: helm | git`
+- [ ] `source.helm: {chartURL, version, ...}` — for container-based mode (Deployment + Service + ClusterRepo + UIPlugin)
+- [ ] `source.git: {repoURL, branch, ...}` — for git-based mode (ClusterRepo + UIPlugin, no deployment)
+- [ ] Webhook validates exactly-one-of `source.helm` / `source.git`
+
+*Helm source mode:*
+- [ ] Controller deploys container (Deployment + Service) serving built extension assets to `cattle-ui-plugin-system`
+- [ ] Controller creates ClusterRepo (`catalog.cattle.io/v1`) pointing to Service endpoint
+- [ ] Controller creates UIPlugin (`catalog.cattle.io/v1`) referencing ClusterRepo version
+
+*Git source mode:*
+- [ ] Controller creates ClusterRepo pointing to git branch URL
+- [ ] Controller creates UIPlugin based on ClusterRepo
+
+*RBAC:*
+- [ ] `charts/aif-operator/templates/rbac.yaml` adds permissions for `catalog.cattle.io` → `uiplugins` (get, list, watch, create, update, patch, delete)
+- [ ] `charts/aif-operator/templates/rbac.yaml` adds permissions for `catalog.cattle.io` → `clusterrepos` (get, list, watch, create, update, patch, delete)
+- [ ] `charts/aif-operator/templates/rbac.yaml` adds permissions for `apiextensions.k8s.io` → `customresourcedefinitions` (get, list, watch) — needed for `checkUIPluginCRD()`
+
+*Operator best practices:*
+- [ ] **Owner references** set on all child resources (Deployment, Service, ClusterRepo, UIPlugin) for automatic GC on CR deletion. Finalizer as safety net only.
+- [ ] **Watch owned resources** — use `Watches(&UIPlugin{}, handler.EnqueueRequestForOwner(...))` instead of polling with `RequeueAfter: 5s`
+- [ ] **Drift detection / self-healing** — compare desired vs actual state on every reconcile; if someone deletes the Service or modifies the Deployment, the operator restores it (level-triggered reconciliation)
+- [ ] **Multi-condition status** — replace single `phase` field with independent conditions: `DeploymentReady`, `ServiceReady`, `ClusterRepoReady`, `UIPluginReady` (admin sees exactly which step failed)
+- [ ] **Observed generation** — track `status.observedGeneration` to detect spec changes
+- [ ] **Upgrade path** — detect generation bump when user changes version → rolling update or Helm upgrade → report progress → rollback on failure (current implementation is install-only)
+- [ ] **Health propagation** — continuously monitor deployed extension health (pod crash, OOM) and reflect in status conditions
+- [ ] **Events** — emit K8s Events for state transitions: `ExtensionDeployed`, `ClusterRepoCreated`, `UIPluginRegistered`, `UpgradeStarted`, `DriftDetected`
+
+*P1-6 controller fixes (align with other controllers):*
+- [ ] `setCondition` (line 322-324) pre-sets `LastTransitionTime = metav1.Now()` before `meta.SetStatusCondition`, defeating the contract. Should delegate to `conditions.Set()` like all other controllers.
+- [ ] Replace `r.Logger *slog.Logger` (struct field) with `log.FromContext(ctx)` (logr) to match Bundle, Blueprint, Settings, and Workload controllers and get controller-runtime's automatic reconcile metadata enrichment.
+- [ ] Replace event type string literals `"Warning"`/`"Normal"` with `corev1.EventTypeWarning`/`corev1.EventTypeNormal` constants.
+
+*Namespace strategy:*
+- [ ] All managed resources (Deployment, Service, ClusterRepo, UIPlugin) live in `cattle-ui-plugin-system`
+
+*Testing:*
 - [ ] Test: Verify Rancher Dashboard loads extension via ClusterRepo flow in a real Rancher management cluster
-- [ ] Update P1-6 controller tests to mock ClusterRepo creation if needed
+- [ ] Update P1-6 controller tests to cover ClusterRepo creation, owner references, drift recovery
 
 **Background:**
 PR #1 review (https://github.com/SUSE/aif/pull/1#discussion_r3190614754) identified this architectural gap. Current P1-6 implementation performs direct Helm install + UIPlugin creation, skipping the ClusterRepo step. For container-based Rancher UI extensions, the expected flow is:
@@ -2705,13 +2744,21 @@ PR #1 review (https://github.com/SUSE/aif/pull/1#discussion_r3190614754) identif
 
 For git-based extensions, the current implementation may be sufficient (ClusterRepo points to git repo instead of Service). This story exists to research the correct approach and implement if needed.
 
+The current controller also has several implementation gaps versus the patterns established by later controllers (Workload, Bundle, Blueprint): `setCondition` defeats `LastTransitionTime` preservation, logging uses `slog` instead of `logr`, and event types use string literals instead of `corev1` constants. These should be fixed as part of the controller rewrite.
+
+Reference chart: `github.com/leooamaral/suse-ai-lifecycle-manager` (branch `feat/suse-ai-operator-gh`) has the correct container-based pattern: Deployment with `catalog.cattle.io/ui-extensions-catalog-image` label, Service on port 8080, security context, liveness/readiness probes, rolling update strategy.
+
 **Validation:**
 ```bash
 # Deploy to real Rancher cluster
 kubectl apply -f testdata/installaiextension-cr.yaml
 # Verify Rancher Dashboard shows AIF extension in Extensions page
 # Verify extension loads correctly in UI
+# Verify drift recovery: delete the Service, confirm operator recreates it
+# Verify upgrade: change spec version, confirm rolling update
 ```
+
+> **NOTE:** The `charts/aif-ui/` chart must be revisited after P6-11 is complete. P6-11's outcome (container-based vs git-based deployment, two source modes, Deployment+Service+ClusterRepo) will drive the chart's template structure. The current chart (single UIPlugin template) will likely need to be restructured or replaced entirely. Defer any non-trivial aif-ui chart work until P6-11 lands.
 
 ---
 
@@ -3242,6 +3289,8 @@ cosign download sbom ghcr.io/suse/aif-operator:0.1.0 | jq -e '.SPDXID'
 **Depends On:** P0-3, P7-3, P7-4
 **Parallelizable With:** P9-1, P9-2, P9-4
 **Done When:** All charts have a complete `README.md`, `values.schema.json`, and pinned `appVersion` matching the operator binary.
+
+> **NOTE:** All 5 charts are missing a `LICENSE` file. Each chart directory should include the project's license so it ships with the packaged `.tgz`.
 
 ---
 

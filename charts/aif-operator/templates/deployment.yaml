@@ -14,15 +14,30 @@ spec:
     metadata:
       labels:
         {{- include "aif-operator.selectorLabels" . | nindent 8 }}
-    spec:
-      serviceAccountName: {{ include "aif-operator.serviceAccountName" . }}
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
+      {{- with .Values.podAnnotations }}
+      annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    spec:
+      serviceAccountName: {{ include "aif-operator.serviceAccountName" . }}
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.podSecurityContext }}
       securityContext:
-        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
-        runAsUser: {{ .Values.securityContext.runAsUser }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: operator
           image: {{ include "aif-operator.image" . }}
@@ -40,12 +55,16 @@ spec:
             - name: health
               containerPort: {{ .Values.service.ports.health }}
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.service.ports.metrics }}
               protocol: TCP
+            {{- end }}
+            {{- if .Values.webhook.enabled }}
             - name: webhook
               containerPort: {{ .Values.service.ports.webhook }}
               protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -67,11 +86,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: data

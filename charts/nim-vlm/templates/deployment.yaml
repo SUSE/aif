@@ -6,6 +6,8 @@ metadata:
     {{- include "nim-vlm.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: {{ .Values.strategy.type }}
   selector:
     matchLabels:
       {{- include "nim-vlm.selectorLabels" . | nindent 6 }}
@@ -13,20 +15,34 @@ spec:
     metadata:
       labels:
         {{- include "nim-vlm.selectorLabels" . | nindent 8 }}
-    spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
+      {{- with .Values.podAnnotations }}
+      annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    spec:
+      {{- include "nim-vlm.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: 120
+      {{- with .Values.podSecurityContext }}
       securityContext:
-        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
-        runAsUser: {{ .Values.securityContext.runAsUser }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
@@ -41,22 +57,27 @@ spec:
           env:
             {{- toYaml .Values.env | nindent 12 }}
           {{- end }}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: http
+            failureThreshold: 60
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /v1/health/ready
               port: http
-            initialDelaySeconds: 120
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /v1/health/ready
               port: http
-            initialDelaySeconds: 120
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}

@@ -1,0 +1,17 @@
+NIM VLM inference service has been deployed in namespace {{ .Release.Namespace }}.
+
+Model: {{ include "nim-vlm.image" . }}
+
+Service endpoint:
+  kubectl -n {{ .Release.Namespace }} get svc {{ include "nim-vlm.fullname" . }}
+
+Verify the pod is running:
+  kubectl -n {{ .Release.Namespace }} get pods -l {{ include "nim-vlm.selectorLabelsString" . }}
+
+The model container needs time to load weights before becoming ready.
+Monitor readiness:
+  kubectl -n {{ .Release.Namespace }} wait --for=condition=ready pod -l {{ include "nim-vlm.selectorLabelsString" . }} --timeout=600s
+
+Once ready, test the API:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "nim-vlm.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl http://localhost:{{ .Values.service.port }}/v1/models

@@ -1,0 +1,11 @@
+{{ include "generic-container.fullname" . }} has been deployed in namespace {{ .Release.Namespace }}.
+
+Service endpoint:
+  kubectl -n {{ .Release.Namespace }} get svc {{ include "generic-container.fullname" . }}
+
+Verify the pod is running:
+  kubectl -n {{ .Release.Namespace }} get pods -l {{ include "generic-container.selectorLabelsString" . }}
+
+{{- if .Values.gpu.enabled }}
+GPU scheduling is enabled ({{ .Values.gpu.count }} x {{ .Values.gpu.type }}).
+{{- end }}

@@ -1,20 +1,13 @@
-# Image configuration supports three install modes:
-# 1. Connected (default): Uses ghcr.io registry
-#    Result: ghcr.io/suse/aif-operator:<tag>
-# 2. Air-gap with hostname-only: --set image.registry=harbor.example.com
-#    Result: harbor.example.com/suse/aif-operator:<tag>
-# 3. Air-gap with project-prefix: --set image.registry=harbor.example.com/suse --set image.repository=aif-operator
-#    Result: harbor.example.com/suse/aif-operator:<tag>
-#    Note: When using a project-prefix registry, also override repository to match your mirrored path
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
 image:
   registry: ghcr.io
   repository: suse/aif-operator
   tag: ""              # empty string → templated to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
-# Image pull secrets for private registries (air-gap installs)
-# Example: imagePullSecrets:
-#   - name: harbor-pull-secret
 imagePullSecrets: []
 
 serviceAccount:
@@ -45,10 +38,23 @@ persistence:
   accessMode: ReadWriteOnce
   mountPath: /data
 
-securityContext:
+podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
   readOnlyRootFilesystem: true
+
+podAnnotations: {}
+
+metrics:
+  enabled: true
 
 extraEmptyDirs:
   - /data/charts
@@ -66,9 +72,10 @@ webhook:
   certManager:
     enabled: true
 
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
-
-networkPolicy:
-  enabled: false

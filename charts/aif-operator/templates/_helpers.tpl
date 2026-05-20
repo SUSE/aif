@@ -34,6 +34,7 @@ Common labels
 {{- define "aif-operator.labels" -}}
 helm.sh/chart: {{ include "aif-operator.chart" . }}
 {{ include "aif-operator.selectorLabels" . }}
+app.kubernetes.io/component: controller
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -56,13 +57,45 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Selector labels as a kubectl label selector string
+*/}}
+{{- define "aif-operator.selectorLabelsString" -}}
+app.kubernetes.io/name={{ include "aif-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+{{/*
 Image reference with conditional registry prefix
 */}}
 {{- define "aif-operator.image" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion }}
-{{- if .Values.image.registry -}}
-{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ $tag }}
-{{- else -}}
-{{ .Values.image.repository }}:{{ $tag }}
-{{- end -}}
+{{- $repo := .Values.image.repository }}
+{{- with (coalesce .Values.global.imageRegistry .Values.image.registry) }}
+{{- printf "%s/%s:%s" . $repo $tag }}
+{{- else }}
+{{- printf "%s:%s" $repo $tag }}
 {{- end }}
+{{- end }}
+
+{{/*
+Return the proper Docker Image Registry Secret Names.
+Merges global.imagePullSecrets and per-chart imagePullSecrets.
+*/}}
+{{- define "aif-operator.imagePullSecrets" -}}
+{{- $secrets := list }}
+{{- range .Values.imagePullSecrets }}
+  {{- $secrets = append $secrets . }}
+{{- end }}
+{{- if .Values.global }}
+  {{- range .Values.global.imagePullSecrets }}
+    {{- if kindIs "string" . }}
+      {{- $secrets = append $secrets (dict "name" .) }}
+    {{- else }}
+      {{- $secrets = append $secrets . }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if $secrets }}
+imagePullSecrets:
+  {{- toYaml $secrets | nindent 2 }}
+{{- end }}
+{{- end -}}

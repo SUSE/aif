@@ -34,6 +34,7 @@ Common labels
 {{- define "nim-vlm.labels" -}}
 helm.sh/chart: {{ include "nim-vlm.chart" . }}
 {{ include "nim-vlm.selectorLabels" . }}
+app.kubernetes.io/component: inference
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -49,9 +50,47 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Selector labels as a kubectl label selector string
+*/}}
+{{- define "nim-vlm.selectorLabelsString" -}}
+app.kubernetes.io/name={{ include "nim-vlm.name" . }},app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+{{/*
 Image reference
 */}}
 {{- define "nim-vlm.image" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion }}
-{{- printf "%s:%s" .Values.image.repository $tag }}
+{{- $repo := .Values.image.repository }}
+{{- with (coalesce .Values.global.imageRegistry .Values.image.registry) }}
+{{- printf "%s/%s:%s" . $repo $tag }}
+{{- else }}
+{{- printf "%s:%s" $repo $tag }}
 {{- end }}
+{{- end }}
+
+{{/*
+Return the proper Docker Image Registry Secret Names.
+Merges global.imagePullSecrets and per-chart imagePullSecrets (both lists
+are concatenated so chart-level defaults like suse-registry-creds are never
+silently dropped when a global override is set).
+*/}}
+{{- define "nim-vlm.imagePullSecrets" -}}
+{{- $secrets := list }}
+{{- range .Values.imagePullSecrets }}
+  {{- $secrets = append $secrets . }}
+{{- end }}
+{{- if .Values.global }}
+  {{- range .Values.global.imagePullSecrets }}
+    {{- if kindIs "string" . }}
+      {{- $secrets = append $secrets (dict "name" .) }}
+    {{- else }}
+      {{- $secrets = append $secrets . }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if $secrets }}
+imagePullSecrets:
+  {{- toYaml $secrets | nindent 2 }}
+{{- end }}
+{{- end -}}

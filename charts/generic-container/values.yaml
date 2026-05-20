@@ -1,4 +1,15 @@
-image: nginx:latest
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+imagePullSecrets: []
+
+image:
+  registry: ""
+  repository: nginx
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
 replicaCount: 1
 
 service:
@@ -18,15 +29,32 @@ resources:
     cpu: "500m"
     memory: "256Mi"
 
-securityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-      - ALL
-
 livenessProbe: {}
 readinessProbe: {}
 
 env: []
 ports: []
-imagePullSecrets: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+extraVolumes: []
+extraVolumeMounts: []
+
+priorityClassName: ""
+

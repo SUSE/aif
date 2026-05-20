@@ -1,0 +1,250 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Global values shared across subcharts",
+      "properties": {
+        "imageRegistry": { "type": "string", "default": "", "description": "Global image registry override" },
+        "imagePullSecrets": {
+          "type": "array",
+          "default": [],
+          "description": "Global image pull secrets",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "Container image configuration",
+      "properties": {
+        "registry": {
+          "type": "string",
+          "default": "ghcr.io",
+          "description": "Image registry hostname (with optional project prefix)"
+        },
+        "repository": {
+          "type": "string",
+          "default": "suse/aif-operator",
+          "description": "Image repository path"
+        },
+        "tag": {
+          "type": "string",
+          "default": "",
+          "description": "Image tag (empty defaults to Chart.appVersion)"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "default": "IfNotPresent",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "default": [],
+      "description": "Image pull secrets for private registries",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "default": "",
+          "description": "Service account name (empty defaults to chart fullname)"
+        }
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "description": "Number of operator replicas"
+    },
+    "service": {
+      "type": "object",
+      "description": "Kubernetes Service configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "default": "ClusterIP",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "description": "Kubernetes Service type"
+        },
+        "ports": {
+          "type": "object",
+          "properties": {
+            "api": { "type": "integer", "default": 8080, "description": "API server port" },
+            "health": { "type": "integer", "default": 8081, "description": "Health check port" },
+            "metrics": { "type": "integer", "default": 8082, "description": "Metrics port" },
+            "webhook": { "type": "integer", "default": 9443, "description": "Webhook server port" }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Container resource requests and limits",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string", "default": "100m" },
+            "memory": { "type": "string", "default": "256Mi" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string", "default": "1000m" },
+            "memory": { "type": "string", "default": "512Mi" }
+          }
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "description": "Persistent volume configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "Enable persistent volume" },
+        "size": { "type": "string", "default": "10Gi", "description": "Persistent volume size" },
+        "storageClass": { "type": "string", "default": "", "description": "Storage class (empty uses cluster default)" },
+        "accessMode": {
+          "type": "string",
+          "default": "ReadWriteOnce",
+          "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"],
+          "description": "PVC access mode"
+        },
+        "mountPath": { "type": "string", "default": "/data", "description": "Mount path for persistent volume" }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level security context",
+      "properties": {
+        "runAsNonRoot": { "type": "boolean", "default": true, "description": "Run as non-root" },
+        "runAsUser": { "type": "integer", "default": 1000, "description": "Container UID" },
+        "seccompProfile": {
+          "type": "object",
+          "description": "Seccomp profile configuration",
+          "properties": {
+            "type": { "type": "string", "default": "RuntimeDefault", "description": "Seccomp profile type" }
+          }
+        }
+      }
+    },
+    "containerSecurityContext": {
+      "type": "object",
+      "description": "Container-level security context",
+      "properties": {
+        "allowPrivilegeEscalation": { "type": "boolean", "default": false, "description": "Disallow privilege escalation" },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "drop": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["ALL"],
+              "description": "Linux capabilities to drop"
+            }
+          }
+        },
+        "readOnlyRootFilesystem": { "type": "boolean", "default": true, "description": "Read-only root filesystem" }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "default": {},
+      "description": "Additional annotations for pods",
+      "additionalProperties": { "type": "string" }
+    },
+    "extraEmptyDirs": {
+      "type": "array",
+      "default": ["/data/charts", "/data/git", "/tmp"],
+      "description": "Additional emptyDir volume mounts",
+      "items": { "type": "string" }
+    },
+    "operator": {
+      "type": "object",
+      "description": "Operator runtime configuration",
+      "properties": {
+        "logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": ["debug", "info", "warn", "error"],
+          "description": "Log level"
+        },
+        "logFormat": {
+          "type": "string",
+          "default": "json",
+          "enum": ["json", "text"],
+          "description": "Log format"
+        },
+        "catalogRefresh": {
+          "type": "string",
+          "default": "10m",
+          "description": "Catalog refresh interval"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Metrics endpoint configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "Enable metrics port" }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "description": "Admission webhook configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "Enable admission webhooks" },
+        "tlsMode": {
+          "type": "string",
+          "default": "cert-manager",
+          "description": "TLS certificate mode (additional modes deferred to P7-4)"
+        },
+        "certManager": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true, "description": "Enable cert-manager for webhook TLS" }
+          }
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "default": {},
+      "description": "Node selector labels",
+      "additionalProperties": { "type": "string" }
+    },
+    "tolerations": {
+      "type": "array",
+      "default": [],
+      "description": "Pod tolerations",
+      "items": { "type": "object" }
+    },
+    "affinity": {
+      "type": "object",
+      "default": {},
+      "description": "Pod affinity and anti-affinity rules"
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "description": "PodDisruptionBudget configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "Enable PodDisruptionBudget" },
+        "minAvailable": { "type": "integer", "default": 1, "minimum": 0, "description": "Minimum available pods during disruption" }
+      }
+    }
+  }
+}

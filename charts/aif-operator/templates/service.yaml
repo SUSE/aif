@@ -16,13 +16,17 @@ spec:
       targetPort: health
       protocol: TCP
       name: health
+    {{- if .Values.metrics.enabled }}
     - port: {{ .Values.service.ports.metrics }}
       targetPort: metrics
       protocol: TCP
       name: metrics
+    {{- end }}
+    {{- if .Values.webhook.enabled }}
     - port: {{ .Values.service.ports.webhook }}
       targetPort: webhook
       protocol: TCP
       name: webhook
+    {{- end }}
   selector:
     {{- include "aif-operator.selectorLabels" . | nindent 4 }}

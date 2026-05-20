@@ -13,14 +13,39 @@ spec:
     metadata:
       labels:
         {{- include "generic-container.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
+      {{- include "generic-container.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: container
-          image: {{ .Values.image }}
+          image: {{ include "generic-container.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.ports }}
           ports:
             {{- toYaml .Values.ports | nindent 12 }}
@@ -28,6 +53,10 @@ spec:
           {{- if .Values.env }}
           env:
             {{- toYaml .Values.env | nindent 12 }}
+          {{- end }}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
@@ -48,7 +77,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- end }}
-          {{- with .Values.securityContext }}
+          {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
