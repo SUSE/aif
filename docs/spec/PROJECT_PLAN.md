@@ -3296,10 +3296,10 @@ cosign download sbom ghcr.io/suse/aif-operator:0.1.0 | jq -e '.SPDXID'
 ---
 
 **ID:** P9-3a
-**Epic:** Leader Election Support
-**Story:** As a platform engineer deploying the operator with `replicaCount > 1`, I want leader election wired end-to-end so that only one replica reconciles at a time.
+**Epic:** Leader Election & HA Support
+**Story:** As a platform engineer deploying the operator with `replicaCount > 1`, I want leader election wired end-to-end so that only one replica reconciles at a time, with fast failover and correct persistence behavior.
 **Owner Hint:** DevOps
-**Effort:** S
+**Effort:** M
 **Depends On:** P9-3
 **Parallelizable With:** P9-4
 **Done When:** `helm install --set operator.leaderElection.enabled=true` passes `--leader-elect=true` to the operator binary, renders the leader-election Role + RoleBinding for coordination.k8s.io/leases, and two-replica deployments converge on a single active leader.
@@ -3312,6 +3312,10 @@ cosign download sbom ghcr.io/suse/aif-operator:0.1.0 | jq -e '.SPDXID'
 - [ ] README documents the HA deployment pattern (`replicaCount: 2` + `operator.leaderElection.enabled: true`)
 - [ ] `helm template` with `operator.leaderElection.enabled=false` does NOT render the Role/RoleBinding
 - [ ] `helm lint --strict` passes with both `true` and `false`
+- [ ] `internal/manager/setup.go` sets `LeaderElectionReleaseOnCancel: true` in manager options so graceful termination releases the lease immediately instead of waiting for the full lease duration (~15s failover delay)
+- [ ] `internal/manager/setup.go` sets `LeaderElectionNamespace` explicitly (from a flag or the downward API) rather than relying on implicit controller-runtime default
+- [ ] PVC access mode is addressed for multi-replica: either document that `persistence.enabled=true` (RWO) is incompatible with `replicaCount > 1`, or switch to `ReadWriteMany` when replicas > 1, or convert to StatefulSet with per-replica PVCs
+- [ ] Evaluate `MaxConcurrentReconciles` for controllers handling large workload counts — document default (1) and add optional tuning knob if warranted
 
 **Validation:**
 ```bash
@@ -3323,7 +3327,7 @@ helm template aif-operator charts/aif-operator --set operator.leaderElection.ena
 helm template aif-operator charts/aif-operator --set operator.leaderElection.enabled=true | grep -q 'leader-election' && echo PASS || echo FAIL
 ```
 
-**Context:** The leader-election Role+RoleBinding were originally added in P9-3 but removed during code review because the deployment template didn't pass `--leader-elect` to the binary — the RBAC was aspirational. This story wires it end-to-end. No Go changes required — `cmd/operator/main.go` already defines the `--leader-elect` flag (default `false`) and passes it to the controller-runtime manager; the chart just needs to forward the value via container args.
+**Context:** The leader-election Role+RoleBinding were originally added in P9-3 but removed during code review because the deployment template didn't pass `--leader-elect` to the binary — the RBAC was aspirational. This story wires it end-to-end. `cmd/operator/main.go` already defines the `--leader-elect` flag (default `false`) and passes it to the controller-runtime manager; the chart needs to forward the value via container args. Go-side changes are now in scope: `LeaderElectionReleaseOnCancel` and explicit `LeaderElectionNamespace` in `setup.go`. The PVC access mode decision (RWO blocks multi-node scheduling) is the biggest architectural question — evaluate StatefulSet vs RWX vs documenting the constraint.
 
 ---
 
