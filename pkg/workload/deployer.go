@@ -97,12 +97,9 @@ func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult,
 		// Successful uninstall: orphan is implicitly dropped (not appended to components).
 	}
 
-	phase := aggregatePhase(components)
-
 	return DeployResult{
 		Components:               components,
 		ObservedBundleGeneration: observedGen,
-		Phase:                    phase,
 	}, errors.Join(errs...)
 }
 
@@ -328,52 +325,3 @@ func detectOrphans(previous []ComponentRelease, desired []desiredComponent) []Co
 	return orphans
 }
 
-// aggregatePhase computes the Workload-level Phase from per-component
-// release statuses per spec §5.2 step 5:
-//
-//	any "failed"                                          → PhaseFailed
-//	any pending/upgrading/uninstalling/orphan-failed      → PhaseDeploying
-//	all "deployed"                                        → PhaseRunning
-//	empty desired set                                     → PhasePending
-//
-// "Failed" wins over "Deploying" because a failed release won't progress
-// without action; surfacing Failed lets the user act.
-//
-// Per spec §4.4, the phase rules will evolve in P5-1/P5-2:
-//   - Single-component "failed" → PhaseDegraded (not PhaseFailed)
-//   - PhaseFailed reserved for ProgressDeadlineExceeded on the aggregate
-//   - PhaseRecoveryInProgress added for automatic rollback
-// P4-2 maps any "failed" → PhaseFailed as the conservative early-action
-// signal; P5-1 will reshape when the watch on owned Deployments lands.
-func aggregatePhase(components []ComponentRelease) Phase {
-	if len(components) == 0 {
-		return PhasePending
-	}
-	hasFailed := false
-	hasPending := false
-	allDeployed := true
-	for _, c := range components {
-		switch c.Status {
-		case "failed":
-			hasFailed = true
-			allDeployed = false
-		case "pending-install", "pending-upgrade", "uninstalling", ComponentStatusOrphanUninstallFailed:
-			hasPending = true
-			allDeployed = false
-		case "deployed":
-			// no-op
-		default:
-			allDeployed = false
-			hasPending = true // unknown statuses treated as in-flight
-		}
-	}
-	switch {
-	case hasFailed:
-		return PhaseFailed
-	case hasPending:
-		return PhaseDeploying
-	case allDeployed:
-		return PhaseRunning
-	}
-	return PhasePending
-}

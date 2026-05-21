@@ -582,8 +582,18 @@ func TestDeploy_PartialFailure_ContinuesAndJoins(t *testing.T) {
 	if len(result.Components) != 3 {
 		t.Fatalf("Components len=%d, want 3 (all attempted, even after b failed)", len(result.Components))
 	}
-	if result.Phase != PhaseFailed {
-		t.Errorf("Phase=%q, want Failed", result.Phase)
+	// Phase is no longer set on DeployResult (P5-1 moved phase ownership
+	// to the controller); the per-component statuses below drive the
+	// controller's RecomputePhase call into PhaseFailed.
+	var failedSeen bool
+	for _, c := range result.Components {
+		if c.Status == "failed" {
+			failedSeen = true
+			break
+		}
+	}
+	if !failedSeen {
+		t.Errorf("expected at least one component with Status=failed in %+v", result.Components)
 	}
 }
 
@@ -606,50 +616,6 @@ func newTestDeployer(t *testing.T) *deployer {
 		nvidiaDisc:     newStubDiscovery(),
 		nvidiaDeployer: &stubNvidiaDeployer{},
 		logger:         logger,
-	}
-}
-
-func TestAggregatePhase_AllDeployed_Running(t *testing.T) {
-	got := aggregatePhase([]ComponentRelease{
-		{Status: "deployed"}, {Status: "deployed"},
-	})
-	if got != PhaseRunning {
-		t.Errorf("phase=%q, want Running", got)
-	}
-}
-
-func TestAggregatePhase_AnyFailed_Failed(t *testing.T) {
-	got := aggregatePhase([]ComponentRelease{
-		{Status: "deployed"}, {Status: "failed"},
-	})
-	if got != PhaseFailed {
-		t.Errorf("phase=%q, want Failed", got)
-	}
-}
-
-func TestAggregatePhase_AnyPending_Deploying(t *testing.T) {
-	for _, status := range []string{"pending-install", "pending-upgrade", "uninstalling", ComponentStatusOrphanUninstallFailed, "weird-helm-status"} {
-		got := aggregatePhase([]ComponentRelease{
-			{Status: "deployed"}, {Status: status},
-		})
-		if got != PhaseDeploying {
-			t.Errorf("status=%q → phase=%q, want Deploying", status, got)
-		}
-	}
-}
-
-func TestAggregatePhase_Empty_Pending(t *testing.T) {
-	if got := aggregatePhase(nil); got != PhasePending {
-		t.Errorf("empty → phase=%q, want Pending", got)
-	}
-}
-
-func TestAggregatePhase_FailedOverridesPending(t *testing.T) {
-	got := aggregatePhase([]ComponentRelease{
-		{Status: "pending-install"}, {Status: "failed"},
-	})
-	if got != PhaseFailed {
-		t.Errorf("phase=%q, want Failed (failed beats pending)", got)
 	}
 }
 

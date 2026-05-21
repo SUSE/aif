@@ -8,7 +8,10 @@ import (
 )
 
 // Repository is the K8s-backed CRUD port for Workload CRs.
-// Methods are kept ≤4 (ISP) — counting queries live on DeploymentCounter.
+//
+// Repository is a K8s adapter port — aifv1 imports are allowed here per the
+// layering rule. Counting queries live on DeploymentCounter so this stays
+// at the ISP target of ≤4 methods.
 type Repository interface {
 	Get(ctx context.Context, namespace, name string) (*aifv1.Workload, error)
 	List(ctx context.Context, namespace string, selector labels.Selector) ([]aifv1.Workload, error)

@@ -23,15 +23,17 @@ func TestFakeDeployer_RecordsDeployCalls(t *testing.T) {
 }
 
 func TestFakeDeployer_ReturnsConfiguredResult(t *testing.T) {
-	want := DeployResult{Phase: PhaseRunning}
+	want := DeployResult{
+		Components: []ComponentRelease{{Name: "c1", ReleaseName: "wid-c1", Status: "deployed"}},
+	}
 	f := &FakeDeployer{DeployResult: want}
 
 	got, err := f.Deploy(context.Background(), DeployRequest{})
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
-	if got.Phase != PhaseRunning {
-		t.Errorf("Phase=%q, want Running", got.Phase)
+	if len(got.Components) != 1 || got.Components[0].Status != "deployed" {
+		t.Errorf("Components=%+v, want one with Status=deployed", got.Components)
 	}
 }
 
@@ -61,9 +63,11 @@ func TestFakeDeployer_TeardownRecordsAndReturnsErr(t *testing.T) {
 
 func TestFakeDeployer_Reset_ClearsCallLog(t *testing.T) {
 	f := &FakeDeployer{
-		DeployResult: DeployResult{Phase: PhaseRunning},
-		DeployErr:    errors.New("configured deploy err"),
-		TeardownErr:  errors.New("configured teardown err"),
+		DeployResult: DeployResult{
+			Components: []ComponentRelease{{Name: "c1", Status: "deployed"}},
+		},
+		DeployErr:   errors.New("configured deploy err"),
+		TeardownErr: errors.New("configured teardown err"),
 	}
 	_, _ = f.Deploy(context.Background(), DeployRequest{})
 	_ = f.Teardown(context.Background(), "ns", nil)
@@ -74,7 +78,7 @@ func TestFakeDeployer_Reset_ClearsCallLog(t *testing.T) {
 		t.Errorf("Reset did not clear call log: deploy=%d teardown=%d",
 			len(f.DeployCalls), len(f.TeardownCalls))
 	}
-	if f.DeployResult.Phase != "" {
+	if len(f.DeployResult.Components) != 0 {
 		t.Errorf("Reset did not clear DeployResult: %+v", f.DeployResult)
 	}
 	if f.DeployErr != nil {

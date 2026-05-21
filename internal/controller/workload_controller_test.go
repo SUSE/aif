@@ -53,7 +53,11 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "n-1", Status: "deployed"},
+			},
+		})
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -64,7 +68,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
 			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
 		}, timeout, interval).Should(Succeed())
 
 		// Verify finalizer
@@ -91,7 +95,11 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "n-1", Status: "deployed"},
+			},
+		})
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -101,7 +109,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
 			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
 		}, timeout, interval).Should(Succeed())
 	})
 
@@ -124,7 +132,11 @@ var _ = Describe("WorkloadReconciler", func() {
 			},
 		}
 
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "n-1", Status: "deployed"},
+			},
+		})
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -134,7 +146,7 @@ var _ = Describe("WorkloadReconciler", func() {
 			rc := findReady(fetched.Status.Conditions)
 			g.Expect(rc).NotTo(BeNil())
 			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInstalled))
+			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
 		}, timeout, interval).Should(Succeed())
 	})
 
@@ -311,28 +323,36 @@ var _ = Describe("Workload deployer error → condition mapping (P4-2)", func() 
 
 	It("maps ErrNestedBlueprintNotSupported to UnsupportedComposition (terminal)", func() {
 		fakeDeployer.SetDeployErr(workload.ErrNestedBlueprintNotSupported)
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseFailed})
+		fakeDeployer.SetDeployResult(workload.DeployResult{})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonUnsupportedComposition))
 	})
 
 	It("maps ErrSourceNotResolved to SourceNotResolved", func() {
 		fakeDeployer.SetDeployErr(workload.ErrSourceNotResolved)
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhasePending})
+		fakeDeployer.SetDeployResult(workload.DeployResult{})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonSourceNotResolved))
 	})
 
 	It("maps ErrComponentInstallFailed to ComponentInstallFailed", func() {
 		fakeDeployer.SetDeployErr(workload.ErrComponentInstallFailed)
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseFailed})
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "n-1", Status: "failed"},
+			},
+		})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonComponentInstallFailed))
 	})
 
 	It("maps ErrComponentUninstallFailed to OrphanCleanupPending", func() {
 		fakeDeployer.SetDeployErr(workload.ErrComponentUninstallFailed)
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseDeploying})
+		fakeDeployer.SetDeployResult(workload.DeployResult{
+			Components: []workload.ComponentRelease{
+				{Name: "n", ReleaseName: "n-1", Status: workload.ComponentStatusOrphanUninstallFailed},
+			},
+		})
 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonOrphanCleanupPending))
 	})
@@ -344,24 +364,22 @@ var _ = Describe("Workload deployer error → condition mapping (P4-2)", func() 
 		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonReconcileFailed))
 	})
 
-	It("sets Ready=True Reason=Installed when Deploy succeeds and Phase=Running", func() {
+	It("sets Ready=True Reason=WorkloadRunning when Deploy succeeds and components are all deployed", func() {
 		fakeDeployer.SetDeployErr(nil)
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase:      workload.PhaseRunning,
-			Components: []workload.ComponentRelease{{Name: "n", Status: "deployed"}},
+			Components: []workload.ComponentRelease{{Name: "n", ReleaseName: "n-1", Status: "deployed"}},
 		})
 
-		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonInstalled))
+		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonWorkloadRunning))
 	})
 
-	It("sets Reason=Installing when Deploy returns nil but Phase=Deploying", func() {
+	It("sets Reason=WorkloadDeploying when Deploy returns nil but components are in-flight", func() {
 		fakeDeployer.SetDeployErr(nil)
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase:      workload.PhaseDeploying,
-			Components: []workload.ComponentRelease{{Name: "n", Status: "pending-install"}},
+			Components: []workload.ComponentRelease{{Name: "n", ReleaseName: "n-1", Status: "pending-install"}},
 		})
 
-		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonInstalling))
+		Eventually(eventuallyReason, timeout, interval).Should(Equal(conditions.ReasonWorkloadDeploying))
 	})
 })
 
@@ -373,7 +391,6 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 	It("calls Deployer.Teardown on delete and removes finalizer when Teardown succeeds", func() {
 		fakeDeployer.SetTeardownErr(nil)
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: "wid-fin-n", Status: "deployed"},
 			},
@@ -421,7 +438,6 @@ var _ = Describe("Workload finalizer cleanup (P4-2)", func() {
 
 	It("keeps finalizer when Teardown fails (Workload not deleted until success)", func() {
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: "wid-fin2-n", Status: "deployed"},
 			},
@@ -490,9 +506,9 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 	}
 
 	It("emits Running event on Deploying→Running transition", func() {
-		// First reconcile: Deploying.
+		// First reconcile: Deploying — driven by component Status="pending-install"
+		// which RecomputePhase rule 2 maps to PhaseDeploying.
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase:      workload.PhaseDeploying,
 			Components: []workload.ComponentRelease{{Name: "n", Status: "pending-install"}},
 		})
 
@@ -510,9 +526,9 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 			g.Expect(string(got.Status.Phase)).To(Equal(string(aifv1.WorkloadPhaseDeploying)))
 		}, timeout, interval).Should(Succeed())
 
-		// Switch fake to Running.
+		// Switch fake to Running — all components deployed, ReadyReplicas
+		// synthesised to DesiredReplicas (pre-P5-2 default), so rule 4 maps to Running.
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase:      workload.PhaseRunning,
 			Components: []workload.ComponentRelease{{Name: "n", Status: "deployed"}},
 		})
 
@@ -546,7 +562,6 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 
 	It("emits BundleTestGenerationDrift when observed != recorded", func() {
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase:                    workload.PhaseRunning,
 			ObservedBundleGeneration: 9, // recorded was 5
 			Components:               []workload.ComponentRelease{{Name: "c", Status: "deployed"}},
 		})
@@ -584,7 +599,6 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 	It("App-source workload reaches Running", func() {
 		name := "wid-e2e1-" + randomSuffix()
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: name + "-n", ChartRef: "oci://r/c:1", Status: "deployed", Revision: 1},
 			},
@@ -628,7 +642,6 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 	It("Blueprint-source workload records 3 components in source order", func() {
 		name := "wid-e2e2-" + randomSuffix()
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "llm", ReleaseName: name + "-llm", Status: "deployed"},
 				{Name: "vec", ReleaseName: name + "-vec", Status: "deployed"},
@@ -669,7 +682,6 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 	It("Drift cleanup: orphan release removed when Workload patched", func() {
 		name := "wid-e2e3-" + randomSuffix()
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: name + "-n", Status: "deployed"},
 				{Name: "old", ReleaseName: name + "-old", Status: "deployed"},
@@ -694,7 +706,6 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 
 		// Re-configure fake to return only "n" — simulates spec drift dropping "old".
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: name + "-n", Status: "deployed"},
 			},
@@ -723,7 +734,10 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 	It("Nested Blueprint surfaces UnsupportedComposition; phase Failed; stable across reconciles", func() {
 		name := "wid-e2e4-" + randomSuffix()
 		fakeDeployer.SetDeployErr(workload.ErrNestedBlueprintNotSupported)
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseFailed})
+		// Deploy errors short-circuit before ApplyDeployResult, so DeployResult
+		// is unused on the error path. Phase comes from the controller's
+		// error-classification block setting Ready=UnsupportedComposition.
+		fakeDeployer.SetDeployResult(workload.DeployResult{})
 
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
@@ -762,7 +776,7 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 	It("Source not yet present → SourceNotResolved; later available → Running", func() {
 		name := "wid-e2e5-" + randomSuffix()
 		fakeDeployer.SetDeployErr(workload.ErrSourceNotResolved)
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhasePending})
+		fakeDeployer.SetDeployResult(workload.DeployResult{})
 
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
@@ -788,10 +802,9 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 			return ""
 		}, timeout, interval).Should(Equal(conditions.ReasonSourceNotResolved))
 
-		// Source becomes available — fake transitions to Running.
+		// Source becomes available — fake transitions to Running via deployed component.
 		fakeDeployer.SetDeployErr(nil)
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "rag", ReleaseName: name + "-rag", Status: "deployed"},
 			},
@@ -819,9 +832,8 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 
 	It("preserves prior phase on un-classified errors", func() {
 		name := "wid-preserve-" + randomSuffix()
-		// First reconcile: succeed → Running
+		// First reconcile: succeed → Running (all components deployed, ready synthesised).
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseRunning,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: name + "-n", Status: "deployed"},
 			},
@@ -883,8 +895,10 @@ var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
 
 	It("orphan uninstall failure surfaces Phase=Deploying", func() {
 		name := "wid-orphan-fail-" + randomSuffix()
+		// One orphan-uninstall-failed component triggers rule 2 ("any in-progress"
+		// status) → PhaseDeploying via RecomputePhase. ErrComponentUninstallFailed
+		// is the classified sentinel that maps to ReasonOrphanCleanupPending.
 		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Phase: workload.PhaseDeploying,
 			Components: []workload.ComponentRelease{
 				{Name: "n", ReleaseName: name + "-n", Status: "deployed"},
 				{Name: "old", ReleaseName: name + "-old", Status: workload.ComponentStatusOrphanUninstallFailed},

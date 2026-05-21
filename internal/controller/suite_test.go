@@ -89,11 +89,17 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)).To(Succeed())
 
 	fakeDeployer = &workload.FakeDeployer{}
+	// P5-1: the envtest suite uses the K8s-backed repository (not the
+	// in-memory FakeRepository) because reconciles are driven by real
+	// CR Create/Update/Delete against envtest's apiserver — a fake repo
+	// would diverge from the watch source. FakeRepository is exercised
+	// in pkg-level unit tests.
 	Expect((&controller.WorkloadReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("workload-controller"),
-		Deployer: fakeDeployer,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorder("workload-controller"),
+		Deployer:   fakeDeployer,
+		Repository: workload.NewK8sRepository(mgr.GetClient()).AsRepository(),
 	}).SetupWithManager(mgr)).To(Succeed())
 
 	settingsApplier = &controller.FakeSettingsApplier{}

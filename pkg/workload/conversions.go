@@ -54,12 +54,12 @@ func sourceRefFromCR(s aifv1.WorkloadSource) SourceRef {
 	return out
 }
 
-// ApplyDeployResult writes the domain DeployResult back into the CR's
-// status fields. Does NOT touch unrelated fields (Conditions, Replicas,
-// DeploymentHistory) — the reconciler manages Conditions separately via
-// meta.SetStatusCondition. P5-2 will own Replicas/ReadyReplicas writes.
+// ApplyDeployResult writes the deployer's per-component outcome and the
+// observed Bundle generation back into the CR's status. Does NOT touch
+// Phase: the controller computes Phase via RecomputePhase after this
+// function returns. Does NOT touch Conditions/Replicas/DeploymentHistory.
+// P5-2 will own Replicas/ReadyReplicas writes.
 func ApplyDeployResult(w *aifv1.Workload, r DeployResult) {
-	w.Status.Phase = aifv1.WorkloadPhase(r.Phase)
 	w.Status.ObservedBundleGeneration = r.ObservedBundleGeneration
 
 	w.Status.ComponentReleases = nil
@@ -71,6 +71,63 @@ func ApplyDeployResult(w *aifv1.Workload, r DeployResult) {
 			Revision:    c.Revision,
 		})
 	}
+}
+
+// PhaseInputFromCR projects an *aifv1.Workload into the domain PhaseInput
+// that RecomputePhase consumes. Defaults applied:
+//   - DesiredReplicas: spec.replicas is nil → 0. The kubebuilder default of
+//     1 normally fills spec.replicas at admission; this fallback covers
+//     envtest paths where the defaulting webhook isn't installed.
+//   - ReadyReplicas: status.readyReplicas, BUT — in the pre-P5-2 "no pod
+//     informer wired" world — defaults to DesiredReplicas so rule 4
+//     ("ready >= desired") fires and produces Running for healthy deploys.
+//     P5-2 will replace this with the real informer-populated count.
+//   - FailureThreshold: nil/zero → DefaultFailureThreshold. Handles envtest
+//     paths without the defaulting webhook and older CRs that pre-date
+//     the strategy.automaticRecovery field.
+//
+// The threshold lives at a nested path
+// (spec.strategy.automaticRecovery.failureThreshold) with two nil checks;
+// keeping the projection here lets phase.go stay aifv1-free.
+func PhaseInputFromCR(w *aifv1.Workload) PhaseInput {
+	in := PhaseInput{
+		Components:           ComponentReleasesFromCR(w.Status.ComponentReleases),
+		DesiredReplicas:      0,
+		ReadyReplicas:        w.Status.ReadyReplicas,
+		RecoveryFailureCount: w.Status.RecoveryFailureCount,
+		FailureThreshold:     DefaultFailureThreshold,
+		PriorPhase:           Phase(w.Status.Phase),
+	}
+	if w.Spec.Replicas != nil {
+		in.DesiredReplicas = *w.Spec.Replicas
+	}
+	// Pre-P5-2 default: with no pod informer, status.readyReplicas is always 0,
+	// which would force rule 4 to fail for any DesiredReplicas > 0. Synthesise
+	// "ready == desired" so the success path is reachable. P5-2 replaces this
+	// when the informer starts writing real counts.
+	if in.ReadyReplicas == 0 {
+		in.ReadyReplicas = in.DesiredReplicas
+	}
+	if w.Spec.Strategy != nil && w.Spec.Strategy.AutomaticRecovery != nil {
+		// Enabled is a value type (no nil check beyond the parent pointers).
+		// Defaults to false (matches kubebuilder default) when the nested
+		// struct is absent. Keys the three branches of ARCHITECTURE.md §4.4
+		// rule 2 (recovery off → Failed immediate; recovery on →
+		// Degraded/RecoveryInProgress based on count vs threshold).
+		in.AutomaticRecoveryEnabled = w.Spec.Strategy.AutomaticRecovery.Enabled
+		if w.Spec.Strategy.AutomaticRecovery.FailureThreshold != nil &&
+			*w.Spec.Strategy.AutomaticRecovery.FailureThreshold > 0 {
+			in.FailureThreshold = *w.Spec.Strategy.AutomaticRecovery.FailureThreshold
+		}
+	}
+	return in
+}
+
+// PhaseToCR converts a domain Phase to the wire-type aifv1.WorkloadPhase.
+// Trivial cast; symbolic helper so callers don't sprinkle aifv1 casts
+// throughout the controller.
+func PhaseToCR(p Phase) aifv1.WorkloadPhase {
+	return aifv1.WorkloadPhase(p)
 }
 
 // blueprintCRName encodes (lineage, version) as the CR's metadata.name.
