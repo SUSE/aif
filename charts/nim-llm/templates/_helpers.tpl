@@ -93,8 +93,8 @@ silently dropped when a global override is set).
       {{- $seen = set $seen $entry.name "true" }}
     {{- end }}
   {{- end }}
-{{- end }}
-{{- if $secrets }}
+{{- end -}}
+{{- if $secrets -}}
 imagePullSecrets:
   {{- toYaml $secrets | nindent 2 }}
 {{- end }}

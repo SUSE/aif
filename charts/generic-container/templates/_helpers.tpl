@@ -71,7 +71,9 @@ Image reference with conditional registry prefix
 
 {{/*
 Return the proper Docker Image Registry Secret Names.
-Merges global.imagePullSecrets and per-chart imagePullSecrets.
+Merges global.imagePullSecrets and per-chart imagePullSecrets (both lists
+are concatenated so chart-level defaults like suse-registry-creds are never
+silently dropped when a global override is set).
 */}}
 {{- define "generic-container.imagePullSecrets" -}}
 {{- $secrets := list }}
@@ -91,8 +93,8 @@ Merges global.imagePullSecrets and per-chart imagePullSecrets.
       {{- $seen = set $seen $entry.name "true" }}
     {{- end }}
   {{- end }}
-{{- end }}
-{{- if $secrets }}
+{{- end -}}
+{{- if $secrets -}}
 imagePullSecrets:
   {{- toYaml $secrets | nindent 2 }}
 {{- end }}
