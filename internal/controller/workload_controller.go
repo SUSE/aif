@@ -26,10 +26,11 @@ const (
 
 // WorkloadReconciler reconciles a Workload object.
 //
-// Repository is the K8s-backed CRUD port for Workload CRs. P5-1 routes
-// finalizer I/O through it for testability; the cached client.Client is
-// kept embedded for the watch setup and convenience reads in non-test
-// contexts (suite_test.go wires a FakeRepository).
+// Repository is the K8s-backed CRUD port for Workload CRs. The reconciler
+// routes its own CR reads/writes (Get on enter, Update for finalizer
+// add/remove) through the port to keep the reconcile body framework-free.
+// The embedded client.Client is kept for the controller-runtime watch
+// setup; production and the envtest suite both wire the same K8sRepository.
 type WorkloadReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
@@ -139,7 +140,7 @@ func mapDeployError(err error) (reason string, requeueAfter time.Duration, termi
 // reconcile performs the core reconciliation logic.
 func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) error {
 	logger := log.FromContext(ctx)
-	priorPhase := w.Status.Phase
+	priorPhase := workload.Phase(w.Status.Phase)
 
 	// Validate source.
 	if err := r.validateSource(w); err != nil {
@@ -170,13 +171,13 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 
 	// Controller-owned phase computation. computePhaseWithTransitions does
 	// the increment/reset side effects on Status.RecoveryFailureCount.
-	newPhase := computePhaseWithTransitions(w, result, deployErr)
-	applyErrorPhaseOverrides(w, &newPhase, deployErr)
+	newPhase := computePhaseWithTransitions(w)
+	applyErrorPhaseOverrides(priorPhase, &newPhase, deployErr)
 	w.Status.Phase = workload.PhaseToCR(newPhase)
 
 	// Events + Ready condition. emitDeployEvents reads w.Status.Phase
 	// (post-override) so the event matches the persisted phase.
-	r.emitDeployEvents(w, priorPhase, result, deployErr)
+	r.emitDeployEvents(w, aifv1.WorkloadPhase(priorPhase), result, deployErr)
 	r.setReadyCondition(w, deployErr)
 
 	w.Status.ObservedGeneration = w.Generation
@@ -290,7 +291,7 @@ func (r *WorkloadReconciler) emitDeployEvents(
 // when we cross over (ARCHITECTURE.md §4.4 line 737).
 //
 // All counter side effects are confined here; RecomputePhase itself is pure.
-func computePhaseWithTransitions(w *aifv1.Workload, _ workload.DeployResult, _ error) workload.Phase {
+func computePhaseWithTransitions(w *aifv1.Workload) workload.Phase {
 	priorPhase := workload.Phase(w.Status.Phase)
 	priorCount := w.Status.RecoveryFailureCount
 
@@ -325,11 +326,11 @@ func computePhaseWithTransitions(w *aifv1.Workload, _ workload.DeployResult, _ e
 // unclassified errors preserve the prior phase so transient cluster I/O
 // failures don't flap the user-visible phase.
 //
-// Note (latent-bug fix from spec §3.3): the spec proposed checking
-// `*phase == ""` to restore prior phase, but RecomputePhase always returns
-// at least PhasePending — that check never fires. Preserve prior phase
-// whenever the prior is non-empty AND the error is unclassified.
-func applyErrorPhaseOverrides(w *aifv1.Workload, phase *workload.Phase, err error) {
+// Note: an earlier draft proposed checking `*phase == ""` to restore prior
+// phase, but RecomputePhase always returns at least PhasePending — that
+// check never fires. Preserve prior phase whenever the prior is non-empty
+// AND the error is unclassified.
+func applyErrorPhaseOverrides(priorPhase workload.Phase, phase *workload.Phase, err error) {
 	if err == nil {
 		return
 	}
@@ -342,8 +343,8 @@ func applyErrorPhaseOverrides(w *aifv1.Workload, phase *workload.Phase, err erro
 	// overridden — the rule-driven phase from RecomputePhase already
 	// reflects the per-component status those errors caused.
 	reason, _, _ := mapDeployError(err)
-	if reason == conditions.ReasonReconcileFailed && w.Status.Phase != "" {
-		*phase = workload.Phase(w.Status.Phase)
+	if reason == conditions.ReasonReconcileFailed && priorPhase != "" {
+		*phase = priorPhase
 	}
 }
 

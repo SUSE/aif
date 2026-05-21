@@ -39,7 +39,7 @@ func TestComputePhaseWithTransitions_IncrementOnDegradedEntry(t *testing.T) {
 			},
 		},
 	}
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseDegraded {
 		t.Errorf("phase=%q, want Degraded", got)
 	}
@@ -62,7 +62,7 @@ func TestComputePhaseWithTransitions_NoIncrementOnDegradedStay(t *testing.T) {
 			},
 		},
 	}
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseDegraded {
 		t.Errorf("phase=%q, want Degraded", got)
 	}
@@ -81,7 +81,7 @@ func TestComputePhaseWithTransitions_ResetOnRunningEntry(t *testing.T) {
 			},
 		},
 	}
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseRunning {
 		t.Errorf("phase=%q, want Running", got)
 	}
@@ -103,7 +103,7 @@ func TestComputePhaseWithTransitions_NoResetOnRunningStay(t *testing.T) {
 	// Pre-set count to a non-zero (shouldn't happen in real flow but
 	// asserts the "stay" branch doesn't wipe).
 	w.Status.RecoveryFailureCount = 5
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseRunning {
 		t.Errorf("phase=%q, want Running", got)
 	}
@@ -122,7 +122,7 @@ func TestComputePhaseWithTransitions_SpecChangeFromFailedResets(t *testing.T) {
 		{Name: "n", Status: "pending-install"},
 	}
 
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseDeploying {
 		t.Errorf("phase=%q, want Deploying (spec change clears Failed)", got)
 	}
@@ -136,17 +136,10 @@ func TestComputePhaseWithTransitions_ThresholdPromotesRecoveryInProgress(t *test
 	// reconcile's increment pushes it to threshold, and the second
 	// RecomputePhase call promotes Degraded → RecoveryInProgress (rule 2
 	// branch B, not Failed — that's the recovery-OFF path covered by the
-	// next test).
-	threshold := int32(3)
+	// next test). recoveryEnabledSpec() uses threshold=3, which matches
+	// the count→3 expectation below.
 	w := &aifv1.Workload{
-		Spec: aifv1.WorkloadSpec{
-			Strategy: &aifv1.DeploymentStrategy{
-				AutomaticRecovery: &aifv1.AutomaticRecoveryStrategy{
-					Enabled:          true,
-					FailureThreshold: &threshold,
-				},
-			},
-		},
+		Spec: recoveryEnabledSpec(),
 		Status: aifv1.WorkloadStatus{
 			Phase:                aifv1.WorkloadPhaseRunning, // entering Degraded this pass
 			RecoveryFailureCount: 2,                          // about to become 3
@@ -156,12 +149,40 @@ func TestComputePhaseWithTransitions_ThresholdPromotesRecoveryInProgress(t *test
 		},
 	}
 
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseRecoveryInProgress {
 		t.Errorf("phase=%q, want RecoveryInProgress (counter hit threshold + recovery on)", got)
 	}
 	if w.Status.RecoveryFailureCount != 3 {
 		t.Errorf("RecoveryFailureCount=%d, want 3", w.Status.RecoveryFailureCount)
+	}
+}
+
+// TestComputePhaseWithTransitions_FirstReconcileFailedComponentDegrades
+// covers the bootstrap path: a fresh CR with no prior Status.Phase set and
+// AutomaticRecovery enabled, fed a single failed component. RecomputePhase
+// produces Degraded, the increment branch fires (priorPhase=="" != Degraded),
+// and the counter lands at 1 in a single pass. Reviewer #14 flagged that
+// this first-reconcile path was previously only exercised end-to-end via
+// the envtest suite, not at the unit level.
+func TestComputePhaseWithTransitions_FirstReconcileFailedComponentDegrades(t *testing.T) {
+	w := &aifv1.Workload{
+		Spec: recoveryEnabledSpec(),
+		Status: aifv1.WorkloadStatus{
+			Phase:                "", // fresh CR — no phase yet
+			RecoveryFailureCount: 0,
+			ComponentReleases: []aifv1.ComponentReleaseStatus{
+				{Name: "n", Status: "failed"},
+			},
+		},
+	}
+
+	got := computePhaseWithTransitions(w)
+	if got != workload.PhaseDegraded {
+		t.Errorf("phase=%q, want Degraded (first reconcile + failed component + recovery on)", got)
+	}
+	if w.Status.RecoveryFailureCount != 1 {
+		t.Errorf("RecoveryFailureCount=%d, want 1 (incremented on Degraded entry from empty prior phase)", w.Status.RecoveryFailureCount)
 	}
 }
 
@@ -182,7 +203,7 @@ func TestComputePhaseWithTransitions_RecoveryDisabledFailsImmediate(t *testing.T
 		},
 	}
 
-	got := computePhaseWithTransitions(w, workload.DeployResult{}, nil)
+	got := computePhaseWithTransitions(w)
 	if got != workload.PhaseFailed {
 		t.Errorf("phase=%q, want Failed (recovery off → no Degraded intermediate)", got)
 	}
@@ -194,7 +215,7 @@ func TestComputePhaseWithTransitions_RecoveryDisabledFailsImmediate(t *testing.T
 func TestApplyErrorPhaseOverrides_NestedBlueprintForcesFailed(t *testing.T) {
 	w := &aifv1.Workload{Status: aifv1.WorkloadStatus{Phase: aifv1.WorkloadPhasePending}}
 	phase := workload.PhaseDeploying
-	applyErrorPhaseOverrides(w, &phase, workload.ErrNestedBlueprintNotSupported)
+	applyErrorPhaseOverrides(workload.Phase(w.Status.Phase), &phase, workload.ErrNestedBlueprintNotSupported)
 	if phase != workload.PhaseFailed {
 		t.Errorf("phase=%q, want Failed (nested-Blueprint is terminal)", phase)
 	}
@@ -207,7 +228,7 @@ func TestApplyErrorPhaseOverrides_UnclassifiedPreservesPriorPhase(t *testing.T) 
 	// of what RecomputePhase produced this pass.
 	w := &aifv1.Workload{Status: aifv1.WorkloadStatus{Phase: aifv1.WorkloadPhaseRunning}}
 	phase := workload.PhasePending // what RecomputePhase returned (no components yet)
-	applyErrorPhaseOverrides(w, &phase, errors.New("transient cluster bug"))
+	applyErrorPhaseOverrides(workload.Phase(w.Status.Phase), &phase, errors.New("transient cluster bug"))
 	if phase != workload.PhaseRunning {
 		t.Errorf("phase=%q, want Running (prior preserved on unclassified error)", phase)
 	}
@@ -216,8 +237,26 @@ func TestApplyErrorPhaseOverrides_UnclassifiedPreservesPriorPhase(t *testing.T) 
 func TestApplyErrorPhaseOverrides_NoErrorNoChange(t *testing.T) {
 	w := &aifv1.Workload{Status: aifv1.WorkloadStatus{Phase: aifv1.WorkloadPhaseRunning}}
 	phase := workload.PhaseDeploying
-	applyErrorPhaseOverrides(w, &phase, nil)
+	applyErrorPhaseOverrides(workload.Phase(w.Status.Phase), &phase, nil)
 	if phase != workload.PhaseDeploying {
 		t.Errorf("phase=%q, want Deploying (no override when err==nil)", phase)
+	}
+}
+
+// TestApplyErrorPhaseOverrides_PriorPhaseParamWins locks the contract that
+// applyErrorPhaseOverrides preserves the phase passed via the priorPhase
+// parameter, not whatever happens to be on w.Status.Phase at call time. The
+// reconcile body captures priorPhase BEFORE writing the new phase, so passing
+// it explicitly makes the override visibly correct rather than coincidentally
+// correct.
+func TestApplyErrorPhaseOverrides_PriorPhaseParamWins(t *testing.T) {
+	// w.Status.Phase is Running, but the caller passed Degraded as
+	// priorPhase. The override MUST use the parameter, not the struct field.
+	w := &aifv1.Workload{Status: aifv1.WorkloadStatus{Phase: aifv1.WorkloadPhaseRunning}}
+	_ = w // intentionally unused — proves the function does not read the field
+	phase := workload.PhasePending
+	applyErrorPhaseOverrides(workload.PhaseDegraded, &phase, errors.New("transient cluster bug"))
+	if phase != workload.PhaseDegraded {
+		t.Errorf("phase=%q, want Degraded (priorPhase param is the source of truth)", phase)
 	}
 }
