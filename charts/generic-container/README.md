@@ -16,7 +16,7 @@ Set `gpu.enabled=true` to request GPU resources. The chart injects `gpu.type` (d
 | `global.imagePullSecrets` | list | `[]` | Global image pull secrets |
 | `image.registry` | string | `""` | Image registry (overridden by global.imageRegistry) |
 | `image.repository` | string | `nginx` | Image repository |
-| `image.tag` | string | `latest` | Image tag (defaults to appVersion) |
+| `image.tag` | string | `""` | Image tag (defaults to Chart.AppVersion) |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `replicaCount` | integer | `1` | Number of replicas |
 | `service.port` | integer | `80` | Service port |

@@ -28,7 +28,7 @@
       "properties": {
         "registry": { "type": "string", "default": "", "description": "Image registry (overridden by global.imageRegistry)" },
         "repository": { "type": "string", "default": "nginx", "description": "Image repository" },
-        "tag": { "type": "string", "default": "latest", "description": "Image tag (defaults to appVersion)" },
+        "tag": { "type": "string", "default": "", "description": "Image tag (defaults to Chart.AppVersion)" },
         "pullPolicy": {
           "type": "string",
           "default": "IfNotPresent",

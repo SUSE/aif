@@ -34,8 +34,8 @@
         },
         "tag": {
           "type": "string",
-          "default": "latest",
-          "description": "Image tag"
+          "default": "",
+          "description": "Image tag (defaults to Chart.AppVersion)"
         },
         "pullPolicy": {
           "type": "string",

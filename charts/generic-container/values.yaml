@@ -10,7 +10,7 @@ imagePullSecrets: []
 image:
   registry: ""
   repository: nginx
-  tag: "latest"
+  tag: ""
   pullPolicy: IfNotPresent
 
 replicaCount: 1
