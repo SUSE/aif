@@ -59,7 +59,7 @@ This produces a Deployment with:
 | `persistence.mountPath` | string | `/data` | Mount path for persistent volume |
 | `podSecurityContext.runAsNonRoot` | boolean | `true` | Run as non-root |
 | `podSecurityContext.runAsUser` | integer | `1000` | Container UID |
-| `podSecurityContext.fsGroup` | integer | `1000` | Filesystem group for volume mounts |
+| `podSecurityContext.fsGroup` | integer | `1000` | Filesystem group for volume mounts (must match `runAsUser` for PVC writes) |
 | `podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
 | `containerSecurityContext.allowPrivilegeEscalation` | boolean | `false` | Disallow privilege escalation |
 | `containerSecurityContext.capabilities.drop` | list | `[ALL]` | Linux capabilities to drop |

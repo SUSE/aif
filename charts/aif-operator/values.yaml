@@ -5,6 +5,7 @@ global:
 nameOverride: ""
 fullnameOverride: ""
 
+# Image configuration — see README.md "Air-Gap Install Modes" for registry override patterns.
 image:
   registry: ghcr.io
   repository: suse/aif-operator
@@ -60,6 +61,7 @@ podAnnotations: {}
 metrics:
   enabled: true
 
+# Writable scratch paths (emptyDir mounts that mask PVC subpaths when persistence is enabled).
 extraEmptyDirs:
   - /data/charts
   - /data/git
