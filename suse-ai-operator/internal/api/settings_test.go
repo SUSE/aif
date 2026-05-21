@@ -182,3 +182,23 @@ func TestSettingsPut_EmptySpec_200(t *testing.T) {
 		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
 	}
 }
+
+func TestGetRegistryCredentials_NoSettings(t *testing.T) {
+	c := newSettingsFakeClient(t)
+	h := newSettingsHandler(c, "suse-ai-system")
+
+	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body["applicationCollection"] != nil || body["suseRegistry"] != nil {
+		t.Errorf("expected empty credentials when settings not found, got %v", body)
+	}
+}

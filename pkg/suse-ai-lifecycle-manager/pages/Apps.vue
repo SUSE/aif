@@ -128,7 +128,7 @@
             :key="app.slug_name"
             :class="['app-tile', 'clickable-tile']"
             @click="onTileClick(app)"
-            :aria-label="`View instances of ${app.name}`"
+            :aria-label="`Install ${ app.name }`"
             role="button"
             tabindex="0"
             @keydown.enter="onTileClick(app)"
@@ -206,7 +206,7 @@
               :key="app.slug_name"
               class="main-row clickable-row"
               @click="onTileClick(app)"
-              :aria-label="`View instances of ${app.name}`"
+              :aria-label="`Install ${ app.name }`"
               role="button"
               tabindex="0"
               @keydown.enter="onTileClick(app)"
@@ -269,6 +269,7 @@
 
 <script lang="ts">
 import { defineComponent, computed, getCurrentInstance, onMounted, ref, watch } from 'vue';
+import type { RouteLocationRaw } from 'vue-router';
 // Using basic HTML table instead of ResourceTable to avoid import issues
 import type { AppCollectionItem, AppRepository } from '../services/app-collection';
 import { fetchSuseAiApps, fetchClusterRepositories, fetchAllRepositoryApps, fetchAppsFromRepository, getClusterRepoNameFromUrl } from '../services/app-collection';
@@ -545,25 +546,22 @@ export default defineComponent({
     };
 
     const onTileClick = async (app: AppCollectionItem) => {
-      const route: any = {
-        name: `c-cluster-suseai-app-instances`,
+      const route: RouteLocationRaw = {
+        name:   `c-cluster-suseai-install`,
         params: {
           cluster: currentClusterId,
-          slug: app.slug_name
-        }
+          slug:    app.slug_name,
+        },
+        query: { n: app.name },
       };
 
-      // Pass repository context
-      // Priority: app's repository_url > selected repository filter
       if (app.repository_url) {
         const repoName = await getClusterRepoNameFromUrl(store, app.repository_url);
         if (repoName) {
-          route.query = { repo: repoName };
-        } else {
-          console.warn(`[SUSE-AI] Could not find cluster repository for URL: ${repoName}`);
+          route.query = { ...route.query, repo: repoName };
         }
       } else if (selectedRepo.value && selectedRepo.value !== 'all' && selectedRepo.value !== DEFAULT_REPO) {
-        route.query = { repo: selectedRepo.value };
+        route.query = { ...route.query, repo: selectedRepo.value };
       }
 
       await $router.push(route);

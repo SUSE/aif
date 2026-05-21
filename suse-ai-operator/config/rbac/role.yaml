@@ -7,11 +7,63 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - persistentvolumeclaims
+  - pods
+  - serviceaccounts
+  verbs:
+  - delete
+  - get
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - services
   verbs:
+  - delete
   - get
   - list
   - watch
+- apiGroups:
+  - ai-platform.suse.com
+  resources:
+  - aiworkloads
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ai-platform.suse.com
+  resources:
+  - aiworkloads/finalizers
+  - installaiextensions/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ai-platform.suse.com
+  resources:
+  - aiworkloads/status
+  - installaiextensions/status
+  - settings/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - ai-platform.suse.com
   resources:
@@ -26,25 +78,21 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ai-platform.suse.com
-  resources:
-  - installaiextensions/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ai-platform.suse.com
-  resources:
-  - installaiextensions/status
-  - settings/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
   - apiextensions.k8s.io
   resources:
   - customresourcedefinitions
   verbs:
+  - get
+  - list
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  - replicasets
+  - statefulsets
+  verbs:
+  - delete
   - get
   - list
 - apiGroups:
@@ -67,3 +115,41 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - fleet.cattle.io
+  resources:
+  - bundledeployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - fleet.cattle.io
+  resources:
+  - gitrepos
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fleet.cattle.io
+  resources:
+  - helmops
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - delete
+  - get
+  - list

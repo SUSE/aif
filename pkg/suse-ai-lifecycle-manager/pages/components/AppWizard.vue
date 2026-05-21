@@ -15,7 +15,6 @@ import {
   createOrUpgradeApp,
   listChartVersions,
   fetchChartDefaultValues,
-  fetchChartYaml,
   ensureRegistrySecretSimple,
   ensureServiceAccountPullSecret,
   ensurePullSecretOnAllSAs,
@@ -24,24 +23,28 @@ import {
   getInstalledHelmDetails,
   inferClusterRepoForChart,
   listClusterRepos,
-  listNamespaces
+  listNamespaces,
 } from '../../services/rancher-apps';
-import { getRepoAuthForClusterRepo } from '../../services/repo-auth';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { fetchSuseAiApps, getClusterRepoNameFromUrl } from '../../services/app-collection';
+import { createAIWorkload, getRegistryCredentials } from '../../utils/operator-api';
+import { createFleetBundle, buildBundleName }        from '../../services/fleet-bundle';
+import { publishToFleetGit }                          from '../../services/git-publish';
+import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
 
 const REPO_CLUSTER = 'local' as const;
 
 type WizardMode = 'install' | 'manage';
 
 type WizardForm = {
-  release: string;
-  namespace: string;
-  clusters: string[];
-  chartRepo: string;
-  chartName: string;
+  release:      string;
+  namespace:    string;
+  clusters:     string[];
+  chartRepo:    string;
+  chartName:    string;
   chartVersion: string;
-  values: Record<string, any>;
+  values:       Record<string, any>;
+  deployType:   'Helm' | 'FleetBundle' | 'GitOps';
 };
 
 interface Props {
@@ -78,13 +81,14 @@ const PKEY = `${props.mode}.${props.slug}`;
 const TTL = 1000 * 60 * 60;
 
 const form = ref<WizardForm>({
-  release: props.slug,
-  namespace: `${props.slug}-system`,
-  clusters: [],
-  chartRepo: '',
-  chartName: props.slug,
+  release:      props.slug,
+  namespace:    `${ props.slug }-system`,
+  clusters:     [],
+  chartRepo:    '',
+  chartName:    props.slug,
   chartVersion: '',
-  values: {}
+  values:       {},
+  deployType:   'Helm',
 });
 
 // Mode and version computed properties - must be declared before wizardSteps
@@ -198,6 +202,15 @@ watch(() => [form.value.chartRepo, form.value.chartName, form.value.chartVersion
   defaultValuesSnapshot.value = {};
 });
 
+// Helm installs require the ClusterRepo on the target cluster, which we only ensure
+// on local. Force FleetBundle for any non-local cluster selection.
+watch(() => form.value.clusters, (clusters) => {
+  const hasNonLocal = clusters.some(c => c !== REPO_CLUSTER);
+  if (hasNonLocal && form.value.deployType === 'Helm') {
+    form.value.deployType = 'FleetBundle';
+  }
+});
+
 // Basic info form computed
 const basicInfoForm = computed({
   get: () => ({
@@ -302,7 +315,6 @@ async function findRepoForApp(slug: string): Promise<string | null> {
   if (!store) return null;
 
   try {
-    // First try SUSE AI apps
     const suseAiApps = await fetchSuseAiApps(store);
     const staticApp = suseAiApps.find(app => app.slug_name === slug);
 
@@ -311,7 +323,6 @@ async function findRepoForApp(slug: string): Promise<string | null> {
       if (clusterRepoName) return clusterRepoName;
     }
 
-    // Fallback to inference
     return await inferClusterRepoForChart(store, slug);
   } catch (e) {
     console.warn('Failed to find repo for app:', e);
@@ -455,84 +466,25 @@ async function loadDefaultValues(options: { skipVersionInfoFetch?: boolean } = {
 }
 
 /**
- * Resolve pull secret names from repo credentials and subchart dependencies,
+ * Resolve pull secret names from Settings registry credentials,
  * then inject them into form.values so the user can see them in the Configuration step.
  */
 async function resolvePullSecretNames() {
-  if (!store || !form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) {
-    return;
-  }
-
-  const allPullSecrets = new Set<string>();
-
+  if (!form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) return;
   try {
-    // Resolve credentials from the selected ClusterRepo
-    const repoCtx = await getRepoAuthForClusterRepo(store, form.value.chartRepo);
-    const hasRepoCredentials = !!repoCtx.auth?.username && !!repoCtx.auth?.password;
-
-    if (hasRepoCredentials) {
-      const desiredSecretBase = repoCtx.secretName || `repo-${form.value.chartRepo}`;
-      const secretName = `suse-ai-pull-secret-${desiredSecretBase.replace(/[^a-z0-9-]/g, '-')}`;
-      allPullSecrets.add(secretName);
-    }
-
-    // Check subchart dependencies for additional pull secrets
-    const chartYaml = await fetchChartYaml(store, form.value.chartRepo, form.value.chartName, form.value.chartVersion);
-    if (chartYaml?.dependencies) {
-      let clusterRepos: any[] = [];
-      try {
-        clusterRepos = await listClusterRepos(store);
-      } catch (e: any) {
-        console.warn('[SUSE-AI] Failed to list cluster repos for dependency secrets:', e?.message || e);
-      }
-
-      const repos = clusterRepos
-        .filter((r: any) => r?.metadata?.name && (r?.spec?.url || r?.spec?.gitRepo || r?.spec?.ociRepo))
-        .map((r: any) => ({
-          name: r.metadata.name,
-          url: r.spec.url || r.spec.gitRepo || r.spec.ociRepo
-        }));
-      const processedRepos = new Set<string>();
-
-      for (const dep of chartYaml.dependencies) {
-        if (!dep.repository) continue;
-
-        const normalizeUrl = (url: string) => url?.replace(/\/+$/, '').toLowerCase();
-        const repo = repos.find((r: any) => normalizeUrl(r.url) === normalizeUrl(dep.repository));
-
-        if (!repo || processedRepos.has(repo.name)) continue;
-        processedRepos.add(repo.name);
-
-        const subRepoCtx = await getRepoAuthForClusterRepo(store, repo.name);
-        if (!subRepoCtx.auth?.username || !subRepoCtx.auth?.password) continue;
-
-        const subDesiredSecretBase = subRepoCtx.secretName || `repo-${repo.name}`;
-        const secretName = `suse-ai-pull-secret-${subDesiredSecretBase.replace(/[^a-z0-9-]/g, '-')}`;
-        allPullSecrets.add(secretName);
-      }
-    }
-
-    // Inject resolved secret names into form values
-    if (allPullSecrets.size > 0) {
-      const pullSecrets = Array.from(allPullSecrets);
-      const addSecrets = (arr: any): any[] => {
-        const list = Array.isArray(arr) ? arr.slice() : [];
-        for (const secretName of pullSecrets) {
-          const hasStr = list.some((e: any) => e === secretName);
-          const hasObj = list.some((e: any) => e && typeof e === 'object' && e.name === secretName);
-          if (!hasStr && !hasObj) {
-            list.push({ name: secretName });
-          }
-        }
-        return list;
-      };
-
+    const creds = await getRegistryCredentials(5000);
+    const secrets = [creds.applicationCollection, creds.suseRegistry]
+      .filter(Boolean)
+      .map(cred => ({
+        name: `suse-ai-pull-secret-${ cred!.registryHost.replace(/[^a-z0-9]/g, '-') }`,
+      }));
+    if (secrets.length > 0) {
       form.value.values.global = form.value.values.global || {};
-      form.value.values.global.imagePullSecrets = addSecrets(form.value.values.global?.imagePullSecrets);
-      form.value.values.imagePullSecrets = addSecrets(form.value.values.imagePullSecrets);
+      form.value.values.global.imagePullSecrets = secrets;
+      form.value.values.imagePullSecrets = secrets;
     }
   } catch (e: any) {
-    console.warn('[SUSE-AI] Failed to resolve pull secret names (will retry at install time):', e?.message || e);
+    console.warn('[SUSE-AI] Failed to resolve pull secret names:', e?.message || e);
   }
 }
 
@@ -623,16 +575,9 @@ async function onWizardFinish() {
 
 function onWizardCancel() {
   persistClear(PKEY);
-  // Redirect to AppInstances page instead of Apps page
   router?.push({
-    name: `c-cluster-suseai-app-instances`,
-    params: {
-      cluster: route?.params?.cluster,
-      slug: props.slug
-    },
-    query: {
-      repo: route.query.repo
-    }
+    name:   `c-cluster-suseai-apps`,
+    params: { cluster: route?.params?.cluster },
   });
 }
 
@@ -642,14 +587,14 @@ async function submit() {
     error.value = null;
 
     if (!form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) {
-      error.value = 'Please set repository, chart and version.'; return;
+      error.value = 'Please set repository, chart and version.'; submitting.value = false; return;
     }
 
     if (form.value.clusters.length === 0) {
-      error.value = 'Please select at least one cluster.'; return;
+      error.value = 'Please select at least one cluster.'; submitting.value = false; return;
     }
 
-    if (!store) { error.value = 'Store not available'; return; }
+    if (!store) { error.value = 'Store not available'; submitting.value = false; return; }
 
     const actionLabel = isInstallMode.value ? 'INSTALL' : 'UPGRADE';
     const targetClusters = form.value.clusters;
@@ -661,7 +606,13 @@ async function submit() {
     });
 
     if (isInstallMode.value) {
-      await performMultiClusterInstall();
+      if (form.value.deployType === 'Helm') {
+        await performMultiClusterInstall();
+      } else if (form.value.deployType === 'FleetBundle') {
+        await performFleetBundleInstall();
+      } else {
+        await performGitOpsInstall();
+      }
     } else {
       await performUpgrade();
     }
@@ -671,17 +622,11 @@ async function submit() {
   }
 }
 
-function navigateToAppInstances() {
+function navigateToApps() {
   persistClear(PKEY);
   router?.push({
-    name: `c-cluster-suseai-app-instances`,
-    params: {
-      cluster: route?.params?.cluster,
-      slug: props.slug
-    },
-    query: {
-      repo: route.query.repo
-    }
+    name:   `c-cluster-suseai-apps`,
+    params: { cluster: route?.params?.cluster },
   });
 }
 
@@ -728,7 +673,171 @@ async function performMultiClusterInstall() {
     console.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
   }
 
+  await recordAIWorkload('', 'Helm');
   submitting.value = false;
+}
+
+async function performFleetBundleInstall() {
+  const bundleName = buildBundleName(form.value.release, form.value.namespace);
+
+  installProgress.value = form.value.clusters.map(clusterId => ({
+    clusterId,
+    clusterName: clusterId,
+    status:      'installing' as const,
+    progress:    10,
+    message:     'Creating imagePullSecrets on target clusters...',
+  }));
+  showProgressModal.value = true;
+
+  try {
+    const repos = await listClusterRepos(store);
+    const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+    const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+
+    updateAllProgress(50, 'Creating Fleet Bundle...');
+    await createFleetBundle(store, {
+      bundleName,
+      chartRepo:        form.value.chartRepo,
+      chartRepoUrl,
+      chartName:        form.value.chartName,
+      chartVersion:     form.value.chartVersion,
+      values:           form.value.values,
+      targetNamespace:  form.value.namespace,
+      targetClusterIds: form.value.clusters,
+    });
+
+    updateAllProgress(100, 'Fleet Bundle created — Fleet will deploy to selected clusters');
+    installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
+
+    await recordAIWorkload(bundleName, 'FleetBundle', { phase: 'Pending', clusterStatuses: [] });
+  } catch (e: any) {
+    installProgress.value = installProgress.value.map(p => ({
+      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+    }));
+    throw e;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function performGitOpsInstall() {
+  const bundleName = buildBundleName(form.value.release, form.value.namespace);
+
+  installProgress.value = form.value.clusters.map(clusterId => ({
+    clusterId,
+    clusterName: clusterId,
+    status:      'installing' as const,
+    progress:    10,
+    message:     'Creating imagePullSecrets on target clusters...',
+  }));
+  showProgressModal.value = true;
+
+  try {
+    const creds = await getRegistryCredentials(5000);
+    const pullSecretNames: string[] = [];
+    for (const clusterId of form.value.clusters) {
+      for (const cred of [creds.applicationCollection, creds.suseRegistry]) {
+        if (!cred) continue;
+        try {
+          const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
+          const name = await ensureRegistrySecretSimple(
+            store, clusterId, form.value.namespace,
+            cred.registryHost, hostSlug, cred.username, cred.password,
+          );
+          if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
+        } catch (e) {
+          console.warn('[SUSE-AI] pull-secret skipped for GitOps:', e);
+        }
+      }
+    }
+
+    updateAllProgress(60, 'Publishing Fleet Bundle YAML to git...');
+
+    const repos = await listClusterRepos(store);
+    const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+    const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+
+    await publishToFleetGit({
+      bundleName,
+      chartName:        form.value.chartName,
+      chartVersion:     form.value.chartVersion,
+      chartRepoUrl,
+      values:           form.value.values,
+      pullSecretNames,
+      targetClusterIds: form.value.clusters,
+      targetNamespace:  form.value.namespace,
+    });
+
+    updateAllProgress(100, 'Fleet Bundle YAML committed — Fleet will deploy to selected clusters');
+    installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
+
+    await recordAIWorkload(bundleName, 'GitOps', { phase: 'Pending', clusterStatuses: [] });
+  } catch (e: any) {
+    installProgress.value = installProgress.value.map(p => ({
+      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+    }));
+    throw e;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function updateAllProgress(progress: number, message: string) {
+  installProgress.value = installProgress.value.map(p => ({ ...p, progress, message }));
+}
+
+async function recordAIWorkload(
+  fleetBundleName: string,
+  strategy: 'Helm' | 'FleetBundle' | 'GitOps',
+  initialStatus?: { phase: AIWorkloadPhase; clusterStatuses: AIWorkloadClusterStatus[] },
+) {
+  try {
+    let phase: AIWorkloadPhase;
+    let clusterStatuses: AIWorkloadClusterStatus[];
+
+    if (initialStatus) {
+      phase = initialStatus.phase;
+      clusterStatuses = initialStatus.clusterStatuses;
+    } else {
+      clusterStatuses = installProgress.value.map(p => ({
+        clusterId: p.clusterId,
+        phase:     p.status === 'success' ? 'Running' : 'Failed',
+        message:   p.error || p.message || '',
+      }));
+
+      const allRunning = clusterStatuses.every(s => s.phase === 'Running');
+      const allFailed  = clusterStatuses.every(s => s.phase === 'Failed');
+      phase = allRunning ? 'Running' : allFailed ? 'Failed' : 'Degraded';
+    }
+
+    await createAIWorkload(
+      form.value.namespace,
+      `${ form.value.release }-${ Date.now() }`.slice(0, 63),
+      {
+        displayName:     (route.query.n as string) || props.slug,
+        source: {
+          sourceType: 'App',
+          app: {
+            chartRepo:    form.value.chartRepo,
+            chartName:    form.value.chartName,
+            chartVersion: form.value.chartVersion,
+            release:      form.value.release,
+          },
+        },
+        targetNamespace:  form.value.namespace,
+        targetClusters:   form.value.clusters,
+        deployStrategy:   strategy,
+        componentValues:  [{
+          componentName: form.value.chartName,
+          values:        form.value.values,
+        }],
+        fleetBundleName: strategy !== 'Helm' ? fleetBundleName : undefined,
+      },
+      { phase, clusterStatuses },
+    );
+  } catch (e) {
+    console.warn('[SUSE-AI] Failed to create AIWorkload CR (non-fatal):', e);
+  }
 }
 
 // Install to multiple clusters with concurrency limit
@@ -794,7 +903,7 @@ function updateClusterProgress(clusterId: string, updates: Partial<ClusterInstal
 // Progress modal event handlers
 function onProgressModalDone() {
   showProgressModal.value = false;
-  navigateToAppInstances();
+  navigateToApps();
 }
 
 function onProgressModalCancel() {
@@ -855,7 +964,7 @@ async function onProgressModalRetryFailed() {
 
 function onProgressModalContinueAnyway() {
   showProgressModal.value = false;
-  navigateToAppInstances();
+  navigateToApps();
 }
 
 // Install to a single cluster with progress callback
@@ -867,92 +976,44 @@ async function installToCluster(
 
   onProgress(15, 'Preparing namespace...');
 
-  // Resolve creds from SELECTED ClusterRepo
-  const repoCtx = await getRepoAuthForClusterRepo(store, form.value.chartRepo);
-  const desiredSecretBase = repoCtx.secretName || `repo-${form.value.chartRepo}`;
-  const hasRepoCredentials = !!repoCtx.auth?.username && !!repoCtx.auth?.password;
-
   await ensureNamespace(store, clusterId, form.value.namespace);
 
   onProgress(25, 'Setting up registry credentials...');
 
-  if (hasRepoCredentials) {
+  let creds: { applicationCollection?: any; suseRegistry?: any } = {};
+  try {
+    creds = await getRegistryCredentials(5000);
+  } catch (e: any) {
+    console.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', e?.message || e);
+  }
+
+  for (const cred of [creds.applicationCollection, creds.suseRegistry]) {
+    if (!cred) continue;
     try {
-      const finalSecretName = await ensureRegistrySecretSimple(
+      const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
+      const secretName = await ensureRegistrySecretSimple(
         store, clusterId, form.value.namespace,
-        repoCtx.registryHost, desiredSecretBase,
-        repoCtx.auth!.username, repoCtx.auth!.password
+        cred.registryHost,
+        hostSlug,
+        cred.username,
+        cred.password,
       );
-      if (finalSecretName) {
-        allPullSecrets.add(finalSecretName);
-      }
+      if (secretName) allPullSecrets.add(secretName);
     } catch (e: any) {
       console.error('[SUSE-AI] pull-secret creation skipped:', e?.message || e);
     }
   }
 
-  onProgress(35, 'Processing chart dependencies...');
-
-  // Handle subchart dependencies
-  const chartYaml = await fetchChartYaml(store, form.value.chartRepo, form.value.chartName, form.value.chartVersion);
-  if (chartYaml?.dependencies) {
-    // Fetch cluster repos 
-    let clusterRepos: any[] = [];
-    try {
-      clusterRepos = await listClusterRepos(store);
-    } catch (e: any) {
-      console.warn('[SUSE-AI] Failed to list cluster repos for dependency secrets (continuing without):', e?.message || e);
-    }
-
-    // Include spec.url, spec.gitRepo, and spec.ociRepo for matching
-    // Git-backed and OCI repos use different spec fields
-    const repos = clusterRepos
-      .filter((r: any) => r?.metadata?.name && (r?.spec?.url || r?.spec?.gitRepo || r?.spec?.ociRepo))
-      .map((r: any) => ({
-        name: r.metadata.name,
-        url: r.spec.url || r.spec.gitRepo || r.spec.ociRepo
-      }));
-    const processedRepos = new Set<string>();
-
-    for (const dep of chartYaml.dependencies) {
-      if (!dep.repository) continue;
-
-      const normalizeUrl = (url: string) => url?.replace(/\/+$/, '').toLowerCase();
-      const repo = repos.find((r: any) => normalizeUrl(r.url) === normalizeUrl(dep.repository));
-
-      if (!repo) {
-        console.warn(`[SUSE-AI] Subchart ${dep.name} repository ${dep.repository} not found in configured ClusterRepos`);
-        continue;
-      }
-
-      if (processedRepos.has(repo.name)) continue;
-      processedRepos.add(repo.name);
-
-      const subRepoCtx = await getRepoAuthForClusterRepo(store, repo.name);
-      if (!subRepoCtx.auth?.username || !subRepoCtx.auth?.password) continue;
-
-      try {
-        const subDesiredSecretBase = subRepoCtx.secretName || `repo-${repo.name}`;
-        const finalSecretName = await ensureRegistrySecretSimple(
-          store, clusterId, form.value.namespace,
-          subRepoCtx.registryHost, subDesiredSecretBase,
-          subRepoCtx.auth.username, subRepoCtx.auth.password
-        );
-        if (finalSecretName) {
-          allPullSecrets.add(finalSecretName);
-        }
-      } catch (e: any) {
-        console.warn(`[SUSE-AI] Pull secret creation skipped for subchart ${dep.name}:`, e?.message || e);
-      }
-    }
-  }
-
   onProgress(45, 'Configuring image pull secrets...');
 
-  // Pull secret names are already in form.value.values (populated by resolvePullSecretNames).
-  // Here we only need to attach them to service accounts.
   const v = JSON.parse(JSON.stringify(form.value.values || {}));
   const pullSecrets = Array.from(allPullSecrets);
+
+  if (pullSecrets.length > 0) {
+    const secrets = pullSecrets.map(name => ({ name }));
+    v.global = { ...(v.global || {}), imagePullSecrets: secrets };
+    v.imagePullSecrets = secrets;
+  }
 
   if (pullSecrets.length > 0) {
     const saCandidates = new Set<string>(['default']);
@@ -1180,6 +1241,7 @@ function previousStep() {
             v-else-if="currentStep === 1"
             :mode="props.mode"
             v-model:clusters="form.clusters"
+            v-model:deployType="form.deployType"
             :app-slug="props.slug"
             :app-name="(route.query.n as string) || props.slug"
           />

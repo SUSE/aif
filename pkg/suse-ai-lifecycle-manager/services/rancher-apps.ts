@@ -766,6 +766,115 @@ export async function inferClusterRepoForChart(
 }
 
 
+function clusterRepoNameFromUrl(ociUrl: string): string {
+  const KNOWN: Record<string, string> = {
+    'oci://dp.apps.rancher.io/charts':   'application-collection',
+    'oci://registry.suse.com/ai/charts': 'suse-ai-registry',
+  };
+  return KNOWN[ociUrl] ?? ociUrl
+    .replace(/^oci:\/\//, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .toLowerCase()
+    .replace(/^-|-$/g, '');
+}
+
+async function upsertBasicAuthSecret(
+  $store: RancherStore,
+  namespace: string,
+  name: string,
+  username: string,
+  password: string,
+): Promise<void> {
+  const secretBody = {
+    apiVersion: 'v1',
+    kind:       'Secret',
+    metadata:   { name, namespace },
+    type:       'kubernetes.io/basic-auth',
+    stringData: { username, password },
+  };
+  try {
+    const res = await $store.dispatch('rancher/request', {
+      url:     `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
+      timeout: 10000,
+    });
+    const existing = res?.data || res;
+    await $store.dispatch('rancher/request', {
+      url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
+      method: 'PUT',
+      data:   { ...secretBody, metadata: { ...secretBody.metadata, resourceVersion: existing?.metadata?.resourceVersion } },
+      timeout: 20000,
+    });
+  } catch {
+    await $store.dispatch('rancher/request', {
+      url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets`,
+      method: 'POST',
+      data:   secretBody,
+      timeout: 20000,
+    });
+  }
+}
+
+export async function ensureClusterRepo(
+  $store: RancherStore,
+  ociUrl: string,
+  credentials?: { username: string; password: string },
+): Promise<string> {
+  const repos = await listClusterRepos($store);
+  const existing = repos.find((r: any) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
+  const name = existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
+
+  let clientSecret: { name: string; namespace: string } | undefined;
+  if (credentials) {
+    const secretName = `${name}-auth`;
+    await upsertBasicAuthSecret($store, 'cattle-system', secretName, credentials.username, credentials.password);
+    clientSecret = { name: secretName, namespace: 'cattle-system' };
+  }
+
+  if (existing) {
+    // If we now have credentials and the repo didn't before, patch it
+    if (clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name) {
+      const res = await $store.dispatch('rancher/request', {
+        url:     `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
+        timeout: 10000,
+      });
+      const full = res?.data || res;
+      await $store.dispatch('rancher/request', {
+        url:    `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
+        method: 'PUT',
+        data:   { ...full, spec: { ...full.spec, clientSecret } },
+        timeout: 20000,
+      });
+    }
+    return name;
+  }
+
+  // Create the ClusterRepo
+  const spec: any = { url: ociUrl };
+  if (clientSecret) spec.clientSecret = clientSecret;
+  await $store.dispatch('rancher/request', {
+    url:    '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos',
+    method: 'POST',
+    data:   { apiVersion: 'catalog.cattle.io/v1', kind: 'ClusterRepo', metadata: { name }, spec },
+    timeout: 20000,
+  });
+
+  // Poll until indexed (up to 60 s)
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const fresh = await listClusterRepos($store);
+      const created = fresh.find((r: any) => r?.metadata?.name === name);
+      if (!created) continue;
+      const ready = (created?.status?.conditions || []).some((c: any) =>
+        ['OCIDownloaded', 'Downloaded', 'FollowerDownloaded'].includes(c.type) && c.status === 'True'
+      );
+      if (ready) return name;
+    } catch { /* retry */ }
+  }
+  return name;
+}
+
+
 async function findHelmReleaseObjects(
   $store: RancherStore,
   clusterId: string,

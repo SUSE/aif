@@ -8,6 +8,7 @@ import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { OPERATOR_NAMESPACE } from '../utils/constants';
+import { ensureClusterRepo } from '../services/rancher-apps';
 
 function createEmptySpec() {
   return {
@@ -221,6 +222,61 @@ export default {
       this.spec.imageRewrite.rules.splice(index, 1);
     },
 
+    async readSecretData(name) {
+      if (!name) return {};
+      try {
+        const res = await this.$store.dispatch('rancher/request', {
+          url:     `/k8s/clusters/local/api/v1/namespaces/${OPERATOR_NAMESPACE}/secrets/${name}`,
+          timeout: 10000,
+        });
+        // rancher/request returns the raw K8s object: res.data is the base64 data map.
+        // If ever wrapped (Axios-style), res.data is the K8s Secret and res.data.data is the map.
+        const secretObj = res?.kind === 'Secret' ? res : (res?.data?.kind === 'Secret' ? res.data : res);
+        const dataMap = secretObj?.data || {};
+        return Object.fromEntries(
+          Object.entries(dataMap).map(([k, v]) => [k, atob(String(v))])
+        );
+      } catch { return {}; }
+    },
+
+    async ensureClusterReposWithCredentials() {
+      const store = this.$store;
+      const ac = this.spec.applicationCollection;
+      const sr = this.spec.suseRegistry;
+
+      // Read all unique secrets referenced in settings (deduped)
+      const secretNames = [...new Set([
+        ac.userSecretRef?.name,
+        ac.tokenSecretRef?.name,
+        sr.userSecretRef?.name,
+        sr.tokenSecretRef?.name,
+      ].filter(Boolean))];
+
+      const secretCache = {};
+      await Promise.all(secretNames.map(async (name) => {
+        secretCache[name] = await this.readSecretData(name);
+      }));
+
+      const getVal = (ref) => ref?.name && ref?.key ? secretCache[ref.name]?.[ref.key] : null;
+
+      // Extract credentials for a registry: prefer explicit refs, fall back to common key names
+      const buildCreds = (userRef, tokenRef) => {
+        const user  = getVal(userRef);
+        const token = getVal(tokenRef);
+        const data  = secretCache[tokenRef?.name] || secretCache[userRef?.name] || {};
+        const username = user  || data.username || data.user  || data.login || data.email || null;
+        const password = token || data.password || data.token || null;
+        return username && password ? { username, password } : null;
+      };
+
+      const tasks = [];
+      const acCreds = buildCreds(ac.userSecretRef, ac.tokenSecretRef);
+      const srCreds = buildCreds(sr.userSecretRef, sr.tokenSecretRef);
+      if (acCreds) tasks.push(ensureClusterRepo(store, 'oci://dp.apps.rancher.io/charts',   acCreds));
+      if (srCreds) tasks.push(ensureClusterRepo(store, 'oci://registry.suse.com/ai/charts', srCreds));
+      await Promise.all(tasks);
+    },
+
     async save(buttonDone) {
       try {
         this.errors = [];
@@ -228,6 +284,11 @@ export default {
 
         this.spec = this.buildSpec(data.spec);
         buttonDone(true);
+
+        // Fire-and-forget: ensure ClusterRepos exist on the local cluster with
+        // credentials so the install wizard can list chart versions.
+        this.ensureClusterReposWithCredentials()
+          .catch(e => console.warn('[SUSE-AI] ClusterRepo setup (non-fatal):', e));
       } catch (e) {
         this.errors = [e?.message || String(e)];
         buttonDone(false);

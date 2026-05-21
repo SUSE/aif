@@ -28,10 +28,13 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -41,6 +44,7 @@ import (
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
 	"github.com/SUSE/suse-ai-operator/internal/api"
 	"github.com/SUSE/suse-ai-operator/internal/config"
+	aiworkloadctrl "github.com/SUSE/suse-ai-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/suse-ai-operator/internal/controller/installaiextension"
 	settingsctrl "github.com/SUSE/suse-ai-operator/internal/controller/settings"
 	// +kubebuilder:scaffold:imports
@@ -162,6 +166,8 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	operatorNamespace := config.GetOperatorNamespace()
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -169,6 +175,14 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "77d8cb24.suse.com",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				// Watch secrets across all namespaces: settings controller needs
+				// operatorNamespace secrets; aiworkload controller needs Helm
+				// release secrets (owner=helm) from any target namespace.
+				&corev1.Secret{}: {},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -203,6 +217,15 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Settings")
 		os.Exit(1)
 	}
+	if err := (&aiworkloadctrl.AIWorkloadReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		RestConfig:        mgr.GetConfig(),
+		OperatorNamespace: operatorNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -215,9 +238,9 @@ func main() {
 	}
 
 	// Start the operator HTTP API server.
-	operatorNamespace := config.GetOperatorNamespace()
 	mux := http.NewServeMux()
 	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(mux)
+	api.NewAIWorkloadHandler(mgr.GetClient()).Register(mux)
 	srv := &http.Server{Addr: apiBindAddr, Handler: api.Chain(mux)}
 
 	ctx := ctrl.SetupSignalHandler()

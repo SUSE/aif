@@ -24,24 +24,15 @@
     </div>
 
     <div class="row mt-20">
-      <div class="col span-4">
-        <LabeledInput
-          v-model:value="chartRepo"
-          :label="t('suseai.wizard.form.repository', 'Repository (ClusterRepo)')"
-          :placeholder="t('suseai.wizard.form.repositoryPlaceholder', 'e.g. application-collection')"
-          required
-        />
-      </div>
-      <div class="col span-4">
+      <div class="col span-6">
         <LabeledInput
           v-model:value="chartName"
           :label="t('suseai.wizard.form.chartName', 'Chart name')"
           :placeholder="t('suseai.wizard.form.chartNamePlaceholder', 'e.g. ollama')"
-          required
           :disabled="true"
         />
       </div>
-      <div class="col span-4">
+      <div class="col span-6">
         <LabeledSelect
           v-model:value="chartVersion"
           :label="t('suseai.wizard.form.version', 'Version')"
@@ -97,11 +88,6 @@ const namespace = computed({
     const namespaceName = typeof value === 'object' ? value.label : value;
     emit('update:form', { ...props.form, namespace: namespaceName });
   }
-});
-
-const chartRepo = computed({
-  get: () => props.form.chartRepo,
-  set: (value: string) => emit('update:form', { ...props.form, chartRepo: value })
 });
 
 const chartName = computed({
