@@ -51,6 +51,10 @@ type upgradeResponse struct {
 }
 
 func (h *WorkloadsHandler) upgrade(w http.ResponseWriter, r *http.Request) {
+	// Path values pass through verbatim to the upgrader; malformed
+	// namespace/name strings surface as apierrors at the K8s boundary
+	// (ErrInternal/500 via mapUpgradeErr's default arm). Mirrors the
+	// publish handler's behavior.
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")
 
