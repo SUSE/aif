@@ -1859,6 +1859,8 @@ defaultNamespace: aif-workloads
 
 **Branch policy:** the operator commits only to `Settings.fleet.branch` (default `main`). It does not create branches or open PRs.
 
+**GitOps write-back loop guard** (P4-3 contract): when the controller mirrors Fleet-managed values (e.g., reconciled chart version, namespace, or merged values) back into the `Workload` CR spec — necessary when a user edits values via Fleet's git source rather than via AIF's REST API — naive code creates an infinite reconcile loop (CR write → reconcile fires → controller re-reads same Fleet state → CR write again …). The contract: before any mirror-back spec write, the controller computes a sha256 over the exact fields it is about to mirror, compares against the value stored at `metadata.annotations["ai.suse.com/git-sync-hash"]`, and skips the write if they match. On every successful mirror-back write, the annotation is updated to the new hash atomically with the spec patch. The hash helper lives in `pkg/workload/gitsync.go` as a pure function (no `aifv1` import — takes the mirrored field projection, returns a hex string). This pattern is borrowed from SUSE AI Lifecycle Manager's `gitops.go:71-122`, which discovered the loop in production.
+
 ---
 
 ## 7. UI Extension Architecture

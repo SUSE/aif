@@ -1680,6 +1680,12 @@ go test -race ./pkg/helm/ -v
 - [ ] Unit test: GitRepo CRs created with correct fields per cluster; idempotent on re-run; multi-cluster workload creates N GitRepo CRs
 - [ ] Integration test: GitRepo CRs created in envtest cluster; verify one CR per target cluster; `spec.targets` has single entry per CR
 
+> **Follow-up (pre-implementation, sourced from SUSE AI Lifecycle Manager):**
+>
+> 1. **`pkg/git/` engine implementation candidate.** `pkg/git/git.go` is a 19-line `FleetEngine` stub today. A working go-git-in-memory implementation exists in `SUSE/suse-ai-lifecycle-manager` at `suse-ai-operator/internal/git/client.go` (~134 lines: clone-in-memory via `go-git/v5` + `memfs`, `WriteFile` / `DeleteFile` returning commit SHA) with a `client_test.go` that uses `gogit.PlainInit` of a bare local repo — no live remote needed in CI. **Adaptation required for AIF:** (a) drop the direct Settings-CR read; the engine receives credentials via `EngineSettings.UpdateSettings` per §8.2.1 (CLAUDE.md "pkg/{git,helm,...} MUST NOT import api/v1alpha1"); (b) rename `Manager` → `Engine` (CLAUDE.md "no new top-level `Manager` types"); (c) add `errors.go` with sentinels (`ErrUnreachable`, `ErrAuthFailed`); (d) ship the `example_test.go` + `live_test.go` (build tag `live`) + Makefile `verify-git-mock` / `verify-git-live` trio per CLAUDE.md "How to Add a New External Integration".
+>
+> 2. **GitOps write-back loop guard.** When the controller mirrors Fleet-managed values (e.g., chart version, namespace, merged values) back into the Workload CR spec, naive code creates an infinite reconcile loop (CR write → reconcile → re-mirror → CR write …). The lifecycle-manager solved this with a sha256 hash of the mirrored fields stored as an annotation (`last-git-sync` / `ai.suse.com/git-sync-hash`); next reconcile skips the write-back if the recomputed hash matches (reference: lifecycle-manager `gitops.go:71-122`). Add an AC: "Mirror-back path computes a sha256 over the mirrored fields and stores it as annotation `ai.suse.com/git-sync-hash` on the Workload CR; subsequent reconciles skip the spec write when the recomputed hash matches the annotation. Helper lives in `pkg/workload/gitsync.go` (pure function, aifv1-free)." See `ARCHITECTURE.md §6.7` for the matching architectural note.
+
 ---
 
 **ID:** P4-3b
@@ -1721,6 +1727,17 @@ go test -race ./pkg/helm/ -v
 - [ ] envtest: Bundle CR created with correct chart reference, targets, values, and pull-secret resource; owner reference set; Bundle deletion triggered by Workload deletion; multi-cluster workload has `len(spec.targets) == len(targetClusters)`
 
 > **Note:** This story replaces the direct Helm install path in P4-2 for the `helm` deployStrategy. P4-2's `pkg/workload/deployer.go` should be updated to delegate to `FleetBundleEngine` instead of calling `pkg/helm.Engine` directly for cross-cluster workloads.
+
+> **Follow-up (pre-implementation, sourced from SUSE AI Lifecycle Manager):**
+>
+> 1. **Fleet `Modified` is NOT a failure — phase mapping must allow it.** When Fleet manages a Helm chart that creates a `Job`, the cluster's garbage collector eventually removes the completed Job and Fleet then reports its `BundleDeployment.status` as `Modified` (drift detected). Treating that as Failed (or even Degraded) would flap healthy workloads. The correct mapping, validated in production by lifecycle-manager (`aiworkload_controller.go:248-258`), is:
+>    - `Ready` → Running
+>    - `Modified` → Running  *(critical: drift from GC'd Jobs is not failure)*
+>    - `ErrApplied` → Failed
+>    - any connection/auth error from the BundleDeployment status → Failed
+>    - everything else (pending, waiting, rolling out) → Deploying
+>
+>    Add an AC: "Phase aggregation honors the Fleet state→phase table above; a pure helper `MapFleetStateToPhase(string) workload.ClusterPhase` lives in `pkg/workload/fleet_phase.go` (aifv1-free) and is unit-tested per row."
 
 ---
 
@@ -2289,6 +2306,12 @@ kubectl get settings -n aif -o yaml | grep -A20 'spec:'
 >    goroutine into each engine's `UpdateSettings` if the engine wants
 >    self-refresh) or document that lazy refresh via existing tickers
 >    satisfies the contract. Manager's call.
+>
+> 7. **Fleet `credSecretRef` mirroring — pre-implementation guidance from SUSE AI Lifecycle Manager.** The current SettingsReconciler validates `Settings.spec.fleet.credSecretRef` but does NOT mirror the referenced secret into Fleet's namespace (deferred — see comment near `settings_controller.go` Fleet validation). When Fleet wiring lands (alongside P4-3 / P4-3b), two non-obvious constraints from `suse-ai-lifecycle-manager/.../settings_controller.go:175-229` must be honored:
+>    - **Fleet detects auth type from secret keys, not from a declared field.** A raw `Opaque` secret with a single `token` key is misidentified as GitHub-App auth. For token/basic auth, the mirrored secret MUST be of type `kubernetes.io/basic-auth` with both `username` and `password` keys. For SSH, it MUST be of type `kubernetes.io/ssh-auth` with an `ssh-privatekey` key.
+>    - **Secret `type` is immutable in the Kubernetes API.** When the source secret type changes (or when a stale-typed mirror exists from an older revision), the mirror cannot be patched in place — it must be deleted and recreated. The reconciler must detect type mismatch and perform delete+recreate, NOT `Update`/`Patch`, which will fail with `Invalid: type is immutable`.
+>
+>    These become AC bullets on the future Fleet-mirror story, not on P5-7 itself.
 
 ---
 
@@ -2566,6 +2589,8 @@ yarn serve-pkgs
 - [ ] **Vendor-chart-unavailable indicator**: when a Workload's `Source` references a vendor chart that is no longer present in the configured registry (detected via the wrapping Blueprint's status — see `ARCHITECTURE.md §4.3` Withdrawn auto-flip), render a small warning chip on the Workload row: "vendor chart unavailable — Upgrade to a newer Blueprint version".
 - [ ] Pipeline visualization (`components/PipelineViz.vue`) per spec
 - [ ] Vitest covers the Upgrade flow and the vendor-chart-unavailable indicator
+- [ ] **Helm-state normalization for UI display** (lessons from `SUSE/suse-ai-lifecycle-manager/.../services/app-lifecycle-service.ts:329-425`): the Workload row MUST NOT surface raw Helm release strings. Apply the following mapping in `formatters/WorkloadPhaseState.vue` (or a shared helper in `utils/workload-status.ts`): `pending-install` → `Installing`; `pending-upgrade` → `Upgrading`; `pending-rollback` → `Rolling back`; `superseded` → `Stale (superseded)`; `uninstalling` → `Uninstalling`; `failed` → `Failed`; `deployed` → drive from server-computed `status.phase` (do NOT override). Vitest covers each mapping row.
+- [ ] **Stale-status-on-retry guard:** when the user re-triggers an Upgrade or AutomaticRecovery from this page, the row MUST treat the prior status as not-yet-observed until `status.observedGeneration > priorObservedGeneration` AND `status.phase` has progressed past `Pending`. Without this guard the row flashes the old success state before the new reconcile lands. This is a UI-side guard; the server-side detection in `pkg/workload/phase.go` handles the eventual transition. Vitest covers the retry case (mocked Workload with `observedGeneration` unchanged from prior render).
 
 ---
 
@@ -2605,6 +2630,17 @@ yarn serve-pkgs
 - [ ] Step 3 adapts per `SOFTWARE_SPEC.md §10` (NIM-specific panel for NIM apps)
 - [ ] On submit: calls the right endpoint (`POST /api/v1/blueprints/.../deploy`, or `/bundles/.../test-deploy`)
 - [ ] Vitest covers each entry mode
+- [ ] **Post-submit deploy progress modal** (`components/DeployProgressModal.vue`): on successful submit, the wizard hands off to a modal that displays live per-cluster deploy progress driven by `Workload.status.clusterStatuses[]` (or the equivalent aggregate status if AIF doesn't model per-cluster status yet — in which case the modal renders a single aggregate row).
+  - Per-cluster row: cluster name, status icon, mini progress bar, current message.
+  - Row data shape: `{clusterId, clusterName, status: 'pending'|'installing'|'success'|'failed', progress, message, error?}`.
+  - Four terminal-state button shapes (per `SUSE/suse-ai-lifecycle-manager/.../pages/components/wizard/InstallProgressModal.vue`):
+    - All succeeded → "Done" (primary)
+    - All failed → "Cancel" + "Retry All"
+    - Partial success → "Retry Failed" + "Continue Anyway"
+    - Still in progress → disabled spinner
+  - Polling cadence: drive off Steve store watch on the Workload (NOT raw `setInterval` fetches); fall back to 5s polling if watch unavailable.
+  - Markup constraints: all strings via `labelKey` from `l10n/en-us.yaml` (no hardcoded English); buttons use `@components/Button` (no raw `<button>`); CSS uses Rancher tokens (no inline custom-properties).
+  - Vitest covers each of the four terminal-state branches with mocked Workload status.
 
 ---
 
@@ -2798,6 +2834,10 @@ yarn test:unit:ui
 
 *Namespace strategy:*
 - [ ] All managed resources (Deployment, Service, ClusterRepo, UIPlugin) live in `cattle-ui-plugin-system`
+
+*UIPlugin metadata enrichment:*
+- [ ] **Populate `UIPlugin.spec.plugin.metadata`** from the chart's `index.yaml` annotations on the source Helm repo. Required keys (per Rancher's expectations): a display-name (sourced from the chart's `annotations["catalog.cattle.io/display-name"]`, falling back to the chart name), `catalog.cattle.io/rancher-version`, and `catalog.cattle.io/ui-extensions-version`. User-supplied overrides on `InstallAIExtension.spec` merge on top. Without this enrichment Rancher's Extensions page renders a bare ID instead of a human-readable name. Reference pattern: `SUSE/suse-ai-lifecycle-manager/.../internal/infra/rancher/metadata.go:20-66` (read index → look up `{name, version}` → pull annotations).
+- [ ] Helper `FindChartAnnotations(index *repo.IndexFile, name, version string) (map[string]string, error)` added to `pkg/helm/` (pure function, no I/O — `pkg/helm/engine.go::pullIndex` already fetches the IndexFile). Unit test covers: chart-not-found, version-not-found, no-annotations, happy path.
 
 *Testing:*
 - [ ] Test: Verify Rancher Dashboard loads extension via ClusterRepo flow in a real Rancher management cluster
