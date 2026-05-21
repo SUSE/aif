@@ -2,8 +2,7 @@
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: aif-webhook-issuer
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "aif-operator.fullname" . }}-webhook-issuer
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
 spec:
@@ -12,12 +11,11 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: aif-webhook-cert
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "aif-operator.fullname" . }}-webhook-cert
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
 spec:
-  secretName: aif-webhook-tls
+  secretName: {{ include "aif-operator.fullname" . }}-webhook-tls
   duration: 8760h
   renewBefore: 720h
   dnsNames:
@@ -26,7 +24,7 @@ spec:
     - {{ include "aif-operator.fullname" . }}.{{ .Release.Namespace }}.svc
     - {{ include "aif-operator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
   issuerRef:
-    name: aif-webhook-issuer
+    name: {{ include "aif-operator.fullname" . }}-webhook-issuer
     kind: Issuer
 {{- end }}
 ---
@@ -34,12 +32,12 @@ spec:
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: aif-blueprint-immutability
+  name: {{ include "aif-operator.fullname" . }}-blueprint-immutability
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
   {{- if eq .Values.webhook.tlsMode "cert-manager" }}
   annotations:
-    cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/aif-webhook-cert"
+    cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/{{ include "aif-operator.fullname" . }}-webhook-cert"
   {{- end }}
 webhooks:
   - name: blueprint-immutability.ai.suse.com

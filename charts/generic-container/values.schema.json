@@ -1,0 +1,205 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "nameOverride": { "type": "string", "default": "", "description": "Override the chart name" },
+    "fullnameOverride": { "type": "string", "default": "", "description": "Override the full release name" },
+    "global": {
+      "type": "object",
+      "description": "Global values shared across subcharts",
+      "properties": {
+        "imageRegistry": { "type": "string", "default": "", "description": "Global image registry override" },
+        "imagePullSecrets": {
+          "type": "array",
+          "default": [],
+          "description": "Global image pull secrets",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }
+            ]
+          }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "Container image configuration",
+      "properties": {
+        "registry": { "type": "string", "default": "", "description": "Image registry (overridden by global.imageRegistry)" },
+        "repository": { "type": "string", "default": "nginx", "description": "Image repository" },
+        "tag": { "type": "string", "default": "", "description": "Image tag (defaults to Chart.AppVersion)" },
+        "pullPolicy": {
+          "type": "string",
+          "default": "IfNotPresent",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy"
+        }
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "description": "Number of replicas"
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "default": 80, "description": "Service port" },
+        "type": {
+          "type": "string",
+          "default": "ClusterIP",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "description": "Kubernetes Service type"
+        }
+      }
+    },
+    "gpu": {
+      "type": "object",
+      "description": "GPU resource configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "Enable GPU resource requests" },
+        "count": { "type": "string", "default": "1", "description": "Number of GPUs to request" },
+        "type": { "type": "string", "default": "nvidia.com/gpu", "description": "GPU resource type" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string", "default": "100m" },
+            "memory": { "type": "string", "default": "128Mi" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string", "default": "500m" },
+            "memory": { "type": "string", "default": "256Mi" }
+          }
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level security context",
+      "properties": {
+        "runAsNonRoot": { "type": "boolean", "default": true, "description": "Run as non-root" },
+        "runAsUser": { "type": "integer", "default": 1000, "description": "Container UID" },
+        "seccompProfile": {
+          "type": "object",
+          "description": "Seccomp profile configuration",
+          "properties": {
+            "type": { "type": "string", "default": "RuntimeDefault", "description": "Seccomp profile type" }
+          }
+        }
+      }
+    },
+    "containerSecurityContext": {
+      "type": "object",
+      "description": "Container-level security context (secure defaults provided)",
+      "properties": {
+        "allowPrivilegeEscalation": { "type": "boolean", "default": false, "description": "Disallow privilege escalation" },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "drop": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["ALL"],
+              "description": "Linux capabilities to drop"
+            },
+            "add": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Linux capabilities to add"
+            }
+          }
+        },
+        "readOnlyRootFilesystem": { "type": "boolean", "default": false, "description": "Mount root filesystem as read-only" },
+        "seccompProfile": {
+          "type": "object",
+          "description": "Seccomp profile configuration",
+          "properties": {
+            "type": { "type": "string", "description": "Seccomp profile type (RuntimeDefault, Localhost, Unconfined)" }
+          }
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "default": {},
+      "description": "Node selector labels",
+      "additionalProperties": { "type": "string" }
+    },
+    "tolerations": {
+      "type": "array",
+      "default": [],
+      "description": "Pod tolerations",
+      "items": { "type": "object" }
+    },
+    "affinity": {
+      "type": "object",
+      "default": {},
+      "description": "Pod affinity and anti-affinity rules"
+    },
+    "podAnnotations": {
+      "type": "object",
+      "default": {},
+      "description": "Additional annotations for pods",
+      "additionalProperties": { "type": "string" }
+    },
+    "extraVolumes": {
+      "type": "array",
+      "default": [],
+      "description": "Additional volumes to add to the pod",
+      "items": { "type": "object" }
+    },
+    "extraVolumeMounts": {
+      "type": "array",
+      "default": [],
+      "description": "Additional volume mounts to add to the container",
+      "items": { "type": "object" }
+    },
+    "priorityClassName": {
+      "type": "string",
+      "default": "",
+      "description": "PriorityClass name for scheduling priority"
+    },
+    "livenessProbe": {
+      "type": "object",
+      "description": "Kubernetes liveness probe spec"
+    },
+    "readinessProbe": {
+      "type": "object",
+      "description": "Kubernetes readiness probe spec"
+    },
+    "env": {
+      "type": "array",
+      "default": [],
+      "description": "Environment variables",
+      "items": { "type": "object" }
+    },
+    "ports": {
+      "type": "array",
+      "default": [],
+      "description": "Additional container ports",
+      "items": { "type": "object" }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "default": [],
+      "description": "Image pull secrets for private registries",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" }
+        }
+      }
+    }
+  }
+}

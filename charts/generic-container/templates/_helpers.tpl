@@ -34,6 +34,7 @@ Common labels
 {{- define "generic-container.labels" -}}
 helm.sh/chart: {{ include "generic-container.chart" . }}
 {{ include "generic-container.selectorLabels" . }}
+app.kubernetes.io/component: workload
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -47,3 +48,55 @@ Selector labels
 app.kubernetes.io/name: {{ include "generic-container.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Selector labels as a kubectl label selector string
+*/}}
+{{- define "generic-container.selectorLabelsString" -}}
+app.kubernetes.io/name={{ include "generic-container.name" . }},app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+{{/*
+Image reference with conditional registry prefix
+*/}}
+{{- define "generic-container.image" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
+{{- $repo := .Values.image.repository }}
+{{- with (coalesce .Values.global.imageRegistry .Values.image.registry) }}
+{{- printf "%s/%s:%s" . $repo $tag }}
+{{- else }}
+{{- printf "%s:%s" $repo $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Return the proper Docker Image Registry Secret Names.
+Merges global.imagePullSecrets and per-chart imagePullSecrets (both lists
+are concatenated so chart-level defaults like suse-registry-creds are never
+silently dropped when a global override is set).
+*/}}
+{{- define "generic-container.imagePullSecrets" -}}
+{{- $secrets := list }}
+{{- $seen := dict }}
+{{- range .Values.imagePullSecrets }}
+  {{- $secrets = append $secrets . }}
+  {{- $seen = set $seen .name "true" }}
+{{- end }}
+{{- if .Values.global }}
+  {{- range .Values.global.imagePullSecrets }}
+    {{- $entry := . }}
+    {{- if kindIs "string" . }}
+      {{- $entry = dict "name" . }}
+    {{- end }}
+    {{- if not (hasKey $seen $entry.name) }}
+      {{- $secrets = append $secrets $entry }}
+      {{- $seen = set $seen $entry.name "true" }}
+    {{- end }}
+  {{- end }}
+{{- end -}}
+{{- if $secrets -}}
+imagePullSecrets:
+  {{- toYaml $secrets | nindent 2 }}
+{{- end }}
+{{- end -}}
+

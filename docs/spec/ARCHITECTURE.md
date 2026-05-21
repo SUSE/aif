@@ -2588,7 +2588,6 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: aif-webhook-issuer
-  namespace: {{ .Release.Namespace }}
 spec:
   selfSigned: {}
 ---
@@ -2596,7 +2595,6 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: aif-webhook-cert
-  namespace: {{ .Release.Namespace }}
 spec:
   secretName: aif-webhook-tls           # mounted into the operator pod at /tmp/k8s-webhook-server/serving-certs
   duration: 8760h    # 1 year
@@ -2623,7 +2621,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: aif-webhook-tls-bootstrap
-  namespace: {{ .Release.Namespace }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "-10"
@@ -2666,7 +2663,6 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: aif-webhook-tls-bootstrap
-  namespace: {{ .Release.Namespace }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-weight": "0"
@@ -2728,7 +2724,11 @@ metadata:
 **Key `values.yaml` parameters:**
 
 ```yaml
-image: nginx:latest
+image:
+  registry: ""
+  repository: nginx
+  tag: ""              # defaults to Chart.AppVersion
+  pullPolicy: IfNotPresent
 replicaCount: 1
 service:
   port: 80

@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "aif-operator.fullname" . }}
-  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
 spec:
@@ -14,15 +13,30 @@ spec:
     metadata:
       labels:
         {{- include "aif-operator.selectorLabels" . | nindent 8 }}
-    spec:
-      serviceAccountName: {{ include "aif-operator.serviceAccountName" . }}
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
+      {{- with .Values.podAnnotations }}
+      annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    spec:
+      serviceAccountName: {{ include "aif-operator.serviceAccountName" . }}
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.podSecurityContext }}
       securityContext:
-        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
-        runAsUser: {{ .Values.securityContext.runAsUser }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: operator
           image: {{ include "aif-operator.image" . }}
@@ -30,6 +44,10 @@ spec:
           command:
             - /opt/aif/bin/operator
           args:
+            - --addr=:{{ .Values.service.ports.api }}
+            - --health-probe-bind-address=:{{ .Values.service.ports.health }}
+            - --metrics-bind-address={{ if .Values.metrics.enabled }}:{{ .Values.service.ports.metrics }}{{ else }}0{{ end }}
+            - --webhook-bind-address=:{{ .Values.service.ports.webhook }}
             - --log-level={{ .Values.operator.logLevel }}
             - --log-format={{ .Values.operator.logFormat }}
             - --catalog-refresh={{ .Values.operator.catalogRefresh }}
@@ -40,12 +58,16 @@ spec:
             - name: health
               containerPort: {{ .Values.service.ports.health }}
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.service.ports.metrics }}
               protocol: TCP
+            {{- end }}
+            {{- if .Values.webhook.enabled }}
             - name: webhook
               containerPort: {{ .Values.service.ports.webhook }}
               protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -67,11 +89,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: data
@@ -99,6 +117,6 @@ spec:
         {{- if .Values.webhook.enabled }}
         - name: webhook-certs
           secret:
-            secretName: aif-webhook-tls
+            secretName: {{ include "aif-operator.fullname" . }}-webhook-tls
             defaultMode: 0444
         {{- end }}

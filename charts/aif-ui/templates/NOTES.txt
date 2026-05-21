@@ -1,0 +1,9 @@
+AIF UI extension has been registered.
+
+UIPlugin: {{ .Values.plugin.name }} v{{ .Values.plugin.version }}
+Endpoint: {{ .Values.endpoint }}
+
+Verify the plugin is registered:
+  kubectl get uiplugin {{ .Values.plugin.name }} -n cattle-ui-plugin-system
+
+The extension will appear in the Rancher Dashboard after the next page refresh.

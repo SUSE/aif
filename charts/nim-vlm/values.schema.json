@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "nameOverride": { "type": "string", "default": "", "description": "Override the chart name" },
+    "fullnameOverride": { "type": "string", "default": "", "description": "Override the full release name" },
+    "global": {
+      "type": "object",
+      "description": "Global values shared across subcharts",
+      "properties": {
+        "imageRegistry": { "type": "string", "default": "", "description": "Global image registry override" },
+        "imagePullSecrets": {
+          "type": "array",
+          "default": [],
+          "description": "Global image pull secrets",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }
+            ]
+          }
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "Container image configuration",
+      "properties": {
+        "registry": { "type": "string", "default": "registry.suse.com", "description": "Image registry (overridden by global.imageRegistry)" },
+        "repository": {
+          "type": "string",
+          "default": "ai/containers/nvidia/llava-v1.6-mistral-7b",
+          "description": "NIM container image repository"
+        },
+        "tag": {
+          "type": "string",
+          "default": "",
+          "description": "Image tag (defaults to Chart.AppVersion)"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "default": "IfNotPresent",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy"
+        }
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "description": "Number of replicas"
+    },
+    "strategy": {
+      "type": "object",
+      "description": "Deployment update strategy",
+      "properties": {
+        "type": {
+          "type": "string",
+          "default": "Recreate",
+          "enum": ["Recreate", "RollingUpdate"],
+          "description": "Deployment strategy type (Recreate avoids double GPU allocation)"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "default": 8000, "description": "Service port" },
+        "type": {
+          "type": "string",
+          "default": "ClusterIP",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "description": "Kubernetes Service type"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Container resource requests and limits",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "limits": {
+          "type": "object",
+          "description": "Resource limits including GPU allocation (e.g. nvidia.com/gpu)",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Pod tolerations",
+      "items": { "type": "object" }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "description": "Node selector labels",
+      "additionalProperties": { "type": "string" }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "description": "Image pull secrets for private registries",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level security context",
+      "properties": {
+        "runAsNonRoot": { "type": "boolean", "default": true, "description": "Run as non-root" },
+        "runAsUser": { "type": "integer", "description": "Container UID (omitted by default; uses the container image UID)" },
+        "seccompProfile": {
+          "type": "object",
+          "description": "Seccomp profile configuration",
+          "properties": {
+            "type": { "type": "string", "default": "RuntimeDefault", "description": "Seccomp profile type" }
+          }
+        }
+      }
+    },
+    "containerSecurityContext": {
+      "type": "object",
+      "description": "Container-level security context (secure defaults provided)",
+      "properties": {
+        "allowPrivilegeEscalation": { "type": "boolean", "default": false, "description": "Disallow privilege escalation" },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "drop": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["ALL"],
+              "description": "Linux capabilities to drop"
+            },
+            "add": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Linux capabilities to add"
+            }
+          }
+        },
+        "readOnlyRootFilesystem": { "type": "boolean", "default": false, "description": "Mount root filesystem as read-only" },
+        "seccompProfile": {
+          "type": "object",
+          "description": "Seccomp profile configuration",
+          "properties": {
+            "type": { "type": "string", "description": "Seccomp profile type (RuntimeDefault, Localhost, Unconfined)" }
+          }
+        }
+      }
+    },
+    "affinity": {
+      "type": "object",
+      "default": {},
+      "description": "Pod affinity and anti-affinity rules"
+    },
+    "podAnnotations": {
+      "type": "object",
+      "default": {},
+      "description": "Additional annotations for pods",
+      "additionalProperties": { "type": "string" }
+    },
+    "extraVolumes": {
+      "type": "array",
+      "default": [],
+      "description": "Additional volumes to add to the pod",
+      "items": { "type": "object" }
+    },
+    "extraVolumeMounts": {
+      "type": "array",
+      "default": [],
+      "description": "Additional volume mounts to add to the container",
+      "items": { "type": "object" }
+    },
+    "env": {
+      "type": "array",
+      "default": [],
+      "description": "Environment variables",
+      "items": { "type": "object" }
+    },
+    "priorityClassName": {
+      "type": "string",
+      "default": "",
+      "description": "PriorityClass name for GPU workload scheduling priority"
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "description": "PodDisruptionBudget configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "Enable PodDisruptionBudget" },
+        "minAvailable": { "type": "integer", "default": 1, "minimum": 0, "description": "Minimum available pods during disruption" }
+      }
+    }
+  }
+}

@@ -34,6 +34,7 @@ Common labels
 {{- define "aif-operator.labels" -}}
 helm.sh/chart: {{ include "aif-operator.chart" . }}
 {{ include "aif-operator.selectorLabels" . }}
+app.kubernetes.io/component: controller
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -56,13 +57,52 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Selector labels as a kubectl label selector string
+*/}}
+{{- define "aif-operator.selectorLabelsString" -}}
+app.kubernetes.io/name={{ include "aif-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+{{/*
 Image reference with conditional registry prefix
 */}}
 {{- define "aif-operator.image" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion }}
-{{- if .Values.image.registry -}}
-{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ $tag }}
-{{- else -}}
-{{ .Values.image.repository }}:{{ $tag }}
-{{- end -}}
+{{- $repo := .Values.image.repository }}
+{{- with (coalesce .Values.global.imageRegistry .Values.image.registry) }}
+{{- printf "%s/%s:%s" . $repo $tag }}
+{{- else }}
+{{- printf "%s:%s" $repo $tag }}
 {{- end }}
+{{- end }}
+
+{{/*
+Return the proper Docker Image Registry Secret Names.
+Merges global.imagePullSecrets and per-chart imagePullSecrets (both lists
+are concatenated so chart-level defaults like suse-registry-creds are never
+silently dropped when a global override is set).
+*/}}
+{{- define "aif-operator.imagePullSecrets" -}}
+{{- $secrets := list }}
+{{- $seen := dict }}
+{{- range .Values.imagePullSecrets }}
+  {{- $secrets = append $secrets . }}
+  {{- $seen = set $seen .name "true" }}
+{{- end }}
+{{- if .Values.global }}
+  {{- range .Values.global.imagePullSecrets }}
+    {{- $entry := . }}
+    {{- if kindIs "string" . }}
+      {{- $entry = dict "name" . }}
+    {{- end }}
+    {{- if not (hasKey $seen $entry.name) }}
+      {{- $secrets = append $secrets $entry }}
+      {{- $seen = set $seen $entry.name "true" }}
+    {{- end }}
+  {{- end }}
+{{- end -}}
+{{- if $secrets -}}
+imagePullSecrets:
+  {{- toYaml $secrets | nindent 2 }}
+{{- end }}
+{{- end -}}

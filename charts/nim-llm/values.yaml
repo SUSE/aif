@@ -1,18 +1,24 @@
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
 image:
-  repository: registry.suse.com/ai/containers/nvidia/llama-3-8b-instruct
-  tag: latest
+  registry: "registry.suse.com"
+  repository: ai/containers/nvidia/llama-3-8b-instruct
+  tag: ""
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
+strategy:
+  type: Recreate
+
 service:
   port: 8000
   type: ClusterIP
-
-gpu:
-  enabled: true
-  count: "1"
-  type: nvidia.com/gpu
 
 resources:
   requests:
@@ -34,8 +40,32 @@ nodeSelector:
 imagePullSecrets:
   - name: suse-registry-creds
 
-securityContext:
+podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
 
 env: []
+
+affinity: {}
+
+podAnnotations: {}
+
+extraVolumes: []
+extraVolumeMounts: []
+
+priorityClassName: ""
+
+# Note: with replicaCount=1 and minAvailable=1, PDB blocks all voluntary evictions.
+# Set replicaCount >= 2 when enabling PDB.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

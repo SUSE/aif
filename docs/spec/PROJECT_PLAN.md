@@ -103,7 +103,7 @@ Phases 2 and 3 can start as soon as Phase 1 begins. Phase 6 can start once Phase
 | 6     | P6-0 ‖ P6-1; then P6-2 ‖ P6-3; then P6-4 ‖ P6-5 ‖ P6-6; then P6-7 ‖ P6-8 ‖ P6-9 ‖ P6-10 | UI-internal chain only |
 | 7     | All five (P7-1..P7-5) parallel | Each only needs its Phase 0 prereq |
 | 8     | P8-1 ‖ P8-2 ‖ P8-3 ‖ P8-6; P8-4 ‖ P8-5 | P8-6 needs Phase 6 done |
-| 9     | P9-1 ‖ P9-2 ‖ P9-3 ‖ P9-4 ‖ P9-6 ‖ P9-7 | P9-5 last (final polish); P9-6 needs P9-1, P9-2, P0-6, P0-7; P9-7 needs P9-6, P5-7 |
+| 9     | P9-1 ‖ P9-2 ‖ P9-3 ‖ P9-3a ‖ P9-4 ‖ P9-6 ‖ P9-7 | P9-3a needs P9-3; P9-5 last (final polish); P9-6 needs P9-1, P9-2, P0-6, P0-7; P9-7 needs P9-6, P5-7 |
 
 A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on UI/DevOps, with Tests + Docs interleaved. A 4-agent fleet should saturate Phase 1 (multiple parallel controllers) and Phase 7 (all 5 parallel) easily.
 
@@ -115,7 +115,7 @@ A two-developer team can run the matrix at roughly: dev-A on Backend, dev-B on U
 |------|-----------|------------|
 | `cmd/operator/main.go` | P0-4 only after that | Keep main ≤250 lines. Route registration moves into `internal/manager/routes.go` after P0-4. Each handler story adds one `mux.HandleFunc` line via that file, not main. |
 | `internal/manager/routes.go` | P3-2..P3-6, P4-2, P4-3, P4-5, P5-2, P5-3, P5-4a, P5-5, P7-5, P8-1, P8-2 | Each handler story adds one `mux.HandleFunc` line — no rewrites of existing lines. |
-| `charts/aif-operator/templates/deployment.yaml` | P0-3, P7-2, P7-3, P9-3 | P0-3 lands a complete-but-minimal template. P7-* and P9-3 are surgical patches. |
+| `charts/aif-operator/templates/deployment.yaml` | P0-3, P7-2, P7-3, P9-3, P9-3a | P0-3 lands a complete-but-minimal template. P7-* and P9-3 are surgical patches. P9-3a wires leader-election args. |
 | `charts/aif-operator/templates/rbac.yaml` | P0-3, P7-1, P8-3 | Generate from `//+kubebuilder:rbac` markers via `make manifests`. Don't hand-edit after P0-3. |
 | `charts/aif-operator/templates/webhook.yaml` | P1-5, P7-4 | Created in P1-5; P7-4 may add CA bundle injection details. |
 | `pkg/bundle/manager.go` | P3-1 first, then P3-2..P3-5 add methods | Define `Manager` interface in P3-1. Subsequent stories add methods only — never change existing signatures. |
@@ -2733,20 +2733,59 @@ yarn test:unit:ui
 
 **ID:** P6-11
 **Epic:** UI Extension ClusterRepo Integration
-**Story:** As a platform engineer, I want the InstallAIExtension controller to follow Rancher's container-based UI extension pattern with ClusterRepo.
+**Story:** As a platform engineer, I want the InstallAIExtension controller to follow Rancher's container-based UI extension pattern with ClusterRepo, supporting both Helm and git source modes.
 **Owner Hint:** Backend Go + UI
 **Effort:** M
 **Depends On:** P1-6, P4-1
 **Parallelizable With:** none (needs architectural confirmation)
-**Done When:** InstallAIExtension creates Deployment+Service → ClusterRepo → UIPlugin for container-based extensions (OR confirms git-based deployment model is correct).
+**Done When:** InstallAIExtension creates Deployment+Service → ClusterRepo → UIPlugin for container-based extensions (OR confirms git-based deployment model is correct). Controller follows operator best practices (owner references, watches, drift detection, multi-condition status).
 
 **Acceptance Criteria:**
+
+*Research:*
 - [ ] **Research first:** Verify whether AIF UI extension uses container-based (needs ClusterRepo) or git-based (current impl OK) deployment model. Document findings in ADR or ARCHITECTURE.md.
-- [ ] If container-based: Helm chart (`charts/aif-ui/`) creates Deployment+Service serving `index.yaml` with available extension versions
-- [ ] If container-based: Controller creates ClusterRepo (`catalog.cattle.io/v1`) resource pointing to Service endpoint as the source for `index.yaml`
-- [ ] If container-based: UIPlugin (`catalog.cattle.io/v1`) references the specific version from ClusterRepo, with the Service as the source path to extension files
+
+*CRD spec redesign:*
+- [ ] `InstallAIExtensionSpec` gains a `source` discriminated union: `source.type: helm | git`
+- [ ] `source.helm: {chartURL, version, ...}` — for container-based mode (Deployment + Service + ClusterRepo + UIPlugin)
+- [ ] `source.git: {repoURL, branch, ...}` — for git-based mode (ClusterRepo + UIPlugin, no deployment)
+- [ ] Webhook validates exactly-one-of `source.helm` / `source.git`
+
+*Helm source mode:*
+- [ ] Controller deploys container (Deployment + Service) serving built extension assets to `cattle-ui-plugin-system`
+- [ ] Controller creates ClusterRepo (`catalog.cattle.io/v1`) pointing to Service endpoint
+- [ ] Controller creates UIPlugin (`catalog.cattle.io/v1`) referencing ClusterRepo version
+
+*Git source mode:*
+- [ ] Controller creates ClusterRepo pointing to git branch URL
+- [ ] Controller creates UIPlugin based on ClusterRepo
+
+*RBAC:*
+- [ ] `charts/aif-operator/templates/rbac.yaml` adds permissions for `catalog.cattle.io` → `uiplugins` (get, list, watch, create, update, patch, delete)
+- [ ] `charts/aif-operator/templates/rbac.yaml` adds permissions for `catalog.cattle.io` → `clusterrepos` (get, list, watch, create, update, patch, delete)
+- [ ] `charts/aif-operator/templates/rbac.yaml` adds permissions for `apiextensions.k8s.io` → `customresourcedefinitions` (get, list, watch) — needed for `checkUIPluginCRD()`
+
+*Operator best practices:*
+- [ ] **Owner references** set on all child resources (Deployment, Service, ClusterRepo, UIPlugin) for automatic GC on CR deletion. Finalizer as safety net only.
+- [ ] **Watch owned resources** — use `Watches(&UIPlugin{}, handler.EnqueueRequestForOwner(...))` instead of polling with `RequeueAfter: 5s`
+- [ ] **Drift detection / self-healing** — compare desired vs actual state on every reconcile; if someone deletes the Service or modifies the Deployment, the operator restores it (level-triggered reconciliation)
+- [ ] **Multi-condition status** — replace single `phase` field with independent conditions: `DeploymentReady`, `ServiceReady`, `ClusterRepoReady`, `UIPluginReady` (admin sees exactly which step failed)
+- [ ] **Observed generation** — track `status.observedGeneration` to detect spec changes
+- [ ] **Upgrade path** — detect generation bump when user changes version → rolling update or Helm upgrade → report progress → rollback on failure (current implementation is install-only)
+- [ ] **Health propagation** — continuously monitor deployed extension health (pod crash, OOM) and reflect in status conditions
+- [ ] **Events** — emit K8s Events for state transitions: `ExtensionDeployed`, `ClusterRepoCreated`, `UIPluginRegistered`, `UpgradeStarted`, `DriftDetected`
+
+*P1-6 controller fixes (align with other controllers):*
+- [ ] `setCondition` (line 322-324) pre-sets `LastTransitionTime = metav1.Now()` before `meta.SetStatusCondition`, defeating the contract. Should delegate to `conditions.Set()` like all other controllers.
+- [ ] Replace `r.Logger *slog.Logger` (struct field) with `log.FromContext(ctx)` (logr) to match Bundle, Blueprint, Settings, and Workload controllers and get controller-runtime's automatic reconcile metadata enrichment.
+- [ ] Replace event type string literals `"Warning"`/`"Normal"` with `corev1.EventTypeWarning`/`corev1.EventTypeNormal` constants.
+
+*Namespace strategy:*
+- [ ] All managed resources (Deployment, Service, ClusterRepo, UIPlugin) live in `cattle-ui-plugin-system`
+
+*Testing:*
 - [ ] Test: Verify Rancher Dashboard loads extension via ClusterRepo flow in a real Rancher management cluster
-- [ ] Update P1-6 controller tests to mock ClusterRepo creation if needed
+- [ ] Update P1-6 controller tests to cover ClusterRepo creation, owner references, drift recovery
 
 **Background:**
 PR #1 review (https://github.com/SUSE/aif/pull/1#discussion_r3190614754) identified this architectural gap. Current P1-6 implementation performs direct Helm install + UIPlugin creation, skipping the ClusterRepo step. For container-based Rancher UI extensions, the expected flow is:
@@ -2756,13 +2795,21 @@ PR #1 review (https://github.com/SUSE/aif/pull/1#discussion_r3190614754) identif
 
 For git-based extensions, the current implementation may be sufficient (ClusterRepo points to git repo instead of Service). This story exists to research the correct approach and implement if needed.
 
+The current controller also has several implementation gaps versus the patterns established by later controllers (Workload, Bundle, Blueprint): `setCondition` defeats `LastTransitionTime` preservation, logging uses `slog` instead of `logr`, and event types use string literals instead of `corev1` constants. These should be fixed as part of the controller rewrite.
+
+Reference chart: `github.com/leooamaral/suse-ai-lifecycle-manager` (branch `feat/suse-ai-operator-gh`) has the correct container-based pattern: Deployment with `catalog.cattle.io/ui-extensions-catalog-image` label, Service on port 8080, security context, liveness/readiness probes, rolling update strategy.
+
 **Validation:**
 ```bash
 # Deploy to real Rancher cluster
 kubectl apply -f testdata/installaiextension-cr.yaml
 # Verify Rancher Dashboard shows AIF extension in Extensions page
 # Verify extension loads correctly in UI
+# Verify drift recovery: delete the Service, confirm operator recreates it
+# Verify upgrade: change spec version, confirm rolling update
 ```
+
+> **NOTE:** The `charts/aif-ui/` chart must be revisited after P6-11 is complete. P6-11's outcome (container-based vs git-based deployment, two source modes, Deployment+Service+ClusterRepo) will drive the chart's template structure. The current chart (single UIPlugin template) will likely need to be restructured or replaced entirely. Defer any non-trivial aif-ui chart work until P6-11 lands.
 
 ---
 
@@ -2916,6 +2963,7 @@ go test -race ./internal/controller/ -run TestPullSecretFailClosed -v
 - [ ] Egress allowlist: kube-apiserver, `registry.suse.com`, `dp.apps.rancher.io`, `api.apps.rancher.io`, configured Fleet Git host
 - [ ] NGC hosts intentionally NOT allowed
 - [ ] Ingress: only from `cattle-system` namespace and from kube-apiserver (for the webhook)
+- [ ] `values.yaml` adds `networkPolicy.enabled: false` and `values.schema.json` documents it (removed in P9-3 because no template existed yet)
 
 ---
 
@@ -3293,6 +3341,44 @@ cosign download sbom ghcr.io/suse/aif-operator:0.1.0 | jq -e '.SPDXID'
 **Depends On:** P0-3, P7-3, P7-4
 **Parallelizable With:** P9-1, P9-2, P9-4
 **Done When:** All charts have a complete `README.md`, `values.schema.json`, and pinned `appVersion` matching the operator binary.
+
+> **NOTE:** All 5 charts are missing a `LICENSE` file. Each chart directory should include the project's license so it ships with the packaged `.tgz`.
+
+---
+
+**ID:** P9-3a
+**Epic:** Leader Election & HA Support
+**Story:** As a platform engineer deploying the operator with `replicaCount > 1`, I want leader election wired end-to-end so that only one replica reconciles at a time, with fast failover and correct persistence behavior.
+**Owner Hint:** DevOps
+**Effort:** M
+**Depends On:** P9-3
+**Parallelizable With:** P9-4
+**Done When:** `helm install --set operator.leaderElection.enabled=true` passes `--leader-elect=true` to the operator binary, renders the leader-election Role + RoleBinding for coordination.k8s.io/leases, and two-replica deployments converge on a single active leader.
+
+**Acceptance Criteria:**
+- [ ] `values.yaml` adds `operator.leaderElection.enabled` (default `false`)
+- [ ] `values.schema.json` documents the new field
+- [ ] `templates/deployment.yaml` appends `--leader-elect={{ .Values.operator.leaderElection.enabled }}` to container args
+- [ ] `templates/rbac.yaml` conditionally renders a namespaced Role + RoleBinding granting `coordination.k8s.io/leases` verbs `{get,list,watch,create,update,patch,delete}`, gated on `.Values.operator.leaderElection.enabled`
+- [ ] README documents the HA deployment pattern (`replicaCount: 2` + `operator.leaderElection.enabled: true`)
+- [ ] `helm template` with `operator.leaderElection.enabled=false` does NOT render the Role/RoleBinding
+- [ ] `helm lint --strict` passes with both `true` and `false`
+- [ ] `internal/manager/setup.go` sets `LeaderElectionReleaseOnCancel: true` in manager options so graceful termination releases the lease immediately instead of waiting for the full lease duration (~15s failover delay)
+- [ ] `internal/manager/setup.go` sets `LeaderElectionNamespace` explicitly (from a flag or the downward API) rather than relying on implicit controller-runtime default
+- [ ] PVC access mode is addressed for multi-replica: either document that `persistence.enabled=true` (RWO) is incompatible with `replicaCount > 1`, or switch to `ReadWriteMany` when replicas > 1, or convert to StatefulSet with per-replica PVCs
+- [ ] Evaluate `MaxConcurrentReconciles` for controllers handling large workload counts — document default (1) and add optional tuning knob if warranted
+
+**Validation:**
+```bash
+# leader election disabled (default) — no Role rendered
+helm template aif-operator charts/aif-operator | grep -q 'leader-election' && echo FAIL || echo PASS
+
+# leader election enabled — Role + args rendered
+helm template aif-operator charts/aif-operator --set operator.leaderElection.enabled=true | grep -q 'leader-elect=true' && echo PASS || echo FAIL
+helm template aif-operator charts/aif-operator --set operator.leaderElection.enabled=true | grep -q 'leader-election' && echo PASS || echo FAIL
+```
+
+**Context:** The leader-election Role+RoleBinding were originally added in P9-3 but removed during code review because the deployment template didn't pass `--leader-elect` to the binary — the RBAC was aspirational. This story wires it end-to-end. `cmd/operator/main.go` already defines the `--leader-elect` flag (default `false`) and passes it to the controller-runtime manager; the chart needs to forward the value via container args. Go-side changes are now in scope: `LeaderElectionReleaseOnCancel` and explicit `LeaderElectionNamespace` in `setup.go`. The PVC access mode decision (RWO blocks multi-node scheduling) is the biggest architectural question — evaluate StatefulSet vs RWX vs documenting the constraint.
 
 ---
 

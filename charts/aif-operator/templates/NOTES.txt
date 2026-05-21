@@ -1,0 +1,16 @@
+AIF Operator has been installed in namespace {{ .Release.Namespace }}.
+
+API endpoint:
+  kubectl -n {{ .Release.Namespace }} get svc {{ include "aif-operator.fullname" . }}
+
+Verify the operator is running:
+  kubectl -n {{ .Release.Namespace }} get pods -l {{ include "aif-operator.selectorLabelsString" . }}
+
+Check CRDs are registered:
+  kubectl get crd | grep ai.suse.com
+
+{{- if .Values.webhook.enabled }}
+Admission webhook is enabled (TLS mode: {{ .Values.webhook.tlsMode }}).
+{{- end }}
+
+For more information, visit the project documentation.
