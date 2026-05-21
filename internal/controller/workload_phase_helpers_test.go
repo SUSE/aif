@@ -162,9 +162,8 @@ func TestComputePhaseWithTransitions_ThresholdPromotesRecoveryInProgress(t *test
 // covers the bootstrap path: a fresh CR with no prior Status.Phase set and
 // AutomaticRecovery enabled, fed a single failed component. RecomputePhase
 // produces Degraded, the increment branch fires (priorPhase=="" != Degraded),
-// and the counter lands at 1 in a single pass. Reviewer #14 flagged that
-// this first-reconcile path was previously only exercised end-to-end via
-// the envtest suite, not at the unit level.
+// and the counter lands at 1 in a single pass. Without this case, the
+// first-reconcile path is only exercised end-to-end via the envtest suite.
 func TestComputePhaseWithTransitions_FirstReconcileFailedComponentDegrades(t *testing.T) {
 	w := &aifv1.Workload{
 		Spec: recoveryEnabledSpec(),

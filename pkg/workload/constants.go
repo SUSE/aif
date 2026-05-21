@@ -3,8 +3,14 @@ package workload
 import "time"
 
 // DefaultFailureThreshold is the consecutive-failure count at which a
-// Degraded Workload transitions to Failed. Matches the CRD kubebuilder
-// default for spec.strategy.automaticRecovery.failureThreshold.
+// Degraded Workload (AutomaticRecovery.Enabled=true) transitions to
+// RecoveryInProgress; P5-6 owns the rollback exit from RecoveryInProgress
+// to either Running or Failed. With recovery disabled there is no Degraded
+// intermediate at all — the first failed component routes directly to
+// Failed. See ARCHITECTURE.md §4.4 rule 2.
+//
+// Matches the CRD kubebuilder default for
+// spec.strategy.automaticRecovery.failureThreshold.
 const DefaultFailureThreshold int32 = 3
 
 // Per-phase requeue cadence from ARCHITECTURE.md §4.4. The controller
