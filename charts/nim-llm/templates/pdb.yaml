@@ -3,7 +3,6 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "nim-llm.fullname" . }}
-  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "nim-llm.labels" . | nindent 4 }}
 spec:

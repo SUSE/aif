@@ -3,7 +3,6 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: {{ include "aif-operator.fullname" . }}-webhook-issuer
-  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
 spec:
@@ -13,7 +12,6 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ include "aif-operator.fullname" . }}-webhook-cert
-  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
 spec:

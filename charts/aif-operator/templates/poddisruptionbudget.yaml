@@ -3,7 +3,6 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "aif-operator.fullname" . }}
-  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
 spec:
