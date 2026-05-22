@@ -67,18 +67,34 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 
 	t.Logf("Basic auth succeeded; discovered %d HELM_CHART applications:", len(apps))
 	withTimestamp := 0
+	withVersion := 0
+	withCategories := 0
 	for _, a := range apps {
-		t.Logf("  %-30s  publisher=%-25s  latest=%s", a.ID, a.Publisher, a.LatestVersion)
+		t.Logf("  %-30s  version=%-10s  categories=%v", a.ID, a.LatestVersion, a.Categories)
 		if a.LastUpdatedAt != "" {
 			withTimestamp++
+		}
+		if a.LatestVersion != "" {
+			withVersion++
+		}
+		if len(a.Categories) > 0 {
+			withCategories++
 		}
 	}
 	if len(apps) == 0 {
 		t.Log("note: zero apps came back — auth handshake still validated, but the upstream catalog may be empty under the configured filter.")
 	}
 	t.Logf("%d/%d apps have LastUpdatedAt", withTimestamp, len(apps))
+	t.Logf("%d/%d apps have LatestVersion", withVersion, len(apps))
+	t.Logf("%d/%d apps have Categories", withCategories, len(apps))
 	if len(apps) > 0 && withTimestamp == 0 {
 		t.Errorf("no apps have LastUpdatedAt — upstream may have renamed last_updated_at")
+	}
+	if len(apps) > 0 && withVersion == 0 {
+		t.Errorf("no apps have LatestVersion — detail-endpoint branches[].baseline may have moved")
+	}
+	if len(apps) > 0 && withCategories == 0 {
+		t.Errorf("no apps have Categories — labels[] 'category:' prefix may have changed")
 	}
 
 	// Exercise the AnnotationReader handshake — pick the first chart (if any)
