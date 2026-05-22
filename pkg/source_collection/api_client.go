@@ -106,9 +106,6 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 		}
 		filtered = append(filtered, a)
 	}
-	if filtered == nil {
-		filtered = []CatalogApp{}
-	}
 	return filtered, nil
 }
 
@@ -277,8 +274,8 @@ func (c *apiClient) buildCatalogApp(settings EngineSettings, item apiListItem, d
 // latestBaseline picks the most-recent baseline from an app's branches.
 // Strategy: skip LTS branches (separately released long-term-support
 // streams), then pick the lexicographically-greatest baseline string —
-// the upstream branches are semver-shaped so lexicographic ordering on
-// zero-padded strings matches semver well enough for our display purpose.
+// the upstream branches are semver-shaped so component-by-component
+// numeric comparison matches semver well enough for our display purpose.
 // Returns empty string if no usable branch is found.
 func latestBaseline(branches []apiBranch) string {
 	var best string
