@@ -37,7 +37,10 @@ func TestAggregateClusterPhases(t *testing.T) {
 		{"any failed", []ClusterPhase{ClusterRunning, ClusterFailed}, PhaseFailed},
 		{"any deploying no failed", []ClusterPhase{ClusterRunning, ClusterDeploying}, PhaseDeploying},
 		{"all deploying", []ClusterPhase{ClusterDeploying, ClusterDeploying}, PhaseDeploying},
-		{"pending dominates over deploying when no observed status", []ClusterPhase{ClusterPending, ClusterPending}, PhasePending},
+		{"all pending", []ClusterPhase{ClusterPending, ClusterPending}, PhasePending},
+		{"pending mixed with deploying yields deploying", []ClusterPhase{ClusterPending, ClusterDeploying}, PhaseDeploying},
+		{"single running", []ClusterPhase{ClusterRunning}, PhaseRunning},
+		{"single pending", []ClusterPhase{ClusterPending}, PhasePending},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

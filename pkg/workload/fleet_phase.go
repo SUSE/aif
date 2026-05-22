@@ -49,7 +49,7 @@ func MapFleetStateToPhase(state string) ClusterPhase {
 //   any Failed                            → Failed   (terminal — surfaces fastest)
 //   all Running                           → Running
 //   all Pending                           → Pending
-//   otherwise (any Deploying, no Failed)  → Deploying
+//   otherwise (mixed states, no Failed)   → Deploying
 func AggregateClusterPhases(phases []ClusterPhase) Phase {
 	if len(phases) == 0 {
 		return PhasePending
