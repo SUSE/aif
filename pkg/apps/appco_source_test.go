@@ -15,10 +15,10 @@ import (
 type fakeAppCoClient struct {
 	mu sync.Mutex
 
-	listResult     []source_collection.CatalogApp
-	listErr        error
-	settingsCalls  []source_collection.EngineSettings
-	listCalls      int
+	listResult    []source_collection.CatalogApp
+	listErr       error
+	settingsCalls []source_collection.EngineSettings
+	listCalls     int
 }
 
 func (f *fakeAppCoClient) List(_ context.Context) ([]source_collection.CatalogApp, error) {
@@ -49,7 +49,6 @@ func sampleCatalogApps() []source_collection.CatalogApp {
 			ID:            "ollama",
 			DisplayName:   "Ollama",
 			Description:   "Local LLM runtime",
-			Publisher:     "Ollama Inc",
 			Categories:    []string{"AI", "Inference"},
 			ChartRef:      "oci://dp.apps.rancher.io/charts/ollama:0.4.1",
 			LatestVersion: "0.4.1",
@@ -60,7 +59,6 @@ func sampleCatalogApps() []source_collection.CatalogApp {
 			ID:            "milvus",
 			DisplayName:   "Milvus",
 			Description:   "Vector DB",
-			Publisher:     "Zilliz",
 			Categories:    []string{"AI", "Vector DB"},
 			ChartRef:      "oci://dp.apps.rancher.io/charts/milvus:2.4.0",
 			LatestVersion: "2.4.0",
@@ -115,8 +113,8 @@ func TestAppCoSource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	if milvus.DisplayName != "Milvus" {
 		t.Errorf("Milvus DisplayName = %q, want %q", milvus.DisplayName, "Milvus")
 	}
-	if milvus.Publisher != "Zilliz" {
-		t.Errorf("Milvus Publisher = %q, want %q", milvus.Publisher, "Zilliz")
+	if milvus.Publisher != "SUSE" {
+		t.Errorf("Milvus Publisher = %q, want %q", milvus.Publisher, "SUSE")
 	}
 	if milvus.Description != "Vector DB" {
 		t.Errorf("Milvus Description = %q, want %q", milvus.Description, "Vector DB")
@@ -287,7 +285,6 @@ func TestAppCoSource_Refresh_PopulatesReferenceBlueprintAndOverrides(t *testing.
 		{
 			ID:            "milvus",
 			DisplayName:   "Milvus",
-			Publisher:     "Zilliz",
 			LatestVersion: "2.4.0",
 			ChartRef:      "oci://dp.apps.rancher.io/charts/milvus:2.4.0",
 		},
@@ -403,7 +400,6 @@ func TestAppCoSource_Refresh_MapsLastUpdatedAt(t *testing.T) {
 		{
 			ID:            "ollama",
 			DisplayName:   "Ollama",
-			Publisher:     "Ollama Inc",
 			LatestVersion: "0.4.1",
 			ChartRef:      "oci://dp.apps.rancher.io/charts/ollama:0.4.1",
 			LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
@@ -432,7 +428,6 @@ func TestAppCoSource_Refresh_LastUpdatedAt_NilWhenEmpty(t *testing.T) {
 		{
 			ID:            "milvus",
 			DisplayName:   "Milvus",
-			Publisher:     "Zilliz",
 			LatestVersion: "2.4.0",
 			ChartRef:      "oci://dp.apps.rancher.io/charts/milvus:2.4.0",
 		},

@@ -153,12 +153,14 @@ func translateCatalogApps(logger *slog.Logger, upstream []source_collection.Cata
 			Name:          u.ID,
 			DisplayName:   u.DisplayName,
 			Description:   u.Description,
-			Publisher:     u.Publisher,
+			Publisher:     "SUSE",
 			Version:       u.LatestVersion,
 			Source:        "suse",
 			AssetType:     "chart",
 			Categories:    append([]string(nil), u.Categories...),
 			ChartRef:      parseAppCoChartRef(u),
+			LogoURL:       u.LogoURL,
+			ProjectURL:    u.ProjectURL,
 			LastUpdatedAt: parseTimePtr(logger, u.LastUpdatedAt),
 		})
 	}
