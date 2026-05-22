@@ -25,3 +25,25 @@ func TestMapFleetStateToPhase(t *testing.T) {
 		})
 	}
 }
+
+func TestAggregateClusterPhases(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    []ClusterPhase
+		want  Phase
+	}{
+		{"empty", []ClusterPhase{}, PhasePending},
+		{"all running", []ClusterPhase{ClusterRunning, ClusterRunning}, PhaseRunning},
+		{"any failed", []ClusterPhase{ClusterRunning, ClusterFailed}, PhaseFailed},
+		{"any deploying no failed", []ClusterPhase{ClusterRunning, ClusterDeploying}, PhaseDeploying},
+		{"all deploying", []ClusterPhase{ClusterDeploying, ClusterDeploying}, PhaseDeploying},
+		{"pending dominates over deploying when no observed status", []ClusterPhase{ClusterPending, ClusterPending}, PhasePending},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := AggregateClusterPhases(c.in); got != c.want {
+				t.Fatalf("got %v want %v", got, c.want)
+			}
+		})
+	}
+}

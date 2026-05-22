@@ -41,3 +41,42 @@ func MapFleetStateToPhase(state string) ClusterPhase {
 		return ClusterDeploying
 	}
 }
+
+// AggregateClusterPhases collapses per-cluster phases into a single
+// workload Phase.
+//
+//   empty                                 → Pending  (no Bundle observed yet)
+//   any Failed                            → Failed   (terminal — surfaces fastest)
+//   all Running                           → Running
+//   all Pending                           → Pending
+//   otherwise (any Deploying, no Failed)  → Deploying
+func AggregateClusterPhases(phases []ClusterPhase) Phase {
+	if len(phases) == 0 {
+		return PhasePending
+	}
+	var anyFailed, anyRunning, anyDeploying, allPending bool
+	allPending = true
+	for _, p := range phases {
+		if p != ClusterPending {
+			allPending = false
+		}
+		switch p {
+		case ClusterFailed:
+			anyFailed = true
+		case ClusterRunning:
+			anyRunning = true
+		case ClusterDeploying:
+			anyDeploying = true
+		}
+	}
+	switch {
+	case anyFailed:
+		return PhaseFailed
+	case allPending:
+		return PhasePending
+	case anyRunning && !anyDeploying:
+		return PhaseRunning
+	default:
+		return PhaseDeploying
+	}
+}
