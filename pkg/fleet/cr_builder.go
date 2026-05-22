@@ -91,8 +91,7 @@ func validateSpec(s BundleDeploymentSpec) error {
 }
 
 // buildBundleCR translates a BundleDeploymentSpec into a fully-formed
-// fleet.cattle.io/v1alpha1 Bundle CR. Pure function — no I/O. Tested
-// exhaustively in cr_builder_test.go (one test per AC-NEW-6 row).
+// fleet.cattle.io/v1alpha1 Bundle CR. Pure function — no I/O.
 func buildBundleCR(spec BundleDeploymentSpec) (*fleetv1.Bundle, error) {
 	if err := validateSpec(spec); err != nil {
 		return nil, err
@@ -127,6 +126,9 @@ func buildBundleCR(spec BundleDeploymentSpec) (*fleetv1.Bundle, error) {
 		})
 	}
 
+	// JSON round-trip normalizes nested maps to map[string]interface{} and
+	// []interface{} so Fleet's GenericMap.DeepCopyInto can recurse correctly
+	// — its deepCopyMap only handles those two stdlib types.
 	firstValuesJSON, err := json.Marshal(first.Values)
 	if err != nil {
 		return nil, fmt.Errorf("marshal first-component values: %w", err)
