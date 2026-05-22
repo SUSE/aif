@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -280,6 +280,26 @@ verify-wrapper-live:
 		exit 1; \
 	fi
 	go test -count=1 -tags=live -v -run TestWrapperLive ./pkg/blueprint/...
+
+# --- pkg/fleet (Fleet Bundle Engine) validation targets (P4-3b) -----------
+# Exercise the FleetBundleEngine adapter. test-fleet runs unit tests;
+# verify-fleet-mock runs the deterministic Example_* (no creds);
+# verify-fleet-live drives Apply + Teardown against a real Fleet manager.
+# Unlike verify-nim-live, this target does NOT exit-1 on missing env vars
+# — the live test itself calls t.Skip when AIF_FLEET_LIVE_* are unset, so
+# `make verify-fleet-live` is safe to run from CI without credentials.
+
+test-fleet:
+	@echo "Running pkg/fleet unit tests..."
+	go test -count=1 -v ./pkg/fleet/...
+
+verify-fleet-mock:
+	@echo "Demonstrating FleetBundleEngine against in-process stubs..."
+	go test -count=1 -v -run Example ./pkg/fleet/
+
+verify-fleet-live:
+	@echo "Verifying FleetBundleEngine against a real Fleet manager (skips without env vars)..."
+	go test -count=1 -tags=live -v -run TestLive_FleetBundle ./pkg/fleet/...
 
 # --- internal/api (Apps REST handlers) validation target (P2-4) -------------
 # Runs the httptest-driven handler tests for /api/v1/apps*. No live target —
