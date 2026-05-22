@@ -6,10 +6,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// genericCondition aliases the wrangler vendor type. If upstream renames
-// a field, the compiler catches it at this alias site.
-type genericCondition = genericcondition.GenericCondition
-
 // mirrorStatus walks bs and emits one ClusterDeploymentObserved per
 // entry in targets, in the same order. If bs has no per-cluster
 // information for a target (Fleet hasn't created a BundleDeployment
@@ -43,7 +39,7 @@ func mirrorStatus(bs fleetv1.BundleStatus, targets []string) BundleObservedStatu
 // condition carries a Reason indicating downstream connectivity loss.
 // Reasons come from Fleet's typed enum — no strings.Contains on
 // human-readable messages.
-func connectionErrorFromConditions(conds []genericCondition) bool {
+func connectionErrorFromConditions(conds []genericcondition.GenericCondition) bool {
 	for _, c := range conds {
 		if c.Type != "Ready" || c.Status != corev1.ConditionFalse {
 			continue
