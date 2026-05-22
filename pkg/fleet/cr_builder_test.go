@@ -93,3 +93,76 @@ func TestBuildBundleCR_SingleComponent(t *testing.T) {
 	// Avoid unused import lint
 	_ = fleetv1.Bundle{}
 }
+
+func TestBuildBundleCR_MultiComponent(t *testing.T) {
+	spec := BundleDeploymentSpec{
+		WorkloadID:     "demo",
+		WorkloadNS:     "team-a",
+		TargetClusters: []string{"c1"},
+		Components: []ComponentBundle{
+			{Name: "llama", ChartRef: "oci://r/llama:1", Values: map[string]any{"r": 1}},
+			{Name: "vllm", ChartRef: "oci://r/vllm:2", Values: map[string]any{"r": 2}},
+			{Name: "ui", ChartRef: "oci://r/ui:3", Values: map[string]any{"r": 3}},
+		},
+		Owner: OwnerRef{APIVersion: "ai.suse.com/v1alpha1", Kind: "Workload", Name: "demo", UID: "u-1"},
+	}
+	b, err := buildBundleCR(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Spec.Helm.Chart != "oci://r/llama:1" {
+		t.Fatalf("first chart wins; got %q", b.Spec.Helm.Chart)
+	}
+	if len(b.Spec.Helm.ValuesFiles) != 2 {
+		t.Fatalf("ValuesFiles len = %d, want 2", len(b.Spec.Helm.ValuesFiles))
+	}
+	if b.Spec.Helm.ValuesFiles[0] != "values/vllm.yaml" || b.Spec.Helm.ValuesFiles[1] != "values/ui.yaml" {
+		t.Fatalf("ValuesFiles order/content wrong: %v", b.Spec.Helm.ValuesFiles)
+	}
+	if len(b.Spec.Resources) != 2 {
+		t.Fatalf("Resources len = %d, want 2 (no pull-secret)", len(b.Spec.Resources))
+	}
+}
+
+func TestBuildBundleCR_PullSecretEmbedded(t *testing.T) {
+	spec := BundleDeploymentSpec{
+		WorkloadID:     "demo",
+		WorkloadNS:     "team-a",
+		TargetClusters: []string{"c1"},
+		Components:     []ComponentBundle{{Name: "x", ChartRef: "oci://r/x:1", Values: map[string]any{}}},
+		PullSecretData: []byte(`{"auths":{"registry.suse.com":{"auth":"dXNlcjpwYXNz"}}}`),
+		Owner:          OwnerRef{APIVersion: "ai.suse.com/v1alpha1", Kind: "Workload", Name: "demo", UID: "u-1"},
+	}
+	b, err := buildBundleCR(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Spec.Resources) != 1 {
+		t.Fatalf("expected 1 resource (pull-secret), got %d", len(b.Spec.Resources))
+	}
+	r := b.Spec.Resources[0]
+	if r.Name != "manifests/suse-registry-creds.yaml" {
+		t.Fatalf("unexpected resource name: %q", r.Name)
+	}
+	if !strings.Contains(r.Content, "kind: Secret") {
+		t.Fatalf("Secret manifest missing kind: %s", r.Content)
+	}
+	if !strings.Contains(r.Content, "suse-registry-creds") {
+		t.Fatalf("Secret manifest missing name: %s", r.Content)
+	}
+}
+
+func TestBuildBundleCR_Validation(t *testing.T) {
+	bad := []BundleDeploymentSpec{
+		{},
+		{WorkloadID: "x"},
+		{WorkloadID: "x", WorkloadNS: "n"},
+		{WorkloadID: "x", WorkloadNS: "n", Components: []ComponentBundle{{}}},
+		{WorkloadID: "x", WorkloadNS: "n", Components: []ComponentBundle{{Name: "c"}}, TargetClusters: []string{"c"}},
+	}
+	for i, s := range bad {
+		if _, err := buildBundleCR(s); err == nil {
+			t.Errorf("case %d: expected error, got nil", i)
+		}
+	}
+}
