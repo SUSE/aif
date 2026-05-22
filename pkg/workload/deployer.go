@@ -6,30 +6,26 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
+	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 
 	"sigs.k8s.io/yaml"
 )
 
-// componentInstallTimeout matches helm.defaultInstallTimeout (5min). Kept
-// here so the deployer doesn't import an unexported helm constant; if the
-// helm engine ever exposes a public DefaultInstallTimeout, prefer that.
-const componentInstallTimeout = 5 * time.Minute
-
 // deployer is the production Deployer. Pure orchestrator: holds
 // constant refs to its dependency ports; no mutable state.
 type deployer struct {
-	helm           helm.Engine
-	blueprintRepo  blueprint.Repository
-	bundleRepo     bundle.Repository
-	nvidiaDisc     nvidia.Discovery
-	nvidiaDeployer nvidia.Deployer
-	logger         *slog.Logger
+	log         *slog.Logger
+	render      helm.ValueRenderer
+	fleetBundle fleet.FleetBundleEngine
+	bpRepo      blueprint.Repository
+	bundleRepo  bundle.Repository
+	nvDisc      nvidia.Discovery
+	nvDepl      nvidia.Deployer
 }
 
 // NewDeployer constructs the production Deployer.
@@ -43,184 +39,181 @@ type deployer struct {
 // map or its string values (it's shared with the caller's Workload CR
 // per pkg/workload/conversions.go.WorkloadToDeployRequest).
 func NewDeployer(
-	h helm.Engine,
-	br blueprint.Repository,
-	bnr bundle.Repository,
-	nd nvidia.Discovery,
-	nde nvidia.Deployer,
-	logger *slog.Logger,
+	log *slog.Logger,
+	render helm.ValueRenderer,
+	fleetBundle fleet.FleetBundleEngine,
+	bpRepo blueprint.Repository,
+	bundleRepo bundle.Repository,
+	nvDisc nvidia.Discovery,
+	nvDepl nvidia.Deployer,
 ) Deployer {
 	return &deployer{
-		helm:           h,
-		blueprintRepo:  br,
-		bundleRepo:     bnr,
-		nvidiaDisc:     nd,
-		nvidiaDeployer: nde,
-		logger:         logger,
+		log:         log,
+		render:      render,
+		fleetBundle: fleetBundle,
+		bpRepo:      bpRepo,
+		bundleRepo:  bundleRepo,
+		nvDisc:      nvDisc,
+		nvDepl:      nvDepl,
 	}
 }
 
-// Deploy resolves the workload's source into components, helm-installs each
-// with layered overrides, cleans up orphans from drift, and returns a typed
-// result the reconciler can apply to status. Idempotent: re-invocation with
-// the same DeployRequest converges to the same cluster state.
+// Deploy resolves the workload's source into components, renders values for
+// each via helm.ValueRenderer, assembles a single Fleet Bundle, and dispatches
+// via FleetBundleEngine.Apply. Returns a typed result the reconciler can apply
+// to status. Idempotent: re-invocation with the same DeployRequest converges
+// to the same cluster state.
 func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult, error) {
 	desired, observedGen, err := d.resolveSource(ctx, req)
 	if err != nil {
 		return DeployResult{ObservedBundleGeneration: observedGen}, err
 	}
 
-	var (
-		components []ComponentRelease
-		errs       []error
-	)
-	for _, dc := range desired {
-		release, derr := d.installComponent(ctx, req, dc)
-		components = append(components, release)
-		if derr != nil {
-			errs = append(errs, derr)
+	componentsForFleet := make([]fleet.ComponentBundle, 0, len(desired))
+	releaseRecords := make([]ComponentRelease, 0, len(desired))
+
+	for _, c := range desired {
+		ov := helm.Overrides{
+			Blueprint:    parseOverride(c.blueprintOverride),
+			Workload:     parseOverride(req.Overrides[c.name]),
+			NIMGenerated: d.nimGenerated(ctx, req, c),
 		}
-	}
-
-	// Orphan cleanup: uninstall releases that were previously installed but
-	// are no longer in the desired set. Failures keep the orphan visible in
-	// status with marker status; phase aggregation (Task 22) will see
-	// ComponentStatusOrphanUninstallFailed and surface phase=Deploying until clean.
-	orphans := detectOrphans(req.Previous, desired)
-	for _, orphan := range orphans {
-		if uerr := d.helm.Uninstall(ctx, req.Namespace, orphan.ReleaseName); uerr != nil {
-			orphan.Status = ComponentStatusOrphanUninstallFailed
-			components = append(components, orphan)
-			errs = append(errs, errors.Join(ErrComponentUninstallFailed,
-				fmt.Errorf("orphan %q: %w", orphan.Name, uerr)))
+		values, err := d.render.Render(ctx, c.repo, c.chart, c.version, ov)
+		if err != nil {
+			return DeployResult{}, fmt.Errorf("render %q: %w", c.name, err)
 		}
-		// Successful uninstall: orphan is implicitly dropped (not appended to components).
-	}
-
-	return DeployResult{
-		Components:               components,
-		ObservedBundleGeneration: observedGen,
-	}, errors.Join(errs...)
-}
-
-// installComponent runs a single component install: parses overrides,
-// composes release name, builds the helm.InstallRequest, calls the engine,
-// and translates the result into a ComponentRelease.
-//
-// NIM detection (layer 4) is added in Task 20.
-func (d *deployer) installComponent(ctx context.Context, req DeployRequest, dc desiredComponent) (ComponentRelease, error) {
-	bpOverrides, err := parseYAMLOverrides(dc.blueprintOverride)
-	if err != nil {
-		return ComponentRelease{Name: dc.name, Status: "failed"},
-			errors.Join(ErrComponentInstallFailed,
-				fmt.Errorf("parse blueprint override for %q: %w", dc.name, err))
-	}
-	wlOverrides, err := parseYAMLOverrides(req.Overrides[dc.name])
-	if err != nil {
-		return ComponentRelease{Name: dc.name, Status: "failed"},
-			errors.Join(ErrComponentInstallFailed,
-				fmt.Errorf("parse workload override for %q: %w", dc.name, err))
-	}
-
-	// NIM detection: ask Discovery whether this chart:version is a known NIM.
-	// Found → call GenerateValues with resolved GPU count; layer 4 = result.
-	// Not found (ErrNIMNotFound) → silently skip (expected for non-NIMs).
-	// Any other error → log warning and treat as non-NIM.
-	var nimGenerated map[string]any
-	if entry, derr := d.nvidiaDisc.Get(ctx, fmt.Sprintf("%s:%s", dc.chart, dc.version)); derr == nil {
-		// gpuCount is a deployer-protocol field, read ONLY from workloadOverrides
-		// per P4-4 follow-up note 2. Blueprint overrides cannot influence NIM
-		// sizing (their job is Helm-native chart values).
-		gpuCount := extractGPUCount(wlOverrides)
-		generated, gerr := d.nvidiaDeployer.GenerateValues(ctx, nvidia.GenerateRequest{
-			Entry:    entry,
-			Replicas: req.Replicas,
-			GPUs:     gpuCount,
+		chartRef := composeChartRef(c.repo, c.chart, c.version)
+		componentsForFleet = append(componentsForFleet, fleet.ComponentBundle{
+			Name:     c.name,
+			ChartRef: chartRef,
+			Values:   values,
 		})
-		if gerr != nil {
-			return ComponentRelease{Name: dc.name, Status: "failed"},
-				errors.Join(ErrComponentInstallFailed, fmt.Errorf("nvidia.GenerateValues for %q: %w", dc.name, gerr))
-		}
-		nimGenerated = generated
-	} else if !errors.Is(derr, nvidia.ErrNIMNotFound) {
-		d.logger.Warn("nvidia.Discovery.Get returned non-NotFound error; treating component as non-NIM",
-			slog.String("component", dc.name),
-			slog.String("chart", dc.chart),
-			slog.String("version", dc.version),
-			slog.String("err", derr.Error()))
+		releaseRecords = append(releaseRecords, ComponentRelease{
+			Name:        c.name,
+			ReleaseName: ComposeReleaseName(req.ID, c.name),
+			ChartRef:    chartRef,
+			Status:      "fleet-managed",
+		})
 	}
 
-	chartRef := composeChartRef(dc.repo, dc.chart, dc.version)
-	releaseName := ComposeReleaseName(req.ID, dc.name)
+	spec := fleet.BundleDeploymentSpec{
+		WorkloadID:     req.ID,
+		WorkloadNS:     req.Namespace,
+		TargetClusters: req.TargetClusters,
+		Components:     componentsForFleet,
+		PullSecretData: req.PullSecretData,
+		Owner:          req.Owner,
+	}
+	obs, err := d.fleetBundle.Apply(ctx, spec)
+	if err != nil {
+		return DeployResult{
+			Components:               releaseRecords,
+			ObservedBundleGeneration: observedGen,
+		}, err
+	}
 
-	status, ierr := d.helm.InstallChartFromRepo(ctx, helm.InstallRequest{
-		Namespace:   req.Namespace,
-		ReleaseName: releaseName,
-		ChartRef:    chartRef,
-		Overrides: helm.Overrides{
-			Blueprint:    bpOverrides,
-			Workload:     wlOverrides,
-			NIMGenerated: nimGenerated,
-		},
-		Wait:                   false,
-		Timeout:                componentInstallTimeout,
-		RequireImageRepository: true,
-	})
-	rel := ComponentRelease{
-		Name:        dc.name,
-		ReleaseName: releaseName,
-		ChartRef:    chartRef,
-		Status:      status.Status,
-		Revision:    int32(status.Revision),
-	}
-	if ierr != nil {
-		rel.Status = "failed"
-		return rel, errors.Join(ErrComponentInstallFailed, fmt.Errorf("helm install %q: %w", dc.name, ierr))
-	}
-	return rel, nil
+	// Phase is NOT set on DeployResult: post-P5-1 the controller owns
+	// phase via RecomputePhase(PhaseInputFromCR(w)). The per-cluster
+	// projection below feeds PhaseInput.PerClusterPhases so Rule 0 of
+	// RecomputePhase aggregates per-cluster phases for the Fleet path.
+	return DeployResult{
+		Components:               releaseRecords,
+		PerCluster:               translateObserved(obs),
+		ObservedBundleGeneration: observedGen,
+	}, nil
 }
 
-// parseYAMLOverrides parses a YAML string from the user CR's
+// translateObserved maps fleet.BundleObservedStatus → workload-domain
+// per-cluster status. Aggregate Phase is computed downstream by
+// RecomputePhase (which calls AggregateClusterPhases on
+// PhaseInput.PerClusterPhases — Rule 0 in phase.go).
+func translateObserved(obs fleet.BundleObservedStatus) []ClusterDeploymentStatusDomain {
+	if len(obs.PerCluster) == 0 {
+		return nil
+	}
+	out := make([]ClusterDeploymentStatusDomain, 0, len(obs.PerCluster))
+	for _, e := range obs.PerCluster {
+		var p ClusterPhase
+		if e.ConnectionError {
+			p = ClusterFailed
+		} else {
+			p = MapFleetStateToPhase(e.FleetState)
+		}
+		out = append(out, ClusterDeploymentStatusDomain{
+			ClusterName: e.ClusterName,
+			Phase:       p,
+			FleetState:  e.FleetState,
+		})
+	}
+	return out
+}
+
+// nimGenerated performs NIM detection for a single component and returns
+// the generated values layer if NIM, or nil if non-NIM or error.
+// Carves out the discovery+deployer calls from the old installComponent.
+func (d *deployer) nimGenerated(ctx context.Context, req DeployRequest, c desiredComponent) map[string]any {
+	entry, derr := d.nvDisc.Get(ctx, fmt.Sprintf("%s:%s", c.chart, c.version))
+	if derr != nil {
+		if !errors.Is(derr, nvidia.ErrNIMNotFound) {
+			d.log.Warn("nvidia.Discovery.Get returned non-NotFound error; treating component as non-NIM",
+				slog.String("component", c.name),
+				slog.String("chart", c.chart),
+				slog.String("version", c.version),
+				slog.String("err", derr.Error()))
+		}
+		return nil
+	}
+
+	// gpuCount is a deployer-protocol field, read ONLY from workloadOverrides
+	// per P4-4 follow-up note 2. Blueprint overrides cannot influence NIM
+	// sizing (their job is Helm-native chart values).
+	wlOverrides := parseOverride(req.Overrides[c.name])
+	gpuCount := extractGPUCount(wlOverrides)
+	generated, gerr := d.nvDepl.GenerateValues(ctx, nvidia.GenerateRequest{
+		Entry:    entry,
+		Replicas: req.Replicas,
+		GPUs:     gpuCount,
+	})
+	if gerr != nil {
+		d.log.Warn("nvidia.Deployer.GenerateValues failed; skipping NIM layer",
+			slog.String("component", c.name),
+			slog.String("err", gerr.Error()))
+		return nil
+	}
+	return generated
+}
+
+// parseOverride parses a YAML string from the user CR's
 // valueOverrides map into a Go map. Empty/whitespace input → nil map
 // (treated as "no overrides"). Invalid YAML → error.
-func parseYAMLOverrides(raw string) (map[string]any, error) {
+func parseOverride(raw string) map[string]any {
 	if strings.TrimSpace(raw) == "" {
-		return nil, nil
+		return nil
 	}
 	var out map[string]any
 	if err := yaml.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// composeChartRef builds the OCI chart ref string from {repo, chart, version}.
-// Trims trailing slash on repo to avoid `oci://r//chart:1.0`.
-func composeChartRef(repo, chart, version string) string {
-	repo = strings.TrimRight(repo, "/")
-	return fmt.Sprintf("%s/%s:%s", repo, chart, version)
-}
-
-// Teardown uninstalls all component releases in the provided slice.
-// Called by WorkloadReconciler's finalizer block on Workload deletion.
-//
-// Continues past errors, accumulating failures via errors.Join — gives full
-// attempt coverage before surfacing failures to the caller (mirroring Deploy's
-// install loop semantics from Task 19).
-func (d *deployer) Teardown(ctx context.Context, namespace string, releases []ComponentRelease) error {
-	if len(releases) == 0 {
 		return nil
 	}
-	var errs []error
-	for _, r := range releases {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(append(errs, err)...)
-		}
-		if err := d.helm.Uninstall(ctx, namespace, r.ReleaseName); err != nil {
-			errs = append(errs, fmt.Errorf("uninstall %q: %w", r.ReleaseName, err))
-		}
+	return out
+}
+
+// composeChartRef constructs an OCI reference from the App-ref shape.
+// Replaces what InstallChartFromRepo used to build internally.
+func composeChartRef(repo, chart, version string) string {
+	// Normalize: repo may or may not carry the oci:// prefix.
+	r := repo
+	if !strings.HasPrefix(r, "oci://") {
+		r = "oci://" + strings.TrimPrefix(r, "https://")
 	}
-	return errors.Join(errs...)
+	r = strings.TrimSuffix(r, "/")
+	return r + "/" + chart + ":" + version
+}
+
+// Teardown deletes the Fleet Bundle for the workload. Called by
+// WorkloadReconciler's finalizer block on Workload deletion.
+// Fleet handles per-cluster uninstall and orphan cleanup declaratively.
+func (d *deployer) Teardown(ctx context.Context, namespace, workloadID string, _ []ComponentRelease) error {
+	return d.fleetBundle.Teardown(ctx, namespace, workloadID)
 }
 
 // extractGPUCount looks for an int-typed "gpuCount" key in the parsed
@@ -289,7 +282,7 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 		if req.Source.Blueprint == nil {
 			return nil, 0, ErrSourceNotResolved
 		}
-		bp, err := d.blueprintRepo.Get(ctx, blueprintCRName(req.Source.Blueprint.Name, req.Source.Blueprint.Version))
+		bp, err := d.bpRepo.Get(ctx, blueprintCRName(req.Source.Blueprint.Name, req.Source.Blueprint.Version))
 		if err != nil {
 			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
 		}
@@ -306,22 +299,5 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 		return ComponentsFromBundleCR(b)
 	}
 	return nil, 0, ErrSourceNotResolved
-}
-
-// detectOrphans returns previous-component entries whose Name is not in
-// desired. Used for drift cleanup: caller invokes helm.Engine.Uninstall
-// on each returned entry.
-func detectOrphans(previous []ComponentRelease, desired []desiredComponent) []ComponentRelease {
-	desiredNames := make(map[string]struct{}, len(desired))
-	for _, d := range desired {
-		desiredNames[d.name] = struct{}{}
-	}
-	var orphans []ComponentRelease
-	for _, p := range previous {
-		if _, kept := desiredNames[p.Name]; !kept {
-			orphans = append(orphans, p)
-		}
-	}
-	return orphans
 }
 

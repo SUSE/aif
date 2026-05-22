@@ -27,11 +27,11 @@ type Deployer interface {
 	// AND the underlying cause are reachable via errors.Is.
 	Deploy(ctx context.Context, req DeployRequest) (DeployResult, error)
 
-	// Teardown uninstalls all releases recorded in releases. Used by the
-	// reconciler's finalizer block. Returns nil only if all releases
-	// are torn down (or were already absent — helm.Engine.Uninstall
-	// returns nil for missing releases per its contract).
-	Teardown(ctx context.Context, namespace string, releases []ComponentRelease) error
+	// Teardown deletes the Fleet Bundle for the workload. Used by the
+	// reconciler's finalizer block. Fleet handles per-cluster uninstall
+	// and orphan cleanup declaratively. Returns nil if the Bundle is deleted
+	// or was already absent.
+	Teardown(ctx context.Context, namespace, workloadID string, releases []ComponentRelease) error
 }
 
 // Upgrader is the workflow port for the P5-3 upgrade action. It runs the 5

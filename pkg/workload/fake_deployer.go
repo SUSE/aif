@@ -24,8 +24,9 @@ type FakeDeployer struct {
 
 // TeardownCall captures one Teardown invocation for assertion.
 type TeardownCall struct {
-	Namespace string
-	Releases  []ComponentRelease
+	Namespace  string
+	WorkloadID string
+	Releases   []ComponentRelease
 }
 
 // Deploy implements Deployer. Records the request and returns the
@@ -39,12 +40,13 @@ func (f *FakeDeployer) Deploy(_ context.Context, req DeployRequest) (DeployResul
 
 // Teardown implements Deployer. Records the call and returns the
 // configured error.
-func (f *FakeDeployer) Teardown(_ context.Context, namespace string, releases []ComponentRelease) error {
+func (f *FakeDeployer) Teardown(_ context.Context, namespace, workloadID string, releases []ComponentRelease) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.TeardownCalls = append(f.TeardownCalls, TeardownCall{
-		Namespace: namespace,
-		Releases:  releases,
+		Namespace:  namespace,
+		WorkloadID: workloadID,
+		Releases:   releases,
 	})
 	return f.TeardownErr
 }

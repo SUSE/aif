@@ -52,11 +52,11 @@ func TestFakeDeployer_TeardownRecordsAndReturnsErr(t *testing.T) {
 	f := &FakeDeployer{TeardownErr: want}
 
 	releases := []ComponentRelease{{Name: "c1", ReleaseName: "wid-c1"}}
-	err := f.Teardown(context.Background(), "ns", releases)
+	err := f.Teardown(context.Background(), "ns", "wid", releases)
 	if !errors.Is(err, want) {
 		t.Errorf("err=%v, want %v", err, want)
 	}
-	if len(f.TeardownCalls) != 1 || f.TeardownCalls[0].Namespace != "ns" {
+	if len(f.TeardownCalls) != 1 || f.TeardownCalls[0].Namespace != "ns" || f.TeardownCalls[0].WorkloadID != "wid" {
 		t.Errorf("TeardownCalls=%+v", f.TeardownCalls)
 	}
 }
@@ -70,7 +70,7 @@ func TestFakeDeployer_Reset_ClearsCallLog(t *testing.T) {
 		TeardownErr: errors.New("configured teardown err"),
 	}
 	_, _ = f.Deploy(context.Background(), DeployRequest{})
-	_ = f.Teardown(context.Background(), "ns", nil)
+	_ = f.Teardown(context.Background(), "ns", "wid", nil)
 
 	f.Reset()
 
