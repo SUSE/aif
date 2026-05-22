@@ -8,12 +8,111 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 )
 
+// testApp is a minimal fixture builder that produces a (list item,
+// detail) pair for a given slug. Tests register pairs with newTestServer.
+type testApp struct {
+	list   apiListItem
+	detail apiAppDetail
+}
+
+func newTestApp(slug, name, version string, categories ...string) testApp {
+	labels := make([]string, 0, len(categories)+1)
+	for _, c := range categories {
+		labels = append(labels, "category:"+c)
+	}
+	labels = append(labels, "license:Apache-2.0")
+	return testApp{
+		list: apiListItem{
+			SlugName:        slug,
+			Name:            name,
+			Description:     "Description of " + name,
+			ProjectURL:      "https://example.com/" + slug,
+			LogoURL:         "/logos/" + slug + ".png",
+			LastUpdatedAt:   "2026-04-30T23:56:07.607227Z",
+			PackagingFormat: "HELM_CHART",
+		},
+		detail: apiAppDetail{
+			SlugName: slug,
+			Labels:   labels,
+			Branches: []apiBranch{
+				{ID: 1, BranchName: "0", BranchPattern: "^0\\.\\d+\\.\\d+$", Baseline: version, IsLTS: false},
+			},
+		},
+	}
+}
+
+// newTestServer routes /v1/applications to a paginated list and
+// /v1/applications/{slug} to the matching detail. Apps are split across
+// pages of `pageSize` items in registration order.
+func newTestServer(t *testing.T, pageSize int, apps ...testApp) *httptest.Server {
+	t.Helper()
+	bySlug := make(map[string]apiAppDetail, len(apps))
+	for _, a := range apps {
+		bySlug[a.list.SlugName] = a.detail
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 1 {
+			page = 1
+		}
+		size, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+		if size <= 0 {
+			size = pageSize
+		}
+		start := (page - 1) * pageSize
+		if start > len(apps) {
+			start = len(apps)
+		}
+		end := start + pageSize
+		if end > len(apps) {
+			end = len(apps)
+		}
+		items := make([]apiListItem, 0, end-start)
+		for _, a := range apps[start:end] {
+			items = append(items, a.list)
+		}
+		total := len(apps)
+		totalPages := (total + pageSize - 1) / pageSize
+		if totalPages == 0 {
+			totalPages = 1
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiListResponse{
+			Items:      items,
+			Page:       page,
+			PageSize:   size,
+			TotalSize:  total,
+			TotalPages: totalPages,
+		})
+	})
+	mux.HandleFunc("/v1/applications/", func(w http.ResponseWriter, r *http.Request) {
+		slug := strings.TrimPrefix(r.URL.Path, "/v1/applications/")
+		d, ok := bySlug[slug]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(d)
+	})
+	return httptest.NewServer(mux)
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stdout, nil))
+}
+
+// ── Construction & configuration ──────────────────────────────────────
+
 func TestNewClient(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, annReader := NewClient(logger)
+	c, annReader := NewClient(discardLogger())
 	if c == nil {
 		t.Fatal("expected non-nil Client")
 	}
@@ -23,8 +122,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestList_NotConfigured(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	_, err := c.List(context.Background())
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got: %v", err)
@@ -32,8 +130,7 @@ func TestList_NotConfigured(t *testing.T) {
 }
 
 func TestGetChart_NotConfigured(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	_, err := c.GetChart(context.Background(), "", "ollama", "0.4.1")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got: %v", err)
@@ -45,8 +142,7 @@ func TestFakeClient_ImplementsClient(t *testing.T) {
 }
 
 func TestUpdateSettings(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	apiC := c.(*apiClient)
 
 	s := EngineSettings{
@@ -60,108 +156,112 @@ func TestUpdateSettings(t *testing.T) {
 	apiC.mu.RLock()
 	defer apiC.mu.RUnlock()
 	if apiC.settings.APIURL != "https://custom.example.com" {
-		t.Errorf("expected APIURL 'https://custom.example.com', got %q", apiC.settings.APIURL)
+		t.Errorf("APIURL = %q", apiC.settings.APIURL)
 	}
 	if apiC.settings.Username != "user" {
-		t.Errorf("expected Username 'user', got %q", apiC.settings.Username)
+		t.Errorf("Username = %q", apiC.settings.Username)
 	}
 	if apiC.settings.Token != "tok" {
-		t.Errorf("expected Token 'tok', got %q", apiC.settings.Token)
+		t.Errorf("Token = %q", apiC.settings.Token)
 	}
 }
 
-func newTestApp(slug, title, publisher, version string) apiApplication {
-	return apiApplication{
-		SlugName:      slug,
-		Title:         title,
-		Description:   "Description of " + title,
-		PublisherName: publisher,
-		Categories:    []apiCategory{{ID: "ai", Name: "AI"}, {ID: "ml", Name: "ML"}},
-		Tags:          []string{"gpu", "inference"},
-		LogoURL:       "https://example.com/" + slug + ".png",
-		Helm: apiHelm{
-			RepositoryURL: "oci://dp.apps.rancher.io/charts",
-			ChartName:     slug,
-		},
-		LatestVersion: apiVersion{Version: version},
-		LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
-	}
-}
+// ── List happy paths ─────────────────────────────────────────────────
 
-func TestList_SinglePage(t *testing.T) {
-	resp := apiResponse{
-		Items: []apiApplication{
-			newTestApp("ollama", "Ollama", "Ollama Inc", "0.4.1"),
-			newTestApp("vllm", "vLLM", "vLLM Project", "0.6.0"),
-			newTestApp("milvus", "Milvus", "Zilliz", "2.4.0"),
-		},
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("packaging_format") != "HELM_CHART" {
-			t.Errorf("expected packaging_format=HELM_CHART, got %q", r.URL.Query().Get("packaging_format"))
-		}
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != "testuser" || pass != "testtoken" {
-			t.Errorf("expected basic auth testuser:testtoken, got %q:%q (ok=%v)", user, pass, ok)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
+func TestList_SinglePage_PopulatesAllFields(t *testing.T) {
+	srv := newTestServer(t, 100,
+		newTestApp("ollama", "Ollama", "0.4.1", "AI", "Inference"),
+		newTestApp("vllm", "vLLM", "0.6.0", "AI"),
+		newTestApp("milvus", "Milvus", "2.4.0", "Vector DB"),
+	)
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{
 		APIURL:   srv.URL,
+		OCIHost:  "dp.apps.rancher.io",
 		Username: "testuser",
 		Token:    "testtoken",
 	})
 
 	apps, err := c.List(context.Background())
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("List failed: %v", err)
 	}
 	if len(apps) != 3 {
 		t.Fatalf("expected 3 apps, got %d", len(apps))
 	}
 
-	app := apps[0]
-	if app.ID != "ollama" {
-		t.Errorf("expected ID 'ollama', got %q", app.ID)
+	bySlug := make(map[string]CatalogApp, len(apps))
+	for _, a := range apps {
+		bySlug[a.ID] = a
 	}
-	if app.DisplayName != "Ollama" {
-		t.Errorf("expected DisplayName 'Ollama', got %q", app.DisplayName)
+
+	ollama, ok := bySlug["ollama"]
+	if !ok {
+		t.Fatal("ollama missing from result")
 	}
-	if app.Publisher != "Ollama Inc" {
-		t.Errorf("expected Publisher 'Ollama Inc', got %q", app.Publisher)
+	if ollama.DisplayName != "Ollama" {
+		t.Errorf("DisplayName = %q, want Ollama", ollama.DisplayName)
 	}
-	if app.LatestVersion != "0.4.1" {
-		t.Errorf("expected LatestVersion '0.4.1', got %q", app.LatestVersion)
+	if ollama.LatestVersion != "0.4.1" {
+		t.Errorf("LatestVersion = %q, want 0.4.1", ollama.LatestVersion)
 	}
-	if app.ChartRef != "oci://dp.apps.rancher.io/charts/ollama:0.4.1" {
-		t.Errorf("expected ChartRef 'oci://dp.apps.rancher.io/charts/ollama:0.4.1', got %q", app.ChartRef)
+	if ollama.ChartRef != "oci://dp.apps.rancher.io/charts/ollama:0.4.1" {
+		t.Errorf("ChartRef = %q", ollama.ChartRef)
 	}
-	if len(app.Categories) != 2 || app.Categories[0] != "AI" || app.Categories[1] != "ML" {
-		t.Errorf("expected categories [AI, ML], got %v", app.Categories)
+	if len(ollama.Categories) != 2 || ollama.Categories[0] != "AI" || ollama.Categories[1] != "Inference" {
+		t.Errorf("Categories = %v, want [AI Inference]", ollama.Categories)
 	}
-	if app.Source != "api" {
-		t.Errorf("expected Source 'api', got %q", app.Source)
+	if ollama.Source != "api" {
+		t.Errorf("Source = %q, want api", ollama.Source)
 	}
-	if app.LastUpdatedAt != "2026-04-30T23:56:07.607227Z" {
-		t.Errorf("expected LastUpdatedAt '2026-04-30T23:56:07.607227Z', got %q", app.LastUpdatedAt)
+	if ollama.LastUpdatedAt != "2026-04-30T23:56:07.607227Z" {
+		t.Errorf("LastUpdatedAt = %q", ollama.LastUpdatedAt)
+	}
+	if ollama.ProjectURL != "https://example.com/ollama" {
+		t.Errorf("ProjectURL = %q", ollama.ProjectURL)
+	}
+	if ollama.LogoURL != srv.URL+"/logos/ollama.png" {
+		t.Errorf("LogoURL = %q, want %q", ollama.LogoURL, srv.URL+"/logos/ollama.png")
+	}
+}
+
+func TestList_SendsBasicAuthAndPackagingFilter(t *testing.T) {
+	gotAuth := false
+	gotFilter := ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if ok && u == "testuser" && p == "testtoken" {
+			gotAuth = true
+		}
+		gotFilter = r.URL.Query().Get("packaging_format")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiListResponse{Items: nil, TotalPages: 0})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "testuser", Token: "testtoken"})
+	_, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if !gotAuth {
+		t.Error("expected BasicAuth testuser:testtoken")
+	}
+	if gotFilter != "HELM_CHART" {
+		t.Errorf("packaging_format = %q, want HELM_CHART", gotFilter)
 	}
 }
 
 func TestList_EmptyResults(t *testing.T) {
-	resp := apiResponse{Items: []apiApplication{}}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
+	srv := newTestServer(t, 100)
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	apps, err := c.List(context.Background())
@@ -173,173 +273,226 @@ func TestList_EmptyResults(t *testing.T) {
 	}
 }
 
-func TestList_Pagination(t *testing.T) {
-	page := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// ── Pagination ──────────────────────────────────────────────────────
+
+func TestList_PageBasedPagination_WalksAllPages(t *testing.T) {
+	srv := newTestServer(t, 2,
+		newTestApp("a", "A", "1.0.0", "AI"),
+		newTestApp("b", "B", "2.0.0", "AI"),
+		newTestApp("c", "C", "3.0.0", "AI"),
+	)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(apps) != 3 {
+		t.Fatalf("expected 3 apps across 2 pages, got %d", len(apps))
+	}
+	got := []string{apps[0].ID, apps[1].ID, apps[2].ID}
+	want := []string{"a", "b", "c"}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("order[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestList_Deduplication_KeepsFirstSeen(t *testing.T) {
+	// Same slug returned on two pages — second occurrence dropped.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		w.Header().Set("Content-Type", "application/json")
 		switch page {
-		case 0:
-			page++
-			json.NewEncoder(w).Encode(apiResponse{
-				Items: []apiApplication{newTestApp("app-a", "App A", "Pub A", "1.0.0")},
-				Next:  "http://" + r.Host + "/v1/applications?packaging_format=HELM_CHART&page=2",
-			})
 		case 1:
-			page++
-			json.NewEncoder(w).Encode(apiResponse{
-				Items: []apiApplication{newTestApp("app-b", "App B", "Pub B", "2.0.0")},
-				Next:  "http://" + r.Host + "/v1/applications?packaging_format=HELM_CHART&page=3",
+			_ = json.NewEncoder(w).Encode(apiListResponse{
+				Items: []apiListItem{
+					{SlugName: "ollama", Name: "Ollama", PackagingFormat: "HELM_CHART"},
+				},
+				Page: 1, PageSize: 1, TotalSize: 2, TotalPages: 2,
 			})
 		case 2:
-			json.NewEncoder(w).Encode(apiResponse{
-				Items: []apiApplication{newTestApp("app-c", "App C", "Pub C", "3.0.0")},
+			_ = json.NewEncoder(w).Encode(apiListResponse{
+				Items: []apiListItem{
+					{SlugName: "ollama", Name: "Ollama-Duplicate", PackagingFormat: "HELM_CHART"},
+				},
+				Page: 2, PageSize: 1, TotalSize: 2, TotalPages: 2,
 			})
 		}
-	}))
-	defer srv.Close()
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
-	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
-
-	apps, err := c.List(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(apps) != 3 {
-		t.Fatalf("expected 3 apps, got %d", len(apps))
-	}
-	if apps[0].ID != "app-a" || apps[1].ID != "app-b" || apps[2].ID != "app-c" {
-		t.Errorf("unexpected app order: %v, %v, %v", apps[0].ID, apps[1].ID, apps[2].ID)
-	}
-}
-
-func TestList_Deduplication(t *testing.T) {
-	page := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+	mux.HandleFunc("/v1/applications/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch page {
-		case 0:
-			page++
-			json.NewEncoder(w).Encode(apiResponse{
-				Items: []apiApplication{
-					newTestApp("ollama", "Ollama", "Ollama Inc", "0.4.1"),
-					newTestApp("vllm", "vLLM", "vLLM Project", "0.6.0"),
-				},
-				Next: "http://" + r.Host + "/v1/applications?page=2",
-			})
-		case 1:
-			json.NewEncoder(w).Encode(apiResponse{
-				Items: []apiApplication{
-					newTestApp("ollama", "Ollama Duplicate", "Other Publisher", "0.5.0"),
-					newTestApp("milvus", "Milvus", "Zilliz", "2.4.0"),
-				},
-			})
-		}
-	}))
+		_ = json.NewEncoder(w).Encode(apiAppDetail{
+			SlugName: "ollama",
+			Labels:   []string{"category:AI"},
+			Branches: []apiBranch{{Baseline: "0.4.1"}},
+		})
+	})
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	apps, err := c.List(context.Background())
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("List failed: %v", err)
 	}
-	if len(apps) != 3 {
-		t.Fatalf("expected 3 apps (deduped), got %d", len(apps))
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app (deduped), got %d", len(apps))
 	}
-
-	for _, app := range apps {
-		if app.ID == "ollama" {
-			if app.Publisher != "Ollama Inc" {
-				t.Errorf("expected first-seen publisher 'Ollama Inc', got %q", app.Publisher)
-			}
-			if app.LatestVersion != "0.4.1" {
-				t.Errorf("expected first-seen version '0.4.1', got %q", app.LatestVersion)
-			}
-			return
-		}
+	if apps[0].DisplayName != "Ollama" {
+		t.Errorf("expected first-seen DisplayName 'Ollama', got %q", apps[0].DisplayName)
 	}
-	t.Error("ollama not found in results")
 }
+
+// ── Detail-fetch degradation ────────────────────────────────────────
+
+func TestList_DetailFetch404_AppDropped(t *testing.T) {
+	// Detail endpoint returns 404 for the only app → app has empty version
+	// → filtered out (no usable chartRef). Expected: empty result list.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiListResponse{
+			Items: []apiListItem{{SlugName: "ghost", Name: "Ghost", PackagingFormat: "HELM_CHART"}},
+			Page:  1, PageSize: 100, TotalSize: 1, TotalPages: 1,
+		})
+	})
+	mux.HandleFunc("/v1/applications/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(apps) != 0 {
+		t.Errorf("expected ghost app to be filtered out, got %d apps", len(apps))
+	}
+}
+
+func TestList_DetailFetchPartialFailure_OtherAppsSurvive(t *testing.T) {
+	// One app's detail returns 500; the other returns 200. List should
+	// succeed and include the good app; the broken one is filtered out
+	// because its version is empty.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiListResponse{
+			Items: []apiListItem{
+				{SlugName: "good", Name: "Good", PackagingFormat: "HELM_CHART"},
+				{SlugName: "broken", Name: "Broken", PackagingFormat: "HELM_CHART"},
+			},
+			Page: 1, PageSize: 100, TotalSize: 2, TotalPages: 1,
+		})
+	})
+	mux.HandleFunc("/v1/applications/good", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiAppDetail{
+			SlugName: "good", Labels: []string{"category:AI"},
+			Branches: []apiBranch{{Baseline: "1.0.0"}},
+		})
+	})
+	// /v1/applications/broken returns 500 on every attempt (retry exhausts).
+	brokenCalls := 0
+	mu := sync.Mutex{}
+	mux.HandleFunc("/v1/applications/broken", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		brokenCalls++
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(apps) != 1 || apps[0].ID != "good" {
+		t.Fatalf("expected only good app to survive, got %v", apps)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if brokenCalls < 1 {
+		t.Errorf("expected at least one detail-fetch attempt on broken, got %d", brokenCalls)
+	}
+}
+
+// ── Error classification ────────────────────────────────────────────
 
 func TestList_AuthFailure401(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "bad", Token: "creds"})
 
 	_, err := c.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
 	if !errors.Is(err, ErrAuthFailed) {
 		t.Errorf("expected ErrAuthFailed, got %v", err)
 	}
 }
 
 func TestList_AuthFailure403(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "user", Token: "tok"})
 
 	_, err := c.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
 	if !errors.Is(err, ErrAuthFailed) {
 		t.Errorf("expected ErrAuthFailed, got %v", err)
 	}
 }
 
-func TestList_ServerError500(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestList_ServerError500_RetriesAndReturnsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
 	if !errors.Is(err, ErrUpstreamUnavailable) {
 		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
 	}
 }
 
-func TestList_MalformedJSON(t *testing.T) {
+func TestList_MalformedJSON_RetriesAndReturnsMalformed(t *testing.T) {
 	attempts := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{invalid json`))
+		_, _ = w.Write([]byte(`{invalid json`))
 	}))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
 	if !errors.Is(err, ErrCatalogMalformed) {
 		t.Errorf("expected ErrCatalogMalformed, got %v", err)
 	}
@@ -348,39 +501,31 @@ func TestList_MalformedJSON(t *testing.T) {
 	}
 }
 
-func TestList_RateLimited429(t *testing.T) {
+func TestList_RateLimited429_RetriesAndReturnsUnavailable(t *testing.T) {
 	attempts := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	_, err := c.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
 	if !errors.Is(err, ErrUpstreamUnavailable) {
 		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
 	}
 	if attempts != 2 {
-		t.Errorf("expected 2 attempts (original + 1 retry), got %d", attempts)
+		t.Errorf("expected 2 attempts, got %d", attempts)
 	}
 }
 
 func TestList_ContextCancelled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse{Items: []apiApplication{}})
-	}))
+	srv := newTestServer(t, 100, newTestApp("a", "A", "1.0.0", "AI"))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -388,114 +533,79 @@ func TestList_ContextCancelled(t *testing.T) {
 
 	_, err := c.List(ctx)
 	if err == nil {
-		t.Fatal("expected error, got nil")
+		t.Fatal("expected error from cancelled context, got nil")
 	}
 }
 
-func TestGetChart_HappyPath(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/applications/ollama/versions" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiVersionsResponse{
-			Items: []apiVersionEntry{
-				{Version: "0.3.0", AppVersion: "0.3.0"},
-				{Version: "0.4.1", AppVersion: "0.4.1"},
-				{Version: "0.5.0", AppVersion: "0.5.0-beta"},
-			},
-		})
-	}))
+// ── GetChart ────────────────────────────────────────────────────────
+
+func TestGetChart_HappyPath_ReturnsMetadata(t *testing.T) {
+	srv := newTestServer(t, 100, newTestApp("ollama", "Ollama", "0.4.1", "AI"))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
-	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "user", Token: "tok"})
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "u", Token: "t"})
 
 	meta, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "0.4.1")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("GetChart failed: %v", err)
 	}
-	if meta.Name != "ollama" {
-		t.Errorf("expected Name 'ollama', got %q", meta.Name)
-	}
-	if meta.Version != "0.4.1" {
-		t.Errorf("expected Version '0.4.1', got %q", meta.Version)
-	}
-	if meta.AppVersion != "0.4.1" {
-		t.Errorf("expected AppVersion '0.4.1', got %q", meta.AppVersion)
+	if meta.Name != "ollama" || meta.Version != "0.4.1" || meta.AppVersion != "0.4.1" {
+		t.Errorf("got %+v", meta)
 	}
 }
 
 func TestGetChart_VersionNotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiVersionsResponse{
-			Items: []apiVersionEntry{
-				{Version: "0.3.0", AppVersion: "0.3.0"},
-			},
-		})
-	}))
+	srv := newTestServer(t, 100, newTestApp("ollama", "Ollama", "0.4.1", "AI"))
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
-	_, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "9.9.9")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	_, err := c.GetChart(context.Background(), "", "ollama", "9.9.9")
 	if !errors.Is(err, ErrVersionNotFound) {
 		t.Errorf("expected ErrVersionNotFound, got %v", err)
 	}
 }
 
-func TestGetChart_ContextCancelled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiVersionsResponse{
-			Items: []apiVersionEntry{{Version: "0.3.0", AppVersion: "0.3.0"}},
-		})
-	}))
+func TestGetChart_ChartNotFound(t *testing.T) {
+	srv := newTestServer(t, 100)
 	defer srv.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	_, err := c.GetChart(context.Background(), "", "missing-chart", "0.1.0")
+	if !errors.Is(err, ErrChartNotFound) {
+		t.Errorf("expected ErrChartNotFound, got %v", err)
+	}
+}
+
+func TestGetChart_ContextCancelled(t *testing.T) {
+	srv := newTestServer(t, 100, newTestApp("ollama", "Ollama", "0.4.1", "AI"))
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := c.GetChart(ctx, "", "ollama", "0.3.0")
+	_, err := c.GetChart(ctx, "", "ollama", "0.4.1")
 	if err == nil {
-		t.Fatal("expected error, got nil")
+		t.Fatal("expected error from cancelled context, got nil")
 	}
 }
 
-func TestUpdateSettings_ReflectedInList(t *testing.T) {
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse{
-			Items: []apiApplication{newTestApp("from-srv1", "Server 1 App", "Pub1", "1.0.0")},
-		})
-	}))
-	defer srv1.Close()
+// ── UpdateSettings reflection ───────────────────────────────────────
 
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, _ := r.BasicAuth()
-		if user != "newuser" || pass != "newtoken" {
-			t.Errorf("expected newuser:newtoken, got %q:%q", user, pass)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse{
-			Items: []apiApplication{newTestApp("from-srv2", "Server 2 App", "Pub2", "2.0.0")},
-		})
-	}))
+func TestUpdateSettings_ReflectedInList(t *testing.T) {
+	srv1 := newTestServer(t, 100, newTestApp("from-srv1", "Server 1", "1.0.0", "AI"))
+	defer srv1.Close()
+	srv2 := newTestServer(t, 100, newTestApp("from-srv2", "Server 2", "2.0.0", "AI"))
 	defer srv2.Close()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	c, _ := NewClient(logger)
+	c, _ := NewClient(discardLogger())
 	c.UpdateSettings(EngineSettings{APIURL: srv1.URL})
 
 	apps, err := c.List(context.Background())
@@ -506,7 +616,7 @@ func TestUpdateSettings_ReflectedInList(t *testing.T) {
 		t.Fatalf("expected from-srv1, got %v", apps)
 	}
 
-	c.UpdateSettings(EngineSettings{APIURL: srv2.URL, Username: "newuser", Token: "newtoken"})
+	c.UpdateSettings(EngineSettings{APIURL: srv2.URL})
 
 	apps, err = c.List(context.Background())
 	if err != nil {
@@ -517,31 +627,139 @@ func TestUpdateSettings_ReflectedInList(t *testing.T) {
 	}
 }
 
-func TestToApp_MapsLastUpdatedAt(t *testing.T) {
-	app := apiApplication{
-		SlugName:      "ollama",
-		Title:         "Ollama",
-		PublisherName: "Ollama Inc",
-		Helm:          apiHelm{RepositoryURL: "oci://dp.apps.rancher.io/charts", ChartName: "ollama"},
-		LatestVersion: apiVersion{Version: "0.4.1"},
-		LastUpdatedAt: "2026-04-30T23:56:07.607227Z",
-	}
-	got := app.toApp()
-	if got.LastUpdatedAt != "2026-04-30T23:56:07.607227Z" {
-		t.Errorf("LastUpdatedAt = %q, want %q", got.LastUpdatedAt, "2026-04-30T23:56:07.607227Z")
+// ── Field mappings ──────────────────────────────────────────────────
+
+func TestList_MapsLastUpdatedAt(t *testing.T) {
+	srv := newTestServer(t, 100, newTestApp("ollama", "Ollama", "0.4.1", "AI"))
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, _ := c.List(context.Background())
+	if apps[0].LastUpdatedAt != "2026-04-30T23:56:07.607227Z" {
+		t.Errorf("LastUpdatedAt = %q", apps[0].LastUpdatedAt)
 	}
 }
 
-func TestToApp_LastUpdatedAt_EmptyWhenAbsent(t *testing.T) {
-	app := apiApplication{
-		SlugName:      "milvus",
-		Title:         "Milvus",
-		PublisherName: "Zilliz",
-		Helm:          apiHelm{RepositoryURL: "oci://dp.apps.rancher.io/charts", ChartName: "milvus"},
-		LatestVersion: apiVersion{Version: "2.4.0"},
+func TestList_LastUpdatedAt_EmptyWhenAbsent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiListResponse{
+			Items: []apiListItem{{SlugName: "milvus", Name: "Milvus", PackagingFormat: "HELM_CHART"}},
+			Page:  1, PageSize: 100, TotalSize: 1, TotalPages: 1,
+		})
+	})
+	mux.HandleFunc("/v1/applications/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiAppDetail{
+			SlugName: "milvus",
+			Labels:   []string{"category:Vector DB"},
+			Branches: []apiBranch{{Baseline: "2.4.0"}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	apps, _ := c.List(context.Background())
+	if apps[0].LastUpdatedAt != "" {
+		t.Errorf("LastUpdatedAt = %q, want empty", apps[0].LastUpdatedAt)
 	}
-	got := app.toApp()
-	if got.LastUpdatedAt != "" {
-		t.Errorf("LastUpdatedAt = %q, want empty", got.LastUpdatedAt)
+}
+
+// ── Pure-function unit tests ────────────────────────────────────────
+
+func TestBuildChartRef(t *testing.T) {
+	cases := []struct {
+		name, host, slug, version, want string
+	}{
+		{"bare host", "dp.apps.rancher.io", "ollama", "0.4.1", "oci://dp.apps.rancher.io/charts/ollama:0.4.1"},
+		{"https scheme stripped", "https://dp.apps.rancher.io", "vllm", "0.6.0", "oci://dp.apps.rancher.io/charts/vllm:0.6.0"},
+		{"path stripped", "dp.apps.rancher.io/charts", "milvus", "2.4.0", "oci://dp.apps.rancher.io/charts/milvus:2.4.0"},
+		{"empty host defaults to production", "", "ollama", "0.4.1", "oci://dp.apps.rancher.io/charts/ollama:0.4.1"},
+		{"missing version returns empty", "dp.apps.rancher.io", "ollama", "", ""},
+		{"missing slug returns empty", "dp.apps.rancher.io", "", "0.4.1", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildChartRef(tc.host, tc.slug, tc.version)
+			if got != tc.want {
+				t.Errorf("buildChartRef(%q, %q, %q) = %q, want %q", tc.host, tc.slug, tc.version, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCategoriesFromLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"empty", nil, []string{}},
+		{"no category labels", []string{"license:MIT", "ecosystem:cncf"}, []string{}},
+		{"mixed", []string{"category:observability", "license:Apache-2.0", "category:logging"}, []string{"observability", "logging"}},
+		{"empty category value skipped", []string{"category:", "category:AI"}, []string{"AI"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := categoriesFromLabels(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestLatestBaseline_PicksHighestNonLTS(t *testing.T) {
+	branches := []apiBranch{
+		{Baseline: "0.4.0", IsLTS: false},
+		{Baseline: "0.5.0", IsLTS: false},
+		{Baseline: "0.10.0", IsLTS: false}, // numerically highest
+		{Baseline: "1.0.0", IsLTS: true},   // LTS — skipped
+	}
+	if got := latestBaseline(branches); got != "0.10.0" {
+		t.Errorf("latestBaseline = %q, want 0.10.0", got)
+	}
+}
+
+func TestLatestBaseline_FallsBackToLTS_WhenAllAreLTS(t *testing.T) {
+	branches := []apiBranch{
+		{Baseline: "1.0.0", IsLTS: true},
+		{Baseline: "2.0.0", IsLTS: true},
+	}
+	if got := latestBaseline(branches); got != "2.0.0" {
+		t.Errorf("latestBaseline = %q, want 2.0.0", got)
+	}
+}
+
+func TestLatestBaseline_EmptyBranches_ReturnsEmpty(t *testing.T) {
+	if got := latestBaseline(nil); got != "" {
+		t.Errorf("latestBaseline(nil) = %q, want empty", got)
+	}
+}
+
+func TestAbsolutizeLogoURL(t *testing.T) {
+	cases := []struct {
+		apiURL, logoURL, want string
+	}{
+		{"https://api.example.com", "/logos/x.png", "https://api.example.com/logos/x.png"},
+		{"https://api.example.com", "https://other.com/x.png", "https://other.com/x.png"},
+		{"https://api.example.com", "", ""},
+	}
+	for _, tc := range cases {
+		got := absolutizeLogoURL(tc.apiURL, tc.logoURL)
+		if got != tc.want {
+			t.Errorf("absolutizeLogoURL(%q, %q) = %q, want %q", tc.apiURL, tc.logoURL, got, tc.want)
+		}
 	}
 }
