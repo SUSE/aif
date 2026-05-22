@@ -79,6 +79,23 @@ func decodeAPIError(t *testing.T, rr *httptest.ResponseRecorder) *APIError {
 	return &e
 }
 
+func TestWorkloadUpgrade_MissingImpersonateUser(t *testing.T) {
+	rig := newUpgradeTestRig(t)
+	// Bypass rig.post so we can omit the Impersonate-User header.
+	req := httptest.NewRequest("POST", "/api/v1/workloads/team-a/rag-prod/upgrade",
+		strings.NewReader(`{"toBlueprintVersion":"1.1.0"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if got := decodeAPIError(t, rr).Code; got != ErrCodeForbidden {
+		t.Errorf("expected error code %s, got %s", ErrCodeForbidden, got)
+	}
+}
+
 func TestWorkloadUpgrade_MalformedBody(t *testing.T) {
 	rig := newUpgradeTestRig(t)
 	req := httptest.NewRequest("POST", "/api/v1/workloads/ns/wl/upgrade", strings.NewReader("not-json"))

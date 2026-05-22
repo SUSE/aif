@@ -58,8 +58,11 @@ func (h *WorkloadsHandler) upgrade(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")
 
-	// Audit only — Impersonate-User is recorded in logs but not enforced.
 	user, _ := ExtractUser(r)
+	if user == "" {
+		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var body upgradeRequest
