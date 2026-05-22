@@ -67,6 +67,14 @@ rules:
 - apiGroups:
   - ai-platform.suse.com
   resources:
+  - blueprints
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ai-platform.suse.com
+  resources:
   - installaiextensions
   - settings
   verbs:
@@ -140,9 +148,11 @@ rules:
   resources:
   - helmops
   verbs:
+  - create
   - delete
   - get
   - list
+  - patch
   - watch
 - apiGroups:
   - rbac.authorization.k8s.io

@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL } from './app-collection';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
 function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
@@ -214,7 +215,15 @@ export async function createOrUpgradeApp(
     // For install actions, check if app exists first and use upgrade if it does
     try {
       log('Checking for existing App...', { namespace, releaseName, checkUrl: appUrl });
-      await $store.dispatch('rancher/request', { url: appUrl, timeout: 20000 });
+      const existingAppResp = await $store.dispatch('rancher/request', { url: appUrl, timeout: 20000 });
+      const existingApp = existingAppResp?.data ?? existingAppResp;
+      const existingState = (existingApp?.status?.summary?.state || existingApp?.metadata?.state?.name || '').toLowerCase();
+      if (existingState === 'uninstalling') {
+        throw new Error(
+          `Cannot install "${releaseName}" — a previous installation is still being uninstalled. ` +
+          `Wait for it to finish and then retry.`
+        );
+      }
 
       // App exists — use clusterRepo upgrade action to re-trigger Helm
       log('App exists, performing upgrade via clusterRepo action');
@@ -312,37 +321,60 @@ export async function waitForAppInstall(
   const errorHandler = createErrorHandler($store, 'RancherApps');
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/namespaces/${encodeURIComponent(namespace)}/apps/${encodeURIComponent(releaseName)}`;
   const start = Date.now();
-  let lastErr: unknown = null;
 
   log('post-install: wait for App to appear', { clusterId, namespace, releaseName, timeoutMs });
 
-  let initialObs = -1;
-  let initialState = '';
+  let initialObs    = -1;
+  let everFound     = false; // true once the App CR has been observed at least once
 
   for (;;) {
-    let app: any = null;
+    let app: any        = null;
+    let is404           = false;
 
     try {
       const r = await $store.dispatch('rancher/request', { url, timeout: 20000 });
       app = (r?.data ?? r) || {};
     } catch (e: unknown) {
-      lastErr = e;
       const standardError = errorHandler.normalizeError(e);
-      if (standardError.status && standardError.status !== 404) {
+      if (standardError.status === 404) {
+        is404 = true;
+      } else if (standardError.status) {
         log('post-install: early error (non-404)', standardError.status);
       }
     }
 
+    if (is404 && everFound) {
+      // The App CR existed but was deleted. This can happen after a successful Helm install
+      // in some Rancher versions — verify by checking for the Helm release secret before
+      // assuming failure.
+      const helmSecretUrl =
+        `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets` +
+        `?labelSelector=owner%3Dhelm%2Cname%3D${encodeURIComponent(releaseName)}`;
+      try {
+        const secretsResp = await $store.dispatch('rancher/request', { url: helmSecretUrl, timeout: 10000 });
+        const secrets = secretsResp?.data?.items ?? secretsResp?.items ?? [];
+        if (secrets.length > 0) {
+          // Helm release exists — install succeeded, App CR was just cleaned up by Rancher.
+          log('post-install: App CR gone but Helm release secret found — treating as success', { releaseName, namespace });
+          return {} as AppCRD;
+        }
+      } catch {
+        // ignore — fall through to the failure path below
+      }
+      throw new Error(
+        `Helm install of "${releaseName}" failed and was rolled back. ` +
+        `Check pod and job status in namespace "${namespace}" for details.`
+      );
+    }
+
     if (app) {
+      everFound = true;
       const gen = app?.metadata?.generation ?? 0;
       const obs = app?.status?.observedGeneration ?? 0;
       const sum = app?.status?.summary || {};
       const state = sum?.state || app?.status?.conditions?.find((c: { type: string; status: string }) => c?.type === 'Ready')?.status || 'Unknown';
 
-      if (initialObs < 0) {
-        initialObs = obs;
-        initialState = (state || '').toLowerCase();
-      }
+      if (initialObs < 0) initialObs = obs;
 
       console.log('[SUSE-AI] post-install: app peek', {
         gen, obs, initialObs, state, ns: namespace, name: releaseName,
@@ -352,13 +384,12 @@ export async function waitForAppInstall(
       });
 
       if (obs >= gen) {
-        // On retry/upgrade, wait for observedGeneration to increment
-        // to avoid reading stale status from the previous operation
-        const isStale = isRetry && obs <= initialObs;
-        if (isStale) {
-          // Keep polling — controller hasn't processed the new operation yet
-        } else {
-          const lowerState = (state || '').toLowerCase();
+        const lowerState = (state || '').toLowerCase();
+        // On retry/upgrade, wait for observedGeneration to increment to avoid reading stale
+        // status from the previous operation — but skip the stale check when the App is
+        // actively uninstalling, since that IS the current live state.
+        const isStale = isRetry && obs <= initialObs && lowerState !== 'uninstalling';
+        if (!isStale) {
           if (lowerState === 'failed' || lowerState === 'error') {
             const errMsg = app?.metadata?.state?.message
               || (typeof sum?.error === 'string' ? sum.error : null)
@@ -366,8 +397,10 @@ export async function waitForAppInstall(
             console.error('[SUSE-AI] post-install: app failed', { state, errMsg });
             throw new Error(errMsg);
           }
-          // Only return for terminal success states; keep polling for transitional states
-          const transitional = ['installing', 'pending', 'pending-install', 'pending-upgrade', 'pending-rollback'];
+          // Only return for terminal success states; keep polling for transitional states.
+          // "uninstalling" is included so the loop continues until the App CR disappears,
+          // at which point the Helm release secret check below determines true outcome.
+          const transitional = ['installing', 'pending', 'pending-install', 'pending-upgrade', 'pending-rollback', 'uninstalling'];
           if (!transitional.includes(lowerState)) {
             return app;
           }
@@ -376,8 +409,10 @@ export async function waitForAppInstall(
     }
 
     if (Date.now() - start > timeoutMs) {
-      const msg = lastErr ? handleSimpleError(lastErr, 'App did not appear in time') : 'App did not appear in time';
-      throw new Error(msg);
+      const detail = everFound
+        ? `App "${releaseName}" is still in a transitional state after ${Math.round(timeoutMs / 1000)}s — check pod status in namespace "${namespace}"`
+        : `App "${releaseName}" did not appear in namespace "${namespace}" within ${Math.round(timeoutMs / 1000)}s — check ClusterRepo permissions`;
+      throw new Error(detail);
     }
     await new Promise(r => setTimeout(r, 1500));
   }
@@ -768,8 +803,8 @@ export async function inferClusterRepoForChart(
 
 function clusterRepoNameFromUrl(ociUrl: string): string {
   const KNOWN: Record<string, string> = {
-    'oci://dp.apps.rancher.io/charts':   'application-collection',
-    'oci://registry.suse.com/ai/charts': 'suse-ai-registry',
+    [APP_COLLECTION_REPO_URL]: 'application-collection',
+    [SUSE_REGISTRY_REPO_URL]:  'suse-ai-registry',
   };
   return KNOWN[ociUrl] ?? ociUrl
     .replace(/^oci:\/\//, '')

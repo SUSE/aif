@@ -116,10 +116,10 @@ var _ = Describe("AIWorkload Controller", func() {
 			wl := &aiplatformv1alpha1.AIWorkload{
 				ObjectMeta: metav1.ObjectMeta{Name: "gitops-sync", Namespace: "default"},
 				Spec: aiplatformv1alpha1.AIWorkloadSpec{
-					DisplayName:     "Test",
-					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployGitOps,
-					FleetBundleName: "test-bundle",
-					TargetNamespace: "old-ns",
+					DisplayName:      "Test",
+					DeployStrategy:   aiplatformv1alpha1.AIWorkloadDeployGitOps,
+					FleetBundleNames: []string{"test-bundle"},
+					TargetNamespace:  "old-ns",
 					Source: aiplatformv1alpha1.AIWorkloadSource{
 						SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
 						App: &aiplatformv1alpha1.AppSource{
@@ -168,10 +168,10 @@ var _ = Describe("AIWorkload Controller", func() {
 			wl := &aiplatformv1alpha1.AIWorkload{
 				ObjectMeta: metav1.ObjectMeta{Name: "gitops-new", Namespace: "default"},
 				Spec: aiplatformv1alpha1.AIWorkloadSpec{
-					DisplayName:     "Test",
-					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployGitOps,
-					FleetBundleName: "missing-bundle",
-					TargetNamespace: "ns",
+					DisplayName:      "Test",
+					DeployStrategy:   aiplatformv1alpha1.AIWorkloadDeployGitOps,
+					FleetBundleNames: []string{"missing-bundle"},
+					TargetNamespace:  "ns",
 					Source: aiplatformv1alpha1.AIWorkloadSource{
 						SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
 						App: &aiplatformv1alpha1.AppSource{
@@ -208,10 +208,10 @@ var _ = Describe("AIWorkload Controller", func() {
 					},
 				},
 				Spec: aiplatformv1alpha1.AIWorkloadSpec{
-					DisplayName:     "Test",
-					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployGitOps,
-					FleetBundleName: "deleted-bundle",
-					TargetNamespace: "ns",
+					DisplayName:      "Test",
+					DeployStrategy:   aiplatformv1alpha1.AIWorkloadDeployGitOps,
+					FleetBundleNames: []string{"deleted-bundle"},
+					TargetNamespace:  "ns",
 					Source: aiplatformv1alpha1.AIWorkloadSource{
 						SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
 						App: &aiplatformv1alpha1.AppSource{
@@ -231,6 +231,94 @@ var _ = Describe("AIWorkload Controller", func() {
 			var got aiplatformv1alpha1.AIWorkload
 			err = k8sClient.Get(ctx, req("gitops-deleted", "default").NamespacedName, &got)
 			Expect(errors.IsNotFound(err)).To(BeTrue())
+		})
+	})
+})
+
+var _ = Describe("Blueprint AIWorkload", func() {
+	reconciler := func() *aiworkload.AIWorkloadReconciler {
+		return &aiworkload.AIWorkloadReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	}
+	req := func(name, ns string) reconcile.Request {
+		return reconcile.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: ns}}
+	}
+
+	Context("Blueprint CR missing", func() {
+		It("sets phase=Failed when blueprint CR not found", func() {
+			wl := &aiplatformv1alpha1.AIWorkload{
+				ObjectMeta: metav1.ObjectMeta{Name: "bp-missing", Namespace: "default"},
+				Spec: aiplatformv1alpha1.AIWorkloadSpec{
+					DisplayName:     "Test",
+					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployFleetBundle,
+					TargetNamespace: "ns",
+					Source: aiplatformv1alpha1.AIWorkloadSource{
+						SourceType: aiplatformv1alpha1.AIWorkloadSourceBlueprint,
+						Blueprint: &aiplatformv1alpha1.BlueprintSource{
+							Name:    "my-stack",
+							Version: "1.0.0",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), wl) })
+
+			// First reconcile: adds finalizer
+			_, _ = reconciler().Reconcile(ctx, req("bp-missing", "default"))
+			// Second reconcile: tries to fetch Blueprint CR
+			_, err := reconciler().Reconcile(ctx, req("bp-missing", "default"))
+			Expect(err).NotTo(HaveOccurred())
+
+			var got aiplatformv1alpha1.AIWorkload
+			Expect(k8sClient.Get(ctx, req("bp-missing", "default").NamespacedName, &got)).To(Succeed())
+			Expect(got.Status.Phase).To(Equal(aiplatformv1alpha1.AIWorkloadPhaseFailed))
+		})
+	})
+
+	Context("Blueprint CR exists, fleetBundleNames empty", func() {
+		It("populates fleetBundleNames from components and requeues", func() {
+			bp := &aiplatformv1alpha1.Blueprint{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-stack-1-0-0"},
+				Spec: aiplatformv1alpha1.BlueprintSpec{
+					DisplayName: "My Stack",
+					Version:     "1.0.0",
+					Components: []aiplatformv1alpha1.BlueprintComponent{
+						{ChartRepo: "suse-ai", ChartName: "ollama", ChartVersion: "1.0.0"},
+						{ChartRepo: "suse-ai", ChartName: "qdrant", ChartVersion: "1.2.0"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, bp)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bp) })
+
+			wl := &aiplatformv1alpha1.AIWorkload{
+				ObjectMeta: metav1.ObjectMeta{Name: "bp-populate", Namespace: "default"},
+				Spec: aiplatformv1alpha1.AIWorkloadSpec{
+					DisplayName:     "Test",
+					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployFleetBundle,
+					TargetNamespace: "ns",
+					Source: aiplatformv1alpha1.AIWorkloadSource{
+						SourceType: aiplatformv1alpha1.AIWorkloadSourceBlueprint,
+						Blueprint:  &aiplatformv1alpha1.BlueprintSource{Name: "my-stack", Version: "1.0.0"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), wl) })
+
+			// First reconcile: adds finalizer
+			_, _ = reconciler().Reconcile(ctx, req("bp-populate", "default"))
+			// Second reconcile: detects empty fleetBundleNames, populates them
+			result, err := reconciler().Reconcile(ctx, req("bp-populate", "default"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Requeue).To(BeTrue())
+
+			var got aiplatformv1alpha1.AIWorkload
+			Expect(k8sClient.Get(ctx, req("bp-populate", "default").NamespacedName, &got)).To(Succeed())
+			Expect(got.Spec.FleetBundleNames).To(HaveLen(2))
+			Expect(got.Spec.FleetBundleNames[0]).To(Equal("bp-populate-ollama"))
+			Expect(got.Spec.FleetBundleNames[1]).To(Equal("bp-populate-qdrant"))
+			Expect(got.Status.ObservedGeneration).To(BeZero())
 		})
 	})
 })

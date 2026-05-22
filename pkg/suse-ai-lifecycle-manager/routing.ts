@@ -61,6 +61,30 @@ export default [
     meta:      { product: PRODUCT, category: 'settings' }
   },
 
+  // Blueprints list page
+  {
+    name:      `c-cluster-${ PRODUCT }-${ PAGE_TYPES.BLUEPRINTS }`,
+    path:      `/c/:cluster/${ PRODUCT }/${ PAGE_TYPES.BLUEPRINTS }`,
+    component: () => import('./pages/Blueprints.vue'),
+    meta:      { product: PRODUCT, category: 'blueprints' }
+  },
+
+  // Blueprint create / edit wizard
+  {
+    name:      `c-cluster-${ PRODUCT }-blueprint-create`,
+    path:      `/c/:cluster/${ PRODUCT }/${ PAGE_TYPES.BLUEPRINTS }/create`,
+    component: () => import('./pages/BlueprintCreate.vue'),
+    meta:      { product: PRODUCT, category: 'blueprint-create' }
+  },
+
+  // Blueprint install wizard
+  {
+    name:      `c-cluster-${ PRODUCT }-blueprint-install`,
+    path:      `/c/:cluster/${ PRODUCT }/${ PAGE_TYPES.BLUEPRINTS }/install`,
+    component: () => import('./pages/BlueprintInstall.vue'),
+    meta:      { product: PRODUCT, category: 'blueprint-install' }
+  },
+
   // Legacy routes (kept for compatibility during transition)
   {
     name:      `c-cluster-${PRODUCT}-home`,

@@ -6,6 +6,14 @@ rules:
   - apiGroups:
       - ""
     resources:
+      - namespaces
+    verbs:
+      - create
+      - get
+      - patch
+  - apiGroups:
+      - ""
+    resources:
       - configmaps
       - persistentvolumeclaims
       - pods
@@ -131,6 +139,18 @@ rules:
   - apiGroups:
       - ai-platform.suse.com
     resources:
+      - blueprints
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
       - aiworkloads
     verbs:
       - create
@@ -178,9 +198,12 @@ rules:
     resources:
       - helmops
     verbs:
+      - create
       - delete
       - get
       - list
+      - patch
+      - update
       - watch
 
 ---

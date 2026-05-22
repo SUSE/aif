@@ -3,11 +3,7 @@
     <div class="outlet">
       <!-- Header -->
       <header class="fixed-header">
-        <!-- Page Title 
-        <div class="title">
-          <h1 class="m-0" id="page-title">{{ t('suseai.apps.title', 'SUSE AI Applications') }}</h1>
-        </div>
-        -->
+        <h1>Applications</h1>
 
         <!-- Toolbar with filters and actions -->
         <div class="actions-container" role="toolbar" aria-label="Application filters and actions">

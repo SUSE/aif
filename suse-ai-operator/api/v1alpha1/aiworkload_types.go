@@ -80,9 +80,12 @@ type AppSource struct {
 
 // BlueprintSource references a Blueprint CR (Epic 2).
 type BlueprintSource struct {
-	// Name is the Blueprint CR name.
+	// Name is the blueprint family slug (label ai-platform.suse.com/blueprint-name).
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
+	// Version is the semver version of the blueprint to use.
+	// +kubebuilder:validation:MinLength=1
+	Version string `json:"version"`
 }
 
 // AIWorkloadSource is a discriminated union describing what is being deployed.
@@ -128,9 +131,11 @@ type AIWorkloadSpec struct {
 	// ComponentValues holds per-component Helm value overrides.
 	// +optional
 	ComponentValues []ComponentValueOverride `json:"componentValues,omitempty"`
-	// FleetBundleName is the Fleet Bundle CR name for FleetBundle/GitOps paths.
+	// FleetBundleNames are the Fleet Bundle CR names for this workload.
+	// App-sourced workloads have exactly one entry; Blueprint-sourced workloads
+	// have one entry per component.
 	// +optional
-	FleetBundleName string `json:"fleetBundleName,omitempty"`
+	FleetBundleNames []string `json:"fleetBundleNames,omitempty"`
 }
 
 // AIWorkloadClusterStatus tracks per-cluster deployment outcome.

@@ -1,6 +1,12 @@
 import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
 
+// Canonical OCI registry URLs for the two SUSE chart repositories.
+// These are the single source of truth for all hardcoded registry URLs in the codebase.
+// Air-gapped environments override these via Settings → registryEndpoints.
+export const APP_COLLECTION_REPO_URL = 'oci://dp.apps.rancher.io/charts';
+export const SUSE_REGISTRY_REPO_URL  = 'oci://registry.suse.com/ai/charts';
+
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';
 
 export interface AppCollectionItem {

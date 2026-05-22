@@ -43,10 +43,11 @@ func (r *AIWorkloadReconciler) getHelmOp(ctx context.Context, name string) (*uns
 
 // reconcileGitOpsStatus handles the GitOps strategy reconcile loop.
 func (r *AIWorkloadReconciler) reconcileGitOpsStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
-	if w.Spec.FleetBundleName == "" {
+	if len(w.Spec.FleetBundleNames) == 0 {
 		return nil
 	}
-	ho, err := r.getHelmOp(ctx, w.Spec.FleetBundleName)
+	bundleName := w.Spec.FleetBundleNames[0]
+	ho, err := r.getHelmOp(ctx, bundleName)
 	if err != nil {
 		return err
 	}
@@ -131,9 +132,9 @@ func (r *AIWorkloadReconciler) deleteAIWorkload(ctx context.Context, w *aiplatfo
 	return r.Delete(ctx, w)
 }
 
-// deleteGitFile commits the removal of workloads/<fleetBundleName>.yaml from git.
+// deleteGitFileByName commits the removal of workloads/<bundleName>.yaml from git.
 // Errors are logged by the caller but do not block finalizer removal.
-func (r *AIWorkloadReconciler) deleteGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
+func (r *AIWorkloadReconciler) deleteGitFileByName(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName string) error {
 	var s aiplatformv1alpha1.Settings
 	if err := r.Get(ctx, types.NamespacedName{
 		Namespace: r.OperatorNamespace,
@@ -147,8 +148,8 @@ func (r *AIWorkloadReconciler) deleteGitFile(ctx context.Context, w *aiplatformv
 		return fmt.Errorf("init git client: %w", err)
 	}
 
-	filePath := "workloads/" + w.Spec.FleetBundleName + ".yaml"
-	_, err = gc.DeleteFile(ctx, filePath, "chore: remove workload "+w.Spec.FleetBundleName)
+	filePath := "workloads/" + bundleName + ".yaml"
+	_, err = gc.DeleteFile(ctx, filePath, "chore: remove workload "+bundleName)
 	return err
 }
 

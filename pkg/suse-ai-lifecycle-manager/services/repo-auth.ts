@@ -4,7 +4,6 @@ import { getClusterContext } from '../utils/cluster-operations';
 export interface RepoAuth { username: string; password: string; }
 type SecretRef = string | { name?: string; namespace?: string } | null | undefined;
 
-const WANT_URL = 'oci://dp.apps.rancher.io/charts';
 const norm = (u?: string) => (u || '').replace(/\/+$/, '');
 const b64 = (s?: string) => { try { return s ? atob(s) : ''; } catch { return ''; } };
 

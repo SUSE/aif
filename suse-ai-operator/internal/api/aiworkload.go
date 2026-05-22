@@ -25,7 +25,9 @@ import (
 	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -45,6 +47,7 @@ func NewAIWorkloadHandler(c client.Client) *AIWorkloadHandler {
 func (h *AIWorkloadHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/aiworkloads", h.listAIWorkloads)
 	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
+	mux.HandleFunc("PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
 }
 
 func (h *AIWorkloadHandler) listAIWorkloads(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +88,87 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Ensure the target namespace exists before creating the namespaced AIWorkload CR.
+	ns := &corev1.Namespace{}
+	ns.APIVersion = "v1"
+	ns.Kind = "Namespace"
+	ns.Name = namespace
+	if err := h.client.Patch(
+		r.Context(), ns, client.Apply,
+		client.ForceOwnership,
+		client.FieldOwner(aiWorkloadFieldOwner),
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to ensure namespace %q: %w", namespace, err))
+		return
+	}
+
 	wl := &aiplatformv1alpha1.AIWorkload{}
 	wl.APIVersion = "ai-platform.suse.com/v1alpha1"
 	wl.Kind = "AIWorkload"
 	wl.Name = body.Metadata.Name
+	wl.Namespace = namespace
+	wl.Spec = body.Spec
+
+	if err := h.client.Create(r.Context(), wl); err != nil {
+		if errors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, fmt.Errorf(
+				"deployment %q already exists in namespace %q — choose a different instance name or use Manage to update it",
+				wl.Name, namespace,
+			))
+			return
+		}
+		if errors.IsInvalid(err) {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if body.Status != nil {
+		wl.Status = *body.Status
+		if err := h.client.Status().Update(r.Context(), wl); err != nil {
+			log.Printf("api: failed to set initial AIWorkload status %s/%s: %v", namespace, body.Metadata.Name, err)
+		}
+	}
+
+	wl.ManagedFields = nil
+	writeJSON(w, http.StatusCreated, wl)
+}
+
+func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Request) {
+	namespace := r.PathValue("namespace")
+	name := r.PathValue("name")
+	if namespace == "" || name == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: namespace and name are required", ErrInvalidInput))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, fmt.Errorf("%w: Content-Type must be application/json", ErrInvalidInput))
+		return
+	}
+
+	var body aiWorkloadCreateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		return
+	}
+
+	existing := &aiplatformv1alpha1.AIWorkload{}
+	if err := h.client.Get(r.Context(), types.NamespacedName{Namespace: namespace, Name: name}, existing); err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, fmt.Errorf("deployment %q not found in namespace %q", name, namespace))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	wl := &aiplatformv1alpha1.AIWorkload{}
+	wl.APIVersion = "ai-platform.suse.com/v1alpha1"
+	wl.Kind = "AIWorkload"
+	wl.Name = name
 	wl.Namespace = namespace
 	wl.Spec = body.Spec
 
@@ -108,12 +188,12 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	if body.Status != nil {
 		wl.Status = *body.Status
 		if err := h.client.Status().Update(r.Context(), wl); err != nil {
-			log.Printf("api: failed to set initial AIWorkload status %s/%s: %v", namespace, body.Metadata.Name, err)
+			log.Printf("api: failed to update AIWorkload status %s/%s: %v", namespace, name, err)
 		}
 	}
 
 	wl.ManagedFields = nil
-	writeJSON(w, http.StatusCreated, wl)
+	writeJSON(w, http.StatusOK, wl)
 }
 
 // Compile-time guard.

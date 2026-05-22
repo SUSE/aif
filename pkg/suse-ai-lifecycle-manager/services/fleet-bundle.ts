@@ -1,14 +1,15 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
 
 export interface FleetBundleParams {
-  bundleName:       string;
-  chartRepo:        string; // ClusterRepo name (used to look up repo URL)
-  chartRepoUrl:     string; // actual OCI/Helm URL for the bundle spec
-  chartName:        string;
-  chartVersion:     string;
-  values:           Record<string, any>;
-  targetNamespace:  string;
-  targetClusterIds: string[];
+  bundleName:              string;
+  chartRepo:               string; // ClusterRepo name (used to look up repo URL)
+  chartRepoUrl:            string; // actual OCI/Helm URL for the bundle spec
+  chartName:               string;
+  chartVersion:            string;
+  values:                  Record<string, any>;
+  targetNamespace:         string;
+  targetClusterIds:        string[];
+  additionalPullSecretNames?: string[]; // pre-created pull secrets for extra registries (e.g. subchart registries)
 }
 
 // buildBundleName returns a deterministic Fleet HelmOp name for an app install.
@@ -16,17 +17,30 @@ export function buildBundleName(release: string, namespace: string): string {
   return `suse-ai-${ release }-${ namespace }`.replace(/[^a-z0-9-]/g, '-').slice(0, 63);
 }
 
-// Maps known OCI repo URLs to the basic-auth secrets created by the Settings page.
-const REPO_AUTH_SECRETS: Record<string, string> = {
-  'oci://dp.apps.rancher.io/charts':   'application-collection-auth',
-  'oci://registry.suse.com/ai/charts': 'suse-ai-registry-auth',
-};
+interface ClientSecretRef { name: string; namespace: string; }
 
-// Read a kubernetes.io/basic-auth secret from cattle-system and return decoded credentials.
-async function readAuthSecret(store: any, secretName: string): Promise<{ username: string; password: string } | null> {
+// Read the clientSecret ref from a Rancher ClusterRepo resource.
+// Rancher stores spec.clientSecret as {name, namespace} for OCI repos,
+// or as a plain string in older versions.
+async function readClusterRepoClientSecret(store: any, repoName: string): Promise<ClientSecretRef | null> {
+  try {
+    const res = await store.dispatch('management/find', {
+      type: 'catalog.cattle.io.clusterrepo',
+      id:   repoName,
+    });
+    const cs = res?.spec?.clientSecret;
+    if (!cs) return null;
+    if (typeof cs === 'object' && cs?.name) return { name: cs.name, namespace: cs.namespace || 'cattle-system' };
+    if (typeof cs === 'string' && cs)       return { name: cs, namespace: 'cattle-system' };
+    return null;
+  } catch { return null; }
+}
+
+// Read a kubernetes.io/basic-auth secret and return decoded credentials.
+async function readAuthSecret(store: any, ref: ClientSecretRef): Promise<{ username: string; password: string } | null> {
   try {
     const res = await store.dispatch('rancher/request', {
-      url:     `/k8s/clusters/local/api/v1/namespaces/cattle-system/secrets/${secretName}`,
+      url:     `/k8s/clusters/local/api/v1/namespaces/${ref.namespace}/secrets/${ref.name}`,
       timeout: 10000,
     });
     const secretObj = res?.kind === 'Secret' ? res : (res?.data?.kind === 'Secret' ? res.data : res);
@@ -71,6 +85,7 @@ export function buildFleetBundleYAML(params: {
   chartName:        string;
   chartVersion:     string;
   chartRepoUrl:     string;
+  helmSecretName:   string | null;
   values:           Record<string, any>;
   pullSecretNames:  string[];
   targetClusterIds: string[];
@@ -91,27 +106,28 @@ export function buildFleetBundleYAML(params: {
     values.imagePullSecrets = secrets;
   }
 
-  const helmOp = {
+  const isOCI = params.chartRepoUrl.startsWith('oci://');
+  const spec: Record<string, any> = {
+    namespace: params.targetNamespace,
+    helm: {
+      ...(isOCI ? {} : { chart: params.chartName }),
+      version:     params.chartVersion,
+      repo:        isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl,
+      releaseName: params.bundleName,
+      values,
+    },
+    targets,
+  };
+  if (params.helmSecretName) {
+    spec.helmSecretName = params.helmSecretName;
+  }
+
+  return JSON.stringify({
     apiVersion: 'fleet.cattle.io/v1alpha1',
     kind:       'HelmOp',
     metadata:   { name: params.bundleName, namespace: fleetNamespace },
-    spec: {
-      namespace:      params.targetNamespace,
-      helmSecretName: REPO_AUTH_SECRETS[params.chartRepoUrl] ?? undefined,
-      helm: {
-        ...(params.chartRepoUrl.startsWith('oci://') ? {} : { chart: params.chartName }),
-        version:     params.chartVersion,
-        repo:        params.chartRepoUrl.startsWith('oci://')
-          ? `${ params.chartRepoUrl }/${ params.chartName }`
-          : params.chartRepoUrl,
-        releaseName: params.bundleName,
-        values,
-      },
-      targets,
-    },
-  };
-
-  return JSON.stringify(helmOp, null, 2);
+    spec,
+  }, null, 2);
 }
 
 // createFleetBundle creates Fleet HelmOp CR(s) which pull and deploy the external OCI Helm chart.
@@ -121,15 +137,18 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   const localClusters      = params.targetClusterIds.filter(id => id === 'local');
   const downstreamClusters = params.targetClusterIds.filter(id => id !== 'local');
 
-  const authSecretName = REPO_AUTH_SECRETS[params.chartRepoUrl];
-  const pullCreds      = authSecretName ? await readAuthSecret(store, authSecretName) : null;
+  const secretRef = await readClusterRepoClientSecret(store, params.chartRepo);
+  const pullCreds = secretRef ? await readAuthSecret(store, secretRef) : null;
 
-  if (!pullCreds && authSecretName) {
-    console.warn('[SUSE-AI] FleetHelmOp: could not read auth secret', authSecretName, '— chart pull auth will be skipped');
+  if (!pullCreds && secretRef) {
+    console.warn('[SUSE-AI] FleetHelmOp: could not read auth secret', secretRef.name, '— chart pull auth will be skipped');
   }
 
+  // Seed with any pre-created secrets passed by the caller (covers additional registries such as
+  // subchart image registries that differ from the parent chart's registry).
+  const pullSecretNames: string[] = [...(params.additionalPullSecretNames || [])];
+
   // Create imagePullSecrets in the target namespace on each cluster (for container image pulls).
-  const pullSecretNames: string[] = [];
   if (pullCreds) {
     const registryHost = params.chartRepoUrl.replace(/^oci:\/\//, '').split('/')[0];
     for (const clusterId of params.targetClusterIds) {
@@ -147,13 +166,13 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   }
 
   // Create helm auth secrets in the fleet workspace namespaces so HelmOp can pull the chart.
-  if (pullCreds && authSecretName) {
+  if (pullCreds && secretRef) {
     const fleetNamespaces = [
       ...(localClusters.length > 0      ? ['fleet-local']   : []),
       ...(downstreamClusters.length > 0 ? ['fleet-default'] : []),
     ];
     for (const ns of fleetNamespaces) {
-      await ensureFleetHelmAuthSecret(store, ns, authSecretName, pullCreds.username, pullCreds.password);
+      await ensureFleetHelmAuthSecret(store, ns, secretRef.name, pullCreds.username, pullCreds.password);
     }
   }
 
@@ -168,8 +187,8 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   };
 
   const baseSpec: Record<string, any> = { namespace: params.targetNamespace, helm: helmSpec };
-  if (pullCreds && authSecretName) {
-    baseSpec.helmSecretName = authSecretName;
+  if (pullCreds && secretRef) {
+    baseSpec.helmSecretName = secretRef.name;
   }
 
   const postHelmOp = (fleetNamespace: string, targets: any[]) =>

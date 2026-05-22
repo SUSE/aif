@@ -4,8 +4,9 @@
       <div class="col span-6">
         <LabeledInput
           v-model:value="release"
-          :label="t('suseai.wizard.form.release', 'Release name')"
-          :placeholder="t('suseai.wizard.form.releasePlaceholder', 'Enter release name')"
+          :label="t('suseai.wizard.form.release', 'Instance name')"
+          :placeholder="t('suseai.wizard.form.releasePlaceholder', 'Enter instance name')"
+          :disabled="props.releaseDisabled"
           required
         />
       </div>
@@ -64,6 +65,7 @@ interface Props {
   versionOptions: Array<{ label: string; value: string }>;
   loadingVersions: boolean;
   namespaceOptions: Array<{ label: string; value: string }>;
+  releaseDisabled?: boolean;
 }
 
 interface Emits {

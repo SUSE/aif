@@ -2,7 +2,7 @@
 export type AIWorkloadSourceType = 'App' | 'Blueprint';
 export type AIWorkloadDeployStrategy = 'Helm' | 'FleetBundle' | 'GitOps';
 export type AIWorkloadPhase = 'Pending' | 'Running' | 'Degraded' | 'Failed';
-export type AIWorkloadClusterPhase = 'Running' | 'Failed';
+export type AIWorkloadClusterPhase = 'Running' | 'Failed' | 'Pending';
 
 export interface AppSource {
   chartRepo:    string;
@@ -12,7 +12,8 @@ export interface AppSource {
 }
 
 export interface BlueprintSource {
-  name: string;
+  name:    string;
+  version: string;
 }
 
 export interface AIWorkloadSource {
@@ -33,7 +34,7 @@ export interface AIWorkloadSpec {
   targetClusters?:  string[];
   deployStrategy?:  AIWorkloadDeployStrategy;
   componentValues?: ComponentValueOverride[];
-  fleetBundleName?: string;
+  fleetBundleNames?: string[];
 }
 
 export interface AIWorkloadClusterStatus {

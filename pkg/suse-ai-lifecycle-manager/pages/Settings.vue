@@ -9,6 +9,7 @@ import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { OPERATOR_NAMESPACE } from '../utils/constants';
 import { ensureClusterRepo } from '../services/rancher-apps';
+import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL } from '../services/app-collection';
 
 function createEmptySpec() {
   return {
@@ -269,11 +270,15 @@ export default {
         return username && password ? { username, password } : null;
       };
 
+      const re = this.spec.registryEndpoints;
+      const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
+      const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
+
       const tasks = [];
       const acCreds = buildCreds(ac.userSecretRef, ac.tokenSecretRef);
       const srCreds = buildCreds(sr.userSecretRef, sr.tokenSecretRef);
-      if (acCreds) tasks.push(ensureClusterRepo(store, 'oci://dp.apps.rancher.io/charts',   acCreds));
-      if (srCreds) tasks.push(ensureClusterRepo(store, 'oci://registry.suse.com/ai/charts', srCreds));
+      if (acCreds) tasks.push(ensureClusterRepo(store, acUrl, acCreds));
+      if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
       await Promise.all(tasks);
     },
 

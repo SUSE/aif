@@ -80,16 +80,27 @@ export const NAVIGATION_ITEMS: NavItem[] = [
       meta: { product: PRODUCT }
     },
     icon: 'gear'
-  }
+  },
+  {
+    name:  'blueprints',
+    label: 'Blueprints',
+    route: {
+      name:   `c-cluster-${ PRODUCT }-blueprints`,
+      params: { product: PRODUCT, cluster: BLANK_CLUSTER },
+      meta:   { product: PRODUCT }
+    },
+    icon: 'blueprint'
+  },
 ];
 
 // === Page Definitions ===
 export const PAGE_TYPES = {
-  APPS: 'apps',
-  INSTALL: 'install',
-  MANAGE: 'manage',
+  APPS:         'apps',
+  INSTALL:      'install',
+  MANAGE:       'manage',
   REPOSITORIES: 'repositories',
-  SETTINGS: 'settings'
+  BLUEPRINTS:   'blueprints',
+  SETTINGS:     'settings'
 } as const;
 
 export type PageType = typeof PAGE_TYPES[keyof typeof PAGE_TYPES];
@@ -112,6 +123,15 @@ export const VIRTUAL_TYPES: VirtualTypeConfig[] = [
     }
   },
   {
+    name:  PAGE_TYPES.BLUEPRINTS,
+    label: 'Blueprints',
+    route: {
+      name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.BLUEPRINTS }`,
+      params: { product: PRODUCT, cluster: BLANK_CLUSTER },
+      meta:   { product: PRODUCT }
+    }
+  },
+  {
     name:  PAGE_TYPES.SETTINGS,
     label: 'Settings',
     route: {
@@ -123,7 +143,7 @@ export const VIRTUAL_TYPES: VirtualTypeConfig[] = [
 ];
 
 // === Basic Types Configuration ===
-export const BASIC_TYPES = [PAGE_TYPES.APPS, PAGE_TYPES.SETTINGS];
+export const BASIC_TYPES = [PAGE_TYPES.APPS, PAGE_TYPES.BLUEPRINTS, PAGE_TYPES.SETTINGS];
 
 // === Product Metadata ===
 export const PRODUCT_METADATA = {

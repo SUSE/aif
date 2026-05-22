@@ -6,6 +6,7 @@ export interface GitPublishParams {
   chartName:        string;
   chartVersion:     string;
   chartRepoUrl:     string;
+  helmSecretName:   string | null;
   values:           Record<string, any>;
   pullSecretNames:  string[];
   targetClusterIds: string[];
@@ -20,6 +21,7 @@ export async function publishToFleetGit(params: GitPublishParams): Promise<strin
     chartName:        params.chartName,
     chartVersion:     params.chartVersion,
     chartRepoUrl:     params.chartRepoUrl,
+    helmSecretName:   params.helmSecretName,
     values:           params.values,
     pullSecretNames:  params.pullSecretNames,
     targetClusterIds: params.targetClusterIds,

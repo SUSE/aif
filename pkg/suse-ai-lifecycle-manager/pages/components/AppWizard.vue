@@ -27,7 +27,7 @@ import {
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { fetchSuseAiApps, getClusterRepoNameFromUrl } from '../../services/app-collection';
-import { createAIWorkload, getRegistryCredentials } from '../../utils/operator-api';
+import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { createFleetBundle, buildBundleName }        from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
@@ -606,6 +606,20 @@ async function submit() {
     });
 
     if (isInstallMode.value) {
+      try {
+        const { items } = await listAIWorkloads();
+        const exists = items.some(
+          w => w.metadata?.namespace === form.value.namespace && w.metadata?.name === form.value.release,
+        );
+        if (exists) {
+          error.value = `A deployment named "${form.value.release}" already exists in namespace "${form.value.namespace}". Choose a different instance name, or manage the existing deployment from the list.`;
+          submitting.value = false;
+          return;
+        }
+      } catch (e) {
+        console.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', e);
+      }
+
       if (form.value.deployType === 'Helm') {
         await performMultiClusterInstall();
       } else if (form.value.deployType === 'FleetBundle') {
@@ -690,6 +704,28 @@ async function performFleetBundleInstall() {
   showProgressModal.value = true;
 
   try {
+    // Pre-create pull secrets for ALL configured registries so subchart images from a
+    // different registry than the parent chart are also covered.
+    let creds: { applicationCollection?: any; suseRegistry?: any } = {};
+    try { creds = await getRegistryCredentials(5000); } catch (e) {
+      console.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', e);
+    }
+    const activeCreds = [creds.applicationCollection, creds.suseRegistry].filter(Boolean);
+    const secretResults = await Promise.all(
+      form.value.clusters.flatMap(clusterId =>
+        activeCreds.map(async cred => {
+          try {
+            const hostSlug = cred!.registryHost.replace(/[^a-z0-9]/g, '-');
+            return await ensureRegistrySecretSimple(
+              store, clusterId, form.value.namespace,
+              cred!.registryHost, hostSlug, cred!.username, cred!.password,
+            );
+          } catch (e) { console.warn('[SUSE-AI] FleetBundle: pull-secret skipped:', e); return null; }
+        })
+      )
+    );
+    const extraPullSecretNames = [...new Set(secretResults.filter((n): n is string => !!n))];
+
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
@@ -697,13 +733,14 @@ async function performFleetBundleInstall() {
     updateAllProgress(50, 'Creating Fleet Bundle...');
     await createFleetBundle(store, {
       bundleName,
-      chartRepo:        form.value.chartRepo,
+      chartRepo:                form.value.chartRepo,
       chartRepoUrl,
-      chartName:        form.value.chartName,
-      chartVersion:     form.value.chartVersion,
-      values:           form.value.values,
-      targetNamespace:  form.value.namespace,
-      targetClusterIds: form.value.clusters,
+      chartName:                form.value.chartName,
+      chartVersion:             form.value.chartVersion,
+      values:                   form.value.values,
+      targetNamespace:          form.value.namespace,
+      targetClusterIds:         form.value.clusters,
+      additionalPullSecretNames: extraPullSecretNames,
     });
 
     updateAllProgress(100, 'Fleet Bundle created — Fleet will deploy to selected clusters');
@@ -762,6 +799,7 @@ async function performGitOpsInstall() {
       chartName:        form.value.chartName,
       chartVersion:     form.value.chartVersion,
       chartRepoUrl,
+      helmSecretName:   (() => { const cs = repoObj?.spec?.clientSecret; return typeof cs === 'object' ? (cs?.name || null) : (cs || null); })(),
       values:           form.value.values,
       pullSecretNames,
       targetClusterIds: form.value.clusters,
@@ -810,33 +848,35 @@ async function recordAIWorkload(
       phase = allRunning ? 'Running' : allFailed ? 'Failed' : 'Degraded';
     }
 
-    await createAIWorkload(
-      form.value.namespace,
-      `${ form.value.release }-${ Date.now() }`.slice(0, 63),
-      {
-        displayName:     (route.query.n as string) || props.slug,
-        source: {
-          sourceType: 'App',
-          app: {
-            chartRepo:    form.value.chartRepo,
-            chartName:    form.value.chartName,
-            chartVersion: form.value.chartVersion,
-            release:      form.value.release,
-          },
+    const crName = form.value.release;
+    const spec = {
+      displayName:     (route.query.n as string) || props.slug,
+      source: {
+        sourceType: 'App' as const,
+        app: {
+          chartRepo:    form.value.chartRepo,
+          chartName:    form.value.chartName,
+          chartVersion: form.value.chartVersion,
+          release:      form.value.release,
         },
-        targetNamespace:  form.value.namespace,
-        targetClusters:   form.value.clusters,
-        deployStrategy:   strategy,
-        componentValues:  [{
-          componentName: form.value.chartName,
-          values:        form.value.values,
-        }],
-        fleetBundleName: strategy !== 'Helm' ? fleetBundleName : undefined,
       },
-      { phase, clusterStatuses },
-    );
+      targetNamespace:  form.value.namespace,
+      targetClusters:   form.value.clusters,
+      deployStrategy:   strategy,
+      componentValues:  [{
+        componentName: form.value.chartName,
+        values:        form.value.values,
+      }],
+      fleetBundleNames: strategy !== 'Helm' && fleetBundleName ? [fleetBundleName] : undefined,
+    };
+
+    if (isManageMode.value) {
+      await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+    } else {
+      await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+    }
   } catch (e) {
-    console.warn('[SUSE-AI] Failed to create AIWorkload CR (non-fatal):', e);
+    console.warn('[SUSE-AI] Failed to record AIWorkload CR (non-fatal):', e);
   }
 }
 
@@ -1053,7 +1093,7 @@ async function installToCluster(
     await waitForAppInstall(store, clusterId, form.value.namespace, form.value.release, 180_000, upgraded);
   } catch (e: any) {
     console.error('[SUSE-AI] post-install app status (peek): ', { error: e?.message || e });
-    throw new Error(`App resource did not appear in namespace ${form.value.namespace}. Check Rancher logs and ClusterRepo permissions.`);
+    throw e; // propagate the specific message from waitForAppInstall
   }
 
   onProgress(90, 'Finalizing service accounts...');
@@ -1078,7 +1118,6 @@ async function installToCluster(
 async function performUpgrade() {
   const clusterId = form.value.clusters[0];
 
-  // Initialize progress for the single cluster
   installProgress.value = [{
     clusterId,
     clusterName: await getClusterDisplayName(clusterId),
@@ -1089,9 +1128,12 @@ async function performUpgrade() {
 
   showProgressModal.value = true;
 
-  await upgradeSingleCluster(clusterId);
-
-  submitting.value = false;
+  try {
+    await upgradeSingleCluster(clusterId);
+    await recordAIWorkload('', 'Helm');
+  } finally {
+    submitting.value = false;
+  }
 }
 
 // Upgrade a single cluster and update progress
@@ -1234,6 +1276,7 @@ function previousStep() {
             :version-options="versionOptions"
             :loading-versions="loadingVersions"
             :namespace-options="namespaceOptions"
+            :release-disabled="isManageMode"
           />
 
           <!-- Step: Target Cluster -->

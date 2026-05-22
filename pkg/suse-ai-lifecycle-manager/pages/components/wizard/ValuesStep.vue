@@ -132,6 +132,8 @@ const showFormView = computed(() => props.hasQuestions && viewMode.value === 'fo
 watch(() => props.hasQuestions, (val) => {
   if (!val && viewMode.value === 'form') {
     viewMode.value = 'yaml';
+  } else if (val && viewMode.value === 'yaml') {
+    viewMode.value = 'form';
   }
 });
 

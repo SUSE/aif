@@ -241,6 +241,7 @@ func main() {
 	mux := http.NewServeMux()
 	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(mux)
 	api.NewAIWorkloadHandler(mgr.GetClient()).Register(mux)
+	api.NewBlueprintHandler(mgr.GetClient()).Register(mux)
 	srv := &http.Server{Addr: apiBindAddr, Handler: api.Chain(mux)}
 
 	ctx := ctrl.SetupSignalHandler()

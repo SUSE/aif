@@ -69,6 +69,21 @@ export function createAIWorkload(
   });
 }
 
+export function updateAIWorkload(
+  namespace: string,
+  name:      string,
+  spec:      AIWorkloadSpec,
+  status?:   AIWorkloadStatus,
+): Promise<AIWorkload> {
+  return operatorFetch(
+    `/api/v1/namespaces/${ encodeURIComponent(namespace) }/aiworkloads/${ encodeURIComponent(name) }`,
+    {
+      method: 'PATCH',
+      body:   JSON.stringify({ metadata: { name }, spec, status }),
+    },
+  );
+}
+
 export function listAIWorkloads(): Promise<{ items: AIWorkload[] }> {
   return operatorFetch('/api/v1/aiworkloads');
 }

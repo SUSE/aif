@@ -45,7 +45,9 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=blueprints,verbs=get;list;watch
+// +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
+// +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods;services;configmaps;serviceaccounts;persistentvolumeclaims,verbs=get;list;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete
@@ -68,8 +70,12 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, r.Update(ctx, &w)
 	}
 
-	if err := r.reconcileStatus(ctx, &w); err != nil {
+	result, err := r.reconcileStatus(ctx, &w)
+	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if result.Requeue || result.RequeueAfter > 0 {
+		return result, nil
 	}
 
 	w.Status.ObservedGeneration = w.Generation
@@ -83,16 +89,19 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 // reconcileStatus dispatches to the strategy-specific status reconciler.
-func (r *AIWorkloadReconciler) reconcileStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
+func (r *AIWorkloadReconciler) reconcileStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (ctrl.Result, error) {
+	if w.Spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceBlueprint {
+		return r.reconcileBlueprintStatus(ctx, w)
+	}
 	switch w.Spec.DeployStrategy {
 	case aiplatformv1alpha1.AIWorkloadDeployHelm:
-		return r.reconcileHelmStatus(ctx, w)
+		return ctrl.Result{}, r.reconcileHelmStatus(ctx, w)
 	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-		return r.reconcileFleetStatus(ctx, w)
+		return ctrl.Result{}, r.reconcileFleetStatus(ctx, w)
 	case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-		return r.reconcileGitOpsStatus(ctx, w)
+		return ctrl.Result{}, r.reconcileGitOpsStatus(ctx, w)
 	}
-	return nil
+	return ctrl.Result{}, nil
 }
 
 // ── Helm path ────────────────────────────────────────────────────────────────
@@ -145,10 +154,10 @@ func (r *AIWorkloadReconciler) uninstallHelm(namespace, releaseName string) erro
 
 // reconcileFleetStatus handles the FleetBundle strategy reconcile loop.
 func (r *AIWorkloadReconciler) reconcileFleetStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
-	if w.Spec.FleetBundleName == "" {
+	if len(w.Spec.FleetBundleNames) == 0 {
 		return nil
 	}
-	ho, err := r.getHelmOp(ctx, w.Spec.FleetBundleName)
+	ho, err := r.getHelmOp(ctx, w.Spec.FleetBundleNames[0])
 	if err != nil {
 		return err
 	}
@@ -179,8 +188,9 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 	bdList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
 	})
+	// App-sourced workloads always have exactly one bundle; Blueprint workloads use mirrorBlueprintStatus.
 	if err := r.List(ctx, bdList, client.MatchingLabels{
-		"fleet.cattle.io/bundle-name": w.Spec.FleetBundleName,
+		"fleet.cattle.io/bundle-name": w.Spec.FleetBundleNames[0],
 	}); err != nil {
 		return err
 	}
@@ -223,15 +233,15 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 			}
 		}
 	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-		if w.Spec.FleetBundleName != "" {
-			if err := r.deleteHelmOp(ctx, w.Spec.FleetBundleName); err != nil {
-				l.Error(err, "HelmOp delete failed — proceeding with finalizer removal")
+		for _, name := range w.Spec.FleetBundleNames {
+			if err := r.deleteHelmOp(ctx, name); err != nil {
+				l.Error(err, "HelmOp delete failed — proceeding with finalizer removal", "name", name)
 			}
 		}
 	case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-		if w.Spec.FleetBundleName != "" {
-			if err := r.deleteGitFile(ctx, w); err != nil {
-				l.Error(err, "git file deletion failed — proceeding with finalizer removal")
+		for _, name := range w.Spec.FleetBundleNames {
+			if err := r.deleteGitFileByName(ctx, w, name); err != nil {
+				l.Error(err, "git file deletion failed — proceeding with finalizer removal", "name", name)
 			}
 		}
 	}
@@ -261,20 +271,29 @@ func derivePhase(statuses []aiplatformv1alpha1.AIWorkloadClusterStatus) aiplatfo
 	if len(statuses) == 0 {
 		return aiplatformv1alpha1.AIWorkloadPhasePending
 	}
-	running, failed := 0, 0
+	running, pending, failed := 0, 0, 0
 	for _, s := range statuses {
-		if s.Phase == aiplatformv1alpha1.AIWorkloadClusterPhaseRunning {
+		switch s.Phase {
+		case aiplatformv1alpha1.AIWorkloadClusterPhaseRunning:
 			running++
-		} else {
+		case aiplatformv1alpha1.AIWorkloadClusterPhaseFailed:
 			failed++
+		default:
+			pending++
 		}
 	}
 	switch {
-	case failed == 0:
+	case failed == 0 && pending == 0:
 		return aiplatformv1alpha1.AIWorkloadPhaseRunning
-	case running == 0:
+	case failed == 0 && running == 0:
+		// Nothing deployed yet — all clusters still in startup window.
+		return aiplatformv1alpha1.AIWorkloadPhasePending
+	case running == 0 && pending == 0:
 		return aiplatformv1alpha1.AIWorkloadPhaseFailed
 	default:
+		// Covers running+pending (partially deployed), running+failed, and
+		// pending+failed (no running). All surface as Degraded so the user
+		// inspects per-cluster status.
 		return aiplatformv1alpha1.AIWorkloadPhaseDegraded
 	}
 }
@@ -300,10 +319,13 @@ func (r *AIWorkloadReconciler) workloadsWithFleetBundle(ctx context.Context, bun
 	}
 	var reqs []reconcile.Request
 	for _, w := range list.Items {
-		if w.Spec.FleetBundleName == bundleName {
-			reqs = append(reqs, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: w.Name, Namespace: w.Namespace},
-			})
+		for _, name := range w.Spec.FleetBundleNames {
+			if name == bundleName {
+				reqs = append(reqs, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: w.Name, Namespace: w.Namespace},
+				})
+				break
+			}
 		}
 	}
 	return reqs
