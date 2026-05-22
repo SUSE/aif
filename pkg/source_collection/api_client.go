@@ -407,71 +407,36 @@ func absolutizeLogoURL(apiURL, logoURL string) string {
 	return base.ResolveReference(rel).String()
 }
 
-// GetChart returns version metadata from the Application Collection API.
-// The repo parameter is reserved for P5-8 (OCI fallback); currently unused.
-// Annotations and Description require fetching the actual Chart.yaml from OCI,
-// which is handled by the consuming code in P2-5 — this method returns only
-// what the /versions API endpoint provides.
+// GetChart looks up version metadata via the per-app detail endpoint.
+// The repo parameter is reserved for the future OCI-fallback path and
+// is currently unused. Annotations and Description require fetching
+// Chart.yaml from OCI (handled by AnnotationReader); this method
+// returns Name/Version/AppVersion only.
+//
+// The upstream /v1/applications/{slug}/versions endpoint was removed
+// — versions now live under branches[].baseline in the detail
+// response. A version is considered "present" if any branch's
+// baseline matches exactly.
 func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*ChartMetadata, error) {
 	settings, err := c.effectiveSettings()
 	if err != nil {
 		return nil, err
 	}
-	nextURL := settings.APIURL + "/v1/applications/" + chart + "/versions"
-
-	for nextURL != "" {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter: %w", err)
+	detail, err := c.fetchAppDetail(ctx, settings, chart)
+	if err != nil {
+		if errors.Is(err, ErrChartNotFound) {
+			return nil, fmt.Errorf("%w: chart %s", ErrChartNotFound, chart)
 		}
-
-		resp, err := c.fetchAndDecodeVersions(ctx, settings, nextURL)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, entry := range resp.Items {
-			if entry.Version == version {
-				return &ChartMetadata{
-					Name:       chart,
-					Version:    entry.Version,
-					AppVersion: entry.AppVersion,
-				}, nil
-			}
-		}
-
-		nextURL = resp.Next
+		return nil, err
 	}
-
+	for _, b := range detail.Branches {
+		if b.Baseline == version {
+			return &ChartMetadata{
+				Name:       chart,
+				Version:    version,
+				AppVersion: version,
+			}, nil
+		}
+	}
 	return nil, fmt.Errorf("%w: version %s for chart %s", ErrVersionNotFound, version, chart)
-}
-
-func (c *apiClient) fetchAndDecodeVersions(ctx context.Context, settings EngineSettings, url string) (*apiVersionsResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	if settings.Username != "" || settings.Token != "" {
-		req.SetBasicAuth(settings.Username, settings.Token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		var result apiVersionsResponse
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCatalogMalformed, err)
-		}
-		return &result, nil
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, fmt.Errorf("%w: HTTP %d", ErrAuthFailed, resp.StatusCode)
-	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: HTTP %d", ErrUpstreamUnavailable, resp.StatusCode)
-	default:
-		return nil, fmt.Errorf("unexpected HTTP %d", resp.StatusCode)
-	}
 }
