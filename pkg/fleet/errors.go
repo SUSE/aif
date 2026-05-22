@@ -24,9 +24,11 @@ var (
 	// BundleDeploymentSpec fails validateSpec checks.
 	ErrBundleInvalidSpec = errors.New("fleet bundle invalid spec")
 
-	// ErrConnectionLost is surfaced via BundleObservedStatus when a
-	// per-cluster BundleDeployment reports downstream connectivity loss.
-	// The reconciler maps this to ClusterFailed.
+	// ErrConnectionLost signals downstream-cluster connectivity loss
+	// observed by either engine (Bundle or GitRepo); deliberately
+	// unprefixed because the failure mode is engine-agnostic. Surfaced
+	// via BundleObservedStatus for the Bundle engine; the reconciler
+	// maps it to ClusterFailed.
 	ErrConnectionLost = errors.New("fleet bundle connection error")
 )
 
