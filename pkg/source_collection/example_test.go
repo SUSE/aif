@@ -35,9 +35,9 @@ func Example_clientList() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"items": []map[string]any{
-				{"slug_name": "milvus", "title": "Milvus", "helm": map[string]string{"repository_url": "oci://dp.apps.rancher.io/charts", "chart_name": "milvus"}},
-				{"slug_name": "ollama", "title": "Ollama", "helm": map[string]string{"repository_url": "oci://dp.apps.rancher.io/charts", "chart_name": "ollama"}},
-				{"slug_name": "vllm", "title": "vLLM", "helm": map[string]string{"repository_url": "oci://dp.apps.rancher.io/charts", "chart_name": "vllm"}},
+				{"slug_name": "milvus", "name": "Milvus"},
+				{"slug_name": "ollama", "name": "Ollama"},
+				{"slug_name": "vllm", "name": "vLLM"},
 			},
 		})
 	})
