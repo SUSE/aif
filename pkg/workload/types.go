@@ -5,6 +5,10 @@
 // conversions.go (the canonical home for CR↔domain translation).
 package workload
 
+import (
+	"github.com/SUSE/aif/pkg/fleet"
+)
+
 // SourceKind enumerates the provenance of a Workload's spec.source.
 // Mirrors aifv1.WorkloadSourceKind so interface.go can stay aifv1-free.
 type SourceKind string
@@ -101,6 +105,25 @@ type DeployRequest struct {
 
 	// Previous is the prior status.componentReleases — drift-detection input.
 	Previous []ComponentRelease
+
+	// DeployStrategy mirrors aifv1.Workload.spec.deployStrategy. Empty
+	// defaults to "helm" (matches CRD default). The deployer's dispatch
+	// reads this to choose the Fleet path.
+	DeployStrategy string
+
+	// TargetClusters mirrors aifv1.Workload.spec.targetClusters. Used as
+	// the per-cluster fan-out list for the Fleet Bundle's spec.targets.
+	TargetClusters []string
+
+	// PullSecretData is the raw .dockerconfigjson from suse-registry-creds
+	// in the operator namespace. The Workload reconciler fetches it; the
+	// deployer embeds it into the Fleet Bundle so downstream clusters can
+	// pull images.
+	PullSecretData []byte
+
+	// Owner captures the Workload CR identity for the Fleet Bundle's
+	// OwnerReferences (cascade-delete). Filled in by conversions.OwnerRefFromCR.
+	Owner fleet.OwnerRef
 }
 
 // ComponentRelease records the outcome of one component's helm release.
@@ -141,6 +164,11 @@ type DeployResult struct {
 	// ObservedBundleGeneration is the Bundle.metadata.generation observed
 	// at deploy time when source.Kind == BundleTest. Zero otherwise.
 	ObservedBundleGeneration int64
+
+	// PerCluster carries the per-target-cluster observed status, mirrored
+	// from the Fleet Bundle's per-cluster summary. Empty for sources that
+	// haven't been deployed yet (or for the in-cluster Helm path).
+	PerCluster []ClusterDeploymentStatusDomain
 }
 
 // PhaseInput is the domain projection consumed by RecomputePhase.
@@ -217,4 +245,15 @@ type UpgradeBlueprintView struct {
 	Name      string
 	Lineage   string
 	Withdrawn bool
+}
+
+// ClusterDeploymentStatusDomain is the domain-level twin of
+// aifv1.ClusterDeploymentStatus (translation in conversions.go). Carried
+// in DeployResult.PerCluster (Fleet path) and consumed by RecomputePhase
+// via PhaseInput.PerClusterPhases when the per-cluster aggregate is the
+// authoritative phase source.
+type ClusterDeploymentStatusDomain struct {
+	ClusterName string
+	Phase       ClusterPhase
+	FleetState  string
 }

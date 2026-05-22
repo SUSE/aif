@@ -173,7 +173,9 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 
 	// Translate to DeployRequest, call Deployer, project per-component
 	// outcome back into status (NOT Phase — controller owns that below).
-	req := workload.WorkloadToDeployRequest(w)
+	// PullSecretData is nil here; the Workload reconciler fetches it and
+	// re-threads it through DeployRequest in a subsequent commit.
+	req := workload.WorkloadToDeployRequest(w, nil)
 	result, deployErr := r.Deployer.Deploy(ctx, req)
 	workload.ApplyDeployResult(w, result)
 

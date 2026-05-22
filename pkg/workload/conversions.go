@@ -10,30 +10,48 @@ import (
 	"fmt"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
+	"github.com/SUSE/aif/pkg/fleet"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// WorkloadToDeployRequest projects an aifv1.Workload into the
-// framework-agnostic DeployRequest the Deployer port consumes.
-//
-// Defaults applied:
-//   - Replicas: nil → 1 (matches the +kubebuilder default)
-//
-// status.componentReleases is read into Previous so the deployer can
-// detect drift orphans on subsequent reconciles.
-func WorkloadToDeployRequest(w *aifv1.Workload) DeployRequest {
+// WorkloadToDeployRequest projects the CR + the pre-fetched pull-secret
+// payload into the framework-agnostic DeployRequest. The reconciler
+// fetches the pull-secret bytes from suse-registry-creds in the operator
+// namespace and passes them through; the deployer embeds them into the
+// Fleet Bundle's spec.resources[].
+func WorkloadToDeployRequest(w *aifv1.Workload, pullSecretData []byte) DeployRequest {
 	req := DeployRequest{
-		Namespace: w.Namespace,
-		ID:        w.Name,
-		SpecName:  w.Spec.Name,
-		Replicas:  1,
-		Overrides: w.Spec.ValueOverrides,
-		Source:    sourceRefFromCR(w.Spec.Source),
-		Previous:  ComponentReleasesFromCR(w.Status.ComponentReleases),
+		Namespace:      w.Namespace,
+		ID:             w.Name,
+		SpecName:       w.Spec.Name,
+		Replicas:       1,
+		Overrides:      w.Spec.ValueOverrides,
+		Source:         sourceRefFromCR(w.Spec.Source),
+		Previous:       ComponentReleasesFromCR(w.Status.ComponentReleases),
+		DeployStrategy: string(w.Spec.DeployStrategy),
+		TargetClusters: append([]string(nil), w.Spec.TargetClusters...),
+		PullSecretData: pullSecretData,
+		Owner:          OwnerRefFromCR(w),
 	}
 	if w.Spec.Replicas != nil {
 		req.Replicas = *w.Spec.Replicas
 	}
+	if req.DeployStrategy == "" {
+		req.DeployStrategy = string(aifv1.DeployStrategyTypeHelm)
+	}
 	return req
+}
+
+// OwnerRefFromCR builds the Fleet-domain OwnerRef from a Workload CR.
+// Keeps pkg/fleet free of aifv1 imports.
+func OwnerRefFromCR(w *aifv1.Workload) fleet.OwnerRef {
+	return fleet.OwnerRef{
+		APIVersion: w.APIVersion,
+		Kind:       w.Kind,
+		Name:       w.Name,
+		UID:        string(w.UID),
+		Controller: true,
+	}
 }
 
 func sourceRefFromCR(s aifv1.WorkloadSource) SourceRef {
@@ -69,6 +87,17 @@ func ApplyDeployResult(w *aifv1.Workload, r DeployResult) {
 			ReleaseName: c.ReleaseName,
 			Status:      c.Status,
 			Revision:    c.Revision,
+		})
+	}
+
+	now := metav1.Now()
+	w.Status.PerCluster = nil
+	for _, p := range r.PerCluster {
+		w.Status.PerCluster = append(w.Status.PerCluster, aifv1.ClusterDeploymentStatus{
+			ClusterName:    p.ClusterName,
+			Phase:          string(p.Phase),
+			FleetState:     p.FleetState,
+			LastObservedAt: now,
 		})
 	}
 }

@@ -21,7 +21,7 @@ func TestWorkloadToDeployRequest_AppSource(t *testing.T) {
 		},
 	}
 
-	req := WorkloadToDeployRequest(w)
+	req := WorkloadToDeployRequest(w, nil)
 
 	if req.Namespace != "ns" || req.ID != "wid" || req.SpecName != "my-llm" {
 		t.Errorf("got %+v, want ns/wid/my-llm", req)
@@ -50,7 +50,7 @@ func TestWorkloadToDeployRequest_ReplicasOverride(t *testing.T) {
 			Source:   aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
 		},
 	}
-	if got := WorkloadToDeployRequest(w).Replicas; got != 7 {
+	if got := WorkloadToDeployRequest(w, nil).Replicas; got != 7 {
 		t.Errorf("Replicas=%d, want 7", got)
 	}
 }
@@ -66,7 +66,7 @@ func TestWorkloadToDeployRequest_BlueprintSource(t *testing.T) {
 			},
 		},
 	}
-	req := WorkloadToDeployRequest(w)
+	req := WorkloadToDeployRequest(w, nil)
 	if req.Source.Kind != SourceKindBlueprint || req.Source.Blueprint == nil ||
 		req.Source.Blueprint.Name != "rag" || req.Source.Blueprint.Version != "1.2.0" {
 		t.Errorf("Source=%+v", req.Source)
@@ -84,7 +84,7 @@ func TestWorkloadToDeployRequest_BundleTestSource(t *testing.T) {
 			},
 		},
 	}
-	req := WorkloadToDeployRequest(w)
+	req := WorkloadToDeployRequest(w, nil)
 	if req.Source.BundleTest == nil || req.Source.BundleTest.Generation != 5 {
 		t.Errorf("BundleTest=%+v", req.Source.BundleTest)
 	}
@@ -100,7 +100,7 @@ func TestWorkloadToDeployRequest_PreviousFromStatus(t *testing.T) {
 			},
 		},
 	}
-	req := WorkloadToDeployRequest(w)
+	req := WorkloadToDeployRequest(w, nil)
 	if len(req.Previous) != 1 || req.Previous[0].Name != "c1" || req.Previous[0].Revision != 3 {
 		t.Errorf("Previous=%+v", req.Previous)
 	}
@@ -146,6 +146,28 @@ func TestApplyDeployResult_PreservesUnrelatedStatusFields(t *testing.T) {
 	}
 	if len(w.Status.Conditions) != 1 {
 		t.Errorf("Conditions wiped: %+v", w.Status.Conditions)
+	}
+}
+
+func TestApplyDeployResult_WritesPerCluster(t *testing.T) {
+	w := &aifv1.Workload{}
+	r := DeployResult{
+		PerCluster: []ClusterDeploymentStatusDomain{
+			{ClusterName: "prod-east", Phase: ClusterRunning, FleetState: "Ready"},
+			{ClusterName: "prod-west", Phase: ClusterDeploying, FleetState: "Pending"},
+		},
+	}
+
+	ApplyDeployResult(w, r)
+
+	if len(w.Status.PerCluster) != 2 {
+		t.Fatalf("PerCluster len=%d, want 2", len(w.Status.PerCluster))
+	}
+	if w.Status.PerCluster[0].ClusterName != "prod-east" || w.Status.PerCluster[0].FleetState != "Ready" {
+		t.Errorf("PerCluster[0]=%+v", w.Status.PerCluster[0])
+	}
+	if w.Status.PerCluster[1].Phase != string(ClusterDeploying) {
+		t.Errorf("PerCluster[1].Phase=%q, want %q", w.Status.PerCluster[1].Phase, ClusterDeploying)
 	}
 }
 
@@ -317,5 +339,45 @@ func TestPhaseToCR_MapsAllPhases(t *testing.T) {
 		if got := PhaseToCR(tc.in); got != tc.want {
 			t.Errorf("PhaseToCR(%q)=%q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestWorkloadToDeployRequest_PopulatesNewFields(t *testing.T) {
+	w := &aifv1.Workload{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "n", Name: "x", UID: "u-1"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "ai.suse.com/v1alpha1", Kind: "Workload"},
+		Spec: aifv1.WorkloadSpec{
+			Name:           "n",
+			Source:         aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+			DeployStrategy: aifv1.DeployStrategyTypeHelm,
+			TargetClusters: []string{"a", "b"},
+		},
+	}
+	req := WorkloadToDeployRequest(w, []byte("creds"))
+	if req.DeployStrategy != "helm" {
+		t.Fatalf("DeployStrategy = %q", req.DeployStrategy)
+	}
+	if len(req.TargetClusters) != 2 {
+		t.Fatalf("TargetClusters len = %d", len(req.TargetClusters))
+	}
+	if string(req.PullSecretData) != "creds" {
+		t.Fatalf("PullSecretData not propagated")
+	}
+	if req.Owner.UID != "u-1" || req.Owner.Kind != "Workload" {
+		t.Fatalf("Owner = %+v", req.Owner)
+	}
+}
+
+func TestWorkloadToDeployRequest_DefaultsDeployStrategy(t *testing.T) {
+	w := &aifv1.Workload{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "n", Name: "x"},
+		Spec: aifv1.WorkloadSpec{
+			Name:   "n",
+			Source: aifv1.WorkloadSource{Kind: aifv1.WorkloadSourceKindApp, App: &aifv1.AppRef{Repo: "r", Chart: "c", Version: "1"}},
+		},
+	}
+	req := WorkloadToDeployRequest(w, nil)
+	if req.DeployStrategy != "helm" {
+		t.Fatalf("expected default helm, got %q", req.DeployStrategy)
 	}
 }
