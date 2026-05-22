@@ -124,3 +124,21 @@ type ImageRewriteRule struct {
 	// Replace is the substitution prefix.
 	Replace string
 }
+
+// ValueRenderer renders the post-merge Helm values for one chart
+// without installing. Used by pkg/workload's Fleet path: the deployer
+// composes Render() per component, then hands assembled values to
+// fleet.FleetBundleEngine.Apply.
+//
+// Single method (well within ISP target). The same concrete *engine
+// type satisfies both helm.Engine and helm.ValueRenderer — wire-time
+// composition in cmd/operator/main.go.
+type ValueRenderer interface {
+	// Render pulls the chart, loads it, applies §6.6 layers 1-5 (chart
+	// defaults, Blueprint overrides, Workload overrides, NIM-generated,
+	// image rewrite) and returns the merged values. Layer 6 (pull-secret
+	// injection) is NOT applied here — Fleet ships the pull-secret as a
+	// separate Secret resource via spec.resources[], so injecting
+	// imagePullSecrets into chart values would be redundant.
+	Render(ctx context.Context, repo, chart, version string, ov Overrides) (map[string]any, error)
+}

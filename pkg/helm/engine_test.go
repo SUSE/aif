@@ -583,3 +583,32 @@ func TestInstallChartFromRepo_ReturnsErrMissingImageRepository(t *testing.T) {
 		t.Errorf("err=%v, want ErrMissingImageRepository", err)
 	}
 }
+
+func TestEngine_Render_DoesNotInstall(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image": map[string]any{"repository": "registry.example.com/app"},
+		"replicas": 1,
+	}
+	fr := &fakeRunner{
+		pullPath: writeTinyChartWithValues(t, t.TempDir(), chartDefaults),
+	}
+	e := newTestEngine(t, fr)
+
+	got, err := e.Render(context.Background(), "registry.example.com", "ai/charts/nim-llm", "1.2.3",
+		Overrides{Workload: map[string]any{"replicas": 3}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["replicas"] != 3 {
+		t.Errorf("expected Workload override to win, got %v", got["replicas"])
+	}
+	// Layer 6 (imagePullSecrets) must NOT be applied — Fleet ships
+	// pull-secrets as a separate resource.
+	if _, ok := got["imagePullSecrets"]; ok {
+		t.Errorf("Render must not inject imagePullSecrets; got %v", got["imagePullSecrets"])
+	}
+	wantCalls := []string{"Pull"}
+	if !equalStrings(fr.calls, wantCalls) {
+		t.Errorf("call order mismatch: got %v want %v", fr.calls, wantCalls)
+	}
+}

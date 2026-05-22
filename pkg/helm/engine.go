@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
@@ -24,6 +25,61 @@ import (
 )
 
 const defaultInstallTimeout = 5 * time.Minute
+
+// renderValues extracts the pure-merge path from InstallChartFromRepo.
+// It pulls the chart, loads it, and applies §6.6 layers 1-5 (chart defaults,
+// Blueprint overrides, Workload overrides, NIM-generated, image rewrite) and
+// returns the merged values. Layer 6 (imagePullSecrets injection) is NOT
+// applied here — that stays in InstallChartFromRepo. The caller MUST defer
+// the returned cleanup function, which is always safe (no-op if Pull failed).
+//
+// The namespace parameter doesn't affect the merge (no release is created),
+// but is needed by e.cfgFactory for the Helm action config. For render-only
+// paths, pass a synthetic namespace like "aif-render".
+func (e *engine) renderValues(
+	ctx context.Context,
+	namespace, chartRef string,
+	ov Overrides,
+) (merged map[string]any, ch *chart.Chart, cleanup func(), err error) {
+	cfg, err := e.cfgFactory(namespace)
+	if err != nil {
+		return nil, nil, func() {}, fmt.Errorf("failed to create action config: %w", err)
+	}
+
+	chartPath, err := e.runner.Pull(ctx, cfg, chartRef, e.chartDir)
+	if err != nil {
+		return nil, nil, func() {}, errors.Join(ErrPullFailed, fmt.Errorf("ref %s: %w", chartRef, err))
+	}
+
+	// Define cleanup: remove the parent directory (Pull returns a path inside
+	// a per-pull subdir of e.chartDir; we clean up that subdir).
+	cleanup = func() { _ = os.RemoveAll(filepath.Dir(chartPath)) }
+
+	chart, err := loader.Load(chartPath)
+	if err != nil {
+		cleanup()
+		return nil, nil, func() {}, fmt.Errorf("failed to load chart: %w", err)
+	}
+
+	mergedValues, mergeErr := MergeValues(MergeInput{
+		ChartDefaults:      chart.Values,
+		BlueprintOverrides: ov.Blueprint,
+		WorkloadOverrides:  ov.Workload,
+		NIMGenerated:       ov.NIMGenerated,
+	})
+	if mergeErr != nil {
+		cleanup()
+		return nil, nil, func() {}, mergeErr
+	}
+
+	// Layer 5: image rewrite from EngineSettings (P4-6 + P5-7).
+	settings := e.snapshot()
+	if settings.ImageRewrite.Enabled && len(settings.ImageRewrite.Rules) > 0 {
+		mergedValues = ApplyImageRewrites(mergedValues, settings.ImageRewrite.Rules)
+	}
+
+	return mergedValues, chart, cleanup, nil
+}
 
 // InstallChartFromRepo installs a chart pulled from an OCI repo. Idempotent:
 // if a release with the same name exists, performs an upgrade.
@@ -44,38 +100,11 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, fmt.Errorf("failed to check release history: %w", err)
 	}
 
-	chartPath, err := e.runner.Pull(ctx, cfg, req.ChartRef, e.chartDir)
+	// Extract layers 1-5 (renderValues does NOT apply layer 6).
+	merged, ch, cleanup, err := e.renderValues(ctx, req.Namespace, req.ChartRef, req.Overrides)
+	defer cleanup()
 	if err != nil {
-		// errors.Join keeps both sentinels reachable via errors.Is: callers can
-		// branch on ErrPullFailed (the package contract) AND on the underlying
-		// cause (e.g. transport-level errors). fmt.Errorf only supports one %w
-		// per format, so Join is the idiomatic way to expose both.
-		return ReleaseStatus{}, errors.Join(ErrPullFailed, fmt.Errorf("ref %s: %w", req.ChartRef, err))
-	}
-	// Pull's contract (per realRunner.Pull godoc) is "returned path lives
-	// inside a per-pull subdir of e.chartDir"; remove the parent so the
-	// subdir doesn't leak alongside the .tgz.
-	defer func() { _ = os.RemoveAll(filepath.Dir(chartPath)) }()
-
-	ch, err := loader.Load(chartPath)
-	if err != nil {
-		return ReleaseStatus{}, fmt.Errorf("failed to load chart: %w", err)
-	}
-
-	merged, mergeErr := MergeValues(MergeInput{
-		ChartDefaults:      ch.Values,
-		BlueprintOverrides: req.Overrides.Blueprint,
-		WorkloadOverrides:  req.Overrides.Workload,
-		NIMGenerated:       req.Overrides.NIMGenerated,
-	})
-	if mergeErr != nil {
-		return ReleaseStatus{}, mergeErr
-	}
-
-	// Layer 5: image rewrite from EngineSettings (P4-6 + P5-7).
-	settings := e.snapshot()
-	if settings.ImageRewrite.Enabled && len(settings.ImageRewrite.Rules) > 0 {
-		merged = ApplyImageRewrites(merged, settings.ImageRewrite.Rules)
+		return ReleaseStatus{}, err
 	}
 
 	// §6.6 invariant: validate image.repository presence when the caller
@@ -130,6 +159,28 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, fmt.Errorf("helm install failed: %w", err)
 	}
 	return toReleaseStatus(rel), nil
+}
+
+// Render satisfies the helm.ValueRenderer port. It pulls the chart, loads it,
+// applies §6.6 layers 1-5 (chart defaults, Blueprint overrides, Workload
+// overrides, NIM-generated, image rewrite) and returns the merged values.
+// Layer 6 (pull-secret injection) is NOT applied — Fleet ships the pull-secret
+// as a separate Secret resource via spec.resources[], so injecting
+// imagePullSecrets into chart values would be redundant.
+//
+// chartRef is assembled from (repo, chart, version) as
+// "oci://{repo}/{chart}:{version}" to match the OCI URL shape used by
+// InstallChartFromRepo.
+func (e *engine) Render(ctx context.Context, repo, chart, version string, ov Overrides) (map[string]any, error) {
+	chartRef := fmt.Sprintf("oci://%s/%s:%s", repo, chart, version)
+	// Use synthetic namespace "aif-render" for the action config. No release is
+	// created by renderValues; the namespace is only needed for cfgFactory.
+	merged, _, cleanup, err := e.renderValues(ctx, "aif-render", chartRef, ov)
+	defer cleanup()
+	if err != nil {
+		return nil, err
+	}
+	return merged, nil
 }
 
 // Uninstall removes a release. Returns nil if the release doesn't exist.

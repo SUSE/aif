@@ -22,12 +22,20 @@ type InstallOutcome struct {
 	Err    error
 }
 
-// FakeEngine is a recording fake satisfying Engine. Pass it to controllers
-// and HTTP handlers under test; assert on Calls afterwards.
+// RenderCall records one invocation of Render against FakeEngine.
+type RenderCall struct {
+	Repo, Chart, Version string
+	Overrides            Overrides
+}
+
+// FakeEngine is a recording fake satisfying Engine and ValueRenderer.
+// Pass it to controllers and HTTP handlers under test; assert on Calls and
+// Rendered afterwards.
 //
 // Defaults are friendly: Install returns {Status:"deployed", Revision:1};
 // Uninstall returns nil; Status returns ErrReleaseNotFound; Rollback returns
-// nil; History returns nil. Override per-method via the *Result hooks.
+// nil; History returns nil; Render shallow-merges overrides. Override
+// per-method via the *Result hooks or *Fn callbacks.
 type FakeEngine struct {
 	mu    sync.Mutex
 	Calls []FakeCall
@@ -43,6 +51,13 @@ type FakeEngine struct {
 	// InstallResult — useful for tests that want per-release outcomes
 	// without re-implementing the callback.
 	InstallByRelease map[string]InstallOutcome
+
+	// RenderFn overrides the default merge behavior for Render. When nil,
+	// Render shallow-merges Blueprint → Workload → NIMGenerated and returns.
+	RenderFn func(ctx context.Context, repo, chart, version string, ov Overrides) (map[string]any, error)
+
+	// Rendered records every Render invocation. Inspect in tests.
+	Rendered []RenderCall
 
 	Settings EngineSettings // last applied
 }
@@ -130,6 +145,24 @@ func (f *FakeEngine) History(_ context.Context, namespace, releaseName string) (
 		return stub(namespace, releaseName)
 	}
 	return nil, nil
+}
+
+func (f *FakeEngine) Render(ctx context.Context, repo, chart, version string, ov Overrides) (map[string]any, error) {
+	f.mu.Lock()
+	f.Rendered = append(f.Rendered, RenderCall{Repo: repo, Chart: chart, Version: version, Overrides: ov})
+	stub := f.RenderFn
+	f.mu.Unlock()
+
+	if stub != nil {
+		return stub(ctx, repo, chart, version, ov)
+	}
+	out := map[string]any{}
+	for _, src := range []map[string]any{ov.Blueprint, ov.Workload, ov.NIMGenerated} {
+		for k, v := range src {
+			out[k] = v
+		}
+	}
+	return out, nil
 }
 
 func (f *FakeEngine) UpdateSettings(s EngineSettings) {
