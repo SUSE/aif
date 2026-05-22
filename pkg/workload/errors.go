@@ -30,4 +30,21 @@ var (
 	// ErrComponentUninstallFailed wraps any orphan-cleanup uninstall
 	// failure. Phase stays Deploying until cleanup succeeds.
 	ErrComponentUninstallFailed = errors.New("workload: orphan component uninstall failed")
+
+	// P5-3 upgrade workflow sentinels. Classified by errors.Is at the
+	// internal/api boundary, where each maps to a specific HTTP status:
+	//   ErrWorkloadNotFound          → 404 NOT_FOUND
+	//   ErrSourceNotBlueprint        → 400 INVALID_INPUT
+	//   ErrBlueprintVersionNotFound  → 404 NOT_FOUND
+	//   ErrCrossLineageUpgrade       → 400 INVALID_INPUT
+	//   ErrTargetWithdrawn           → 409 INVALID_TRANSITION
+	//   ErrDowngradeNotSupported     → 409 INVALID_TRANSITION
+	//   ErrUpgradeConflict           → 409 CONFLICT (resourceVersion mismatch)
+	ErrWorkloadNotFound         = errors.New("workload: not found")
+	ErrSourceNotBlueprint       = errors.New("workload: upgrade requires source.kind=Blueprint")
+	ErrBlueprintVersionNotFound = errors.New("workload: target Blueprint version not found")
+	ErrCrossLineageUpgrade      = errors.New("workload: cross-lineage upgrade not allowed")
+	ErrTargetWithdrawn          = errors.New("workload: cannot upgrade to a Withdrawn Blueprint version")
+	ErrDowngradeNotSupported    = errors.New("workload: upgrade must target a higher version (downgrade is not supported in v1)")
+	ErrUpgradeConflict          = errors.New("workload: upgrade conflict -- workload was modified concurrently")
 )

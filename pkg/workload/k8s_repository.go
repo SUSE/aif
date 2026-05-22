@@ -57,6 +57,20 @@ func (r *k8sRepository) UpdateStatus(ctx context.Context, w *aifv1.Workload) err
 	return r.c.Status().Update(ctx, w)
 }
 
+// Patch performs an optimistic-concurrency merge patch. The diff is computed
+// between w and orig via MergeFromWithOptimisticLock, which causes
+// client-go to include orig.metadata.resourceVersion in the patch payload.
+// If the stored object's resourceVersion has advanced (i.e. anything was
+// written between the consumer's Get and this Patch), the apiserver rejects
+// with apierrors.IsConflict; the P5-3 upgrade handler maps that to HTTP 409.
+//
+// Without the optimistic-lock option the default MergeFrom emits no
+// resourceVersion and the apiserver silently overwrites — see
+// sigs.k8s.io/controller-runtime/pkg/client/patch.go for the semantics.
+func (r *k8sRepository) Patch(ctx context.Context, w, orig *aifv1.Workload) error {
+	return r.c.Patch(ctx, w, client.MergeFromWithOptions(orig, client.MergeFromWithOptimisticLock{}))
+}
+
 // CountByBlueprint counts Workloads whose source.kind is Blueprint and whose
 // source.blueprint matches (name, version). Today this is implemented as a
 // cluster-wide List + filter; plan task E1 replaces it with a label-selector

@@ -44,6 +44,9 @@ const (
 	ReasonWorkloadRecoveryInProgress = "WorkloadRecoveryInProgress"
 	ReasonWorkloadFailed             = "WorkloadFailed"
 
+	// P5-3: Workload upgrade reasons.
+	ReasonUpgradeStarted = "UpgradeStarted" // Workload upgraded to a newer Blueprint version via REST API
+
 	// Webhook / immutability
 	ReasonImmutableSpec = "ImmutableSpec" // Blueprint spec mutation attempted
 

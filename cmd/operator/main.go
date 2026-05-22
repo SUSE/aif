@@ -17,6 +17,7 @@ import (
 	"github.com/SUSE/aif/internal/api"
 	"github.com/SUSE/aif/internal/manager"
 	internalpublish "github.com/SUSE/aif/internal/publish"
+	internalworkload "github.com/SUSE/aif/internal/workload"
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
@@ -25,6 +26,7 @@ import (
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/source_collection"
+	"github.com/SUSE/aif/pkg/workload"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -192,14 +194,28 @@ func main() {
 	publishHandler := api.NewPublishHandler(publishWorkflow, logger)
 	settingsHandler := api.NewSettingsHandler(mgr.GetClient(), nil) // nil applier: engine propagation is async via SettingsReconciler
 
+	// P5-3 Workload upgrade wiring. The upgrader depends on three narrow
+	// consumer-defined ports — all aifv1-free. The internal/workload
+	// adapters wrap pkg/{workload,blueprint}.Repository and translate
+	// apierrors into pkg/workload sentinels at the K8s boundary.
+	//   - upgradeStore:    workloadStore  (Get + PatchBlueprintVersion)
+	//   - blueprintReader: blueprintReader (GetForUpgrade)
+	//   - upgradeRecorder: UpgradeEventRecorder (k8s events adapter)
+	// All reads go through mgr.GetClient() so they hit the informer cache.
+	workloadRepo := workload.NewK8sRepository(mgr.GetClient()).AsRepository()
+	upgradeStore := internalworkload.NewUpgradeStore(workloadRepo)
+	upgradeBlueprintReader := internalworkload.NewBlueprintReader(blueprintRepo)
+	upgradeRecorder := internalworkload.NewEventRecorder(mgr.GetEventRecorder("workload-upgrader"))
+	workloadUpgrader := workload.NewUpgrader(upgradeStore, upgradeBlueprintReader, upgradeRecorder, logger)
+	workloadsHandler := api.NewWorkloadsHandler(workloadUpgrader, logger)
+
 	// Setup API server
 	mux := http.NewServeMux()
 	// Register the REST handlers via the api.Handler interface. Future
-	// handlers (P2-6 NIM, P3-x more publish actions, P5-3 Workload, …)
-	// plug in the same way — pass them as additional varargs.
+	// handlers plug in the same way — pass them as additional varargs.
 	appsAPIHandler := api.NewAppsHandler(appsCatalog)
 	nimHandler := api.NewNIMHandler(nvidiaDiscovery)
-	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler, settingsHandler)
+	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler, settingsHandler, workloadsHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,

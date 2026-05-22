@@ -21,10 +21,11 @@ type FakeRepository struct {
 	mu    sync.RWMutex
 	items map[string]*aifv1.Workload
 
-	GetErr             error
-	ListErr            error
-	UpdateErr          error
-	UpdateStatusErr    error
+	GetErr              error
+	ListErr             error
+	UpdateErr           error
+	UpdateStatusErr     error
+	PatchErr            error
 	CountByBlueprintErr error
 }
 
@@ -95,6 +96,32 @@ func (f *FakeRepository) UpdateStatus(_ context.Context, w *aifv1.Workload) erro
 		return apierrors.NewNotFound(schema.GroupResource{Group: "ai.suse.com", Resource: "workloads"}, w.Name)
 	}
 	existing.Status = *w.Status.DeepCopy()
+	return nil
+}
+
+// Patch simulates optimistic concurrency: if orig.ResourceVersion differs
+// from the stored item's ResourceVersion, return apierrors.NewConflict.
+// Otherwise replace the stored item with w. The patch payload itself is
+// NOT computed — for upgrade-test purposes, callers verify the spec change
+// by reading back via Get. PatchErr takes precedence (test-injected error).
+func (f *FakeRepository) Patch(_ context.Context, w, orig *aifv1.Workload) error {
+	if f.PatchErr != nil {
+		return f.PatchErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	existing, ok := f.items[key(w.Namespace, w.Name)]
+	if !ok {
+		return apierrors.NewNotFound(schema.GroupResource{Group: "ai.suse.com", Resource: "workloads"}, w.Name)
+	}
+	if existing.ResourceVersion != orig.ResourceVersion {
+		return apierrors.NewConflict(
+			schema.GroupResource{Group: "ai.suse.com", Resource: "workloads"},
+			w.Name,
+			fmt.Errorf("resourceVersion %q does not match stored %q", orig.ResourceVersion, existing.ResourceVersion),
+		)
+	}
+	f.items[key(w.Namespace, w.Name)] = w.DeepCopy()
 	return nil
 }
 
