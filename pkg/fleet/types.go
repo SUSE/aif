@@ -90,19 +90,18 @@ type ClusterDeploymentObserved struct {
 // FleetSettings is the EngineSettings push target for this package.
 // Currently empty: the bundle engine speaks to the local apiserver via
 // the injected client.Client (Fleet manager runs in-cluster), so no
-// credentials need to land. The struct + UpdateSettings method exist for
-// symmetry with helm.EngineSettings / source_collection.EngineSettings
-// and so P5-7 (downstream-cluster auth) can extend without an interface
-// change.
+// credentials need to land. The struct + UpdateSettings method exist
+// for symmetry with helm.EngineSettings / source_collection.EngineSettings
+// so future downstream-cluster credential pushes can land without
+// changing the engine interface.
 type FleetSettings struct{}
 
-// --- P4-3 sibling types (declared here so the GitRepo engine can land
-// without editing this file). Implementation lives in P4-3's gitrepo_engine.go.
+// --- GitRepo deployment-type stubs. The parallel GitRepo engine fills
+// these in via gitrepo_engine.go; they live here so that story can land
+// without editing this file.
 
 // GitRepoDeploymentSpec is the input to FleetGitRepoEngine.Apply.
-// Filled in by P4-3.
 type GitRepoDeploymentSpec struct{}
 
 // GitRepoObservedStatus is the Fleet GitRepo status mirror.
-// Filled in by P4-3.
 type GitRepoObservedStatus struct{}
