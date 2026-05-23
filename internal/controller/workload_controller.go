@@ -46,7 +46,7 @@ type WorkloadReconciler struct {
 	Recorder          events.EventRecorder
 	Deployer          workload.Deployer   // P4-2: Helm deployment engine
 	Repository        workload.Repository // P5-1: CR CRUD via the port
-	OperatorNamespace string              // P4-3b: namespace where suse-registry-creds lives
+	OperatorNamespace string              // P4-3b: namespace the operator runs in; pull-secret (suse-registry-creds) is fetched from here
 }
 
 // +kubebuilder:rbac:groups=ai.suse.com,resources=workloads,verbs=get;list;watch;update;patch
@@ -184,8 +184,9 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 	}
 
 	// P4-3b: Fetch the pull-secret from the operator namespace. Missing →
-	// surface Ready=False/reason=PullSecretNotReady (SettingsReconciler will
-	// materialize it from Settings.spec.suseRegistry once configured).
+	// surface Ready=False/reason=PullSecretNotReady (the pull-secret
+	// reconciler from P7-2 materializes suse-registry-creds from
+	// Settings.spec.suseRegistry once configured).
 	var pullSecret corev1.Secret
 	if err := r.Get(ctx,
 		client.ObjectKey{Namespace: r.OperatorNamespace, Name: "suse-registry-creds"},
@@ -200,6 +201,10 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 				ObservedGeneration: w.Generation,
 			})
 			w.Status.ObservedGeneration = w.Generation
+			// Return the sentinel; the outer Reconcile path calls
+			// mapDeployError, which classifies errPullSecretNotReady and
+			// extracts a 30s RequeueAfter while preserving the status
+			// fields we just set.
 			return errPullSecretNotReady
 		}
 		return fmt.Errorf("fetch pull-secret: %w", err)
