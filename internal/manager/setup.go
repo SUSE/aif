@@ -7,6 +7,7 @@ import (
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
+	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/workload"
@@ -30,8 +31,13 @@ type Options struct {
 
 	BlueprintManager blueprint.Manager
 	HelmEngine       helm.Engine
-	Discovery        discovery.DiscoveryInterface
-	Logger           *slog.Logger
+	// HelmRenderer is the value-only rendering port used by the
+	// workload deployer's Fleet path (helm.Engine and helm.ValueRenderer
+	// are both satisfied by the same concrete *engine; main.go composes
+	// them at wire time — see pkg/helm/interface.go ValueRenderer doc).
+	HelmRenderer helm.ValueRenderer
+	Discovery    discovery.DiscoveryInterface
+	Logger       *slog.Logger
 
 	// EngineBus pushes Settings snapshots to all settings-aware engines on
 	// every reconcile. Constructed in cmd/operator/main.go via NewEngineBus
@@ -40,8 +46,14 @@ type Options struct {
 
 	// Engine ports needed to construct the production WorkloadDeployer
 	// inside setupControllers (post-manager so repos use mgr.GetClient()).
-	NvidiaDiscovery nvidia.Discovery
-	NvidiaDeployer  nvidia.Deployer
+	NvidiaDiscovery   nvidia.Discovery
+	NvidiaDeployer    nvidia.Deployer
+	FleetBundleEngine fleet.FleetBundleEngine
+
+	// OperatorNamespace is the namespace the operator runs in. The
+	// WorkloadReconciler uses it to fetch the suse-registry-creds Secret
+	// it then mirrors into each workload namespace (P4-3b).
+	OperatorNamespace string
 }
 
 func (o Options) leaderElectionID() string {
@@ -111,20 +123,22 @@ func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
 	blueprintRepo := blueprint.NewK8sRepository(mgr.GetClient())
 	bundleRepo := bundle.NewK8sRepository(mgr.GetClient())
 	workloadDeployer := workload.NewDeployer(
-		opts.HelmEngine,
+		opts.Logger,
+		opts.HelmRenderer,      // P4-3b — value-only renderer for the Fleet path
+		opts.FleetBundleEngine, // P4-3b
 		blueprintRepo,
 		bundleRepo,
 		opts.NvidiaDiscovery,
 		opts.NvidiaDeployer,
-		opts.Logger,
 	)
 
 	workloadReconciler := &controller.WorkloadReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Recorder:   mgr.GetEventRecorder("workload-controller"),
-		Deployer:   workloadDeployer,
-		Repository: workload.NewK8sRepository(mgr.GetClient()).AsRepository(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorder("workload-controller"),
+		Deployer:          workloadDeployer,
+		Repository:        workload.NewK8sRepository(mgr.GetClient()).AsRepository(),
+		OperatorNamespace: opts.OperatorNamespace, // P4-3b
 	}
 	if err := workloadReconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up WorkloadReconciler: %w", err)
