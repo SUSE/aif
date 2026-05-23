@@ -21,16 +21,19 @@ import (
 	"github.com/SUSE/aif/pkg/apps"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/bundle"
+	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/git"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/source_collection"
 	"github.com/SUSE/aif/pkg/workload"
+	fleetv1 "github.com/rancher/fleet/pkg/apis/fleet.cattle.io/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -107,8 +110,41 @@ func main() {
 	// construction until that's available.
 	var publishWorkflow publish.Workflow
 
+	// Scheme registration must precede client.New (for the Fleet engine's
+	// non-cached client) and manager.NewManager. The same scheme instance
+	// is shared by both — the standard Kubernetes types are needed for
+	// SettingsReconciler's Secret reads, AIF CRDs for our own reconcilers,
+	// and fleetv1 for the Fleet Bundle SSA path.
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		logger.Error("Failed to add built-in Kubernetes types to scheme", "error", err)
+		os.Exit(1)
+	}
+	if err := aifv1alpha1.AddToScheme(scheme); err != nil {
+		logger.Error("Failed to add AIF API types to scheme", "error", err)
+		os.Exit(1)
+	}
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		logger.Error("Failed to add Fleet API types to scheme", "error", err)
+		os.Exit(1)
+	}
+
+	// Fleet engine uses a non-cached client: its Apply uses server-side-apply
+	// (Patch with client.Apply — bypasses cache), Teardown uses Delete, and
+	// the post-SSA Get for status read-back benefits little from caching in
+	// the one-bundle-per-workload pattern. Building it here lets the bus and
+	// the manager Options share a single FleetBundleEngine instance — needed
+	// so that when P5-7 populates FleetSettings with downstream-cluster auth,
+	// the bus's UpdateSettings push reaches the engine the deployer uses.
+	fleetClient, err := client.New(k8sConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		logger.Error("failed to create non-cached client for Fleet engine", "error", err)
+		os.Exit(1)
+	}
+	fleetBundleEngine := fleet.NewBundleEngine(logger, fleetClient)
+
 	// Bus that propagates Settings to all engines on every reconcile (P5-7).
-	engineBus := manager.NewEngineBus(helmEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
+	engineBus := manager.NewEngineBus(helmEngine, fleetBundleEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
 
 	// Log manager types so vars stay "used" while their consumers (later
 	// stories wire gitEngine, etc.) come online. Logging the values
@@ -128,36 +164,41 @@ func main() {
 
 	// Setup controller-runtime manager with all controllers and webhooks
 	logger.Info("Creating controller-runtime manager")
-	scheme := runtime.NewScheme()
 
-	// Register the standard Kubernetes built-in types (corev1, appsv1, batchv1,
-	// rbacv1, networkingv1, …). Without this, controller-runtime's typed client
-	// cannot Get/List/Watch any non-CRD object — most concretely, the
-	// SettingsReconciler's r.Get(ctx, secretName, &corev1.Secret{}) fails with
-	// "no kind is registered for the type v1.Secret in scheme".
-	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		logger.Error("Failed to add built-in Kubernetes types to scheme", "error", err)
+	// helm.New returns the narrow Engine interface, but the underlying
+	// *engine also satisfies helm.ValueRenderer (per ValueRenderer doc).
+	// Assert here to expose both ports without changing the constructor's
+	// return type.
+	helmRenderer, ok := helmEngine.(helm.ValueRenderer)
+	if !ok {
+		logger.Error("helm.Engine does not satisfy helm.ValueRenderer — unexpected helm package contract change")
 		os.Exit(1)
 	}
-	// Register the AIF CRDs.
-	if err := aifv1alpha1.AddToScheme(scheme); err != nil {
-		logger.Error("Failed to add AIF API types to scheme", "error", err)
-		os.Exit(1)
+
+	// OperatorNamespace is read from the downward-API POD_NAMESPACE env
+	// var set by the operator Deployment; default to the chart's install
+	// namespace when running out-of-cluster (make run).
+	operatorNS := os.Getenv("POD_NAMESPACE")
+	if operatorNS == "" {
+		operatorNS = "aif"
 	}
 
 	mgr, err := manager.NewManager(scheme, k8sConfig, manager.Options{
-		LeaderElection:   leaderElect,
-		LeaderElectionID: "aif-operator-leader",
-		MetricsAddr:      metricsBindAddress,
-		HealthAddr:       healthProbeBindAddress,
-		WebhookPort:      parsePort(webhookBindAddress),
-		BlueprintManager: blueprintManager,
-		HelmEngine:       helmEngine,
-		Discovery:        discoveryClient,
-		Logger:           logger,
-		EngineBus:        engineBus,
-		NvidiaDiscovery:  nvidiaDiscovery,
-		NvidiaDeployer:   nvidiaDeployer,
+		LeaderElection:    leaderElect,
+		LeaderElectionID:  "aif-operator-leader",
+		MetricsAddr:       metricsBindAddress,
+		HealthAddr:        healthProbeBindAddress,
+		WebhookPort:       parsePort(webhookBindAddress),
+		BlueprintManager:  blueprintManager,
+		HelmEngine:        helmEngine,
+		HelmRenderer:      helmRenderer,
+		FleetBundleEngine: fleetBundleEngine,
+		OperatorNamespace: operatorNS,
+		Discovery:         discoveryClient,
+		Logger:            logger,
+		EngineBus:         engineBus,
+		NvidiaDiscovery:   nvidiaDiscovery,
+		NvidiaDeployer:    nvidiaDeployer,
 	})
 	if err != nil {
 		logger.Error("Failed to create manager", "error", err)
