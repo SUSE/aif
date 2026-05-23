@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/SUSE/aif/internal/controller"
+	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/source_collection"
@@ -18,11 +19,16 @@ import (
 // after construction); each engine's UpdateSettings is thread-safe per its
 // own pattern (sync.RWMutex sole-writer, mirroring helm.engine).
 type engineBus struct {
-	helm       helm.Engine
-	nvidiaDisc nvidia.Discovery
-	nvidiaDepl nvidia.Deployer
-	appCollect source_collection.Client
-	logger     *slog.Logger
+	helm helm.Engine
+	// fleetBundle is the FleetBundleEngine; receives FleetSettings via
+	// projectFleet. Field is empty-settings today but wired through the
+	// bus so P5-7 (downstream-cluster auth) can extend without touching
+	// the bus contract.
+	fleetBundle fleet.FleetBundleEngine
+	nvidiaDisc  nvidia.Discovery
+	nvidiaDepl  nvidia.Deployer
+	appCollect  source_collection.Client
+	logger      *slog.Logger
 }
 
 // NewEngineBus constructs the production SettingsApplier with refs to all
@@ -30,12 +36,20 @@ type engineBus struct {
 // engines themselves are constructed.
 func NewEngineBus(
 	h helm.Engine,
+	fb fleet.FleetBundleEngine,
 	nd nvidia.Discovery,
 	nde nvidia.Deployer,
 	ac source_collection.Client,
 	logger *slog.Logger,
 ) controller.SettingsApplier {
-	return &engineBus{helm: h, nvidiaDisc: nd, nvidiaDepl: nde, appCollect: ac, logger: logger}
+	return &engineBus{
+		helm:        h,
+		fleetBundle: fb,
+		nvidiaDisc:  nd,
+		nvidiaDepl:  nde,
+		appCollect:  ac,
+		logger:      logger,
+	}
 }
 
 // Apply projects the snapshot into per-engine EngineSettings and pushes via
@@ -49,6 +63,7 @@ func NewEngineBus(
 // errors.Join here.
 func (b *engineBus) Apply(_ context.Context, s controller.SettingsSnapshot) error {
 	b.helm.UpdateSettings(b.projectHelm(s))
+	b.fleetBundle.UpdateSettings(b.projectFleet(s))
 	b.nvidiaDisc.UpdateSettings(b.projectNvidiaDiscovery(s))
 	b.nvidiaDepl.UpdateSettings(b.projectNvidiaDeployer(s))
 	b.appCollect.UpdateSettings(b.projectAppCo(s))
@@ -116,4 +131,14 @@ func (b *engineBus) projectAppCo(s controller.SettingsSnapshot) source_collectio
 		Username: s.AppCollectionUser,
 		Token:    s.AppCollectionToken,
 	}
+}
+
+// projectFleet is the FleetBundleEngine settings projector. FleetSettings
+// is empty today — the engine talks to the local Rancher apiserver via the
+// injected client.Client, so no per-cluster auth is needed yet. The
+// projector exists so P5-7 (downstream-cluster auth, e.g. kubeconfig
+// snippets per Cluster) can extend FleetSettings without changing the
+// bus's contract with the engine.
+func (b *engineBus) projectFleet(_ controller.SettingsSnapshot) fleet.FleetSettings {
+	return fleet.FleetSettings{}
 }
