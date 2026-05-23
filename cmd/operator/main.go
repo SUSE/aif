@@ -131,11 +131,11 @@ func main() {
 
 	// Fleet engine uses a non-cached client: its Apply uses server-side-apply
 	// (Patch with client.Apply — bypasses cache), Teardown uses Delete, and
-	// the post-SSA Get for status read-back benefits little from caching in
-	// the one-bundle-per-workload pattern. Building it here lets the bus and
-	// the manager Options share a single FleetBundleEngine instance — needed
-	// so that when P5-7 populates FleetSettings with downstream-cluster auth,
-	// the bus's UpdateSettings push reaches the engine the deployer uses.
+	// the post-SSA Get for status read-back is acceptable without caching.
+	// Building it here lets the bus and the manager Options share a single
+	// FleetBundleEngine instance — needed so that when P5-7 populates
+	// FleetSettings with downstream-cluster auth, the bus's UpdateSettings
+	// push reaches the engine the deployer uses.
 	fleetClient, err := client.New(k8sConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		logger.Error("failed to create non-cached client for Fleet engine", "error", err)
