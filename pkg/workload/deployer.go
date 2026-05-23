@@ -34,10 +34,6 @@ type deployer struct {
 // the deployer doesn't carry settings of its own — image-rewrite and
 // pull-secret policy live inside helm.Engine via P5-7's bus, NIM sizing
 // formulas live inside nvidia.Deployer.
-//
-// req.Overrides is read-only — the implementation MUST NOT mutate the
-// map or its string values (it's shared with the caller's Workload CR
-// per pkg/workload/conversions.go.WorkloadToDeployRequest).
 func NewDeployer(
 	log *slog.Logger,
 	render helm.ValueRenderer,
@@ -184,8 +180,9 @@ func (d *deployer) nimGenerated(ctx context.Context, req DeployRequest, c desire
 }
 
 // parseOverride parses a YAML string from the user CR's
-// valueOverrides map into a Go map. Empty/whitespace input → nil map
-// (treated as "no overrides"). Invalid YAML → error.
+// valueOverrides map into a Go map. Empty/whitespace input → nil map.
+// Invalid YAML → nil (silently dropped — Fleet surfaces the resulting
+// chart-render failure if the override was load-bearing).
 func parseOverride(raw string) map[string]any {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -300,4 +297,3 @@ func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desi
 	}
 	return nil, 0, ErrSourceNotResolved
 }
-

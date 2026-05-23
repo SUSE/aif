@@ -7,24 +7,23 @@ import "context"
 // FakeDeployer in fake_deployer.go for controller tests.
 //
 // Idempotent: re-invocation with the same DeployRequest converges to
-// the same cluster state (re-installs, upgrades unchanged releases,
-// uninstalls orphans).
+// the same cluster state (reconciles Fleet Bundle to desired spec).
 //
 // Pure orchestrator — never reads K8s directly. All K8s I/O happens
-// through injected ports (helm.Engine, blueprint.Repository,
-// bundle.Repository, nvidia.Discovery, nvidia.Deployer).
+// through injected ports (helm.ValueRenderer, fleet.FleetBundleEngine,
+// blueprint.Repository, bundle.Repository, nvidia.Discovery, nvidia.Deployer).
 //
 // 2 methods (well within ISP target of ≤4).
 type Deployer interface {
-	// Deploy resolves req.Source to a list of components, drifts orphans
-	// against req.Previous, helm-installs each desired component, and
-	// returns the per-component outcome plus aggregate phase.
+	// Deploy resolves req.Source into components, renders per-component
+	// values via helm.ValueRenderer (layers 1-5), assembles a Fleet
+	// BundleDeploymentSpec, and dispatches it via FleetBundleEngine.Apply.
+	// Returns the per-component release records plus aggregate Phase
+	// translated from Fleet's per-cluster state.
 	//
 	// Returns (DeployResult, nil) on success. Returns (DeployResult, err)
-	// on partial or full failure where DeployResult still reflects what
-	// was attempted (so the reconciler can surface useful status). The
-	// error is wrapped via errors.Join so the deployer-level sentinel
-	// AND the underlying cause are reachable via errors.Is.
+	// on value-render or Fleet-apply failure; DeployResult still reflects
+	// what was attempted so the reconciler can surface useful status.
 	Deploy(ctx context.Context, req DeployRequest) (DeployResult, error)
 
 	// Teardown deletes the Fleet Bundle for the workload. Used by the
