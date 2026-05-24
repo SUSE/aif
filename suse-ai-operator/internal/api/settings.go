@@ -137,7 +137,7 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 	creds := &RegistryCredentials{}
 
 	appHost := defaultAppCollectionHost
-	if s.Spec.RegistryEndpoints.ApplicationCollection != "" {
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
 		appHost = s.Spec.RegistryEndpoints.ApplicationCollection
 	}
 	if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
@@ -151,7 +151,7 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 	}
 
 	suseHost := defaultSUSERegistryHost
-	if s.Spec.RegistryEndpoints.SUSERegistry != "" {
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
 		suseHost = s.Spec.RegistryEndpoints.SUSERegistry
 	}
 	if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {

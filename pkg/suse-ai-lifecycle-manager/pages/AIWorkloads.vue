@@ -1,6 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, reactive, getCurrentInstance } from 'vue';
 import { Banner } from '@components/Banner';
+import LabeledSelect from '@shell/components/form/LabeledSelect';
+import AppModal from '@shell/components/AppModal';
+import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, deleteAIWorkload, updateAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
@@ -43,6 +46,13 @@ const upgradeVersionOptions = computed(() => {
   return versions.map(bp => bp.spec.version);
 });
 
+const upgradeVersionSelectOptions = computed(() =>
+  upgradeVersionOptions.value.map(v => ({
+    label: `v${ v }${ v === upgradeModal.workload?.spec.source.blueprint?.version ? ' (current)' : '' }`,
+    value: v,
+  })),
+);
+
 // ── Filtering ──────────────────────────────────────────────────────────────────
 const filteredWorkloads = computed(() => {
   const q = search.value.toLowerCase();
@@ -56,21 +66,21 @@ const filteredWorkloads = computed(() => {
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function phaseClass(phase: AIWorkloadPhase | undefined) {
+function phaseBadgeColor(phase: AIWorkloadPhase | undefined): string {
   switch (phase) {
-    case 'Running':  return 'phase-running';
-    case 'Degraded': return 'phase-degraded';
-    case 'Failed':   return 'phase-failed';
-    default:         return 'phase-pending';
+    case 'Running':  return 'bg-success';
+    case 'Degraded': return 'bg-warning';
+    case 'Failed':   return 'bg-error';
+    default:         return 'bg-info';
   }
 }
 
-function phaseIcon(phase: AIWorkloadPhase | undefined) {
+function phaseBadgeIcon(phase: AIWorkloadPhase | undefined): string {
   switch (phase) {
     case 'Running':  return 'icon-checkmark';
     case 'Degraded': return 'icon-warning';
-    case 'Failed':   return 'icon-error';
-    default:         return 'icon-spinner icon-spin';
+    case 'Failed':   return 'icon-x';
+    default:         return 'icon-info';
   }
 }
 
@@ -259,10 +269,11 @@ async function executeUpgrade() {
               >
                 <!-- State -->
                 <td class="col-state">
-                  <span class="phase-badge" :class="phaseClass(w.status?.phase)">
-                    <i :class="['icon', phaseIcon(w.status?.phase)]" />
-                    {{ w.status?.phase || 'Pending' }}
-                  </span>
+                  <BadgeState
+                    :color="phaseBadgeColor(w.status?.phase)"
+                    :icon="phaseBadgeIcon(w.status?.phase)"
+                    :label="w.status?.phase || 'Pending'"
+                  />
                 </td>
 
                 <!-- Name -->
@@ -340,8 +351,8 @@ async function executeUpgrade() {
     </div>
 
     <!-- Delete confirmation modal -->
-    <div v-if="deleteModal.show" class="modal-overlay" @click.self="deleteModal.show = false">
-      <div class="modal-content">
+    <AppModal v-if="deleteModal.show" :click-to-close="true" :width="480" @close="deleteModal.show = false">
+      <div class="modal-body">
         <h3>Delete Workload</h3>
         <p>
           Delete <strong>{{ deleteModal.display }}</strong> from namespace
@@ -364,11 +375,11 @@ async function executeUpgrade() {
           </button>
         </div>
       </div>
-    </div>
+    </AppModal>
 
     <!-- Blueprint upgrade modal -->
-    <div v-if="upgradeModal.show" class="modal-overlay" @click.self="upgradeModal.show = false">
-      <div class="modal-content">
+    <AppModal v-if="upgradeModal.show" :click-to-close="true" :width="480" @close="upgradeModal.show = false">
+      <div class="modal-body">
         <h3>Upgrade Blueprint Workload</h3>
         <p>
           <strong>{{ upgradeModal.workload?.spec.displayName }}</strong>
@@ -380,20 +391,12 @@ async function executeUpgrade() {
         </div>
 
         <div class="field-row">
-          <label class="field-label" for="upgrade-version">Target version</label>
-          <select
-            id="upgrade-version"
-            v-model="upgradeModal.selectedVersion"
-            class="version-select form-control"
-          >
-            <option
-              v-for="v in upgradeVersionOptions"
-              :key="v"
-              :value="v"
-            >
-              v{{ v }}{{ v === upgradeModal.workload?.spec.source.blueprint?.version ? ' (current)' : '' }}
-            </option>
-          </select>
+          <LabeledSelect
+            v-model:value="upgradeModal.selectedVersion"
+            label="Target version"
+            :options="upgradeVersionSelectOptions"
+            :clearable="false"
+          />
         </div>
 
         <div class="modal-buttons">
@@ -409,7 +412,7 @@ async function executeUpgrade() {
           </button>
         </div>
       </div>
-    </div>
+    </AppModal>
   </main>
 </template>
 
@@ -486,26 +489,6 @@ async function executeUpgrade() {
   }
 }
 
-// Phase badge
-.phase-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-
-  .icon { font-size: 10px; }
-
-  &.phase-running  { background: var(--success-banner-bg); color: var(--success); }
-  &.phase-degraded { background: var(--warning-banner-bg); color: var(--warning); }
-  &.phase-failed   { background: var(--error-banner-bg);   color: var(--error);   }
-  &.phase-pending  { background: var(--info-banner-bg);    color: var(--info);    }
-}
 
 // Name column
 .col-name {
@@ -561,22 +544,8 @@ async function executeUpgrade() {
 }
 
 // Modal
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-content {
-  background: var(--body-bg);
+.modal-body {
   padding: 24px;
-  border-radius: 8px;
-  max-width: 480px;
-  width: 100%;
 
   h3 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
 
@@ -608,16 +577,6 @@ async function executeUpgrade() {
   .field-value { font-family: monospace; font-size: 14px; color: var(--muted); }
 }
 
-.version-select {
-  flex: 1;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--border-radius);
-  background: var(--input-bg);
-  color: var(--body-text);
-  font-size: 14px;
-}
 
 // Empty state
 .empty-state-content {

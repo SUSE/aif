@@ -1,5 +1,6 @@
 import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
+import { getSettings } from '../utils/operator-api';
 
 // Canonical OCI registry URLs for the two SUSE chart repositories.
 // These are the single source of truth for all hardcoded registry URLs in the codebase.
@@ -51,16 +52,21 @@ export async function getClusterRepoNameFromUrl($store: any, repoUrl: string): P
 
 /** Fetch apps from SUSE Application Collection and SUSE Registry, merged and sorted alphabetically. */
 export async function fetchSuseAiApps($store: any): Promise<AppCollectionItem[]> {
+  const settings = await getSettings().catch(() => null);
+  const re = settings?.spec?.registryEndpoints || {};
+  const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
+  const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
+
   const repos = await fetchClusterRepositories($store);
-  const appCollectionRepo = repos.find(r => r.url === APP_COLLECTION_REPO_URL);
-  const suseRegistryRepo  = repos.find(r => r.url === SUSE_REGISTRY_REPO_URL);
+  const appCollectionRepo = repos.find(r => r.url === acUrl);
+  const suseRegistryRepo  = repos.find(r => r.url === srUrl);
 
   const [appCollectionApps, suseRegistryApps] = await Promise.all([
     appCollectionRepo
-      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: APP_COLLECTION_REPO_URL })))
+      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: acUrl })))
       : Promise.resolve([] as AppCollectionItem[]),
     suseRegistryRepo
-      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: SUSE_REGISTRY_REPO_URL })))
+      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: srUrl })))
       : Promise.resolve([] as AppCollectionItem[]),
   ]);
 

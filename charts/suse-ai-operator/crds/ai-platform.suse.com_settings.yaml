@@ -158,6 +158,7 @@ spec:
               registryEndpoints:
                 description: RegistryEndpoints overrides upstream registry defaults
                   for air-gap deployments.
+                nullable: true
                 properties:
                   applicationCollection:
                     description: ApplicationCollection overrides the SUSE App Collection

@@ -689,7 +689,11 @@ func (in *SettingsSpec) DeepCopyInto(out *SettingsSpec) {
 	in.Fleet.DeepCopyInto(&out.Fleet)
 	in.ApplicationCollection.DeepCopyInto(&out.ApplicationCollection)
 	in.SUSERegistry.DeepCopyInto(&out.SUSERegistry)
-	out.RegistryEndpoints = in.RegistryEndpoints
+	if in.RegistryEndpoints != nil {
+		in, out := &in.RegistryEndpoints, &out.RegistryEndpoints
+		*out = new(RegistryEndpointsSettings)
+		**out = **in
+	}
 	out.CatalogDiscovery = in.CatalogDiscovery
 	in.ImageRewrite.DeepCopyInto(&out.ImageRewrite)
 }

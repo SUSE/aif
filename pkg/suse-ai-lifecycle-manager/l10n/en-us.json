@@ -85,7 +85,7 @@
             "registryEndpoints": {
               "title": "Registry Endpoints",
               "suseRegistry": {
-                "label": "SUSE Registry",
+                "label": "SUSE Registry (OCI)",
                 "placeholder": "registry.suse.com"
               },
               "applicationCollection": {

@@ -35,14 +35,10 @@
           </div>
 
           <div class="filter-group-checkbox">
-            <input
-              id="show-installed-only"
-              v-model="showInstalledOnly"
-              type="checkbox"
-              class="checkbox"
-              aria-label="Show only installed applications"
+            <Checkbox
+              v-model:value="showInstalledOnly"
+              :label="t('suseai.apps.showInstalledOnly', 'Installed')"
             />
-            <label for="show-installed-only" class="text-label">{{ t('suseai.apps.showInstalledOnly', 'Installed') }}</label>
           </div>
 
           <div class="view-controls" role="group" aria-label="View mode selection">
@@ -251,7 +247,7 @@
 <script lang="ts">
 import { defineComponent, computed, getCurrentInstance, onMounted, ref } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
-// Using basic HTML table instead of ResourceTable to avoid import issues
+import { Checkbox } from '@components/Form/Checkbox';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchSuseAiApps, getClusterRepoNameFromUrl } from '../services/app-collection';
 import { discoverExistingInstall, getClusters } from '../services/rancher-apps';
@@ -267,7 +263,7 @@ export default defineComponent({
   name: 'SuseAIApps',
 
   components: {
-    // ResourceTable,
+    Checkbox,
     // LabeledSelect
   },
 

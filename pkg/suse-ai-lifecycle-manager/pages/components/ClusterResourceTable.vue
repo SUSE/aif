@@ -34,14 +34,13 @@
           <tr>
             <th class="col-select">
               <!-- Select All checkbox for multi-select mode -->
-              <input
+              <Checkbox
                 v-if="multiSelect"
-                type="checkbox"
-                :checked="allCompatibleSelected"
+                :value="allCompatibleSelected"
                 :indeterminate="someButNotAllSelected"
-                @change="toggleSelectAllCompatible"
-                class="cluster-checkbox"
+                :disabled="disabled"
                 title="Select all compatible clusters"
+                @update:value="toggleSelectAllCompatible"
               />
             </th>
             <th class="col-cluster">Cluster</th>
@@ -68,15 +67,13 @@
           >
             <td class="col-select">
               <!-- Checkbox for multi-select mode -->
-              <input
-                v-if="multiSelect"
-                type="checkbox"
-                :value="cluster.clusterId"
-                :checked="isClusterSelected(cluster.clusterId)"
-                @change="toggleCluster(cluster.clusterId)"
-                @click.stop
-                class="cluster-checkbox"
-              />
+              <span v-if="multiSelect" @click.stop>
+                <Checkbox
+                  :value="isClusterSelected(cluster.clusterId)"
+                  :disabled="disabled"
+                  @update:value="toggleCluster(cluster.clusterId)"
+                />
+              </span>
               <!-- Radio button for single-select mode -->
               <input
                 v-else
@@ -97,13 +94,11 @@
             </td>
             <td class="col-cpu">
               <div v-if="cluster.resources.cpu.total > 0" class="resource-bar-container">
-                <div class="resource-bar-track">
-                  <div
-                    class="resource-bar-fill"
-                    :class="getResourceBarClass(cluster.resources.cpu.used, cluster.resources.cpu.total)"
-                    :style="{ width: `${Math.min(100, (cluster.resources.cpu.used / cluster.resources.cpu.total) * 100)}%` }"
-                  ></div>
-                </div>
+                <ProgressBarMulti
+                  :values="[{ color: getResourceBarColor(cluster.resources.cpu.used, cluster.resources.cpu.total), value: cluster.resources.cpu.used }]"
+                  :max="cluster.resources.cpu.total"
+                  class="resource-bar"
+                />
                 <div class="resource-percentage">
                   {{ Math.ceil((cluster.resources.cpu.used / cluster.resources.cpu.total) * 100) }}%
                 </div>
@@ -112,13 +107,11 @@
             </td>
             <td class="col-memory">
               <div v-if="cluster.resources.memory.total > 0" class="resource-bar-container">
-                <div class="resource-bar-track">
-                  <div
-                    class="resource-bar-fill"
-                    :class="getResourceBarClass(cluster.resources.memory.used, cluster.resources.memory.total)"
-                    :style="{ width: `${Math.min(100, (cluster.resources.memory.used / cluster.resources.memory.total) * 100)}%` }"
-                  ></div>
-                </div>
+                <ProgressBarMulti
+                  :values="[{ color: getResourceBarColor(cluster.resources.memory.used, cluster.resources.memory.total), value: cluster.resources.memory.used }]"
+                  :max="cluster.resources.memory.total"
+                  class="resource-bar"
+                />
                 <div class="resource-percentage">
                   {{ Math.ceil((cluster.resources.memory.used / cluster.resources.memory.total) * 100) }}%
                 </div>
@@ -127,13 +120,11 @@
             </td>
             <td class="col-gpu">
               <div v-if="cluster.resources.gpu && cluster.resources.gpu.total > 0" class="resource-bar-container">
-                <div class="resource-bar-track">
-                  <div
-                    class="resource-bar-fill"
-                    :class="getResourceBarClass(cluster.resources.gpu.used, cluster.resources.gpu.total)"
-                    :style="{ width: `${Math.min(100, (cluster.resources.gpu.used / cluster.resources.gpu.total) * 100)}%` }"
-                  ></div>
-                </div>
+                <ProgressBarMulti
+                  :values="[{ color: getResourceBarColor(cluster.resources.gpu.used, cluster.resources.gpu.total), value: cluster.resources.gpu.used }]"
+                  :max="cluster.resources.gpu.total"
+                  class="resource-bar"
+                />
                 <div class="resource-percentage">
                   {{ Math.ceil((cluster.resources.gpu.used / cluster.resources.gpu.total) * 100) }}%
                 </div>
@@ -141,9 +132,7 @@
               <span v-else class="no-resource">—</span>
             </td>
             <td class="col-status">
-              <span class="status-icon" :title="cluster.statusMessage">
-                {{ getStatusIcon(cluster.status) }}
-              </span>
+              <StatusBadge :status="getStatusBadgeStatus(cluster.status)" :title="cluster.statusMessage" />
             </td>
           </tr>
         </tbody>
@@ -205,6 +194,9 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, onMounted, watch, PropType, getCurrentInstance } from 'vue';
+import { Checkbox } from '@components/Form/Checkbox';
+import ProgressBarMulti from '@shell/components/ProgressBarMulti';
+import StatusBadge from '@shell/components/StatusBadge';
 import {
   getAllClusterResourceMetrics,
   checkAppCompatibility,
@@ -217,6 +209,7 @@ let tableIdCounter = 0;
 
 export default defineComponent({
   name: 'ClusterResourceTable',
+  components: { Checkbox, ProgressBarMulti, StatusBadge },
   props: {
     // Array-based selection - works for both single and multi-select modes
     // For single-select, parent enforces array.length <= 1
@@ -414,6 +407,24 @@ export default defineComponent({
       return 'resource-bar-low';
     }
 
+    function getResourceBarColor(used: number, total: number): string {
+      if (total === 0) return 'bg-success';
+      const pct = (used / total) * 100;
+      if (pct >= 90) return 'bg-error';
+      if (pct >= 70) return 'bg-warning';
+      return 'bg-success';
+    }
+
+    function getStatusBadgeStatus(status: ClusterResourceSummary['status']): 'success' | 'warning' | 'error' | 'info' {
+      switch (status) {
+        case 'compatible':   return 'success';
+        case 'limited':      return 'warning';
+        case 'insufficient': return 'error';
+        case 'error':        return 'error';
+        default:             return 'info';
+      }
+    }
+
     onMounted(() => {
       loadClusterResources();
     });
@@ -442,7 +453,9 @@ export default defineComponent({
       getClusterName,
       getClusterChipClass,
       getStatusIcon,
-      getResourceBarClass
+      getResourceBarClass,
+      getResourceBarColor,
+      getStatusBadgeStatus
     };
   }
 });
@@ -614,32 +627,9 @@ export default defineComponent({
   min-width: 100px;
 }
 
-.resource-bar-track {
+.resource-bar {
   flex: 1;
-  height: 6px;
-  background: var(--progress-bg, #e2e8f0);
-  border-radius: 3px;
-  overflow: hidden;
   min-width: 60px;
-}
-
-.resource-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-
-/* Color the bar based on usage percentage */
-.resource-bar-fill.resource-bar-low {
-  background: var(--success, #10b981);
-}
-
-.resource-bar-fill.resource-bar-high {
-  background: var(--warning, #f59e0b);
-}
-
-.resource-bar-fill.resource-bar-critical {
-  background: var(--error, #ef4444);
 }
 
 .resource-percentage {
@@ -655,14 +645,7 @@ export default defineComponent({
   color: var(--muted, #9ca3af);
 }
 
-.status-icon {
-  font-size: 16px;
-  cursor: help;
-  color: var(--body-text);
-}
-
-.cluster-radio,
-.cluster-checkbox {
+.cluster-radio {
   cursor: pointer;
 }
 

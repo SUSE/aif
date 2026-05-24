@@ -128,7 +128,7 @@ type SettingsSpec struct {
 	SUSERegistry SUSERegistrySettings `json:"suseRegistry,omitempty"`
 	// RegistryEndpoints overrides upstream registry defaults for air-gap deployments.
 	// +optional
-	RegistryEndpoints RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
+	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
 	// CatalogDiscovery controls how the SUSE Application Collection is discovered.
 	// +optional
 	CatalogDiscovery CatalogDiscoverySettings `json:"catalogDiscovery,omitempty"`

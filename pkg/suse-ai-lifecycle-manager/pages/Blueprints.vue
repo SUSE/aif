@@ -13,10 +13,7 @@
             />
           </div>
 
-          <label class="deprecated-toggle">
-            <input v-model="showDeprecated" type="checkbox" class="checkbox" />
-            <span>Show deprecated</span>
-          </label>
+          <Checkbox v-model:value="showDeprecated" label="Show deprecated" />
 
           <button class="btn role-primary ml-auto" @click="navigateCreate" type="button">
             Create
@@ -47,7 +44,7 @@
             <div class="tile-header">
               <div class="tile-info">
                 <div class="tile-title-row">
-                  <h3 class="tile-title">{{ latestFor(versions).spec.displayName }}</h3>
+                  <h3 class="tile-title">{{ toTitleCase(latestFor(versions).spec.displayName) }}</h3>
                   <select
                     v-model="selectedVersions[family]"
                     class="version-select form-control-sm"
@@ -91,8 +88,8 @@
       </div>
 
       <!-- Delete confirmation modal -->
-      <div v-if="deleteModal.show" class="modal-overlay" @click.self="deleteModal.show = false">
-        <div class="modal-content">
+      <AppModal v-if="deleteModal.show" :click-to-close="true" :width="480" @close="deleteModal.show = false">
+        <div class="modal-body">
           <h3>Delete Blueprint</h3>
           <p>
             Delete <strong>{{ deleteModal.displayName }}</strong>
@@ -114,11 +111,11 @@
             </button>
           </div>
         </div>
-      </div>
+      </AppModal>
 
       <!-- Deprecate / Undeprecate confirmation modal -->
-      <div v-if="deprecateModal.show" class="modal-overlay" @click.self="deprecateModal.show = false">
-        <div class="modal-content">
+      <AppModal v-if="deprecateModal.show" :click-to-close="true" :width="480" @close="deprecateModal.show = false">
+        <div class="modal-body">
           <h3>{{ deprecateModal.currentlyDeprecated ? 'Undeprecate' : 'Deprecate' }} Blueprint</h3>
           <p>
             {{ deprecateModal.currentlyDeprecated ? 'Undeprecate' : 'Deprecate' }}
@@ -148,7 +145,7 @@
             </button>
           </div>
         </div>
-      </div>
+      </AppModal>
     </div>
   </main>
 </template>
@@ -156,7 +153,9 @@
 <script lang="ts">
 import { defineComponent, ref, computed, watch, onMounted, getCurrentInstance, reactive } from 'vue';
 import { Banner } from '@components/Banner';
+import { Checkbox } from '@components/Form/Checkbox';
 import ActionMenuShell from '@shell/components/ActionMenuShell';
+import AppModal from '@shell/components/AppModal';
 import {
   listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion,
 } from '../utils/blueprint-api';
@@ -166,7 +165,7 @@ import { PRODUCT } from '../config/suseai';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, ActionMenuShell },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal },
   setup() {
     const vm        = getCurrentInstance()!.proxy as any;
     const $router   = vm.$router;
@@ -403,6 +402,10 @@ export default defineComponent({
       return latestVersion(versions);
     }
 
+    function toTitleCase(str: string): string {
+      return str.replace(/\b\w/g, c => c.toUpperCase());
+    }
+
     async function checkAdminRole() {
       try {
         const grbs  = await vm.$store.dispatch('management/findAll', { type: 'management.cattle.io.globalrolebinding' });
@@ -450,7 +453,7 @@ export default defineComponent({
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
-      tileActions, onTileAction,
+      toTitleCase, tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
     };
@@ -480,16 +483,6 @@ export default defineComponent({
   }
 }
 
-.deprecated-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--body-text);
-  cursor: pointer;
-  user-select: none;
-  .checkbox { cursor: pointer; }
-}
 .tiles-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -555,13 +548,8 @@ export default defineComponent({
   h3 { margin: 0 0 12px; font-size: 20px; }
   p { color: var(--muted); }
 }
-.modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-  display: flex; align-items: center; justify-content: center; z-index: 1000;
-}
-.modal-content {
-  background: var(--body-bg); padding: 24px; border-radius: 8px;
-  max-width: 480px; width: 100%;
+.modal-body {
+  padding: 24px;
   h3 { margin: 0 0 16px; }
   .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 }
