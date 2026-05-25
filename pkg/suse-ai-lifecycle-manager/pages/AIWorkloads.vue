@@ -278,7 +278,7 @@ async function executeUpgrade() {
 
                 <!-- Name -->
                 <td class="col-name">
-                  <div class="name-primary">{{ w.spec.displayName || w.metadata.name }}</div>
+                  <div class="name-primary">{{ w.metadata.name }}</div>
                 </td>
 
                 <!-- Namespace -->
@@ -334,7 +334,6 @@ async function executeUpgrade() {
                     <!-- Delete (both types) -->
                     <button
                       class="btn btn-sm role-secondary text-error"
-                      :disabled="w.status?.phase !== 'Running'"
                       @click="openDeleteModal(w)"
                       type="button"
                     >
