@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,7 +106,7 @@ func newTestServer(t *testing.T, pageSize int, apps ...testApp) *httptest.Server
 }
 
 func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stdout, nil))
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // ── Construction & configuration ──────────────────────────────────────
@@ -465,8 +465,14 @@ func TestList_AuthFailure403(t *testing.T) {
 	}
 }
 
-func TestList_ServerError500_RetriesAndReturnsUnavailable(t *testing.T) {
+func TestList_ServerError500_ReturnsUnavailable(t *testing.T) {
+	// 5xx is classified as ErrUpstreamUnavailable and NOT retried —
+	// isRetryable only matches errRetryableStatus (408/429) and
+	// ErrCatalogMalformed. The attempt-count assertion pins that
+	// behavior so a future change to retry 5xx is caught here.
+	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -477,6 +483,9 @@ func TestList_ServerError500_RetriesAndReturnsUnavailable(t *testing.T) {
 	_, err := c.List(context.Background())
 	if !errors.Is(err, ErrUpstreamUnavailable) {
 		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+	if attempts != 1 {
+		t.Errorf("expected 1 attempt (5xx is not retried), got %d", attempts)
 	}
 }
 
@@ -789,22 +798,28 @@ func TestAbsolutizeLogoURL(t *testing.T) {
 		name, apiURL, logoURL, want string
 	}{
 		{
-			name:    "api subdomain stripped — logos live on marketplace host",
+			name:    "SaaS api host rewritten to marketplace host",
 			apiURL:  "https://api.apps.rancher.io",
 			logoURL: "/logos/alertmanager.png",
 			want:    "https://apps.rancher.io/logos/alertmanager.png",
 		},
 		{
-			name:    "api subdomain stripped — generic example",
-			apiURL:  "https://api.example.com",
+			name:    "non-SaaS host with api. prefix is NOT rewritten (air-gap mirror)",
+			apiURL:  "https://api.mirror.internal.corp",
 			logoURL: "/logos/x.png",
-			want:    "https://example.com/logos/x.png",
+			want:    "https://api.mirror.internal.corp/logos/x.png",
 		},
 		{
-			name:    "no api subdomain — air-gap mirror with arbitrary host",
+			name:    "non-SaaS host without api. prefix passes through unchanged",
 			apiURL:  "https://mirror.internal.corp",
 			logoURL: "/logos/x.png",
 			want:    "https://mirror.internal.corp/logos/x.png",
+		},
+		{
+			name:    "generic api.* host (not the SaaS pair) is NOT rewritten",
+			apiURL:  "https://api.example.com",
+			logoURL: "/logos/x.png",
+			want:    "https://api.example.com/logos/x.png",
 		},
 		{
 			name:    "absolute URL passes through unchanged",

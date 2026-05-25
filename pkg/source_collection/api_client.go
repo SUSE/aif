@@ -56,6 +56,15 @@ func (c *apiClient) effectiveSettings() (EngineSettings, error) {
 const appCoMaxPageSize = 100
 const appCoDetailConcurrency = 8
 
+// appCoSaaSAPIHost / appCoSaaSLogoHost: the public SUSE Application
+// Collection splits API and logo serving across two hostnames. Air-gap
+// mirrors don't necessarily follow the same split, so the logo-host
+// rewrite below is gated on this exact match.
+const (
+	appCoSaaSAPIHost  = "api.apps.rancher.io"
+	appCoSaaSLogoHost = "apps.rancher.io"
+)
+
 func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 	settings, err := c.effectiveSettings()
 	if err != nil {
@@ -76,13 +85,15 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 		g.Go(func() error {
 			detail, derr := c.fetchAppDetail(gctx, settings, listItems[i].SlugName)
 			if derr != nil {
-				// Detail-fetch failures degrade gracefully: the app still
-				// shows up in the catalog with empty version/categories.
-				// The list flow itself stays successful so partial upstream
-				// outages do not blank the UI.
-				c.log.Warn("source_collection: per-app detail fetch failed; emitting app with empty version/categories",
+				// Detail-fetch failures degrade gracefully at the catalog
+				// level: this app is excluded but the list flow itself
+				// succeeds, so partial upstream outages don't blank the UI.
+				// apps[i] is left zero-valued; the post-Wait() filter
+				// distinguishes this case from "fetched OK but no
+				// branches" so the aggregate log below doesn't conflate
+				// upstream availability errors with catalog content gaps.
+				c.log.Warn("source_collection: per-app detail fetch failed; app excluded from catalog",
 					"slug", listItems[i].SlugName, "error", derr)
-				apps[i] = c.buildCatalogApp(settings, listItems[i], apiAppDetail{})
 				return nil
 			}
 			apps[i] = c.buildCatalogApp(settings, listItems[i], detail)
@@ -93,13 +104,18 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 		return nil, err
 	}
 
-	// Drop apps whose detail fetch returned with no usable branches.
-	// LatestVersion is the strongest signal that the detail fetch
-	// succeeded and the app is actually deployable. Items with no
-	// branches at all (e.g. unpublished apps) are filtered out.
+	// Two reasons an app can be missing here:
+	//   1. fetch failed — apps[i] is zero-valued, ID == "" (logged per
+	//      slug above; skip silently to avoid double-counting).
+	//   2. fetched OK but no usable branches — ID populated, LatestVersion
+	//      empty (rolled up into the aggregate warn below so operators
+	//      can spot systemic catalog gaps).
 	filtered := apps[:0]
 	var droppedSlugs []string
 	for _, a := range apps {
+		if a.ID == "" {
+			continue
+		}
 		if a.LatestVersion == "" {
 			droppedSlugs = append(droppedSlugs, a.ID)
 			continue
@@ -107,10 +123,9 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 		filtered = append(filtered, a)
 	}
 	if len(droppedSlugs) > 0 {
-		c.log.Warn("source_collection: dropped apps with empty LatestVersion (no usable branches)",
+		c.log.Warn("source_collection: dropped apps with no usable branches",
 			"dropped_count", len(droppedSlugs),
 			"kept_count", len(filtered),
-			"total_fetched", len(apps),
 			"sample_dropped", sampleSlugs(droppedSlugs, 10))
 	}
 	return filtered, nil
@@ -417,12 +432,13 @@ func buildChartRef(ociHost, slug, version string) string {
 }
 
 // absolutizeLogoURL converts upstream's relative logo paths (e.g.
-// "/logos/alertmanager.png") into absolute URLs. Logos are served by
-// the public marketplace host, not the API host — for api.apps.rancher.io
-// that's apps.rancher.io (unauthenticated, browser-fetchable). The
-// "api." subdomain prefix is stripped when present; other hosts (air-gap
-// mirrors that don't follow the same convention) fall through to the
-// raw apiURL host. Absolute URLs pass through unchanged. Empty stays empty.
+// "/logos/alertmanager.png") into absolute URLs. The public SUSE
+// Application Collection serves logos from a marketplace host
+// (apps.rancher.io) that is distinct from its API host
+// (api.apps.rancher.io); for that exact pair we rewrite the host.
+// All other hosts — including air-gap mirrors that happen to share an
+// "api." prefix — resolve against the raw apiURL host. Absolute URLs
+// pass through unchanged. Empty stays empty.
 func absolutizeLogoURL(apiURL, logoURL string) string {
 	if logoURL == "" {
 		return ""
@@ -434,7 +450,9 @@ func absolutizeLogoURL(apiURL, logoURL string) string {
 	if err != nil {
 		return logoURL
 	}
-	base.Host = strings.TrimPrefix(base.Host, "api.")
+	if base.Host == appCoSaaSAPIHost {
+		base.Host = appCoSaaSLogoHost
+	}
 	rel, err := url.Parse(logoURL)
 	if err != nil {
 		return logoURL
