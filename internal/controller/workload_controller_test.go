@@ -995,6 +995,29 @@ var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", Serial, 
 	var savedDeployer workload.Deployer
 
 	BeforeEach(func() {
+		// Drain any Workloads left by prior Describe blocks before swapping
+		// workloadReconciler.Deployer. Prior blocks delete their Workloads
+		// fire-and-forget without waiting for completion (or skip Delete
+		// entirely on negative-path specs), so the controller may still be
+		// processing finalizer-removal Reconciles (which read r.Deployer
+		// via handleDeletion) at the moment this BeforeEach runs. Mutating
+		// r.Deployer concurrently with that read trips `go test -race` even
+		// though the swap is logically harmless. Draining + waiting for zero
+		// Workloads guarantees the controller's queue is idle for live
+		// objects by the time the swap happens.
+		var leftover aifv1.WorkloadList
+		Expect(k8sClient.List(ctx, &leftover)).To(Succeed())
+		for i := range leftover.Items {
+			_ = k8sClient.Delete(ctx, &leftover.Items[i])
+		}
+		Eventually(func() int {
+			var list aifv1.WorkloadList
+			if err := k8sClient.List(ctx, &list); err != nil {
+				return -1
+			}
+			return len(list.Items)
+		}, 30*time.Second, 250*time.Millisecond).Should(Equal(0))
+
 		savedDeployer = workloadReconciler.Deployer
 
 		// Direct envtest client (not the manager's cached client). The
@@ -1016,9 +1039,24 @@ var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", Serial, 
 	})
 
 	AfterEach(func() {
-		// Restore the suite-wide FakeDeployer so downstream specs in other
-		// Describe blocks see the default. Serial guarantees no concurrent
-		// spec is observing the swapped field.
+		// Same drain as BeforeEach — Serial guarantees no other spec runs
+		// concurrently, but reconciler goroutines from this spec's own
+		// Workloads may still be in flight after the spec body returns.
+		// Restoring the Deployer field while a Reconcile is reading it
+		// trips `go test -race`. Delete anything left behind and wait for
+		// zero Workloads cluster-wide before restoring the field.
+		var leftover aifv1.WorkloadList
+		Expect(k8sClient.List(ctx, &leftover)).To(Succeed())
+		for i := range leftover.Items {
+			_ = k8sClient.Delete(ctx, &leftover.Items[i])
+		}
+		Eventually(func() int {
+			var list aifv1.WorkloadList
+			if err := k8sClient.List(ctx, &list); err != nil {
+				return -1
+			}
+			return len(list.Items)
+		}, 30*time.Second, 250*time.Millisecond).Should(Equal(0))
 		workloadReconciler.Deployer = savedDeployer
 	})
 
