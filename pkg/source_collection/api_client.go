@@ -407,8 +407,12 @@ func buildChartRef(ociHost, slug, version string) string {
 }
 
 // absolutizeLogoURL converts upstream's relative logo paths (e.g.
-// "/logos/alertmanager.png") into absolute URLs anchored at the APIURL
-// host. Absolute URLs pass through unchanged. Empty stays empty.
+// "/logos/alertmanager.png") into absolute URLs. Logos are served by
+// the public marketplace host, not the API host — for api.apps.rancher.io
+// that's apps.rancher.io (unauthenticated, browser-fetchable). The
+// "api." subdomain prefix is stripped when present; other hosts (air-gap
+// mirrors that don't follow the same convention) fall through to the
+// raw apiURL host. Absolute URLs pass through unchanged. Empty stays empty.
 func absolutizeLogoURL(apiURL, logoURL string) string {
 	if logoURL == "" {
 		return ""
@@ -420,6 +424,7 @@ func absolutizeLogoURL(apiURL, logoURL string) string {
 	if err != nil {
 		return logoURL
 	}
+	base.Host = strings.TrimPrefix(base.Host, "api.")
 	rel, err := url.Parse(logoURL)
 	if err != nil {
 		return logoURL

@@ -750,16 +750,45 @@ func TestLatestBaseline_EmptyBranches_ReturnsEmpty(t *testing.T) {
 
 func TestAbsolutizeLogoURL(t *testing.T) {
 	cases := []struct {
-		apiURL, logoURL, want string
+		name, apiURL, logoURL, want string
 	}{
-		{"https://api.example.com", "/logos/x.png", "https://api.example.com/logos/x.png"},
-		{"https://api.example.com", "https://other.com/x.png", "https://other.com/x.png"},
-		{"https://api.example.com", "", ""},
+		{
+			name:    "api subdomain stripped — logos live on marketplace host",
+			apiURL:  "https://api.apps.rancher.io",
+			logoURL: "/logos/alertmanager.png",
+			want:    "https://apps.rancher.io/logos/alertmanager.png",
+		},
+		{
+			name:    "api subdomain stripped — generic example",
+			apiURL:  "https://api.example.com",
+			logoURL: "/logos/x.png",
+			want:    "https://example.com/logos/x.png",
+		},
+		{
+			name:    "no api subdomain — air-gap mirror with arbitrary host",
+			apiURL:  "https://mirror.internal.corp",
+			logoURL: "/logos/x.png",
+			want:    "https://mirror.internal.corp/logos/x.png",
+		},
+		{
+			name:    "absolute URL passes through unchanged",
+			apiURL:  "https://api.example.com",
+			logoURL: "https://other.com/x.png",
+			want:    "https://other.com/x.png",
+		},
+		{
+			name:    "empty logo stays empty",
+			apiURL:  "https://api.example.com",
+			logoURL: "",
+			want:    "",
+		},
 	}
 	for _, tc := range cases {
-		got := absolutizeLogoURL(tc.apiURL, tc.logoURL)
-		if got != tc.want {
-			t.Errorf("absolutizeLogoURL(%q, %q) = %q, want %q", tc.apiURL, tc.logoURL, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got := absolutizeLogoURL(tc.apiURL, tc.logoURL)
+			if got != tc.want {
+				t.Errorf("absolutizeLogoURL(%q, %q) = %q, want %q", tc.apiURL, tc.logoURL, got, tc.want)
+			}
+		})
 	}
 }
