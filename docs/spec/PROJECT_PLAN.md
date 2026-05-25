@@ -1797,6 +1797,12 @@ go test -race ./pkg/helm/ -v
 >
 >    Add an AC: "Phase aggregation honors the Fleet state→phase table above; a pure helper `MapFleetStateToPhase(string) workload.ClusterPhase` lives in `pkg/workload/fleet_phase.go` (aifv1-free) and is unit-tested per row."
 
+> **Follow-up (post-merge, from P4-3b PR #50 + Reviewer #1):**
+>
+> 1. **Engine port shape deviated from the AC** — line 1759 above specifies `CreateOrUpdate(ctx, spec BundleDeploymentSpec) error` + `Delete(ctx, workloadID string) error`. The implementation that shipped is `Apply(ctx, spec) (BundleObservedStatus, error)` + `Teardown(ctx, namespace, workloadID) error`. The change was deliberate: (a) `Apply` returns the post-SSA observed status so the caller can mirror per-cluster phases without a separate read, and (b) `Teardown` takes `(namespace, workloadID)` because the Fleet `Bundle` namespace is the Workload's namespace, not the operator namespace. Update the AC to match the shipped interface when revising this story; the rename is API-shape only and the semantics (SSA idempotency, owner-reference cascade) are unchanged.
+>
+> 2. **`mirrorStatus` emits `FleetState=""`** — the current implementation (`pkg/fleet/status.go`) projects only `(ClusterName, Phase)` per target. Extracting the rich Fleet state from `Bundle.Status.Summary` / `Bundle.Status.PartitionStatus` was punted out of scope because the exact shape we get from a real Fleet manager wasn't yet reproducible in envtest. Lift this when live-cluster validation (`make verify-fleet-live`) is exercised against a real manager; the field on `ClusterDeploymentStatus` already exists and the parsing helper is the only new code needed.
+
 ---
 
 **ID:** P4-4
