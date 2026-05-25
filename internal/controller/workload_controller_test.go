@@ -957,36 +957,74 @@ func randomSuffix() string {
 	return hex.EncodeToString(b)
 }
 
-var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", func() {
+var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", Serial, func() {
 	const timeout = 30 * time.Second
 	const interval = 250 * time.Millisecond
 	ctx := context.Background()
 
-	// Regression — Modified→Running wire-up guard.
+	// Regression — wire-up guard for the controller→Deployer→FleetBundleEngine
+	// chain end-to-end in envtest.
 	//
 	// The suite-wide WorkloadReconciler is wired with workload.FakeDeployer
-	// (suite_test.go), which never calls fleet.FleetBundleEngine.Apply, so
-	// the reconciler alone cannot produce a Fleet Bundle in envtest. To
-	// exercise the production Deployer→FleetBundleEngine→Bundle path, this
-	// test constructs a production deployer in-test and drives Deploy()
-	// directly against the envtest client. It then asserts:
+	// (suite_test.go), which never calls fleet.FleetBundleEngine.Apply, so the
+	// reconciler alone cannot produce a Fleet Bundle. For this block we
+	// hot-swap the suite reconciler's Deployer field to a production
+	// workload.NewDeployer wired against fleet.NewBundleEngine + a direct
+	// envtest client. Serial (above) prevents any other Describe block from
+	// running concurrently while the swap is in effect; the AfterEach
+	// restores the original FakeDeployer so downstream specs see the
+	// suite-wide default.
 	//
-	//  1. The production deployer creates a fleet.cattle.io/v1alpha1 Bundle
-	//     with the expected name ({ns}-{workloadID}).
-	//  2. Updating the Bundle status with a healthy-looking Conditions list
-	//     does NOT cause the suite-driven reconciler to flip the Workload
-	//     phase to Failed.
+	// Asserts:
 	//
-	// Per the plan's caveat (docs/superpowers/plans/2026-05-21-p4-3b-fleet-bundle-engine.md:3072),
-	// the unit test for MapFleetStateToPhase (Task 1) is the primary guard for
-	// the Modified→Running mapping; this integration test is the wire-up guard.
-	It("creates a Fleet Bundle and doesn't flip the Workload to Failed on healthy Bundle status", func() {
-		// FakeDeployer drives the suite reconciler — keep it on the happy
-		// path so the reconciler doesn't itself produce a Failed phase.
-		fakeDeployer.SetDeployResult(workload.DeployResult{Phase: workload.PhaseRunning})
+	//   1. After creating a Workload CR, the suite-driven reconciler runs the
+	//      production deployer and a fleet.cattle.io/v1alpha1 Bundle named
+	//      {ns}-{workloadID} appears in the apiserver. This is the
+	//      "reconciler creates Fleet Bundle" pillar.
+	//
+	//   2. After we patch Bundle.Status with a healthy "Ready=True"
+	//      condition, the Workload.status.Phase does NOT flip to Failed.
+	//      This is the "healthy status doesn't flip Failed" pillar. We cannot
+	//      assert Eventually==Running here because pkg/fleet/status.go's
+	//      mirrorStatus does not (yet) parse per-cluster FleetState from
+	//      Bundle.Status — every per-cluster FleetState is "", which
+	//      MapFleetStateToPhase translates to ClusterDeploying / PhaseDeploying.
+	//      The plan's caveat (docs/superpowers/plans/2026-05-21-p4-3b-fleet-bundle-engine.md:3072)
+	//      acknowledges this — the Modified→Running unit guard lives in
+	//      pkg/workload/fleet_phase_test.go (Task 1).
+	var savedDeployer workload.Deployer
 
-		// Unique namespace per spec; created here because no envtest
-		// helper exists and the suite-wide "default" namespace is shared.
+	BeforeEach(func() {
+		savedDeployer = workloadReconciler.Deployer
+
+		// Direct envtest client (not the manager's cached client). The
+		// production fleet.bundleEngine does Patch-then-Get; the cache lags
+		// the apiserver after Create on first reconcile, and a direct
+		// client side-steps that.
+		directClient, err := client.New(testEnv.Config, client.Options{Scheme: scheme.Scheme})
+		Expect(err).NotTo(HaveOccurred())
+		nvDisc, _ := nvidia.NewDiscovery(slog.Default())
+		workloadReconciler.Deployer = workload.NewDeployer(
+			slog.Default(),
+			helm.NewFake(),
+			fleet.NewBundleEngine(slog.Default(), directClient),
+			blueprint.NewFakeRepository(),
+			bundle.NewFakeRepository(),
+			nvDisc,
+			nvidia.NewDeployer(slog.Default()),
+		)
+	})
+
+	AfterEach(func() {
+		// Restore the suite-wide FakeDeployer so downstream specs in other
+		// Describe blocks see the default. Serial guarantees no concurrent
+		// spec is observing the swapped field.
+		workloadReconciler.Deployer = savedDeployer
+	})
+
+	It("creates a Fleet Bundle and doesn't flip the Workload to Failed on healthy Bundle status", func() {
+		// Unique namespace per spec; created here because no envtest helper
+		// exists and the suite-wide "default" namespace is shared.
 		nsName := "wl-fleet-" + randomSuffix()
 		Expect(k8sClient.Create(ctx, &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: nsName},
@@ -1011,60 +1049,40 @@ var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", func() {
 		}
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 
-		// Production deployer wired against a DIRECT envtest client (not
-		// the cached manager client). The production fleet.bundleEngine
-		// does Patch-then-Get on the same client and the cache lags the
-		// apiserver after Create — the direct client side-steps that.
-		directClient, err := client.New(testEnv.Config, client.Options{Scheme: scheme.Scheme})
-		Expect(err).NotTo(HaveOccurred())
-		nvDisc, _ := nvidia.NewDiscovery(slog.Default())
-		prodDeployer := workload.NewDeployer(
-			slog.Default(),
-			helm.NewFake(),
-			fleet.NewBundleEngine(slog.Default(), directClient),
-			blueprint.NewFakeRepository(),
-			bundle.NewFakeRepository(),
-			nvDisc,
-			nvidia.NewDeployer(slog.Default()),
-		)
-
-		// k8sClient is the manager's cached client; the informer cache may
-		// lag the apiserver right after Create. Wait until the Workload is
-		// visible in-cache before projecting it into a DeployRequest.
-		var fetched aifv1.Workload
-		Eventually(func() error {
-			return k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)
-		}, timeout, interval).Should(Succeed())
-
-		_, deployErr := prodDeployer.Deploy(ctx,
-			workload.WorkloadToDeployRequest(&fetched, []byte(`{"auths":{}}`)),
-		)
-		Expect(deployErr).NotTo(HaveOccurred())
-
-		// Fleet Bundle name is {ns}-{workloadID} (lowercased + DNS-1123
+		// Pillar 1: the suite reconciler (now driving the production
+		// deployer chain) creates a Fleet Bundle for the Workload.
+		// Bundle name is {ns}-{workloadID} (lowercased + DNS-1123
 		// sanitized; see pkg/fleet/cr_builder.go.fleetBundleName).
 		bundleKey := client.ObjectKey{Namespace: nsName, Name: nsName + "-" + wlName}
 		Eventually(func() error {
 			var b fleetv1.Bundle
 			return k8sClient.Get(ctx, bundleKey, &b)
-		}, timeout, interval).Should(Succeed(), "Fleet Bundle should be created")
+		}, timeout, interval).Should(Succeed(),
+			"reconciler should drive production deployer to create Fleet Bundle")
 
 		// Inject a healthy-looking Bundle status.
 		// fleetv1.GenericCondition aliases wrangler's genericcondition.GenericCondition,
 		// whose Status field is corev1.ConditionStatus (NOT metav1.ConditionStatus).
-		var bndl fleetv1.Bundle
-		Expect(k8sClient.Get(ctx, bundleKey, &bndl)).To(Succeed())
-		bndl.Status = fleetv1.BundleStatus{
-			Conditions: []genericcondition.GenericCondition{
-				{Type: "Ready", Status: corev1.ConditionTrue},
-			},
-		}
-		Expect(k8sClient.Status().Update(ctx, &bndl)).To(Succeed())
+		// The Owns(&fleetv1.Bundle{}) watch on the reconciler should fire a
+		// re-reconcile when this Update lands.
+		Eventually(func() error {
+			var bndl fleetv1.Bundle
+			if err := k8sClient.Get(ctx, bundleKey, &bndl); err != nil {
+				return err
+			}
+			bndl.Status = fleetv1.BundleStatus{
+				Conditions: []genericcondition.GenericCondition{
+					{Type: "Ready", Status: corev1.ConditionTrue},
+				},
+			}
+			return k8sClient.Status().Update(ctx, &bndl)
+		}, timeout, interval).Should(Succeed())
 
-		// The Workload must not flip to Failed. The suite reconciler is
-		// driving the status with FakeDeployer's Running result; assert
-		// that the existence of (and status update on) the Fleet Bundle
-		// owned by this Workload doesn't perturb that contract.
+		// Pillar 2: the Owns(Bundle) re-reconcile triggered by the status
+		// patch must NOT flip the Workload to Failed. mirrorStatus reports
+		// per-cluster FleetState="" today (richer parsing is deferred per
+		// the plan caveat), which MapFleetStateToPhase maps to
+		// ClusterDeploying → PhaseDeploying — non-Failed and non-empty.
 		Consistently(func() string {
 			var got aifv1.Workload
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &got); err != nil {
@@ -1073,8 +1091,13 @@ var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", func() {
 			return string(got.Status.Phase)
 		}, "3s", interval).ShouldNot(Equal(string(aifv1.WorkloadPhaseFailed)))
 
-		// Cleanup: clear teardown error (default nil) and delete the Workload.
-		// FakeDeployer.Teardown succeeds with nil err, finalizer is removed.
+		// Cleanup: remove the Workload. The production deployer's Teardown
+		// calls FleetBundleEngine.Teardown, which deletes the Bundle.
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+		Eventually(func() bool {
+			var got aifv1.Workload
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &got)
+			return errors.IsNotFound(err)
+		}, timeout, interval).Should(BeTrue(), "Workload should be fully deleted")
 	})
 })

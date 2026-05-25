@@ -30,11 +30,12 @@ import (
 )
 
 var (
-	testEnv         *envtest.Environment
-	k8sClient       client.Client
-	cancelFn        context.CancelFunc
-	settingsApplier *controller.FakeSettingsApplier // P5-7: assert snapshot propagation
-	fakeDeployer    *workload.FakeDeployer          // P4-2: Workload deployment test double
+	testEnv            *envtest.Environment
+	k8sClient          client.Client
+	cancelFn           context.CancelFunc
+	settingsApplier    *controller.FakeSettingsApplier // P5-7: assert snapshot propagation
+	fakeDeployer       *workload.FakeDeployer          // P4-2: Workload deployment test double
+	workloadReconciler *controller.WorkloadReconciler  // P4-3b: lifted so Fleet-integration spec can swap Deployer field
 )
 
 func TestControllers(t *testing.T) {
@@ -102,14 +103,15 @@ var _ = BeforeSuite(func() {
 	// CR Create/Update/Delete against envtest's apiserver — a fake repo
 	// would diverge from the watch source. FakeRepository is exercised
 	// in pkg-level unit tests.
-	Expect((&controller.WorkloadReconciler{
+	workloadReconciler = &controller.WorkloadReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		Recorder:          mgr.GetEventRecorder("workload-controller"),
 		Deployer:          fakeDeployer,
 		Repository:        workload.NewK8sRepository(mgr.GetClient()).AsRepository(),
 		OperatorNamespace: "aif",
-	}).SetupWithManager(mgr)).To(Succeed())
+	}
+	Expect(workloadReconciler.SetupWithManager(mgr)).To(Succeed())
 
 	settingsApplier = &controller.FakeSettingsApplier{}
 	Expect((&controller.SettingsReconciler{
