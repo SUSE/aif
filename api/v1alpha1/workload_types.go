@@ -264,6 +264,8 @@ type WorkloadStatus struct {
 	// PerCluster reports the per-target-cluster deployment state derived
 	// from Fleet BundleDeployment status. Empty until the first Fleet
 	// status observation lands.
+	// +listType=map
+	// +listMapKey=clusterName
 	// +optional
 	PerCluster []ClusterDeploymentStatus `json:"perCluster,omitempty"`
 

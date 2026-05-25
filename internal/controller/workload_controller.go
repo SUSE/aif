@@ -53,6 +53,8 @@ type WorkloadReconciler struct {
 // +kubebuilder:rbac:groups=ai.suse.com,resources=workloads/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ai.suse.com,resources=workloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundles,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile implements the reconcile loop for Workload resources
 func (r *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -185,7 +187,7 @@ func (r *WorkloadReconciler) reconcile(ctx context.Context, w *aifv1.Workload) e
 
 	// P4-3b: Fetch the pull-secret from the operator namespace. Missing →
 	// surface Ready=False/reason=PullSecretNotReady (the pull-secret
-	// reconciler from P7-2 materializes suse-registry-creds from
+	// reconciler from P5-5 materializes suse-registry-creds from
 	// Settings.spec.suseRegistry once configured).
 	var pullSecret corev1.Secret
 	if err := r.Get(ctx,

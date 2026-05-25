@@ -512,14 +512,18 @@ spec:
                       type: string
                     phase:
                       description: |-
-                        Phase is the workload-domain ClusterPhase string
-                        (Pending/Deploying/Running/Failed).
+                        Phase is the workload-domain ClusterPhase value — one of the
+                        enumerated constants Pending, Deploying, Running, Failed.
+                        The reconciler must never write a value outside this set.
                       type: string
                   required:
                   - clusterName
                   - phase
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - clusterName
+                x-kubernetes-list-type: map
               phase:
                 description: Phase is the current lifecycle phase
                 enum:
