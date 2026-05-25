@@ -27,7 +27,7 @@ export function init($plugin: IPlugin, store: RancherStore) {
     showClusterSwitcher: false,
     weight: SUSEAI_PRODUCT.weight,
     to: {
-      name: `c-cluster-${PRODUCT}-${PAGE_TYPES.APPS}`,
+      name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`,
       params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
       meta: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
     }

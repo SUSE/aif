@@ -1,12 +1,20 @@
 import { PRODUCT, PAGE_TYPES } from './config/suseai';
 
 export default [
-  // Product root → redirect to Apps
+  // Product root → redirect to Overview
   {
     name:     `c-cluster-${PRODUCT}-home-root`,
     path:     `/c/:cluster/${PRODUCT}`,
-    redirect: { name: `c-cluster-${PRODUCT}-${PAGE_TYPES.APPS}`, params: { product: PRODUCT } },
+    redirect: { name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`, params: { product: PRODUCT } },
     meta:     { product: PRODUCT }
+  },
+
+  // Overview page
+  {
+    name:      `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`,
+    path:      `/c/:cluster/${PRODUCT}/${PAGE_TYPES.OVERVIEW}`,
+    component: () => import('./pages/Overview.vue'),
+    meta:      { product: PRODUCT, category: 'overview' }
   },
 
   // Apps page - Main application listing
@@ -97,7 +105,7 @@ export default [
   {
     name:      `c-cluster-${PRODUCT}-home`,
     path:      `/c/:cluster/${PRODUCT}/home`,
-    redirect:  { name: `c-cluster-${PRODUCT}-${PAGE_TYPES.APPS}`, params: { product: PRODUCT } },
+    redirect:  { name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`, params: { product: PRODUCT } },
     meta:      { product: PRODUCT }
   }
 ];
