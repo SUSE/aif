@@ -126,6 +126,7 @@ func PhaseInputFromCR(w *aifv1.Workload) PhaseInput {
 		RecoveryFailureCount: w.Status.RecoveryFailureCount,
 		FailureThreshold:     DefaultFailureThreshold,
 		PriorPhase:           Phase(w.Status.Phase),
+		PerClusterPhases:     perClusterPhasesFromCR(w.Status.PerCluster),
 	}
 	if w.Spec.Replicas != nil {
 		in.DesiredReplicas = *w.Spec.Replicas
@@ -164,6 +165,22 @@ func PhaseToCR(p Phase) aifv1.WorkloadPhase {
 // lineage and version with a hyphen.
 func blueprintCRName(name, version string) string {
 	return name + "-" + version
+}
+
+// perClusterPhasesFromCR projects the per-cluster phase strings stored in
+// status.perCluster into the domain ClusterPhase slice that
+// PhaseInput.PerClusterPhases consumes (Rule 0 of RecomputePhase).
+// Status entries written by ApplyDeployResult use the same string form as
+// the ClusterPhase constants; the cast is symbolic.
+func perClusterPhasesFromCR(in []aifv1.ClusterDeploymentStatus) []ClusterPhase {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ClusterPhase, 0, len(in))
+	for _, p := range in {
+		out = append(out, ClusterPhase(p.Phase))
+	}
+	return out
 }
 
 // ComponentReleasesFromCR projects a slice of aifv1.ComponentReleaseStatus

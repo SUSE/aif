@@ -13,6 +13,16 @@ package workload
 // Rules per ARCHITECTURE.md §4.4 "Phase computation rules" (lines 723–729),
 // first match wins:
 //
+//  0. PerClusterPhases is non-empty (Fleet path)              → AggregateClusterPhases
+//     Fleet owns the per-cluster state for deployStrategy: helm — its
+//     BundleDeployment status is the authoritative source. When the
+//     deployer's last Apply produced a per-cluster projection (or the
+//     CR's status.perCluster carries the prior observation), aggregate
+//     those into a single workload phase via the rules documented on
+//     AggregateClusterPhases. Components/ReadyReplicas are deliberately
+//     ignored here: a "fleet-managed" component status is a placeholder
+//     marker, not a Helm-release classifier, and would otherwise fall
+//     into rule 3's default (Deploying-forever).
 //  1. No components yet                                       → Pending
 //  2. Any component failed (three sub-branches keyed on
 //     AutomaticRecoveryEnabled, per ARCHITECTURE.md §4.4 lines 723–726):
@@ -33,6 +43,11 @@ package workload
 //     across reconciles until rule 4 promotes it to Running or rule 2
 //     demotes it to Degraded/Failed.
 func RecomputePhase(in PhaseInput) Phase {
+	// Rule 0: Fleet path — per-cluster phases are authoritative.
+	if len(in.PerClusterPhases) > 0 {
+		return AggregateClusterPhases(in.PerClusterPhases)
+	}
+
 	// Rule 1
 	if len(in.Components) == 0 {
 		return PhasePending

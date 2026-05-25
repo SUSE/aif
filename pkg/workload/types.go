@@ -208,6 +208,15 @@ type PhaseInput struct {
 	// Used by rule 6 (preserve prior phase when no rule matches) and by
 	// the RecoveryInProgress exit path.
 	PriorPhase Phase
+
+	// PerClusterPhases is the Fleet-path per-target-cluster phase list,
+	// projected from workload.status.perCluster (or a fresh DeployResult
+	// after a successful Apply). When non-empty, Rule 0 of RecomputePhase
+	// fires and aggregates these via AggregateClusterPhases — Fleet is
+	// the authoritative state source for the helm/Fleet deployStrategy.
+	// Empty for the in-cluster Helm path (P5-2 in-cluster informer) and
+	// for sources that haven't been deployed yet.
+	PerClusterPhases []ClusterPhase
 }
 
 // UpgradeResult is the success-return value of Upgrader.Upgrade. It carries

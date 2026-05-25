@@ -171,6 +171,43 @@ func TestApplyDeployResult_WritesPerCluster(t *testing.T) {
 	}
 }
 
+// TestPhaseInputFromCR_PerClusterPhasesProjected verifies that the
+// per-cluster phases written to status.perCluster by ApplyDeployResult
+// round-trip back into PhaseInput.PerClusterPhases — the input Rule 0
+// of RecomputePhase consumes to declare Fleet authoritative for the
+// helm/Fleet path.
+func TestPhaseInputFromCR_PerClusterPhasesProjected(t *testing.T) {
+	w := &aifv1.Workload{
+		Status: aifv1.WorkloadStatus{
+			PerCluster: []aifv1.ClusterDeploymentStatus{
+				{ClusterName: "prod-east", Phase: string(ClusterRunning), FleetState: "Ready"},
+				{ClusterName: "prod-west", Phase: string(ClusterFailed), FleetState: "ErrApplied"},
+			},
+		},
+	}
+	in := PhaseInputFromCR(w)
+	if len(in.PerClusterPhases) != 2 {
+		t.Fatalf("PerClusterPhases len=%d, want 2", len(in.PerClusterPhases))
+	}
+	if in.PerClusterPhases[0] != ClusterRunning {
+		t.Errorf("PerClusterPhases[0]=%q, want %q", in.PerClusterPhases[0], ClusterRunning)
+	}
+	if in.PerClusterPhases[1] != ClusterFailed {
+		t.Errorf("PerClusterPhases[1]=%q, want %q", in.PerClusterPhases[1], ClusterFailed)
+	}
+}
+
+// TestPhaseInputFromCR_NoPerClusterStays_Nil keeps the in-cluster Helm
+// path's status.perCluster empty so Rule 0 is bypassed and Rules 1-6
+// take over.
+func TestPhaseInputFromCR_NoPerClusterStays_Nil(t *testing.T) {
+	w := &aifv1.Workload{Status: aifv1.WorkloadStatus{}}
+	in := PhaseInputFromCR(w)
+	if in.PerClusterPhases != nil {
+		t.Errorf("PerClusterPhases=%v, want nil for empty status.perCluster", in.PerClusterPhases)
+	}
+}
+
 func TestPhaseInputFromCR_Defaults(t *testing.T) {
 	w := &aifv1.Workload{
 		Spec: aifv1.WorkloadSpec{

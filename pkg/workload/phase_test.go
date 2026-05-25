@@ -237,3 +237,81 @@ func TestRecomputePhase(t *testing.T) {
 		})
 	}
 }
+
+// TestRecomputePhase_Rule0_PerClusterPhasesPreempt asserts that whenever
+// PhaseInput.PerClusterPhases is non-empty (Fleet path), Rule 0 fires and
+// the result is the AggregateClusterPhases output — independent of the
+// Components / ReadyReplicas / counter inputs. This is what prevents the
+// Fleet path's "fleet-managed" component marker from being misclassified
+// by Rule 3 (in-flight default) and stuck at PhaseDeploying.
+func TestRecomputePhase_Rule0_PerClusterPhasesPreempt(t *testing.T) {
+	cases := []struct {
+		name string
+		in   PhaseInput
+		want Phase
+	}{
+		{
+			name: "fleet-managed components + all clusters Running → Running",
+			in: PhaseInput{
+				Components: []ComponentRelease{
+					{Name: "a", Status: "fleet-managed"},
+					{Name: "b", Status: "fleet-managed"},
+				},
+				PerClusterPhases: []ClusterPhase{ClusterRunning, ClusterRunning},
+				FailureThreshold: 3,
+			},
+			want: PhaseRunning,
+		},
+		{
+			name: "any cluster Failed → Failed (preempts Rule 2)",
+			in: PhaseInput{
+				Components:       []ComponentRelease{{Status: "fleet-managed"}},
+				PerClusterPhases: []ClusterPhase{ClusterRunning, ClusterFailed},
+				// Recovery inputs are deliberately set; Rule 0 must ignore them.
+				AutomaticRecoveryEnabled: true,
+				RecoveryFailureCount:     0,
+				FailureThreshold:         3,
+			},
+			want: PhaseFailed,
+		},
+		{
+			name: "mixed Running + Deploying → Deploying",
+			in: PhaseInput{
+				Components:       []ComponentRelease{{Status: "fleet-managed"}},
+				PerClusterPhases: []ClusterPhase{ClusterRunning, ClusterDeploying},
+				FailureThreshold: 3,
+			},
+			want: PhaseDeploying,
+		},
+		{
+			name: "all Pending → Pending (preempts Rule 3 in-flight default)",
+			in: PhaseInput{
+				Components:       []ComponentRelease{{Status: "fleet-managed"}},
+				PerClusterPhases: []ClusterPhase{ClusterPending, ClusterPending},
+				FailureThreshold: 3,
+			},
+			want: PhasePending,
+		},
+		{
+			// Sanity: empty PerClusterPhases does NOT trigger Rule 0; the
+			// in-cluster Helm path falls through to Rules 1–6 as before.
+			name: "empty PerClusterPhases → falls through to rules 1-6",
+			in: PhaseInput{
+				Components:       []ComponentRelease{{Status: "deployed"}},
+				DesiredReplicas:  1,
+				ReadyReplicas:    1,
+				FailureThreshold: 3,
+			},
+			want: PhaseRunning,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RecomputePhase(tc.in)
+			if got != tc.want {
+				t.Errorf("RecomputePhase(%+v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
