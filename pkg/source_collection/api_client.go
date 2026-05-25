@@ -93,20 +93,35 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 		return nil, err
 	}
 
-	// Drop non-HELM_CHART entries client-side: the upstream silently ignores
-	// ?packaging_format=HELM_CHART. We keep the query param on the request
-	// (cheap insurance against future upstream re-enabling it) AND filter here.
+	// Drop apps whose detail fetch returned with no usable branches.
+	// LatestVersion is the strongest signal that the detail fetch
+	// succeeded and the app is actually deployable. Items with no
+	// branches at all (e.g. unpublished apps) are filtered out.
 	filtered := apps[:0]
+	var droppedSlugs []string
 	for _, a := range apps {
-		// LatestVersion is the strongest signal that the detail fetch
-		// succeeded and the app is actually deployable. Items with no
-		// branches at all (e.g. unpublished apps) are filtered out.
 		if a.LatestVersion == "" {
+			droppedSlugs = append(droppedSlugs, a.ID)
 			continue
 		}
 		filtered = append(filtered, a)
 	}
+	if len(droppedSlugs) > 0 {
+		c.log.Warn("source_collection: dropped apps with empty LatestVersion (no usable branches)",
+			"dropped_count", len(droppedSlugs),
+			"kept_count", len(filtered),
+			"total_fetched", len(apps),
+			"sample_dropped", sampleSlugs(droppedSlugs, 10))
+	}
 	return filtered, nil
+}
+
+// sampleSlugs returns up to n elements from s for log readability.
+func sampleSlugs(s []string, n int) []string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // listAllPages walks the page-based pagination envelope and returns the
@@ -137,6 +152,11 @@ func (c *apiClient) listAllPages(ctx context.Context, settings EngineSettings) (
 			items = append(items, it)
 		}
 
+		c.log.Info("source_collection: fetched list page",
+			"page_number", page, "items_in_page", len(resp.Items),
+			"total_pages", resp.TotalPages, "total_size", resp.TotalSize,
+			"accumulated", len(items))
+
 		// Termination: either we have all pages, or the server returned
 		// fewer items than page_size (defensive — handles servers that
 		// don't populate total_pages).
@@ -161,8 +181,8 @@ func (c *apiClient) fetchListPage(ctx context.Context, settings EngineSettings, 
 		return nil, fmt.Errorf("parse list URL: %w", err)
 	}
 	q := u.Query()
-	q.Set("packaging_format", "HELM_CHART")
-	q.Set("page", strconv.Itoa(page))
+	q.Set("packaging_formats", "HELM_CHART")
+	q.Set("page_number", strconv.Itoa(page))
 	q.Set("page_size", strconv.Itoa(appCoMaxPageSize))
 	u.RawQuery = q.Encode()
 

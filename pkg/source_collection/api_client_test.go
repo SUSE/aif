@@ -58,7 +58,7 @@ func newTestServer(t *testing.T, pageSize int, apps ...testApp) *httptest.Server
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, r *http.Request) {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page, _ := strconv.Atoi(r.URL.Query().Get("page_number"))
 		if page < 1 {
 			page = 1
 		}
@@ -236,7 +236,7 @@ func TestList_SendsBasicAuthAndPackagingFilter(t *testing.T) {
 		if ok && u == "testuser" && p == "testtoken" {
 			gotAuth = true
 		}
-		gotFilter = r.URL.Query().Get("packaging_format")
+		gotFilter = r.URL.Query().Get("packaging_formats")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(apiListResponse{Items: nil, TotalPages: 0})
 	})
@@ -253,7 +253,7 @@ func TestList_SendsBasicAuthAndPackagingFilter(t *testing.T) {
 		t.Error("expected BasicAuth testuser:testtoken")
 	}
 	if gotFilter != "HELM_CHART" {
-		t.Errorf("packaging_format = %q, want HELM_CHART", gotFilter)
+		t.Errorf("packaging_formats = %q, want HELM_CHART", gotFilter)
 	}
 }
 
@@ -306,7 +306,7 @@ func TestList_Deduplication_KeepsFirstSeen(t *testing.T) {
 	// Same slug returned on two pages — second occurrence dropped.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, r *http.Request) {
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page, _ := strconv.Atoi(r.URL.Query().Get("page_number"))
 		w.Header().Set("Content-Type", "application/json")
 		switch page {
 		case 1:
