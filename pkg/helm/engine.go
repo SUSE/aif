@@ -185,6 +185,12 @@ func (e *engine) Render(ctx context.Context, repo, chart, version string, ov Ove
 // InstallFromRepoURL installs a chart resolved by name from an HTTP chart
 // repository URL. Used for UI extension charts where the ClusterRepo (or raw
 // GitHub URL) serves index.yaml + chart tarballs.
+//
+// Unlike InstallChartFromRepo, this method does not accept Overrides and
+// installs with chart defaults only — no §6.6 merge layers or image rewrite.
+// This is acceptable for Git-mode UIPlugin installs which use the chart's
+// baked-in image references. If air-gap image rewrite is needed for this
+// path, thread Overrides through InstallFromRepoURLRequest.
 func (e *engine) InstallFromRepoURL(ctx context.Context, req InstallFromRepoURLRequest) (ReleaseStatus, error) {
 	e.logger.Info("installing chart from repo URL",
 		slog.String("component", "helm.engine"),

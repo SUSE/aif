@@ -111,10 +111,10 @@ func (r *InstallAIExtensionReconciler) discoverServiceURL(ctx context.Context, r
 	}
 
 	svc := &services.Items[0]
-	port := int32(8080)
-	if len(svc.Spec.Ports) > 0 {
-		port = svc.Spec.Ports[0].Port
+	if len(svc.Spec.Ports) == 0 {
+		return "", fmt.Errorf("service %s/%s has no ports", svc.Namespace, svc.Name)
 	}
+	port := svc.Spec.Ports[0].Port
 
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, port), nil
 }

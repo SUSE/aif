@@ -582,6 +582,9 @@ func (r *InstallAIExtensionReconciler) cleanup(ctx context.Context, ext *aifv1.I
 	}
 
 	for _, name := range names {
+		if name == "" {
+			continue
+		}
 		if err := r.Catalog.DeleteClusterRepo(ctx, name); err != nil {
 			logger.Error(err, "failed to delete ClusterRepo", "name", name)
 			errs = append(errs, err)

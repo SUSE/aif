@@ -88,7 +88,7 @@ This produces a Deployment with:
 | `aiExtension.extension.version` | string | `1.1.0` | Expected extension version |
 | `aiExtension.cleanup.image.registry` | string | `registry.suse.com` | Pre-delete cleanup Job image registry |
 | `aiExtension.cleanup.image.repository` | string | `suse/kubectl` | Pre-delete cleanup Job image repository |
-| `aiExtension.cleanup.image.tag` | string | `latest` | Pre-delete cleanup Job image tag |
+| `aiExtension.cleanup.image.tag` | string | `1.35` | Pre-delete cleanup Job image tag |
 | `aiExtension.cleanup.image.pullPolicy` | string | `IfNotPresent` | Cleanup Job image pull policy |
 | `aiExtension.cleanup.resources` | object | `{cpu: 100m/10m, mem: 64Mi/32Mi}` | Cleanup Job resource requests/limits |
 
