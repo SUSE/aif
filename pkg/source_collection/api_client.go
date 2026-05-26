@@ -28,11 +28,23 @@ type apiClient struct {
 }
 
 // NewClient returns a Client that talks to the SUSE Application Collection HTTP API.
+//
+// Rate-limit + fan-out budget: a full refresh is dominated by the
+// per-app detail fan-out (~145 calls for the current SaaS catalog,
+// plus 2 list-page calls). Sustained rate is 1 req/s with burst of
+// appCoDetailConcurrency (8) so the worker pool actually parallelizes
+// — burst < workers would make the workers idle on the limiter and
+// the "concurrency" would be a lie. At 1 req/s sustained the burst
+// drains in ~8 s and the remaining ~140 calls run serially, putting
+// a full refresh at ~2.5 minutes — well under the default 10-minute
+// refresh interval. The earlier setting (0.5 req/s, burst 1) ran ~5
+// minutes per refresh, which was uncomfortably close to overlapping
+// the next tick.
 func NewClient(log *slog.Logger) (Client, AnnotationReader) {
 	c := &apiClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		limiter:    rate.NewLimiter(rate.Every(2*time.Second), 1),
-		log:        log,
+		limiter:    rate.NewLimiter(rate.Every(time.Second), appCoDetailConcurrency),
+		log:        log.With("component", "source_collection"),
 		annCache:   make(map[string]annotationCacheEntry),
 	}
 	return c, c
@@ -81,19 +93,21 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(appCoDetailConcurrency)
 	for i := range listItems {
-		i := i
 		g.Go(func() error {
-			detail, derr := c.fetchAppDetail(gctx, settings, listItems[i].SlugName)
-			if derr != nil {
-				// Detail-fetch failures degrade gracefully at the catalog
-				// level: this app is excluded but the list flow itself
-				// succeeds, so partial upstream outages don't blank the UI.
+			slug := listItems[i].SlugName
+			detail, derr := c.fetchAppDetail(gctx, settings, slug)
+			if abortErr, dropped := classifyPerAppErr(gctx, derr); abortErr != nil {
+				return abortErr
+			} else if dropped {
+				// Non-cancellation failures degrade gracefully: this
+				// app is excluded but the list flow itself succeeds,
+				// so partial upstream outages don't blank the UI.
 				// apps[i] is left zero-valued; the post-Wait() filter
 				// distinguishes this case from "fetched OK but no
 				// branches" so the aggregate log below doesn't conflate
 				// upstream availability errors with catalog content gaps.
-				c.log.Warn("source_collection: per-app detail fetch failed; app excluded from catalog",
-					"slug", listItems[i].SlugName, "error", derr)
+				c.log.Warn("per-app detail fetch failed; app excluded from catalog",
+					"slug", slug, "error", derr)
 				return nil
 			}
 			apps[i] = c.buildCatalogApp(settings, listItems[i], detail)
@@ -123,20 +137,76 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 		filtered = append(filtered, a)
 	}
 	if len(droppedSlugs) > 0 {
-		c.log.Warn("source_collection: dropped apps with no usable branches",
+		c.log.Warn("dropped apps with no usable branches",
 			"dropped_count", len(droppedSlugs),
 			"kept_count", len(filtered),
-			"sample_dropped", sampleSlugs(droppedSlugs, 10))
+			"sample_dropped", firstN(droppedSlugs, 10))
 	}
 	return filtered, nil
 }
 
-// sampleSlugs returns up to n elements from s for log readability.
-func sampleSlugs(s []string, n int) []string {
+// firstN returns up to n elements from s for log readability.
+func firstN(s []string, n int) []string {
 	if len(s) <= n {
 		return s
 	}
 	return s[:n]
+}
+
+// limiterWait wraps c.limiter.Wait with cancellation-aware error
+// classification. rate.Wait returns two error shapes that callers care
+// about distinguishing:
+//
+//	(a) ctx.Err() when the context fires while waiting (already
+//	    context.Canceled or context.DeadlineExceeded — propagate as-is).
+//	(b) "rate: Wait(n=1) would exceed context deadline" — the limiter's
+//	    preflight check, returned when the wait time would miss the
+//	    deadline even before ctx fires. This is custom-formatted and
+//	    does NOT wrap context.DeadlineExceeded by default.
+//
+// Both cases mean "this op can't complete in the time available". We
+// normalize to a context-error-wrapping value so the rest of the error
+// machinery (errors.Is in the fan-out goroutine, in callers) works
+// uniformly.
+func (c *apiClient) limiterWait(ctx context.Context) error {
+	err := c.limiter.Wait(ctx)
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return fmt.Errorf("rate limiter would exceed deadline: %w", context.DeadlineExceeded)
+}
+
+// classifyPerAppErr decides how an error from a per-app HTTP call should
+// affect the fan-out. Returns (abortErr, dropped):
+//
+//   - abortErr != nil: ctx is firing (mid-request cancel, deadline, or
+//     limiter preflight rewrap) and the whole flow must abort. Caller
+//     should return abortErr from the goroutine — that cancels siblings
+//     via errgroup.
+//   - dropped == true: non-cancellation failure; the goroutine should
+//     log with slug context and return nil so the rest of the catalog
+//     can complete. apps[i] stays zero-valued and the post-Wait filter
+//     drops it.
+//   - Both false: err is nil.
+//
+// We check gctx.Err() first (cleaner identity) but fall back to err's
+// chain because fetchAndDecode rewraps mid-request HTTP errors as
+// ErrUpstreamUnavailable with %v, which would lose the context.Canceled
+// identity if we only inspected err.
+func classifyPerAppErr(gctx context.Context, err error) (abortErr error, dropped bool) {
+	if err == nil {
+		return nil, false
+	}
+	if gctx.Err() != nil {
+		return gctx.Err(), false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err, false
+	}
+	return nil, true
 }
 
 // listAllPages walks the page-based pagination envelope and returns the
@@ -147,12 +217,19 @@ func (c *apiClient) listAllPages(ctx context.Context, settings EngineSettings) (
 
 	page := 1
 	for {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter: %w", err)
+		if err := c.limiterWait(ctx); err != nil {
+			return nil, err
 		}
 
 		resp, err := c.fetchListPage(ctx, settings, page)
 		if err != nil {
+			// Same masking risk as the fan-out: a mid-request ctx
+			// cancellation gets rewrapped as ErrUpstreamUnavailable by
+			// fetchAndDecode. Prefer ctx.Err() so callers can
+			// errors.Is(err, context.Canceled / DeadlineExceeded).
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, err
 		}
 
@@ -167,7 +244,7 @@ func (c *apiClient) listAllPages(ctx context.Context, settings EngineSettings) (
 			items = append(items, it)
 		}
 
-		c.log.Info("source_collection: fetched list page",
+		c.log.Info("fetched list page",
 			"page_number", page, "items_in_page", len(resp.Items),
 			"total_pages", resp.TotalPages, "total_size", resp.TotalSize,
 			"accumulated", len(items))
@@ -212,8 +289,8 @@ func (c *apiClient) fetchListPage(ctx context.Context, settings EngineSettings, 
 // Returns the parsed detail on success; ErrChartNotFound on 404 (caller
 // degrades gracefully). One retry on transient errors.
 func (c *apiClient) fetchAppDetail(ctx context.Context, settings EngineSettings, slug string) (apiAppDetail, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
-		return apiAppDetail{}, fmt.Errorf("rate limiter: %w", err)
+	if err := c.limiterWait(ctx); err != nil {
+		return apiAppDetail{}, err
 	}
 	u := settings.APIURL + "/v1/applications/" + url.PathEscape(slug)
 
@@ -413,6 +490,15 @@ func categoriesFromLabels(labels []string) []string {
 // Collection convention: oci://<host>/charts/<slug>:<version>. OCIHost
 // may arrive with or without a scheme; we strip http(s):// and any path
 // component to get the bare host.
+//
+// Returns "" when slug, version, or host is empty. In particular, an
+// empty host is treated as a misconfiguration (Settings hasn't wired
+// OCIHost through) — we deliberately do NOT substitute a default like
+// dp.apps.rancher.io: in an air-gapped cluster that would silently
+// emit a chart ref pointing at the public SaaS, exactly the egress an
+// air-gapped cluster shouldn't make. Empty ChartRef downstream
+// surfaces as an obvious install failure rather than a confusing
+// connection timeout to an unreachable host.
 func buildChartRef(ociHost, slug, version string) string {
 	if slug == "" || version == "" {
 		return ""
@@ -424,9 +510,7 @@ func buildChartRef(ociHost, slug, version string) string {
 		host = host[:i]
 	}
 	if host == "" {
-		// Documented production default — keeps the catalog deployable
-		// when OCIHost is not yet wired through Settings.
-		host = "dp.apps.rancher.io"
+		return ""
 	}
 	return "oci://" + host + "/charts/" + slug + ":" + version
 }

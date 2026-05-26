@@ -67,9 +67,8 @@ type apiAppDetail struct {
 // versioned non-LTS branch's baseline as the "latest" — matching the
 // upstream UI's "latest version" presentation.
 type apiBranch struct {
-	ID            int    `json:"id"`
-	BranchName    string `json:"branch_name"`
-	BranchPattern string `json:"branch_pattern"`
-	Baseline      string `json:"baseline"`
-	IsLTS         bool   `json:"is_lts"`
+	ID         int    `json:"id"`
+	BranchName string `json:"branch_name"`
+	Baseline   string `json:"baseline"`
+	IsLTS      bool   `json:"is_lts"`
 }

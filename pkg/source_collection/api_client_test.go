@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // testApp is a minimal fixture builder that produces a (list item,
@@ -41,7 +42,7 @@ func newTestApp(slug, name, version string, categories ...string) testApp {
 			SlugName: slug,
 			Labels:   labels,
 			Branches: []apiBranch{
-				{ID: 1, BranchName: "0", BranchPattern: "^0\\.\\d+\\.\\d+$", Baseline: version, IsLTS: false},
+				{ID: 1, BranchName: "0", Baseline: version, IsLTS: false},
 			},
 		},
 	}
@@ -541,8 +542,49 @@ func TestList_ContextCancelled(t *testing.T) {
 	cancel()
 
 	_, err := c.List(ctx)
-	if err == nil {
-		t.Fatal("expected error from cancelled context, got nil")
+	// Assert errors.Is(context.Canceled), not just non-nil — the
+	// detail-fan-out path used to mask cancellation as
+	// ErrUpstreamUnavailable, so this guards against that regression.
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestList_ContextCancelledMidFanOut_ReturnsContextError(t *testing.T) {
+	// Detail handler blocks until the client connection closes (which
+	// happens when our parent ctx fires). This exercises the fan-out
+	// cancellation path: the list page succeeds, the detail fetch is
+	// in flight when the deadline hits, and we want the resulting
+	// error to surface as context.DeadlineExceeded — not as a partial
+	// success with the slow app silently dropped, and not as
+	// ErrUpstreamUnavailable.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiListResponse{
+			Items: []apiListItem{{SlugName: "slow", Name: "Slow", PackagingFormat: "HELM_CHART"}},
+			Page:  1, PageSize: 100, TotalSize: 1, TotalPages: 1,
+		})
+	})
+	mux.HandleFunc("/v1/applications/", func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	apps, err := c.List(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context error, got err=%v apps=%v", err, apps)
+	}
+	if len(apps) != 0 {
+		t.Errorf("expected empty result on cancellation, got %d apps", len(apps))
 	}
 }
 
@@ -689,7 +731,7 @@ func TestBuildChartRef(t *testing.T) {
 		{"bare host", "dp.apps.rancher.io", "ollama", "0.4.1", "oci://dp.apps.rancher.io/charts/ollama:0.4.1"},
 		{"https scheme stripped", "https://dp.apps.rancher.io", "vllm", "0.6.0", "oci://dp.apps.rancher.io/charts/vllm:0.6.0"},
 		{"path stripped", "dp.apps.rancher.io/charts", "milvus", "2.4.0", "oci://dp.apps.rancher.io/charts/milvus:2.4.0"},
-		{"empty host defaults to production", "", "ollama", "0.4.1", "oci://dp.apps.rancher.io/charts/ollama:0.4.1"},
+		{"empty host returns empty (no silent SaaS fallback)", "", "ollama", "0.4.1", ""},
 		{"missing version returns empty", "dp.apps.rancher.io", "ollama", "", ""},
 		{"missing slug returns empty", "dp.apps.rancher.io", "", "0.4.1", ""},
 	}
