@@ -15,10 +15,9 @@ var (
 	// reconciler requeues).
 	ErrSourceNotResolved = errors.New("workload: source CR not found")
 
-	// ErrNestedBlueprintNotSupported is returned when a Blueprint or
-	// BundleTest source contains a child component with Kind=Blueprint.
-	// P4-2 does not implement recursive Blueprint expansion. Terminal
-	// until spec changes.
+	// ErrNestedBlueprintNotSupported is returned when a Blueprint source
+	// contains a child component with Kind=Blueprint. P4-2 does not
+	// implement recursive Blueprint expansion. Terminal until spec changes.
 	ErrNestedBlueprintNotSupported = errors.New("workload: nested Blueprint composition not supported (P4-2)")
 
 	// ErrComponentInstallFailed wraps any per-component install failure

@@ -21,9 +21,8 @@ const (
 type WorkloadSourceKind string
 
 const (
-	WorkloadSourceKindApp        WorkloadSourceKind = "App"
-	WorkloadSourceKindBlueprint  WorkloadSourceKind = "Blueprint"
-	WorkloadSourceKindBundleTest WorkloadSourceKind = "BundleTest"
+	WorkloadSourceKindApp       WorkloadSourceKind = "App"
+	WorkloadSourceKindBlueprint WorkloadSourceKind = "Blueprint"
 )
 
 // StrategyType defines the deployment strategy type
@@ -105,9 +104,8 @@ type WorkloadSpec struct {
 // TODO: Add cross-field validation to ensure exactly one field is set per Kind value (requires CEL/webhook)
 type WorkloadSource struct {
 	// Kind is a source-provenance discriminator, not a Kubernetes TypeMeta.Kind.
-	// "App" and "Blueprint" correspond to CRDs of the same name; "BundleTest" has
-	// no corresponding CRD — it denotes a test deployment created from a Bundle.
-	// +kubebuilder:validation:Enum=App;Blueprint;BundleTest
+	// "App" and "Blueprint" correspond to CRDs of the same name.
+	// +kubebuilder:validation:Enum=App;Blueprint
 	Kind WorkloadSourceKind `json:"kind"`
 
 	// App is populated when Kind=App
@@ -117,22 +115,6 @@ type WorkloadSource struct {
 	// Blueprint is populated when Kind=Blueprint
 	// +optional
 	Blueprint *BlueprintRef `json:"blueprint,omitempty"`
-
-	// BundleTest is populated when Kind=BundleTest
-	// +optional
-	BundleTest *BundleTestRef `json:"bundleTest,omitempty"`
-}
-
-// BundleTestRef references a Bundle for test deployment
-type BundleTestRef struct {
-	// Namespace is the Bundle namespace
-	Namespace string `json:"namespace"`
-
-	// Name is the Bundle name
-	Name string `json:"name"`
-
-	// Generation is the Bundle generation snapshot at test-deploy time
-	Generation int64 `json:"generation"`
 }
 
 // DeploymentStrategy defines deployment strategy configuration
@@ -289,14 +271,6 @@ type WorkloadStatus struct {
 	// ObservedGeneration is the generation observed by the controller
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-
-	// ObservedBundleGeneration records the Bundle.metadata.generation observed
-	// at deploy time when source.kind=BundleTest. Zero for App and Blueprint
-	// sources. Surfaces drift between source.bundleTest.generation and the
-	// current Bundle spec without requiring an Event read. P4-2 records;
-	// drift-driven auto-redeploy is a future story.
-	// +optional
-	ObservedBundleGeneration int64 `json:"observedBundleGeneration,omitempty"`
 
 	// RecoveryFailureCount is the number of consecutive times this
 	// Workload has entered Degraded since last reaching Running.

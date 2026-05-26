@@ -20,7 +20,6 @@ import (
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/blueprint"
-	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/SUSE/aif/pkg/conditions"
 	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/helm"
@@ -122,43 +121,6 @@ var _ = Describe("WorkloadReconciler", func() {
 		}, timeout, interval).Should(Succeed())
 	})
 
-	It("should reconcile a valid BundleTest Workload to Pending/Installed", func() {
-		w := &aifv1.Workload{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "valid-bundletest-workload",
-				Namespace: "default",
-			},
-			Spec: aifv1.WorkloadSpec{
-				Name: "Test BundleTest Workload",
-				Source: aifv1.WorkloadSource{
-					Kind: aifv1.WorkloadSourceKindBundleTest,
-					BundleTest: &aifv1.BundleTestRef{
-						Namespace:  "default",
-						Name:       "test-bundle",
-						Generation: 1,
-					},
-				},
-			},
-		}
-
-		fakeDeployer.SetDeployResult(workload.DeployResult{
-			Components: []workload.ComponentRelease{
-				{Name: "n", ReleaseName: "n-1", Status: "deployed"},
-			},
-		})
-		Expect(k8sClient.Create(ctx, w)).To(Succeed())
-
-		Eventually(func(g Gomega) {
-			var fetched aifv1.Workload
-			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
-			g.Expect(fetched.Status.Phase).To(Equal(aifv1.WorkloadPhaseRunning))
-			rc := findReady(fetched.Status.Conditions)
-			g.Expect(rc).NotTo(BeNil())
-			g.Expect(rc.Status).To(Equal(metav1.ConditionTrue))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonWorkloadRunning))
-		}, timeout, interval).Should(Succeed())
-	})
-
 	It("should set InvalidSpec when Kind=App but App field is nil", func() {
 		w := &aifv1.Workload{
 			ObjectMeta: metav1.ObjectMeta{
@@ -213,34 +175,6 @@ var _ = Describe("WorkloadReconciler", func() {
 			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
 			g.Expect(rc.Reason).To(Equal(conditions.ReasonInvalidSpec))
 			g.Expect(rc.Message).To(ContainSubstring("source.blueprint"))
-		}, timeout, interval).Should(Succeed())
-	})
-
-	It("should set InvalidSpec when Kind=BundleTest but BundleTest field is nil", func() {
-		w := &aifv1.Workload{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "invalid-bt-workload",
-				Namespace: "default",
-			},
-			Spec: aifv1.WorkloadSpec{
-				Name: "Invalid BundleTest Workload",
-				Source: aifv1.WorkloadSource{
-					Kind:       aifv1.WorkloadSourceKindBundleTest,
-					BundleTest: nil,
-				},
-			},
-		}
-
-		Expect(k8sClient.Create(ctx, w)).To(Succeed())
-
-		Eventually(func(g Gomega) {
-			var fetched aifv1.Workload
-			g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &fetched)).To(Succeed())
-			rc := findReady(fetched.Status.Conditions)
-			g.Expect(rc).NotTo(BeNil())
-			g.Expect(rc.Status).To(Equal(metav1.ConditionFalse))
-			g.Expect(rc.Reason).To(Equal(conditions.ReasonInvalidSpec))
-			g.Expect(rc.Message).To(ContainSubstring("source.bundleTest"))
 		}, timeout, interval).Should(Succeed())
 	})
 
@@ -569,35 +503,6 @@ var _ = Describe("Workload deployer events (P4-2)", func() {
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
 	})
 
-	It("emits BundleTestGenerationDrift when observed != recorded", func() {
-		fakeDeployer.SetDeployResult(workload.DeployResult{
-			ObservedBundleGeneration: 9, // recorded was 5
-			Components:               []workload.ComponentRelease{{Name: "c", Status: "deployed"}},
-		})
-
-		name := "wid-drift-" + randomSuffix()
-		w := &aifv1.Workload{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-			Spec: aifv1.WorkloadSpec{
-				Name: "c",
-				Source: aifv1.WorkloadSource{
-					Kind:       aifv1.WorkloadSourceKindBundleTest,
-					BundleTest: &aifv1.BundleTestRef{Namespace: "default", Name: "b1", Generation: 5},
-				},
-			},
-		}
-		Expect(k8sClient.Create(ctx, w)).To(Succeed())
-		key := client.ObjectKeyFromObject(w)
-
-		Eventually(func() []string {
-			var got aifv1.Workload
-			_ = k8sClient.Get(ctx, key, &got)
-			return eventReasons(&got)
-		}, timeout, interval).Should(ContainElement("BundleTestGenerationDrift"))
-
-		// Cleanup
-		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
-	})
 })
 
 var _ = Describe("Workload deployer envtest scenarios (P4-2)", func() {
@@ -1033,7 +938,6 @@ var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", Serial, 
 			fleet.NewBundleEngine(slog.Default(), directClient),
 			&fleet.FakeGitRepoEngine{},
 			blueprint.NewFakeRepository(),
-			bundle.NewFakeRepository(),
 			nvDisc,
 			nvidia.NewDeployer(slog.Default()),
 		)

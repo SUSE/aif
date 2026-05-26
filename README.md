@@ -57,8 +57,8 @@ Everything in AIF is one of four things:
 | **Workload**  | A running instance of an App or Blueprint on a target cluster.                  | Status-only                      | Workload namespace |
 
 A Bundle becomes a Blueprint version through the publish-by-approval workflow.
-Each Workload records its `spec.source` (App, Blueprint, or BundleTest), so
-provenance is always recoverable.
+Each Workload records its `spec.source` (App or Blueprint), so provenance is
+always recoverable.
 
 > Note: NVIDIA and other vendors publish their own "Reference Blueprints" —
 > these are Helm charts. AIF treats each as an App in the catalog and wraps it

@@ -126,12 +126,6 @@ func (r *WorkloadReconciler) validateSource(w *aifv1.Workload) error {
 		}
 		return nil
 
-	case aifv1.WorkloadSourceKindBundleTest:
-		if w.Spec.Source.BundleTest == nil {
-			return fmt.Errorf("source.kind=BundleTest requires source.bundleTest field")
-		}
-		return nil
-
 	default:
 		return fmt.Errorf("invalid source.kind: %s", w.Spec.Source.Kind)
 	}
@@ -305,17 +299,6 @@ func (r *WorkloadReconciler) emitDeployEvents(
 			r.Recorder.Eventf(w, nil, corev1.EventTypeWarning, "ComponentInstallFailed",
 				conditions.ActionInstalling, "One or more components failed: %v", deployErr)
 		}
-	}
-
-	// BundleTest generation drift
-	if w.Spec.Source.Kind == aifv1.WorkloadSourceKindBundleTest &&
-		w.Spec.Source.BundleTest != nil &&
-		result.ObservedBundleGeneration != 0 &&
-		result.ObservedBundleGeneration != w.Spec.Source.BundleTest.Generation {
-		r.Recorder.Eventf(w, nil, corev1.EventTypeNormal, "BundleTestGenerationDrift",
-			conditions.ActionReconciling,
-			"Bundle generation drifted: recorded=%d observed=%d",
-			w.Spec.Source.BundleTest.Generation, result.ObservedBundleGeneration)
 	}
 
 	// Source-not-resolved + nested-Blueprint reject events

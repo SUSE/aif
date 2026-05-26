@@ -40,7 +40,7 @@ type Engine interface {
 // empty and are safe.
 type Overrides struct {
 	// Blueprint is layer 2: Blueprint.spec.valueOverrides[componentName]
-	// parsed from YAML. Nil for App and BundleTest sources.
+	// parsed from YAML. Nil for App sources.
 	Blueprint map[string]any
 	// Workload is layer 3: Workload.spec.valueOverrides[componentName]
 	// parsed from YAML. Nil when the user supplied no overrides.

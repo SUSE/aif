@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/SUSE/aif/pkg/blueprint"
-	"github.com/SUSE/aif/pkg/bundle"
 	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
@@ -24,7 +23,6 @@ type deployer struct {
 	fleetBundle  fleet.FleetBundleEngine
 	fleetGitRepo fleet.FleetGitRepoEngine
 	bpRepo       blueprint.Repository
-	bundleRepo   bundle.Repository
 	nvDisc       nvidia.Discovery
 	nvDepl       nvidia.Deployer
 }
@@ -41,7 +39,6 @@ func NewDeployer(
 	fleetBundle fleet.FleetBundleEngine,
 	fleetGitRepo fleet.FleetGitRepoEngine,
 	bpRepo blueprint.Repository,
-	bundleRepo bundle.Repository,
 	nvDisc nvidia.Discovery,
 	nvDepl nvidia.Deployer,
 ) Deployer {
@@ -51,7 +48,6 @@ func NewDeployer(
 		fleetBundle:  fleetBundle,
 		fleetGitRepo: fleetGitRepo,
 		bpRepo:       bpRepo,
-		bundleRepo:   bundleRepo,
 		nvDisc:       nvDisc,
 		nvDepl:       nvDepl,
 	}
@@ -63,9 +59,9 @@ func NewDeployer(
 // to status. Idempotent: re-invocation with the same DeployRequest converges
 // to the same cluster state.
 func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult, error) {
-	desired, observedGen, err := d.resolveSource(ctx, req)
+	desired, err := d.resolveSource(ctx, req)
 	if err != nil {
-		return DeployResult{ObservedBundleGeneration: observedGen}, err
+		return DeployResult{}, err
 	}
 
 	componentsForFleet := make([]fleet.ComponentBundle, 0, len(desired))
@@ -107,17 +103,13 @@ func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult,
 		}
 		obs, err := d.fleetBundle.Apply(ctx, spec)
 		if err != nil {
-			return DeployResult{
-				Components:               releaseRecords,
-				ObservedBundleGeneration: observedGen,
-			}, err
+			return DeployResult{Components: releaseRecords}, err
 		}
 		// Phase ownership lives in the controller (RecomputePhase Rule 0
 		// reads PerCluster). See pkg/workload/phase.go.
 		return DeployResult{
-			Components:               releaseRecords,
-			PerCluster:               translateObserved(obs),
-			ObservedBundleGeneration: observedGen,
+			Components: releaseRecords,
+			PerCluster: translateObserved(obs),
 		}, nil
 
 	case "gitops":
@@ -310,46 +302,37 @@ type desiredComponent struct {
 	repo              string // OCI host + path (e.g. "oci://registry.suse.com/ai/charts")
 	chart             string // chart name (e.g. "nim-llm")
 	version           string // chart version
-	blueprintOverride string // YAML string from Blueprint.spec.valueOverrides[name]; "" for App/BundleTest
+	blueprintOverride string // YAML string from Blueprint.spec.valueOverrides[name]; "" for App
 }
 
 // resolveSource translates req.Source into the ordered list of components
-// to install plus the observed bundle generation (BundleTest only).
+// to install.
 //
 // Returns ErrSourceNotResolved if the source CR is not found.
 // Returns ErrNestedBlueprintNotSupported if any child component has Kind=Blueprint.
-func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desiredComponent, int64, error) {
+func (d *deployer) resolveSource(ctx context.Context, req DeployRequest) ([]desiredComponent, error) {
 	switch req.Source.Kind {
 	case SourceKindApp:
 		if req.Source.App == nil {
-			return nil, 0, ErrSourceNotResolved
+			return nil, ErrSourceNotResolved
 		}
 		return []desiredComponent{{
 			name:    req.SpecName,
 			repo:    req.Source.App.Repo,
 			chart:   req.Source.App.Chart,
 			version: req.Source.App.Version,
-		}}, 0, nil
+		}}, nil
 
 	case SourceKindBlueprint:
 		if req.Source.Blueprint == nil {
-			return nil, 0, ErrSourceNotResolved
+			return nil, ErrSourceNotResolved
 		}
 		bp, err := d.bpRepo.Get(ctx, blueprintCRName(req.Source.Blueprint.Name, req.Source.Blueprint.Version))
 		if err != nil {
-			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
+			return nil, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
 		}
-		return ComponentsFromBlueprintCR(bp)
-
-	case SourceKindBundleTest:
-		if req.Source.BundleTest == nil {
-			return nil, 0, ErrSourceNotResolved
-		}
-		b, err := d.bundleRepo.Get(ctx, req.Source.BundleTest.Namespace, req.Source.BundleTest.Name)
-		if err != nil {
-			return nil, 0, fmt.Errorf("%w: %v", ErrSourceNotResolved, err)
-		}
-		return ComponentsFromBundleCR(b)
+		comps, _, err := ComponentsFromBlueprintCR(bp)
+		return comps, err
 	}
-	return nil, 0, ErrSourceNotResolved
+	return nil, ErrSourceNotResolved
 }

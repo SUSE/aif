@@ -14,9 +14,8 @@ import (
 type SourceKind string
 
 const (
-	SourceKindApp        SourceKind = "App"
-	SourceKindBlueprint  SourceKind = "Blueprint"
-	SourceKindBundleTest SourceKind = "BundleTest"
+	SourceKindApp       SourceKind = "App"
+	SourceKindBlueprint SourceKind = "Blueprint"
 )
 
 // Phase is the workload-domain phase. Mirrors aifv1.WorkloadPhase across
@@ -59,21 +58,12 @@ type BlueprintRef struct {
 	Version string
 }
 
-// BundleTestRef points at a Bundle being tested at a specific generation
-// snapshot. The generation is recorded at test-deploy time.
-type BundleTestRef struct {
-	Namespace  string
-	Name       string
-	Generation int64
-}
-
-// SourceRef is the discriminated union over App/Blueprint/BundleTest.
-// Exactly one of App/Blueprint/BundleTest is non-nil per Kind.
+// SourceRef is the discriminated union over App/Blueprint.
+// Exactly one of App/Blueprint is non-nil per Kind.
 type SourceRef struct {
-	Kind       SourceKind
-	App        *AppRef
-	Blueprint  *BlueprintRef
-	BundleTest *BundleTestRef
+	Kind      SourceKind
+	App       *AppRef
+	Blueprint *BlueprintRef
 }
 
 // DeployRequest is the input to Deployer.Deploy. Carries everything the
@@ -160,10 +150,6 @@ type DeployResult struct {
 	// Components is the per-component outcome list (in source order, with
 	// surviving orphans appended on cleanup failure).
 	Components []ComponentRelease
-
-	// ObservedBundleGeneration is the Bundle.metadata.generation observed
-	// at deploy time when source.Kind == BundleTest. Zero otherwise.
-	ObservedBundleGeneration int64
 
 	// PerCluster carries the per-target-cluster observed status, mirrored
 	// from the Fleet Bundle's per-cluster summary. Empty for sources that

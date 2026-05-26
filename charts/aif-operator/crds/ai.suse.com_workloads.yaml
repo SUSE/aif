@@ -149,34 +149,13 @@ spec:
                     - name
                     - version
                     type: object
-                  bundleTest:
-                    description: BundleTest is populated when Kind=BundleTest
-                    properties:
-                      generation:
-                        description: Generation is the Bundle generation snapshot
-                          at test-deploy time
-                        format: int64
-                        type: integer
-                      name:
-                        description: Name is the Bundle name
-                        type: string
-                      namespace:
-                        description: Namespace is the Bundle namespace
-                        type: string
-                    required:
-                    - generation
-                    - name
-                    - namespace
-                    type: object
                   kind:
                     description: |-
                       Kind is a source-provenance discriminator, not a Kubernetes TypeMeta.Kind.
-                      "App" and "Blueprint" correspond to CRDs of the same name; "BundleTest" has
-                      no corresponding CRD — it denotes a test deployment created from a Bundle.
+                      "App" and "Blueprint" correspond to CRDs of the same name.
                     enum:
                     - App
                     - Blueprint
-                    - BundleTest
                     type: string
                 required:
                 - kind
@@ -264,7 +243,14 @@ spec:
                     type: string
                 type: object
               targetClusters:
-                description: TargetClusters are the cluster IDs (informational)
+                description: |-
+                  TargetClusters lists the downstream cluster IDs the workload should
+                  land on. For deployStrategy=helm (P4-3b), each entry drives one
+                  fleet.cattle.io/v1alpha1 Bundle.spec.targets[].clusterName fan-out
+                  entry, so the slice is load-bearing: an empty slice means "do not
+                  target any cluster" (Fleet creates the Bundle but reconciles zero
+                  BundleDeployments) and the Workload stays at phase=Pending until
+                  the field is populated.
                 items:
                   type: string
                 type: array
@@ -424,34 +410,13 @@ spec:
                           - name
                           - version
                           type: object
-                        bundleTest:
-                          description: BundleTest is populated when Kind=BundleTest
-                          properties:
-                            generation:
-                              description: Generation is the Bundle generation snapshot
-                                at test-deploy time
-                              format: int64
-                              type: integer
-                            name:
-                              description: Name is the Bundle name
-                              type: string
-                            namespace:
-                              description: Namespace is the Bundle namespace
-                              type: string
-                          required:
-                          - generation
-                          - name
-                          - namespace
-                          type: object
                         kind:
                           description: |-
                             Kind is a source-provenance discriminator, not a Kubernetes TypeMeta.Kind.
-                            "App" and "Blueprint" correspond to CRDs of the same name; "BundleTest" has
-                            no corresponding CRD — it denotes a test deployment created from a Bundle.
+                            "App" and "Blueprint" correspond to CRDs of the same name.
                           enum:
                           - App
                           - Blueprint
-                          - BundleTest
                           type: string
                       required:
                       - kind
@@ -472,15 +437,6 @@ spec:
                   type: object
                 maxItems: 100
                 type: array
-              observedBundleGeneration:
-                description: |-
-                  ObservedBundleGeneration records the Bundle.metadata.generation observed
-                  at deploy time when source.kind=BundleTest. Zero for App and Blueprint
-                  sources. Surfaces drift between source.bundleTest.generation and the
-                  current Bundle spec without requiring an Event read. P4-2 records;
-                  drift-driven auto-redeploy is a future story.
-                format: int64
-                type: integer
               observedGeneration:
                 description: ObservedGeneration is the generation observed by the
                   controller

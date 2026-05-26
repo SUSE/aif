@@ -73,23 +73,6 @@ func TestWorkloadToDeployRequest_BlueprintSource(t *testing.T) {
 	}
 }
 
-func TestWorkloadToDeployRequest_BundleTestSource(t *testing.T) {
-	w := &aifv1.Workload{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "wid"},
-		Spec: aifv1.WorkloadSpec{
-			Name: "n",
-			Source: aifv1.WorkloadSource{
-				Kind:       aifv1.WorkloadSourceKindBundleTest,
-				BundleTest: &aifv1.BundleTestRef{Namespace: "ns2", Name: "b1", Generation: 5},
-			},
-		},
-	}
-	req := WorkloadToDeployRequest(w, nil)
-	if req.Source.BundleTest == nil || req.Source.BundleTest.Generation != 5 {
-		t.Errorf("BundleTest=%+v", req.Source.BundleTest)
-	}
-}
-
 func TestWorkloadToDeployRequest_PreviousFromStatus(t *testing.T) {
 	w := &aifv1.Workload{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "wid"},
@@ -106,7 +89,7 @@ func TestWorkloadToDeployRequest_PreviousFromStatus(t *testing.T) {
 	}
 }
 
-func TestApplyDeployResult_WritesComponentsAndGeneration(t *testing.T) {
+func TestApplyDeployResult_WritesComponents(t *testing.T) {
 	// Pre-set Phase to assert ApplyDeployResult does NOT overwrite it
 	// (the controller owns Phase via RecomputePhase, post-P5-1).
 	w := &aifv1.Workload{Status: aifv1.WorkloadStatus{Phase: aifv1.WorkloadPhaseDeploying}}
@@ -114,7 +97,6 @@ func TestApplyDeployResult_WritesComponentsAndGeneration(t *testing.T) {
 		Components: []ComponentRelease{
 			{Name: "c1", ReleaseName: "wid-c1", ChartRef: "oci://x/c1:1", Status: "deployed", Revision: 2},
 		},
-		ObservedBundleGeneration: 7,
 	}
 
 	ApplyDeployResult(w, r)
@@ -124,9 +106,6 @@ func TestApplyDeployResult_WritesComponentsAndGeneration(t *testing.T) {
 	}
 	if len(w.Status.ComponentReleases) != 1 || w.Status.ComponentReleases[0].Status != "deployed" {
 		t.Errorf("ComponentReleases=%+v", w.Status.ComponentReleases)
-	}
-	if w.Status.ObservedBundleGeneration != 7 {
-		t.Errorf("ObservedBundleGeneration=%d", w.Status.ObservedBundleGeneration)
 	}
 }
 

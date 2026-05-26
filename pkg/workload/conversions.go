@@ -62,24 +62,15 @@ func sourceRefFromCR(s aifv1.WorkloadSource) SourceRef {
 	if s.Blueprint != nil {
 		out.Blueprint = &BlueprintRef{Name: s.Blueprint.Name, Version: s.Blueprint.Version}
 	}
-	if s.BundleTest != nil {
-		out.BundleTest = &BundleTestRef{
-			Namespace:  s.BundleTest.Namespace,
-			Name:       s.BundleTest.Name,
-			Generation: s.BundleTest.Generation,
-		}
-	}
 	return out
 }
 
-// ApplyDeployResult writes the deployer's per-component outcome and the
-// observed Bundle generation back into the CR's status. Does NOT touch
-// Phase: the controller computes Phase via RecomputePhase after this
-// function returns. Does NOT touch Conditions/Replicas/DeploymentHistory.
-// P5-2 will own Replicas/ReadyReplicas writes.
+// ApplyDeployResult writes the deployer's per-component outcome back into
+// the CR's status. Does NOT touch Phase: the controller computes Phase via
+// RecomputePhase after this function returns. Does NOT touch
+// Conditions/Replicas/DeploymentHistory. P5-2 will own
+// Replicas/ReadyReplicas writes.
 func ApplyDeployResult(w *aifv1.Workload, r DeployResult) {
-	w.Status.ObservedBundleGeneration = r.ObservedBundleGeneration
-
 	w.Status.ComponentReleases = nil
 	for _, c := range r.Components {
 		w.Status.ComponentReleases = append(w.Status.ComponentReleases, aifv1.ComponentReleaseStatus{
@@ -236,8 +227,7 @@ func ComponentsFromBlueprintCR(bp *aifv1.Blueprint) ([]desiredComponent, int64, 
 
 // ComponentsFromBundleCR projects a Bundle CR's components + per-component
 // value overrides + current generation into the deployer's internal
-// projection. The Generation is recorded as observedGen for BundleTest
-// drift detection.
+// projection. Returns the Bundle generation for future use.
 func ComponentsFromBundleCR(b *aifv1.Bundle) ([]desiredComponent, int64, error) {
 	components, _, err := componentsFromCRComponents(b.Spec.Components, b.Spec.ValueOverrides)
 	if err != nil {
