@@ -25,7 +25,11 @@ type engineBus struct {
 	// bus so P5-7 (downstream-cluster auth) can extend without touching
 	// the bus contract.
 	fleetBundle fleet.FleetBundleEngine
-	nvidiaDisc  nvidia.Discovery
+	// fleetGitRepo is the FleetGitRepoEngine; receives the same empty
+	// FleetSettings as fleetBundle via projectFleet. P5-4b extends
+	// FleetSettings with git.Credentials and auth fields.
+	fleetGitRepo fleet.FleetGitRepoEngine
+	nvidiaDisc   nvidia.Discovery
 	nvidiaDepl  nvidia.Deployer
 	appCollect  source_collection.Client
 	logger      *slog.Logger
@@ -37,18 +41,20 @@ type engineBus struct {
 func NewEngineBus(
 	h helm.Engine,
 	fb fleet.FleetBundleEngine,
+	fg fleet.FleetGitRepoEngine,
 	nd nvidia.Discovery,
 	nde nvidia.Deployer,
 	ac source_collection.Client,
 	logger *slog.Logger,
 ) controller.SettingsApplier {
 	return &engineBus{
-		helm:        h,
-		fleetBundle: fb,
-		nvidiaDisc:  nd,
-		nvidiaDepl:  nde,
-		appCollect:  ac,
-		logger:      logger,
+		helm:         h,
+		fleetBundle:  fb,
+		fleetGitRepo: fg,
+		nvidiaDisc:   nd,
+		nvidiaDepl:   nde,
+		appCollect:   ac,
+		logger:       logger,
 	}
 }
 
@@ -64,6 +70,7 @@ func NewEngineBus(
 func (b *engineBus) Apply(_ context.Context, s controller.SettingsSnapshot) error {
 	b.helm.UpdateSettings(b.projectHelm(s))
 	b.fleetBundle.UpdateSettings(b.projectFleet(s))
+	b.fleetGitRepo.UpdateSettings(b.projectFleet(s))
 	b.nvidiaDisc.UpdateSettings(b.projectNvidiaDiscovery(s))
 	b.nvidiaDepl.UpdateSettings(b.projectNvidiaDeployer(s))
 	b.appCollect.UpdateSettings(b.projectAppCo(s))

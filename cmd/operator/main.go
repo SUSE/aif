@@ -42,7 +42,6 @@ var (
 	metricsBindAddress     string
 	webhookBindAddress     string
 	chartsDir              string
-	gitDir                 string
 	leaderElect            bool
 	logLevel               string
 	logFormat              string
@@ -57,7 +56,6 @@ func main() {
 	flag.StringVar(&metricsBindAddress, "metrics-bind-address", ":8082", "Metrics bind address")
 	flag.StringVar(&webhookBindAddress, "webhook-bind-address", ":9443", "Webhook bind address")
 	flag.StringVar(&chartsDir, "charts-dir", "/charts", "Directory containing Helm charts")
-	flag.StringVar(&gitDir, "git-dir", "/git", "Directory for Git operations")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	flag.StringVar(&logFormat, "log-format", "json", "Log format (json, text)")
@@ -74,7 +72,6 @@ func main() {
 		"metricsBindAddress", metricsBindAddress,
 		"webhookBindAddress", webhookBindAddress,
 		"chartsDir", chartsDir,
-		"gitDir", gitDir,
 		"leaderElect", leaderElect,
 		"logLevel", logLevel,
 		"logFormat", logFormat,
@@ -90,7 +87,7 @@ func main() {
 		logger.Error("failed to create discovery client", slog.Any("error", err))
 		os.Exit(1)
 	}
-	gitEngine := git.NewFleetEngine(logger, gitDir)
+	gitEngine := git.NewEngine(logger)
 	nvidiaDiscovery, nvidiaAnnReader := nvidia.NewDiscovery(logger)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
 	appcoClient, appcoAnnReader := source_collection.NewClient(logger)
@@ -142,9 +139,10 @@ func main() {
 		os.Exit(1)
 	}
 	fleetBundleEngine := fleet.NewBundleEngine(logger, fleetClient)
+	fleetGitRepoEngine := fleet.NewGitRepoEngine(logger, fleetClient, gitEngine)
 
 	// Bus that propagates Settings to all engines on every reconcile (P5-7).
-	engineBus := manager.NewEngineBus(helmEngine, fleetBundleEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
+	engineBus := manager.NewEngineBus(helmEngine, fleetBundleEngine, fleetGitRepoEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
 
 	// Log manager types so vars stay "used" while their consumers (later
 	// stories wire gitEngine, etc.) come online. Logging the values
@@ -184,21 +182,22 @@ func main() {
 	}
 
 	mgr, err := manager.NewManager(scheme, k8sConfig, manager.Options{
-		LeaderElection:    leaderElect,
-		LeaderElectionID:  "aif-operator-leader",
-		MetricsAddr:       metricsBindAddress,
-		HealthAddr:        healthProbeBindAddress,
-		WebhookPort:       parsePort(webhookBindAddress),
-		BlueprintManager:  blueprintManager,
-		HelmEngine:        helmEngine,
-		HelmRenderer:      helmRenderer,
-		FleetBundleEngine: fleetBundleEngine,
-		OperatorNamespace: operatorNS,
-		Discovery:         discoveryClient,
-		Logger:            logger,
-		EngineBus:         engineBus,
-		NvidiaDiscovery:   nvidiaDiscovery,
-		NvidiaDeployer:    nvidiaDeployer,
+		LeaderElection:     leaderElect,
+		LeaderElectionID:   "aif-operator-leader",
+		MetricsAddr:        metricsBindAddress,
+		HealthAddr:         healthProbeBindAddress,
+		WebhookPort:        parsePort(webhookBindAddress),
+		BlueprintManager:   blueprintManager,
+		HelmEngine:         helmEngine,
+		HelmRenderer:       helmRenderer,
+		FleetBundleEngine:  fleetBundleEngine,
+		FleetGitRepoEngine: fleetGitRepoEngine,
+		OperatorNamespace:  operatorNS,
+		Discovery:          discoveryClient,
+		Logger:             logger,
+		EngineBus:          engineBus,
+		NvidiaDiscovery:    nvidiaDiscovery,
+		NvidiaDeployer:     nvidiaDeployer,
 	})
 	if err != nil {
 		logger.Error("Failed to create manager", "error", err)
