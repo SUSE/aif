@@ -254,6 +254,67 @@
         "enabled": { "type": "boolean", "default": false, "description": "Enable PodDisruptionBudget" },
         "minAvailable": { "type": "integer", "default": 1, "minimum": 0, "description": "Minimum available pods during disruption" }
       }
+    },
+    "aiExtension": {
+      "type": "object",
+      "description": "UI extension auto-install configuration",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "Create an InstallAIExtension CR to deploy the UI extension" },
+        "source": {
+          "type": "object",
+          "description": "Extension source configuration",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "default": "Helm",
+              "enum": ["Helm", "Git"],
+              "description": "Source type: Helm (container-based) or Git"
+            },
+            "helm": {
+              "type": "object",
+              "description": "Helm source configuration (used when source.kind=Helm)",
+              "properties": {
+                "chartURL": { "type": "string", "minLength": 1, "default": "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager", "description": "Helm chart repository URL (oci:// or https://)" },
+                "version": { "type": "string", "minLength": 1, "default": "1.1.0", "description": "Chart version to install" }
+              }
+            },
+            "git": {
+              "type": "object",
+              "description": "Git source configuration (used when source.kind=Git)",
+              "properties": {
+                "repo": { "type": "string", "minLength": 1, "default": "https://github.com/SUSE/suse-ai-lifecycle-manager", "description": "Git repository URL" },
+                "branch": { "type": "string", "minLength": 1, "default": "gh-pages", "description": "Git branch serving extension assets" }
+              }
+            }
+          }
+        },
+        "extension": {
+          "type": "object",
+          "description": "UIPlugin identification for post-install verification",
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "default": "suse-ai-lifecycle-manager", "description": "UIPlugin resource name" },
+            "version": { "type": "string", "minLength": 1, "default": "1.1.0", "description": "Expected extension version" }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "description": "Pre-delete cleanup Job configuration",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "registry": { "type": "string", "default": "registry.suse.com", "description": "Cleanup Job image registry" },
+                "repository": { "type": "string", "default": "suse/kubectl", "description": "Cleanup Job image repository" },
+                "tag": { "type": "string", "default": "latest", "description": "Cleanup Job image tag" },
+                "pullPolicy": { "type": "string", "default": "IfNotPresent", "enum": ["Always", "IfNotPresent", "Never"], "description": "Image pull policy" }
+              }
+            },
+            "resources": { "type": "object", "description": "Container resource requests and limits" },
+            "podSecurityContext": { "type": "object", "description": "Pod-level security context" },
+            "securityContext": { "type": "object", "description": "Container-level security context" }
+          }
+        }
+      }
     }
   }
 }

@@ -87,3 +87,43 @@ affinity: {}
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
+
+# UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
+# Set aiExtension.enabled=false to skip extension installation.
+aiExtension:
+  enabled: true
+  source:
+    kind: Helm          # "Helm" (container-based) or "Git"
+    helm:
+      chartURL: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
+      version: "1.1.0"
+    git:
+      repo: "https://github.com/SUSE/suse-ai-lifecycle-manager"
+      branch: "gh-pages"
+  extension:
+    name: "suse-ai-lifecycle-manager"
+    version: "1.1.0"
+  cleanup:
+    image:
+      registry: registry.suse.com
+      repository: suse/kubectl
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
