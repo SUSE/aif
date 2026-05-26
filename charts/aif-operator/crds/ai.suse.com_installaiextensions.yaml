@@ -151,6 +151,16 @@ spec:
           status:
             description: InstallAIExtensionStatus defines the observed state of InstallAIExtension.
             properties:
+              activeExtensionName:
+                description: |-
+                  ActiveExtensionName is the extension name last successfully reconciled.
+                  Used to detect name changes and clean up orphaned resources.
+                type: string
+              activeSourceKind:
+                description: |-
+                  ActiveSourceKind is the source kind last successfully reconciled.
+                  Used to detect source switches and clean up old source's resources.
+                type: string
               conditions:
                 description: Conditions represent the latest available observations
                   of the InstallAIExtension state.

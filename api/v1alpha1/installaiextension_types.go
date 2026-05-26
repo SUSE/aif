@@ -125,6 +125,16 @@ type InstallAIExtensionStatus struct {
 	// HelmReleaseRevision is the Helm release revision number.
 	// +optional
 	HelmReleaseRevision int32 `json:"helmReleaseRevision,omitempty"`
+
+	// ActiveExtensionName is the extension name last successfully reconciled.
+	// Used to detect name changes and clean up orphaned resources.
+	// +optional
+	ActiveExtensionName string `json:"activeExtensionName,omitempty"`
+
+	// ActiveSourceKind is the source kind last successfully reconciled.
+	// Used to detect source switches and clean up old source's resources.
+	// +optional
+	ActiveSourceKind ExtensionSourceKind `json:"activeSourceKind,omitempty"`
 }
 
 // +kubebuilder:object:root=true

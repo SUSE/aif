@@ -1,31 +1,133 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["endpoint", "plugin"],
   "properties": {
-    "endpoint": {
-      "type": "string",
-      "default": "http://aif-operator.aif.svc.cluster.local:8080/ui",
-      "description": "AIF operator UI endpoint URL"
+    "replicaCount": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 0
     },
-    "plugin": {
+    "global": {
       "type": "object",
-      "required": ["name", "version"],
       "properties": {
-        "name": {
+        "imageRegistry": {
           "type": "string",
-          "default": "ai-factory",
-          "description": "UIPlugin name registered in Rancher"
+          "default": ""
         },
-        "version": {
+        "imagePullSecrets": {
+          "type": "array",
+          "default": []
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "registry": {
           "type": "string",
-          "default": "1.0.0",
-          "description": "Plugin version"
+          "default": "ghcr.io"
         },
-        "noCache": {
-          "type": "boolean",
-          "default": false,
-          "description": "Disable browser caching of plugin assets"
+        "repository": {
+          "type": "string",
+          "default": "suse/aif-ui"
+        },
+        "tag": {
+          "type": "string",
+          "default": ""
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "default": "IfNotPresent"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "default": []
+    },
+    "nameOverride": {
+      "type": "string",
+      "default": ""
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "default": ""
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "default": "ClusterIP"
+        },
+        "port": {
+          "type": "integer",
+          "default": 8080
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "default": {}
+    },
+    "podLabels": {
+      "type": "object",
+      "default": {}
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "containerSecurityContext": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object"
+    },
+    "probes": {
+      "type": "object",
+      "properties": {
+        "liveness": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "rollingUpdate": {
+      "type": "object",
+      "properties": {
+        "maxSurge": {
+          "type": ["string", "integer"],
+          "default": "25%"
+        },
+        "maxUnavailable": {
+          "type": ["string", "integer"],
+          "default": "25%"
         }
       }
     }

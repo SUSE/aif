@@ -15,6 +15,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -282,8 +283,8 @@ entries:
 	if err != nil {
 		t.Fatalf("second reconcile failed: %v", err)
 	}
-	if result.Requeue || result.RequeueAfter > 0 {
-		t.Errorf("expected no requeue for successful install, got Requeue=%v RequeueAfter=%v", result.Requeue, result.RequeueAfter)
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("expected RequeueAfter=%v for health monitoring, got %v", healthCheckInterval, result.RequeueAfter)
 	}
 
 	var updated aifv1.InstallAIExtension
@@ -364,6 +365,14 @@ entries:
 	if !found {
 		t.Errorf("expected Installed event, got: %v", recorder.events)
 	}
+
+	// Verify tracking fields are set
+	if updated.Status.ActiveExtensionName != "ai-factory" {
+		t.Errorf("expected ActiveExtensionName=ai-factory, got %q", updated.Status.ActiveExtensionName)
+	}
+	if updated.Status.ActiveSourceKind != aifv1.ExtensionSourceKindHelm {
+		t.Errorf("expected ActiveSourceKind=Helm, got %q", updated.Status.ActiveSourceKind)
+	}
 }
 
 // TestInstallAIExtensionReconciler_GitSource tests successful Git source installation.
@@ -406,8 +415,8 @@ func TestInstallAIExtensionReconciler_GitSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second reconcile failed: %v", err)
 	}
-	if result.Requeue || result.RequeueAfter > 0 {
-		t.Errorf("expected no requeue for successful git install, got Requeue=%v RequeueAfter=%v", result.Requeue, result.RequeueAfter)
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("expected RequeueAfter=%v for health monitoring, got %v", healthCheckInterval, result.RequeueAfter)
 	}
 
 	var updated aifv1.InstallAIExtension
@@ -483,6 +492,14 @@ func TestInstallAIExtensionReconciler_GitSource(t *testing.T) {
 	}
 	if repoInstalls[0].Name != "ai-factory" {
 		t.Errorf("expected release name ai-factory, got %s", repoInstalls[0].Name)
+	}
+
+	// Verify tracking fields are set
+	if updated.Status.ActiveExtensionName != "ai-factory" {
+		t.Errorf("expected ActiveExtensionName=ai-factory, got %q", updated.Status.ActiveExtensionName)
+	}
+	if updated.Status.ActiveSourceKind != aifv1.ExtensionSourceKindGit {
+		t.Errorf("expected ActiveSourceKind=Git, got %q", updated.Status.ActiveSourceKind)
 	}
 }
 
@@ -595,10 +612,10 @@ func TestInstallAIExtensionReconciler_HelmInstallFailed(t *testing.T) {
 	// First reconcile: adds finalizer
 	_, _ = reconciler.Reconcile(ctx, req)
 
-	// Second reconcile: Helm install fails → returns error for backoff retry
+	// Second reconcile: Helm install fails → no error returned (prevents blocking retry loop)
 	_, err := reconciler.Reconcile(ctx, req)
-	if err == nil {
-		t.Error("expected error from Helm install failure")
+	if err != nil {
+		t.Errorf("expected nil error (no retry on install failure), got: %v", err)
 	}
 
 	// Verify event was recorded (happens before error return)
@@ -653,8 +670,8 @@ func TestInstallAIExtensionReconciler_UIPluginCreatedWithoutMetadata(t *testing.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Requeue || result.RequeueAfter > 0 {
-		t.Errorf("expected no requeue, got Requeue=%v RequeueAfter=%v", result.Requeue, result.RequeueAfter)
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("expected RequeueAfter=%v for health monitoring, got %v", healthCheckInterval, result.RequeueAfter)
 	}
 
 	var updated aifv1.InstallAIExtension
@@ -738,6 +755,104 @@ func TestInstallAIExtensionReconciler_DeploymentNotReady(t *testing.T) {
 	if deployCond.Status != metav1.ConditionFalse {
 		t.Errorf("expected DeploymentReady=False, got %s", deployCond.Status)
 	}
+}
+
+// TestInstallAIExtensionReconciler_DeploymentPodFailure tests that pod-level errors
+// (ImagePullBackOff, CrashLoopBackOff) are surfaced in the DeploymentReady condition message.
+func TestInstallAIExtensionReconciler_DeploymentPodFailure(t *testing.T) {
+	scheme := newTestScheme(t)
+	ext := createInstallAIExtension("test-ext", "")
+
+	deploy := helmDeployment("aif-ui")
+	deploy.Status.ReadyReplicas = 0
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aif-ui-abc123",
+			Namespace: uiPluginNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/instance": "aif-ui",
+			},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "aif-ui",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason:  "ImagePullBackOff",
+							Message: "Back-off pulling image \"ghcr.io/suse/aif-ui:0.1.0\"",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ext, deploy, pod).
+		WithStatusSubresource(&aifv1.InstallAIExtension{}).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	fakeDisc := &fakeDiscovery{shouldFail: false}
+	recorder := &fakeRecorder{}
+
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		HelmEngine: fakeHelm,
+		Discovery:  fakeDisc,
+		Recorder:   recorder,
+	}
+
+	ctx := context.Background()
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "test-ext"}}
+
+	// First reconcile: adds finalizer
+	_, _ = reconciler.Reconcile(ctx, req)
+
+	// Second reconcile: Deployment not ready, pod has ImagePullBackOff
+	result, err := reconciler.Reconcile(ctx, req)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != readinessRequeue {
+		t.Errorf("expected RequeueAfter=%v, got %v", readinessRequeue, result.RequeueAfter)
+	}
+
+	var updated aifv1.InstallAIExtension
+	if err := fakeClient.Get(ctx, req.NamespacedName, &updated); err != nil {
+		t.Fatalf("failed to get updated resource: %v", err)
+	}
+
+	deployCond := findCondition(updated.Status.Conditions, conditions.TypeDeploymentReady)
+	if deployCond == nil {
+		t.Fatal("DeploymentReady condition not set")
+	}
+	if deployCond.Status != metav1.ConditionFalse {
+		t.Errorf("expected DeploymentReady=False, got %s", deployCond.Status)
+	}
+	if deployCond.Message == "Deployment not yet ready" {
+		t.Error("expected enriched message with pod failure detail, got generic message")
+	}
+	if !containsSubstring(deployCond.Message, "ImagePullBackOff") {
+		t.Errorf("expected message to contain ImagePullBackOff, got: %s", deployCond.Message)
+	}
+}
+
+func containsSubstring(s, substr string) bool {
+	return len(s) >= len(substr) && searchSubstring(s, substr)
+}
+
+func searchSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 // TestInstallAIExtensionReconciler_Deletion tests finalizer cleanup.
@@ -977,67 +1092,42 @@ func TestEnsureUIPluginHelm_Update(t *testing.T) {
 
 // TestCleanup tests the cleanup helper method.
 func TestCleanup(t *testing.T) {
-	tests := []struct {
-		name         string
-		uninstallErr error
-		expectError  bool
-	}{
-		{
-			name:         "cleanup succeeds",
-			uninstallErr: nil,
-			expectError:  false,
-		},
-		{
-			name:         "helm uninstall fails",
-			uninstallErr: fmt.Errorf("release not found"),
-			expectError:  true,
-		},
+	scheme := newTestScheme(t)
+	ext := createInstallAIExtension("test-ext", "")
+	ext.Status.HelmReleaseName = "aif-ui"
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		HelmEngine: fakeHelm,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scheme := newTestScheme(t)
-			ext := createInstallAIExtension("test-ext", "")
-			ext.Status.HelmReleaseName = "aif-ui"
+	err := reconciler.cleanup(context.Background(), ext)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
 
-			fakeClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				Build()
+	// Verify Helm uninstalls: one for HelmReleaseName, one for extension name
+	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
+	if len(uninstalls) != 2 {
+		t.Fatalf("expected 2 Uninstall calls, got %d", len(uninstalls))
+	}
 
-			fakeHelm := helm.NewFake()
-			if tt.uninstallErr != nil {
-				fakeHelm.UninstallResult = func(string, string) error {
-					return tt.uninstallErr
-				}
-			}
+	// First call: HelmReleaseName
+	if uninstalls[0].Name != "aif-ui" {
+		t.Errorf("expected first uninstall of aif-ui, got %s", uninstalls[0].Name)
+	}
+	if uninstalls[0].Namespace != uiPluginNamespace {
+		t.Errorf("expected namespace %s, got %s", uiPluginNamespace, uninstalls[0].Namespace)
+	}
 
-			reconciler := &InstallAIExtensionReconciler{
-				Client:     fakeClient,
-				HelmEngine: fakeHelm,
-			}
-
-			err := reconciler.cleanup(context.Background(), ext)
-			if tt.expectError && err == nil {
-				t.Error("expected error, got nil")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("expected no error, got %v", err)
-			}
-
-			// Verify Helm uninstall was called with correct args
-			uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
-			if len(uninstalls) != 1 {
-				t.Errorf("expected 1 Uninstall call, got %d", len(uninstalls))
-			}
-			if len(uninstalls) > 0 {
-				if uninstalls[0].Namespace != uiPluginNamespace {
-					t.Errorf("expected namespace %s, got %s", uiPluginNamespace, uninstalls[0].Namespace)
-				}
-				if uninstalls[0].Name != "aif-ui" {
-					t.Errorf("expected release name aif-ui, got %s", uninstalls[0].Name)
-				}
-			}
-		})
+	// Second call: extension name (Git source UIPlugin release)
+	if uninstalls[1].Name != "ai-factory" {
+		t.Errorf("expected second uninstall of ai-factory, got %s", uninstalls[1].Name)
 	}
 }
 
@@ -1243,8 +1333,8 @@ func TestReconcileHelmSource_WithValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconcile failed: %v", err)
 	}
-	if result.RequeueAfter > 0 {
-		t.Errorf("unexpected requeue: %v", result.RequeueAfter)
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("expected requeue after %v, got %v", healthCheckInterval, result.RequeueAfter)
 	}
 
 	// Verify values were passed as Overrides.Workload
@@ -1377,6 +1467,220 @@ func TestGitRepoToRawURL(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.expected, got)
 			}
 		})
+	}
+}
+
+// TestCleanupStaleResources_NameChange verifies that changing extension.name
+// cleans up old ClusterRepo and UIPlugin.
+func TestCleanupStaleResources_NameChange(t *testing.T) {
+	scheme := newTestScheme(t)
+	ext := createInstallAIExtension("test-ext", "")
+
+	// Simulate previous reconcile with old name
+	ext.Status.ActiveExtensionName = "old-extension"
+	ext.Status.ActiveSourceKind = aifv1.ExtensionSourceKindHelm
+	ext.Status.HelmReleaseName = "old-chart"
+
+	// Create old ClusterRepo and UIPlugin that should be cleaned up
+	oldRepo := &unstructured.Unstructured{}
+	oldRepo.SetGroupVersionKind(clusterRepoGVK())
+	oldRepo.SetName(clusterRepoName("old-extension"))
+
+	oldPlugin := &unstructured.Unstructured{}
+	oldPlugin.SetGroupVersionKind(uiPluginGVK())
+	oldPlugin.SetName("old-extension")
+	oldPlugin.SetNamespace(uiPluginNamespace)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ext, oldRepo, oldPlugin).
+		WithStatusSubresource(&aifv1.InstallAIExtension{}).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		HelmEngine: fakeHelm,
+	}
+
+	ctx := context.Background()
+	reconciler.cleanupStaleResources(ctx, ext)
+
+	// Old ClusterRepo should be deleted
+	var repo unstructured.Unstructured
+	repo.SetGroupVersionKind(clusterRepoGVK())
+	err := fakeClient.Get(ctx, types.NamespacedName{Name: clusterRepoName("old-extension")}, &repo)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("expected old ClusterRepo to be deleted, got err: %v", err)
+	}
+
+	// Old UIPlugin should be deleted
+	var plugin unstructured.Unstructured
+	plugin.SetGroupVersionKind(uiPluginGVK())
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "old-extension", Namespace: uiPluginNamespace}, &plugin)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("expected old UIPlugin to be deleted, got err: %v", err)
+	}
+
+	// Old Helm release should be uninstalled
+	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
+	if len(uninstalls) != 1 {
+		t.Fatalf("expected 1 Uninstall call, got %d", len(uninstalls))
+	}
+	if uninstalls[0].Name != "old-chart" {
+		t.Errorf("expected uninstall of old-chart, got %s", uninstalls[0].Name)
+	}
+
+	// HelmReleaseName should be cleared
+	if ext.Status.HelmReleaseName != "" {
+		t.Errorf("expected HelmReleaseName cleared, got %q", ext.Status.HelmReleaseName)
+	}
+}
+
+// TestCleanupStaleResources_HelmToGit verifies that switching from Helm to Git
+// cleans up the Helm release and removes stale conditions.
+func TestCleanupStaleResources_HelmToGit(t *testing.T) {
+	scheme := newTestScheme(t)
+	ext := createGitInstallAIExtension("test-ext")
+
+	// Simulate previous Helm reconcile
+	ext.Status.ActiveExtensionName = "ai-factory"
+	ext.Status.ActiveSourceKind = aifv1.ExtensionSourceKindHelm
+	ext.Status.HelmReleaseName = "aif-ui"
+	ext.Status.HelmReleaseRevision = 3
+	ext.Status.Conditions = []metav1.Condition{
+		{Type: conditions.TypeHelmInstalled, Status: metav1.ConditionTrue, Reason: conditions.ReasonInstalled},
+		{Type: conditions.TypeDeploymentReady, Status: metav1.ConditionTrue, Reason: conditions.ReasonDeploymentAvailable},
+		{Type: conditions.TypeServiceReady, Status: metav1.ConditionTrue, Reason: conditions.ReasonServiceCreated},
+		{Type: conditions.TypeClusterRepoReady, Status: metav1.ConditionTrue, Reason: conditions.ReasonClusterRepoCreated},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ext).
+		WithStatusSubresource(&aifv1.InstallAIExtension{}).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		HelmEngine: fakeHelm,
+	}
+
+	ctx := context.Background()
+	reconciler.cleanupStaleResources(ctx, ext)
+
+	// Helm release should be uninstalled
+	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
+	if len(uninstalls) != 1 {
+		t.Fatalf("expected 1 Uninstall call, got %d", len(uninstalls))
+	}
+	if uninstalls[0].Name != "aif-ui" {
+		t.Errorf("expected uninstall of aif-ui, got %s", uninstalls[0].Name)
+	}
+
+	// HelmReleaseName and revision should be cleared
+	if ext.Status.HelmReleaseName != "" {
+		t.Errorf("expected HelmReleaseName cleared, got %q", ext.Status.HelmReleaseName)
+	}
+	if ext.Status.HelmReleaseRevision != 0 {
+		t.Errorf("expected HelmReleaseRevision cleared, got %d", ext.Status.HelmReleaseRevision)
+	}
+
+	// Stale Helm-specific conditions should be removed
+	for _, condType := range []string{
+		conditions.TypeHelmInstalled,
+		conditions.TypeDeploymentReady,
+		conditions.TypeServiceReady,
+	} {
+		if cond := findCondition(ext.Status.Conditions, condType); cond != nil {
+			t.Errorf("expected %s condition to be removed after Helm→Git switch, but it exists", condType)
+		}
+	}
+
+	// ClusterRepoReady should survive (Git flow also sets it)
+	if cond := findCondition(ext.Status.Conditions, conditions.TypeClusterRepoReady); cond == nil {
+		t.Error("expected ClusterRepoReady condition to survive source switch")
+	}
+}
+
+// TestCleanupStaleResources_GitToHelm verifies that switching from Git to Helm
+// cleans up the UIPlugin Helm release from the Git flow.
+func TestCleanupStaleResources_GitToHelm(t *testing.T) {
+	scheme := newTestScheme(t)
+	ext := createInstallAIExtension("test-ext", "")
+
+	// Simulate previous Git reconcile
+	ext.Status.ActiveExtensionName = "ai-factory"
+	ext.Status.ActiveSourceKind = aifv1.ExtensionSourceKindGit
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ext).
+		WithStatusSubresource(&aifv1.InstallAIExtension{}).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		HelmEngine: fakeHelm,
+	}
+
+	ctx := context.Background()
+	reconciler.cleanupStaleResources(ctx, ext)
+
+	// UIPlugin Helm release should be uninstalled
+	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
+	if len(uninstalls) != 1 {
+		t.Fatalf("expected 1 Uninstall call for Git UIPlugin release, got %d", len(uninstalls))
+	}
+	if uninstalls[0].Name != "ai-factory" {
+		t.Errorf("expected uninstall of ai-factory, got %s", uninstalls[0].Name)
+	}
+}
+
+// TestCleanup_BothNames verifies that deletion cleans up resources under
+// both the current and previously-active extension names.
+func TestCleanup_BothNames(t *testing.T) {
+	scheme := newTestScheme(t)
+	ext := createInstallAIExtension("test-ext", "")
+	ext.Status.ActiveExtensionName = "old-extension"
+	ext.Status.HelmReleaseName = "aif-ui"
+
+	// Create resources for both old and new names
+	oldRepo := &unstructured.Unstructured{}
+	oldRepo.SetGroupVersionKind(clusterRepoGVK())
+	oldRepo.SetName(clusterRepoName("old-extension"))
+
+	newRepo := &unstructured.Unstructured{}
+	newRepo.SetGroupVersionKind(clusterRepoGVK())
+	newRepo.SetName(clusterRepoName("ai-factory"))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ext, oldRepo, newRepo).
+		WithStatusSubresource(&aifv1.InstallAIExtension{}).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		HelmEngine: fakeHelm,
+	}
+
+	ctx := context.Background()
+	err := reconciler.cleanup(ctx, ext)
+	if err != nil {
+		t.Fatalf("cleanup failed: %v", err)
+	}
+
+	// Both ClusterRepos should be deleted
+	for _, name := range []string{"old-extension-charts", "ai-factory-charts"} {
+		var repo unstructured.Unstructured
+		repo.SetGroupVersionKind(clusterRepoGVK())
+		if getErr := fakeClient.Get(ctx, types.NamespacedName{Name: name}, &repo); !apierrors.IsNotFound(getErr) {
+			t.Errorf("expected ClusterRepo %s to be deleted", name)
+		}
 	}
 }
 

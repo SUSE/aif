@@ -1,6 +1,6 @@
 apiVersion: v2
 name: aif-ui
-description: SUSE AI Factory UI plugin for Rancher
+description: SUSE AI Factory UI extension for Rancher Dashboard
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
@@ -8,9 +8,10 @@ keywords:
   - ai
   - rancher
   - ui-plugin
-home: https://github.com/suse/aif
+  - extension
+home: https://github.com/SUSE/aif
 sources:
-  - https://github.com/suse/aif
+  - https://github.com/SUSE/aif
 maintainers:
   - name: SUSE AI Factory Team
-    email: aif-maintainers@suse.com
+    url: https://www.suse.com/
