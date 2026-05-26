@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live test-git verify-git-mock verify-git-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -300,6 +300,22 @@ verify-fleet-mock:
 verify-fleet-live:
 	@echo "Verifying FleetBundleEngine against a real Fleet manager (skips without env vars)..."
 	go test -count=1 -tags=live -v -run TestLive_FleetBundle ./pkg/fleet/...
+
+# pkg/git verification trio (P4-3). The git engine wraps go-git via memfs +
+# memory.NewStorage; the live target exercises a real remote round-trip and
+# is safe to run from CI without credentials (skips cleanly).
+
+test-git:
+	@echo "Running pkg/git unit tests..."
+	go test -count=1 -v ./pkg/git/...
+
+verify-git-mock:
+	@echo "Demonstrating git.Engine constructor against in-process stubs..."
+	go test -count=1 -v -run Example ./pkg/git/
+
+verify-git-live:
+	@echo "Verifying git.Engine against a real remote (skips without env vars)..."
+	go test -count=1 -tags=live -v -run TestLive_ ./pkg/git/...
 
 # --- internal/api (Apps REST handlers) validation target (P2-4) -------------
 # Runs the httptest-driven handler tests for /api/v1/apps*. No live target —
