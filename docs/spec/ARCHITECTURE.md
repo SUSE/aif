@@ -669,6 +669,8 @@ type BundleTestRef struct {
 
 **Note:** `kind` here is a source-provenance discriminator, not a Kubernetes `TypeMeta.Kind`. `App` and `Blueprint` correspond to CRDs of the same name. `BundleTest` has no corresponding CRD — it denotes a test deployment created from a Bundle via `/bundles/{ns}/{name}/test-deploy`.
 
+> **Follow-up (post-merge P4-3):** The `BundleTest` source kind was removed on the P4-3 branch. The current `WorkloadSource.Kind` enum is `App|Blueprint`; the `BundleTestRef` Go struct, the `BundleTest` pointer field on `WorkloadSource`, and the `/bundles/{ns}/{name}/test-deploy` endpoint were all deleted. The struct block, Note, and enum comment above describe the pre-P4-3 shape; consult `api/v1alpha1/workload_types.go` for the current definition.
+
 The `source.kind` discriminator drives the operate experience: only `Blueprint`-sourced Workloads expose an "Upgrade" action (re-deploy against a newer Blueprint version of the same lineage).
 
 #### Status Fields
@@ -1095,6 +1097,8 @@ When fallback fires, the client emits `slog.Warn("app collection api unreachable
 | `PATCH` | `/api/v1/bundles/{ns}/{name}` | `BundleSpec (subset)` | `Bundle` | Edit Draft (rejected if `phase != Draft`) |
 | `DELETE` | `/api/v1/bundles/{ns}/{name}` | — | 204 | Delete Bundle |
 | `POST` | `/api/v1/bundles/{ns}/{name}/test-deploy` | `{targetClusters, deployStrategy}` | `Workload` + 201 | Create a `BundleTest`-sourced Workload |
+<!-- Follow-up (post-merge P4-3): the /test-deploy row above was removed on the P4-3 branch alongside the BundleTest source kind. The row is preserved here per the P0-0..P9-5 append-only constraint. -->
+
 | `POST` | `/api/v1/bundles/{ns}/{name}/preflight` | — | `{ok, missingCharts: [{component, ref}], missingImages: [{component, image}], unresolvableComponents: [{component, reason}]}` | Verifies every component's chart and image is currently resolvable in the configured registry (after image-rewrite pass — see §6.6 layer 5). Pre-publish health check used by the Bundle UI banner and the Publisher's review screen. **Informational only — does NOT block Submit or Approve.** Always returns `200 OK`. Result is cached for 60s per `(ns, name, generation)`; cache invalidates on Bundle edit. Requires `get bundles` (any bundle viewer can run it). |
 | `POST` | `/api/v1/bundles/{ns}/{name}/submit` | `{proposedVersion, changeDescription?}` | `Bundle` | Draft → Submitted (or ChangesRequested → Submitted) |
 | `POST` | `/api/v1/bundles/{ns}/{name}/withdraw` | — | `Bundle` | Submitted/ChangesRequested → Draft |
@@ -1809,9 +1813,15 @@ The trade-off: uninstall has to remove all per-component releases atomically (th
 
 This pattern applies to Workloads sourced from `Blueprint` and `BundleTest`. For `App` source (single chart), there's exactly one release named `{workloadID}` (no component suffix needed).
 
+> **Follow-up (post-merge P4-3):** `BundleTest` was removed from the source-kind enum on the P4-3 branch. The per-component release pattern now applies to `Blueprint`-sourced Workloads only.
+
 ### 6.7 Fleet Manifest Layout
 
 When `Workload.spec.deployStrategy == "gitops"`, the operator (via `pkg/fleet/gitrepo_engine.go` and `pkg/git/`) writes a directory tree to `--git-dir`, pushes it, and creates `fleet.cattle.io/v1alpha1 GitRepo` CR(s) on the management cluster pointing at that repo. The layout below is the contract; Fleet expects it exactly.
+
+> **Follow-up (post-merge P4-3):** Two shifts on the P4-3 branch:
+> 1. **No on-disk staging.** The `pkg/git` engine works entirely in-memory (`memfs` + `memory.NewStorage` from go-billy/go-git). The `--git-dir` CLI flag was dropped from `cmd/operator/main.go`; the tree below is now constructed in-memory and pushed directly to `Settings.spec.fleet.repoURL` without ever touching the operator's local filesystem. References to `{git-dir}/` in this section (and §13.3) should be read as "the in-memory tree root", not a filesystem path.
+> 2. **No `BundleTest` source-kind label value.** The `ai.suse.com/source-kind` label in `fleet.yaml` (below) can only take values `App|Blueprint` post-P4-3; the `BundleTest` value is no longer emitted.
 
 **Multi-cluster workloads** (`targetClusters` with >1 entry): The operator generates one directory per cluster ID (`gitops/{clusterID}/{workloadID}/`) and creates **one GitRepo CR per cluster**, each with `spec.paths = ["gitops/{clusterID}/{workloadID}"]` and `spec.targets = [{clusterName: clusterID}]` (single-cluster targeting). This isolates manifests per cluster and avoids Fleet's multi-cluster targeting complexity (which requires identical manifests across all targets — not suitable for workloads that may have cluster-specific value overrides in future phases). For a Workload targeting 3 clusters, the operator creates 3 GitRepo CRs (one per cluster) on the management cluster.
 
@@ -2194,6 +2204,8 @@ bp.Status.DeploymentCount = int32(count)
 - Status phase logic: aggregate component release states; `Running` only if all components are healthy
 - Returns `ctrl.Result{RequeueAfter: 30s}` for in-progress deployments
 - Records events: `Deploying`, `Running`, `Degraded`, `RecoveryStarted`, `Failed`
+
+> **Follow-up (post-merge P4-3):** The `kind: BundleTest` arm in the bulleted resolver above was deleted on the P4-3 branch. The deployer now resolves only `App` and `Blueprint`; `BundleTestGenerationDrift` event emission was removed alongside it.
 
 **SettingsReconciler**
 - Watch: `Settings` CR
@@ -2997,6 +3009,7 @@ Controllers record events using `record.EventRecorder`:
   - `pkg/publish` — every transition (Submit, Withdraw, Approve, RequestChanges) including invalid-state cases
   - `pkg/blueprint` — version listing, importer logic, immutability path
   - `pkg/workload` — source resolution (App/Blueprint/BundleTest)
+    > **Follow-up (post-merge P4-3):** Source resolution now covers `App` and `Blueprint` only — the `BundleTest` arm and its dedicated unit tests were deleted on the P4-3 branch.
   - `pkg/helm` — value merge precedence
   - `pkg/nvidia` — NIM sizing formulas
 
@@ -3438,6 +3451,8 @@ The fallback path produces a Degraded App per §5 with `source: "suse-oci-fallba
                 └── ...
 ```
 
+> **Follow-up (post-merge P4-3):** `{git-dir}/` here is the in-memory tree root (go-billy `memfs`), not a filesystem path — the `--git-dir` flag was dropped on the P4-3 branch. See §6.7's follow-up note for the full architectural shift.
+
 `fleet.yaml`:
 ```yaml
 namespace: aif-workloads
@@ -3599,6 +3614,8 @@ Each publish action creates one new Blueprint CR. Over a multi-year deployment, 
 | **Settings** | Singleton CRD per cluster holding catalog credentials, sync intervals, Fleet config. |
 | **InstallAIExtension** | One-shot CRD that bootstraps the UI Helm chart and registers the UIPlugin. |
 | **Source (of a Workload)** | Provenance metadata: `kind` ∈ {`App`, `Blueprint`, `BundleTest`} + a typed reference. |
+<!-- Follow-up (post-merge P4-3): the BundleTest member of the kind enum was removed on the P4-3 branch. Current enum is {App, Blueprint}. Row preserved per the P0-0..P9-5 append-only constraint. -->
+
 | **Origin (of a Blueprint)** | The user-facing UI label for the Blueprint card column reflecting `Blueprint.spec.source.type`. Values: `Wraps vendor chart` (`source.type=WrapsVendorChart`) or `Published from Bundle` (`source.type=Published`). The internal Go field name is `source`; "Origin" is the UI presentation. |
 | **Publish action** | The act of approving a Submitted Bundle, which mints a new Blueprint version and resets the Bundle to Draft. |
 | **Vendor-chart wrapping** | The act of AIF auto-creating a single-component AIF Blueprint that references a vendor Reference Blueprint chart. Triggered by detection of the `ai.suse.com/role: reference-blueprint` annotation during catalog sync. See §13.1 and §4.3 (Version Mapping for Wrapped Blueprints). |

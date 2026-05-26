@@ -415,6 +415,7 @@ Between P0-0 and P9-5, all edits are append-only. P9-5 is the only story allowed
 3. **Mirror path convention:** NVIDIA charts at `oci://registry.suse.com/ai/charts/nvidia/{nim-llm|nim-vlm}:{version}`, images at `registry.suse.com/ai/containers/nvidia/{model}:{version}`.
 4. **Blueprint immutability:** Spec fields are immutable per version. Status fields (Active/Deprecated/Withdrawn) are mutable. Webhook enforces this.
 5. **Workload provenance:** Every Workload records `spec.source` (App|Blueprint|BundleTest). Operate actions check `source.kind`.
+   > **Follow-up (post-merge P4-3):** The `BundleTest` source kind was removed on the P4-3 branch. The current `WorkloadSource.Kind` enum is `App|Blueprint`; the `BundleTestRef` struct and the `/bundles/{ns}/{name}/test-deploy` endpoint were deleted alongside it. See `api/v1alpha1/workload_types.go` for the enforced enum.
 6. **Air-gap parameterization:** No hardcoded registry hostnames. Use `Settings.spec.registryEndpoints` for overrides. Image rewrite layer (§6.6 layer 5) handles prefix substitution.
 7. **Publish-by-approval governance:** Bundle → Submitted → Approved → mints Blueprint version. Blueprint Publisher role via RBAC (`aif-blueprint-publisher` ClusterRole).
 8. **Single pull-secret pattern:** Workload pods use one docker-config Secret (`suse-registry-creds`) reconciled by the operator into each workload namespace.

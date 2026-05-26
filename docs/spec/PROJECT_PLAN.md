@@ -13,6 +13,8 @@ These constraints flow through every story; violating them creates rework. Each 
 2. **Publish-by-approval governance.** A Bundle becomes a Blueprint via `POST /api/v1/bundles/{ns}/{name}/approve` invoked by a user holding the `aif-blueprint-publisher` ClusterRole. Approval mints a NEW Blueprint CR (immutable per `(name, version)`). The Bundle returns to `Draft`.
 3. **Blueprint immutability.** A `ValidatingAdmissionWebhook` (`aif-blueprint-immutability`) rejects any UPDATE to `Blueprint.spec`. Status mutations (Active / Deprecated / Withdrawn) are allowed.
 4. **Workload provenance.** Every Workload has `spec.source` = `{kind: App|Blueprint|BundleTest, ...}`. The deployer resolves source → component list. Operate-page actions (Upgrade) check `source.kind`.
+
+   > **Follow-up (post-merge P4-3):** The P4-3 branch removed `BundleTest` from the source-kind enum (CRD enum is now `App|Blueprint`); the `BundleTestRef` Go struct, the `/bundles/{ns}/{name}/test-deploy` REST endpoint, and the deployer's BundleTest arm were all deleted. The enum above describes the pre-P4-3 shape; consult `api/v1alpha1/workload_types.go` for the current definition.
 5. **No internal OCI registry.** AIF never hosts, proxies, or mirrors images. There is no `pkg/registry/`, no `pkg/mirror/`, no `:5000` port, no `aif_registry_*` metrics, no `/api/v1/clients`, no `/api/v1/registry/*`, no `/api/v1/sync` (image-mirror direction).
 6. **No direct NVIDIA NGC access at runtime.** AIF never reaches `nvcr.io`, `helm.ngc.nvidia.com`, or `integrate.api.nvidia.com`. NIM containers and Helm charts are mirrored into SUSE Registry by an **external offline process** (run by SUSE / customer ops, NOT implemented by any story in this plan). AIF's only NVIDIA-asset source is SUSE Registry. Therefore: no NGC API client, no NGC API key in Settings, no NGC sync endpoint.
 7. **Mirror path convention (contract with the offline process):**
@@ -377,6 +379,8 @@ helm template aif-ui charts/aif-ui | grep 'ui-extensions-version: ">= 3.0.0 < 4.
 **Acceptance Criteria:**
 - [ ] `cmd/operator/main.go` is ≤250 lines (target: ~30 lines flag parsing, ~40 manager init, ~50 server startup, ~30 shutdown, ~100 imports/wiring) — aspirational but enforceable via CI line-count guard
 - [ ] Parses CLI flags: `--addr` (8080), `--health-probe-bind-address` (8081), `--metrics-bind-address` (8082), `--webhook-bind-address` (9443), `--charts-dir`, `--git-dir`, `--leader-elect`, `--log-level`, `--log-format`, `--allowed-origin`, `--catalog-refresh`
+
+  > **Follow-up (post-merge P4-3):** `--git-dir` is no longer parsed. The P4-3 Fleet GitRepo engine uses an in-memory go-git working tree (`memfs` + `memory.NewStorage`) and pushes directly to `Settings.spec.fleet.repoURL`; there is no on-disk staging directory. The flag was dropped from `cmd/operator/main.go`.
 - [ ] NO `--registry-addr`, NO `--nvidia-api-key`, NO `NVIDIA_API_KEY` env read (per Definition of Done air-gap parameterization guard)
 - [ ] **slog setup**: `slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: ...})` for `--log-format=json` (production); `slog.NewTextHandler` for `--log-format=text` (development). Level from `--log-level`. Set as default via `slog.SetDefault(...)`.
 - [ ] **Manager structs created** (in this wiring order — empty/stub OK; real impls in later phases):
@@ -1640,6 +1644,8 @@ go test -race ./pkg/helm/ -v
   - `App` → 1 component (the app's chart)
   - `Blueprint` → fetch Blueprint by `(name, version)`, copy `components[]`
   - `BundleTest` → fetch Bundle by `(ns, name)` at the recorded `generation`, copy `components[]`
+
+  > **Follow-up (post-merge P4-3):** The `BundleTest` arm above was deleted on the P4-3 branch. The deployer's `resolveSource` now handles only `App` and `Blueprint`; `Workload.spec.source.bundleTest` is no longer a valid field.
 - [ ] For each component: Helm install with merged values (precedence per §6.6)
 - [ ] Updates `status.componentReleases[]` with per-component status
 - [ ] Sets `status.phase` based on aggregate: `Running` if all healthy, `Deploying` if any in progress, `Degraded`/`Failed` per state machine
@@ -1901,6 +1907,8 @@ grep 'nvcr.io' pkg/nvidia/nim.go && echo FAIL || echo PASS
 - [ ] Constructs `Workload.spec.source` correctly per endpoint:
   - Blueprint deploy → `source.kind=Blueprint, source.blueprint={name,version}`
   - Bundle test deploy → `source.kind=BundleTest, source.bundleTest={ns,name,generation}`
+
+  > **Follow-up (post-merge P4-3):** The Bundle test-deploy bullet (and the corresponding `/bundles/{ns}/{name}/test-deploy` endpoint) were removed on the P4-3 branch. Only the Blueprint deploy endpoint remains; this acceptance criterion's second sub-bullet is obsolete.
 - [ ] Workload created in user-specified namespace (or `aif-workloads` default)
 - [ ] HTTP integration tests for both
 
@@ -3260,6 +3268,7 @@ go test -race ./internal/api/ -run TestPublisherEndpointsEnforcement -v
   - `BundleReconciler`: validation pass / invalid spec / finalizer add+remove / self-heal scenario from §6.5.2
   - `BlueprintReconciler`: validation pass / spec-mutation defense (logs warn, doesn't reject — webhook does) / deploymentCount recompute on Workload create+delete / Workload status update does NOT trigger reconcile (predicate test from P1-2)
   - `WorkloadReconciler`: deploy paths for App / Blueprint / BundleTest source / RecomputePhase 8-row table from P5-1 / P5-2 5 scenarios
+    > **Follow-up (post-merge P4-3):** Drop the `BundleTest source` scenario — the kind was removed on the P4-3 branch.
   - `SettingsReconciler`: 5 scenarios from P5-5 + 4 fail-closed scenarios from P7-2
   - `InstallAIExtensionReconciler`: install path / UIPlugin CRD missing path
 - [ ] All tests `-race` clean
