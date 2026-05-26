@@ -209,7 +209,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 	var s aiplatformv1alpha1.Settings
 	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err == nil {
 		appHost := defaultAppCollectionHost
-		if s.Spec.RegistryEndpoints.ApplicationCollection != "" {
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
 			appHost = s.Spec.RegistryEndpoints.ApplicationCollection
 		}
 		if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
@@ -221,7 +221,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 		}
 
 		suseHost := defaultSUSERegistryHost
-		if s.Spec.RegistryEndpoints.SUSERegistry != "" {
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
 			suseHost = s.Spec.RegistryEndpoints.SUSERegistry
 		}
 		if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {

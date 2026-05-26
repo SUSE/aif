@@ -79,6 +79,38 @@ async function ensureFleetHelmAuthSecret(
   }
 }
 
+async function upsertFleetHelmOp(store: any, fleetNamespace: string, name: string, spec: Record<string, any>): Promise<void> {
+  const baseUrl = `/k8s/clusters/local/apis/fleet.cattle.io/v1alpha1/namespaces/${fleetNamespace}/helmops`;
+  const body = {
+    apiVersion: 'fleet.cattle.io/v1alpha1',
+    kind:       'HelmOp',
+    metadata:   { name, namespace: fleetNamespace },
+    spec,
+  };
+
+  try {
+    const res = await store.dispatch('rancher/request', {
+      url:     `${baseUrl}/${name}`,
+      timeout: 10000,
+    });
+    const existing = res?.data || res;
+
+    await store.dispatch('rancher/request', {
+      url:    `${baseUrl}/${name}`,
+      method: 'PUT',
+      data:   { ...body, metadata: { ...body.metadata, resourceVersion: existing?.metadata?.resourceVersion } },
+      timeout: 20000,
+    });
+  } catch {
+    await store.dispatch('rancher/request', {
+      url:    baseUrl,
+      method: 'POST',
+      data:   body,
+      timeout: 20000,
+    });
+  }
+}
+
 // buildFleetBundleYAML produces the Fleet HelmOp manifest as a YAML string (used by GitOps path).
 export function buildFleetBundleYAML(params: {
   bundleName:       string;
@@ -191,26 +223,20 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     baseSpec.helmSecretName = secretRef.name;
   }
 
-  const postHelmOp = (fleetNamespace: string, targets: any[]) =>
-    store.dispatch('management/request', {
-      url:    '/v1/fleet.cattle.io.helmops',
-      method: 'POST',
-      data:   {
-        apiVersion: 'fleet.cattle.io/v1alpha1',
-        kind:       'HelmOp',
-        metadata:   { name: params.bundleName, namespace: fleetNamespace },
-        spec:       { ...baseSpec, targets },
-      },
-    });
-
   if (localClusters.length > 0) {
-    await postHelmOp('fleet-local', [{ clusterName: 'local' }]);
+    await upsertFleetHelmOp(store, 'fleet-local', params.bundleName, {
+      ...baseSpec,
+      targets: [{ clusterName: 'local' }],
+    });
   }
 
   if (downstreamClusters.length > 0) {
-    await postHelmOp('fleet-default', downstreamClusters.map(id => ({
-      clusterSelector: { matchLabels: { 'management.cattle.io/cluster-name': id } },
-    })));
+    await upsertFleetHelmOp(store, 'fleet-default', params.bundleName, {
+      ...baseSpec,
+      targets: downstreamClusters.map(id => ({
+        clusterSelector: { matchLabels: { 'management.cattle.io/cluster-name': id } },
+      })),
+    });
   }
 
   return params.bundleName;

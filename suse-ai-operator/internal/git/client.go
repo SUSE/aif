@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"time"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/memfs"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -57,6 +59,11 @@ func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string)
 	if err != nil {
 		return "", err
 	}
+	if unchanged, err := fileContentMatches(wt.Filesystem, path, content); err != nil {
+		return "", err
+	} else if unchanged {
+		return "", nil
+	}
 	// Create intermediate directories if needed.
 	dir := filepath.Dir(path)
 	if dir != "." {
@@ -76,6 +83,21 @@ func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string)
 		return "", fmt.Errorf("git add: %w", err)
 	}
 	return c.commitAndPush(ctx, repo, wt, commitMsg)
+}
+
+func fileContentMatches(fs billy.Filesystem, path, expected string) (bool, error) {
+	f, err := fs.Open(path)
+	if err != nil {
+		return false, nil
+	}
+	defer f.Close()
+
+	current, err := io.ReadAll(f)
+	if err != nil {
+		return false, fmt.Errorf("read existing file: %w", err)
+	}
+
+	return string(current) == expected, nil
 }
 
 // DeleteFile clones the repo, removes path if it exists, commits, and pushes.

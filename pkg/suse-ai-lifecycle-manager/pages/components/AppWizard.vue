@@ -76,6 +76,7 @@ const namespaceOptions = ref<{label: string, value: string}[]>([]);
 // Multi-cluster install progress state
 const showProgressModal = ref(false);
 const installProgress = ref<ClusterInstallProgress[]>([]);
+const managedFleetBundleNames = ref<string[]>([]);
 
 const PKEY = `${props.mode}.${props.slug}`;
 const TTL = 1000 * 60 * 60;
@@ -367,6 +368,12 @@ async function loadAIWorkloadDetails() {
     if (workload.spec.deployStrategy) {
       form.value.deployType = workload.spec.deployStrategy;
     }
+
+    if (workload.spec.targetClusters?.length) {
+      form.value.clusters = [...workload.spec.targetClusters];
+    }
+
+    managedFleetBundleNames.value = [...(workload.spec.fleetBundleNames || [])];
 
     // For non-Helm strategies, the live Helm release isn't accessible — use stored component values.
     if (form.value.deployType !== 'Helm') {
@@ -664,7 +671,13 @@ async function submit() {
         await performGitOpsInstall();
       }
     } else {
-      await performUpgrade();
+      if (form.value.deployType === 'Helm') {
+        await performUpgrade();
+      } else if (form.value.deployType === 'FleetBundle') {
+        await performFleetBundleUpgrade();
+      } else {
+        await performGitOpsUpgrade();
+      }
     }
   } catch (e: any) {
     error.value = e?.message || 'Operation failed';
@@ -672,10 +685,10 @@ async function submit() {
   }
 }
 
-function navigateToApps() {
+function navigateAfterSuccess() {
   persistClear(PKEY);
   router?.push({
-    name:   `c-cluster-suseai-apps`,
+    name:   isManageMode.value ? `c-cluster-suseai-workloads` : `c-cluster-suseai-apps`,
     params: { cluster: route?.params?.cluster },
   });
 }
@@ -979,7 +992,7 @@ function updateClusterProgress(clusterId: string, updates: Partial<ClusterInstal
 // Progress modal event handlers
 function onProgressModalDone() {
   showProgressModal.value = false;
-  navigateToApps();
+  navigateAfterSuccess();
 }
 
 function onProgressModalCancel() {
@@ -1040,7 +1053,7 @@ async function onProgressModalRetryFailed() {
 
 function onProgressModalContinueAnyway() {
   showProgressModal.value = false;
-  navigateToApps();
+  navigateAfterSuccess();
 }
 
 // Install to a single cluster with progress callback
@@ -1167,6 +1180,139 @@ async function performUpgrade() {
   try {
     await upgradeSingleCluster(clusterId);
     await recordAIWorkload('', form.value.deployType);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function getManagedBundleName(): string {
+  return managedFleetBundleNames.value[0] || buildBundleName(form.value.release, form.value.namespace);
+}
+
+async function performFleetBundleUpgrade() {
+  const bundleName = getManagedBundleName();
+
+  installProgress.value = form.value.clusters.map(clusterId => ({
+    clusterId,
+    clusterName: clusterId,
+    status:      'installing' as const,
+    progress:    10,
+    message:     'Updating Fleet Bundle...',
+  }));
+  showProgressModal.value = true;
+
+  try {
+    let creds: { applicationCollection?: any; suseRegistry?: any } = {};
+    try { creds = await getRegistryCredentials(5000); } catch (e) {
+      console.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', e);
+    }
+    const activeCreds = [creds.applicationCollection, creds.suseRegistry].filter(Boolean);
+    const secretResults = await Promise.all(
+      form.value.clusters.flatMap(clusterId =>
+        activeCreds.map(async cred => {
+          try {
+            const hostSlug = cred!.registryHost.replace(/[^a-z0-9]/g, '-');
+            return await ensureRegistrySecretSimple(
+              store, clusterId, form.value.namespace,
+              cred!.registryHost, hostSlug, cred!.username, cred!.password,
+            );
+          } catch (e) { console.warn('[SUSE-AI] FleetBundle upgrade: pull-secret skipped:', e); return null; }
+        })
+      )
+    );
+    const extraPullSecretNames = [...new Set(secretResults.filter((n): n is string => !!n))];
+
+    const repos = await listClusterRepos(store);
+    const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+    const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+
+    updateAllProgress(60, 'Updating Fleet Bundle...');
+    await createFleetBundle(store, {
+      bundleName,
+      chartRepo:                form.value.chartRepo,
+      chartRepoUrl,
+      chartName:                form.value.chartName,
+      chartVersion:             form.value.chartVersion,
+      values:                   form.value.values,
+      targetNamespace:          form.value.namespace,
+      targetClusterIds:         form.value.clusters,
+      additionalPullSecretNames: extraPullSecretNames,
+    });
+
+    updateAllProgress(100, 'Fleet Bundle updated — Fleet will reconcile selected clusters');
+    installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
+    managedFleetBundleNames.value = [bundleName];
+
+    await recordAIWorkload(bundleName, 'FleetBundle', { phase: 'Pending', clusterStatuses: [] });
+  } catch (e: any) {
+    installProgress.value = installProgress.value.map(p => ({
+      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+    }));
+    throw e;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function performGitOpsUpgrade() {
+  const bundleName = getManagedBundleName();
+
+  installProgress.value = form.value.clusters.map(clusterId => ({
+    clusterId,
+    clusterName: clusterId,
+    status:      'installing' as const,
+    progress:    10,
+    message:     'Publishing updated Fleet Bundle YAML to git...',
+  }));
+  showProgressModal.value = true;
+
+  try {
+    const creds = await getRegistryCredentials(5000);
+    const pullSecretNames: string[] = [];
+    for (const clusterId of form.value.clusters) {
+      for (const cred of [creds.applicationCollection, creds.suseRegistry]) {
+        if (!cred) continue;
+        try {
+          const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
+          const name = await ensureRegistrySecretSimple(
+            store, clusterId, form.value.namespace,
+            cred.registryHost, hostSlug, cred.username, cred.password,
+          );
+          if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
+        } catch (e) {
+          console.warn('[SUSE-AI] pull-secret skipped for GitOps upgrade:', e);
+        }
+      }
+    }
+
+    updateAllProgress(60, 'Publishing updated Fleet Bundle YAML to git...');
+
+    const repos = await listClusterRepos(store);
+    const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+    const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+
+    await publishToFleetGit({
+      bundleName,
+      chartName:        form.value.chartName,
+      chartVersion:     form.value.chartVersion,
+      chartRepoUrl,
+      helmSecretName:   (() => { const cs = repoObj?.spec?.clientSecret; return typeof cs === 'object' ? (cs?.name || null) : (cs || null); })(),
+      values:           form.value.values,
+      pullSecretNames,
+      targetClusterIds: form.value.clusters,
+      targetNamespace:  form.value.namespace,
+    });
+
+    updateAllProgress(100, 'Fleet Bundle YAML committed — Fleet will reconcile selected clusters');
+    installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
+    managedFleetBundleNames.value = [bundleName];
+
+    await recordAIWorkload(bundleName, 'GitOps', { phase: 'Pending', clusterStatuses: [] });
+  } catch (e: any) {
+    installProgress.value = installProgress.value.map(p => ({
+      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+    }));
+    throw e;
   } finally {
     submitting.value = false;
   }

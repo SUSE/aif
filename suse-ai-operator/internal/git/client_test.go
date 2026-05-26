@@ -120,6 +120,29 @@ func TestWriteFile(t *testing.T) {
 	require.Equal(t, "content: true\n", got)
 }
 
+func TestWriteFile_UnchangedContentIsNoOp(t *testing.T) {
+	remote := newTestRemote(t)
+	c := newClient(t, remote)
+
+	firstHash, err := c.WriteFile(context.Background(),
+		filepath.Join("workloads", "test.yaml"),
+		"content: true\n",
+		"chore: add test")
+	require.NoError(t, err)
+	require.NotEmpty(t, firstHash)
+
+	secondHash, err := c.WriteFile(context.Background(),
+		filepath.Join("workloads", "test.yaml"),
+		"content: true\n",
+		"chore: add test")
+	require.NoError(t, err)
+	require.Empty(t, secondHash)
+
+	got, err := readFileFromRemote(t, remote, filepath.Join("workloads", "test.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "content: true\n", got)
+}
+
 func TestDeleteFile_Exists(t *testing.T) {
 	remote := newTestRemote(t)
 	c := newClient(t, remote)
