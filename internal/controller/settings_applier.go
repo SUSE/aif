@@ -189,8 +189,15 @@ func translateSettings(s *aifv1.Settings, sc, ac, fc Credentials) SettingsSnapsh
 				out.FleetGitAuth = FleetGitAuth{Basic: &FleetGitAuthBasic{Password: fc.Token}}
 			}
 			// AuthType "" with a credSecretRef set is a misconfiguration that
-			// the reconciler already rejects at validation time; leaving
-			// FleetGitAuth zero here is harmless — projection emits no auth.
+			// nothing currently catches: the CRD enum permits empty (authType
+			// is omitempty) and no admission webhook validates the
+			// (authType, credSecretRef) pair. The switch above falls through,
+			// FleetGitAuth stays zero, and projectFleet ships an anonymous
+			// auth method downstream — Push will succeed against a public
+			// repo or fail with a transport error on a private one. A
+			// Settings/FleetConfig admission webhook is the right home for
+			// this cross-field invariant; tracked under the P5-4b webhook
+			// follow-up in PROJECT_PLAN.md.
 		}
 	}
 	return out
