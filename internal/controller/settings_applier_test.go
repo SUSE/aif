@@ -169,7 +169,7 @@ func TestTranslateSettings_FleetPropagation(t *testing.T) {
 			},
 		},
 		{
-			name: "populated spec.Fleet with token auth populates RepoURL/Branch/AuthType/GitAuth.Token",
+			name: "populated spec.Fleet with token auth populates RepoURL/Branch/GitAuth.Token",
 			spec: &aifv1.Settings{Spec: aifv1.SettingsSpec{
 				Fleet: &aifv1.FleetConfig{
 					RepoURL:       "https://git.example.com/fleet-state.git",
@@ -186,7 +186,6 @@ func TestTranslateSettings_FleetPropagation(t *testing.T) {
 				AppCollectionMode:     "api",
 				FleetRepoURL:          "https://git.example.com/fleet-state.git",
 				FleetBranch:           "release",
-				FleetAuthType:         "token",
 				FleetGitAuth:          FleetGitAuth{Token: &FleetGitAuthToken{Token: "ghp_test123"}},
 			},
 		},
@@ -208,7 +207,6 @@ func TestTranslateSettings_FleetPropagation(t *testing.T) {
 				AppCollectionMode:     "api",
 				FleetRepoURL:          "git@github.com:org/repo.git",
 				FleetBranch:           "main",
-				FleetAuthType:         "ssh",
 				FleetGitAuth:          FleetGitAuth{SSH: &FleetGitAuthSSH{PrivateKeyPEM: []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n")}},
 			},
 		},
@@ -230,7 +228,6 @@ func TestTranslateSettings_FleetPropagation(t *testing.T) {
 				AppCollectionMode:     "api",
 				FleetRepoURL:          "https://git.example.com/fleet-state.git",
 				FleetBranch:           "main",
-				FleetAuthType:         "basic",
 				FleetGitAuth:          FleetGitAuth{Basic: &FleetGitAuthBasic{Username: "", Password: "s3cret"}},
 			},
 		},
@@ -251,7 +248,6 @@ func TestTranslateSettings_FleetPropagation(t *testing.T) {
 				AppCollectionMode:     "api",
 				FleetRepoURL:          "https://git.example.com/anon.git",
 				FleetBranch:           "main",
-				FleetAuthType:         "",
 				// FleetGitAuth left zero — no auth.
 			},
 		},

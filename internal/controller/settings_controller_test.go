@@ -215,7 +215,6 @@ var _ = Describe("SettingsReconciler", func() {
 			latest := snaps[len(snaps)-1]
 			g.Expect(latest.FleetRepoURL).To(Equal("https://git.example.com/fleet-state.git"))
 			g.Expect(latest.FleetBranch).To(Equal("release"))
-			g.Expect(latest.FleetAuthType).To(Equal("token"))
 			g.Expect(latest.FleetGitAuth.Token).ToNot(BeNil())
 			g.Expect(latest.FleetGitAuth.Token.Token).To(Equal("ghp_int_test_123"))
 		}, "5s", "100ms").Should(Succeed())

@@ -212,10 +212,9 @@ func TestEngineBus_Apply_PropagatesFleetSettings_AllAuthTypes(t *testing.T) {
 		{
 			name: "token auth: snapshot.FleetGitAuth.Token → git.GitAuth.Token",
 			snap: controller.SettingsSnapshot{
-				FleetRepoURL:  "https://git.example.com/fleet.git",
-				FleetBranch:   "release",
-				FleetAuthType: "token",
-				FleetGitAuth:  controller.FleetGitAuth{Token: &controller.FleetGitAuthToken{Token: "ghp_xyz"}},
+				FleetRepoURL: "https://git.example.com/fleet.git",
+				FleetBranch:  "release",
+				FleetGitAuth: controller.FleetGitAuth{Token: &controller.FleetGitAuthToken{Token: "ghp_xyz"}},
 			},
 			want: fleet.FleetSettings{
 				GitRepoURL: "https://git.example.com/fleet.git",
@@ -226,10 +225,9 @@ func TestEngineBus_Apply_PropagatesFleetSettings_AllAuthTypes(t *testing.T) {
 		{
 			name: "ssh auth: snapshot.FleetGitAuth.SSH.PrivateKeyPEM → git.GitAuth.SSH.PrivateKeyPEM",
 			snap: controller.SettingsSnapshot{
-				FleetRepoURL:  "git@github.com:org/repo.git",
-				FleetBranch:   "main",
-				FleetAuthType: "ssh",
-				FleetGitAuth:  controller.FleetGitAuth{SSH: &controller.FleetGitAuthSSH{PrivateKeyPEM: []byte("PEM_BYTES")}},
+				FleetRepoURL: "git@github.com:org/repo.git",
+				FleetBranch:  "main",
+				FleetGitAuth: controller.FleetGitAuth{SSH: &controller.FleetGitAuthSSH{PrivateKeyPEM: []byte("PEM_BYTES")}},
 			},
 			want: fleet.FleetSettings{
 				GitRepoURL: "git@github.com:org/repo.git",
@@ -240,10 +238,9 @@ func TestEngineBus_Apply_PropagatesFleetSettings_AllAuthTypes(t *testing.T) {
 		{
 			name: "basic auth: snapshot.FleetGitAuth.Basic → git.GitAuth.Basic",
 			snap: controller.SettingsSnapshot{
-				FleetRepoURL:  "https://git.example.com/fleet.git",
-				FleetBranch:   "main",
-				FleetAuthType: "basic",
-				FleetGitAuth:  controller.FleetGitAuth{Basic: &controller.FleetGitAuthBasic{Username: "", Password: "s3cret"}},
+				FleetRepoURL: "https://git.example.com/fleet.git",
+				FleetBranch:  "main",
+				FleetGitAuth: controller.FleetGitAuth{Basic: &controller.FleetGitAuthBasic{Username: "", Password: "s3cret"}},
 			},
 			want: fleet.FleetSettings{
 				GitRepoURL: "https://git.example.com/fleet.git",

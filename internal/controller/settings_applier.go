@@ -31,17 +31,21 @@ type SettingsSnapshot struct {
 	BlueprintForceReference     []ChartRef
 	BlueprintForceBuildingBlock []ChartRef
 
-	// FleetRepoURL/Branch/AuthType/GitAuth carry the Fleet GitOps configuration
-	// to both Fleet engines (FleetBundleEngine, FleetGitRepoEngine) via the
+	// FleetRepoURL/Branch/GitAuth carry the Fleet GitOps configuration to
+	// both Fleet engines (FleetBundleEngine, FleetGitRepoEngine) via the
 	// bus's projectFleet projection. Resolved values, not references: the
 	// reconciler resolves spec.fleet.credSecretRef to bytes before calling
 	// translateSettings, matching the SUSERegistry/AppCollection resolved-creds
 	// pattern. Engines never touch the apiserver — required by CLAUDE.md
 	// "credentials via UpdateSettings, never direct Secret reads".
-	FleetRepoURL  string
-	FleetBranch   string
-	FleetAuthType string // "" | "ssh" | "token" | "basic"
-	FleetGitAuth  FleetGitAuth
+	//
+	// Auth method is encoded by which FleetGitAuth pointer is non-nil; the
+	// CR's spec.fleet.authType string is consumed by the reconciler's switch
+	// in translateSettings and not carried onto the snapshot (single source
+	// of truth = the tagged-union pointers).
+	FleetRepoURL string
+	FleetBranch  string
+	FleetGitAuth FleetGitAuth
 }
 
 // ImageRewriteRule mirrors aifv1.ImageRewriteRule and helm.ImageRewriteRule.
@@ -168,7 +172,6 @@ func translateSettings(s *aifv1.Settings, sc, ac, fc Credentials) SettingsSnapsh
 	if s.Spec.Fleet != nil {
 		out.FleetRepoURL = s.Spec.Fleet.RepoURL
 		out.FleetBranch = s.Spec.Fleet.Branch
-		out.FleetAuthType = string(s.Spec.Fleet.AuthType)
 		// Resolved credential bytes only when CredSecretRef is non-nil. Both
 		// guards required: spec.Fleet AND spec.Fleet.CredSecretRef are pointers.
 		// fc.Token carries the single resolved value (ssh PEM bytes, token, or
