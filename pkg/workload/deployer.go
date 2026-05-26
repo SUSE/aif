@@ -19,13 +19,14 @@ import (
 // deployer is the production Deployer. Pure orchestrator: holds
 // constant refs to its dependency ports; no mutable state.
 type deployer struct {
-	log         *slog.Logger
-	render      helm.ValueRenderer
-	fleetBundle fleet.FleetBundleEngine
-	bpRepo      blueprint.Repository
-	bundleRepo  bundle.Repository
-	nvDisc      nvidia.Discovery
-	nvDepl      nvidia.Deployer
+	log          *slog.Logger
+	render       helm.ValueRenderer
+	fleetBundle  fleet.FleetBundleEngine
+	fleetGitRepo fleet.FleetGitRepoEngine
+	bpRepo       blueprint.Repository
+	bundleRepo   bundle.Repository
+	nvDisc       nvidia.Discovery
+	nvDepl       nvidia.Deployer
 }
 
 // NewDeployer constructs the production Deployer.
@@ -38,19 +39,21 @@ func NewDeployer(
 	log *slog.Logger,
 	render helm.ValueRenderer,
 	fleetBundle fleet.FleetBundleEngine,
+	fleetGitRepo fleet.FleetGitRepoEngine,
 	bpRepo blueprint.Repository,
 	bundleRepo bundle.Repository,
 	nvDisc nvidia.Discovery,
 	nvDepl nvidia.Deployer,
 ) Deployer {
 	return &deployer{
-		log:         log,
-		render:      render,
-		fleetBundle: fleetBundle,
-		bpRepo:      bpRepo,
-		bundleRepo:  bundleRepo,
-		nvDisc:      nvDisc,
-		nvDepl:      nvDepl,
+		log:          log,
+		render:       render,
+		fleetBundle:  fleetBundle,
+		fleetGitRepo: fleetGitRepo,
+		bpRepo:       bpRepo,
+		bundleRepo:   bundleRepo,
+		nvDisc:       nvDisc,
+		nvDepl:       nvDepl,
 	}
 }
 
@@ -92,31 +95,53 @@ func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult,
 		})
 	}
 
-	spec := fleet.BundleDeploymentSpec{
-		WorkloadID:     req.ID,
-		WorkloadNS:     req.Namespace,
-		TargetClusters: req.TargetClusters,
-		Components:     componentsForFleet,
-		PullSecretData: req.PullSecretData,
-		Owner:          req.Owner,
-	}
-	obs, err := d.fleetBundle.Apply(ctx, spec)
-	if err != nil {
+	switch req.DeployStrategy {
+	case "", "helm":
+		spec := fleet.BundleDeploymentSpec{
+			WorkloadID:     req.ID,
+			WorkloadNS:     req.Namespace,
+			TargetClusters: req.TargetClusters,
+			Components:     componentsForFleet,
+			PullSecretData: req.PullSecretData,
+			Owner:          req.Owner,
+		}
+		obs, err := d.fleetBundle.Apply(ctx, spec)
+		if err != nil {
+			return DeployResult{
+				Components:               releaseRecords,
+				ObservedBundleGeneration: observedGen,
+			}, err
+		}
+		// Phase ownership lives in the controller (RecomputePhase Rule 0
+		// reads PerCluster). See pkg/workload/phase.go.
 		return DeployResult{
 			Components:               releaseRecords,
+			PerCluster:               translateObserved(obs),
 			ObservedBundleGeneration: observedGen,
-		}, err
-	}
+		}, nil
 
-	// Phase is NOT set on DeployResult: post-P5-1 the controller owns
-	// phase via RecomputePhase(PhaseInputFromCR(w)). The per-cluster
-	// projection below feeds PhaseInput.PerClusterPhases so Rule 0 of
-	// RecomputePhase aggregates per-cluster phases for the Fleet path.
-	return DeployResult{
-		Components:               releaseRecords,
-		PerCluster:               translateObserved(obs),
-		ObservedBundleGeneration: observedGen,
-	}, nil
+	case "gitops":
+		spec := fleet.GitRepoDeploymentSpec{
+			WorkloadID:     req.ID,
+			WorkloadNS:     req.Namespace,
+			TargetClusters: req.TargetClusters,
+			Components:     componentsForFleet,
+			PullSecretData: req.PullSecretData,
+			Owner:          req.Owner,
+		}
+		obs, err := d.fleetGitRepo.Apply(ctx, spec)
+		if err != nil {
+			return DeployResult{Components: releaseRecords}, err
+		}
+		return DeployResult{
+			Components: releaseRecords,
+			PerCluster: translateObservedGit(obs),
+		}, nil
+
+	default:
+		return DeployResult{Components: releaseRecords},
+			fmt.Errorf("unknown deployStrategy %q", req.DeployStrategy)
+	}
 }
 
 // translateObserved maps fleet.BundleObservedStatus → workload-domain
@@ -124,6 +149,31 @@ func (d *deployer) Deploy(ctx context.Context, req DeployRequest) (DeployResult,
 // RecomputePhase (which calls AggregateClusterPhases on
 // PhaseInput.PerClusterPhases — Rule 0 in phase.go).
 func translateObserved(obs fleet.BundleObservedStatus) []ClusterDeploymentStatusDomain {
+	if len(obs.PerCluster) == 0 {
+		return nil
+	}
+	out := make([]ClusterDeploymentStatusDomain, 0, len(obs.PerCluster))
+	for _, e := range obs.PerCluster {
+		var p ClusterPhase
+		if e.ConnectionError {
+			p = ClusterFailed
+		} else {
+			p = MapFleetStateToPhase(e.FleetState)
+		}
+		out = append(out, ClusterDeploymentStatusDomain{
+			ClusterName: e.ClusterName,
+			Phase:       p,
+			FleetState:  e.FleetState,
+		})
+	}
+	return out
+}
+
+// translateObservedGit maps fleet.GitRepoObservedStatus → workload-domain
+// per-cluster status. Identical to translateObserved except for input type
+// (Go has no generics-friendly way to share without churn, and the
+// duplication keeps each engine's translation easy to evolve independently).
+func translateObservedGit(obs fleet.GitRepoObservedStatus) []ClusterDeploymentStatusDomain {
 	if len(obs.PerCluster) == 0 {
 		return nil
 	}
@@ -210,7 +260,13 @@ func composeChartRef(repo, chart, version string) string {
 // WorkloadReconciler's finalizer block on Workload deletion.
 // Fleet handles per-cluster uninstall and orphan cleanup declaratively.
 func (d *deployer) Teardown(ctx context.Context, namespace, workloadID string, _ []ComponentRelease) error {
-	return d.fleetBundle.Teardown(ctx, namespace, workloadID)
+	if err := d.fleetBundle.Teardown(ctx, namespace, workloadID); err != nil {
+		return err
+	}
+	if err := d.fleetGitRepo.Teardown(ctx, namespace, workloadID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // extractGPUCount looks for an int-typed "gpuCount" key in the parsed

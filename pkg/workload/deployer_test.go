@@ -26,7 +26,7 @@ func TestNewDeployer_ConstructsWithDeps(t *testing.T) {
 	disc, _ := nvidia.NewDiscovery(log)
 	dep := nvidia.NewDeployer(log)
 
-	d := NewDeployer(log, render, fleetBundle, bpRepo, bnRepo, disc, dep)
+	d := NewDeployer(log, render, fleetBundle, &fleet.FakeGitRepoEngine{}, bpRepo, bnRepo, disc, dep)
 	if d == nil {
 		t.Fatal("NewDeployer returned nil")
 	}
@@ -252,13 +252,14 @@ func newTestDeployer(t *testing.T) *deployer {
 	t.Helper()
 	log := slog.Default()
 	return &deployer{
-		log:         log,
-		render:      helm.NewFake(),
-		fleetBundle: fleet.NewFakeBundleEngine(),
-		bpRepo:      blueprint.NewFakeRepository(),
-		bundleRepo:  bundle.NewFakeRepository(),
-		nvDisc:      newStubDiscovery(),
-		nvDepl:      &stubNvidiaDeployer{},
+		log:          log,
+		render:       helm.NewFake(),
+		fleetBundle:  fleet.NewFakeBundleEngine(),
+		fleetGitRepo: &fleet.FakeGitRepoEngine{},
+		bpRepo:       blueprint.NewFakeRepository(),
+		bundleRepo:   bundle.NewFakeRepository(),
+		nvDisc:       newStubDiscovery(),
+		nvDepl:       &stubNvidiaDeployer{},
 	}
 }
 
@@ -330,8 +331,9 @@ func TestDeployer_HelmStrategy_CallsFleetBundleEngine(t *testing.T) {
 	fakeHelm := helm.NewFake()
 	d := NewDeployer(
 		slog.Default(),
-		fakeHelm,         // helm.ValueRenderer
-		fakeFleet,        // fleet.FleetBundleEngine
+		fakeHelm,                       // helm.ValueRenderer
+		fakeFleet,                      // fleet.FleetBundleEngine
+		&fleet.FakeGitRepoEngine{},     // fleet.FleetGitRepoEngine (P4-3)
 		blueprint.NewFakeRepository(),
 		bundle.NewFakeRepository(),
 		newStubDiscovery(),
@@ -375,5 +377,88 @@ func TestDeployer_HelmStrategy_CallsFleetBundleEngine(t *testing.T) {
 		if pc.Phase != ClusterDeploying && pc.Phase != ClusterRunning {
 			t.Fatalf("unexpected per-cluster phase %v on %q", pc.Phase, pc.ClusterName)
 		}
+	}
+}
+
+func TestDeploy_DispatchesToGitRepoEngineForGitOps(t *testing.T) {
+	d := newTestDeployer(t)
+	bundleFake := d.fleetBundle.(*fleet.FakeBundleEngine)
+	gitFake := d.fleetGitRepo.(*fleet.FakeGitRepoEngine)
+
+	req := DeployRequest{
+		Namespace: "ns", ID: "wl", SpecName: "comp",
+		DeployStrategy: "gitops",
+		TargetClusters: []string{"cluster-a"},
+		Source: SourceRef{Kind: SourceKindApp, App: &AppRef{
+			Repo: "oci://example", Chart: "c", Version: "1.0.0",
+		}},
+	}
+	if _, err := d.Deploy(context.Background(), req); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if len(gitFake.Applied) != 1 {
+		t.Fatalf("expected GitRepo Apply, got %d", len(gitFake.Applied))
+	}
+	if len(bundleFake.Applied) != 0 {
+		t.Fatalf("Bundle Apply should not have been called for gitops; got %d", len(bundleFake.Applied))
+	}
+}
+
+func TestDeploy_DispatchesToBundleEngineForHelmAndEmpty(t *testing.T) {
+	for _, strategy := range []string{"", "helm"} {
+		t.Run("strategy="+strategy, func(t *testing.T) {
+			d := newTestDeployer(t)
+			bundleFake := d.fleetBundle.(*fleet.FakeBundleEngine)
+			gitFake := d.fleetGitRepo.(*fleet.FakeGitRepoEngine)
+
+			req := DeployRequest{
+				Namespace: "ns", ID: "wl", SpecName: "comp",
+				DeployStrategy: strategy,
+				TargetClusters: []string{"cluster-a"},
+				Source: SourceRef{Kind: SourceKindApp, App: &AppRef{
+					Repo: "oci://example", Chart: "c", Version: "1.0.0",
+				}},
+			}
+			if _, err := d.Deploy(context.Background(), req); err != nil {
+				t.Fatalf("Deploy: %v", err)
+			}
+			if len(bundleFake.Applied) != 1 {
+				t.Fatalf("Bundle Apply expected, got %d", len(bundleFake.Applied))
+			}
+			if len(gitFake.Applied) != 0 {
+				t.Fatalf("GitRepo Apply should not have been called; got %d", len(gitFake.Applied))
+			}
+		})
+	}
+}
+
+func TestDeploy_UnknownStrategy_ReturnsError(t *testing.T) {
+	d := newTestDeployer(t)
+	req := DeployRequest{
+		Namespace: "ns", ID: "wl", SpecName: "comp",
+		DeployStrategy: "bogus",
+		Source: SourceRef{Kind: SourceKindApp, App: &AppRef{
+			Repo: "oci://example", Chart: "c", Version: "1.0.0",
+		}},
+	}
+	_, err := d.Deploy(context.Background(), req)
+	if err == nil {
+		t.Fatalf("expected error for unknown deployStrategy, got nil")
+	}
+}
+
+func TestTeardown_CallsBothEngines(t *testing.T) {
+	d := newTestDeployer(t)
+	bundleFake := d.fleetBundle.(*fleet.FakeBundleEngine)
+	gitFake := d.fleetGitRepo.(*fleet.FakeGitRepoEngine)
+
+	if err := d.Teardown(context.Background(), "ns", "wl", nil); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+	if len(bundleFake.TornDown) != 1 || bundleFake.TornDown[0] != "ns/wl" {
+		t.Fatalf("Bundle Teardown not called: %+v", bundleFake.TornDown)
+	}
+	if len(gitFake.TornDown) != 1 || gitFake.TornDown[0] != "ns/wl" {
+		t.Fatalf("GitRepo Teardown not called: %+v", gitFake.TornDown)
 	}
 }
