@@ -6,8 +6,8 @@ spec:
   source:
     kind: Git
     git:
-      repo: https://github.com/SUSE/suse-ai-lifecycle-manager
+      repo: https://github.com/SUSE/aif
       branch: gh-pages
   extension:
-    name: suse-ai-lifecycle-manager
-    version: "1.1.0"
+    name: ai-factory
+    version: "0.1.0"
