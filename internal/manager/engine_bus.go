@@ -6,6 +6,7 @@ import (
 
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/fleet"
+	"github.com/SUSE/aif/pkg/git"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/source_collection"
@@ -140,12 +141,28 @@ func (b *engineBus) projectAppCo(s controller.SettingsSnapshot) source_collectio
 	}
 }
 
-// projectFleet is the FleetBundleEngine settings projector. FleetSettings
-// is empty today — the engine talks to the local Rancher apiserver via the
-// injected client.Client, so no per-cluster auth is needed yet. The
-// projector exists so P5-7 (downstream-cluster auth, e.g. kubeconfig
-// snippets per Cluster) can extend FleetSettings without changing the
-// bus's contract with the engine.
-func (b *engineBus) projectFleet(_ controller.SettingsSnapshot) fleet.FleetSettings {
-	return fleet.FleetSettings{}
+// projectFleet projects the Fleet GitOps configuration carried by
+// SettingsSnapshot into fleet.FleetSettings. Both Fleet engines
+// (FleetBundleEngine, FleetGitRepoEngine) receive the same value via
+// UpdateSettings; FleetSettings is engine-agnostic so the bus uses one
+// projection for both. Credentials arrive resolved from the reconciler's
+// SecretKeySelector lookup; the bus translates the snapshot's local mirror
+// types into pkg/git.GitAuth without reading the apiserver.
+func (b *engineBus) projectFleet(s controller.SettingsSnapshot) fleet.FleetSettings {
+	out := fleet.FleetSettings{
+		GitRepoURL: s.FleetRepoURL,
+		GitBranch:  s.FleetBranch,
+	}
+	switch {
+	case s.FleetGitAuth.Token != nil:
+		out.GitAuth = git.GitAuth{Token: &git.TokenAuth{Token: s.FleetGitAuth.Token.Token}}
+	case s.FleetGitAuth.SSH != nil:
+		out.GitAuth = git.GitAuth{SSH: &git.SSHAuth{PrivateKeyPEM: s.FleetGitAuth.SSH.PrivateKeyPEM}}
+	case s.FleetGitAuth.Basic != nil:
+		out.GitAuth = git.GitAuth{Basic: &git.BasicAuth{
+			Username: s.FleetGitAuth.Basic.Username,
+			Password: s.FleetGitAuth.Basic.Password,
+		}}
+	}
+	return out
 }

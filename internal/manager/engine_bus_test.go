@@ -4,11 +4,13 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/fleet"
+	"github.com/SUSE/aif/pkg/git"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/source_collection"
@@ -201,16 +203,81 @@ func TestEngineBus_Apply_PushesOCIHostToAppCo(t *testing.T) {
 	}
 }
 
-// TestEngineBus_Apply_PushesToFleetGitRepo: snapshot → fleetGitRepo fake
-// received an UpdateSettings call (the FleetSettings projection is empty
-// in P4-3; P5-4b populates the git fields).
-func TestEngineBus_Apply_PushesToFleetGitRepo(t *testing.T) {
-	bus, _, _, gr, _, _, _ := newTestBus()
-	if err := bus.Apply(context.Background(), controller.SettingsSnapshot{}); err != nil {
-		t.Fatalf("Apply: %v", err)
+func TestEngineBus_Apply_PropagatesFleetSettings_AllAuthTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		snap controller.SettingsSnapshot
+		want fleet.FleetSettings
+	}{
+		{
+			name: "token auth: snapshot.FleetGitAuth.Token → git.GitAuth.Token",
+			snap: controller.SettingsSnapshot{
+				FleetRepoURL:  "https://git.example.com/fleet.git",
+				FleetBranch:   "release",
+				FleetAuthType: "token",
+				FleetGitAuth:  controller.FleetGitAuth{Token: &controller.FleetGitAuthToken{Token: "ghp_xyz"}},
+			},
+			want: fleet.FleetSettings{
+				GitRepoURL: "https://git.example.com/fleet.git",
+				GitBranch:  "release",
+				GitAuth:    git.GitAuth{Token: &git.TokenAuth{Token: "ghp_xyz"}},
+			},
+		},
+		{
+			name: "ssh auth: snapshot.FleetGitAuth.SSH.PrivateKeyPEM → git.GitAuth.SSH.PrivateKeyPEM",
+			snap: controller.SettingsSnapshot{
+				FleetRepoURL:  "git@github.com:org/repo.git",
+				FleetBranch:   "main",
+				FleetAuthType: "ssh",
+				FleetGitAuth:  controller.FleetGitAuth{SSH: &controller.FleetGitAuthSSH{PrivateKeyPEM: []byte("PEM_BYTES")}},
+			},
+			want: fleet.FleetSettings{
+				GitRepoURL: "git@github.com:org/repo.git",
+				GitBranch:  "main",
+				GitAuth:    git.GitAuth{SSH: &git.SSHAuth{PrivateKeyPEM: []byte("PEM_BYTES")}},
+			},
+		},
+		{
+			name: "basic auth: snapshot.FleetGitAuth.Basic → git.GitAuth.Basic",
+			snap: controller.SettingsSnapshot{
+				FleetRepoURL:  "https://git.example.com/fleet.git",
+				FleetBranch:   "main",
+				FleetAuthType: "basic",
+				FleetGitAuth:  controller.FleetGitAuth{Basic: &controller.FleetGitAuthBasic{Username: "", Password: "s3cret"}},
+			},
+			want: fleet.FleetSettings{
+				GitRepoURL: "https://git.example.com/fleet.git",
+				GitBranch:  "main",
+				GitAuth:    git.GitAuth{Basic: &git.BasicAuth{Username: "", Password: "s3cret"}},
+			},
+		},
+		{
+			name: "anonymous: empty FleetGitAuth → zero git.GitAuth",
+			snap: controller.SettingsSnapshot{
+				FleetRepoURL: "file:///tmp/local.git",
+				FleetBranch:  "main",
+			},
+			want: fleet.FleetSettings{
+				GitRepoURL: "file:///tmp/local.git",
+				GitBranch:  "main",
+			},
+		},
 	}
-	// Settings is empty in P4-3; assert the fake's Settings field is
-	// reachable (UpdateSettings ran, otherwise the field would not be
-	// mutated even from its zero-value default).
-	_ = gr.Settings
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bus, _, fb, fg, _, _, _ := newTestBus()
+			if err := bus.Apply(context.Background(), tc.snap); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			gotFB := fb.LastSettings()
+			gotFG := fg.LastSettings()
+			if !reflect.DeepEqual(gotFB, tc.want) {
+				t.Errorf("fleetBundle settings mismatch\n got: %+v\nwant: %+v", gotFB, tc.want)
+			}
+			if !reflect.DeepEqual(gotFG, tc.want) {
+				t.Errorf("fleetGitRepo settings mismatch\n got: %+v\nwant: %+v", gotFG, tc.want)
+			}
+		})
+	}
 }
