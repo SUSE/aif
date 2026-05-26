@@ -66,9 +66,10 @@ func NewEngineBus(
 // breaking-change. If any engine grows fallibility, aggregate via
 // errors.Join here.
 func (b *engineBus) Apply(_ context.Context, s controller.SettingsSnapshot) error {
+	fleetSettings := b.projectFleet(s)
 	b.helm.UpdateSettings(b.projectHelm(s))
-	b.fleetBundle.UpdateSettings(b.projectFleet(s))
-	b.fleetGitRepo.UpdateSettings(b.projectFleet(s))
+	b.fleetBundle.UpdateSettings(fleetSettings)
+	b.fleetGitRepo.UpdateSettings(fleetSettings)
 	b.nvidiaDisc.UpdateSettings(b.projectNvidiaDiscovery(s))
 	b.nvidiaDepl.UpdateSettings(b.projectNvidiaDeployer(s))
 	b.appCollect.UpdateSettings(b.projectAppCo(s))
