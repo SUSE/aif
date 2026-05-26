@@ -7,6 +7,10 @@
 // consuming package (pkg/workload/conversions.go).
 package fleet
 
+import (
+	"github.com/SUSE/aif/pkg/git"
+)
+
 // BundleDeploymentSpec is the input to FleetBundleEngine.Apply.
 // All fields are framework-agnostic — the adapter translates to a
 // fleet.cattle.io/v1alpha1 Bundle CR.
@@ -87,21 +91,38 @@ type ClusterDeploymentObserved struct {
 	ConnectionError bool
 }
 
-// FleetSettings is the EngineSettings push target for this package.
-// Currently empty: the bundle engine speaks to the local apiserver via
-// the injected client.Client (Fleet manager runs in-cluster), so no
-// credentials need to land. The struct + UpdateSettings method exist
-// for symmetry with helm.EngineSettings / source_collection.EngineSettings
-// so future downstream-cluster credential pushes can land without
-// changing the engine interface.
-type FleetSettings struct{}
+// FleetSettings carries the per-engine credentials and target git
+// repo/branch. Pushed by SettingsReconciler.applySettingsToEngines via
+// engine_bus.projectFleet. The bundle engine ignores all fields today
+// (it speaks to the local apiserver); the GitRepo engine forwards
+// GitRepoURL/GitBranch/GitAuth into pkg/git.EngineSettings on every
+// UpdateSettings.
+//
+// P5-4b will populate these fields from controller.SettingsSnapshot
+// (the projectFleet call returns an empty value today; until then the
+// engine fails closed with git.ErrNotConfigured on Apply).
+type FleetSettings struct {
+	GitRepoURL string
+	GitBranch  string
+	GitAuth    git.GitAuth
+}
 
-// --- GitRepo deployment-type stubs. The parallel GitRepo engine fills
-// these in via gitrepo_engine.go; they live here so that story can land
-// without editing this file.
+// --- GitRepo deployment-type. Mirrors BundleDeploymentSpec field-for-field
+// (same Components/PullSecret/Owner shape) so the workload-side phase
+// aggregation (pkg/workload/phase.go) works unchanged.
 
 // GitRepoDeploymentSpec is the input to FleetGitRepoEngine.Apply.
-type GitRepoDeploymentSpec struct{}
+type GitRepoDeploymentSpec struct {
+	WorkloadID     string
+	WorkloadNS     string
+	TargetClusters []string
+	Components     []ComponentBundle
+	PullSecretData []byte
+	Owner          OwnerRef
+}
 
-// GitRepoObservedStatus is the Fleet GitRepo status mirror.
-type GitRepoObservedStatus struct{}
+// GitRepoObservedStatus is the mirrored Fleet state. Reuses
+// ClusterDeploymentObserved so workload-side translation is uniform.
+type GitRepoObservedStatus struct {
+	PerCluster []ClusterDeploymentObserved
+}
