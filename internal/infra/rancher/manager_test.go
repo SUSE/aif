@@ -402,6 +402,7 @@ func TestDeriveReleaseName(t *testing.T) {
 		expected string
 	}{
 		{"oci://registry.suse.com/ai/charts/aif-ui", "aif-ui"},
+		{"oci://registry.suse.com/ai/charts/aif-ui:1.0.0", "aif-ui"},
 		{"oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager", "suse-ai-lifecycle-manager"},
 		{"https://example.com/charts/my-extension", "my-extension"},
 	}

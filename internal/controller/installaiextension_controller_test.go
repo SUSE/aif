@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
@@ -83,7 +84,7 @@ func helmDeployment(releaseName string) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      releaseName,
-			Namespace: uiPluginNamespace,
+			Namespace: rancher.UIPluginNamespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/instance": releaseName,
 			},
@@ -119,7 +120,7 @@ func helmService(releaseName string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      releaseName + "-svc",
-			Namespace: uiPluginNamespace,
+			Namespace: rancher.UIPluginNamespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/instance": releaseName,
 			},
@@ -131,7 +132,6 @@ func helmService(releaseName string) *corev1.Service {
 		},
 	}
 }
-
 
 // TestInstallAIExtensionReconciler_HappyPath tests successful Helm source installation.
 func TestInstallAIExtensionReconciler_HappyPath(t *testing.T) {
@@ -225,8 +225,8 @@ func TestInstallAIExtensionReconciler_HappyPath(t *testing.T) {
 	}
 	if len(installs) > 0 {
 		call := installs[0].Request
-		if call.Namespace != uiPluginNamespace {
-			t.Errorf("expected namespace %s, got %s", uiPluginNamespace, call.Namespace)
+		if call.Namespace != rancher.UIPluginNamespace {
+			t.Errorf("expected namespace %s, got %s", rancher.UIPluginNamespace, call.Namespace)
 		}
 		if call.ReleaseName != "aif-ui" {
 			t.Errorf("expected release name aif-ui, got %s", call.ReleaseName)
@@ -379,8 +379,8 @@ func TestInstallAIExtensionReconciler_GitSource(t *testing.T) {
 	if len(repoInstalls) != 1 {
 		t.Fatalf("expected 1 InstallFromRepoURL call, got %d", len(repoInstalls))
 	}
-	if repoInstalls[0].Namespace != uiPluginNamespace {
-		t.Errorf("expected namespace %s, got %s", uiPluginNamespace, repoInstalls[0].Namespace)
+	if repoInstalls[0].Namespace != rancher.UIPluginNamespace {
+		t.Errorf("expected namespace %s, got %s", rancher.UIPluginNamespace, repoInstalls[0].Namespace)
 	}
 	if repoInstalls[0].Name != "ai-factory" {
 		t.Errorf("expected release name ai-factory, got %s", repoInstalls[0].Name)
@@ -517,6 +517,88 @@ func TestInstallAIExtensionReconciler_HelmInstallFailed(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected InstallFailed event, got: %v", recorder.events)
+	}
+}
+
+// TestInstallAIExtensionReconciler_HelmInstallFailedWithPodDiag tests that pod-level errors
+// (ImagePullBackOff) are surfaced in the HelmInstalled condition when Helm install fails.
+func TestInstallAIExtensionReconciler_HelmInstallFailedWithPodDiag(t *testing.T) {
+	scheme := newTestScheme(t)
+	ext := createInstallAIExtension("test-ext")
+
+	deploy := helmDeployment("aif-ui")
+	deploy.Status.ReadyReplicas = 0
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aif-ui-abc123",
+			Namespace: rancher.UIPluginNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/instance": "aif-ui",
+			},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "aif-ui",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason:  "ImagePullBackOff",
+							Message: "Back-off pulling image",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(ext, deploy, pod).
+		WithStatusSubresource(&aifv1.InstallAIExtension{}).
+		Build()
+
+	fakeHelm := helm.NewFake()
+	fakeHelm.InstallResult = func(helm.InstallRequest) (helm.ReleaseStatus, error) {
+		return helm.ReleaseStatus{}, errors.New("timed out waiting for the condition")
+	}
+	fakeCatalog := rancher.NewFake()
+	recorder := &fakeRecorder{}
+
+	reconciler := &InstallAIExtensionReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		HelmEngine: fakeHelm,
+		Catalog:    fakeCatalog,
+		Recorder:   recorder,
+	}
+
+	ctx := context.Background()
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "test-ext"}}
+
+	// First reconcile: adds finalizer
+	_, _ = reconciler.Reconcile(ctx, req)
+
+	// Second reconcile: Helm install fails, pod has ImagePullBackOff
+	_, err := reconciler.Reconcile(ctx, req)
+	if err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+
+	var updated aifv1.InstallAIExtension
+	if err := fakeClient.Get(ctx, req.NamespacedName, &updated); err != nil {
+		t.Fatalf("failed to get updated resource: %v", err)
+	}
+
+	helmCond := findCondition(updated.Status.Conditions, conditions.TypeHelmInstalled)
+	if helmCond == nil {
+		t.Fatal("HelmInstalled condition not set")
+	}
+	if helmCond.Status != metav1.ConditionFalse {
+		t.Errorf("expected HelmInstalled=False, got %s", helmCond.Status)
+	}
+	if !strings.Contains(helmCond.Message, "ImagePullBackOff") {
+		t.Errorf("expected enriched message with ImagePullBackOff, got: %s", helmCond.Message)
 	}
 }
 
@@ -882,16 +964,14 @@ func TestCleanup(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Verify Helm uninstalls
+	// Verify Helm uninstalls — Helm mode only uninstalls HelmReleaseName;
+	// per-name UIPlugin release uninstall is Git-mode only.
 	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
-	if len(uninstalls) != 2 {
-		t.Fatalf("expected 2 Uninstall calls, got %d", len(uninstalls))
+	if len(uninstalls) != 1 {
+		t.Fatalf("expected 1 Uninstall call (Helm mode), got %d", len(uninstalls))
 	}
 	if uninstalls[0].Name != "aif-ui" {
-		t.Errorf("expected first uninstall of aif-ui, got %s", uninstalls[0].Name)
-	}
-	if uninstalls[1].Name != "ai-factory" {
-		t.Errorf("expected second uninstall of ai-factory, got %s", uninstalls[1].Name)
+		t.Errorf("expected uninstall of aif-ui, got %s", uninstalls[0].Name)
 	}
 
 	// Verify catalog cleanup
@@ -931,8 +1011,8 @@ func TestCleanup_GitMode(t *testing.T) {
 	if len(uninstalls) != 1 {
 		t.Fatalf("expected 1 Uninstall call for git mode UIPlugin release, got %d", len(uninstalls))
 	}
-	if uninstalls[0].Namespace != uiPluginNamespace {
-		t.Errorf("expected namespace %s, got %s", uiPluginNamespace, uninstalls[0].Namespace)
+	if uninstalls[0].Namespace != rancher.UIPluginNamespace {
+		t.Errorf("expected namespace %s, got %s", rancher.UIPluginNamespace, uninstalls[0].Namespace)
 	}
 	if uninstalls[0].Name != "ai-factory" {
 		t.Errorf("expected release name ai-factory, got %s", uninstalls[0].Name)
@@ -961,7 +1041,9 @@ func TestCleanupStaleResources_NameChange(t *testing.T) {
 		Catalog:    fakeCatalog,
 	}
 
-	reconciler.cleanupStaleResources(context.Background(), ext)
+	if err := reconciler.cleanupStaleResources(context.Background(), ext); err != nil {
+		t.Fatalf("cleanupStaleResources failed: %v", err)
+	}
 
 	// Verify catalog cleanup for old name
 	deleteCRCalls := fakeCatalog.FilterCalls("DeleteClusterRepo")
@@ -1023,7 +1105,9 @@ func TestCleanupStaleResources_HelmToGit(t *testing.T) {
 		Catalog:    fakeCatalog,
 	}
 
-	reconciler.cleanupStaleResources(context.Background(), ext)
+	if err := reconciler.cleanupStaleResources(context.Background(), ext); err != nil {
+		t.Fatalf("cleanupStaleResources failed: %v", err)
+	}
 
 	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
 	if len(uninstalls) != 1 {
@@ -1076,7 +1160,9 @@ func TestCleanupStaleResources_GitToHelm(t *testing.T) {
 		Catalog:    fakeCatalog,
 	}
 
-	reconciler.cleanupStaleResources(context.Background(), ext)
+	if err := reconciler.cleanupStaleResources(context.Background(), ext); err != nil {
+		t.Fatalf("cleanupStaleResources failed: %v", err)
+	}
 
 	uninstalls := filterCalls(fakeHelm.Calls, "Uninstall")
 	if len(uninstalls) != 1 {

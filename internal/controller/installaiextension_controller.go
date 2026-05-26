@@ -26,7 +26,6 @@ import (
 
 const (
 	extensionFinalizerName = "ai.suse.com/cleanup"
-	uiPluginNamespace      = rancher.UIPluginNamespace
 	helmInstallTimeout     = 5 * time.Minute
 	readinessRequeue       = 10 * time.Second
 	healthCheckInterval    = 60 * time.Second
@@ -101,7 +100,10 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1
 	ext.Status.Phase = aifv1.InstallAIExtensionPhaseInstalling
 
 	// Step 0: Clean up resources from previous spec if name or source changed
-	r.cleanupStaleResources(ctx, ext)
+	if err := r.cleanupStaleResources(ctx, ext); err != nil {
+		r.Recorder.Eventf(ext, nil, corev1.EventTypeWarning, conditions.ReasonReconcileFailed, conditions.ActionReconciling, "stale resource cleanup incomplete: %v", err)
+		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
+	}
 
 	// Step 1: Check Rancher CRDs exist
 	if err := r.Catalog.CheckCRDs(ctx); err != nil {
@@ -192,7 +194,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(ctx context.Context, 
 
 	chartRef := fmt.Sprintf("%s:%s", helmSource.ChartURL, helmSource.Version)
 
-	existing, statusErr := r.HelmEngine.Status(ctx, uiPluginNamespace, releaseName)
+	existing, statusErr := r.HelmEngine.Status(ctx, rancher.UIPluginNamespace, releaseName)
 	alreadyDeployed := statusErr == nil && existing.Status == "deployed" &&
 		ext.Status.ObservedGeneration == ext.Generation
 
@@ -207,7 +209,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(ctx context.Context, 
 		})
 	} else {
 		installReq := helm.InstallRequest{
-			Namespace:   uiPluginNamespace,
+			Namespace:   rancher.UIPluginNamespace,
 			ReleaseName: releaseName,
 			ChartRef:    chartRef,
 			Overrides:   overrides,
@@ -440,7 +442,7 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(ctx context.Context, e
 	}
 
 	releaseName := ext.Spec.Extension.Name
-	existing, statusErr := r.HelmEngine.Status(ctx, uiPluginNamespace, releaseName)
+	existing, statusErr := r.HelmEngine.Status(ctx, rancher.UIPluginNamespace, releaseName)
 	alreadyDeployed := statusErr == nil && existing.Status == "deployed" &&
 		ext.Status.ObservedGeneration == ext.Generation
 
@@ -500,8 +502,9 @@ func (r *InstallAIExtensionReconciler) handleDeletion(ctx context.Context, ext *
 	return ctrl.Result{}, nil
 }
 
-func (r *InstallAIExtensionReconciler) cleanupStaleResources(ctx context.Context, ext *aifv1.InstallAIExtension) {
+func (r *InstallAIExtensionReconciler) cleanupStaleResources(ctx context.Context, ext *aifv1.InstallAIExtension) error {
 	logger := log.FromContext(ctx)
+	var errs []error
 
 	oldName := ext.Status.ActiveExtensionName
 	newName := ext.Spec.Extension.Name
@@ -513,21 +516,25 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(ctx context.Context
 
 		if err := r.Catalog.DeleteClusterRepo(ctx, oldName); err != nil {
 			logger.Error(err, "failed to delete old ClusterRepo", "name", oldName)
+			errs = append(errs, err)
 		}
 		if err := r.Catalog.DeleteUIPlugin(ctx, oldName); err != nil {
 			logger.Error(err, "failed to delete old UIPlugin", "name", oldName)
+			errs = append(errs, err)
 		}
 
 		if oldSource == aifv1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
-			if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, ext.Status.HelmReleaseName); err != nil {
+			if err := r.HelmEngine.Uninstall(ctx, rancher.UIPluginNamespace, ext.Status.HelmReleaseName); err != nil {
 				logger.Error(err, "failed to uninstall old Helm release", "release", ext.Status.HelmReleaseName)
+				errs = append(errs, err)
 			}
 			ext.Status.HelmReleaseName = ""
 			ext.Status.HelmReleaseRevision = 0
 		}
 		if oldSource == aifv1.ExtensionSourceKindGit {
-			if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, oldName); err != nil {
+			if err := r.HelmEngine.Uninstall(ctx, rancher.UIPluginNamespace, oldName); err != nil {
 				logger.Error(err, "failed to uninstall old UIPlugin Helm release", "release", oldName)
+				errs = append(errs, err)
 			}
 		}
 	}
@@ -537,8 +544,9 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(ctx context.Context
 
 		if oldSource == aifv1.ExtensionSourceKindHelm {
 			if ext.Status.HelmReleaseName != "" {
-				if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, ext.Status.HelmReleaseName); err != nil {
+				if err := r.HelmEngine.Uninstall(ctx, rancher.UIPluginNamespace, ext.Status.HelmReleaseName); err != nil {
 					logger.Error(err, "failed to uninstall Helm release on source switch", "release", ext.Status.HelmReleaseName)
+					errs = append(errs, err)
 				}
 				ext.Status.HelmReleaseName = ""
 				ext.Status.HelmReleaseRevision = 0
@@ -554,11 +562,14 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(ctx context.Context
 			if name == "" {
 				name = newName
 			}
-			if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, name); err != nil {
+			if err := r.HelmEngine.Uninstall(ctx, rancher.UIPluginNamespace, name); err != nil {
 				logger.Error(err, "failed to uninstall UIPlugin Helm release on source switch", "release", name)
+				errs = append(errs, err)
 			}
 		}
 	}
+
+	return stderrors.Join(errs...)
 }
 
 func (r *InstallAIExtensionReconciler) cleanup(ctx context.Context, ext *aifv1.InstallAIExtension) error {
@@ -583,17 +594,24 @@ func (r *InstallAIExtensionReconciler) cleanup(ctx context.Context, ext *aifv1.I
 
 	if ext.Status.HelmReleaseName != "" {
 		logger.Info("uninstalling Helm release", "release", ext.Status.HelmReleaseName)
-		if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, ext.Status.HelmReleaseName); err != nil {
+		if err := r.HelmEngine.Uninstall(ctx, rancher.UIPluginNamespace, ext.Status.HelmReleaseName); err != nil {
 			logger.Error(err, "failed to uninstall Helm release", "release", ext.Status.HelmReleaseName)
 			errs = append(errs, err)
 		}
 	}
 
-	for _, name := range names {
-		logger.Info("uninstalling UIPlugin Helm release", "release", name)
-		if err := r.HelmEngine.Uninstall(ctx, uiPluginNamespace, name); err != nil {
-			logger.Error(err, "failed to uninstall UIPlugin Helm release", "release", name)
-			errs = append(errs, err)
+	// Git mode installs the UIPlugin chart as a Helm release named after the
+	// extension. Helm mode uses Catalog.EnsureUIPlugin instead (no per-name release).
+	if ext.Status.ActiveSourceKind == aifv1.ExtensionSourceKindGit || ext.Spec.Source.Kind == aifv1.ExtensionSourceKindGit {
+		for _, name := range names {
+			if name == ext.Status.HelmReleaseName {
+				continue
+			}
+			logger.Info("uninstalling UIPlugin Helm release", "release", name)
+			if err := r.HelmEngine.Uninstall(ctx, rancher.UIPluginNamespace, name); err != nil {
+				logger.Error(err, "failed to uninstall UIPlugin Helm release", "release", name)
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -603,7 +621,7 @@ func (r *InstallAIExtensionReconciler) cleanup(ctx context.Context, ext *aifv1.I
 // ensureUIPluginGit installs the UIPlugin chart from a git-based Helm repository.
 func (r *InstallAIExtensionReconciler) ensureUIPluginGit(ctx context.Context, ext *aifv1.InstallAIExtension, repoURL string) error {
 	_, err := r.HelmEngine.InstallFromRepoURL(ctx, helm.InstallFromRepoURLRequest{
-		Namespace:   uiPluginNamespace,
+		Namespace:   rancher.UIPluginNamespace,
 		ReleaseName: ext.Spec.Extension.Name,
 		ChartName:   ext.Spec.Extension.Name,
 		RepoURL:     repoURL,

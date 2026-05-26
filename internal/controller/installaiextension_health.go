@@ -8,6 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/SUSE/aif/internal/infra/rancher"
 )
 
 // deploymentStatus holds the readiness state and a human-readable message
@@ -27,7 +29,7 @@ func (r *InstallAIExtensionReconciler) checkDeploymentReady(ctx context.Context,
 		"app.kubernetes.io/instance": releaseName,
 	})
 	if err := r.List(ctx, &deploys, &client.ListOptions{
-		Namespace:     uiPluginNamespace,
+		Namespace:     rancher.UIPluginNamespace,
 		LabelSelector: selector,
 	}); err != nil {
 		return deploymentStatus{}, fmt.Errorf("list deployments: %w", err)
@@ -58,7 +60,7 @@ func (r *InstallAIExtensionReconciler) checkDeploymentReady(ctx context.Context,
 func (r *InstallAIExtensionReconciler) diagnosePodFailures(ctx context.Context, selector labels.Selector) string {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, &client.ListOptions{
-		Namespace:     uiPluginNamespace,
+		Namespace:     rancher.UIPluginNamespace,
 		LabelSelector: selector,
 	}); err != nil {
 		return ""
@@ -98,7 +100,7 @@ func (r *InstallAIExtensionReconciler) discoverServiceURL(ctx context.Context, r
 		"app.kubernetes.io/instance": releaseName,
 	})
 	if err := r.List(ctx, &services, &client.ListOptions{
-		Namespace:     uiPluginNamespace,
+		Namespace:     rancher.UIPluginNamespace,
 		LabelSelector: selector,
 	}); err != nil {
 		return "", fmt.Errorf("list services: %w", err)

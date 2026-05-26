@@ -182,9 +182,14 @@ func (m *Catalog) FetchIndexMetadata(ctx context.Context, indexURL, chartName, c
 	}, nil
 }
 
-// DeriveReleaseName extracts a Helm release name from a chart URL.
+// DeriveReleaseName extracts a Helm release name from a chart URL,
+// stripping any OCI tag suffix (e.g. ":1.0.0").
 func DeriveReleaseName(chartURL string) string {
-	return path.Base(chartURL)
+	base := path.Base(chartURL)
+	if i := strings.LastIndex(base, ":"); i > 0 {
+		return base[:i]
+	}
+	return base
 }
 
 // GitRepoToRawURL converts a GitHub repository URL to a raw.githubusercontent.com URL.

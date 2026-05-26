@@ -83,7 +83,7 @@ func TestInstallAIExtensionReconciler_DeploymentPodFailure(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "aif-ui-abc123",
-			Namespace: uiPluginNamespace,
+			Namespace: rancher.UIPluginNamespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/instance": "aif-ui",
 			},
