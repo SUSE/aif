@@ -101,6 +101,31 @@ func TestGitRepoEngine_AppliesGitRepoPerCluster(t *testing.T) {
 	}
 }
 
+func TestGitRepoEngine_RejectsTooManyComponents(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	g := &git.FakeEngine{}
+	e := fleet.NewGitRepoEngine(newSilentLogger(), c, g)
+	e.UpdateSettings(fleet.FleetSettings{
+		GitRepoURL: "https://example.test/r.git",
+		GitBranch:  "main",
+	})
+
+	spec := validSpec()
+	// MaxComponentIndex+1 components is the limit; one more must fail
+	// validation so we never emit a filename outside the 10..99 prefix
+	// range that would sort wrong against the 00-09 engine-owned files.
+	spec.Components = make([]fleet.ComponentBundle, git.MaxComponentIndex+2)
+	for i := range spec.Components {
+		spec.Components[i] = fleet.ComponentBundle{Name: "c", ChartRef: "oci://x:1"}
+	}
+
+	_, err := e.Apply(context.Background(), spec)
+	if !errors.Is(err, fleet.ErrGitRepoInvalidSpec) {
+		t.Fatalf("got %v, want ErrGitRepoInvalidSpec", err)
+	}
+}
+
 func TestGitRepoEngine_TeardownDeletesByLabel(t *testing.T) {
 	s := newScheme(t)
 	existing := &fleetv1.GitRepo{

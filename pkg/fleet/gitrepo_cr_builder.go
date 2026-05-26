@@ -8,6 +8,8 @@ import (
 
 	fleetv1 "github.com/rancher/fleet/pkg/apis/fleet.cattle.io/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/SUSE/aif/pkg/git"
 )
 
 const (
@@ -58,6 +60,10 @@ func validateGitRepoSpec(s GitRepoDeploymentSpec) error {
 	}
 	if len(s.Components) == 0 {
 		return fmt.Errorf("at least one Component is required")
+	}
+	if len(s.Components) > git.MaxComponentIndex+1 {
+		return fmt.Errorf("too many Components: %d (limit %d, see git.MaxComponentIndex)",
+			len(s.Components), git.MaxComponentIndex+1)
 	}
 	if len(s.TargetClusters) == 0 {
 		return fmt.Errorf("at least one TargetClusters entry is required")

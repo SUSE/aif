@@ -50,14 +50,14 @@ func (e *gitRepoEngine) UpdateSettings(s FleetSettings) {
 	defer e.settingsMu.Unlock()
 	e.settings = s
 	// Forward to the underlying git.Engine so it sees credentials and
-	// repo/branch on the next Push.
-	if e.git != nil {
-		e.git.UpdateSettings(git.EngineSettings{
-			RepoURL: s.GitRepoURL,
-			Branch:  s.GitBranch,
-			Auth:    s.GitAuth,
-		})
-	}
+	// repo/branch on the next Push. The constructor panics on nil git,
+	// so no nil-check is needed here (fast-fail at construction beats
+	// silent miss at first push).
+	e.git.UpdateSettings(git.EngineSettings{
+		RepoURL: s.GitRepoURL,
+		Branch:  s.GitBranch,
+		Auth:    s.GitAuth,
+	})
 }
 
 func (e *gitRepoEngine) snapshot() FleetSettings {
@@ -72,12 +72,13 @@ func (e *gitRepoEngine) snapshot() FleetSettings {
 //  3. SSA each GitRepo CR with the stable field-manager owner.
 //  4. Read back each GitRepo CR; mirror status into PerCluster.
 //
-// Fails fast on the first SSA conflict or apply error: PerCluster will
-// contain entries only for clusters processed before the failure, not
-// one per requested cluster. The caller's phase aggregation treats a
-// short PerCluster slice as the unprocessed clusters being Unknown.
-// (Collect-all-errors semantics may land in a later phase if the
-// downstream reducer needs them.)
+// Fails fast on the first SSA conflict or apply error and returns a
+// zero GitRepoObservedStatus (mirroring bundleEngine.Apply). The caller
+// in pkg/workload/deployer.go already discards the observed status on
+// error, so partial PerCluster slices would have no consumer; returning
+// zero keeps the contract honest. If a downstream reducer ever needs
+// per-cluster failure detail, switch this to collect-all-errors at the
+// same time.
 func (e *gitRepoEngine) Apply(ctx context.Context, spec GitRepoDeploymentSpec) (GitRepoObservedStatus, error) {
 	if err := validateGitRepoSpec(spec); err != nil {
 		return GitRepoObservedStatus{}, fmt.Errorf("%w: %v", ErrGitRepoInvalidSpec, err)
@@ -112,7 +113,7 @@ func (e *gitRepoEngine) Apply(ctx context.Context, spec GitRepoDeploymentSpec) (
 	for _, cluster := range spec.TargetClusters {
 		gr, err := buildGitRepoCR(spec, cluster, s)
 		if err != nil {
-			return out, fmt.Errorf("build GitRepo CR for %q: %w", cluster, err)
+			return GitRepoObservedStatus{}, fmt.Errorf("build GitRepo CR for %q: %w", cluster, err)
 		}
 		// Server-side-apply: idempotent on identical spec, surfaces conflicts
 		// cleanly. ForceOwnership lets us reclaim fields if a previous run was
@@ -127,14 +128,14 @@ func (e *gitRepoEngine) Apply(ctx context.Context, spec GitRepoDeploymentSpec) (
 			client.FieldOwner(fieldManager),
 			client.ForceOwnership); err != nil {
 			if apierrors.IsConflict(err) {
-				return out, fmt.Errorf("%w: %s/%s: %v", ErrGitRepoConflict, gr.Namespace, gr.Name, err)
+				return GitRepoObservedStatus{}, fmt.Errorf("%w: %s/%s: %v", ErrGitRepoConflict, gr.Namespace, gr.Name, err)
 			}
-			return out, fmt.Errorf("%w: %s/%s: %v", ErrGitRepoApplyFailed, gr.Namespace, gr.Name, err)
+			return GitRepoObservedStatus{}, fmt.Errorf("%w: %s/%s: %v", ErrGitRepoApplyFailed, gr.Namespace, gr.Name, err)
 		}
 
 		var got fleetv1.GitRepo
 		if err := e.client.Get(ctx, client.ObjectKeyFromObject(gr), &got); err != nil {
-			return out, fmt.Errorf("readback GitRepo %s/%s: %w", gr.Namespace, gr.Name, err)
+			return GitRepoObservedStatus{}, fmt.Errorf("readback GitRepo %s/%s: %w", gr.Namespace, gr.Name, err)
 		}
 		out.PerCluster = append(out.PerCluster, mirrorGitRepoStatus(got.Status, cluster))
 	}

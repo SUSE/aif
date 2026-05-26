@@ -34,13 +34,26 @@ func SanitizeComponentNameUnique(original string, seen map[string]struct{}) stri
 	return base + "-" + hex.EncodeToString(sum[:])[:4]
 }
 
+// MaxComponentIndex is the largest index ManifestFilename will accept
+// before returning an empty string. The "%02d-..." scheme below
+// reserves the 00..09 prefix range for engine-owned files (currently
+// just 00-namespace.yaml) and the 10..99 range for components, so
+// indices 0..89 map to filenames "10-..." through "99-...".
+const MaxComponentIndex = 89
+
 // ManifestFilename returns the per-component filename inside manifests/.
-// Indices 0-9 use the "1{idx}-..." form so the numeric prefix sorts
-// after fleet.yaml's "00-..." namespace marker. Indices ≥10 use the
-// "1-{idx}-..." form so they still sort after single-digit indices.
+// All indices use the "%02d-..." form with a (+10) offset, so the
+// lexicographic sort matches the numeric sort across the whole range:
+//
+//	00-09 → reserved for engine-owned files (e.g. 00-namespace.yaml)
+//	10-99 → component files (indices 0..89)
+//
+// Returns "" if index exceeds MaxComponentIndex; callers must enforce
+// the limit upstream (validateGitRepoSpec) rather than silently emitting
+// a file that would sort before lower indices.
 func ManifestFilename(index int, sanitizedName string) string {
-	if index < 10 {
-		return fmt.Sprintf("1%d-%s.yaml", index, sanitizedName)
+	if index < 0 || index > MaxComponentIndex {
+		return ""
 	}
-	return fmt.Sprintf("1-%d-%s.yaml", index, sanitizedName)
+	return fmt.Sprintf("%02d-%s.yaml", index+10, sanitizedName)
 }

@@ -8,8 +8,8 @@ import (
 	sshauth "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
-// Regression coverage for the bug where SSHAuth.KnownHostsPEM was
-// silently dropped: a populated KnownHostsPEM left HostKeyCallback nil,
+// Regression coverage for the bug where SSHAuth.KnownHostsData was
+// silently dropped: a populated KnownHostsData left HostKeyCallback nil,
 // which made go-git fall back to ~/.ssh/known_hosts on the operator
 // pod's filesystem. The fix wires parseKnownHostsCallback into
 // buildAuthMethod and surfaces parse errors as ErrAuth.
@@ -33,7 +33,7 @@ func TestBuildAuthMethod_SSH_KnownHostsPopulated_ParsesCallback(t *testing.T) {
 	knownHosts := []byte("github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n")
 	am, err := buildAuthMethod(GitAuth{SSH: &SSHAuth{
 		PrivateKeyPEM: []byte(testPrivateKey),
-		KnownHostsPEM: knownHosts,
+		KnownHostsData: knownHosts,
 	}})
 	if err != nil {
 		t.Fatalf("buildAuthMethod: %v", err)
@@ -43,14 +43,14 @@ func TestBuildAuthMethod_SSH_KnownHostsPopulated_ParsesCallback(t *testing.T) {
 		t.Fatalf("want *sshauth.PublicKeys, got %T", am)
 	}
 	if pk.HostKeyCallback == nil {
-		t.Fatal("HostKeyCallback is nil — KnownHostsPEM was silently dropped (regression of the P4-3 review #1 bug)")
+		t.Fatal("HostKeyCallback is nil — KnownHostsData was silently dropped (regression of the P4-3 review #1 bug)")
 	}
 }
 
 func TestBuildAuthMethod_SSH_KnownHostsGarbage_ReturnsErrAuth(t *testing.T) {
 	_, err := buildAuthMethod(GitAuth{SSH: &SSHAuth{
 		PrivateKeyPEM: []byte(testPrivateKey),
-		KnownHostsPEM: []byte("this is not a known_hosts line\n"),
+		KnownHostsData: []byte("this is not a known_hosts line\n"),
 	}})
 	if err == nil {
 		t.Fatal("want error for malformed known_hosts, got nil")
@@ -63,7 +63,7 @@ func TestBuildAuthMethod_SSH_KnownHostsGarbage_ReturnsErrAuth(t *testing.T) {
 func TestBuildAuthMethod_SSH_KnownHostsEmpty_UsesInsecureCallback(t *testing.T) {
 	am, err := buildAuthMethod(GitAuth{SSH: &SSHAuth{
 		PrivateKeyPEM: []byte(testPrivateKey),
-		// KnownHostsPEM left nil — documented insecure default.
+		// KnownHostsData left nil — documented insecure default.
 	}})
 	if err != nil {
 		t.Fatalf("buildAuthMethod: %v", err)
@@ -73,7 +73,7 @@ func TestBuildAuthMethod_SSH_KnownHostsEmpty_UsesInsecureCallback(t *testing.T) 
 		t.Fatalf("want *sshauth.PublicKeys, got %T", am)
 	}
 	if pk.HostKeyCallback == nil {
-		t.Fatal("empty KnownHostsPEM should yield InsecureIgnoreHostKey callback, not nil")
+		t.Fatal("empty KnownHostsData should yield InsecureIgnoreHostKey callback, not nil")
 	}
 }
 

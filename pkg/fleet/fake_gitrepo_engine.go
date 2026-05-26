@@ -57,4 +57,15 @@ func (f *FakeGitRepoEngine) AppliedSnapshot() []GitRepoDeploymentSpec {
 	return out
 }
 
+// TearDownSnapshot returns a copy of TornDown under the mutex.
+// Companion to AppliedSnapshot for tests that poll teardown progress
+// from a goroutine other than the one calling Teardown.
+func (f *FakeGitRepoEngine) TearDownSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.TornDown))
+	copy(out, f.TornDown)
+	return out
+}
+
 var _ FleetGitRepoEngine = (*FakeGitRepoEngine)(nil)

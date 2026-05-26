@@ -158,10 +158,10 @@ func buildAuthMethod(a GitAuth) (transport.AuthMethod, error) {
 			return nil, fmt.Errorf("%w: parse ssh key: %v", ErrAuth, err)
 		}
 		am := &sshauth.PublicKeys{User: user, Signer: signer}
-		if len(a.SSH.KnownHostsPEM) == 0 {
-			am.HostKeyCallback = cryptossh.InsecureIgnoreHostKey() //nolint:gosec // documented insecure default; production sets KnownHostsPEM
+		if len(a.SSH.KnownHostsData) == 0 {
+			am.HostKeyCallback = cryptossh.InsecureIgnoreHostKey() //nolint:gosec // documented insecure default; production sets KnownHostsData
 		} else {
-			cb, err := parseKnownHostsCallback(a.SSH.KnownHostsPEM)
+			cb, err := parseKnownHostsCallback(a.SSH.KnownHostsData)
 			if err != nil {
 				return nil, fmt.Errorf("%w: parse known_hosts: %v", ErrAuth, err)
 			}

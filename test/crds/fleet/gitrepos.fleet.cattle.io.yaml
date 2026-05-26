@@ -1,3 +1,8 @@
+# Vendored from: https://github.com/rancher/fleet (charts/fleet-crd/templates)
+# Fleet version: v0.10.14 (pinned in ./VERSION)
+# Extracted: 2026-05-26
+# Re-extract when: fleet version in ./VERSION bumps, or fleetv1.GitRepoSpec
+# schema changes (controller-gen will detect drift in envtest startup).
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:

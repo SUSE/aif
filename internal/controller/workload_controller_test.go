@@ -1095,6 +1095,16 @@ var _ = Describe("WorkloadReconciler Fleet Bundle integration (P4-3b)", Serial, 
 			"gitops dispatch must NOT create a Fleet Bundle")
 
 		Expect(k8sClient.Delete(ctx, w)).To(Succeed())
+
+		// The finalizer must drive FleetGitRepoEngine.Teardown before the
+		// Workload disappears — guards against a regression where the
+		// gitops dispatch wires Apply but skips Teardown (deployer.go
+		// calls both engines unconditionally; this test catches drift).
+		Eventually(func() int {
+			return len(fakeGitRepoEngine.TearDownSnapshot())
+		}, timeout, interval).Should(BeNumerically(">=", 1),
+			"reconciler should drive deployer to call FleetGitRepoEngine.Teardown on delete")
+
 		Eventually(func() bool {
 			var got aifv1.Workload
 			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(w), &got)

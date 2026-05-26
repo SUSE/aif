@@ -47,19 +47,18 @@ type BasicAuth struct {
 type SSHAuth struct {
 	PrivateKeyPEM []byte
 	User          string // defaults to "git" when empty
-	// KnownHostsPEM holds OpenSSH-format `known_hosts` data — one entry
+	// KnownHostsData holds OpenSSH-format `known_hosts` data — one entry
 	// per line (`hostname[,hostname...] keytype base64key [comment]`),
 	// the same shape `ssh-keyscan` emits and `~/.ssh/known_hosts`
-	// stores. The "PEM" suffix is a misnomer kept for backwards
-	// compatibility with the initial draft of this struct; the data is
-	// NOT PEM-encoded.
+	// stores. NOT PEM-encoded despite the legacy name in the initial
+	// draft (renamed during P4-3 review).
 	//
 	// When empty, ssh.InsecureIgnoreHostKey is used. When populated,
 	// the engine parses it via golang.org/x/crypto/ssh/knownhosts and
 	// the resulting callback enforces the supplied set; a malformed
 	// payload surfaces as ErrAuth at Push time. Production deployments
 	// should populate this.
-	KnownHostsPEM []byte
+	KnownHostsData []byte
 }
 
 // PushRequest is what callers hand to Engine.Push.
