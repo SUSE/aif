@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SUSE/aif/pkg/git"
 	fleetv1 "github.com/rancher/fleet/pkg/apis/fleet.cattle.io/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -92,6 +93,88 @@ func TestLive_FleetBundle_RoundTrip(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	t.Logf("Bundle resourceVersion: %s, targets: %d", got.ResourceVersion, len(got.Spec.Targets))
+
+	if os.Getenv("AIF_FLEET_LIVE_KEEP") == "1" {
+		t.Log("AIF_FLEET_LIVE_KEEP=1 set; skipping Teardown")
+		return
+	}
+	if err := engine.Teardown(ctx, spec.WorkloadNS, spec.WorkloadID); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+}
+
+func TestLive_FleetGitRepo_RoundTrip(t *testing.T) {
+	kc := os.Getenv("AIF_FLEET_LIVE_KUBECONFIG")
+	ns := os.Getenv("AIF_FLEET_LIVE_NAMESPACE")
+	target := os.Getenv("AIF_FLEET_LIVE_TARGET_CLUSTER")
+	repo := os.Getenv("AIF_FLEET_LIVE_GIT_REPO")
+	token := os.Getenv("AIF_FLEET_LIVE_GIT_TOKEN")
+	if kc == "" || ns == "" || target == "" || repo == "" || token == "" {
+		t.Skip("set AIF_FLEET_LIVE_{KUBECONFIG,NAMESPACE,TARGET_CLUSTER,GIT_REPO,GIT_TOKEN} to enable")
+	}
+
+	cfg, err := clientcmd.BuildConfigFromFlags("", kc)
+	if err != nil {
+		t.Fatalf("kubeconfig: %v", err)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gitEngine := git.NewEngine(logger)
+	engine := NewGitRepoEngine(logger, c, gitEngine)
+
+	engine.UpdateSettings(FleetSettings{
+		GitRepoURL: repo,
+		GitBranch:  "main",
+		GitAuth:    git.GitAuth{Token: &git.TokenAuth{Token: token}},
+	})
+
+	spec := GitRepoDeploymentSpec{
+		WorkloadID:     "aif-live-git-" + time.Now().Format("20060102-150405"),
+		WorkloadNS:     ns,
+		TargetClusters: []string{target},
+		Components: []ComponentBundle{{
+			Name:     "noop",
+			ChartRef: "oci://registry.example.test/aif/noop:0.0.1",
+			Values:   map[string]any{},
+		}},
+		Owner: OwnerRef{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+			Name:       "live-test-owner",
+			UID:        "00000000-0000-0000-0000-000000000000",
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	obs, err := engine.Apply(ctx, spec)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	t.Logf("Apply returned %d cluster observations", len(obs.PerCluster))
+
+	var got fleetv1.GitRepo
+	if err := c.Get(ctx, client.ObjectKey{
+		Namespace: spec.WorkloadNS,
+		Name:      gitRepoName(spec.WorkloadNS, spec.WorkloadID, target),
+	}, &got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	t.Logf("GitRepo resourceVersion: %s, paths: %d", got.ResourceVersion, len(got.Spec.Paths))
 
 	if os.Getenv("AIF_FLEET_LIVE_KEEP") == "1" {
 		t.Log("AIF_FLEET_LIVE_KEEP=1 set; skipping Teardown")

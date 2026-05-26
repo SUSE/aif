@@ -298,8 +298,8 @@ verify-fleet-mock:
 	go test -count=1 -v -run Example ./pkg/fleet/
 
 verify-fleet-live:
-	@echo "Verifying FleetBundleEngine against a real Fleet manager (skips without env vars)..."
-	go test -count=1 -tags=live -v -run TestLive_FleetBundle ./pkg/fleet/...
+	@echo "Verifying FleetBundleEngine + FleetGitRepoEngine against a real Fleet manager (skips without env vars)..."
+	go test -count=1 -tags=live -v -run TestLive_Fleet ./pkg/fleet/...
 
 # pkg/git verification trio (P4-3). The git engine wraps go-git via memfs +
 # memory.NewStorage; the live target exercises a real remote round-trip and
