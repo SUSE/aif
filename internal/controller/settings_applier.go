@@ -30,6 +30,18 @@ type SettingsSnapshot struct {
 	// wrapper). Not pushed by the bus today; see follow-up note 4.
 	BlueprintForceReference     []ChartRef
 	BlueprintForceBuildingBlock []ChartRef
+
+	// FleetRepoURL/Branch/AuthType/GitAuth carry the Fleet GitOps configuration
+	// to both Fleet engines (FleetBundleEngine, FleetGitRepoEngine) via the
+	// bus's projectFleet projection. Resolved values, not references: the
+	// reconciler resolves spec.fleet.credSecretRef to bytes before calling
+	// translateSettings, matching the SUSERegistry/AppCollection resolved-creds
+	// pattern. Engines never touch the apiserver — required by CLAUDE.md
+	// "credentials via UpdateSettings, never direct Secret reads".
+	FleetRepoURL  string
+	FleetBranch   string
+	FleetAuthType string // "" | "ssh" | "token" | "basic"
+	FleetGitAuth  FleetGitAuth
 }
 
 // ImageRewriteRule mirrors aifv1.ImageRewriteRule and helm.ImageRewriteRule.
@@ -44,6 +56,34 @@ type ImageRewriteRule struct {
 type ChartRef struct {
 	Repo  string
 	Chart string
+}
+
+// FleetGitAuth mirrors git.GitAuth as a tagged union over the three supported
+// auth modes; exactly one pointer is non-nil when an auth method is in use, all
+// nil for anonymous. Defined here so the snapshot doesn't import pkg/git — the
+// bus translates to git.GitAuth at projection time, same approach as
+// ImageRewriteRule above.
+type FleetGitAuth struct {
+	Token *FleetGitAuthToken
+	Basic *FleetGitAuthBasic
+	SSH   *FleetGitAuthSSH
+}
+
+type FleetGitAuthToken struct {
+	Token string
+}
+
+type FleetGitAuthBasic struct {
+	Username string // currently empty: aifv1.FleetConfig has no Username field; CRD follow-up tracked in PROJECT_PLAN.md
+	Password string
+}
+
+type FleetGitAuthSSH struct {
+	PrivateKeyPEM []byte
+	// KnownHostsPEM intentionally omitted: aifv1.FleetConfig has no field for it
+	// today, so the engine defaults to ssh.InsecureIgnoreHostKey (documented in
+	// pkg/git/types.go::SSHAuth.KnownHostsPEM). CRD extension tracked in
+	// PROJECT_PLAN.md follow-up.
 }
 
 // Credentials is the resolved (user, token) pair the reconciler assembles
@@ -70,7 +110,7 @@ type SettingsApplier interface {
 // applying §4.5 in-code defaults wherever a CR field is nil/empty. Pure
 // function: never reads Secrets (caller resolves first and passes
 // Credentials in), never mutates the input CR.
-func translateSettings(s *aifv1.Settings, sc, ac Credentials) SettingsSnapshot {
+func translateSettings(s *aifv1.Settings, sc, ac, fc Credentials) SettingsSnapshot {
 	out := SettingsSnapshot{
 		SUSERegistry:          "registry.suse.com",
 		AppCollectionRegistry: "dp.apps.rancher.io",
@@ -123,6 +163,31 @@ func translateSettings(s *aifv1.Settings, sc, ac Credentials) SettingsSnapshot {
 			out.BlueprintForceBuildingBlock = append(out.BlueprintForceBuildingBlock, ChartRef{
 				Repo: c.Repo, Chart: c.Chart,
 			})
+		}
+	}
+	if s.Spec.Fleet != nil {
+		out.FleetRepoURL = s.Spec.Fleet.RepoURL
+		out.FleetBranch = s.Spec.Fleet.Branch
+		out.FleetAuthType = string(s.Spec.Fleet.AuthType)
+		// Resolved credential bytes only when CredSecretRef is non-nil. Both
+		// guards required: spec.Fleet AND spec.Fleet.CredSecretRef are pointers.
+		// fc.Token carries the single resolved value (ssh PEM bytes, token, or
+		// basic password) — the SecretKeySelector schema is one key per ref.
+		if s.Spec.Fleet.CredSecretRef != nil {
+			switch s.Spec.Fleet.AuthType {
+			case aifv1.FleetAuthTypeToken:
+				out.FleetGitAuth = FleetGitAuth{Token: &FleetGitAuthToken{Token: fc.Token}}
+			case aifv1.FleetAuthTypeSSH:
+				out.FleetGitAuth = FleetGitAuth{SSH: &FleetGitAuthSSH{PrivateKeyPEM: []byte(fc.Token)}}
+			case aifv1.FleetAuthTypeBasic:
+				// Username gap: aifv1.FleetConfig has no Username field; ship
+				// empty for now and rely on the engine to surface the failure
+				// as ErrAuth at Push time. Tracked in PROJECT_PLAN.md.
+				out.FleetGitAuth = FleetGitAuth{Basic: &FleetGitAuthBasic{Password: fc.Token}}
+			}
+			// AuthType "" with a credSecretRef set is a misconfiguration that
+			// the reconciler already rejects at validation time; leaving
+			// FleetGitAuth zero here is harmless — projection emits no auth.
 		}
 	}
 	return out

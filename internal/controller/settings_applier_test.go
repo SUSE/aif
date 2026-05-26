@@ -4,12 +4,14 @@ import (
 	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 )
 
 // TestTranslateSettings_Empty: nil CR + empty creds → all defaults applied.
 func TestTranslateSettings_Empty(t *testing.T) {
-	got := translateSettings(nil, Credentials{}, Credentials{})
+	got := translateSettings(nil, Credentials{}, Credentials{}, Credentials{})
 	want := SettingsSnapshot{
 		SUSERegistry:          "registry.suse.com",
 		AppCollectionRegistry: "dp.apps.rancher.io",
@@ -32,7 +34,7 @@ func TestTranslateSettings_RegistryEndpointsOverride(t *testing.T) {
 			},
 		},
 	}
-	got := translateSettings(in, Credentials{}, Credentials{})
+	got := translateSettings(in, Credentials{}, Credentials{}, Credentials{})
 	if got.SUSERegistry != "harbor.example.com" {
 		t.Errorf("SUSERegistry: got %q, want harbor.example.com", got.SUSERegistry)
 	}
@@ -57,7 +59,7 @@ func TestTranslateSettings_ImageRewriteRulesProjected(t *testing.T) {
 			},
 		},
 	}
-	got := translateSettings(in, Credentials{}, Credentials{})
+	got := translateSettings(in, Credentials{}, Credentials{}, Credentials{})
 	if !got.ImageRewriteEnabled {
 		t.Error("ImageRewriteEnabled must be true")
 	}
@@ -77,7 +79,7 @@ func TestTranslateSettings_CatalogDiscoveryMode(t *testing.T) {
 			},
 		},
 	}
-	got := translateSettings(in, Credentials{}, Credentials{})
+	got := translateSettings(in, Credentials{}, Credentials{}, Credentials{})
 	if got.AppCollectionMode != "disabled" {
 		t.Errorf("AppCollectionMode: got %q, want disabled", got.AppCollectionMode)
 	}
@@ -99,7 +101,7 @@ func TestTranslateSettings_PartialNilSpecsUseDefaults(t *testing.T) {
 			BlueprintClassification: nil,
 		},
 	}
-	got := translateSettings(in, Credentials{}, Credentials{})
+	got := translateSettings(in, Credentials{}, Credentials{}, Credentials{})
 	if got.SUSERegistry != "registry.suse.com" {
 		t.Errorf("SUSERegistry default lost: %q", got.SUSERegistry)
 	}
@@ -121,7 +123,7 @@ func TestTranslateSettings_PureFunction_InputsUnchanged(t *testing.T) {
 		},
 	}
 	clone := in.DeepCopy()
-	_ = translateSettings(in, Credentials{User: "u", Token: "t"}, Credentials{})
+	_ = translateSettings(in, Credentials{User: "u", Token: "t"}, Credentials{}, Credentials{})
 	if !reflect.DeepEqual(in, clone) {
 		t.Errorf("input mutated:\n  before: %#v\n  after:  %#v", clone, in)
 	}
@@ -138,7 +140,7 @@ func TestTranslateSettings_BlueprintClassification_StoredInSnapshot(t *testing.T
 			},
 		},
 	}
-	got := translateSettings(in, Credentials{}, Credentials{})
+	got := translateSettings(in, Credentials{}, Credentials{}, Credentials{})
 	wantRef := []ChartRef{{Repo: "oci://x", Chart: "rag"}}
 	wantBB := []ChartRef{{Repo: "oci://y", Chart: "llm"}}
 	if !reflect.DeepEqual(got.BlueprintForceReference, wantRef) {
@@ -146,5 +148,120 @@ func TestTranslateSettings_BlueprintClassification_StoredInSnapshot(t *testing.T
 	}
 	if !reflect.DeepEqual(got.BlueprintForceBuildingBlock, wantBB) {
 		t.Errorf("BlueprintForceBuildingBlock: got %#v, want %#v", got.BlueprintForceBuildingBlock, wantBB)
+	}
+}
+
+func TestTranslateSettings_FleetPropagation(t *testing.T) {
+	tests := []struct {
+		name       string
+		spec       *aifv1.Settings
+		fleetCreds Credentials
+		want       SettingsSnapshot
+	}{
+		{
+			name: "nil spec.Fleet leaves all Fleet fields zero",
+			spec: &aifv1.Settings{Spec: aifv1.SettingsSpec{}},
+			want: SettingsSnapshot{
+				SUSERegistry:          "registry.suse.com",
+				AppCollectionRegistry: "dp.apps.rancher.io",
+				AppCollectionAPI:      "https://api.apps.rancher.io",
+				AppCollectionMode:     "api",
+			},
+		},
+		{
+			name: "populated spec.Fleet with token auth populates RepoURL/Branch/AuthType/GitAuth.Token",
+			spec: &aifv1.Settings{Spec: aifv1.SettingsSpec{
+				Fleet: &aifv1.FleetConfig{
+					RepoURL:       "https://git.example.com/fleet-state.git",
+					Branch:        "release",
+					AuthType:      aifv1.FleetAuthTypeToken,
+					CredSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "fleet-cred"}, Key: "token"},
+				},
+			}},
+			fleetCreds: Credentials{Token: "ghp_test123"},
+			want: SettingsSnapshot{
+				SUSERegistry:          "registry.suse.com",
+				AppCollectionRegistry: "dp.apps.rancher.io",
+				AppCollectionAPI:      "https://api.apps.rancher.io",
+				AppCollectionMode:     "api",
+				FleetRepoURL:          "https://git.example.com/fleet-state.git",
+				FleetBranch:           "release",
+				FleetAuthType:         "token",
+				FleetGitAuth:          FleetGitAuth{Token: &FleetGitAuthToken{Token: "ghp_test123"}},
+			},
+		},
+		{
+			name: "ssh auth carries PEM bytes in FleetGitAuth.SSH",
+			spec: &aifv1.Settings{Spec: aifv1.SettingsSpec{
+				Fleet: &aifv1.FleetConfig{
+					RepoURL:       "git@github.com:org/repo.git",
+					Branch:        "main",
+					AuthType:      aifv1.FleetAuthTypeSSH,
+					CredSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "fleet-cred"}, Key: "ssh-privatekey"},
+				},
+			}},
+			fleetCreds: Credentials{Token: "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n"},
+			want: SettingsSnapshot{
+				SUSERegistry:          "registry.suse.com",
+				AppCollectionRegistry: "dp.apps.rancher.io",
+				AppCollectionAPI:      "https://api.apps.rancher.io",
+				AppCollectionMode:     "api",
+				FleetRepoURL:          "git@github.com:org/repo.git",
+				FleetBranch:           "main",
+				FleetAuthType:         "ssh",
+				FleetGitAuth:          FleetGitAuth{SSH: &FleetGitAuthSSH{PrivateKeyPEM: []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n")}},
+			},
+		},
+		{
+			name: "basic auth with empty Username (CRD gap) still maps Password",
+			spec: &aifv1.Settings{Spec: aifv1.SettingsSpec{
+				Fleet: &aifv1.FleetConfig{
+					RepoURL:       "https://git.example.com/fleet-state.git",
+					Branch:        "main",
+					AuthType:      aifv1.FleetAuthTypeBasic,
+					CredSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "fleet-cred"}, Key: "password"},
+				},
+			}},
+			fleetCreds: Credentials{Token: "s3cret"},
+			want: SettingsSnapshot{
+				SUSERegistry:          "registry.suse.com",
+				AppCollectionRegistry: "dp.apps.rancher.io",
+				AppCollectionAPI:      "https://api.apps.rancher.io",
+				AppCollectionMode:     "api",
+				FleetRepoURL:          "https://git.example.com/fleet-state.git",
+				FleetBranch:           "main",
+				FleetAuthType:         "basic",
+				FleetGitAuth:          FleetGitAuth{Basic: &FleetGitAuthBasic{Username: "", Password: "s3cret"}},
+			},
+		},
+		{
+			name: "spec.Fleet non-nil with nil CredSecretRef leaves FleetGitAuth zero",
+			spec: &aifv1.Settings{Spec: aifv1.SettingsSpec{
+				Fleet: &aifv1.FleetConfig{
+					RepoURL:  "https://git.example.com/anon.git",
+					Branch:   "main",
+					AuthType: "",
+					// CredSecretRef intentionally nil — anonymous repo.
+				},
+			}},
+			want: SettingsSnapshot{
+				SUSERegistry:          "registry.suse.com",
+				AppCollectionRegistry: "dp.apps.rancher.io",
+				AppCollectionAPI:      "https://api.apps.rancher.io",
+				AppCollectionMode:     "api",
+				FleetRepoURL:          "https://git.example.com/anon.git",
+				FleetBranch:           "main",
+				FleetAuthType:         "",
+				// FleetGitAuth left zero — no auth.
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := translateSettings(tc.spec, Credentials{}, Credentials{}, tc.fleetCreds)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("translateSettings mismatch\n got: %+v\nwant: %+v", got, tc.want)
+			}
+		})
 	}
 }

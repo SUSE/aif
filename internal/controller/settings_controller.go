@@ -146,7 +146,11 @@ func (r *SettingsReconciler) reconcile(ctx context.Context, settings *aifv1.Sett
 	// Push the snapshot to engines via the bus. Skipped if Applier is nil
 	// (e.g., test setup that doesn't care about engine state).
 	if r.Applier != nil {
-		snap := translateSettings(settings, suseCreds, appCoCreds)
+		// Task 2 (P5-4b) wires the resolved Fleet credentials in here; for
+		// now pass a zero Credentials so the snapshot keeps FleetGitAuth
+		// empty (the FleetRepoURL/Branch/AuthType fields still propagate
+		// from spec.Fleet via translateSettings).
+		snap := translateSettings(settings, suseCreds, appCoCreds, Credentials{})
 		if err := r.Applier.Apply(ctx, snap); err != nil {
 			logger.Error(err, "applier returned error")
 			msg := "engine push failed: " + err.Error()
