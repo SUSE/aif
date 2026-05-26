@@ -274,15 +274,15 @@
               "type": "object",
               "description": "Helm source configuration (used when source.kind=Helm)",
               "properties": {
-                "chartURL": { "type": "string", "minLength": 1, "default": "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager", "description": "Helm chart repository URL (oci:// or https://)" },
-                "version": { "type": "string", "minLength": 1, "default": "1.1.0", "description": "Chart version to install" }
+                "chartURL": { "type": "string", "minLength": 1, "default": "oci://ghcr.io/suse/chart/aif-ui", "description": "Helm chart repository URL (oci:// or https://)" },
+                "version": { "type": "string", "minLength": 1, "default": "0.1.0", "description": "Chart version to install" }
               }
             },
             "git": {
               "type": "object",
               "description": "Git source configuration (used when source.kind=Git)",
               "properties": {
-                "repo": { "type": "string", "minLength": 1, "default": "https://github.com/SUSE/suse-ai-lifecycle-manager", "description": "Git repository URL" },
+                "repo": { "type": "string", "minLength": 1, "default": "https://github.com/SUSE/aif", "description": "Git repository URL" },
                 "branch": { "type": "string", "minLength": 1, "default": "gh-pages", "description": "Git branch serving extension assets" }
               }
             }
@@ -292,8 +292,8 @@
           "type": "object",
           "description": "UIPlugin identification for post-install verification",
           "properties": {
-            "name": { "type": "string", "minLength": 1, "default": "suse-ai-lifecycle-manager", "description": "UIPlugin resource name" },
-            "version": { "type": "string", "minLength": 1, "default": "1.1.0", "description": "Expected extension version" }
+            "name": { "type": "string", "minLength": 1, "default": "ai-factory", "description": "UIPlugin resource name" },
+            "version": { "type": "string", "minLength": 1, "default": "0.1.0", "description": "Expected extension version" }
           }
         },
         "cleanup": {

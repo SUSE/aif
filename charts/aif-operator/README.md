@@ -80,12 +80,12 @@ This produces a Deployment with:
 | `podDisruptionBudget.minAvailable` | integer | `1` | Minimum available pods during disruption |
 | `aiExtension.enabled` | boolean | `true` | Create an InstallAIExtension CR to auto-deploy the UI extension |
 | `aiExtension.source.kind` | string | `Helm` | Source type: `Helm` (container-based) or `Git` |
-| `aiExtension.source.helm.chartURL` | string | `oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager` | Helm chart repository URL |
-| `aiExtension.source.helm.version` | string | `1.1.0` | Chart version to install |
-| `aiExtension.source.git.repo` | string | `https://github.com/SUSE/suse-ai-lifecycle-manager` | Git repository URL |
+| `aiExtension.source.helm.chartURL` | string | `oci://ghcr.io/suse/chart/aif-ui` | Helm chart repository URL |
+| `aiExtension.source.helm.version` | string | `0.1.0` | Chart version to install |
+| `aiExtension.source.git.repo` | string | `https://github.com/SUSE/aif` | Git repository URL |
 | `aiExtension.source.git.branch` | string | `gh-pages` | Git branch serving extension assets |
-| `aiExtension.extension.name` | string | `suse-ai-lifecycle-manager` | UIPlugin resource name for post-install verification |
-| `aiExtension.extension.version` | string | `1.1.0` | Expected extension version |
+| `aiExtension.extension.name` | string | `ai-factory` | UIPlugin resource name for post-install verification |
+| `aiExtension.extension.version` | string | `0.1.0` | Expected extension version |
 | `aiExtension.cleanup.image.registry` | string | `registry.suse.com` | Pre-delete cleanup Job image registry |
 | `aiExtension.cleanup.image.repository` | string | `suse/kubectl` | Pre-delete cleanup Job image repository |
 | `aiExtension.cleanup.image.tag` | string | `1.35` | Pre-delete cleanup Job image tag |
