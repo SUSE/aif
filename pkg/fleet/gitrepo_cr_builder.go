@@ -75,20 +75,21 @@ func validateGitRepoSpec(s GitRepoDeploymentSpec) error {
 // fleet.cattle.io/v1alpha1 GitRepo CR, scoped to the supplied cluster.
 // Pure function — no I/O.
 //
-// Two intentional gaps in P4-3, both addressed in P5-4b:
+// Two known gaps from P4-3, tracked for later stories:
 //
-//   - ClientSecretName is NOT set. Until P5-4b extends FleetSettings with
-//     a GitClientSecretName field and wires it here, Fleet itself can't
-//     clone the remote — but the operator-side reconciliation works
-//     end-to-end (which is what P4-3 verifies).
+//   - ClientSecretName is NOT set on the GitRepo CR. P5-4b wired
+//     resolved git credentials onto FleetSettings.GitAuth for the
+//     operator's own pkg/git client, but did NOT wire creds onto the
+//     downstream GitRepo CR; that work belongs to a future story that
+//     owns Fleet's downstream-cluster auth.
 //
 //   - spec.PullSecretData is ignored. The original design called for
 //     embedding the suse-registry-creds manifest into
 //     GitRepo.Spec.Resources, but fleet.cattle.io/v1alpha1.GitRepoSpec
 //     has no Resources field (verified against v0.10.14 and v0.15.2 —
-//     Resources lives only on GitRepoStatus). P5-4b will introduce an
-//     out-of-band downstream-cluster pull-secret reconciler; until then
-//     the field is plumbed through GitRepoDeploymentSpec for upstream
+//     Resources lives only on GitRepoStatus). The downstream-cluster
+//     pull-secret reconciler is tracked under P5-5; until then the
+//     field is plumbed through GitRepoDeploymentSpec for upstream
 //     compatibility but unused here.
 func buildGitRepoCR(
 	spec GitRepoDeploymentSpec,

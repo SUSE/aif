@@ -21,7 +21,9 @@ type FleetBundleEngine interface {
 	Teardown(ctx context.Context, namespace, workloadID string) error
 
 	// UpdateSettings is called by SettingsReconciler via engine_bus.
-	// Currently no-op (FleetSettings is empty); kept for symmetry.
+	// No-op for this engine — the bundle path doesn't need git creds.
+	// Implemented for symmetry with FleetGitRepoEngine and the
+	// SettingsApplier contract.
 	UpdateSettings(s FleetSettings)
 }
 
