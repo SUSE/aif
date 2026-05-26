@@ -2939,7 +2939,7 @@ For git-based extensions, the current implementation may be sufficient (ClusterR
 
 The current controller also has several implementation gaps versus the patterns established by later controllers (Workload, Bundle, Blueprint): `setCondition` defeats `LastTransitionTime` preservation, logging uses `slog` instead of `logr`, and event types use string literals instead of `corev1` constants. These should be fixed as part of the controller rewrite.
 
-Reference chart: `github.com/leooamaral/suse-ai-lifecycle-manager` (branch `feat/suse-ai-operator-gh`) has the correct container-based pattern: Deployment with `catalog.cattle.io/ui-extensions-catalog-image` label, Service on port 8080, security context, liveness/readiness probes, rolling update strategy.
+Reference chart: `charts/aif-ui/` in this repository implements the container-based pattern: Deployment with `catalog.cattle.io/ui-extensions-catalog-image` label, Service on port 8080, security context, liveness/readiness probes, rolling update strategy.
 
 **Validation:**
 ```bash
