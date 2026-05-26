@@ -184,6 +184,43 @@ var _ = Describe("SettingsReconciler", func() {
 		}, timeout, interval).Should(Succeed())
 	})
 
+	It("propagates spec.fleet to the applier snapshot with resolved cred bytes", func() {
+		By("creating a Fleet credential Secret")
+		credSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "fleet-cred", Namespace: "aif"},
+			Data:       map[string][]byte{"token": []byte("ghp_int_test_123")},
+		}
+		Expect(k8sClient.Create(ctx, credSecret)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, credSecret) })
+
+		By("creating Settings with spec.fleet populated")
+		settings := &aifv1.Settings{
+			ObjectMeta: metav1.ObjectMeta{Name: "fleet-cred-propagation", Namespace: "aif"},
+			Spec: aifv1.SettingsSpec{
+				Fleet: &aifv1.FleetConfig{
+					RepoURL:       "https://git.example.com/fleet-state.git",
+					Branch:        "release",
+					AuthType:      aifv1.FleetAuthTypeToken,
+					CredSecretRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "fleet-cred"}, Key: "token"},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, settings)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, settings) })
+
+		By("the applier receives a snapshot with the resolved Fleet fields within one reconcile")
+		Eventually(func(g Gomega) {
+			snaps := settingsApplier.Snapshot()
+			g.Expect(snaps).ToNot(BeEmpty(), "applier should have been called at least once")
+			latest := snaps[len(snaps)-1]
+			g.Expect(latest.FleetRepoURL).To(Equal("https://git.example.com/fleet-state.git"))
+			g.Expect(latest.FleetBranch).To(Equal("release"))
+			g.Expect(latest.FleetAuthType).To(Equal("token"))
+			g.Expect(latest.FleetGitAuth.Token).ToNot(BeNil())
+			g.Expect(latest.FleetGitAuth.Token.Token).To(Equal("ghp_int_test_123"))
+		}, "5s", "100ms").Should(Succeed())
+	})
+
 	It("should accept nil SecretKeyRefs (optional fields)", func() {
 		settings := &aifv1.Settings{
 			ObjectMeta: metav1.ObjectMeta{
