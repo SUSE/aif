@@ -23,6 +23,7 @@ type App struct {
 	Version            string     `json:"version"`           // chart version
 	LogoURL            string     `json:"logoURL"`
 	Source             string     `json:"source"`            // "nvidia" | "suse"
+	Origin             string     `json:"origin"`            // "appco" | "registry" | "ngc" — upstream within Source
 	AssetType          string     `json:"assetType"`         // "chart" today; reserved for future asset kinds
 	Categories         []string   `json:"categories"`        // flattened category names
 	Tags               []string   `json:"tags"`

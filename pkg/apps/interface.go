@@ -20,12 +20,13 @@ type Catalog interface {
 	// by App.ID, sorted by ID, optionally filtered by ListOpts.
 	List(ctx context.Context, opts ListOpts) ([]App, error)
 
-	// Get returns a single App by namespaced ID. Parses the dot-
-	// separated "<source>.<chart>:<version>" form and dispatches to
-	// the matching Source's cache. Returns ErrAppNotFound when the
-	// prefix matches a registered Source but no entry has the full
-	// ID; ErrUnknownSource when the prefix doesn't match (or the ID
-	// is missing the "." separator entirely).
+	// Get returns a single App by namespaced ID. Iterates registered
+	// Sources and matches id against Source.Name()+"."; on hit, the
+	// matching Source's cache is searched for the full ID. Returns
+	// ErrAppNotFound when the prefix matches a registered Source but
+	// no entry has the full ID; ErrUnknownSource when the prefix
+	// doesn't match any registered Source (or the ID is missing a
+	// "." separator).
 	Get(ctx context.Context, id string) (App, error)
 
 	// Refresh fans out to every Source.Refresh in parallel. Partial
@@ -44,8 +45,11 @@ type Catalog interface {
 // Each adapter owns its own cache; the Catalog is a thin aggregator.
 // 4 methods (within ISP target).
 type Source interface {
-	// Name returns the namespace prefix used in App.ID
-	// ("nvidia", "suse"). Stable for the lifetime of the adapter.
+	// Name returns the namespace prefix used in this Source's App.IDs,
+	// excluding the trailing dot. For Sources that publish into a single
+	// origin within a library (the production case), this is
+	// "<source>.<origin>" — e.g. "suse.appco", "suse.registry", "nvidia.ngc".
+	// Stable for the lifetime of the adapter.
 	Name() string
 
 	// List returns the adapter's cached App slice. Never blocks on the
