@@ -11,8 +11,12 @@ type EngineSettings struct {
 	Branch string
 
 	// Auth is the tagged union of supported auth modes. Exactly one
-	// pointer is non-nil. When all are nil, the engine will fail with
-	// ErrNotConfigured at Push time.
+	// pointer is non-nil for an authenticated push. When all are nil,
+	// the engine clones and pushes anonymously — appropriate for
+	// `file://` transports (used in tests) and public HTTPS repos
+	// against servers that allow unauthenticated push. ErrNotConfigured
+	// is raised only when RepoURL itself is empty, not when Auth is
+	// zero.
 	Auth GitAuth
 }
 

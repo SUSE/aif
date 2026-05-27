@@ -134,19 +134,24 @@ func (r *SettingsReconciler) reconcile(ctx context.Context, settings *aifv1.Sett
 		appCoCreds = Credentials{User: user, Token: token}
 	}
 
-	// Resolve Fleet credentials (validates Secret presence + key; not pushed
-	// via the bus today — Fleet is git-deployment infra, not a settings-aware
-	// engine in P5-7's scope).
-	if settings.Spec.Fleet != nil {
-		if _, err := r.resolveSecretKeyRef(ctx, settings.Spec.Fleet.CredSecretRef); err != nil {
+	// Resolve Fleet credentials. The single SecretKeySelector value carries
+	// whatever the AuthType implies (token text, ssh PEM bytes, or basic
+	// password); translateSettings dispatches on AuthType to shape FleetGitAuth.
+	// Only resolve when CredSecretRef is non-nil — anonymous repos are valid
+	// (file:// or public HTTPS in dev) and leave fleetCreds zero.
+	var fleetCreds Credentials
+	if settings.Spec.Fleet != nil && settings.Spec.Fleet.CredSecretRef != nil {
+		token, err := r.resolveSecretKeyRef(ctx, settings.Spec.Fleet.CredSecretRef)
+		if err != nil {
 			return r.handleSecretError(ctx, settings, err, "Fleet.credSecretRef")
 		}
+		fleetCreds = Credentials{Token: token}
 	}
 
 	// Push the snapshot to engines via the bus. Skipped if Applier is nil
 	// (e.g., test setup that doesn't care about engine state).
 	if r.Applier != nil {
-		snap := translateSettings(settings, suseCreds, appCoCreds)
+		snap := translateSettings(settings, suseCreds, appCoCreds, fleetCreds)
 		if err := r.Applier.Apply(ctx, snap); err != nil {
 			logger.Error(err, "applier returned error")
 			msg := "engine push failed: " + err.Error()

@@ -91,16 +91,12 @@ type ClusterDeploymentObserved struct {
 	ConnectionError bool
 }
 
-// FleetSettings carries the per-engine credentials and target git
-// repo/branch. Pushed by SettingsReconciler.applySettingsToEngines via
-// engine_bus.projectFleet. The bundle engine ignores all fields today
-// (it speaks to the local apiserver); the GitRepo engine forwards
+// FleetSettings carries the target git repo/branch and resolved
+// credentials. Pushed by SettingsReconciler via engine_bus.projectFleet.
+// The bundle engine ignores all fields (it speaks to the local apiserver
+// and doesn't need git creds); the GitRepo engine forwards
 // GitRepoURL/GitBranch/GitAuth into pkg/git.EngineSettings on every
 // UpdateSettings.
-//
-// P5-4b will populate these fields from controller.SettingsSnapshot
-// (the projectFleet call returns an empty value today; until then the
-// engine fails closed with git.ErrNotConfigured on Apply).
 type FleetSettings struct {
 	GitRepoURL string
 	GitBranch  string

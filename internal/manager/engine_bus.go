@@ -6,6 +6,7 @@ import (
 
 	"github.com/SUSE/aif/internal/controller"
 	"github.com/SUSE/aif/pkg/fleet"
+	"github.com/SUSE/aif/pkg/git"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/source_collection"
@@ -20,14 +21,11 @@ import (
 // own pattern (sync.RWMutex sole-writer, mirroring helm.engine).
 type engineBus struct {
 	helm helm.Engine
-	// fleetBundle is the FleetBundleEngine; receives FleetSettings via
-	// projectFleet. Field is empty-settings today but wired through the
-	// bus so P5-7 (downstream-cluster auth) can extend without touching
-	// the bus contract.
-	fleetBundle fleet.FleetBundleEngine
-	// fleetGitRepo is the FleetGitRepoEngine; receives the same empty
-	// FleetSettings as fleetBundle via projectFleet. P5-4b extends
-	// FleetSettings with git.Credentials and auth fields.
+	// Both Fleet engines receive the same projected FleetSettings.
+	// They are distinct fields because FleetBundleEngine (helm
+	// strategy) and FleetGitRepoEngine (gitops strategy) are
+	// separate ports with separate consumers downstream.
+	fleetBundle  fleet.FleetBundleEngine
 	fleetGitRepo fleet.FleetGitRepoEngine
 	nvidiaDisc   nvidia.Discovery
 	nvidiaDepl   nvidia.Deployer
@@ -68,9 +66,13 @@ func NewEngineBus(
 // breaking-change. If any engine grows fallibility, aggregate via
 // errors.Join here.
 func (b *engineBus) Apply(_ context.Context, s controller.SettingsSnapshot) error {
+	// Hoisted (not recomputed per-engine) so both Fleet engines provably
+	// receive the byte-identical projection — engine-bus tests assert
+	// LastSettings() equality across the two. Semantic clarity, not perf.
+	fleetSettings := b.projectFleet(s)
 	b.helm.UpdateSettings(b.projectHelm(s))
-	b.fleetBundle.UpdateSettings(b.projectFleet(s))
-	b.fleetGitRepo.UpdateSettings(b.projectFleet(s))
+	b.fleetBundle.UpdateSettings(fleetSettings)
+	b.fleetGitRepo.UpdateSettings(fleetSettings)
 	b.nvidiaDisc.UpdateSettings(b.projectNvidiaDiscovery(s))
 	b.nvidiaDepl.UpdateSettings(b.projectNvidiaDeployer(s))
 	b.appCollect.UpdateSettings(b.projectAppCo(s))
@@ -140,12 +142,28 @@ func (b *engineBus) projectAppCo(s controller.SettingsSnapshot) source_collectio
 	}
 }
 
-// projectFleet is the FleetBundleEngine settings projector. FleetSettings
-// is empty today — the engine talks to the local Rancher apiserver via the
-// injected client.Client, so no per-cluster auth is needed yet. The
-// projector exists so P5-7 (downstream-cluster auth, e.g. kubeconfig
-// snippets per Cluster) can extend FleetSettings without changing the
-// bus's contract with the engine.
-func (b *engineBus) projectFleet(_ controller.SettingsSnapshot) fleet.FleetSettings {
-	return fleet.FleetSettings{}
+// projectFleet projects the Fleet GitOps configuration carried by
+// SettingsSnapshot into fleet.FleetSettings. Both Fleet engines
+// (FleetBundleEngine, FleetGitRepoEngine) receive the same value via
+// UpdateSettings; FleetSettings is engine-agnostic so the bus uses one
+// projection for both. Credentials arrive resolved from the reconciler's
+// SecretKeySelector lookup; the bus translates the snapshot's local mirror
+// types into pkg/git.GitAuth without reading the apiserver.
+func (b *engineBus) projectFleet(s controller.SettingsSnapshot) fleet.FleetSettings {
+	out := fleet.FleetSettings{
+		GitRepoURL: s.FleetRepoURL,
+		GitBranch:  s.FleetBranch,
+	}
+	switch {
+	case s.FleetGitAuth.Token != nil:
+		out.GitAuth = git.GitAuth{Token: &git.TokenAuth{Token: s.FleetGitAuth.Token.Token}}
+	case s.FleetGitAuth.SSH != nil:
+		out.GitAuth = git.GitAuth{SSH: &git.SSHAuth{PrivateKeyPEM: s.FleetGitAuth.SSH.PrivateKeyPEM}}
+	case s.FleetGitAuth.Basic != nil:
+		out.GitAuth = git.GitAuth{Basic: &git.BasicAuth{
+			Username: s.FleetGitAuth.Basic.Username,
+			Password: s.FleetGitAuth.Basic.Password,
+		}}
+	}
+	return out
 }

@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -28,5 +30,35 @@ func TestFakeBundleEngine_RecordsApplyAndTeardown(t *testing.T) {
 	}
 	if len(f.TornDown) != 1 || f.TornDown[0] != "n/x" {
 		t.Fatalf("Teardown not recorded: %v", f.TornDown)
+	}
+}
+
+// TestFakeBundleEngine_LastSettings_Concurrent exercises the engine's
+// sync.Mutex under concurrent UpdateSettings / LastSettings calls.
+// Run with `go test -race` to catch a regression of the mutex being
+// removed or scoped incorrectly. Without the mutex, the FleetSettings
+// struct copy flags as a data race.
+func TestFakeBundleEngine_LastSettings_Concurrent(t *testing.T) {
+	f := NewFakeBundleEngine()
+	const n = 32
+
+	var wg sync.WaitGroup
+	wg.Add(2 * n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			f.UpdateSettings(FleetSettings{GitRepoURL: fmt.Sprintf("https://x.example/%d", i)})
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = f.LastSettings()
+		}()
+	}
+	wg.Wait()
+
+	// Last writer wins; we only assert that we observe one of the n values.
+	got := f.LastSettings().GitRepoURL
+	if got == "" {
+		t.Fatalf("LastSettings returned zero value after %d UpdateSettings calls", n)
 	}
 }

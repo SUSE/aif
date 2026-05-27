@@ -85,6 +85,8 @@ func (e *bundleEngine) Teardown(ctx context.Context, ns, workloadID string) erro
 }
 
 func (e *bundleEngine) UpdateSettings(_ FleetSettings) {
-	// No-op today — FleetSettings is empty. Method exists for symmetry
-	// with helm.Engine.UpdateSettings so engine_bus can call it uniformly.
+	// No-op — the bundle path writes Bundle CRs to the local apiserver
+	// and doesn't need git creds. Implemented for symmetry with the
+	// SettingsApplier contract so engine_bus can call UpdateSettings
+	// on every settings-aware engine uniformly.
 }

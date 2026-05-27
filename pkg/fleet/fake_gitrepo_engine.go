@@ -44,6 +44,13 @@ func (f *FakeGitRepoEngine) UpdateSettings(s FleetSettings) {
 	f.Settings = s
 }
 
+// LastSettings returns the most recent FleetSettings under the mutex.
+func (f *FakeGitRepoEngine) LastSettings() FleetSettings {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Settings
+}
+
 // AppliedSnapshot returns a copy of Applied under the mutex. Tests that
 // read the recorded specs from a goroutine other than the one calling
 // Apply (e.g. envtest specs polling via Eventually while the reconciler

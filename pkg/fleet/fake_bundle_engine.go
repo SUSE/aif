@@ -11,6 +11,7 @@ type FakeBundleEngine struct {
 	mu       sync.Mutex
 	Applied  []BundleDeploymentSpec
 	TornDown []string // "namespace/workloadID"
+	Settings FleetSettings
 
 	// ApplyErr, TeardownErr can be set by tests to simulate failures.
 	ApplyErr    error
@@ -52,4 +53,16 @@ func (f *FakeBundleEngine) Teardown(_ context.Context, ns, workloadID string) er
 	return nil
 }
 
-func (f *FakeBundleEngine) UpdateSettings(_ FleetSettings) {}
+func (f *FakeBundleEngine) UpdateSettings(s FleetSettings) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Settings = s
+}
+
+// LastSettings returns the most recent FleetSettings under the mutex,
+// safe to call from a goroutine other than the one calling UpdateSettings.
+func (f *FakeBundleEngine) LastSettings() FleetSettings {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Settings
+}

@@ -5,7 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -93,11 +96,57 @@ func TestEngine_ConcurrentPushSerializes(t *testing.T) {
 	}
 }
 
+// TestEngine_BasicAuthEmptyUsername_FailsAsErrAuth proves the empty-username
+// BasicAuth case (the gap the P5-4b reconciler ships today for FleetAuthType
+// =basic until aifv1.FleetConfig grows a Username field) surfaces as ErrAuth
+// rather than being silently dropped. The smart-HTTP server returns 401 on
+// empty Basic-auth user; classifyTransport must wrap that as ErrAuth.
+func TestEngine_BasicAuthEmptyUsername_FailsAsErrAuth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _, _ := r.BasicAuth()
+		if user == "" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// Non-empty username would mean the test setup is wrong;
+		// fail loudly rather than masking with a 200.
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	e := git.NewEngine(quietLogger())
+	e.UpdateSettings(git.EngineSettings{
+		RepoURL: srv.URL + "/repo.git",
+		Branch:  "main",
+		Auth:    git.GitAuth{Basic: &git.BasicAuth{Username: "", Password: "irrelevant"}},
+	})
+
+	_, err := e.Push(context.Background(), git.PushRequest{
+		Subtrees: []git.ManifestSubtree{{
+			Path:  "gitops/x",
+			Files: map[string][]byte{"a.yaml": []byte("a\n")},
+		}},
+		CommitMessage: "should never commit",
+	})
+	if !errors.Is(err, git.ErrAuth) {
+		t.Fatalf("got %v, want errors.Is(err, ErrAuth)", err)
+	}
+}
+
 // newSeededBareRepo creates a bare repo on disk, seeds it with one commit
 // on the named branch, and returns the file:// URL. The engine clones
 // with SingleBranch:true so the branch must exist before Push runs.
+//
+// Skips on Windows: go-git's file:// transport treats `file://C:\path`
+// paths inconsistently across versions and `make test` fails on Windows
+// runners. The file:// transport is dev/test convenience only; production
+// uses HTTPS or SSH. Tracked alongside the rest of cross-platform CI work.
 func newSeededBareRepo(t *testing.T, branch string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("file:// transport unreliable on Windows; see helper godoc")
+	}
 
 	bareDir := filepath.Join(t.TempDir(), "bare.git")
 	if _, err := gogit.PlainInit(bareDir, true); err != nil {
