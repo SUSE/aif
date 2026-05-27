@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live test-git verify-git-mock verify-git-live test-oci verify-oci-mock smoke-e2e verify-all-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live test-git verify-git-mock verify-git-live test-oci verify-oci-mock test-suse-registry verify-suse-registry-mock verify-suse-registry-live smoke-e2e verify-all-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -355,6 +355,30 @@ test-oci:
 verify-oci-mock:
 	@echo "Demonstrating pkg/oci walker against an in-process OCI registry stub..."
 	go test -count=1 -v -run ExampleWalker_EnumerateCharts ./pkg/oci/
+
+# --- pkg/suse_registry (SUSE-published charts on registry.suse.com) targets
+# Mirrors pkg/nvidia's structure. test-suse-registry runs unit tests;
+# verify-suse-registry-mock exercises ExampleProvider_List against an in-process
+# OCI stub; verify-suse-registry-live walks real registry.suse.com using
+# SUSE_REG_USER / SUSE_REG_TOKEN (same creds as verify-nim-live).
+
+test-suse-registry:
+	@echo "Running pkg/suse_registry unit tests..."
+	go test -count=1 -v ./pkg/suse_registry/...
+
+verify-suse-registry-mock:
+	@echo "Demonstrating SUSE Registry Provider against an in-process OCI stub..."
+	go test -count=1 -v -run ExampleProvider_List ./pkg/suse_registry/
+
+verify-suse-registry-live:
+	@echo "Verifying SUSE Registry Provider against real registry.suse.com..."
+	@if [ -z "$$SUSE_REG_USER" ] || [ -z "$$SUSE_REG_TOKEN" ]; then \
+		echo "ERROR: set SUSE_REG_USER and SUSE_REG_TOKEN before running this target."; \
+		echo "  inline: SUSE_REG_USER=alice SUSE_REG_TOKEN=... make verify-suse-registry-live"; \
+		echo "  or:     copy .env.example to .env and fill in the values"; \
+		exit 1; \
+	fi
+	go test -count=1 -tags=live -v -run TestLive_EnumeratesSUSECharts ./pkg/suse_registry/...
 
 # --- E2E and live-aggregator validation targets ----------------------------
 # Documented in docs/dev/validation.md.
