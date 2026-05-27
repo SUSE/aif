@@ -132,10 +132,10 @@ func (p *providerImpl) enrichWithAnnotations(ctx context.Context, entries map[st
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	// SetLimit MUST precede g.Go; calling it after queues throw a panic.
 	g.SetLimit(annotationFanOutLimit)
 	var mu sync.Mutex
 	for _, k := range keys {
-		k := k
 		g.Go(func() error {
 			entry := entries[k]
 			repo := suseChartsPrefix + entry.Chart
