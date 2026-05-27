@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/SUSE/aif/pkg/oci"
 )
 
 // §4.4 constants. Unexported — these are implementation details of the
@@ -100,7 +102,7 @@ func (d *deployerImpl) GenerateValues(_ context.Context, req GenerateRequest) (m
 	// Strip any scheme (image refs are scheme-less) and trim a trailing
 	// slash so a misconfigured "https://harbor/" doesn't produce a
 	// malformed repository like "https://harbor//ai/...".
-	registry := strings.TrimRight(stripScheme(s.RegistryEndpoint), "/")
+	registry := strings.TrimRight(oci.StripScheme(s.RegistryEndpoint), "/")
 	if registry == "" {
 		registry = suseRegistryDefault
 	}

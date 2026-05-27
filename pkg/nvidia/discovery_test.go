@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -15,11 +16,90 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
+// testServer is a minimal OCI Distribution v2 stub. Each endpoint takes
+// a canned JSON body and an optional Link header for pagination. Records
+// the inbound Authorization header so tests can assert on credentials.
+//
+// Routes:
+//
+//	GET /v2/_catalog            → catalog body (paginated via ?n=&last=)
+//	GET /v2/<repo>/tags/list    → tags body for that repo
+type testServer struct {
+	*httptest.Server
+	authHeader string
+
+	// Catalog responses keyed by query string ("" = first page).
+	catalogPages map[string]testPage
+
+	// Tags responses keyed by repo name.
+	tagsPages map[string]map[string]testPage
+}
+
+type testPage struct {
+	body string
+	next string // value for Link rel="next"; empty = no more pages
+	code int    // HTTP status; 0 means 200
+}
+
+func newTestServer(t *testing.T) *testServer {
+	t.Helper()
+	ts := &testServer{
+		catalogPages: map[string]testPage{},
+		tagsPages:    map[string]map[string]testPage{},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/_catalog", func(w http.ResponseWriter, r *http.Request) {
+		ts.authHeader = r.Header.Get("Authorization")
+		page, ok := ts.catalogPages[r.URL.RawQuery]
+		if !ok {
+			http.Error(w, "no canned response", http.StatusInternalServerError)
+			return
+		}
+		respondPage(w, page)
+	})
+	// Tags endpoint: /v2/<repo>/tags/list
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		ts.authHeader = r.Header.Get("Authorization")
+		const suffix = "/tags/list"
+		path := strings.TrimPrefix(r.URL.Path, "/v2/")
+		if !strings.HasSuffix(path, suffix) {
+			http.NotFound(w, r)
+			return
+		}
+		repo := strings.TrimSuffix(path, suffix)
+		repoPages, ok := ts.tagsPages[repo]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		page, ok := repoPages[r.URL.RawQuery]
+		if !ok {
+			http.Error(w, "no canned response", http.StatusInternalServerError)
+			return
+		}
+		respondPage(w, page)
+	})
+	ts.Server = httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func respondPage(w http.ResponseWriter, p testPage) {
+	if p.next != "" {
+		w.Header().Set("Link", `</v2/_catalog?`+p.next+`>; rel="next"`)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if p.code != 0 {
+		w.WriteHeader(p.code)
+	}
+	_, _ = w.Write([]byte(p.body))
+}
+
 // newRegistryStub starts an httptest server stubbing /v2/_catalog and
 // /v2/<repo>/tags/list with the given canned data.
 //
-//   repos: list of repository names returned by /v2/_catalog
-//   tags:  map[repo][]string of tags returned by /v2/<repo>/tags/list
+//	repos: list of repository names returned by /v2/_catalog
+//	tags:  map[repo][]string of tags returned by /v2/<repo>/tags/list
 func newRegistryStub(t *testing.T, repos []string, tags map[string][]string) *httptest.Server {
 	t.Helper()
 	ts := newTestServer(t)
@@ -62,20 +142,23 @@ func jsonTags(repo string, tags []string) string {
 	return string(b)
 }
 
-// newDiscoveryWithClient is a same-package helper for tests: constructs a
-// discoveryImpl with an injected httpClient (so tests can use
-// httptest.Server.Client()).
-func newDiscoveryWithClient(httpClient *http.Client) *discoveryImpl {
-	return &discoveryImpl{
-		logger:     silentLogger(),
-		httpClient: httpClient,
-	}
+// newDiscovery constructs a Discovery + AnnotationReader pair through the
+// public surface. The httpClient parameter is honored at the test level
+// only by the test server (httptest.Server.Client()); the production
+// Discovery builds its own HTTP client inside pkg/oci.Walker — we drive
+// it solely through UpdateSettings. The httpClient argument exists for
+// symmetry with the previous signature; tests that need the server's
+// TLS-aware client pass ts.Client() but the value is no longer wired
+// in (pkg/oci uses its own 30s-timeout client; httptest servers are
+// HTTP-only in these tests, so default plain http transport works).
+func newDiscovery() (Discovery, AnnotationReader) {
+	return NewDiscovery(silentLogger())
 }
 
 // --- Refresh / Index orchestration ---
 
 func TestDiscovery_RefreshWithoutSettings_ReturnsNotConfigured(t *testing.T) {
-	d := newDiscoveryWithClient(http.DefaultClient)
+	d, _ := newDiscovery()
 	err := d.Refresh(context.Background())
 	if !stderrors.Is(err, ErrNotConfigured) {
 		t.Errorf("Refresh err = %v, want ErrNotConfigured", err)
@@ -83,7 +166,7 @@ func TestDiscovery_RefreshWithoutSettings_ReturnsNotConfigured(t *testing.T) {
 }
 
 func TestDiscovery_IndexBeforeRefresh_ReturnsEmpty(t *testing.T) {
-	d := newDiscoveryWithClient(http.DefaultClient)
+	d, _ := newDiscovery()
 	got, err := d.Index(context.Background())
 	if err != nil {
 		t.Fatalf("Index err = %v, want nil", err)
@@ -104,7 +187,7 @@ func TestDiscovery_RefreshAndIndex_PopulatesCache(t *testing.T) {
 	}
 	ts := newRegistryStub(t, repos, tags)
 
-	d := newDiscoveryWithClient(ts.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
 
 	if err := d.Refresh(context.Background()); err != nil {
@@ -129,10 +212,6 @@ func TestDiscovery_RefreshAndIndex_PopulatesCache(t *testing.T) {
 		if e.Type != TypeLLM {
 			t.Errorf("nim-llm:1.0.0 Type = %v, want LLM", e.Type)
 		}
-		wantRef := ts.URL + "/ai/charts/nvidia/nim-llm:1.0.0"
-		if e.ChartRef == "" || e.ChartRef == wantRef[len(ts.URL):] {
-			// Accept either full or relative — check below for the canonical form.
-		}
 	}
 	// nim-vlm:2.0.0 → VLM via classifier
 	if e, ok := byID["nim-vlm:2.0.0"]; !ok {
@@ -154,7 +233,7 @@ func TestDiscovery_Refresh_FiltersToNVIDIANamespace(t *testing.T) {
 	}
 	ts := newRegistryStub(t, repos, tags)
 
-	d := newDiscoveryWithClient(ts.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
 
 	if err := d.Refresh(context.Background()); err != nil {
@@ -171,7 +250,7 @@ func TestDiscovery_Refresh_ChartRefIsOCIPath(t *testing.T) {
 	tags := map[string][]string{"ai/charts/nvidia/nim-llm": {"1.0.0"}}
 	ts := newRegistryStub(t, repos, tags)
 
-	d := newDiscoveryWithClient(ts.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
 	_ = d.Refresh(context.Background())
 	got, _ := d.Index(context.Background())
@@ -189,7 +268,7 @@ func TestDiscovery_Refresh_ChartRefIsOCIPath(t *testing.T) {
 }
 
 func TestDiscovery_Refresh_NetworkErrorIsUnreachable(t *testing.T) {
-	d := newDiscoveryWithClient(http.DefaultClient)
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{
 		RegistryEndpoint: "http://127.0.0.1:1", // port 1 always refuses
 		Username:         "u",
@@ -207,7 +286,7 @@ func TestDiscovery_ReRefresh_ReplacesCache(t *testing.T) {
 	repos1 := []string{"ai/charts/nvidia/nim-llm"}
 	tags1 := map[string][]string{"ai/charts/nvidia/nim-llm": {"1.0.0"}}
 	ts1 := newRegistryStub(t, repos1, tags1)
-	d := newDiscoveryWithClient(ts1.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts1.URL, Username: "u", Token: "t"})
 	_ = d.Refresh(context.Background())
 	if got, _ := d.Index(context.Background()); len(got) != 1 {
@@ -243,7 +322,7 @@ func TestDiscovery_Index_IsDeterministicallyOrdered(t *testing.T) {
 		"ai/charts/nvidia/nim-llm": {"1.0.0"},
 	}
 	ts := newRegistryStub(t, repos, tags)
-	d := newDiscoveryWithClient(ts.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
 	_ = d.Refresh(context.Background())
 
@@ -263,7 +342,7 @@ func TestDiscovery_Index_IsDeterministicallyOrdered(t *testing.T) {
 // --- Get (single-NIM lookup) ---
 
 func TestDiscovery_Get_BeforeRefresh_ReturnsNotFound(t *testing.T) {
-	d := newDiscoveryWithClient(http.DefaultClient)
+	d, _ := newDiscovery()
 	_, err := d.Get(context.Background(), "nim-llm:1.0.0")
 	if !stderrors.Is(err, ErrNIMNotFound) {
 		t.Errorf("Get err = %v, want ErrNIMNotFound", err)
@@ -274,7 +353,7 @@ func TestDiscovery_Get_KnownEntry_ReturnsEntry(t *testing.T) {
 	repos := []string{"ai/charts/nvidia/nim-llm"}
 	tags := map[string][]string{"ai/charts/nvidia/nim-llm": {"1.0.0", "1.1.0"}}
 	ts := newRegistryStub(t, repos, tags)
-	d := newDiscoveryWithClient(ts.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
 	if err := d.Refresh(context.Background()); err != nil {
 		t.Fatalf("Refresh err = %v", err)
@@ -293,7 +372,7 @@ func TestDiscovery_Get_UnknownID_ReturnsNotFound(t *testing.T) {
 	repos := []string{"ai/charts/nvidia/nim-llm"}
 	tags := map[string][]string{"ai/charts/nvidia/nim-llm": {"1.0.0"}}
 	ts := newRegistryStub(t, repos, tags)
-	d := newDiscoveryWithClient(ts.Client())
+	d, _ := newDiscovery()
 	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL, Username: "u", Token: "t"})
 	_ = d.Refresh(context.Background())
 

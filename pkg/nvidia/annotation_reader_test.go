@@ -16,15 +16,21 @@ import (
 	"testing"
 )
 
-// helmOCIStub serves a minimal Helm OCI registry: HEAD/GET on a manifest
-// returning a one-layer manifest, plus GET on the chart-content blob
-// returning a tar.gz with Chart.yaml.
+// helmOCIStub serves a minimal Helm OCI registry rooted at the
+// nvidiaChartPrefix subtree (so callers can drive ChartAnnotations with
+// the bare chart name). Provides HEAD/GET on a manifest returning a
+// one-layer manifest, plus GET on the chart-content blob returning a
+// tar.gz with Chart.yaml.
 type helmOCIStub struct {
-	chart     string
+	chart     string // bare chart name (e.g. "my-chart"); full repo path is nvidiaChartPrefix+chart
 	version   string
 	chartYaml string
 	headHits  int32
 	getHits   int32
+}
+
+func (s *helmOCIStub) repoPath() string {
+	return nvidiaChartPrefix + s.chart
 }
 
 func (s *helmOCIStub) layerBytes() []byte {
@@ -60,17 +66,19 @@ func (s *helmOCIStub) manifestDigest() string {
 }
 
 func (s *helmOCIStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	manifestPath := "/v2/" + s.repoPath() + "/manifests/" + s.version
+	blobPath := "/v2/" + s.repoPath() + "/blobs/" + s.layerDigest()
 	switch {
-	case strings.HasSuffix(r.URL.Path, "/manifests/"+s.version) && r.Method == http.MethodHead:
+	case r.URL.Path == manifestPath && r.Method == http.MethodHead:
 		atomic.AddInt32(&s.headHits, 1)
 		w.Header().Set("Docker-Content-Digest", s.manifestDigest())
 		w.WriteHeader(http.StatusOK)
-	case strings.HasSuffix(r.URL.Path, "/manifests/"+s.version) && r.Method == http.MethodGet:
+	case r.URL.Path == manifestPath && r.Method == http.MethodGet:
 		atomic.AddInt32(&s.getHits, 1)
 		w.Header().Set("Docker-Content-Digest", s.manifestDigest())
 		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 		_, _ = w.Write(s.manifestBytes())
-	case strings.Contains(r.URL.Path, "/blobs/"+s.layerDigest()):
+	case r.URL.Path == blobPath:
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(s.layerBytes())
 	default:
@@ -78,15 +86,13 @@ func (s *helmOCIStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// readerWith builds an annotation-ready discoveryImpl wired to ts.
-func readerWith(ts *httptest.Server) *discoveryImpl {
-	d := &discoveryImpl{
-		httpClient: ts.Client(),
-		annCache:   map[string]annotationCacheEntry{},
-	}
-	d.client = newRegistryClient(ts.Client(), ts.URL, "", "", nil)
-	d.settings.RegistryEndpoint = ts.URL
-	return d
+// readerWith builds a Discovery+AnnotationReader pair through the public
+// surface, pointed at ts via UpdateSettings.
+func readerWith(t *testing.T, ts *httptest.Server) AnnotationReader {
+	t.Helper()
+	d, ar := NewDiscovery(silentLogger())
+	d.UpdateSettings(EngineSettings{RegistryEndpoint: ts.URL})
+	return ar
 }
 
 func TestAnnotationReader_HappyPathAndCacheHit(t *testing.T) {
@@ -102,8 +108,8 @@ annotations:
 	ts := httptest.NewServer(stub)
 	defer ts.Close()
 
-	d := readerWith(ts)
-	got, err := d.ChartAnnotations(context.Background(), "my-chart", "1.0.0")
+	ar := readerWith(t, ts)
+	got, err := ar.ChartAnnotations(context.Background(), "my-chart", "1.0.0")
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -113,7 +119,7 @@ annotations:
 
 	// Second call — same digest → cache hit, no second GET.
 	getsAfterFirst := atomic.LoadInt32(&stub.getHits)
-	got2, err := d.ChartAnnotations(context.Background(), "my-chart", "1.0.0")
+	got2, err := ar.ChartAnnotations(context.Background(), "my-chart", "1.0.0")
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -132,8 +138,8 @@ func TestAnnotationReader_404_ReturnsErrChartNotFound(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	d := readerWith(ts)
-	_, err := d.ChartAnnotations(context.Background(), "missing", "9.9.9")
+	ar := readerWith(t, ts)
+	_, err := ar.ChartAnnotations(context.Background(), "missing", "9.9.9")
 	if !errors.Is(err, ErrChartNotFound) {
 		t.Fatalf("got %v, want ErrChartNotFound", err)
 	}
@@ -146,14 +152,23 @@ type helmOCIStubWithManifestAnns struct {
 }
 
 func (s *helmOCIStubWithManifestAnns) manifestBytes() []byte {
+	// Deterministic key order so manifestDigest() is stable across calls.
+	keys := make([]string, 0, len(s.manifestAnnotations))
+	for k := range s.manifestAnnotations {
+		keys = append(keys, k)
+	}
+	// Simple insertion-sort to avoid pulling sort here; small map.
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j-1] > keys[j]; j-- {
+			keys[j-1], keys[j] = keys[j], keys[j-1]
+		}
+	}
 	anns := "{"
-	i := 0
-	for k, v := range s.manifestAnnotations {
+	for i, k := range keys {
 		if i > 0 {
 			anns += ","
 		}
-		anns += fmt.Sprintf("%q:%q", k, v)
-		i++
+		anns += fmt.Sprintf("%q:%q", k, s.manifestAnnotations[k])
 	}
 	anns += "}"
 	return []byte(fmt.Sprintf(`{
@@ -171,15 +186,17 @@ func (s *helmOCIStubWithManifestAnns) manifestDigest() string {
 }
 
 func (s *helmOCIStubWithManifestAnns) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	manifestPath := "/v2/" + s.repoPath() + "/manifests/" + s.version
+	blobPath := "/v2/" + s.repoPath() + "/blobs/" + s.layerDigest()
 	switch {
-	case strings.HasSuffix(r.URL.Path, "/manifests/"+s.version) && r.Method == http.MethodHead:
+	case r.URL.Path == manifestPath && r.Method == http.MethodHead:
 		w.Header().Set("Docker-Content-Digest", s.manifestDigest())
 		w.WriteHeader(http.StatusOK)
-	case strings.HasSuffix(r.URL.Path, "/manifests/"+s.version) && r.Method == http.MethodGet:
+	case r.URL.Path == manifestPath && r.Method == http.MethodGet:
 		w.Header().Set("Docker-Content-Digest", s.manifestDigest())
 		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 		_, _ = w.Write(s.manifestBytes())
-	case strings.Contains(r.URL.Path, "/blobs/"+s.layerDigest()):
+	case strings.HasPrefix(r.URL.Path, blobPath):
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(s.layerBytes())
 	default:
@@ -206,8 +223,8 @@ annotations:
 	ts := httptest.NewServer(stub)
 	defer ts.Close()
 
-	d := readerWith(ts)
-	got, err := d.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
+	ar := readerWith(t, ts)
+	got, err := ar.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,8 +257,8 @@ annotations:
 	ts := httptest.NewServer(stub)
 	defer ts.Close()
 
-	d := readerWith(ts)
-	got, err := d.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
+	ar := readerWith(t, ts)
+	got, err := ar.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,8 +281,8 @@ func TestAnnotationReader_ManifestAnnotationsOnly(t *testing.T) {
 	ts := httptest.NewServer(stub)
 	defer ts.Close()
 
-	d := readerWith(ts)
-	got, err := d.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
+	ar := readerWith(t, ts)
+	got, err := ar.ChartAnnotations(context.Background(), "nim-llm", "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -283,8 +300,8 @@ func TestAnnotationReader_NoAnnotationsBlock_ReturnsNilNil(t *testing.T) {
 	ts := httptest.NewServer(stub)
 	defer ts.Close()
 
-	d := readerWith(ts)
-	got, err := d.ChartAnnotations(context.Background(), "plain-chart", "1.0.0")
+	ar := readerWith(t, ts)
+	got, err := ar.ChartAnnotations(context.Background(), "plain-chart", "1.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

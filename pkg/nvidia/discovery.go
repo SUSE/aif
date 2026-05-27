@@ -2,12 +2,14 @@ package nvidia
 
 import (
 	"context"
+	"errors"
 	"log/slog"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/SUSE/aif/pkg/oci"
 )
 
 // nvidiaChartPrefix is the SUSE Registry repo path under which the
@@ -16,17 +18,17 @@ import (
 const nvidiaChartPrefix = "ai/charts/nvidia/"
 
 // discoveryImpl is the production Discovery. It composes:
-//   - registryClient (HTTP adapter to OCI Distribution v2)
-//   - classifyChart  (pure chart-name → Type heuristic)
+//   - pkg/oci.Walker        (HTTP adapter to OCI Distribution v2, shared with siblings)
+//   - pkg/oci.AnnotationReader (manifest + Chart.yaml annotation fetch with digest cache)
+//   - classifyChart          (pure chart-name → Type heuristic)
 //   - an in-memory cache keyed by "<chart>:<version>"
 //
 // Lifecycle: NewDiscovery returns an impl with no settings; the cache is
 // empty and Refresh returns ErrNotConfigured. SettingsReconciler calls
 // UpdateSettings to install credentials + endpoint; subsequent Refresh
-// calls then walk the registry catalog.
+// calls then walk the registry catalog via the shared pkg/oci.Walker.
 type discoveryImpl struct {
-	logger     *slog.Logger
-	httpClient *http.Client
+	logger *slog.Logger
 
 	mu sync.RWMutex
 	// cache is keyed by ID = "<chart>:<version>". Lifecycle invariant:
@@ -37,24 +39,23 @@ type discoveryImpl struct {
 	// to this field; if a use case ever needs them, replace the whole map.
 	cache    map[string]NIMEntry
 	settings EngineSettings
-	client   *registryClient // rebuilt in UpdateSettings; nil until first call
 
-	// annCache memoises Chart.yaml annotations per chart. Keyed by chart
-	// name; value carries the manifest digest under which it was fetched
-	// so a digest mismatch on the next HEAD triggers a re-fetch. Replaces
-	// the entry on miss — no orphaned digests, no LRU bookkeeping needed.
-	annCache map[string]annotationCacheEntry
+	walker oci.Walker
+	annR   oci.AnnotationReader
 }
 
 // NewDiscovery returns the engine bound to the given logger as both a
 // Discovery and an AnnotationReader. The same backing struct satisfies
 // both ports — Interface Segregation at the consumer boundary, single
-// shared state internally (httpClient, settings, registryClient, caches).
+// shared state internally (walker, settings, cache). Walker +
+// AnnotationReader come from pkg/oci so NIMs and SUSE-published charts
+// share the OCI client implementation.
 func NewDiscovery(logger *slog.Logger) (Discovery, AnnotationReader) {
+	w := oci.NewWalker(logger)
 	impl := &discoveryImpl{
-		logger:     logger,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		annCache:   make(map[string]annotationCacheEntry),
+		logger: logger,
+		walker: w,
+		annR:   oci.NewAnnotationReader(logger, w),
 	}
 	return impl, impl
 }
@@ -87,51 +88,41 @@ func (d *discoveryImpl) Get(_ context.Context, id string) (NIMEntry, error) {
 	return entry, nil
 }
 
-// Refresh re-reads the SUSE Registry catalog and atomically replaces the
-// cache. Refresh holds the cache mutex only during the swap; the HTTP
-// calls run without it, so concurrent Index() calls see the previous
-// cache until the new one is ready.
+// Refresh re-reads the SUSE Registry catalog (delegated to pkg/oci.Walker)
+// and atomically replaces the cache. Holds the cache mutex only during
+// the swap; the HTTP calls run without it, so concurrent Index() calls
+// see the previous cache until the new one is ready.
 //
 // Returns ErrNotConfigured if UpdateSettings has not yet supplied a
 // non-empty RegistryEndpoint. Wraps registry HTTP failures via the
 // sentinel errors in errors.go (ErrUnreachable / ErrUnauthorized /
-// ErrUnexpectedResponse).
+// ErrChartNotFound / ErrUnexpectedResponse) via translateOCIError, so
+// callers using errors.Is(err, nvidia.Err…) continue to work unchanged.
 func (d *discoveryImpl) Refresh(ctx context.Context) error {
 	d.mu.RLock()
-	client := d.client
 	endpoint := d.settings.RegistryEndpoint
 	d.mu.RUnlock()
-
-	if client == nil {
+	if endpoint == "" {
 		return ErrNotConfigured
 	}
 
 	start := time.Now()
-	repos, err := client.ListRepositories(ctx)
+	all, err := d.walker.EnumerateCharts(ctx, nvidiaChartPrefix, nil)
 	if err != nil {
-		return err
+		return translateOCIError(err)
 	}
 
 	next := make(map[string]NIMEntry)
-	for _, repo := range repos {
-		if !strings.HasPrefix(repo, nvidiaChartPrefix) {
-			continue
-		}
-		chart := strings.TrimPrefix(repo, nvidiaChartPrefix)
-		tags, err := client.ListTags(ctx, repo)
-		if err != nil {
-			return err
-		}
-		for _, tag := range tags {
-			id := chart + ":" + tag
-			next[id] = NIMEntry{
-				ID:          id,
-				Chart:       chart,
-				Version:     tag,
-				DisplayName: chart,
-				Type:        classifyChart(chart),
-				ChartRef:    "oci://" + stripScheme(endpoint) + "/" + repo + ":" + tag,
-			}
+	for _, c := range all {
+		chart := strings.TrimPrefix(c.Repository, nvidiaChartPrefix)
+		id := chart + ":" + c.Tag
+		next[id] = NIMEntry{
+			ID:          id,
+			Chart:       chart,
+			Version:     c.Tag,
+			DisplayName: chart,
+			Type:        classifyChart(chart),
+			ChartRef:    "oci://" + oci.StripScheme(endpoint) + "/" + c.Repository + ":" + c.Tag,
 		}
 	}
 
@@ -147,39 +138,38 @@ func (d *discoveryImpl) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// UpdateSettings installs credentials + endpoint and rebuilds the
-// internal registry client. Synchronous; never reads K8s Secrets directly.
-// Empty RegistryEndpoint clears the client (subsequent Refresh returns
+// UpdateSettings installs credentials + endpoint and forwards them to the
+// underlying pkg/oci.Walker. Synchronous; never reads K8s Secrets directly.
+// Empty RegistryEndpoint clears the walker (subsequent Refresh returns
 // ErrNotConfigured).
 func (d *discoveryImpl) UpdateSettings(s EngineSettings) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	d.settings = s
-	if s.RegistryEndpoint == "" {
-		d.client = nil
-		return
-	}
-	d.client = newRegistryClient(d.httpClient, normalizeForHTTP(s.RegistryEndpoint), s.Username, s.Token, d.logger)
+	d.mu.Unlock()
+	d.walker.UpdateSettings(oci.EngineSettings{
+		Endpoint:        s.RegistryEndpoint,
+		Username:        s.Username,
+		Token:           s.Token,
+		RefreshInterval: s.RefreshInterval,
+	})
 }
 
-// normalizeForHTTP ensures the endpoint is a full URL the http.Client
-// can dial. Bare hostnames default to https:// (the production case).
-// http:// is preserved (the dev / test case).
-func normalizeForHTTP(endpoint string) string {
-	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
-		return endpoint
+// translateOCIError re-wraps pkg/oci sentinels into the existing
+// nvidia.* sentinels so callers using errors.Is(err, nvidia.ErrUnauthorized)
+// continue to work without change. New callers should prefer the nvidia
+// sentinels for any code consuming this package; pkg/oci sentinels are an
+// internal implementation detail.
+func translateOCIError(err error) error {
+	switch {
+	case errors.Is(err, oci.ErrUnauthorized):
+		return ErrUnauthorized
+	case errors.Is(err, oci.ErrUnreachable):
+		return ErrUnreachable
+	case errors.Is(err, oci.ErrNotFound):
+		return ErrChartNotFound
+	case errors.Is(err, oci.ErrNotConfigured):
+		return ErrNotConfigured
+	default:
+		return ErrUnexpectedResponse
 	}
-	return "https://" + endpoint
-}
-
-// stripScheme removes the leading http:// or https:// from an endpoint
-// so it can be embedded as the host portion of an OCI reference.
-func stripScheme(endpoint string) string {
-	for _, scheme := range []string{"https://", "http://"} {
-		if strings.HasPrefix(endpoint, scheme) {
-			return endpoint[len(scheme):]
-		}
-	}
-	return endpoint
 }
