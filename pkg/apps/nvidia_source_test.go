@@ -107,8 +107,8 @@ func sampleNIMEntries() []nvidia.NIMEntry {
 
 func TestNVIDIASource_Name_IsNvidia(t *testing.T) {
 	s := NewNVIDIASource(&fakeNVIDIADiscovery{}, &fakeNvidiaAnnotationReader{}, discardLogger(), 10*time.Minute)
-	if got := s.Name(); got != "nvidia" {
-		t.Errorf("Name() = %q, want %q", got, "nvidia")
+	if got := s.Name(); got != "nvidia.ngc" {
+		t.Errorf("Name() = %q, want %q", got, "nvidia.ngc")
 	}
 }
 
@@ -136,11 +136,14 @@ func TestNVIDIASource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	llm := apps[0]
-	if llm.ID != "nvidia.nim-llm:1.0.0" {
-		t.Errorf("LLM ID = %q, want %q", llm.ID, "nvidia.nim-llm:1.0.0")
+	if llm.ID != "nvidia.ngc.nim-llm:1.0.0" {
+		t.Errorf("LLM ID = %q, want %q", llm.ID, "nvidia.ngc.nim-llm:1.0.0")
 	}
 	if llm.Source != "nvidia" {
 		t.Errorf("LLM Source = %q, want %q", llm.Source, "nvidia")
+	}
+	if llm.Origin != "ngc" {
+		t.Errorf("LLM Origin = %q, want %q", llm.Origin, "ngc")
 	}
 	if llm.Name != "nim-llm" {
 		t.Errorf("LLM Name = %q, want %q", llm.Name, "nim-llm")
@@ -169,8 +172,11 @@ func TestNVIDIASource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	vlm := apps[1]
-	if vlm.ID != "nvidia.nim-vlm:2.0.0" {
-		t.Errorf("VLM ID = %q, want %q", vlm.ID, "nvidia.nim-vlm:2.0.0")
+	if vlm.ID != "nvidia.ngc.nim-vlm:2.0.0" {
+		t.Errorf("VLM ID = %q, want %q", vlm.ID, "nvidia.ngc.nim-vlm:2.0.0")
+	}
+	if vlm.Origin != "ngc" {
+		t.Errorf("VLM Origin = %q, want %q", vlm.Origin, "ngc")
 	}
 	if len(vlm.Categories) != 1 || vlm.Categories[0] != "vlm" {
 		t.Errorf("VLM Categories = %v, want [vlm]", vlm.Categories)
@@ -426,10 +432,10 @@ func TestNVIDIASource_Refresh_SurvivesPerChartAnnotationError(t *testing.T) {
 		t.Fatalf("expected 2 apps, got %d", len(apps))
 	}
 	for _, a := range apps {
-		if a.ID == "nvidia.good:1.0.0" && !a.ReferenceBlueprint {
+		if a.ID == "nvidia.ngc.good:1.0.0" && !a.ReferenceBlueprint {
 			t.Errorf("good app: expected ReferenceBlueprint=true")
 		}
-		if a.ID == "nvidia.bad:1.0.0" && a.ReferenceBlueprint {
+		if a.ID == "nvidia.ngc.bad:1.0.0" && a.ReferenceBlueprint {
 			t.Errorf("bad app: expected ReferenceBlueprint=false")
 		}
 	}

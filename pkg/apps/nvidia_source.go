@@ -42,7 +42,7 @@ func NewNVIDIASource(d nvidia.Discovery, a nvidia.AnnotationReader, logger *slog
 }
 
 // Name returns the namespace prefix used in this Source's App.IDs.
-func (n *NVIDIASource) Name() string { return "nvidia" }
+func (n *NVIDIASource) Name() string { return "nvidia.ngc" }
 
 // List returns the cached App slice. Snapshot copy; safe for callers
 // to mutate. Never blocks on the underlying engine.
@@ -148,20 +148,20 @@ func (n *NVIDIASource) recordError(err error) {
 }
 
 // translateNIMEntries converts the engine-native NIMEntry slice into
-// the canonical []App. ID is namespaced as `nvidia.<chart>:<version>`
-// (single-token form chosen so the REST surface uses a plain
-// path-segment route, not a wildcard); Type (LLM/VLM) becomes a
+// the canonical []App. ID is namespaced as `nvidia.ngc.<chart>:<version>`
+// (source=nvidia, origin=ngc, two-token form); Type (LLM/VLM) becomes a
 // single-element Categories slice.
 func translateNIMEntries(entries []nvidia.NIMEntry) []App {
 	out := make([]App, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, App{
-			ID:          "nvidia." + e.ID,
+			ID:          "nvidia.ngc." + e.ID,
 			Name:        e.Chart,
 			DisplayName: e.DisplayName,
 			Publisher:   "NVIDIA",
 			Version:     e.Version,
 			Source:      "nvidia",
+			Origin:      "ngc",
 			AssetType:   "chart",
 			Categories:  []string{string(e.Type)},
 			ChartRef:    parseNVIDIAChartRef(e),

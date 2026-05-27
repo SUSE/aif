@@ -102,7 +102,7 @@ func parseIncludeReferenceBlueprints(r *http.Request) bool {
 }
 
 // get serves GET /api/v1/apps/{id}. The dot-namespaced ID is a single
-// path segment (e.g. "nvidia.nim-llm:1.0.0"). Returns the single App
+// path segment (e.g. "nvidia.ngc.nim-llm:1.0.0"). Returns the single App
 // regardless of the includeReferenceBlueprints flag (per
 // ARCHITECTURE.md §5: "Single app (returned regardless of
 // referenceBlueprint flag)").
