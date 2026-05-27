@@ -78,7 +78,6 @@
           :key="app.id"
           :app="app"
           @install="onInstall"
-          @add-to-bundle="onAddToBundle"
         />
       </div>
 
@@ -115,9 +114,6 @@
                 <button class="btn btn-sm role-primary" disabled :title="t('aif.pages.apps.card.installDisabled')" @click.stop="onInstall(app)">
                   {{ t('aif.pages.apps.card.install') }}
                 </button>
-                <button class="btn btn-sm role-secondary" @click.stop="$event.currentTarget.blur(); onAddToBundle(app)">
-                  {{ t('aif.pages.apps.card.addToBundle') }}
-                </button>
               </td>
             </tr>
           </tbody>
@@ -135,20 +131,12 @@
       </div>
     </template>
 
-    <!-- Add to Bundle Dialog -->
-    <AddToBundleDialog
-      v-if="showAddToBundleDialog && dialogApp"
-      :app="dialogApp"
-      @added="onBundleAdded"
-      @cancel="showAddToBundleDialog = false"
-    />
   </div>
 </template>
 
 <script>
 import { defineComponent, ref, computed, onMounted, getCurrentInstance } from 'vue';
 import AppCard from '../components/apps/AppCard.vue';
-import AddToBundleDialog from '../components/apps/AddToBundleDialog.vue';
 import { listApps, listCategories } from '../utils/operator-api';
 import { formatDate } from '../utils/date';
 import { FALLBACK_LOGO } from '../config/constants';
@@ -159,11 +147,10 @@ const STORAGE_KEY = 'aif-include-reference-blueprints';
 export default defineComponent({
   name: 'AppsPage',
 
-  components: { AppCard, AddToBundleDialog, Banner },
+  components: { AppCard, Banner },
 
   setup() {
     const instance = getCurrentInstance();
-    const store = instance?.proxy?.$store;
     const t = instance?.proxy?.t?.bind(instance.proxy) || ((key) => key);
 
     const loading = ref(true);
@@ -175,8 +162,6 @@ export default defineComponent({
     const categoryFilter = ref('');
     const viewMode = ref('tiles');
     const includeRefBlueprints = ref(false);
-    const showAddToBundleDialog = ref(false);
-    const dialogApp = ref(null);
     const fallbackLogo = FALLBACK_LOGO;
 
     const filteredApps = computed(() => {
@@ -235,27 +220,6 @@ export default defineComponent({
       // P6-8 stub: Deploy Wizard not yet available
     };
 
-    const onAddToBundle = (app) => {
-      dialogApp.value = app;
-      showAddToBundleDialog.value = true;
-    };
-
-    const onBundleAdded = (result) => {
-      const appName = dialogApp.value?.displayName || dialogApp.value?.name || '';
-
-      showAddToBundleDialog.value = false;
-      dialogApp.value = null;
-
-      const title = result.mode === 'new'
-        ? t('aif.pages.apps.dialog.successNew')
-        : t('aif.pages.apps.dialog.successExisting');
-
-      instance?.proxy?.$store?.dispatch('growl/success', {
-        title,
-        message: t('aif.pages.apps.dialog.successMessage', { app: appName, bundle: result.bundle })
-      });
-    };
-
     const onImgError = (event) => {
       event.target.src = FALLBACK_LOGO;
     };
@@ -279,8 +243,6 @@ export default defineComponent({
       categoryFilter,
       viewMode,
       includeRefBlueprints,
-      showAddToBundleDialog,
-      dialogApp,
       filteredApps,
       nvidiaCount,
       suseCount,
@@ -289,8 +251,6 @@ export default defineComponent({
       refresh,
       onToggleRefBlueprints,
       onInstall,
-      onAddToBundle,
-      onBundleAdded,
       formatDate,
       onImgError,
       t

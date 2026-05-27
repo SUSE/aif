@@ -24,13 +24,6 @@ test('apps.vue imports and uses AppCard component', () => {
   assert.match(source, /AppCard/);
 });
 
-test('apps.vue imports and uses AddToBundleDialog component', () => {
-  const source = read('pages/apps.vue');
-
-  assert.match(source, /import AddToBundleDialog from/);
-  assert.match(source, /AddToBundleDialog/);
-});
-
 test('apps.vue imports listApps and listCategories from operator-api', () => {
   const source = read('pages/apps.vue');
 
@@ -131,12 +124,6 @@ test('apps.vue has loading state', () => {
   const source = read('pages/apps.vue');
 
   assert.match(source, /loading/);
-});
-
-test('apps.vue handles add-to-bundle dialog show/hide', () => {
-  const source = read('pages/apps.vue');
-
-  assert.match(source, /showAddToBundleDialog|showDialog|dialogApp/);
 });
 
 test('apps.vue persists includeRefBlueprints toggle to localStorage', () => {

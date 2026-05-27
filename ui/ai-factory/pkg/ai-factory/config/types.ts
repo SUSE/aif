@@ -12,8 +12,8 @@ export const OPERATOR_SERVICE   = 'aif-operator';
 export const OPERATOR_PORT      = 8080;
 
 export const PAGE_IDS = {
-  OVERVIEW: 'overview',
-  APPS:     'apps',
+  OVERVIEW:   'overview',
+  APPS:       'apps',
   BLUEPRINTS: 'blueprints',
   WORKLOADS:  'workloads',
   SETTINGS:   'settings'
