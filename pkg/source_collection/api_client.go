@@ -99,18 +99,28 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 			if abortErr, dropped := classifyPerAppErr(gctx, derr); abortErr != nil {
 				return abortErr
 			} else if dropped {
-				// Non-cancellation failures degrade gracefully: this
-				// app is excluded but the list flow itself succeeds,
-				// so partial upstream outages don't blank the UI.
-				// apps[i] is left zero-valued; the post-Wait() filter
-				// distinguishes this case from "fetched OK but no
-				// branches" so the aggregate log below doesn't conflate
-				// upstream availability errors with catalog content gaps.
 				c.log.Warn("per-app detail fetch failed; app excluded from catalog",
 					"slug", slug, "error", derr)
 				return nil
 			}
-			apps[i] = c.buildCatalogApp(settings, listItems[i], detail)
+			chartTag, verr := c.fetchLatestChartArtifact(gctx, settings, slug)
+			// Note: /v1/artifacts 404 and empty-items both result in
+			// dropping the app, but they take different paths.
+			// Empty-items returns ("", nil) and is aggregated by the
+			// post-Wait droppedSlugs warning; a 404 lands here as
+			// ErrChartNotFound with only this per-slug Warn. An upstream
+			// that 404s every slug would blank the catalog without an
+			// aggregate signal.
+			if abortErr, dropped := classifyPerAppErr(gctx, verr); abortErr != nil {
+				return abortErr
+			} else if dropped {
+				// Same degradation policy as the detail fetch: log per-slug,
+				// leave apps[i] zero-valued, let the post-Wait filter drop it.
+				c.log.Warn("per-app artifact fetch failed; app excluded from catalog",
+					"slug", slug, "error", verr)
+				return nil
+			}
+			apps[i] = c.buildCatalogApp(settings, listItems[i], detail, chartTag)
 			return nil
 		})
 	}
@@ -301,6 +311,55 @@ func (c *apiClient) fetchAppDetail(ctx context.Context, settings EngineSettings,
 	return out, nil
 }
 
+// fetchLatestChartArtifact returns the chart tag of the most recently
+// registered HELM_CHART artifact for a component (e.g. "1.55.0-13.1",
+// or just "1.55.0" when upstream omits a revision). The /v1/artifacts
+// endpoint sorts results by registered_at desc across all branches of
+// the component, so page 1 / size 1 is the newest chart published for
+// the app.
+//
+// Trade-off: this is *not* branch-aware. If an LTS branch ships a
+// back-patch chart after a newer branch's release, that back-patch
+// will surface as "latest" because it was registered most recently.
+// Observed to be a non-issue across the current SUSE catalog
+// (alertmanager, postgresql, redis, ollama tested 2026-05-26); the
+// components-walk alternative is preserved on branch
+// backup/components-walk-version-resolution if branch awareness is
+// later required.
+//
+// 404 maps to ErrChartNotFound; empty items array returns "" and nil
+// error (caller drops the app via the post-Wait filter as "no usable
+// chart"). The artifact's application_version is intentionally
+// discarded — per ARCHITECTURE.md §4.3 the catalog surfaces chart
+// version, not app version.
+func (c *apiClient) fetchLatestChartArtifact(ctx context.Context, settings EngineSettings, slug string) (string, error) {
+	if err := c.limiterWait(ctx); err != nil {
+		return "", err
+	}
+	u, err := url.Parse(settings.APIURL + "/v1/artifacts")
+	if err != nil {
+		return "", fmt.Errorf("parse artifacts URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("component_slug_name", slug)
+	q.Set("packaging_formats", "HELM_CHART")
+	q.Set("page_size", "1")
+	u.RawQuery = q.Encode()
+
+	var page apiArtifactsPage
+	if err := c.getJSON(ctx, settings, u.String(), &page); err != nil {
+		return "", err
+	}
+	if len(page.Items) == 0 {
+		return "", nil
+	}
+	a := page.Items[0]
+	if a.Revision != "" {
+		return a.Version + "-" + a.Revision, nil
+	}
+	return a.Version, nil
+}
+
 // getJSON is the shared transport: one HTTP GET, decoded into out, with
 // one retry on transient (5xx / 429 / 408 / malformed-JSON) errors.
 func (c *apiClient) getJSON(ctx context.Context, settings EngineSettings, urlStr string, out any) error {
@@ -362,109 +421,26 @@ func (c *apiClient) fetchAndDecode(ctx context.Context, settings EngineSettings,
 	}
 }
 
-// buildCatalogApp combines a list-endpoint item with its detail-endpoint
-// payload into a CatalogApp. Chart ref is constructed from the documented
-// convention (oci://<OCIHost>/charts/<slug>:<version>) — the helm{} field
-// that used to ship in the list response is gone. Logo URL is absolutized
-// against the APIURL host when relative.
-func (c *apiClient) buildCatalogApp(settings EngineSettings, item apiListItem, detail apiAppDetail) CatalogApp {
-	version := latestBaseline(detail.Branches)
+// buildCatalogApp combines a list-endpoint item, its detail-endpoint
+// payload (for labels → Categories), and the chart tag resolved from
+// /v1/artifacts into a CatalogApp. Chart ref follows
+// oci://<OCIHost>/charts/<slug>:<chartTag>; logo URL is absolutized
+// against the APIURL host when relative. An empty chartTag leaves
+// LatestVersion and ChartRef empty — the post-Wait filter in List
+// drops such apps.
+func (c *apiClient) buildCatalogApp(settings EngineSettings, item apiListItem, detail apiAppDetail, chartTag string) CatalogApp {
 	return CatalogApp{
 		ID:            item.SlugName,
 		DisplayName:   item.Name,
 		Description:   item.Description,
 		Categories:    categoriesFromLabels(detail.Labels),
-		ChartRef:      buildChartRef(settings.OCIHost, item.SlugName, version),
-		LatestVersion: version,
+		ChartRef:      buildChartRef(settings.OCIHost, item.SlugName, chartTag),
+		LatestVersion: chartTag,
 		Source:        "api",
 		LogoURL:       absolutizeLogoURL(settings.APIURL, item.LogoURL),
 		ProjectURL:    item.ProjectURL,
 		LastUpdatedAt: item.LastUpdatedAt,
 	}
-}
-
-// latestBaseline picks the most-recent version string from an app's
-// branches, tiered: non-LTS baseline > any baseline > non-LTS branch_name
-// > any branch_name. Some upstream apps (e.g. postgresql, suse-storage)
-// only ship branch_name without a populated baseline; falling back keeps
-// them in the catalog with their major series rather than dropping them.
-// Returns empty string only if no branch has either field.
-func latestBaseline(branches []apiBranch) string {
-	pick := func(eligible func(apiBranch) bool, field func(apiBranch) string) string {
-		var best string
-		for _, b := range branches {
-			if !eligible(b) {
-				continue
-			}
-			v := field(b)
-			if v == "" {
-				continue
-			}
-			if best == "" || compareSemverLike(v, best) > 0 {
-				best = v
-			}
-		}
-		return best
-	}
-	notLTS := func(b apiBranch) bool { return !b.IsLTS }
-	any := func(apiBranch) bool { return true }
-	baseline := func(b apiBranch) string { return b.Baseline }
-	branchName := func(b apiBranch) string { return b.BranchName }
-
-	for _, tier := range []struct {
-		eligible func(apiBranch) bool
-		field    func(apiBranch) string
-	}{
-		{notLTS, baseline},
-		{any, baseline},
-		{notLTS, branchName},
-		{any, branchName},
-	} {
-		if v := pick(tier.eligible, tier.field); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// compareSemverLike compares two semver-shaped strings (e.g. "1.2.3").
-// Returns -1, 0, +1 like strings.Compare semantics. Components are
-// compared numerically; non-numeric components fall back to string
-// compare. Good enough for display-ordering — not a strict semver impl.
-func compareSemverLike(a, b string) int {
-	pa := strings.Split(a, ".")
-	pb := strings.Split(b, ".")
-	n := len(pa)
-	if len(pb) > n {
-		n = len(pb)
-	}
-	for i := 0; i < n; i++ {
-		var ap, bp string
-		if i < len(pa) {
-			ap = pa[i]
-		}
-		if i < len(pb) {
-			bp = pb[i]
-		}
-		ai, aerr := strconv.Atoi(ap)
-		bi, berr := strconv.Atoi(bp)
-		if aerr == nil && berr == nil {
-			if ai < bi {
-				return -1
-			}
-			if ai > bi {
-				return 1
-			}
-			continue
-		}
-		if ap < bp {
-			return -1
-		}
-		if ap > bp {
-			return 1
-		}
-	}
-	return 0
 }
 
 // categoriesFromLabels extracts category names from the labels array.
@@ -544,34 +520,58 @@ func absolutizeLogoURL(apiURL, logoURL string) string {
 	return base.ResolveReference(rel).String()
 }
 
-// GetChart looks up version metadata via the per-app detail endpoint.
-// The repo parameter is reserved for the future OCI-fallback path and
-// is currently unused. Annotations and Description require fetching
-// Chart.yaml from OCI (handled by AnnotationReader); this method
-// returns Name/Version/AppVersion only.
+// GetChart resolves a chart tag (as stored in CatalogApp.ChartRef, e.g.
+// "1.55.0-13.1") back to its metadata. The repo parameter is reserved
+// for the future OCI-fallback path and is currently unused.
+// Annotations and Description require fetching Chart.yaml from OCI
+// (handled by AnnotationReader); this method returns Name/Version/
+// AppVersion only.
 //
-// The upstream /v1/applications/{slug}/versions endpoint was removed
-// — versions now live under branches[].baseline in the detail
-// response. A version is considered "present" if any branch's
-// baseline matches exactly.
+// Implementation walks page 1 of /v1/artifacts filtered to HELM_CHART;
+// recently published charts resolve in a single call. A caller asking
+// about an old chart that has rolled off page 1 will get
+// ErrVersionNotFound — acceptable because every catalog consumer
+// records the version it was given and never asks about charts that
+// fell out of the most-recent slice.
+//
+// Per ARCHITECTURE.md §6.2 ChartMetadata defines distinct Version and
+// AppVersion fields: Version is the chart tag (matches the request),
+// AppVersion is the artifact's application_version.
 func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*ChartMetadata, error) {
 	settings, err := c.effectiveSettings()
 	if err != nil {
 		return nil, err
 	}
-	detail, err := c.fetchAppDetail(ctx, settings, chart)
+	if err := c.limiterWait(ctx); err != nil {
+		return nil, err
+	}
+	u, err := url.Parse(settings.APIURL + "/v1/artifacts")
 	if err != nil {
+		return nil, fmt.Errorf("parse artifacts URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("component_slug_name", chart)
+	q.Set("packaging_formats", "HELM_CHART")
+	q.Set("page_size", strconv.Itoa(appCoMaxPageSize))
+	u.RawQuery = q.Encode()
+
+	var page apiArtifactsPage
+	if err := c.getJSON(ctx, settings, u.String(), &page); err != nil {
 		if errors.Is(err, ErrChartNotFound) {
 			return nil, fmt.Errorf("%w: chart %s", ErrChartNotFound, chart)
 		}
 		return nil, err
 	}
-	for _, b := range detail.Branches {
-		if b.Baseline == version {
+	for _, a := range page.Items {
+		tag := a.Version
+		if a.Revision != "" {
+			tag = a.Version + "-" + a.Revision
+		}
+		if tag == version {
 			return &ChartMetadata{
 				Name:       chart,
 				Version:    version,
-				AppVersion: version,
+				AppVersion: a.ApplicationVersion,
 			}, nil
 		}
 	}

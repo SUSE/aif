@@ -63,6 +63,25 @@ func Example_clientList() {
 		}
 		_ = json.NewEncoder(w).Encode(details[slug])
 	})
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.URL.Query().Get("component_slug_name")
+		// Map each example slug to a deterministic chart tag. Add entries
+		// here whenever the list mock above gains a new app.
+		tags := map[string]struct{ version, revision string }{
+			"milvus": {"2.4.0", "1"},
+			"ollama": {"0.4.1", "1"},
+			"vllm":   {"0.6.0", "1"},
+		}
+		v, ok := tags[slug]
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(fmt.Sprintf(`{
+			"items":[{"name":"%s:%s-%s","version":%q,"revision":%q,"packaging_format":"HELM_CHART","application_version":"ignored"}],
+			"page":1,"page_size":1,"total_size":1,"total_pages":1
+		}`, slug, v.version, v.revision, v.version, v.revision)))
+	})
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -95,9 +114,9 @@ func Example_clientList() {
 	}
 
 	// Output:
-	// milvus      version=2.4.0   category=vector-db   chart=oci://dp.apps.rancher.io/charts/milvus:2.4.0
-	// ollama      version=0.4.1   category=llm         chart=oci://dp.apps.rancher.io/charts/ollama:0.4.1
-	// vllm        version=0.6.0   category=llm         chart=oci://dp.apps.rancher.io/charts/vllm:0.6.0
+	// milvus      version=2.4.0-1  category=vector-db   chart=oci://dp.apps.rancher.io/charts/milvus:2.4.0-1
+	// ollama      version=0.4.1-1  category=llm         chart=oci://dp.apps.rancher.io/charts/ollama:0.4.1-1
+	// vllm        version=0.6.0-1  category=llm         chart=oci://dp.apps.rancher.io/charts/vllm:0.6.0-1
 }
 
 // Example_chartAnnotations exercises the AnnotationReader against an

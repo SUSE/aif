@@ -35,6 +35,12 @@ import (
 // without error; the count of entries is reported informationally so
 // the test is robust to upstream catalog changes.
 //
+// Timeout budget: List now makes 2 calls per app (detail + artifact),
+// not 1 — for the current ~145-app catalog at rate.Every(1s) +
+// burst=8, a full refresh is ~4.7 min. The 180 s deadline below covers
+// the worker pool's burst + ~3 minutes of sustained calls before
+// limiterWait would preflight-fail.
+//
 // Skipped unless SUSE_APPCO_USER and SUSE_APPCO_TOKEN are both set.
 func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 	user := os.Getenv("SUSE_APPCO_USER")
@@ -56,7 +62,7 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 		OCIHost:  os.Getenv("SUSE_APPCO_OCI_HOST"), // optional; empty → ChartAnnotations returns ErrNotConfigured (skipped below)
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
 	t.Log("calling Client.List against api.apps.rancher.io…")
@@ -91,7 +97,7 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 		t.Errorf("no apps have LastUpdatedAt — upstream may have renamed last_updated_at")
 	}
 	if len(apps) > 0 && withVersion == 0 {
-		t.Errorf("no apps have LatestVersion — detail-endpoint branches[].baseline may have moved")
+		t.Errorf("no apps have LatestVersion — /v1/artifacts may have changed shape or upstream returned no chart artifacts")
 	}
 	if len(apps) > 0 && withCategories == 0 {
 		t.Errorf("no apps have Categories — labels[] 'category:' prefix may have changed")

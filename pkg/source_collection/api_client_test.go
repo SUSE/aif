@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,13 @@ import (
 type testApp struct {
 	list   apiListItem
 	detail apiAppDetail
+	// chartVersion / chartRevision drive the /v1/artifacts handler in
+	// newTestServer. When chartVersion is empty, the handler returns an
+	// empty items array (mirrors upstream "no chart artifact" for this
+	// slug). The composed chart tag is "<version>" when revision is
+	// empty, otherwise "<version>-<revision>".
+	chartVersion  string // e.g. "1.55.0"
+	chartRevision string // e.g. "13.1"
 }
 
 func newTestApp(slug, name, version string, categories ...string) testApp {
@@ -41,11 +49,22 @@ func newTestApp(slug, name, version string, categories ...string) testApp {
 		detail: apiAppDetail{
 			SlugName: slug,
 			Labels:   labels,
-			Branches: []apiBranch{
-				{ID: 1, BranchName: "0", Baseline: version, IsLTS: false},
-			},
 		},
+		// Default to empty revision so the composed chart tag is just
+		// `version` and existing assertions on LatestVersion: version stay
+		// green. Tests that exercise the version-revision composition set
+		// chartRevision explicitly.
+		chartVersion:  version,
+		chartRevision: "",
 	}
+}
+
+// revisionSuffix returns "-<rev>" for non-empty rev, "" otherwise.
+func revisionSuffix(rev string) string {
+	if rev == "" {
+		return ""
+	}
+	return "-" + rev
 }
 
 // newTestServer routes /v1/applications to a paginated list and
@@ -102,6 +121,31 @@ func newTestServer(t *testing.T, pageSize int, apps ...testApp) *httptest.Server
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(d)
+	})
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.URL.Query().Get("component_slug_name")
+		for _, a := range apps {
+			if a.list.SlugName != slug {
+				continue
+			}
+			if a.chartVersion == "" {
+				_, _ = w.Write([]byte(`{"items": [], "page": 1, "page_size": 1, "total_size": 0, "total_pages": 0}`))
+				return
+			}
+			payload := fmt.Sprintf(`{
+				"items": [{
+					"name": "%s:%s%s",
+					"version": %q,
+					"revision": %q,
+					"packaging_format": "HELM_CHART",
+					"application_version": "ignored"
+				}],
+				"page": 1, "page_size": 1, "total_size": 1, "total_pages": 1
+			}`, a.list.SlugName, a.chartVersion, revisionSuffix(a.chartRevision), a.chartVersion, a.chartRevision)
+			_, _ = w.Write([]byte(payload))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
 	})
 	return httptest.NewServer(mux)
 }
@@ -331,8 +375,13 @@ func TestList_Deduplication_KeepsFirstSeen(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(apiAppDetail{
 			SlugName: "ollama",
 			Labels:   []string{"category:AI"},
-			Branches: []apiBranch{{Baseline: "0.4.1"}},
 		})
+	})
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"items":[{"name":"ollama:0.4.1","version":"0.4.1","revision":"","packaging_format":"HELM_CHART","application_version":"ignored"}],
+			"page":1,"page_size":1,"total_size":1,"total_pages":1
+		}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -402,7 +451,6 @@ func TestList_DetailFetchPartialFailure_OtherAppsSurvive(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(apiAppDetail{
 			SlugName: "good", Labels: []string{"category:AI"},
-			Branches: []apiBranch{{Baseline: "1.0.0"}},
 		})
 	})
 	// /v1/applications/broken returns 500 on every attempt (retry exhausts).
@@ -413,6 +461,19 @@ func TestList_DetailFetchPartialFailure_OtherAppsSurvive(t *testing.T) {
 		brokenCalls++
 		mu.Unlock()
 		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.URL.Query().Get("component_slug_name")
+		switch slug {
+		case "good":
+			_, _ = w.Write([]byte(`{
+				"items":[{"name":"good:1.0.0","version":"1.0.0","revision":"","packaging_format":"HELM_CHART","application_version":"ignored"}],
+				"page":1,"page_size":1,"total_size":1,"total_pages":1
+			}`))
+		default:
+			// broken never reaches /v1/artifacts; only good is asserted.
+			http.Error(w, "not found", http.StatusNotFound)
+		}
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -590,19 +651,54 @@ func TestList_ContextCancelledMidFanOut_ReturnsContextError(t *testing.T) {
 
 // ── GetChart ────────────────────────────────────────────────────────
 
-func TestGetChart_HappyPath_ReturnsMetadata(t *testing.T) {
-	srv := newTestServer(t, 100, newTestApp("ollama", "Ollama", "0.4.1", "AI"))
+func TestGetChart_ReturnsAppVersionForMatchingChartTag(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"items": [
+				{"name":"ollama:1.55.0-13.1","version":"1.55.0","revision":"13.1","packaging_format":"HELM_CHART","application_version":"0.21.2"},
+				{"name":"ollama:1.38.0-12.4","version":"1.38.0","revision":"12.4","packaging_format":"HELM_CHART","application_version":"0.14.2"}
+			],
+			"page":1,"page_size":50,"total_size":2,"total_pages":1
+		}`))
+	})
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	c, _ := NewClient(discardLogger())
-	c.UpdateSettings(EngineSettings{APIURL: srv.URL, Username: "u", Token: "t"})
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
 
-	meta, err := c.GetChart(context.Background(), "oci://dp.apps.rancher.io/charts", "ollama", "0.4.1")
+	meta, err := c.GetChart(context.Background(), "", "ollama", "1.38.0-12.4")
 	if err != nil {
-		t.Fatalf("GetChart failed: %v", err)
+		t.Fatalf("GetChart: %v", err)
 	}
-	if meta.Name != "ollama" || meta.Version != "0.4.1" || meta.AppVersion != "0.4.1" {
-		t.Errorf("got %+v", meta)
+	if meta.Name != "ollama" {
+		t.Errorf("Name = %q, want ollama", meta.Name)
+	}
+	if meta.Version != "1.38.0-12.4" {
+		t.Errorf("Version = %q, want 1.38.0-12.4", meta.Version)
+	}
+	if meta.AppVersion != "0.14.2" {
+		t.Errorf("AppVersion = %q, want 0.14.2 (artifact.application_version)", meta.AppVersion)
+	}
+}
+
+func TestGetChart_UnknownVersion_ReturnsErrVersionNotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"items":[{"name":"ollama:1.55.0-13.1","version":"1.55.0","revision":"13.1","packaging_format":"HELM_CHART","application_version":"0.21.2"}],
+			"page":1,"page_size":50,"total_size":1,"total_pages":1
+		}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+	_, err := c.GetChart(context.Background(), "", "ollama", "9.9.9-0.0")
+	if !errors.Is(err, ErrVersionNotFound) {
+		t.Fatalf("expected ErrVersionNotFound, got %v", err)
 	}
 }
 
@@ -707,8 +803,13 @@ func TestList_LastUpdatedAt_EmptyWhenAbsent(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(apiAppDetail{
 			SlugName: "milvus",
 			Labels:   []string{"category:Vector DB"},
-			Branches: []apiBranch{{Baseline: "2.4.0"}},
 		})
+	})
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"items":[{"name":"milvus:2.4.0","version":"2.4.0","revision":"","packaging_format":"HELM_CHART","application_version":"ignored"}],
+			"page":1,"page_size":1,"total_size":1,"total_pages":1
+		}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -771,70 +872,6 @@ func TestCategoriesFromLabels(t *testing.T) {
 	}
 }
 
-func TestLatestBaseline_PicksHighestNonLTS(t *testing.T) {
-	branches := []apiBranch{
-		{Baseline: "0.4.0", IsLTS: false},
-		{Baseline: "0.5.0", IsLTS: false},
-		{Baseline: "0.10.0", IsLTS: false}, // numerically highest
-		{Baseline: "1.0.0", IsLTS: true},   // LTS — skipped
-	}
-	if got := latestBaseline(branches); got != "0.10.0" {
-		t.Errorf("latestBaseline = %q, want 0.10.0", got)
-	}
-}
-
-func TestLatestBaseline_FallsBackToLTS_WhenAllAreLTS(t *testing.T) {
-	branches := []apiBranch{
-		{Baseline: "1.0.0", IsLTS: true},
-		{Baseline: "2.0.0", IsLTS: true},
-	}
-	if got := latestBaseline(branches); got != "2.0.0" {
-		t.Errorf("latestBaseline = %q, want 2.0.0", got)
-	}
-}
-
-func TestLatestBaseline_EmptyBranches_ReturnsEmpty(t *testing.T) {
-	if got := latestBaseline(nil); got != "" {
-		t.Errorf("latestBaseline(nil) = %q, want empty", got)
-	}
-}
-
-func TestLatestBaseline_FallsBackToBranchName_WhenBaselineMissing(t *testing.T) {
-	// Mirrors upstream shape for apps like postgresql: branches only
-	// carry branch_name, no baseline. We want the highest non-LTS
-	// branch_name so the app still shows in the catalog.
-	branches := []apiBranch{
-		{BranchName: "12", IsLTS: false},
-		{BranchName: "18", IsLTS: false},
-		{BranchName: "15", IsLTS: false},
-	}
-	if got := latestBaseline(branches); got != "18" {
-		t.Errorf("latestBaseline = %q, want 18", got)
-	}
-}
-
-func TestLatestBaseline_PrefersBaselineOverBranchName(t *testing.T) {
-	// If any branch has a baseline, it wins even when other branches
-	// only carry branch_name.
-	branches := []apiBranch{
-		{BranchName: "18", IsLTS: false},
-		{BranchName: "0", Baseline: "0.27.0", IsLTS: false},
-	}
-	if got := latestBaseline(branches); got != "0.27.0" {
-		t.Errorf("latestBaseline = %q, want 0.27.0", got)
-	}
-}
-
-func TestLatestBaseline_FallsBackToLTSBranchName_WhenAllLTSAndNoBaseline(t *testing.T) {
-	branches := []apiBranch{
-		{BranchName: "1.10", IsLTS: true},
-		{BranchName: "1.11", IsLTS: true},
-	}
-	if got := latestBaseline(branches); got != "1.11" {
-		t.Errorf("latestBaseline = %q, want 1.11", got)
-	}
-}
-
 func TestAbsolutizeLogoURL(t *testing.T) {
 	cases := []struct {
 		name, apiURL, logoURL, want string
@@ -883,5 +920,158 @@ func TestAbsolutizeLogoURL(t *testing.T) {
 				t.Errorf("absolutizeLogoURL(%q, %q) = %q, want %q", tc.apiURL, tc.logoURL, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFetchLatestChartArtifact_ReturnsChartTag(t *testing.T) {
+	mux := http.NewServeMux()
+	var gotURL string
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		_, _ = w.Write([]byte(`{
+			"items": [{
+				"name": "ollama:1.55.0-13.1",
+				"version": "1.55.0",
+				"revision": "13.1",
+				"packaging_format": "HELM_CHART",
+				"application_version": "0.21.2",
+				"registered_at": "2026-04-30T23:56:07.607227Z"
+			}],
+			"page": 1, "page_size": 1, "total_size": 15, "total_pages": 15
+		}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+	cc := c.(*apiClient)
+	settings, _ := cc.effectiveSettings()
+
+	got, err := cc.fetchLatestChartArtifact(context.Background(), settings, "ollama")
+	if err != nil {
+		t.Fatalf("fetchLatestChartArtifact: %v", err)
+	}
+	if got != "1.55.0-13.1" {
+		t.Errorf("chartTag = %q, want 1.55.0-13.1", got)
+	}
+	if !strings.Contains(gotURL, "component_slug_name=ollama") {
+		t.Errorf("URL missing component_slug_name=ollama: %s", gotURL)
+	}
+	if !strings.Contains(gotURL, "packaging_formats=HELM_CHART") {
+		t.Errorf("URL missing packaging_formats=HELM_CHART: %s", gotURL)
+	}
+	if !strings.Contains(gotURL, "page_size=1") {
+		t.Errorf("URL missing page_size=1: %s", gotURL)
+	}
+}
+
+func TestFetchLatestChartArtifact_EmptyItems_ReturnsEmptyString(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items": [], "page": 1, "page_size": 1, "total_size": 0, "total_pages": 0}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+	cc := c.(*apiClient)
+	settings, _ := cc.effectiveSettings()
+
+	got, err := cc.fetchLatestChartArtifact(context.Background(), settings, "unknown-slug")
+	if err != nil {
+		t.Fatalf("expected nil err on empty items, got %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+func TestFetchLatestChartArtifact_404_ReturnsErrChartNotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+	cc := c.(*apiClient)
+	settings, _ := cc.effectiveSettings()
+
+	_, err := cc.fetchLatestChartArtifact(context.Background(), settings, "anything")
+	if !errors.Is(err, ErrChartNotFound) {
+		t.Fatalf("expected ErrChartNotFound, got %v", err)
+	}
+}
+
+func TestFetchLatestChartArtifact_EmptyRevision_ChartTagIsVersionOnly(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"items": [{
+				"name": "foo:2.0.0",
+				"version": "2.0.0",
+				"revision": "",
+				"packaging_format": "HELM_CHART",
+				"application_version": "1.0.0"
+			}],
+			"page": 1, "page_size": 1, "total_size": 1, "total_pages": 1
+		}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL})
+	cc := c.(*apiClient)
+	settings, _ := cc.effectiveSettings()
+
+	got, _ := cc.fetchLatestChartArtifact(context.Background(), settings, "foo")
+	if got != "2.0.0" {
+		t.Errorf("chartTag = %q, want 2.0.0 (no trailing hyphen)", got)
+	}
+}
+
+func TestList_PopulatesLatestVersionFromArtifact(t *testing.T) {
+	// chartVersion + chartRevision compose into a tag value that no other
+	// upstream field could supply — proving LatestVersion is sourced from
+	// the /v1/artifacts endpoint.
+	srv := newTestServer(t, 10, testApp{
+		list: apiListItem{
+			SlugName:    "ollama",
+			Name:        "Ollama",
+			Description: "Run LLMs locally.",
+		},
+		detail: apiAppDetail{
+			SlugName: "ollama",
+			Labels:   []string{"category:llm"},
+		},
+		chartVersion:  "1.55.0",
+		chartRevision: "13.1",
+	})
+	defer srv.Close()
+
+	c, _ := NewClient(discardLogger())
+	c.UpdateSettings(EngineSettings{APIURL: srv.URL, OCIHost: "dp.apps.rancher.io"})
+
+	apps, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("expected 1 app, got %d", len(apps))
+	}
+	got := apps[0]
+	if got.LatestVersion != "1.55.0-13.1" {
+		t.Errorf("LatestVersion = %q, want 1.55.0-13.1 (artifact version-revision, not branches[].baseline)", got.LatestVersion)
+	}
+	if got.ChartRef != "oci://dp.apps.rancher.io/charts/ollama:1.55.0-13.1" {
+		t.Errorf("ChartRef = %q, want oci://…/charts/ollama:1.55.0-13.1", got.ChartRef)
+	}
+	if len(got.Categories) != 1 || got.Categories[0] != "llm" {
+		t.Errorf("Categories = %v, want [llm] (still sourced from /v1/applications labels)", got.Categories)
 	}
 }

@@ -22,7 +22,7 @@ type CatalogApp struct {
 // ChartMetadata holds Chart.yaml metadata for a specific chart version.
 // Description and Annotations require fetching Chart.yaml from OCI (handled
 // by AnnotationReader); GetChart populates only Name, Version, and AppVersion
-// from the detail endpoint's branches[] array.
+// from the /v1/artifacts endpoint.
 type ChartMetadata struct {
 	Name        string
 	Version     string
@@ -55,20 +55,37 @@ type apiListItem struct {
 	PackagingFormat string `json:"packaging_format"`
 }
 
-// apiAppDetail models /v1/applications/{slug}. The list endpoint returns
-// only summary info; per-app version + categories live here.
+// apiAppDetail is the slice of GET /v1/applications/{slug} we consume.
+// We only read labels[] for Categories; chart version comes from the
+// /v1/artifacts endpoint (see fetchLatestChartArtifact).
 type apiAppDetail struct {
-	SlugName string      `json:"slug_name"`
-	Labels   []string    `json:"labels"`
-	Branches []apiBranch `json:"branches"`
+	SlugName string   `json:"slug_name"`
+	Labels   []string `json:"labels"`
 }
 
-// apiBranch represents one release stream for an app. We pick the highest-
-// versioned non-LTS branch's baseline as the "latest" — matching the
-// upstream UI's "latest version" presentation.
-type apiBranch struct {
-	ID         int    `json:"id"`
-	BranchName string `json:"branch_name"`
-	Baseline   string `json:"baseline"`
-	IsLTS      bool   `json:"is_lts"`
+// apiArtifactsPage is the paged response shape of GET /v1/artifacts.
+// Items are sorted by registered_at desc by the upstream — we rely on
+// that to read page 1 / size 1 as "most recently registered artifact".
+type apiArtifactsPage struct {
+	Items      []apiArtifactItem `json:"items"`
+	Page       int               `json:"page"`
+	PageSize   int               `json:"page_size"`
+	TotalSize  int               `json:"total_size"`
+	TotalPages int               `json:"total_pages"`
+}
+
+// apiArtifactItem is one published artifact. For HELM_CHART artifacts:
+//   - Name is "<slug>:<version>-<revision>" (e.g. "ollama:1.55.0-13.1")
+//   - Version is the chart version (e.g. "1.55.0")
+//   - Revision is the build revision (e.g. "13.1")
+//   - ApplicationVersion is the upstream app version (e.g. "0.21.2")
+// CONTAINER artifacts also populate Version/Revision but leave
+// ApplicationVersion empty; we filter to HELM_CHART at the query layer.
+type apiArtifactItem struct {
+	Name               string `json:"name"`
+	Version            string `json:"version"`
+	Revision           string `json:"revision"`
+	PackagingFormat    string `json:"packaging_format"`
+	ApplicationVersion string `json:"application_version"`
+	RegisteredAt       string `json:"registered_at"`
 }
