@@ -21,18 +21,12 @@ import (
 // that semver.Compare would otherwise emit for invalid strings.
 var semverRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
-// workloadReader is the consumer-defined read port. Satisfied by
-// *workload.k8sRepository and *workload.FakeRepository in tests.
-// ≤4 methods (ISP).
-type workloadReader interface {
-	List(ctx context.Context, namespace string, selector labels.Selector) ([]aifv1.Workload, error)
-	Get(ctx context.Context, namespace, name string) (*aifv1.Workload, error)
-}
-
-// workloadMutator is the consumer-defined write port. Satisfied by
-// *workload.k8sRepository (after Task F-2 adds Create/Delete) and
-// *workload.FakeRepository in tests.
-// ≤4 methods (ISP).
+// workloadMutator is consumer-defined (rather than reusing workload.Writer)
+// to keep both ports ≤4 methods (ISP). Writer holds Patch only; this port
+// adds Create + Delete needed by the HTTP CRUD handlers without growing
+// Writer beyond its current shape (Update/UpdateStatus/Patch — already at
+// 3 methods serving the reconciler + upgrader).
+// Satisfied by *workload.k8sRepository and *workload.FakeRepository in tests.
 type workloadMutator interface {
 	Create(ctx context.Context, w *aifv1.Workload) error
 	Delete(ctx context.Context, namespace, name string) error
@@ -50,7 +44,7 @@ type workloadMutator interface {
 // the SAR-backed checker.
 type WorkloadsHandler struct {
 	upgrader       workload.Upgrader
-	reader         workloadReader
+	reader         workload.Reader
 	mutator        workloadMutator
 	authMiddleware *AuthMiddleware
 	checker        AuthChecker
@@ -65,7 +59,7 @@ type WorkloadsHandler struct {
 // CRUD route in a SAR check via RequireResource (and, for create, calls
 // checker.CheckResource directly inside the handler since the namespace
 // lives in the request body, not the URL).
-func NewWorkloadsHandler(upgrader workload.Upgrader, reader workloadReader, mutator workloadMutator, checker AuthChecker, logger *slog.Logger) *WorkloadsHandler {
+func NewWorkloadsHandler(upgrader workload.Upgrader, reader workload.Reader, mutator workloadMutator, checker AuthChecker, logger *slog.Logger) *WorkloadsHandler {
 	h := &WorkloadsHandler{
 		upgrader: upgrader,
 		reader:   reader,
