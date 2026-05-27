@@ -48,7 +48,7 @@ func NewAppCoSource(c source_collection.Client, ar source_collection.AnnotationR
 }
 
 // Name returns the namespace prefix used in this Source's App.IDs.
-func (a *AppCoSource) Name() string { return "suse" }
+func (a *AppCoSource) Name() string { return "suse.appco" }
 
 // List returns the cached App slice. Snapshot copy; safe to mutate.
 func (a *AppCoSource) List(_ context.Context) ([]App, error) {
@@ -142,20 +142,21 @@ func (a *AppCoSource) recordError(err error) {
 }
 
 // translateCatalogApps converts source_collection.CatalogApp slice
-// into the canonical []App. ID namespaced as `suse.<slug>:<version>`
-// (single-token form so the REST surface uses a plain path-segment
-// route, not a wildcard).
+// into the canonical []App. ID namespaced as `suse.appco.<slug>:<version>`
+// (source=suse, origin=appco), so the REST surface uses a plain
+// path-segment route, not a wildcard.
 func translateCatalogApps(logger *slog.Logger, upstream []source_collection.CatalogApp) []App {
 	out := make([]App, 0, len(upstream))
 	for _, u := range upstream {
 		out = append(out, App{
-			ID:            "suse." + u.ID + ":" + u.LatestVersion,
+			ID:            "suse.appco." + u.ID + ":" + u.LatestVersion,
 			Name:          u.ID,
 			DisplayName:   u.DisplayName,
 			Description:   u.Description,
 			Publisher:     "SUSE",
 			Version:       u.LatestVersion,
 			Source:        "suse",
+			Origin:        "appco",
 			AssetType:     "chart",
 			Categories:    append([]string(nil), u.Categories...),
 			ChartRef:      parseAppCoChartRef(u),

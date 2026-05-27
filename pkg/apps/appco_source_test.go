@@ -74,8 +74,8 @@ func sampleCatalogApps() []source_collection.CatalogApp {
 
 func TestAppCoSource_Name_IsSuse(t *testing.T) {
 	s := NewAppCoSource(&fakeAppCoClient{}, &fakeAppcoAnnotationReader{}, discardLogger(), 10*time.Minute)
-	if got := s.Name(); got != "suse" {
-		t.Errorf("Name() = %q, want %q", got, "suse")
+	if got := s.Name(); got != "suse.appco" {
+		t.Errorf("Name() = %q, want %q", got, "suse.appco")
 	}
 }
 
@@ -103,11 +103,14 @@ func TestAppCoSource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	milvus := apps[0]
-	if milvus.ID != "suse.milvus:2.4.0" {
-		t.Errorf("Milvus ID = %q, want %q", milvus.ID, "suse.milvus:2.4.0")
+	if milvus.ID != "suse.appco.milvus:2.4.0" {
+		t.Errorf("Milvus ID = %q, want %q", milvus.ID, "suse.appco.milvus:2.4.0")
 	}
 	if milvus.Source != "suse" {
 		t.Errorf("Milvus Source = %q, want %q", milvus.Source, "suse")
+	}
+	if milvus.Origin != "appco" {
+		t.Errorf("Milvus Origin = %q, want %q", milvus.Origin, "appco")
 	}
 	if milvus.Name != "milvus" {
 		t.Errorf("Milvus Name = %q, want %q", milvus.Name, "milvus")
@@ -143,8 +146,11 @@ func TestAppCoSource_RefreshThenList_ReturnsNamespacedApps(t *testing.T) {
 	}
 
 	ollama := apps[1]
-	if ollama.ID != "suse.ollama:0.4.1" {
-		t.Errorf("Ollama ID = %q, want %q", ollama.ID, "suse.ollama:0.4.1")
+	if ollama.ID != "suse.appco.ollama:0.4.1" {
+		t.Errorf("Ollama ID = %q, want %q", ollama.ID, "suse.appco.ollama:0.4.1")
+	}
+	if ollama.Origin != "appco" {
+		t.Errorf("Ollama Origin = %q, want %q", ollama.Origin, "appco")
 	}
 }
 
@@ -363,10 +369,10 @@ func TestAppCoSource_Refresh_SurvivesPerChartAnnotationError(t *testing.T) {
 		t.Fatalf("expected 2 apps, got %d", len(apps))
 	}
 	for _, a := range apps {
-		if a.ID == "suse.good:1.0.0" && !a.ReferenceBlueprint {
+		if a.ID == "suse.appco.good:1.0.0" && !a.ReferenceBlueprint {
 			t.Errorf("good app: expected ReferenceBlueprint=true")
 		}
-		if a.ID == "suse.bad:1.0.0" && a.ReferenceBlueprint {
+		if a.ID == "suse.appco.bad:1.0.0" && a.ReferenceBlueprint {
 			t.Errorf("bad app: expected ReferenceBlueprint=false")
 		}
 	}
