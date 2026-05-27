@@ -332,6 +332,77 @@ func TestWorkloadsList_WithItems(t *testing.T) {
 	}
 }
 
+func TestWorkloadsList_NamespaceFilter(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	seedWorkload(rig.repo, "ns-a", "wl-1", aifv1.WorkloadSourceKindApp)
+	seedWorkload(rig.repo, "ns-b", "wl-2", aifv1.WorkloadSourceKindApp)
+
+	req := httptest.NewRequest("GET", "/api/v1/workloads?namespace=ns-a", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var items []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item filtered by namespace, got %d: %+v", len(items), items)
+	}
+	if meta, _ := items[0]["metadata"].(map[string]any); meta["namespace"] != "ns-a" {
+		t.Errorf("expected ns-a, got %v", meta["namespace"])
+	}
+}
+
+func TestWorkloadsList_LabelSelectorFilter(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	matchedW := &aifv1.Workload{}
+	matchedW.Namespace = "team-a"
+	matchedW.Name = "matched"
+	matchedW.Labels = map[string]string{"app": "foo"}
+	matchedW.Spec.Source.Kind = aifv1.WorkloadSourceKindApp
+	rig.repo.Seed(matchedW)
+	otherW := &aifv1.Workload{}
+	otherW.Namespace = "team-a"
+	otherW.Name = "other"
+	otherW.Labels = map[string]string{"app": "bar"}
+	otherW.Spec.Source.Kind = aifv1.WorkloadSourceKindApp
+	rig.repo.Seed(otherW)
+
+	req := httptest.NewRequest("GET", "/api/v1/workloads?labelSelector=app%3Dfoo", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var items []map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d: %+v", len(items), items)
+	}
+	if meta, _ := items[0]["metadata"].(map[string]any); meta["name"] != "matched" {
+		t.Errorf("expected matched, got %v", meta["name"])
+	}
+}
+
+func TestWorkloadsList_MalformedLabelSelector(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("GET", "/api/v1/workloads?labelSelector=BAD!", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on malformed selector, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestWorkloadsList_MissingUser(t *testing.T) {
 	rig := newListDeleteTestRig(t)
 	req := httptest.NewRequest("GET", "/api/v1/workloads", nil)

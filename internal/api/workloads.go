@@ -73,7 +73,18 @@ func (h *WorkloadsHandler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
 		return
 	}
-	items, err := h.reader.List(r.Context(), "", nil)
+	ns := r.URL.Query().Get("namespace")
+	selStr := r.URL.Query().Get("labelSelector")
+	var selector labels.Selector
+	if selStr != "" {
+		parsed, err := labels.Parse(selStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%w: invalid labelSelector: %v", ErrInvalidInput, err))
+			return
+		}
+		selector = parsed
+	}
+	items, err := h.reader.List(r.Context(), ns, selector)
 	if err != nil {
 		LoggerFromContext(r.Context()).Error("list workloads failed", "error", err)
 		writeError(w, http.StatusInternalServerError, ErrInternal)
