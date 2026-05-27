@@ -342,6 +342,48 @@ func TestWorkloadsList_MissingUser(t *testing.T) {
 	}
 }
 
+func TestWorkloadsGet_HappyPath(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	seedWorkload(rig.repo, "team-a", "wl-1", aifv1.WorkloadSourceKindApp)
+
+	req := httptest.NewRequest("GET", "/api/v1/workloads/team-a/wl-1", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if meta, _ := got["metadata"].(map[string]any); meta["name"] != "wl-1" || meta["namespace"] != "team-a" {
+		t.Errorf("unexpected workload returned: %+v", got)
+	}
+}
+
+func TestWorkloadsGet_NotFound(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("GET", "/api/v1/workloads/team-a/missing", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestWorkloadsGet_MissingUser(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("GET", "/api/v1/workloads/team-a/wl-1", nil)
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+}
+
 func TestWorkloadsDelete_HappyPath(t *testing.T) {
 	rig := newListDeleteTestRig(t)
 	seedWorkload(rig.repo, "team-a", "my-wl", aifv1.WorkloadSourceKindApp)

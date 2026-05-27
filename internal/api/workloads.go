@@ -60,6 +60,7 @@ func NewWorkloadsHandler(upgrader workload.Upgrader, reader workloadReader, muta
 // Register wires this handler's routes onto the provided mux.
 func (h *WorkloadsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/workloads", h.list)
+	mux.HandleFunc("GET /api/v1/workloads/{namespace}/{name}", h.getWorkload)
 	mux.HandleFunc("POST /api/v1/workloads", h.createWorkload)
 	mux.HandleFunc("DELETE /api/v1/workloads/{namespace}/{name}", h.deleteWorkload)
 	mux.HandleFunc("PATCH /api/v1/workloads/{namespace}/{name}", h.patchWorkload)
@@ -79,6 +80,27 @@ func (h *WorkloadsHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+func (h *WorkloadsHandler) getWorkload(w http.ResponseWriter, r *http.Request) {
+	user, _ := ExtractUser(r)
+	if user == "" {
+		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
+		return
+	}
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	wl, err := h.reader.Get(r.Context(), ns, name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, ErrNotFound)
+			return
+		}
+		LoggerFromContext(r.Context()).Error("get workload failed", "ns", ns, "name", name, "error", err)
+		writeError(w, http.StatusInternalServerError, ErrInternal)
+		return
+	}
+	writeJSON(w, http.StatusOK, wl)
 }
 
 func (h *WorkloadsHandler) deleteWorkload(w http.ResponseWriter, r *http.Request) {
