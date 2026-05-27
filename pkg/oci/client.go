@@ -173,8 +173,6 @@ func (w *walker) getJSON(ctx context.Context, pathOrURL string, out any) (string
 
 // fetchBytes is a GET that returns the full body — used by AnnotationReader.
 // Sentinels match getJSON (404 → ErrNotFound).
-//
-//nolint:unused // Used by AnnotationReader (Task 1.3); accessed via type assertion
 func (w *walker) fetchBytes(ctx context.Context, path string) ([]byte, error) {
 	w.mu.RLock()
 	endpoint := w.endpoint
@@ -198,8 +196,6 @@ func (w *walker) fetchBytes(ctx context.Context, path string) ([]byte, error) {
 }
 
 // headDigest issues HEAD against path and returns Docker-Content-Digest.
-//
-//nolint:unused // Used by AnnotationReader (Task 1.3); accessed via type assertion
 func (w *walker) headDigest(ctx context.Context, path string) (string, error) {
 	w.mu.RLock()
 	endpoint := w.endpoint
@@ -275,7 +271,6 @@ func (w *walker) do(ctx context.Context, url, bearer, username, token string) (*
 	return resp, nil
 }
 
-//nolint:unused // Used by headDigest (Task 1.3 dependency chain)
 func (w *walker) headWithAuth(ctx context.Context, url string) (*http.Response, error) {
 	w.mu.RLock()
 	username, token := w.settings.Username, w.settings.Token
@@ -300,7 +295,6 @@ func (w *walker) headWithAuth(ctx context.Context, url string) (*http.Response, 
 	return w.head(ctx, url, bearer, username, token)
 }
 
-//nolint:unused // Used by headWithAuth (Task 1.3 dependency chain)
 func (w *walker) head(ctx context.Context, url, bearer, username, token string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
@@ -475,8 +469,6 @@ func StripScheme(endpoint string) string {
 // readAllLimited reads up to max bytes from r and returns the slice.
 // Duplicates pkg/helm_oci.ReadAllLimited's contract with a chunked
 // loop so pkg/oci stays free of sibling-package imports.
-//
-//nolint:unused // Used by fetchBytes (Task 1.3 dependency chain)
 func readAllLimited(r interface{ Read([]byte) (int, error) }, max int64) ([]byte, error) {
 	buf := make([]byte, 0, 4096)
 	for int64(len(buf)) < max {
