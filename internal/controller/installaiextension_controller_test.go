@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -517,6 +518,21 @@ func TestInstallAIExtensionReconciler_HelmInstallFailed(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected InstallFailed event, got: %v", recorder.events)
+	}
+
+	// Verify Phase=Failed and Ready=False are not overwritten by the
+	// success path in reconcile() (regression: zero-Result from
+	// reconcileHelmSource was falling through to Ready=True).
+	var updated aifv1.InstallAIExtension
+	if err := fakeClient.Get(ctx, req.NamespacedName, &updated); err != nil {
+		t.Fatalf("failed to get updated CR: %v", err)
+	}
+	if updated.Status.Phase != aifv1.InstallAIExtensionPhaseFailed {
+		t.Errorf("expected Phase=Failed, got %q", updated.Status.Phase)
+	}
+	readyCond := meta.FindStatusCondition(updated.Status.Conditions, conditions.TypeReady)
+	if readyCond == nil || readyCond.Status != metav1.ConditionFalse {
+		t.Errorf("expected Ready=False, got %v", readyCond)
 	}
 }
 

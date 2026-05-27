@@ -141,6 +141,12 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *aifv1
 		return ctrl.Result{}, nil
 	}
 
+	// Guard: source reconcilers set Phase=Failed and return zero Result
+	// to avoid blocking retry loops. Don't overwrite with success.
+	if ext.Status.Phase == aifv1.InstallAIExtensionPhaseFailed {
+		return ctrl.Result{}, nil
+	}
+
 	conditions.Set(&ext.Status.Conditions, metav1.Condition{
 		Type:               conditions.TypeReady,
 		Status:             metav1.ConditionTrue,
