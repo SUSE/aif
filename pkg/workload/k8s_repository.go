@@ -95,3 +95,14 @@ func (r *k8sRepository) CountByBlueprint(ctx context.Context, name, version stri
 	}
 	return count, nil
 }
+
+func (r *k8sRepository) Create(ctx context.Context, w *aifv1.Workload) error {
+	return r.c.Create(ctx, w)
+}
+
+func (r *k8sRepository) Delete(ctx context.Context, namespace, name string) error {
+	w := &aifv1.Workload{}
+	w.Namespace = namespace
+	w.Name = name
+	return r.c.Delete(ctx, w)
+}

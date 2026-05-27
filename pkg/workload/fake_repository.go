@@ -27,6 +27,8 @@ type FakeRepository struct {
 	UpdateStatusErr     error
 	PatchErr            error
 	CountByBlueprintErr error
+	CreateErr           error
+	DeleteErr           error
 }
 
 // NewFakeRepository returns an empty FakeRepository.
@@ -144,6 +146,30 @@ func (f *FakeRepository) CountByBlueprint(_ context.Context, name, version strin
 		}
 	}
 	return count, nil
+}
+
+func (f *FakeRepository) Create(_ context.Context, w *aifv1.Workload) error {
+	if f.CreateErr != nil {
+		return f.CreateErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.items[key(w.Namespace, w.Name)] = w.DeepCopy()
+	return nil
+}
+
+func (f *FakeRepository) Delete(_ context.Context, namespace, name string) error {
+	if f.DeleteErr != nil {
+		return f.DeleteErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := key(namespace, name)
+	if _, ok := f.items[k]; !ok {
+		return apierrors.NewNotFound(schema.GroupResource{Group: "ai.suse.com", Resource: "workloads"}, name)
+	}
+	delete(f.items, k)
+	return nil
 }
 
 func key(ns, name string) string { return fmt.Sprintf("%s/%s", ns, name) }
