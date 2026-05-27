@@ -5,7 +5,7 @@ import type { App } from './operator-api';
 
 const MOCK_APPS: App[] = [
   {
-    id:                 'nvidia.nim-llm:1.2.0',
+    id:                 'nvidia.ngc.nim-llm:1.2.0',
     name:               'nim-llm',
     displayName:        'NVIDIA NIM for LLMs',
     description:        'Deploy optimized large language models with NVIDIA NIM inference microservices. Supports Llama 3, Mistral, and other popular LLM architectures.',
@@ -23,7 +23,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-04-15T10:30:00Z'
   },
   {
-    id:                 'nvidia.nim-vlm:1.0.0',
+    id:                 'nvidia.ngc.nim-vlm:1.0.0',
     name:               'nim-vlm',
     displayName:        'NVIDIA NIM for VLMs',
     description:        'Run vision-language models at scale with NVIDIA NIM. Supports multimodal inference for image understanding and visual question answering.',
@@ -41,7 +41,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-03-20T14:00:00Z'
   },
   {
-    id:                 'nvidia.nim-llm-blueprint:1.2.0',
+    id:                 'nvidia.ngc.nim-llm-blueprint:1.2.0',
     name:               'nim-llm-blueprint',
     displayName:        'NIM LLM Reference Blueprint',
     description:        'Pre-validated reference blueprint for deploying NIM LLM with GPU Operator, Network Operator, and monitoring. Ready-to-deploy AI stack for text generation workloads.',
@@ -93,7 +93,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-04-20T09:30:00Z'
   },
   {
-    id:                 'suse.ollama:0.5.4',
+    id:                 'suse.appco.ollama:0.5.4',
     name:               'ollama',
     displayName:        'Ollama',
     description:        'Run large language models locally. Get up and running with Llama 3, Mistral, Gemma, and other models on Kubernetes with GPU acceleration.',
@@ -127,7 +127,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-05-10T16:45:00Z'
   },
   {
-    id:                 'suse.milvus:2.4.0',
+    id:                 'suse.appco.milvus:2.4.0',
     name:               'milvus',
     displayName:        'Milvus Vector Database',
     description:        'High-performance vector database for AI applications. Supports similarity search, hybrid search, and production-ready RAG pipelines at scale.',

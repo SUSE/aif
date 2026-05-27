@@ -70,15 +70,15 @@ func (f *fakeCatalog) UpdateSettings(_ apps.EngineSettings) {}
 // sources so filter tests can be written.
 func sampleApps() []apps.App {
 	return []apps.App{
-		{ID: "nvidia.nim-llm:1.0.0", Source: "nvidia", Name: "nim-llm",
+		{ID: "nvidia.ngc.nim-llm:1.0.0", Source: "nvidia", Name: "nim-llm",
 			Categories: []string{"llm"}, ReferenceBlueprint: false},
-		{ID: "nvidia.nim-vlm:2.0.0", Source: "nvidia", Name: "nim-vlm",
+		{ID: "nvidia.ngc.nim-vlm:2.0.0", Source: "nvidia", Name: "nim-vlm",
 			Categories: []string{"vlm"}, ReferenceBlueprint: false},
-		{ID: "nvidia.rag-blueprint:1.0", Source: "nvidia", Name: "rag-blueprint",
+		{ID: "nvidia.ngc.rag-blueprint:1.0", Source: "nvidia", Name: "rag-blueprint",
 			Categories: []string{"reference-blueprint"}, ReferenceBlueprint: true},
-		{ID: "suse.ollama:0.4.1", Source: "suse", Name: "ollama",
+		{ID: "suse.appco.ollama:0.4.1", Source: "suse", Name: "ollama",
 			Categories: []string{"AI", "Inference"}, ReferenceBlueprint: false},
-		{ID: "suse.milvus:2.4.0", Source: "suse", Name: "milvus",
+		{ID: "suse.appco.milvus:2.4.0", Source: "suse", Name: "milvus",
 			Categories: []string{"AI", "Vector DB"}, ReferenceBlueprint: false},
 	}
 }
@@ -305,7 +305,7 @@ func TestAppsHandler_List_EmptyResult_SerializesAsEmptyArray(t *testing.T) {
 
 func TestAppsHandler_Get_HappyPath_Returns200AndApp(t *testing.T) {
 	want := apps.App{
-		ID: "nvidia.nim-llm:1.0.0", Name: "nim-llm", Source: "nvidia",
+		ID: "nvidia.ngc.nim-llm:1.0.0", Name: "nim-llm", Source: "nvidia",
 	}
 	cat := &fakeCatalog{getResult: want}
 	h := newAppsHandlerForTest(cat)
@@ -329,10 +329,10 @@ func TestAppsHandler_Get_HappyPath_Returns200AndApp(t *testing.T) {
 // --- GET /api/v1/apps/{id}: dot-namespaced ID is a single path segment ---
 
 func TestAppsHandler_Get_NamespacedID_RoutedToCatalog(t *testing.T) {
-	cat := &fakeCatalog{getResult: apps.App{ID: "suse.ollama:0.4.1", Source: "suse"}}
+	cat := &fakeCatalog{getResult: apps.App{ID: "suse.appco.ollama:0.4.1", Source: "suse"}}
 	h := newAppsHandlerForTest(cat)
 
-	const wantID = "suse.ollama:0.4.1"
+	const wantID = "suse.appco.ollama:0.4.1"
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/"+wantID, nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
