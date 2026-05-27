@@ -17,9 +17,9 @@ import (
 	"github.com/SUSE/aif/pkg/suse_registry"
 )
 
-// Example_list exercises the Provider end-to-end against an in-process
+// ExampleProvider_List exercises the Provider end-to-end against an in-process
 // OCI Distribution v2 stub. Doubles as `make verify-suse-registry-mock`.
-func Example_list() {
+func ExampleProvider_List() {
 	chartYaml := "apiVersion: v2\nname: example-chart\nannotations:\n  ai.suse.com/display-name: Example Chart\n"
 	var tarBuf bytes.Buffer
 	gz := gzip.NewWriter(&tarBuf)
