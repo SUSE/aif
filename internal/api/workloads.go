@@ -177,6 +177,9 @@ type createWorkloadRequest struct {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
 	} `json:"metadata"`
+	// Spec carries the full WorkloadSpec. If spec.Name (display name) is
+	// omitted, the handler defaults it to metadata.name as an ergonomic
+	// fallback (the CRD requires spec.name with MinLength=1).
 	Spec aifv1.WorkloadSpec `json:"spec"`
 }
 
