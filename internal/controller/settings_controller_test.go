@@ -220,6 +220,35 @@ var _ = Describe("SettingsReconciler", func() {
 		}, "5s", "100ms").Should(Succeed())
 	})
 
+	It("propagates spec.fleet without credSecretRef as anonymous to the applier", func() {
+		By("creating Settings with spec.fleet populated but no credSecretRef")
+		settings := &aifv1.Settings{
+			ObjectMeta: metav1.ObjectMeta{Name: "fleet-anonymous", Namespace: "aif"},
+			Spec: aifv1.SettingsSpec{
+				Fleet: &aifv1.FleetConfig{
+					RepoURL: "https://git.example.com/public-fleet.git",
+					Branch:  "main",
+					// CredSecretRef nil, AuthType "" — anonymous, expected
+					// to project FleetGitAuth as all-nil downstream.
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, settings)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, settings) })
+
+		By("the applier receives a snapshot with RepoURL/Branch and FleetGitAuth zero")
+		Eventually(func(g Gomega) {
+			snaps := settingsApplier.Snapshot()
+			g.Expect(snaps).ToNot(BeEmpty(), "applier should have been called at least once")
+			latest := snaps[len(snaps)-1]
+			g.Expect(latest.FleetRepoURL).To(Equal("https://git.example.com/public-fleet.git"))
+			g.Expect(latest.FleetBranch).To(Equal("main"))
+			g.Expect(latest.FleetGitAuth.Token).To(BeNil())
+			g.Expect(latest.FleetGitAuth.Basic).To(BeNil())
+			g.Expect(latest.FleetGitAuth.SSH).To(BeNil())
+		}, "5s", "100ms").Should(Succeed())
+	})
+
 	It("should accept nil SecretKeyRefs (optional fields)", func() {
 		settings := &aifv1.Settings{
 			ObjectMeta: metav1.ObjectMeta{
