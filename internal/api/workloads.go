@@ -43,29 +43,72 @@ type workloadMutator interface {
 // endpoints. Today the only route is POST .../upgrade (P5-3). Future
 // lifecycle actions (operate, scale, …) plug in via additional methods on
 // this handler.
+//
+// authMiddleware/checker may both be nil; when nil, SAR enforcement is
+// skipped (useful for tests that drive the handler directly without
+// authorization concerns). Production wiring in cmd/operator always supplies
+// the SAR-backed checker.
 type WorkloadsHandler struct {
-	upgrader workload.Upgrader
-	reader   workloadReader
-	mutator  workloadMutator
-	logger   *slog.Logger
+	upgrader       workload.Upgrader
+	reader         workloadReader
+	mutator        workloadMutator
+	authMiddleware *AuthMiddleware
+	checker        AuthChecker
+	logger         *slog.Logger
 }
 
 // NewWorkloadsHandler constructs a WorkloadsHandler bound to the upgrader
 // workflow port. The logger here is the server-level logger; request-scoped
 // loggers come from LoggerFromContext.
-func NewWorkloadsHandler(upgrader workload.Upgrader, reader workloadReader, mutator workloadMutator, logger *slog.Logger) *WorkloadsHandler {
-	return &WorkloadsHandler{upgrader: upgrader, reader: reader, mutator: mutator, logger: logger}
+//
+// checker may be nil — see type doc. When non-nil, the handler wraps each
+// CRUD route in a SAR check via RequireResource (and, for create, calls
+// checker.CheckResource directly inside the handler since the namespace
+// lives in the request body, not the URL).
+func NewWorkloadsHandler(upgrader workload.Upgrader, reader workloadReader, mutator workloadMutator, checker AuthChecker, logger *slog.Logger) *WorkloadsHandler {
+	h := &WorkloadsHandler{
+		upgrader: upgrader,
+		reader:   reader,
+		mutator:  mutator,
+		checker:  checker,
+		logger:   logger,
+	}
+	if checker != nil {
+		h.authMiddleware = NewAuthMiddleware(checker)
+	}
+	return h
 }
 
-// Register wires this handler's routes onto the provided mux.
+// Register wires this handler's routes onto the provided mux. Each CRUD
+// route gets a SAR check; the create handler does its check inline since
+// the namespace comes from the request body.
 func (h *WorkloadsHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/workloads", h.list)
-	mux.HandleFunc("GET /api/v1/workloads/{namespace}/{name}", h.getWorkload)
+	mux.HandleFunc("GET /api/v1/workloads", h.guard("list", queryNamespace, h.list))
+	mux.HandleFunc("GET /api/v1/workloads/{namespace}/{name}", h.guard("get", pathNamespace, h.getWorkload))
 	mux.HandleFunc("POST /api/v1/workloads", h.createWorkload)
-	mux.HandleFunc("DELETE /api/v1/workloads/{namespace}/{name}", h.deleteWorkload)
-	mux.HandleFunc("PUT /api/v1/workloads/{namespace}/{name}", h.putWorkload)
+	mux.HandleFunc("DELETE /api/v1/workloads/{namespace}/{name}", h.guard("delete", pathNamespace, h.deleteWorkload))
+	mux.HandleFunc("PUT /api/v1/workloads/{namespace}/{name}", h.guard("update", pathNamespace, h.putWorkload))
 	mux.HandleFunc("POST /api/v1/workloads/{namespace}/{name}/upgrade", h.upgrade)
 }
+
+// guard wraps next in a SAR check for verb on "workloads" using selector to
+// derive the namespace. When the handler has no checker (test setups), the
+// wrapper is a no-op — handlers still self-check that Impersonate-User is
+// present so the existing 403-on-missing-user contract is preserved.
+func (h *WorkloadsHandler) guard(verb string, selector ResourceSelector, next http.HandlerFunc) http.HandlerFunc {
+	if h.authMiddleware == nil {
+		return next
+	}
+	return h.authMiddleware.RequireResource(verb, "workloads", selector, next)
+}
+
+// pathNamespace pulls the namespace from the {namespace} URL path segment.
+func pathNamespace(r *http.Request) string { return r.PathValue("namespace") }
+
+// queryNamespace pulls the namespace from the ?namespace= query parameter.
+// Empty string means cluster-wide list — the SAR for "list workloads with
+// empty namespace" is the right shape for that case.
+func queryNamespace(r *http.Request) string { return r.URL.Query().Get("namespace") }
 
 func (h *WorkloadsHandler) list(w http.ResponseWriter, r *http.Request) {
 	user, _ := ExtractUser(r)
@@ -144,7 +187,7 @@ type createWorkloadRequest struct {
 }
 
 func (h *WorkloadsHandler) createWorkload(w http.ResponseWriter, r *http.Request) {
-	user, _ := ExtractUser(r)
+	user, groups := ExtractUser(r)
 	if user == "" {
 		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
 		return
@@ -161,6 +204,21 @@ func (h *WorkloadsHandler) createWorkload(w http.ResponseWriter, r *http.Request
 	if req.Metadata.Name == "" || req.Metadata.Namespace == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: metadata.name and metadata.namespace are required", ErrInvalidInput))
 		return
+	}
+
+	// SAR check happens inline (rather than via RequireResource middleware)
+	// because the namespace lives in the request body, not the URL path.
+	if h.checker != nil {
+		allowed, err := h.checker.CheckResource(r.Context(), user, groups, req.Metadata.Namespace, "create", "workloads")
+		if err != nil {
+			LoggerFromContext(r.Context()).Error("create workload SAR failed", "error", err)
+			writeError(w, http.StatusInternalServerError, ErrInternal)
+			return
+		}
+		if !allowed {
+			writeError(w, http.StatusForbidden, errInsufficientPermissions)
+			return
+		}
 	}
 
 	wl := &aifv1.Workload{}

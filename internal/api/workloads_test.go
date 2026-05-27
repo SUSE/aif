@@ -34,7 +34,7 @@ func newUpgradeTestRig(t *testing.T) *upgradeTestRig {
 	upgrader := workload.NewUpgrader(wStore, bpReader, rec, logger)
 
 	mux := http.NewServeMux()
-	h := NewWorkloadsHandler(upgrader, nil, nil, logger)
+	h := NewWorkloadsHandler(upgrader, nil, nil, nil, logger)
 	h.Register(mux)
 	return &upgradeTestRig{mux: mux, workloads: wStore, blueprints: bpReader, events: rec}
 }
@@ -261,13 +261,21 @@ func TestWorkloadUpgrade_Conflict(t *testing.T) {
 	}
 }
 
-// listDeleteTestRig wires list + delete handlers over FakeRepository.
+// listDeleteTestRig wires list + delete handlers over FakeRepository. The
+// auth checker is optional — pass nil to skip SAR enforcement (existing
+// behavior-only tests) or a fakeAuthChecker to assert SAR was consulted.
 type listDeleteTestRig struct {
-	mux  *http.ServeMux
-	repo *workload.FakeRepository
+	mux     *http.ServeMux
+	repo    *workload.FakeRepository
+	checker *fakeAuthChecker
 }
 
 func newListDeleteTestRig(t *testing.T) *listDeleteTestRig {
+	t.Helper()
+	return newListDeleteTestRigWithAuth(t, nil)
+}
+
+func newListDeleteTestRigWithAuth(t *testing.T, checker *fakeAuthChecker) *listDeleteTestRig {
 	t.Helper()
 	repo := workload.NewFakeRepository()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -278,9 +286,13 @@ func newListDeleteTestRig(t *testing.T) *listDeleteTestRig {
 		&workload.FakeUpgradeEventRecorder{},
 		logger,
 	)
-	h := NewWorkloadsHandler(upgrader, repo, repo, logger)
+	var auth AuthChecker
+	if checker != nil {
+		auth = checker
+	}
+	h := NewWorkloadsHandler(upgrader, repo, repo, auth, logger)
 	h.Register(mux)
-	return &listDeleteTestRig{mux: mux, repo: repo}
+	return &listDeleteTestRig{mux: mux, repo: repo, checker: checker}
 }
 
 func seedWorkload(repo *workload.FakeRepository, ns, name string, kind aifv1.WorkloadSourceKind) {
@@ -642,6 +654,130 @@ func TestWorkloadsPut_RejectsUnknownFields(t *testing.T) {
 	rig.mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 on unknown top-level field, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// SAR enforcement — each CRUD route must call CheckResource with the right
+// (namespace, verb) and reject when the checker denies.
+
+func TestWorkloadsList_SARDenied(t *testing.T) {
+	checker := &fakeAuthChecker{resourceAllowed: false}
+	rig := newListDeleteTestRigWithAuth(t, checker)
+
+	req := httptest.NewRequest("GET", "/api/v1/workloads?namespace=team-a", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+	if len(checker.resourceCalls) != 1 || checker.resourceCalls[0].verb != "list" ||
+		checker.resourceCalls[0].resource != "workloads" || checker.resourceCalls[0].namespace != "team-a" {
+		t.Errorf("expected list/workloads/team-a SAR call, got %+v", checker.resourceCalls)
+	}
+}
+
+func TestWorkloadsGet_SARDenied(t *testing.T) {
+	checker := &fakeAuthChecker{resourceAllowed: false}
+	rig := newListDeleteTestRigWithAuth(t, checker)
+	seedWorkload(rig.repo, "team-a", "wl-1", aifv1.WorkloadSourceKindApp)
+
+	req := httptest.NewRequest("GET", "/api/v1/workloads/team-a/wl-1", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+	if len(checker.resourceCalls) != 1 || checker.resourceCalls[0].verb != "get" ||
+		checker.resourceCalls[0].namespace != "team-a" {
+		t.Errorf("expected get/team-a SAR call, got %+v", checker.resourceCalls)
+	}
+}
+
+func TestWorkloadsDelete_SARDenied(t *testing.T) {
+	checker := &fakeAuthChecker{resourceAllowed: false}
+	rig := newListDeleteTestRigWithAuth(t, checker)
+	seedWorkload(rig.repo, "team-a", "wl-1", aifv1.WorkloadSourceKindApp)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/workloads/team-a/wl-1", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+	if len(checker.resourceCalls) != 1 || checker.resourceCalls[0].verb != "delete" {
+		t.Errorf("expected delete SAR call, got %+v", checker.resourceCalls)
+	}
+}
+
+func TestWorkloadsPut_SARDenied(t *testing.T) {
+	checker := &fakeAuthChecker{resourceAllowed: false}
+	rig := newListDeleteTestRigWithAuth(t, checker)
+
+	body := map[string]any{"spec": map[string]any{"source": map[string]any{"kind": "App"}}}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/v1/workloads/team-a/wl-1", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+	if len(checker.resourceCalls) != 1 || checker.resourceCalls[0].verb != "update" {
+		t.Errorf("expected update SAR call, got %+v", checker.resourceCalls)
+	}
+}
+
+func TestWorkloadsCreate_SARDeniedFromBodyNamespace(t *testing.T) {
+	checker := &fakeAuthChecker{resourceAllowed: false}
+	rig := newListDeleteTestRigWithAuth(t, checker)
+
+	body := map[string]any{
+		"metadata": map[string]any{"name": "wl", "namespace": "team-a"},
+		"spec":     map[string]any{"source": map[string]any{"kind": "App"}},
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/workloads", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+	// SAR must use the namespace from the request body, not the URL.
+	if len(checker.resourceCalls) != 1 || checker.resourceCalls[0].namespace != "team-a" ||
+		checker.resourceCalls[0].verb != "create" {
+		t.Errorf("expected create/team-a SAR call (namespace from body), got %+v", checker.resourceCalls)
+	}
+}
+
+func TestWorkloadsCreate_SARAllowed(t *testing.T) {
+	checker := &fakeAuthChecker{resourceAllowed: true}
+	rig := newListDeleteTestRigWithAuth(t, checker)
+
+	body := map[string]any{
+		"metadata": map[string]any{"name": "wl", "namespace": "team-a"},
+		"spec": map[string]any{
+			"source": map[string]any{
+				"kind": "App",
+				"app":  map[string]any{"repo": "r", "chart": "c", "version": "1.0.0"},
+			},
+			"targetClusters": []string{"c-1"},
+			"deployStrategy": "helm",
+		},
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/workloads", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
