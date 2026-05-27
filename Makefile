@@ -1,4 +1,4 @@
-.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live test-git verify-git-mock verify-git-live smoke-e2e verify-all-live
+.PHONY: help build test run docker-build docker-push helm-install helm-uninstall charts-package lint manifests generate install-tools envtest test-controllers dev-cluster dev-cluster-down dev-install dev-certs examples test-nim verify-nim-mock verify-nim-live test-appco verify-appco-mock verify-appco-live test-apps verify-apps-mock verify-apps-live test-api-apps test-helm verify-helm-mock test-helm-envtest test-wrapper verify-wrapper-mock verify-wrapper-live test-fleet verify-fleet-mock verify-fleet-live test-git verify-git-mock verify-git-live test-oci verify-oci-mock smoke-e2e verify-all-live
 
 # Force bash shell on Windows (supports Unix commands like mkdir -p)
 SHELL := bash
@@ -341,6 +341,20 @@ dev-certs:
 			-keyout /tmp/k8s-webhook-server/serving-certs/tls.key \
 			-out /tmp/k8s-webhook-server/serving-certs/tls.crt 2>/dev/null; \
 	fi
+
+# --- pkg/oci (shared OCI Distribution v2 walker) validation targets ----
+# Provides the catalog walker + Bearer-token auth reused by pkg/nvidia and
+# pkg/suse_registry. No `verify-oci-live` target — the consumers' live tests
+# (verify-nim-live, verify-suse-registry-live) exercise the walker against
+# the real registry.
+
+test-oci:
+	@echo "Running pkg/oci unit tests..."
+	go test -count=1 -v ./pkg/oci/...
+
+verify-oci-mock:
+	@echo "Demonstrating pkg/oci walker against an in-process OCI registry stub..."
+	go test -count=1 -v -run ExampleWalker_EnumerateCharts ./pkg/oci/
 
 # --- E2E and live-aggregator validation targets ----------------------------
 # Documented in docs/dev/validation.md.
