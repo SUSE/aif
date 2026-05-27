@@ -63,7 +63,7 @@ func (h *WorkloadsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/workloads/{namespace}/{name}", h.getWorkload)
 	mux.HandleFunc("POST /api/v1/workloads", h.createWorkload)
 	mux.HandleFunc("DELETE /api/v1/workloads/{namespace}/{name}", h.deleteWorkload)
-	mux.HandleFunc("PATCH /api/v1/workloads/{namespace}/{name}", h.patchWorkload)
+	mux.HandleFunc("PUT /api/v1/workloads/{namespace}/{name}", h.putWorkload)
 	mux.HandleFunc("POST /api/v1/workloads/{namespace}/{name}/upgrade", h.upgrade)
 }
 
@@ -174,11 +174,15 @@ func (h *WorkloadsHandler) createWorkload(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, wl)
 }
 
-type patchWorkloadRequest struct {
+type putWorkloadRequest struct {
 	Spec aifv1.WorkloadSpec `json:"spec"`
 }
 
-func (h *WorkloadsHandler) patchWorkload(w http.ResponseWriter, r *http.Request) {
+// putWorkload replaces the spec wholesale (PUT semantics). Callers MUST send
+// the complete spec; omitted fields are zeroed out (except spec.name which
+// falls back to the existing display name for ergonomics). For partial
+// updates, use a dedicated PATCH endpoint when one is added.
+func (h *WorkloadsHandler) putWorkload(w http.ResponseWriter, r *http.Request) {
 	user, _ := ExtractUser(r)
 	if user == "" {
 		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
@@ -189,7 +193,7 @@ func (h *WorkloadsHandler) patchWorkload(w http.ResponseWriter, r *http.Request)
 	name := r.PathValue("name")
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req patchWorkloadRequest
+	var req putWorkloadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: invalid request body: %v", ErrInvalidInput, err))
 		return
@@ -223,12 +227,12 @@ func (h *WorkloadsHandler) patchWorkload(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusNotFound, ErrNotFound)
 			return
 		}
-		LoggerFromContext(r.Context()).Error("patch workload failed", "ns", ns, "name", name, "error", err)
+		LoggerFromContext(r.Context()).Error("put workload failed", "ns", ns, "name", name, "error", err)
 		writeError(w, http.StatusInternalServerError, ErrInternal)
 		return
 	}
 
-	LoggerFromContext(r.Context()).Info("workload patched", "namespace", ns, "name", name, "user", user)
+	LoggerFromContext(r.Context()).Info("workload updated", "namespace", ns, "name", name, "user", user)
 	writeJSON(w, http.StatusOK, patched)
 }
 

@@ -487,7 +487,7 @@ func TestWorkloadsCreate_MissingUser(t *testing.T) {
 	}
 }
 
-func TestWorkloadsPatch_HappyPath(t *testing.T) {
+func TestWorkloadsPut_HappyPath(t *testing.T) {
 	rig := newListDeleteTestRig(t)
 	// Seed an App workload
 	w := &aifv1.Workload{}
@@ -507,7 +507,7 @@ func TestWorkloadsPatch_HappyPath(t *testing.T) {
 		},
 	}
 	buf, _ := json.Marshal(body)
-	req := httptest.NewRequest("PATCH", "/api/v1/workloads/team-a/my-app", bytes.NewReader(buf))
+	req := httptest.NewRequest("PUT", "/api/v1/workloads/team-a/my-app", bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Impersonate-User", "alice")
 	rr := httptest.NewRecorder()
@@ -518,11 +518,11 @@ func TestWorkloadsPatch_HappyPath(t *testing.T) {
 	}
 }
 
-func TestWorkloadsPatch_NotFound(t *testing.T) {
+func TestWorkloadsPut_NotFound(t *testing.T) {
 	rig := newListDeleteTestRig(t)
 	body := map[string]any{"spec": map[string]any{}}
 	buf, _ := json.Marshal(body)
-	req := httptest.NewRequest("PATCH", "/api/v1/workloads/ns/missing", bytes.NewReader(buf))
+	req := httptest.NewRequest("PUT", "/api/v1/workloads/ns/missing", bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Impersonate-User", "alice")
 	rr := httptest.NewRecorder()
@@ -533,9 +533,9 @@ func TestWorkloadsPatch_NotFound(t *testing.T) {
 	}
 }
 
-func TestWorkloadsPatch_MissingUser(t *testing.T) {
+func TestWorkloadsPut_MissingUser(t *testing.T) {
 	rig := newListDeleteTestRig(t)
-	req := httptest.NewRequest("PATCH", "/api/v1/workloads/ns/wl", bytes.NewReader([]byte(`{}`)))
+	req := httptest.NewRequest("PUT", "/api/v1/workloads/ns/wl", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	rig.mux.ServeHTTP(rr, req)
