@@ -28,8 +28,8 @@ import (
 func Example_clientList() {
 	// 1. Spin up a fake Application Collection API serving three
 	//    applications. List endpoint returns minimal items; detail
-	//    endpoint returns branches[].baseline to populate version and
-	//    category.
+	//    endpoint supplies labels (→ Categories); /v1/artifacts
+	//    supplies (version, revision) → (LatestVersion, ChartTag).
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/applications", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -114,9 +114,9 @@ func Example_clientList() {
 	}
 
 	// Output:
-	// milvus      version=2.4.0-1  category=vector-db   chart=oci://dp.apps.rancher.io/charts/milvus:2.4.0-1
-	// ollama      version=0.4.1-1  category=llm         chart=oci://dp.apps.rancher.io/charts/ollama:0.4.1-1
-	// vllm        version=0.6.0-1  category=llm         chart=oci://dp.apps.rancher.io/charts/vllm:0.6.0-1
+	// milvus      version=2.4.0   category=vector-db   chart=oci://dp.apps.rancher.io/charts/milvus:2.4.0-1
+	// ollama      version=0.4.1   category=llm         chart=oci://dp.apps.rancher.io/charts/ollama:0.4.1-1
+	// vllm        version=0.6.0   category=llm         chart=oci://dp.apps.rancher.io/charts/vllm:0.6.0-1
 }
 
 // Example_chartAnnotations exercises the AnnotationReader against an

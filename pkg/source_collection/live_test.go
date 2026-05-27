@@ -74,14 +74,18 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 	t.Logf("Basic auth succeeded; discovered %d HELM_CHART applications:", len(apps))
 	withTimestamp := 0
 	withVersion := 0
+	withChartTag := 0
 	withCategories := 0
 	for _, a := range apps {
-		t.Logf("  %-30s  version=%-10s  categories=%v", a.ID, a.LatestVersion, a.Categories)
+		t.Logf("  %-30s  version=%-10s  tag=%-14s  categories=%v", a.ID, a.LatestVersion, a.ChartTag, a.Categories)
 		if a.LastUpdatedAt != "" {
 			withTimestamp++
 		}
 		if a.LatestVersion != "" {
 			withVersion++
+		}
+		if a.ChartTag != "" {
+			withChartTag++
 		}
 		if len(a.Categories) > 0 {
 			withCategories++
@@ -92,12 +96,16 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 	}
 	t.Logf("%d/%d apps have LastUpdatedAt", withTimestamp, len(apps))
 	t.Logf("%d/%d apps have LatestVersion", withVersion, len(apps))
+	t.Logf("%d/%d apps have ChartTag", withChartTag, len(apps))
 	t.Logf("%d/%d apps have Categories", withCategories, len(apps))
 	if len(apps) > 0 && withTimestamp == 0 {
 		t.Errorf("no apps have LastUpdatedAt — upstream may have renamed last_updated_at")
 	}
 	if len(apps) > 0 && withVersion == 0 {
 		t.Errorf("no apps have LatestVersion — /v1/artifacts may have changed shape or upstream returned no chart artifacts")
+	}
+	if len(apps) > 0 && withChartTag == 0 {
+		t.Errorf("no apps have ChartTag — /v1/artifacts may have stopped returning revision")
 	}
 	if len(apps) > 0 && withCategories == 0 {
 		t.Errorf("no apps have Categories — labels[] 'category:' prefix may have changed")
@@ -109,29 +117,35 @@ func TestLive_ListsCatalog_FromApplicationCollection(t *testing.T) {
 	ociHost := os.Getenv("SUSE_APPCO_OCI_HOST")
 	if len(apps) > 0 && ociHost != "" {
 		first := apps[0]
-		repo, chart := splitAppCoChartRef(first.ChartRef, ociHost, first.LatestVersion)
+		// OCI fetches key off ChartTag (the registry tag, e.g.
+		// "1.55.0-13.1"), not LatestVersion (the bare Chart.yaml :version):
+		// ChartRef's ":<suffix>" is the tag, and ChartAnnotations resolves a
+		// manifest by tag.
+		repo, chart := splitAppCoChartRef(first.ChartRef, ociHost, first.ChartTag)
 		if chart == "" {
 			t.Logf("could not parse chart ref %q against OCIHost %q; skipping annotation fetch", first.ChartRef, ociHost)
 		} else {
-			ann, err := ar.ChartAnnotations(ctx, repo, chart, first.LatestVersion)
+			ann, err := ar.ChartAnnotations(ctx, repo, chart, first.ChartTag)
 			if err != nil {
-				t.Fatalf("ChartAnnotations(%s/%s:%s): %v", repo, chart, first.LatestVersion, err)
+				t.Fatalf("ChartAnnotations(%s/%s:%s): %v", repo, chart, first.ChartTag, err)
 			}
-			t.Logf("annotations for %s/%s:%s = %v", repo, chart, first.LatestVersion, ann)
+			t.Logf("annotations for %s/%s:%s = %v", repo, chart, first.ChartTag, ann)
 		}
 	}
 }
 
-// splitAppCoChartRef parses an "oci://<host>/<repo>/<chart>:<version>"
-// reference relative to the configured OCIHost into (repo, chart). Best
-// effort — returns ("", "") if the ref doesn't match the expected shape.
-func splitAppCoChartRef(chartRef, ociHost, version string) (string, string) {
+// splitAppCoChartRef parses an "oci://<host>/<repo>/<chart>:<tag>"
+// reference relative to the configured OCIHost into (repo, chart). The
+// tag argument is the suffix to strip (the OCI ChartTag, not the bare
+// LatestVersion — see CatalogApp doc). Best effort: returns ("", "") if
+// the ref doesn't match the expected shape.
+func splitAppCoChartRef(chartRef, ociHost, tag string) (string, string) {
 	prefix := "oci://" + strings.TrimPrefix(strings.TrimPrefix(ociHost, "https://"), "http://") + "/"
 	rest := strings.TrimPrefix(chartRef, prefix)
 	if rest == chartRef {
 		return "", ""
 	}
-	rest = strings.TrimSuffix(rest, ":"+version)
+	rest = strings.TrimSuffix(rest, ":"+tag)
 	idx := strings.LastIndex(rest, "/")
 	if idx < 0 {
 		return "", ""

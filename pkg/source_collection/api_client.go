@@ -103,10 +103,10 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 					"slug", slug, "error", derr)
 				return nil
 			}
-			chartTag, verr := c.fetchLatestChartArtifact(gctx, settings, slug)
+			version, chartTag, verr := c.fetchLatestChartArtifact(gctx, settings, slug)
 			// Note: /v1/artifacts 404 and empty-items both result in
 			// dropping the app, but they take different paths.
-			// Empty-items returns ("", nil) and is aggregated by the
+			// Empty-items returns ("", "", nil) and is aggregated by the
 			// post-Wait droppedSlugs warning; a 404 lands here as
 			// ErrChartNotFound with only this per-slug Warn. An upstream
 			// that 404s every slug would blank the catalog without an
@@ -120,7 +120,7 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 					"slug", slug, "error", verr)
 				return nil
 			}
-			apps[i] = c.buildCatalogApp(settings, listItems[i], detail, chartTag)
+			apps[i] = c.buildCatalogApp(settings, listItems[i], detail, version, chartTag)
 			return nil
 		})
 	}
@@ -131,23 +131,25 @@ func (c *apiClient) List(ctx context.Context) ([]CatalogApp, error) {
 	// Two reasons an app can be missing here:
 	//   1. fetch failed — apps[i] is zero-valued, ID == "" (logged per
 	//      slug above; skip silently to avoid double-counting).
-	//   2. fetched OK but no usable branches — ID populated, LatestVersion
-	//      empty (rolled up into the aggregate warn below so operators
-	//      can spot systemic catalog gaps).
+	//   2. fetched OK but /v1/artifacts returned no chart — ID populated,
+	//      ChartTag empty (rolled up into the aggregate warn below so
+	//      operators can spot systemic catalog gaps). ChartTag is the
+	//      load-bearing check: without it ChartRef can't address a chart
+	//      in the OCI registry, so the app isn't installable.
 	filtered := apps[:0]
 	var droppedSlugs []string
 	for _, a := range apps {
 		if a.ID == "" {
 			continue
 		}
-		if a.LatestVersion == "" {
+		if a.ChartTag == "" {
 			droppedSlugs = append(droppedSlugs, a.ID)
 			continue
 		}
 		filtered = append(filtered, a)
 	}
 	if len(droppedSlugs) > 0 {
-		c.log.Warn("dropped apps with no usable branches",
+		c.log.Warn("dropped apps with no published chart",
 			"dropped_count", len(droppedSlugs),
 			"kept_count", len(filtered),
 			"sample_dropped", firstN(droppedSlugs, 10))
@@ -311,12 +313,17 @@ func (c *apiClient) fetchAppDetail(ctx context.Context, settings EngineSettings,
 	return out, nil
 }
 
-// fetchLatestChartArtifact returns the chart tag of the most recently
-// registered HELM_CHART artifact for a component (e.g. "1.55.0-13.1",
-// or just "1.55.0" when upstream omits a revision). The /v1/artifacts
-// endpoint sorts results by registered_at desc across all branches of
-// the component, so page 1 / size 1 is the newest chart published for
-// the app.
+// fetchLatestChartArtifact returns (version, chartTag) for the most
+// recently registered HELM_CHART artifact of a component:
+//   - version is the chart's Chart.yaml :version (e.g. "1.55.0") — the
+//     display surface.
+//   - chartTag is the OCI registry tag (e.g. "1.55.0-13.1", or just
+//     "1.55.0" when upstream omits a revision) — the only key that
+//     resolves to a chart binary, encoded into ChartRef's ":<tag>".
+//
+// The /v1/artifacts endpoint sorts results by registered_at desc
+// across all branches of the component, so page 1 / size 1 is the
+// newest chart published for the app.
 //
 // Trade-off: this is *not* branch-aware. If an LTS branch ships a
 // back-patch chart after a newer branch's release, that back-patch
@@ -327,18 +334,18 @@ func (c *apiClient) fetchAppDetail(ctx context.Context, settings EngineSettings,
 // backup/components-walk-version-resolution if branch awareness is
 // later required.
 //
-// 404 maps to ErrChartNotFound; empty items array returns "" and nil
-// error (caller drops the app via the post-Wait filter as "no usable
-// chart"). The artifact's application_version is intentionally
-// discarded — per ARCHITECTURE.md §4.3 the catalog surfaces chart
-// version, not app version.
-func (c *apiClient) fetchLatestChartArtifact(ctx context.Context, settings EngineSettings, slug string) (string, error) {
+// 404 maps to ErrChartNotFound; empty items array returns
+// ("", "", nil) (caller drops the app via the post-Wait filter as
+// "no published chart"). The artifact's application_version is
+// intentionally discarded — per ARCHITECTURE.md §4.3 the catalog
+// surfaces chart version, not app version.
+func (c *apiClient) fetchLatestChartArtifact(ctx context.Context, settings EngineSettings, slug string) (string, string, error) {
 	if err := c.limiterWait(ctx); err != nil {
-		return "", err
+		return "", "", err
 	}
 	u, err := url.Parse(settings.APIURL + "/v1/artifacts")
 	if err != nil {
-		return "", fmt.Errorf("parse artifacts URL: %w", err)
+		return "", "", fmt.Errorf("parse artifacts URL: %w", err)
 	}
 	q := u.Query()
 	q.Set("component_slug_name", slug)
@@ -348,16 +355,17 @@ func (c *apiClient) fetchLatestChartArtifact(ctx context.Context, settings Engin
 
 	var page apiArtifactsPage
 	if err := c.getJSON(ctx, settings, u.String(), &page); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(page.Items) == 0 {
-		return "", nil
+		return "", "", nil
 	}
 	a := page.Items[0]
+	tag := a.Version
 	if a.Revision != "" {
-		return a.Version + "-" + a.Revision, nil
+		tag = a.Version + "-" + a.Revision
 	}
-	return a.Version, nil
+	return a.Version, tag, nil
 }
 
 // getJSON is the shared transport: one HTTP GET, decoded into out, with
@@ -422,20 +430,22 @@ func (c *apiClient) fetchAndDecode(ctx context.Context, settings EngineSettings,
 }
 
 // buildCatalogApp combines a list-endpoint item, its detail-endpoint
-// payload (for labels → Categories), and the chart tag resolved from
-// /v1/artifacts into a CatalogApp. Chart ref follows
-// oci://<OCIHost>/charts/<slug>:<chartTag>; logo URL is absolutized
-// against the APIURL host when relative. An empty chartTag leaves
-// LatestVersion and ChartRef empty — the post-Wait filter in List
-// drops such apps.
-func (c *apiClient) buildCatalogApp(settings EngineSettings, item apiListItem, detail apiAppDetail, chartTag string) CatalogApp {
+// payload (for labels → Categories), and the (version, chartTag) pair
+// resolved from /v1/artifacts into a CatalogApp. Chart ref follows
+// oci://<OCIHost>/charts/<slug>:<chartTag> (the OCI tag, not the bare
+// version — that's how AppCo's registry indexes its charts); logo URL
+// is absolutized against the APIURL host when relative. An empty
+// chartTag leaves ChartRef empty and trips the "no published chart"
+// filter in List.
+func (c *apiClient) buildCatalogApp(settings EngineSettings, item apiListItem, detail apiAppDetail, version, chartTag string) CatalogApp {
 	return CatalogApp{
 		ID:            item.SlugName,
 		DisplayName:   item.Name,
 		Description:   item.Description,
 		Categories:    categoriesFromLabels(detail.Labels),
 		ChartRef:      buildChartRef(settings.OCIHost, item.SlugName, chartTag),
-		LatestVersion: chartTag,
+		LatestVersion: version,
+		ChartTag:      chartTag,
 		Source:        "api",
 		LogoURL:       absolutizeLogoURL(settings.APIURL, item.LogoURL),
 		ProjectURL:    item.ProjectURL,
@@ -520,23 +530,24 @@ func absolutizeLogoURL(apiURL, logoURL string) string {
 	return base.ResolveReference(rel).String()
 }
 
-// GetChart resolves a chart tag (as stored in CatalogApp.ChartRef, e.g.
-// "1.55.0-13.1") back to its metadata. The repo parameter is reserved
-// for the future OCI-fallback path and is currently unused.
-// Annotations and Description require fetching Chart.yaml from OCI
-// (handled by AnnotationReader); this method returns Name/Version/
-// AppVersion only.
+// GetChart resolves an OCI chart tag (as stored in CatalogApp.ChartTag
+// and embedded in CatalogApp.ChartRef, e.g. "1.55.0-13.1") back to its
+// metadata. The repo parameter is reserved for the future OCI-fallback
+// path and is currently unused. Annotations and Description require
+// fetching Chart.yaml from OCI (handled by AnnotationReader); this
+// method returns Name/Version/AppVersion only.
 //
 // Implementation walks page 1 of /v1/artifacts filtered to HELM_CHART;
 // recently published charts resolve in a single call. A caller asking
 // about an old chart that has rolled off page 1 will get
 // ErrVersionNotFound — acceptable because every catalog consumer
-// records the version it was given and never asks about charts that
+// records the chart tag it was given and never asks about charts that
 // fell out of the most-recent slice.
 //
-// Per ARCHITECTURE.md §6.2 ChartMetadata defines distinct Version and
-// AppVersion fields: Version is the chart tag (matches the request),
-// AppVersion is the artifact's application_version.
+// ChartMetadata.Version is the chart's Chart.yaml :version (bare,
+// e.g. "1.55.0"), matching the same field on CatalogApp — not the
+// OCI tag that came in via the version parameter. AppVersion is the
+// artifact's application_version.
 func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*ChartMetadata, error) {
 	settings, err := c.effectiveSettings()
 	if err != nil {
@@ -570,7 +581,7 @@ func (c *apiClient) GetChart(ctx context.Context, _, chart, version string) (*Ch
 		if tag == version {
 			return &ChartMetadata{
 				Name:       chart,
-				Version:    version,
+				Version:    a.Version,
 				AppVersion: a.ApplicationVersion,
 			}, nil
 		}

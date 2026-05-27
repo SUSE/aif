@@ -168,14 +168,20 @@ func translateCatalogApps(logger *slog.Logger, upstream []source_collection.Cata
 }
 
 // parseAppCoChartRef splits the engine's combined OCI reference
-// ("<repo>/<chart>:<version>") into the {repo, chart, version}
+// ("<repo>/<chart>:<chartTag>") into the {repo, chart, version}
 // structure App expects. Falls back to leaving Repo as the full string
 // if the suffix doesn't match (defensive — should not happen given how
 // pkg/source_collection composes the ref).
+//
+// ChartRef.Version carries u.ChartTag (the OCI tag, e.g. "1.55.0-13.1"),
+// not u.LatestVersion (the bare Chart.yaml :version): the tag is the
+// only key that resolves to a chart binary in AppCo's OCI registry.
+// App.Version stays bare (LatestVersion) for the UI; this split is the
+// reason source_collection.CatalogApp exposes both fields.
 func parseAppCoChartRef(u source_collection.CatalogApp) ChartRef {
-	suffix := "/" + u.ID + ":" + u.LatestVersion
+	suffix := "/" + u.ID + ":" + u.ChartTag
 	repo := strings.TrimSuffix(u.ChartRef, suffix)
-	return ChartRef{Repo: repo, Chart: u.ID, Version: u.LatestVersion}
+	return ChartRef{Repo: repo, Chart: u.ID, Version: u.ChartTag}
 }
 
 // enrichWithAnnotations populates ReferenceBlueprint, DisplayName,
@@ -197,7 +203,11 @@ func (a *AppCoSource) enrichWithAnnotations(ctx context.Context, apps []App) {
 	for i := range apps {
 		i := i
 		g.Go(func() error {
-			ann, err := a.annReader.ChartAnnotations(gctx, apps[i].ChartRef.Repo, apps[i].ChartRef.Chart, apps[i].Version)
+			// ChartRef.Version is the OCI tag (chartTag from the engine);
+			// apps[i].Version is the bare Chart.yaml :version. OCI fetches
+			// require the tag — the registry has no notion of the bare
+			// version.
+			ann, err := a.annReader.ChartAnnotations(gctx, apps[i].ChartRef.Repo, apps[i].ChartRef.Chart, apps[i].ChartRef.Version)
 			if err != nil {
 				if errors.Is(err, source_collection.ErrNotConfigured) {
 					notConfiguredOnce.Do(func() {
@@ -209,7 +219,7 @@ func (a *AppCoSource) enrichWithAnnotations(ctx context.Context, apps []App) {
 				}
 				if a.logger != nil {
 					a.logger.Warn("source_collection annotations: per-chart fetch failed",
-						"repo", apps[i].ChartRef.Repo, "chart", apps[i].ChartRef.Chart, "version", apps[i].Version, "error", err)
+						"repo", apps[i].ChartRef.Repo, "chart", apps[i].ChartRef.Chart, "version", apps[i].ChartRef.Version, "error", err)
 				}
 				return nil
 			}

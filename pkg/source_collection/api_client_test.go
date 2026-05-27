@@ -675,8 +675,8 @@ func TestGetChart_ReturnsAppVersionForMatchingChartTag(t *testing.T) {
 	if meta.Name != "ollama" {
 		t.Errorf("Name = %q, want ollama", meta.Name)
 	}
-	if meta.Version != "1.38.0-12.4" {
-		t.Errorf("Version = %q, want 1.38.0-12.4", meta.Version)
+	if meta.Version != "1.38.0" {
+		t.Errorf("Version = %q, want 1.38.0 (bare Chart.yaml :version, not the OCI tag we requested)", meta.Version)
 	}
 	if meta.AppVersion != "0.14.2" {
 		t.Errorf("AppVersion = %q, want 0.14.2 (artifact.application_version)", meta.AppVersion)
@@ -923,7 +923,7 @@ func TestAbsolutizeLogoURL(t *testing.T) {
 	}
 }
 
-func TestFetchLatestChartArtifact_ReturnsChartTag(t *testing.T) {
+func TestFetchLatestChartArtifact_ReturnsVersionAndChartTag(t *testing.T) {
 	mux := http.NewServeMux()
 	var gotURL string
 	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, r *http.Request) {
@@ -948,12 +948,15 @@ func TestFetchLatestChartArtifact_ReturnsChartTag(t *testing.T) {
 	cc := c.(*apiClient)
 	settings, _ := cc.effectiveSettings()
 
-	got, err := cc.fetchLatestChartArtifact(context.Background(), settings, "ollama")
+	gotVersion, gotTag, err := cc.fetchLatestChartArtifact(context.Background(), settings, "ollama")
 	if err != nil {
 		t.Fatalf("fetchLatestChartArtifact: %v", err)
 	}
-	if got != "1.55.0-13.1" {
-		t.Errorf("chartTag = %q, want 1.55.0-13.1", got)
+	if gotVersion != "1.55.0" {
+		t.Errorf("version = %q, want 1.55.0 (bare Chart.yaml :version)", gotVersion)
+	}
+	if gotTag != "1.55.0-13.1" {
+		t.Errorf("chartTag = %q, want 1.55.0-13.1 (OCI tag)", gotTag)
 	}
 	if !strings.Contains(gotURL, "component_slug_name=ollama") {
 		t.Errorf("URL missing component_slug_name=ollama: %s", gotURL)
@@ -966,7 +969,7 @@ func TestFetchLatestChartArtifact_ReturnsChartTag(t *testing.T) {
 	}
 }
 
-func TestFetchLatestChartArtifact_EmptyItems_ReturnsEmptyString(t *testing.T) {
+func TestFetchLatestChartArtifact_EmptyItems_ReturnsEmptyStrings(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"items": [], "page": 1, "page_size": 1, "total_size": 0, "total_pages": 0}`))
@@ -979,12 +982,12 @@ func TestFetchLatestChartArtifact_EmptyItems_ReturnsEmptyString(t *testing.T) {
 	cc := c.(*apiClient)
 	settings, _ := cc.effectiveSettings()
 
-	got, err := cc.fetchLatestChartArtifact(context.Background(), settings, "unknown-slug")
+	gotVersion, gotTag, err := cc.fetchLatestChartArtifact(context.Background(), settings, "unknown-slug")
 	if err != nil {
 		t.Fatalf("expected nil err on empty items, got %v", err)
 	}
-	if got != "" {
-		t.Errorf("expected empty string, got %q", got)
+	if gotVersion != "" || gotTag != "" {
+		t.Errorf("expected empty version+tag on empty items, got (%q, %q)", gotVersion, gotTag)
 	}
 }
 
@@ -1001,13 +1004,13 @@ func TestFetchLatestChartArtifact_404_ReturnsErrChartNotFound(t *testing.T) {
 	cc := c.(*apiClient)
 	settings, _ := cc.effectiveSettings()
 
-	_, err := cc.fetchLatestChartArtifact(context.Background(), settings, "anything")
+	_, _, err := cc.fetchLatestChartArtifact(context.Background(), settings, "anything")
 	if !errors.Is(err, ErrChartNotFound) {
 		t.Fatalf("expected ErrChartNotFound, got %v", err)
 	}
 }
 
-func TestFetchLatestChartArtifact_EmptyRevision_ChartTagIsVersionOnly(t *testing.T) {
+func TestFetchLatestChartArtifact_EmptyRevision_TagEqualsVersion(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/artifacts", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
@@ -1029,16 +1032,20 @@ func TestFetchLatestChartArtifact_EmptyRevision_ChartTagIsVersionOnly(t *testing
 	cc := c.(*apiClient)
 	settings, _ := cc.effectiveSettings()
 
-	got, _ := cc.fetchLatestChartArtifact(context.Background(), settings, "foo")
-	if got != "2.0.0" {
-		t.Errorf("chartTag = %q, want 2.0.0 (no trailing hyphen)", got)
+	gotVersion, gotTag, _ := cc.fetchLatestChartArtifact(context.Background(), settings, "foo")
+	if gotVersion != "2.0.0" {
+		t.Errorf("version = %q, want 2.0.0", gotVersion)
+	}
+	if gotTag != "2.0.0" {
+		t.Errorf("chartTag = %q, want 2.0.0 (no trailing hyphen when revision empty)", gotTag)
 	}
 }
 
-func TestList_PopulatesLatestVersionFromArtifact(t *testing.T) {
+func TestList_PopulatesVersionAndChartTagFromArtifact(t *testing.T) {
 	// chartVersion + chartRevision compose into a tag value that no other
-	// upstream field could supply — proving LatestVersion is sourced from
-	// the /v1/artifacts endpoint.
+	// upstream field could supply — proving both LatestVersion (bare
+	// version, display) and ChartTag (OCI tag, pull key) are sourced
+	// from the /v1/artifacts endpoint.
 	srv := newTestServer(t, 10, testApp{
 		list: apiListItem{
 			SlugName:    "ollama",
@@ -1065,11 +1072,14 @@ func TestList_PopulatesLatestVersionFromArtifact(t *testing.T) {
 		t.Fatalf("expected 1 app, got %d", len(apps))
 	}
 	got := apps[0]
-	if got.LatestVersion != "1.55.0-13.1" {
-		t.Errorf("LatestVersion = %q, want 1.55.0-13.1 (artifact version-revision, not branches[].baseline)", got.LatestVersion)
+	if got.LatestVersion != "1.55.0" {
+		t.Errorf("LatestVersion = %q, want 1.55.0 (bare Chart.yaml :version, not the OCI tag)", got.LatestVersion)
+	}
+	if got.ChartTag != "1.55.0-13.1" {
+		t.Errorf("ChartTag = %q, want 1.55.0-13.1 (artifact version-revision)", got.ChartTag)
 	}
 	if got.ChartRef != "oci://dp.apps.rancher.io/charts/ollama:1.55.0-13.1" {
-		t.Errorf("ChartRef = %q, want oci://…/charts/ollama:1.55.0-13.1", got.ChartRef)
+		t.Errorf("ChartRef = %q, want oci://…/charts/ollama:1.55.0-13.1 (uses ChartTag suffix, not LatestVersion)", got.ChartRef)
 	}
 	if len(got.Categories) != 1 || got.Categories[0] != "llm" {
 		t.Errorf("Categories = %v, want [llm] (still sourced from /v1/applications labels)", got.Categories)

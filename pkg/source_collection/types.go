@@ -4,8 +4,18 @@ package source_collection
 // Publisher is intentionally absent: the upstream list endpoint no longer
 // carries it, and pkg/apps/appco_source.go hardcodes "SUSE" at the
 // translation boundary (mirroring pkg/apps/nvidia_source.go's "NVIDIA"
-// hardcode). Categories and LatestVersion come from the per-app detail
-// endpoint, not from the list response.
+// hardcode).
+//
+// LatestVersion vs ChartTag: AppCo publishes each chart at an OCI tag of
+// the form "<chart-version>-<build-revision>" (e.g. "1.55.0-13.1"); the
+// chart's own Chart.yaml :version is just "1.55.0". The two are kept
+// separate so callers don't have to guess which one fits their need:
+//   - LatestVersion is the chart's Chart.yaml :version (display surface;
+//     what the UI shows, what wrapping Blueprints carry per
+//     ARCHITECTURE.md §4.3).
+//   - ChartTag is the OCI registry tag (the only key that resolves to a
+//     chart binary; what ChartRef's ":<tag>" suffix encodes).
+// Both come from the /v1/artifacts response.
 type CatalogApp struct {
 	ID            string
 	DisplayName   string
@@ -13,6 +23,7 @@ type CatalogApp struct {
 	Categories    []string
 	ChartRef      string
 	LatestVersion string
+	ChartTag      string
 	Source        string
 	LogoURL       string
 	ProjectURL    string
@@ -22,7 +33,9 @@ type CatalogApp struct {
 // ChartMetadata holds Chart.yaml metadata for a specific chart version.
 // Description and Annotations require fetching Chart.yaml from OCI (handled
 // by AnnotationReader); GetChart populates only Name, Version, and AppVersion
-// from the /v1/artifacts endpoint.
+// from the /v1/artifacts endpoint. Version is the chart's Chart.yaml :version
+// (bare, e.g. "1.55.0"), not the OCI registry tag — see CatalogApp.ChartTag
+// for the latter.
 type ChartMetadata struct {
 	Name        string
 	Version     string
