@@ -3,7 +3,9 @@ package oci
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -231,7 +233,11 @@ type tagsResponse struct {
 }
 
 func (w *walker) doWithAuth(ctx context.Context, url string) (*http.Response, error) {
-	resp, err := w.do(ctx, url, "")
+	w.mu.RLock()
+	username, token := w.settings.Username, w.settings.Token
+	w.mu.RUnlock()
+
+	resp, err := w.do(ctx, url, "", username, token)
 	if err != nil {
 		return nil, err
 	}
@@ -239,18 +245,18 @@ func (w *walker) doWithAuth(ctx context.Context, url string) (*http.Response, er
 		return resp, nil
 	}
 	challenge := parseBearerChallenge(resp.Header.Get("Www-Authenticate"))
-	if challenge.realm == "" || (w.settings.Username == "" && w.settings.Token == "") {
+	if challenge.realm == "" || (username == "" && token == "") {
 		return resp, nil
 	}
 	_ = resp.Body.Close()
-	bearer, err := w.fetchBearerToken(ctx, challenge)
+	bearer, err := w.fetchBearerToken(ctx, challenge, username, token)
 	if err != nil {
 		return nil, err
 	}
-	return w.do(ctx, url, bearer)
+	return w.do(ctx, url, bearer, username, token)
 }
 
-func (w *walker) do(ctx context.Context, url, bearer string) (*http.Response, error) {
+func (w *walker) do(ctx context.Context, url, bearer, username, token string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -259,8 +265,8 @@ func (w *walker) do(ctx context.Context, url, bearer string) (*http.Response, er
 	switch {
 	case bearer != "":
 		req.Header.Set("Authorization", "Bearer "+bearer)
-	case w.settings.Username != "" || w.settings.Token != "":
-		req.SetBasicAuth(w.settings.Username, w.settings.Token)
+	case username != "" || token != "":
+		req.SetBasicAuth(username, token)
 	}
 	resp, err := w.httpClient.Do(req)
 	if err != nil {
@@ -271,7 +277,11 @@ func (w *walker) do(ctx context.Context, url, bearer string) (*http.Response, er
 
 //nolint:unused // Used by headDigest (Task 1.3 dependency chain)
 func (w *walker) headWithAuth(ctx context.Context, url string) (*http.Response, error) {
-	resp, err := w.head(ctx, url, "")
+	w.mu.RLock()
+	username, token := w.settings.Username, w.settings.Token
+	w.mu.RUnlock()
+
+	resp, err := w.head(ctx, url, "", username, token)
 	if err != nil {
 		return nil, err
 	}
@@ -279,19 +289,19 @@ func (w *walker) headWithAuth(ctx context.Context, url string) (*http.Response, 
 		return resp, nil
 	}
 	challenge := parseBearerChallenge(resp.Header.Get("Www-Authenticate"))
-	if challenge.realm == "" || (w.settings.Username == "" && w.settings.Token == "") {
+	if challenge.realm == "" || (username == "" && token == "") {
 		return resp, nil
 	}
 	_ = resp.Body.Close()
-	bearer, err := w.fetchBearerToken(ctx, challenge)
+	bearer, err := w.fetchBearerToken(ctx, challenge, username, token)
 	if err != nil {
 		return nil, err
 	}
-	return w.head(ctx, url, bearer)
+	return w.head(ctx, url, bearer, username, token)
 }
 
 //nolint:unused // Used by headWithAuth (Task 1.3 dependency chain)
-func (w *walker) head(ctx context.Context, url, bearer string) (*http.Response, error) {
+func (w *walker) head(ctx context.Context, url, bearer, username, token string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -300,8 +310,8 @@ func (w *walker) head(ctx context.Context, url, bearer string) (*http.Response, 
 	switch {
 	case bearer != "":
 		req.Header.Set("Authorization", "Bearer "+bearer)
-	case w.settings.Username != "" || w.settings.Token != "":
-		req.SetBasicAuth(w.settings.Username, w.settings.Token)
+	case username != "" || token != "":
+		req.SetBasicAuth(username, token)
 	}
 	resp, err := w.httpClient.Do(req)
 	if err != nil {
@@ -381,7 +391,7 @@ type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-func (w *walker) fetchBearerToken(ctx context.Context, ch bearerChallenge) (string, error) {
+func (w *walker) fetchBearerToken(ctx context.Context, ch bearerChallenge, username, token string) (string, error) {
 	u, err := url.Parse(ch.realm)
 	if err != nil {
 		return "", fmt.Errorf("%w: parse realm %q: %v", ErrUnexpectedResponse, ch.realm, err)
@@ -398,7 +408,7 @@ func (w *walker) fetchBearerToken(ctx context.Context, ch bearerChallenge) (stri
 	if err != nil {
 		return "", fmt.Errorf("build realm request: %w", err)
 	}
-	req.SetBasicAuth(w.settings.Username, w.settings.Token)
+	req.SetBasicAuth(username, token)
 	resp, err := w.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("%w: realm %s: %v", ErrUnreachable, ch.realm, err)
@@ -463,8 +473,8 @@ func StripScheme(endpoint string) string {
 }
 
 // readAllLimited reads up to max bytes from r and returns the slice.
-// Mirror of pkg/helm_oci.ReadAllLimited (avoids importing helm_oci here
-// just for one helper).
+// Duplicates pkg/helm_oci.ReadAllLimited's contract with a chunked
+// loop so pkg/oci stays free of sibling-package imports.
 //
 //nolint:unused // Used by fetchBytes (Task 1.3 dependency chain)
 func readAllLimited(r interface{ Read([]byte) (int, error) }, max int64) ([]byte, error) {
@@ -476,7 +486,7 @@ func readAllLimited(r interface{ Read([]byte) (int, error) }, max int64) ([]byte
 			buf = append(buf, tmp[:n]...)
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				return buf, nil
 			}
 			return buf, fmt.Errorf("read: %w", err)

@@ -2,6 +2,7 @@ package oci
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -64,7 +65,7 @@ func TestEnumerateCharts_FiltersPrefixAndExcludesSubtrees(t *testing.T) {
 func TestEnumerateCharts_NotConfigured(t *testing.T) {
 	w := NewWalker(silentLogger())
 	_, err := w.EnumerateCharts(context.Background(), "", nil)
-	if err == nil || err.Error() != ErrNotConfigured.Error() {
+	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("want ErrNotConfigured, got %v", err)
 	}
 }
