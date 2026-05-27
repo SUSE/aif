@@ -8,9 +8,7 @@ aif:
     overview: 'Overview'
     apps: 'Apps'
     blueprints: 'Blueprints'
-    bundles: 'Bundles'
     workloads: 'Workloads'
-    pendingReviews: 'Pending Reviews'
     settings: 'Settings'
 
   pages:
@@ -111,15 +109,9 @@ aif:
         noResults: 'No blueprints match your search.'
         unreachable: 'Cannot refresh wrapped Reference Blueprints from the configured registry. Vendor-chart auto-wrapping is paused. Existing Blueprints (both vendor-wrapped and internally published) remain visible and deployable from the cached state. Check Settings → Advanced → Registry Endpoints.'
         loadError: 'Failed to load Blueprints: {message}'
-    bundles:
-      title: 'Bundles'
-      comingSoon: 'Bundle management coming soon'
     workloads:
       title: 'Workloads'
       comingSoon: 'Workload monitoring coming soon'
-    pendingReviews:
-      title: 'Pending Reviews'
-      comingSoon: 'Bundle review queue coming soon'
     settings:
       title: 'Settings'
       apply: 'Apply'
