@@ -475,6 +475,24 @@ func TestWorkloadsCreate_MissingName(t *testing.T) {
 	}
 }
 
+func TestWorkloadsCreate_RejectsUnknownFields(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	body := map[string]any{
+		"metadata":     map[string]any{"name": "wl", "namespace": "team-a"},
+		"spec":         map[string]any{"source": map[string]any{"kind": "App"}},
+		"bogusTopKey":  "foo",
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/workloads", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on unknown top-level field, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestWorkloadsCreate_MissingUser(t *testing.T) {
 	rig := newListDeleteTestRig(t)
 	req := httptest.NewRequest("POST", "/api/v1/workloads", bytes.NewReader([]byte(`{}`)))
@@ -530,6 +548,29 @@ func TestWorkloadsPut_NotFound(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestWorkloadsPut_RejectsUnknownFields(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	w := &aifv1.Workload{}
+	w.Namespace = "team-a"
+	w.Name = "wl"
+	w.ResourceVersion = "1"
+	rig.repo.Seed(w)
+
+	body := map[string]any{
+		"spec":         map[string]any{"source": map[string]any{"kind": "App"}},
+		"bogusTopKey":  "foo",
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/v1/workloads/team-a/wl", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on unknown top-level field, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
