@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,10 @@ import (
 	"net/http"
 	"regexp"
 
+	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/workload"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // semverRegex mirrors the CRD pattern on Blueprint.spec.version
@@ -17,25 +21,83 @@ import (
 // that semver.Compare would otherwise emit for invalid strings.
 var semverRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
+// workloadReader is the consumer-defined read port. Satisfied by
+// *workload.k8sRepository and *workload.FakeRepository in tests.
+// ≤4 methods (ISP).
+type workloadReader interface {
+	List(ctx context.Context, namespace string, selector labels.Selector) ([]aifv1.Workload, error)
+	Get(ctx context.Context, namespace, name string) (*aifv1.Workload, error)
+}
+
+// workloadMutator is the consumer-defined write port. Satisfied by
+// *workload.k8sRepository (after Task F-2 adds Create/Delete) and
+// *workload.FakeRepository in tests.
+// ≤4 methods (ISP).
+type workloadMutator interface {
+	Create(ctx context.Context, w *aifv1.Workload) error
+	Delete(ctx context.Context, namespace, name string) error
+	Patch(ctx context.Context, w, orig *aifv1.Workload) error
+}
+
 // WorkloadsHandler serves the /api/v1/workloads/{namespace}/{name}/* REST
 // endpoints. Today the only route is POST .../upgrade (P5-3). Future
 // lifecycle actions (operate, scale, …) plug in via additional methods on
 // this handler.
 type WorkloadsHandler struct {
 	upgrader workload.Upgrader
+	reader   workloadReader
+	mutator  workloadMutator
 	logger   *slog.Logger
 }
 
 // NewWorkloadsHandler constructs a WorkloadsHandler bound to the upgrader
 // workflow port. The logger here is the server-level logger; request-scoped
 // loggers come from LoggerFromContext.
-func NewWorkloadsHandler(upgrader workload.Upgrader, logger *slog.Logger) *WorkloadsHandler {
-	return &WorkloadsHandler{upgrader: upgrader, logger: logger}
+func NewWorkloadsHandler(upgrader workload.Upgrader, reader workloadReader, mutator workloadMutator, logger *slog.Logger) *WorkloadsHandler {
+	return &WorkloadsHandler{upgrader: upgrader, reader: reader, mutator: mutator, logger: logger}
 }
 
 // Register wires this handler's routes onto the provided mux.
 func (h *WorkloadsHandler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/workloads", h.list)
+	mux.HandleFunc("DELETE /api/v1/workloads/{namespace}/{name}", h.deleteWorkload)
 	mux.HandleFunc("POST /api/v1/workloads/{namespace}/{name}/upgrade", h.upgrade)
+}
+
+func (h *WorkloadsHandler) list(w http.ResponseWriter, r *http.Request) {
+	user, _ := ExtractUser(r)
+	if user == "" {
+		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
+		return
+	}
+	items, err := h.reader.List(r.Context(), "", nil)
+	if err != nil {
+		LoggerFromContext(r.Context()).Error("list workloads failed", "error", err)
+		writeError(w, http.StatusInternalServerError, ErrInternal)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (h *WorkloadsHandler) deleteWorkload(w http.ResponseWriter, r *http.Request) {
+	user, _ := ExtractUser(r)
+	if user == "" {
+		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
+		return
+	}
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	if err := h.mutator.Delete(r.Context(), ns, name); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, ErrNotFound)
+			return
+		}
+		LoggerFromContext(r.Context()).Error("delete workload failed", "ns", ns, "name", name, "error", err)
+		writeError(w, http.StatusInternalServerError, ErrInternal)
+		return
+	}
+	LoggerFromContext(r.Context()).Info("workload deleted", "namespace", ns, "name", name, "user", user)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type upgradeRequest struct {

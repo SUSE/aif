@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	aifv1 "github.com/SUSE/aif/api/v1alpha1"
 	"github.com/SUSE/aif/pkg/workload"
 )
 
@@ -33,7 +34,7 @@ func newUpgradeTestRig(t *testing.T) *upgradeTestRig {
 	upgrader := workload.NewUpgrader(wStore, bpReader, rec, logger)
 
 	mux := http.NewServeMux()
-	h := NewWorkloadsHandler(upgrader, logger)
+	h := NewWorkloadsHandler(upgrader, nil, nil, logger)
 	h.Register(mux)
 	return &upgradeTestRig{mux: mux, workloads: wStore, blueprints: bpReader, events: rec}
 }
@@ -257,5 +258,131 @@ func TestWorkloadUpgrade_Conflict(t *testing.T) {
 	}
 	if got := decodeAPIError(t, rr).Code; got != ErrCodeConflict {
 		t.Errorf("expected %s, got %s", ErrCodeConflict, got)
+	}
+}
+
+// listDeleteTestRig wires list + delete handlers over FakeRepository.
+type listDeleteTestRig struct {
+	mux  *http.ServeMux
+	repo *workload.FakeRepository
+}
+
+func newListDeleteTestRig(t *testing.T) *listDeleteTestRig {
+	t.Helper()
+	repo := workload.NewFakeRepository()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mux := http.NewServeMux()
+	upgrader := workload.NewUpgrader(
+		workload.NewFakeWorkloadStore(),
+		workload.NewFakeBlueprintReader(),
+		&workload.FakeUpgradeEventRecorder{},
+		logger,
+	)
+	h := NewWorkloadsHandler(upgrader, repo, repo, logger)
+	h.Register(mux)
+	return &listDeleteTestRig{mux: mux, repo: repo}
+}
+
+func seedWorkload(repo *workload.FakeRepository, ns, name string, kind aifv1.WorkloadSourceKind) {
+	w := &aifv1.Workload{}
+	w.Namespace = ns
+	w.Name = name
+	w.Spec.Source.Kind = kind
+	repo.Seed(w)
+}
+
+func TestWorkloadsList_Empty(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("GET", "/api/v1/workloads", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var result []any
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty array, got %d items", len(result))
+	}
+}
+
+func TestWorkloadsList_WithItems(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	seedWorkload(rig.repo, "ns-a", "wl-1", aifv1.WorkloadSourceKindApp)
+	seedWorkload(rig.repo, "ns-b", "wl-2", aifv1.WorkloadSourceKindBlueprint)
+
+	req := httptest.NewRequest("GET", "/api/v1/workloads", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var result []any
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 workloads, got %d", len(result))
+	}
+}
+
+func TestWorkloadsList_MissingUser(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("GET", "/api/v1/workloads", nil)
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestWorkloadsDelete_HappyPath(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	seedWorkload(rig.repo, "team-a", "my-wl", aifv1.WorkloadSourceKindApp)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/workloads/team-a/my-wl", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	// Confirm deleted
+	req2 := httptest.NewRequest("GET", "/api/v1/workloads", nil)
+	req2.Header.Set("Impersonate-User", "alice")
+	rr2 := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr2, req2)
+	var items []any
+	json.NewDecoder(rr2.Body).Decode(&items)
+	if len(items) != 0 {
+		t.Errorf("expected 0 workloads after delete, got %d", len(items))
+	}
+}
+
+func TestWorkloadsDelete_NotFound(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("DELETE", "/api/v1/workloads/ns/missing", nil)
+	req.Header.Set("Impersonate-User", "alice")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestWorkloadsDelete_MissingUser(t *testing.T) {
+	rig := newListDeleteTestRig(t)
+	req := httptest.NewRequest("DELETE", "/api/v1/workloads/ns/wl", nil)
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
 	}
 }

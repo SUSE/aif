@@ -242,12 +242,14 @@ func main() {
 	//   - blueprintReader: blueprintReader (GetForUpgrade)
 	//   - upgradeRecorder: UpgradeEventRecorder (k8s events adapter)
 	// All reads go through mgr.GetClient() so they hit the informer cache.
-	workloadRepo := workload.NewK8sRepository(mgr.GetClient()).AsRepository()
+	workloadK8sRepo := workload.NewK8sRepository(mgr.GetClient())
+	workloadRepo := workloadK8sRepo.AsRepository()
 	upgradeStore := internalworkload.NewUpgradeStore(workloadRepo)
 	upgradeBlueprintReader := internalworkload.NewBlueprintReader(blueprintRepo)
 	upgradeRecorder := internalworkload.NewEventRecorder(mgr.GetEventRecorder("workload-upgrader"))
 	workloadUpgrader := workload.NewUpgrader(upgradeStore, upgradeBlueprintReader, upgradeRecorder, logger)
-	workloadsHandler := api.NewWorkloadsHandler(workloadUpgrader, logger)
+	// workloadK8sRepo satisfies both workloadReader and workloadMutator — pass it for both.
+	workloadsHandler := api.NewWorkloadsHandler(workloadUpgrader, workloadK8sRepo, workloadK8sRepo, logger)
 
 	// Setup API server
 	mux := http.NewServeMux()
