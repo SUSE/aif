@@ -200,3 +200,9 @@ aif:
               add: 'Add Rule'
 
       notConfigured: 'No settings configured yet. Fill in the form and save to create them.'
+
+  wizards:
+    installProgress:
+      title:  'Installing'
+      done:   'Done'
+      cancel: 'Cancel'

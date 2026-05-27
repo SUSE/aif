@@ -14,7 +14,7 @@
         <span v-if="index < currentStep" class="wizard-step-indicator__check">✓</span>
         <span v-else>{{ index + 1 }}</span>
       </div>
-      <span class="wizard-step-indicator__label">{{ step.label || step.title }}</span>
+      <span class="wizard-step-indicator__label">{{ step.label }}</span>
     </div>
   </div>
 </template>
