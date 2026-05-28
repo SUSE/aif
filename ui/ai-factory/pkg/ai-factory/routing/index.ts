@@ -30,7 +30,23 @@ const routes = [
     path:      `/c/:cluster/${ PRODUCT_NAME }/${ PAGE_IDS.SETTINGS }`,
     component: () => import('../pages/settings.vue'),
     meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.SETTINGS }
+  },
+  // AIDEV: task-3-1 — App Install wizard route
+  {
+    name:      `${ PRODUCT_NAME }-c-cluster-app-install`,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/apps/:id/install`,
+    component: () => import('../pages/wizards/app-install.vue'),
+    meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.APPS }
+  },
+  // AIDEV: /task-3-1
+  // AIDEV: task-3-2 — App Manage page (P6-8)
+  {
+    name:      `${ PRODUCT_NAME }-c-cluster-workload-manage`,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/workloads/:ns/:name/manage`,
+    component: () => import('../pages/manage.vue'),
+    meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.WORKLOADS }
   }
+  // AIDEV: /task-3-2
 ];
 
 export default routes;

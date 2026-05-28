@@ -74,6 +74,31 @@ aif:
         publisherEndpointComingSoon: 'Backend endpoint not yet available'
         publisherRoleRequired: 'Requires the Blueprint Publisher role'
         publisherLabel: 'Publisher'
+      createModal:
+        title: 'Create Blueprint'
+        blueprintName: 'Blueprint Name'
+        version: 'Version'
+        useCase: 'Use Case'
+        description: 'Description'
+        components: 'Components'
+        cancel: 'Cancel'
+        create: 'Create'
+      deprecateModal:
+        title: 'Deprecate Blueprint'
+        body: 'Deprecate {name} v{version}?'
+        bodySecondary: 'Deprecated blueprints are hidden by default. Existing workloads keep running.'
+        confirm: 'Deprecate'
+        cancel: 'Cancel'
+      undeprecateModal:
+        title: 'Undeprecate Blueprint'
+        body: 'Undeprecate {name} v{version} as a recommended version?'
+        confirm: 'Undeprecate'
+        cancel: 'Cancel'
+      deleteModal:
+        title: 'Delete Blueprint'
+        body: 'Delete {name} v{version}?'
+        confirm: 'Delete'
+        cancel: 'Cancel'
       versionsPanel:
         title: 'Versions of {lineage}'
         close: 'Close'
@@ -175,6 +200,45 @@ aif:
               add: 'Add Rule'
 
       notConfigured: 'No settings configured yet. Fill in the form and save to create them.'
+
+    wizards:
+      install:
+        title:           'Install {name}'
+        instanceName:    'Instance name'
+        namespace:       'Namespace'
+        chartVersion:    'Chart version'
+        targetClusters:  'Target clusters'
+        deliveryStrategy: 'Delivery strategy'
+        strategyHelm:    'Helm'
+        strategyGitops:  'GitOps'
+        helmValues:      'Helm values'
+        resetDefaults:   'Reset to defaults'
+        back:            'Back'
+        cancel:          'Cancel'
+        next:            'Next'
+        install:         'Install'
+        installing:      'Installing…'
+        nameInvalid:     'Instance name must be a DNS label: lowercase letters, digits and hyphens, 1-63 characters.'
+        appNotLoaded:    'App details did not load. Refresh the page and try again.'
+        targetClustersRequired: 'Select at least one target cluster before installing.'
+        creating:        'Creating workload…'
+        created:         'Workload created'
+        valuesError:     'Failed to load chart defaults: {message}'
+      steps:
+        basicInfo:     'Basic Info'
+        target:        'Target'
+        configuration: 'Configuration'
+        review:        'Review'
+      manage:
+        title: 'Manage {name}'
+        chartVersion: 'Chart version'
+        helmValues: 'Helm values (YAML)'
+        apply: 'Apply'
+        applying: 'Applying…'
+        cancel: 'Cancel'
+        applySuccess: 'Workload updated.'
+        fetchError: 'Failed to load workload: {message}'
+        appOnly: 'Manage is only available for App-sourced workloads. Use the upgrade action on Blueprint workloads.'
 
   wizards:
     installProgress:
