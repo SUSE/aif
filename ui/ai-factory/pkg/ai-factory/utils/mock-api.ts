@@ -59,7 +59,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-04-10T08:00:00Z'
   },
   {
-    id:                 'suse.gpu-operator:24.9.0',
+    id:                 'suse.appco.gpu-operator:24.9.0',
     name:               'gpu-operator',
     displayName:        'NVIDIA GPU Operator',
     description:        'Automates the management of all NVIDIA software components needed to provision GPUs in Kubernetes, including drivers, container runtime, device plugin, and monitoring.',
@@ -76,7 +76,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-05-01T12:00:00Z'
   },
   {
-    id:                 'suse.network-operator:24.7.0',
+    id:                 'suse.appco.network-operator:24.7.0',
     name:               'network-operator',
     displayName:        'NVIDIA Network Operator',
     description:        'Manages networking resources in Kubernetes for high-performance GPU workloads. Supports RDMA, GPUDirect, and SR-IOV for multi-node training.',
@@ -110,7 +110,7 @@ const MOCK_APPS: App[] = [
     lastUpdatedAt:      '2026-04-30T23:56:07Z'
   },
   {
-    id:                 'suse.open-webui:0.6.5',
+    id:                 'suse.appco.open-webui:0.6.5',
     name:               'open-webui',
     displayName:        'Open WebUI',
     description:        'Full-featured web interface for interacting with LLMs. Supports multiple model backends, conversation history, RAG, and collaborative features.',
