@@ -57,10 +57,17 @@ type BlueprintsHandler struct {
 	logger         *slog.Logger
 }
 
-// NewBlueprintsHandler constructs a BlueprintsHandler. counter must be
-// supplied — DELETE guards against active workloads before allowing the
-// removal. checker may be nil; see type doc.
+// NewBlueprintsHandler constructs a BlueprintsHandler. repo and counter must
+// be supplied — DELETE guards against active workloads before allowing the
+// removal, so a nil counter would panic on the first DELETE rather than fail
+// at startup. checker may be nil; see type doc.
 func NewBlueprintsHandler(repo blueprintRepository, counter blueprintDeploymentCounter, checker AuthChecker, logger *slog.Logger) *BlueprintsHandler {
+	if repo == nil {
+		panic("BlueprintsHandler: repo is required")
+	}
+	if counter == nil {
+		panic("BlueprintsHandler: counter is required")
+	}
 	h := &BlueprintsHandler{
 		repo:    repo,
 		counter: counter,
@@ -71,6 +78,19 @@ func NewBlueprintsHandler(repo blueprintRepository, counter blueprintDeploymentC
 		h.authMiddleware = NewAuthMiddleware(checker)
 	}
 	return h
+}
+
+// validUseCases mirrors the CRD's UseCase enum
+// (api/v1alpha1/blueprint_types.go:36 +kubebuilder:validation:Enum=…). Kept in
+// lock-step with the CRD so the handler can return 400 with a meaningful
+// message rather than letting the API server reject with an opaque 422 that
+// the current catch block would translate to a 500.
+var validUseCases = map[string]struct{}{
+	"rag":         {},
+	"vision":      {},
+	"fine-tuning": {},
+	"inference":   {},
+	"other":       {},
 }
 
 // Register wires this handler's routes onto the provided mux. PATCH/DELETE
@@ -99,10 +119,13 @@ func (h *BlueprintsHandler) guard(verb string, next http.HandlerFunc) http.Handl
 // createBlueprintRequest mirrors the minimal fields needed to create a
 // Blueprint CR. PublishedBy is intentionally absent — the handler stamps it
 // from the Impersonate-User header so callers cannot spoof authorship.
+// UseCase has no omitempty: the CRD requires it (no omitempty on the CR
+// field either) and the handler enforces it pre-Create so a missing value
+// surfaces as 400 rather than the API server's 422-as-500.
 type createBlueprintRequest struct {
 	BlueprintName     string                `json:"blueprintName"`
 	Version           string                `json:"version"`
-	UseCase           string                `json:"useCase,omitempty"`
+	UseCase           string                `json:"useCase"`
 	Description       string                `json:"description,omitempty"`
 	ChangeDescription string                `json:"changeDescription,omitempty"`
 	Source            aifv1.BlueprintSource `json:"source"`
@@ -125,9 +148,26 @@ func (h *BlueprintsHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: invalid request body: %v", ErrInvalidInput, err))
 		return
 	}
-	if req.BlueprintName == "" || req.Version == "" || len(req.Components) == 0 {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: blueprintName, version, and components are required", ErrInvalidInput))
+	if req.BlueprintName == "" || req.Version == "" || req.UseCase == "" || len(req.Components) == 0 {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: blueprintName, version, useCase, and components are required", ErrInvalidInput))
 		return
+	}
+	if _, ok := validUseCases[req.UseCase]; !ok {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: useCase %q is not one of rag|vision|fine-tuning|inference|other", ErrInvalidInput, req.UseCase))
+		return
+	}
+	// This endpoint only mints Published blueprints. The WrapsVendorChart
+	// path runs through the catalog reconciler and writes the CR directly
+	// — letting a client smuggle source.type=WrapsVendorChart through here
+	// would produce a CR whose spec.source.type disagrees with the
+	// blueprint-source label below, hiding it from the wrapper's sweep.
+	if req.Source.Type != "" && req.Source.Type != aifv1.BlueprintSourcePublished {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: source.type must be %q for this endpoint (got %q)", ErrInvalidInput, aifv1.BlueprintSourcePublished, req.Source.Type))
+		return
+	}
+	// Normalise: an absent source.type implies Published for this endpoint.
+	if req.Source.Type == "" {
+		req.Source.Type = aifv1.BlueprintSourcePublished
 	}
 
 	crName := req.BlueprintName + "." + req.Version
@@ -137,7 +177,9 @@ func (h *BlueprintsHandler) create(w http.ResponseWriter, r *http.Request) {
 			Labels: map[string]string{
 				"ai.suse.com/blueprint-name":    req.BlueprintName,
 				"ai.suse.com/blueprint-version": req.Version,
-				"ai.suse.com/blueprint-source":  "published",
+				// Derived from the (validated) source type so the label and
+				// spec.source.type cannot disagree.
+				"ai.suse.com/blueprint-source": string(req.Source.Type),
 			},
 		},
 		Spec: aifv1.BlueprintSpec{
@@ -157,6 +199,13 @@ func (h *BlueprintsHandler) create(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Create(r.Context(), bp); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, fmt.Errorf("%w: blueprint %s already exists", ErrConflict, crName))
+			return
+		}
+		// CRD validation failures (e.g. semver pattern, future enum) come
+		// back as Invalid — surface as 400 so the client sees the real
+		// reason rather than a generic 500.
+		if apierrors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 			return
 		}
 		LoggerFromContext(r.Context()).Error("create blueprint failed", "name", crName, "error", err)
@@ -202,6 +251,15 @@ func (h *BlueprintsHandler) deprecate(w http.ResponseWriter, r *http.Request) {
 		}
 		LoggerFromContext(r.Context()).Error("find blueprint failed", "lineage", lineage, "version", version, "error", err)
 		writeError(w, http.StatusInternalServerError, ErrInternal)
+		return
+	}
+
+	// Withdrawn is set by the wrapper when the vendor chart disappears from
+	// the upstream registry. Allowing PATCH to flip it back to Active would
+	// overwrite the audit trail in Status.Deprecation.ActionedBy and present
+	// a stale phase until the wrapper's next reconcile re-set Withdrawn.
+	if bp.Status.Phase == aifv1.BlueprintPhaseWithdrawn {
+		writeError(w, http.StatusConflict, fmt.Errorf("%w: blueprint %s.%s is Withdrawn and cannot be re-activated via this endpoint", ErrConflict, lineage, version))
 		return
 	}
 

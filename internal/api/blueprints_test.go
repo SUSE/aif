@@ -188,6 +188,7 @@ func TestBlueprintsCreate_Conflict(t *testing.T) {
 	body := map[string]any{
 		"blueprintName": "rag",
 		"version":       "1.0.0",
+		"useCase":       "inference",
 		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
 		"source":        map[string]any{"type": "Published"},
 	}
@@ -238,6 +239,7 @@ func TestBlueprintsCreate_SARAllowed(t *testing.T) {
 	body := map[string]any{
 		"blueprintName": "rag",
 		"version":       "1.0.0",
+		"useCase":       "inference",
 		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
 		"source":        map[string]any{"type": "Published"},
 	}
@@ -463,4 +465,178 @@ func TestBlueprintsDelete_SARDenied(t *testing.T) {
 	if len(checker.resourceCalls) != 1 || checker.resourceCalls[0].verb != "delete" {
 		t.Errorf("expected delete SAR call, got %+v", checker.resourceCalls)
 	}
+}
+
+// --- PR #58 review fix-ups: CRD-parity validation + Withdrawn guard + constructor fail-fast ---
+
+func TestBlueprintsCreate_MissingUseCase(t *testing.T) {
+	rig := newBlueprintTestRig(t)
+	body := map[string]any{
+		"blueprintName": "rag",
+		"version":       "1.0.0",
+		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
+		"source":        map[string]any{"type": "Published"},
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "admin")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := decodeAPIError(t, rr).Code; got != ErrCodeInvalidInput {
+		t.Errorf("expected %s, got %s", ErrCodeInvalidInput, got)
+	}
+}
+
+func TestBlueprintsCreate_InvalidUseCase(t *testing.T) {
+	rig := newBlueprintTestRig(t)
+	body := map[string]any{
+		"blueprintName": "rag",
+		"version":       "1.0.0",
+		"useCase":       "bogus",
+		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
+		"source":        map[string]any{"type": "Published"},
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "admin")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := decodeAPIError(t, rr).Code; got != ErrCodeInvalidInput {
+		t.Errorf("expected %s, got %s", ErrCodeInvalidInput, got)
+	}
+}
+
+func TestBlueprintsCreate_RejectsWrapsVendorChartSource(t *testing.T) {
+	rig := newBlueprintTestRig(t)
+	body := map[string]any{
+		"blueprintName": "rag",
+		"version":       "1.0.0",
+		"useCase":       "inference",
+		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
+		"source":        map[string]any{"type": "WrapsVendorChart"},
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "admin")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := decodeAPIError(t, rr).Code; got != ErrCodeInvalidInput {
+		t.Errorf("expected %s, got %s", ErrCodeInvalidInput, got)
+	}
+}
+
+func TestBlueprintsCreate_DerivesSourceLabel(t *testing.T) {
+	rig := newBlueprintTestRig(t)
+	body := map[string]any{
+		"blueprintName": "rag",
+		"version":       "1.0.0",
+		"useCase":       "inference",
+		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
+		"source":        map[string]any{"type": "Published"},
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "admin")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	got, err := rig.repo.Get(context.Background(), "rag.1.0.0")
+	if err != nil {
+		t.Fatalf("Get after create: %v", err)
+	}
+	if label := got.Labels["ai.suse.com/blueprint-source"]; label != string(aifv1.BlueprintSourcePublished) {
+		t.Errorf("blueprint-source label = %q, want %q", label, aifv1.BlueprintSourcePublished)
+	}
+	if got.Spec.Source.Type != aifv1.BlueprintSourcePublished {
+		t.Errorf("spec.source.type = %q, want %q", got.Spec.Source.Type, aifv1.BlueprintSourcePublished)
+	}
+}
+
+func TestBlueprintsCreate_DefaultsSourceTypeToPublished(t *testing.T) {
+	rig := newBlueprintTestRig(t)
+	body := map[string]any{
+		"blueprintName": "rag",
+		"version":       "1.0.0",
+		"useCase":       "inference",
+		"components":    []map[string]any{{"name": "nim", "kind": "App"}},
+		// source omitted entirely
+	}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "admin")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	got, _ := rig.repo.Get(context.Background(), "rag.1.0.0")
+	if got.Spec.Source.Type != aifv1.BlueprintSourcePublished {
+		t.Errorf("spec.source.type = %q, want %q (defaulted)", got.Spec.Source.Type, aifv1.BlueprintSourcePublished)
+	}
+	if label := got.Labels["ai.suse.com/blueprint-source"]; label != string(aifv1.BlueprintSourcePublished) {
+		t.Errorf("blueprint-source label = %q, want %q", label, aifv1.BlueprintSourcePublished)
+	}
+}
+
+func TestBlueprintsDeprecate_RejectsWithdrawn(t *testing.T) {
+	rig := newBlueprintTestRig(t)
+	seedBlueprintCR(rig.repo, "rag", "1.0.0", aifv1.BlueprintPhaseWithdrawn)
+
+	body := map[string]any{"deprecated": false}
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/v1/blueprints/rag/1.0.0", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Impersonate-User", "admin")
+	rr := httptest.NewRecorder()
+	rig.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := decodeAPIError(t, rr).Code; got != ErrCodeConflict {
+		t.Errorf("expected %s, got %s", ErrCodeConflict, got)
+	}
+}
+
+// --- Constructor fail-fast ---
+
+func TestNewBlueprintsHandler_PanicsOnNilRepo(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on nil repo")
+		}
+	}()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_ = NewBlueprintsHandler(nil, &fakeBlueprintCounter{}, nil, logger)
+}
+
+func TestNewBlueprintsHandler_PanicsOnNilCounter(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on nil counter")
+		}
+	}()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_ = NewBlueprintsHandler(blueprint.NewFakeRepository(), nil, nil, logger)
 }
