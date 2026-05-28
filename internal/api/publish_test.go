@@ -197,6 +197,11 @@ func TestSubmitHandler_NoUser_Returns403(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	var apiErr APIError
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &apiErr))
+	assert.Equal(t, ErrCodeForbidden, apiErr.Code,
+		"envelope Code must be FORBIDDEN, not INTERNAL_ERROR — UI dispatches on Code")
 }
 
 func TestSubmitHandler_InvalidJSON_Returns400(t *testing.T) {
@@ -371,6 +376,11 @@ func TestWithdrawHandler_NoUser_Returns403(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	var apiErr APIError
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &apiErr))
+	assert.Equal(t, ErrCodeForbidden, apiErr.Code,
+		"envelope Code must be FORBIDDEN, not INTERNAL_ERROR — UI dispatches on Code")
 }
 
 func TestWithdrawHandler_ConflictOnUpdate_Returns409(t *testing.T) {

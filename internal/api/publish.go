@@ -75,7 +75,7 @@ func (h *PublishHandler) submit(w http.ResponseWriter, r *http.Request) {
 
 	user, _ := ExtractUser(r)
 	if user == "" {
-		writeError(w, http.StatusForbidden, errors.New("authentication required: Impersonate-User header missing"))
+		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *PublishHandler) withdraw(w http.ResponseWriter, r *http.Request) {
 
 	user, _ := ExtractUser(r)
 	if user == "" {
-		writeError(w, http.StatusForbidden, errors.New("authentication required: Impersonate-User header missing"))
+		writeError(w, http.StatusForbidden, fmt.Errorf("%w: Impersonate-User header missing", ErrForbidden))
 		return
 	}
 
