@@ -1,0 +1,20 @@
+apiVersion: ai.suse.com/v1alpha1
+kind: Workload
+metadata:
+  namespace: default
+  name: smoke
+spec:
+  name: smoke
+  source:
+    kind: Blueprint
+    blueprint:
+      name: smoke-blueprint
+      version: 0.1.0
+  deployStrategy: helm
+  # Empty on purpose: with no target clusters the WorkloadReconciler can
+  # validate the spec but will not create a fleet.cattle.io Bundle, so the
+  # Workload stays at phase=Pending. That is the right "operator observed
+  # and accepted my spec" assertion for a smoke test against a placeholder
+  # chart. Populate this list to drive a real Fleet rollout.
+  targetClusters: []
+  replicas: 1
