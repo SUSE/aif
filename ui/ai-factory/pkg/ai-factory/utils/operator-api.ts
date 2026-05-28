@@ -43,14 +43,14 @@ const BASE_URL = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ OPE
 
 interface OperatorError extends Error {
   status: number;
-  code: string;
+  code:   string;
 }
 
 async function operatorFetch(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${ BASE_URL }${ path }`, {
     ...options,
     headers: {
-      Accept: 'application/json',
+      'Accept': 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...(options.headers || {}),
     },
@@ -62,7 +62,7 @@ async function operatorFetch(path: string, options: RequestInit = {}): Promise<a
     const err = new Error(body?.message || res.statusText) as OperatorError;
 
     err.status = res.status;
-    err.code = body?.error || 'INTERNAL_ERROR';
+    err.code   = body?.error || 'INTERNAL_ERROR';
     throw err;
   }
 

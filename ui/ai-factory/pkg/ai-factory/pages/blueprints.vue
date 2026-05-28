@@ -34,33 +34,16 @@
           :placeholder="t('aif.pages.blueprints.toolbar.search')"
           class="bp-page__search"
         />
-        <select
-          v-model="useCaseFilter"
-          class="bp-page__select"
-        >
-          <option value="">
-            {{ t('aif.pages.blueprints.toolbar.useCaseAll') }}
-          </option>
-          <option
-            v-for="uc in useCases"
-            :key="uc"
-            :value="uc"
-          >
-            {{ uc }}
-          </option>
+        <select v-model="useCaseFilter" class="bp-page__select">
+          <option value="">{{ t('aif.pages.blueprints.toolbar.useCaseAll') }}</option>
+          <option v-for="uc in useCases" :key="uc" :value="uc">{{ uc }}</option>
         </select>
         <div class="bp-page__toggle">
-          <Checkbox
-            v-model:value="showWithdrawn"
-            :label="t('aif.pages.blueprints.toolbar.showWithdrawn')"
-          />
+          <Checkbox v-model:value="showWithdrawn" :label="t('aif.pages.blueprints.toolbar.showWithdrawn')" />
         </div>
       </div>
 
-      <div
-        v-if="visibleLineages.length"
-        class="bp-page__gallery"
-      >
+      <div v-if="visibleLineages.length" class="bp-page__gallery">
         <BlueprintCard
           v-for="l in visibleLineages"
           :key="l.lineage"
@@ -71,17 +54,11 @@
         />
       </div>
 
-      <div
-        v-else-if="hasAnyLineage"
-        class="bp-page__empty"
-      >
+      <div v-else-if="hasAnyLineage" class="bp-page__empty">
         <p>{{ t('aif.pages.blueprints.empty.noResults') }}</p>
       </div>
 
-      <div
-        v-else-if="!unreachable"
-        class="bp-page__empty"
-      >
+      <div v-else-if="!unreachable" class="bp-page__empty">
         <p>{{ t('aif.pages.blueprints.empty.none') }}</p>
       </div>
     </template>
@@ -120,7 +97,7 @@ export default defineComponent({
       this.loaded = true;
     } catch (e) {
       this.loadError = e?.message || String(e);
-      this.loaded = true;
+      this.loaded    = true;
     }
   },
 
@@ -193,7 +170,9 @@ export default defineComponent({
       let total = 0;
 
       for (const l of this.visibleLineages) {
-        total += this.showWithdrawn ? l.versions.length : l.versions.filter((v) => v.phase !== 'Withdrawn').length;
+        total += this.showWithdrawn
+          ? l.versions.length
+          : l.versions.filter((v) => v.phase !== 'Withdrawn').length;
       }
 
       return total;

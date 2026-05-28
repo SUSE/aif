@@ -25,6 +25,7 @@ module.exports = {
     'new-cap':                  'off',
     'no-empty':                 'off',
     'no-extra-boolean-cast':    'off',
+    'no-multi-spaces':          'warn',
     'no-new':                   'off',
     'no-plusplus':              'off',
     'no-useless-escape':        'off',

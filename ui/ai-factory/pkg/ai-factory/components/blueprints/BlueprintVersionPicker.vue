@@ -44,12 +44,13 @@ export default defineComponent({
     // / 'Withdrawn'); the user-facing phase pill (BlueprintPhasePill.vue) handles
     // the localized rendering. Follow-up: translate option labels when LabeledSelect
     // exposes an option slot, or when we move to a custom dropdown component.
-    const options = computed(() => (props.versions ?? [])
-      .filter((v) => props.showWithdrawn || v.phase !== 'Withdrawn')
-      .map((v) => ({
-        label: `v${ v.version } — ${ v.phase }`,
-        value: v.id
-      }))
+    const options = computed(() =>
+      (props.versions ?? [])
+        .filter((v) => props.showWithdrawn || v.phase !== 'Withdrawn')
+        .map((v) => ({
+          label: `v${ v.version } — ${ v.phase }`,
+          value: v.id
+        }))
     );
 
     return { options };

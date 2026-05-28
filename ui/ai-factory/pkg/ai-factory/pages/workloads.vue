@@ -6,7 +6,9 @@
 </template>
 
 <script>
-export default { name: 'WorkloadsPage' };
+export default {
+  name: 'WorkloadsPage'
+};
 </script>
 
 <style scoped>

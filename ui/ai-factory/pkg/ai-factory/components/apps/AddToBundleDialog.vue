@@ -5,34 +5,21 @@
     custom-class="add-to-bundle-modal"
     @close="$emit('cancel')"
   >
-    <template #title>
-      {{ t('aif.pages.apps.dialog.title') }}
-    </template>
+    <template #title>{{ t('aif.pages.apps.dialog.title') }}</template>
     <template #content>
       <div class="add-to-bundle-dialog">
         <div class="add-to-bundle-dialog__modes">
           <label class="add-to-bundle-dialog__mode">
-            <input
-              v-model="mode"
-              type="radio"
-              value="existing"
-            />
+            <input v-model="mode" type="radio" value="existing" />
             {{ t('aif.pages.apps.dialog.modeExisting') }}
           </label>
           <label class="add-to-bundle-dialog__mode">
-            <input
-              v-model="mode"
-              type="radio"
-              value="new"
-            />
+            <input v-model="mode" type="radio" value="new" />
             {{ t('aif.pages.apps.dialog.modeNew') }}
           </label>
         </div>
 
-        <div
-          v-if="mode === 'existing'"
-          class="add-to-bundle-dialog__existing"
-        >
+        <div v-if="mode === 'existing'" class="add-to-bundle-dialog__existing">
           <label class="add-to-bundle-dialog__label">{{ t('aif.pages.apps.dialog.selectBundle') }}</label>
           <select
             :value="selectedBundle || ''"
@@ -40,26 +27,16 @@
             :disabled="!draftBundleOptions.length"
             @change="selectedBundle = $event.target.value"
           >
-            <option
-              value=""
-              disabled
-            >
+            <option value="" disabled>
               {{ draftBundleOptions.length ? t('aif.pages.apps.dialog.selectBundle') : t('aif.pages.apps.dialog.noDrafts') }}
             </option>
-            <option
-              v-for="opt in draftBundleOptions"
-              :key="opt.value"
-              :value="opt.value"
-            >
+            <option v-for="opt in draftBundleOptions" :key="opt.value" :value="opt.value">
               {{ opt.label }}
             </option>
           </select>
         </div>
 
-        <div
-          v-if="mode === 'new'"
-          class="add-to-bundle-dialog__new"
-        >
+        <div v-if="mode === 'new'" class="add-to-bundle-dialog__new">
           <LabeledInput
             v-model:value="newBundleName"
             :label="t('aif.pages.apps.dialog.newBundleName')"
@@ -73,20 +50,13 @@
           />
         </div>
 
-        <Banner
-          v-if="errorMsg"
-          color="error"
-          :label="errorMsg"
-        />
+        <Banner v-if="errorMsg" color="error" :label="errorMsg" />
       </div>
     </template>
 
     <template #footer>
       <div class="add-to-bundle-dialog__footer">
-        <button
-          class="btn role-secondary"
-          @click="$emit('cancel')"
-        >
+        <button class="btn role-secondary" @click="$emit('cancel')">
           {{ t('aif.pages.apps.dialog.cancel') }}
         </button>
         <button
@@ -94,10 +64,7 @@
           :disabled="!canConfirm || saving"
           @click="onConfirm"
         >
-          <i
-            v-if="saving"
-            class="icon icon-spinner icon-spin"
-          />
+          <i v-if="saving" class="icon icon-spinner icon-spin" />
           {{ t('aif.pages.apps.dialog.confirm') }}
         </button>
       </div>
@@ -106,9 +73,7 @@
 </template>
 
 <script>
-import {
-  defineComponent, ref, computed, getCurrentInstance, onMounted
-} from 'vue';
+import { defineComponent, ref, computed, getCurrentInstance, onMounted } from 'vue';
 import ModalWithCard from '@shell/components/ModalWithCard';
 import LabeledInput from '@components/Form/LabeledInput/LabeledInput.vue';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
@@ -142,7 +107,7 @@ export default defineComponent({
 
     const mode = ref('existing');
     const selectedBundle = ref(null);
-    const newBundleName = ref(`${ props.app.name }-bundle`);
+    const newBundleName = ref(`${props.app.name}-bundle`);
     const newBundleNamespace = ref('default');
     const saving = ref(false);
     const errorMsg = ref('');
@@ -164,8 +129,8 @@ export default defineComponent({
 
     const draftBundleOptions = computed(() => {
       return draftBundles.value.map((b) => ({
-        label: `${ b.metadata.namespace }/${ b.metadata.name }`,
-        value: `${ b.metadata.namespace }/${ b.metadata.name }`
+        label: `${b.metadata.namespace}/${b.metadata.name}`,
+        value: `${b.metadata.namespace}/${b.metadata.name}`
       }));
     });
 
@@ -175,7 +140,7 @@ export default defineComponent({
       }
 
       return draftBundles.value.find(
-        (b) => `${ b.metadata.namespace }/${ b.metadata.name }` === selectedBundle.value
+        (b) => `${b.metadata.namespace}/${b.metadata.name}` === selectedBundle.value
       );
     });
 
@@ -197,7 +162,7 @@ export default defineComponent({
       }
     });
 
-    const addToExistingBundle = async() => {
+    const addToExistingBundle = async () => {
       const bundle = selectedBundleObj.value;
 
       if (!bundle) {
@@ -212,7 +177,7 @@ export default defineComponent({
       return bundle.metadata.name;
     };
 
-    const createNewBundle = async() => {
+    const createNewBundle = async () => {
       const name = newBundleName.value.trim();
       const namespace = newBundleNamespace.value || 'default';
       const bundleData = {
@@ -229,18 +194,19 @@ export default defineComponent({
       };
 
       const created = await store.dispatch('management/create', bundleData);
-
       await created.save();
 
       return name;
     };
 
-    const onConfirm = async() => {
+    const onConfirm = async () => {
       saving.value = true;
       errorMsg.value = '';
 
       try {
-        const bundleName = mode.value === 'existing' ? await addToExistingBundle() : await createNewBundle();
+        const bundleName = mode.value === 'existing'
+          ? await addToExistingBundle()
+          : await createNewBundle();
 
         emit('added', { bundle: bundleName, mode: mode.value });
       } catch (err) {

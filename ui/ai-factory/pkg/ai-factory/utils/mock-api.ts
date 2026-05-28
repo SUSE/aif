@@ -16,9 +16,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Inference', 'LLM'],
     tags:               ['gpu', 'tensorrt', 'triton'],
-    chartRef:           {
-      repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-llm', version: '1.2.0'
-    },
+    chartRef:           { repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-llm', version: '1.2.0' },
     projectURL:         'https://developer.nvidia.com/nim',
     referenceBlueprint: false,
     useCase:            'Text generation and chat completions',
@@ -36,9 +34,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Inference', 'VLM'],
     tags:               ['gpu', 'vision', 'multimodal'],
-    chartRef:           {
-      repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-vlm', version: '1.0.0'
-    },
+    chartRef:           { repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-vlm', version: '1.0.0' },
     projectURL:         'https://developer.nvidia.com/nim',
     referenceBlueprint: false,
     useCase:            'Visual question answering and image captioning',
@@ -56,9 +52,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Reference Blueprint', 'LLM'],
     tags:               ['gpu', 'validated', 'stack'],
-    chartRef:           {
-      repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-llm', version: '1.2.0'
-    },
+    chartRef:           { repo: 'oci://registry.suse.com/ai/charts/nvidia', chart: 'nim-llm', version: '1.2.0' },
     projectURL:         'https://developer.nvidia.com/nim',
     referenceBlueprint: true,
     useCase:            'Full-stack LLM inference deployment',
@@ -76,9 +70,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Infrastructure', 'GPU'],
     tags:               ['gpu', 'driver', 'operator'],
-    chartRef:           {
-      repo: 'oci://dp.apps.rancher.io/charts', chart: 'gpu-operator', version: '24.9.0'
-    },
+    chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'gpu-operator', version: '24.9.0' },
     projectURL:         'https://apps.rancher.io',
     referenceBlueprint: false,
     lastUpdatedAt:      '2026-05-01T12:00:00Z'
@@ -95,9 +87,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Infrastructure', 'Networking'],
     tags:               ['rdma', 'gpudirect', 'sriov'],
-    chartRef:           {
-      repo: 'oci://dp.apps.rancher.io/charts', chart: 'network-operator', version: '24.7.0'
-    },
+    chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'network-operator', version: '24.7.0' },
     projectURL:         'https://apps.rancher.io',
     referenceBlueprint: false,
     lastUpdatedAt:      '2026-04-20T09:30:00Z'
@@ -114,9 +104,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Inference', 'LLM'],
     tags:               ['llm', 'local', 'gpu'],
-    chartRef:           {
-      repo: 'oci://dp.apps.rancher.io/charts', chart: 'ollama', version: '0.5.4'
-    },
+    chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'ollama', version: '0.5.4' },
     projectURL:         'https://apps.rancher.io',
     referenceBlueprint: false,
     lastUpdatedAt:      '2026-04-30T23:56:07Z'
@@ -133,9 +121,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Application', 'Chat'],
     tags:               ['ui', 'chat', 'rag'],
-    chartRef:           {
-      repo: 'oci://dp.apps.rancher.io/charts', chart: 'open-webui', version: '0.6.5'
-    },
+    chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'open-webui', version: '0.6.5' },
     projectURL:         'https://apps.rancher.io',
     referenceBlueprint: false,
     lastUpdatedAt:      '2026-05-10T16:45:00Z'
@@ -152,9 +138,7 @@ const MOCK_APPS: App[] = [
     assetType:          'chart',
     categories:         ['Data', 'Vector DB'],
     tags:               ['vector', 'embeddings', 'rag'],
-    chartRef:           {
-      repo: 'oci://dp.apps.rancher.io/charts', chart: 'milvus', version: '2.4.0'
-    },
+    chartRef:           { repo: 'oci://dp.apps.rancher.io/charts', chart: 'milvus', version: '2.4.0' },
     projectURL:         'https://apps.rancher.io',
     referenceBlueprint: false,
     lastUpdatedAt:      '2026-03-15T10:00:00Z'

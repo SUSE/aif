@@ -6,7 +6,9 @@ const origConfigureWebpack = base.configureWebpack;
 base.configureWebpack = (config) => {
   origConfigureWebpack(config);
 
-  config.plugins.push(new webpack.DefinePlugin({ 'process.env.USE_MOCK_API': JSON.stringify(process.env.USE_MOCK_API || 'false') }));
+  config.plugins.push(new webpack.DefinePlugin({
+    'process.env.USE_MOCK_API': JSON.stringify(process.env.USE_MOCK_API || 'false')
+  }));
 };
 
 module.exports = base;

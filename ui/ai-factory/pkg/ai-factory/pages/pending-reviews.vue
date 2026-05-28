@@ -6,7 +6,9 @@
 </template>
 
 <script>
-export default { name: 'PendingReviewsPage' };
+export default {
+  name: 'PendingReviewsPage'
+};
 </script>
 
 <style scoped>

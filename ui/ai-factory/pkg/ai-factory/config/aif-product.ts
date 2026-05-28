@@ -14,27 +14,13 @@ const routeFor = (pageId: string) => ({
 });
 
 const pageNav = [
-  {
-    id: PAGE_IDS.OVERVIEW, labelKey: 'aif.nav.overview', weight: 600
-  },
-  {
-    id: PAGE_IDS.APPS, labelKey: 'aif.nav.apps', weight: 500
-  },
-  {
-    id: PAGE_IDS.BLUEPRINTS, labelKey: 'aif.nav.blueprints', weight: 400
-  },
-  {
-    id: PAGE_IDS.BUNDLES, labelKey: 'aif.nav.bundles', weight: 300
-  },
-  {
-    id: PAGE_IDS.PENDING_REVIEWS, labelKey: 'aif.nav.pendingReviews', weight: 200
-  },
-  {
-    id: PAGE_IDS.WORKLOADS, labelKey: 'aif.nav.workloads', weight: 150
-  },
-  {
-    id: PAGE_IDS.SETTINGS, labelKey: 'aif.nav.settings', weight: 100
-  }
+  { id: PAGE_IDS.OVERVIEW,        labelKey: 'aif.nav.overview',        weight: 600 },
+  { id: PAGE_IDS.APPS,            labelKey: 'aif.nav.apps',            weight: 500 },
+  { id: PAGE_IDS.BLUEPRINTS,      labelKey: 'aif.nav.blueprints',      weight: 400 },
+  { id: PAGE_IDS.BUNDLES,         labelKey: 'aif.nav.bundles',         weight: 300 },
+  { id: PAGE_IDS.PENDING_REVIEWS, labelKey: 'aif.nav.pendingReviews',  weight: 200 },
+  { id: PAGE_IDS.WORKLOADS,       labelKey: 'aif.nav.workloads',       weight: 150 },
+  { id: PAGE_IDS.SETTINGS,        labelKey: 'aif.nav.settings',        weight: 100 }
 ];
 
 /**
@@ -93,16 +79,8 @@ export function init($plugin: IPlugin, store: any): void {
   // Blueprints: minted by approval workflow; only Deprecate/Withdraw/Reactivate are valid lifecycle actions.
   // Workloads: removed via a custom Uninstall action (P6-6) that cleans up K8s resources, not raw delete.
   // Settings: singleton CR managed by the operator; no delete action in spec.
-  configureType(CRD_TYPES.BUNDLE, {
-    isCreatable: true, isEditable: true, isRemovable: true, canYaml: true
-  });
-  configureType(CRD_TYPES.BLUEPRINT, {
-    isCreatable: false, isEditable: false, isRemovable: false, canYaml: true
-  });
-  configureType(CRD_TYPES.WORKLOAD, {
-    isCreatable: false, isEditable: false, isRemovable: false
-  });
-  configureType(CRD_TYPES.SETTINGS, {
-    isCreatable: false, isEditable: true, isRemovable: false
-  });
+  configureType(CRD_TYPES.BUNDLE,     { isCreatable: true,  isEditable: true,  isRemovable: true,  canYaml: true  });
+  configureType(CRD_TYPES.BLUEPRINT,  { isCreatable: false, isEditable: false, isRemovable: false, canYaml: true  });
+  configureType(CRD_TYPES.WORKLOAD,   { isCreatable: false, isEditable: false, isRemovable: false               });
+  configureType(CRD_TYPES.SETTINGS,   { isCreatable: false, isEditable: true,  isRemovable: false               });
 }
