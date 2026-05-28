@@ -78,7 +78,12 @@
       <button class="btn role-secondary" @click="cancel">
         {{ t('aif.pages.wizards.install.cancel') }}
       </button>
-      <button v-if="currentStep < steps.length - 1" class="btn role-primary" @click="next">
+      <button
+        v-if="currentStep < steps.length - 1"
+        class="btn role-primary"
+        :disabled="!stepReady(currentStep + 1)"
+        @click="next"
+      >
         {{ t('aif.pages.wizards.install.next') }}
       </button>
       <button v-else class="btn role-primary" :disabled="installing || !canInstall" @click="install">
@@ -186,12 +191,33 @@ export default defineComponent({
   },
 
   methods: {
+    // Per-step readiness mirrors blueprint-create.vue so the user can't
+    // tab forward into Review with an empty target-clusters list (which
+    // would leave the resulting Workload Pending forever). Step 0 is
+    // always entered fresh; Step 1 requires a DNS-1123 name + a
+    // non-empty namespace; Step 2 (Review) additionally requires the
+    // target-clusters list to be non-empty.
+    stepReady(index) {
+      switch (index) {
+      case 0:  return true;
+      case 1:  return DNS_LABEL.test(this.form.name) && this.form.namespace.trim() !== '';
+      case 2:  return DNS_LABEL.test(this.form.name) &&
+                 this.form.namespace.trim() !== '' &&
+                 this.form.targetClusters.length > 0;
+      default: return false;
+      }
+    },
+
     goToStep(index) {
-      this.currentStep = index;
+      if (index <= this.currentStep || this.stepReady(index)) {
+        this.currentStep = index;
+      }
     },
 
     next() {
-      this.currentStep++;
+      if (this.stepReady(this.currentStep + 1)) {
+        this.currentStep++;
+      }
     },
 
     back() {
