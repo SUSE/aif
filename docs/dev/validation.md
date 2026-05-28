@@ -153,8 +153,15 @@ make smoke-e2e
 9. `trap`-on-EXIT cleanup: kills the operator and deletes the cluster.
 
 **Expected:** Final line is `>>> [smoke-e2e] PASS`. The Workload will stay
-at `phase=Pending` because `targetClusters: []` — that is the deliberate
-"operator observed and accepted the spec" assertion, not a bug.
+at `phase=Pending` with `Ready=False, reason=PullSecretNotReady` because the
+smoke harness deliberately does NOT seed `suse-registry-creds` in the
+operator namespace — the workload reconciler returns its
+`errPullSecretNotReady` sentinel before invoking the deployer, which is the
+"operator observed and accepted the spec" assertion this rung is asserting.
+The `targetClusters: []` choice in the example is independent: it would
+keep the Workload at Pending even if the pull-secret were present, because
+the deployer has nothing to roll out to. Both gates exist on purpose; the
+pull-secret gate is just the one that fires first.
 
 **Useful env overrides:**
 
@@ -175,6 +182,8 @@ propagated to the engine bus:
 kubectl get settings -n aif settings -o jsonpath='{.status.conditions}' | jq .
 # Look for: type=Ready, status=True, reason=SettingsApplied (or similar)
 
+# The smoke-e2e harness writes its operator log to /tmp/aif-operator-smoke.log;
+# `make run` writes to your terminal, so tail the appropriate source for your path.
 tail -n 50 /tmp/aif-operator-smoke.log | grep -i "settings\|engineBus"
 # Should show SettingsReconciler picked up the change and projected it onto each engine.
 ```
@@ -230,9 +239,14 @@ kubectl get workload -n default smoke -o yaml \
 **Expected:**
 
 - Blueprint reaches `phase=Active`, condition `Ready=True, reason=BlueprintValidated`.
-- Workload picks up the Blueprint reference. With `targetClusters: []` it
-  stays at `Pending` (the controller cannot create a Fleet `Bundle` without
-  a target). Populate the list with a real downstream cluster ID
+- Workload picks up the Blueprint reference and stays at `Pending`. The first
+  gate that fires is `Ready=False, reason=PullSecretNotReady` — the workload
+  reconciler bails out before invoking the deployer until
+  `suse-registry-creds` exists in the operator namespace (the pull-secret
+  reconciler from P5-5 materializes it from `Settings.spec.suseRegistry`).
+  Seed Settings with real creds (see §4.5 and §5) to clear this gate; once
+  cleared, `targetClusters: []` becomes the next gate (no Fleet `Bundle`
+  target). Populate the list with a real downstream cluster ID
   (`management.cattle.io.cluster` name) to drive `Deploying → Running` (or
   `Failed` for a placeholder chart that won't actually install).
 
@@ -245,13 +259,20 @@ kubectl get workload -n default smoke -o yaml \
 > Blueprint's spec successfully and it will look like the webhook is
 > broken — it's not, it's just not registered.
 
-To exercise immutability end-to-end:
+To exercise immutability end-to-end you need cert-manager available in the
+cluster, because the chart's `values.schema.json` currently only enumerates
+`webhook.tlsMode=cert-manager`. (The `helm-hook` mode is the deferred
+follow-up wired to P0-7 / P0-3 in `PROJECT_PLAN.md` — until it ships, a
+cert-manager prerequisite is the only supported path.)
 
 ```bash
+# Prereq: cert-manager already installed in the cluster.
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+#   kubectl -n cert-manager rollout status deploy/cert-manager-webhook
+
 # Install the chart instead of running out-of-cluster.
 helm install aif-operator charts/aif-operator \
-  --namespace aif --create-namespace \
-  --set webhook.tlsMode=helm-hook
+  --namespace aif --create-namespace
 
 kubectl apply -f examples/blueprint-smoke.yaml
 
@@ -297,9 +318,11 @@ code — keep the env vars distinct.
 make verify-all-live
 ```
 
-This invokes each `verify-*-live` target in sequence. Targets that hard-fail
-without creds will short-circuit the whole run; targets that skip cleanly
-just skip. If you only want the "skips don't bother me" ones for CI:
+This invokes each `verify-*-live` target in sequence, continues past failures,
+and prints a per-target pass/fail/skip summary at the end. Exit code is
+non-zero iff at least one target failed (cleanly-skipping targets count as
+PASS in the summary). If you only want the "skips don't bother me" ones for
+CI:
 
 ```bash
 make verify-fleet-live verify-git-live   # both skip without env vars
@@ -507,11 +530,12 @@ causes:
   `kubectl --kubeconfig $(k3d kubeconfig write aif-dev-smoke) get nodes`
   should show one Ready node.
 
-### `verify-all-live` aborts immediately
+### `verify-all-live` reports one or more FAILs
 
-Run them one at a time to isolate which target is failing. Hard-failing
-targets print an `ERROR: set X and Y` message naming the env vars they
-need.
+The target now keeps going past failures and prints a summary at the end.
+Re-run the individual `verify-<pkg>-live` to see its full output;
+hard-failing targets print an `ERROR: set X and Y` message naming the env
+vars they need.
 
 ### `bun install` fails on @rancher/shell
 

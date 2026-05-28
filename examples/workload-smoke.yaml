@@ -11,10 +11,17 @@ spec:
       name: smoke-blueprint
       version: 0.1.0
   deployStrategy: helm
-  # Empty on purpose: with no target clusters the WorkloadReconciler can
-  # validate the spec but will not create a fleet.cattle.io Bundle, so the
-  # Workload stays at phase=Pending. That is the right "operator observed
-  # and accepted my spec" assertion for a smoke test against a placeholder
-  # chart. Populate this list to drive a real Fleet rollout.
+  # Empty on purpose. Two gates keep this Workload at phase=Pending in the
+  # smoke harness:
+  #   1. The smoke setup never seeds `suse-registry-creds` in the operator
+  #      namespace, so the WorkloadReconciler returns its
+  #      errPullSecretNotReady sentinel BEFORE invoking the deployer
+  #      (Ready=False, reason=PullSecretNotReady). This fires first.
+  #   2. Even with the pull-secret in place, empty targetClusters means the
+  #      Fleet adapter has no target to roll out to.
+  # Both are deliberate "operator observed and accepted my spec" assertions
+  # for a smoke test against a placeholder chart. Populate this list AND
+  # configure Settings.spec.suseRegistry (so the pull-secret reconciler
+  # materializes `suse-registry-creds`) to drive a real Fleet rollout.
   targetClusters: []
   replicas: 1

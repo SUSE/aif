@@ -353,22 +353,19 @@ smoke-e2e:
 	@echo "Running local end-to-end smoke (always-fresh k3d)..."
 	@bash hack/smoke-e2e.sh
 
-# verify-all-live runs every verify-*-live target in sequence. Targets that
-# already skip cleanly without env vars (fleet, git) are no-ops in CI;
-# targets that hard-fail without creds (nim, appco, apps, wrapper) fail
-# loudly. Designed to be run by a human with .env populated, NOT by CI.
+# verify-all-live runs every verify-*-live target and reports a per-target
+# pass/fail/skip summary at the end. Continues past failures so one missing
+# credential pair doesn't mask the state of the rest. Exits non-zero iff at
+# least one target failed (skips don't count as failures). Designed to be
+# run by a human with .env populated, NOT by CI.
 verify-all-live:
-	@echo "=== verify-nim-live ==="
-	@$(MAKE) verify-nim-live || { echo "FAIL: verify-nim-live"; exit 1; }
-	@echo "=== verify-appco-live ==="
-	@$(MAKE) verify-appco-live || { echo "FAIL: verify-appco-live"; exit 1; }
-	@echo "=== verify-apps-live ==="
-	@$(MAKE) verify-apps-live || { echo "FAIL: verify-apps-live"; exit 1; }
-	@echo "=== verify-wrapper-live ==="
-	@$(MAKE) verify-wrapper-live || { echo "FAIL: verify-wrapper-live"; exit 1; }
-	@echo "=== verify-fleet-live (skips without AIF_FLEET_LIVE_KUBECONFIG) ==="
-	@$(MAKE) verify-fleet-live
-	@echo "=== verify-git-live (skips without AIF_GIT_LIVE_REPO) ==="
-	@$(MAKE) verify-git-live
-	@echo
-	@echo "All live verifies completed."
+	@set +e; \
+	fail=0; results=""; \
+	for t in nim appco apps wrapper fleet git; do \
+		echo "=== verify-$$t-live ==="; \
+		$(MAKE) verify-$$t-live; rc=$$?; \
+		if [ $$rc -eq 0 ]; then results="$$results\nverify-$$t-live: PASS"; \
+		else fail=1; results="$$results\nverify-$$t-live: FAIL (rc=$$rc)"; fi; \
+	done; \
+	echo; echo "=== verify-all-live summary ==="; printf "$$results\n"; \
+	exit $$fail
