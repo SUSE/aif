@@ -112,7 +112,34 @@ aif:
       newBlueprint: 'New Blueprint'
     workloads:
       title: 'Workloads'
-      comingSoon: 'Workload monitoring coming soon'
+      toolbar:
+        refresh: 'Refresh'
+        search: 'Search'
+      columns:
+        state: 'State'
+        name: 'Name'
+        namespace: 'Namespace'
+        source: 'Source'
+        deploy: 'Deploy'
+        version: 'Version'
+      actions:
+        delete: 'Delete'
+        manage: 'Manage'
+        upgrade: 'Upgrade'
+      deleteModal:
+        title: 'Delete Workload'
+        body: 'Delete workload "{name}"? This also removes the Fleet Bundle or GitRepo that drives it.'
+        confirm: 'Delete'
+        cancel: 'Cancel'
+      empty:
+        none: 'No workloads yet. Install an App or Blueprint to create one.'
+        error: 'Failed to load workloads'
+      phase:
+        running: 'Running'
+        pending: 'Pending'
+        degraded: 'Degraded'
+        failed: 'Failed'
+        unknown: 'Unknown'
     settings:
       title: 'Settings'
       apply: 'Apply'
