@@ -220,7 +220,6 @@ module.exports = {
     'vue/v-slot-style':                  'off',
     'vue/component-tags-order':          'off',
     'vue/no-mutating-props':             'off',
-    '@typescript-eslint/no-var-requires': 'off',
     '@typescript-eslint/no-unused-vars': 'off',
     'array-callback-return':             'off',
     'vue/one-component-per-file':        'off',
@@ -238,6 +237,14 @@ module.exports = {
         'vue/component-definition-name-casing': 'off',
         'no-unreachable-loop':                  'off',
         'computed-property-spacing':            'off'
+      }
+    },
+    {
+      files: [
+        'pkg/ai-factory/index.ts'
+      ],
+      rules: {
+        '@typescript-eslint/no-var-requires': 'off'
       }
     }
   ]
