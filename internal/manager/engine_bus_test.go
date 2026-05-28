@@ -14,6 +14,7 @@ import (
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/source_collection"
+	"github.com/SUSE/aif/pkg/suse_registry"
 )
 
 // fakeDiscovery is a hand-rolled nvidia.Discovery that records UpdateSettings.
@@ -53,16 +54,44 @@ func (f *fakeDeployer) GenerateValues(_ context.Context, _ nvidia.GenerateReques
 	return nil, nil
 }
 
+type fakeSUSERegistryProvider struct {
+	last suse_registry.EngineSettings
+	mu   sync.Mutex
+}
+
+func (f *fakeSUSERegistryProvider) List(_ context.Context) ([]suse_registry.SUSEChart, error) {
+	return nil, nil
+}
+
+func (f *fakeSUSERegistryProvider) Get(_ context.Context, _, _ string) (suse_registry.SUSEChart, error) {
+	return suse_registry.SUSEChart{}, suse_registry.ErrNotFound
+}
+
+func (f *fakeSUSERegistryProvider) Refresh(_ context.Context) error { return nil }
+
+func (f *fakeSUSERegistryProvider) UpdateSettings(s suse_registry.EngineSettings) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.last = s
+}
+
+func (f *fakeSUSERegistryProvider) LastSettings() suse_registry.EngineSettings {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.last
+}
+
 // helper: build an engineBus with all engines as recording fakes.
-func newTestBus() (controller.SettingsApplier, *helm.FakeEngine, *fleet.FakeBundleEngine, *fleet.FakeGitRepoEngine, *fakeDiscovery, *fakeDeployer, *source_collection.FakeClient) {
+func newTestBus() (controller.SettingsApplier, *helm.FakeEngine, *fleet.FakeBundleEngine, *fleet.FakeGitRepoEngine, *fakeDiscovery, *fakeDeployer, *source_collection.FakeClient, *fakeSUSERegistryProvider) {
 	helmFake := helm.NewFake()
 	fleetFake := fleet.NewFakeBundleEngine()
 	gitRepoFake := &fleet.FakeGitRepoEngine{}
 	discFake := &fakeDiscovery{}
 	deplFake := &fakeDeployer{}
 	appCoFake := &source_collection.FakeClient{}
-	bus := NewEngineBus(helmFake, fleetFake, gitRepoFake, discFake, deplFake, appCoFake, testLogger())
-	return bus, helmFake, fleetFake, gitRepoFake, discFake, deplFake, appCoFake
+	suseRegFake := &fakeSUSERegistryProvider{}
+	bus := NewEngineBus(helmFake, fleetFake, gitRepoFake, discFake, deplFake, appCoFake, suseRegFake, testLogger())
+	return bus, helmFake, fleetFake, gitRepoFake, discFake, deplFake, appCoFake, suseRegFake
 }
 
 func testLogger() *slog.Logger {
@@ -71,7 +100,7 @@ func testLogger() *slog.Logger {
 
 // TestEngineBus_Apply_PushesToHelm: snapshot with rules → helm fake captured.
 func TestEngineBus_Apply_PushesToHelm(t *testing.T) {
-	bus, h, _, _, _, _, _ := newTestBus()
+	bus, h, _, _, _, _, _, _ := newTestBus()
 	snap := controller.SettingsSnapshot{
 		SUSERegistry:          "harbor.example.com",
 		AppCollectionRegistry: "dp.apps.rancher.io",
@@ -97,7 +126,7 @@ func TestEngineBus_Apply_PushesToHelm(t *testing.T) {
 
 // TestEngineBus_Apply_PushesToDiscovery: snapshot → discovery fake captured.
 func TestEngineBus_Apply_PushesToDiscovery(t *testing.T) {
-	bus, _, _, _, d, _, _ := newTestBus()
+	bus, _, _, _, d, _, _, _ := newTestBus()
 	snap := controller.SettingsSnapshot{
 		SUSERegistry:      "harbor.example.com",
 		SUSERegistryUser:  "u",
@@ -117,7 +146,7 @@ func TestEngineBus_Apply_PushesToDiscovery(t *testing.T) {
 // TestEngineBus_Apply_PushesToDeployer: snapshot → deployer fake captured;
 // Deployer doesn't need creds (only image hostname).
 func TestEngineBus_Apply_PushesToDeployer(t *testing.T) {
-	bus, _, _, _, _, dep, _ := newTestBus()
+	bus, _, _, _, _, dep, _, _ := newTestBus()
 	snap := controller.SettingsSnapshot{SUSERegistry: "harbor.example.com"}
 	if err := bus.Apply(context.Background(), snap); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -130,7 +159,7 @@ func TestEngineBus_Apply_PushesToDeployer(t *testing.T) {
 // TestEngineBus_Apply_AppCoModeDisabled_PushesEmptyAPIURL: mode=disabled →
 // bus passes APIURL="" regardless of AppCollectionAPI value.
 func TestEngineBus_Apply_AppCoModeDisabled_PushesEmptyAPIURL(t *testing.T) {
-	bus, _, _, _, _, _, ac := newTestBus()
+	bus, _, _, _, _, _, ac, _ := newTestBus()
 	snap := controller.SettingsSnapshot{
 		AppCollectionAPI:  "https://configured.example.com",
 		AppCollectionMode: "disabled",
@@ -145,7 +174,7 @@ func TestEngineBus_Apply_AppCoModeDisabled_PushesEmptyAPIURL(t *testing.T) {
 
 // TestEngineBus_Apply_AppCoModeAPI_PushesConfiguredURL: mode=api → URL passes through.
 func TestEngineBus_Apply_AppCoModeAPI_PushesConfiguredURL(t *testing.T) {
-	bus, _, _, _, _, _, ac := newTestBus()
+	bus, _, _, _, _, _, ac, _ := newTestBus()
 	snap := controller.SettingsSnapshot{
 		AppCollectionAPI:  "https://api.example.com",
 		AppCollectionMode: "api",
@@ -161,7 +190,7 @@ func TestEngineBus_Apply_AppCoModeAPI_PushesConfiguredURL(t *testing.T) {
 // TestEngineBus_Apply_AppCoModeRegistryFallback_TreatedAsAPI: registry-fallback
 // → URL passes through (current punt; follow-up note 1).
 func TestEngineBus_Apply_AppCoModeRegistryFallback_TreatedAsAPI(t *testing.T) {
-	bus, _, _, _, _, _, ac := newTestBus()
+	bus, _, _, _, _, _, ac, _ := newTestBus()
 	snap := controller.SettingsSnapshot{
 		AppCollectionAPI:  "https://api.example.com",
 		AppCollectionMode: "registry-fallback",
@@ -178,7 +207,7 @@ func TestEngineBus_Apply_AppCoModeRegistryFallback_TreatedAsAPI(t *testing.T) {
 // If an engine grows fallibility, this test breaks and forces a deliberate
 // update to the bus + reconciler error handling.
 func TestEngineBus_Apply_NeverErrorsToday(t *testing.T) {
-	bus, _, _, _, _, _, _ := newTestBus()
+	bus, _, _, _, _, _, _, _ := newTestBus()
 	if err := bus.Apply(context.Background(), controller.SettingsSnapshot{}); err != nil {
 		t.Fatalf("Apply must return nil today: %v", err)
 	}
@@ -189,7 +218,7 @@ func TestEngineBus_Apply_NeverErrorsToday(t *testing.T) {
 // degrading source_collection.AnnotationReader (which checks OCIHost in
 // effectiveAnnotationSettings and returns ErrNotConfigured when empty).
 func TestEngineBus_Apply_PushesOCIHostToAppCo(t *testing.T) {
-	bus, _, _, _, _, _, ac := newTestBus()
+	bus, _, _, _, _, _, ac, _ := newTestBus()
 	snap := controller.SettingsSnapshot{
 		AppCollectionRegistry: "dp.apps.rancher.io",
 		AppCollectionAPI:      "https://api.apps.rancher.io",
@@ -263,7 +292,7 @@ func TestEngineBus_Apply_PropagatesFleetSettings_AllAuthTypes(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			bus, _, fb, fg, _, _, _ := newTestBus()
+			bus, _, fb, fg, _, _, _, _ := newTestBus()
 			if err := bus.Apply(context.Background(), tc.snap); err != nil {
 				t.Fatalf("Apply: %v", err)
 			}
@@ -276,5 +305,21 @@ func TestEngineBus_Apply_PropagatesFleetSettings_AllAuthTypes(t *testing.T) {
 				t.Errorf("fleetGitRepo settings mismatch\n got: %+v\nwant: %+v", gotFG, tc.want)
 			}
 		})
+	}
+}
+
+func TestEngineBus_DispatchesSUSERegistrySettings(t *testing.T) {
+	bus, _, _, _, _, _, _, suseReg := newTestBus()
+	snapshot := controller.SettingsSnapshot{
+		SUSERegistry:      "registry.example.com",
+		SUSERegistryUser:  "u",
+		SUSERegistryToken: "t",
+	}
+	if err := bus.Apply(context.Background(), snapshot); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	got := suseReg.LastSettings()
+	if got.RegistryEndpoint != "registry.example.com" || got.Username != "u" || got.Token != "t" {
+		t.Errorf("suse_registry did not receive credentials: %+v", got)
 	}
 }

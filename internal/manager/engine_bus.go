@@ -10,6 +10,7 @@ import (
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
 	"github.com/SUSE/aif/pkg/source_collection"
+	"github.com/SUSE/aif/pkg/suse_registry"
 )
 
 // engineBus is the production SettingsApplier. Holds direct refs to all
@@ -30,6 +31,7 @@ type engineBus struct {
 	nvidiaDisc   nvidia.Discovery
 	nvidiaDepl   nvidia.Deployer
 	appCollect   source_collection.Client
+	suseReg      suse_registry.Provider
 	logger       *slog.Logger
 }
 
@@ -43,6 +45,7 @@ func NewEngineBus(
 	nd nvidia.Discovery,
 	nde nvidia.Deployer,
 	ac source_collection.Client,
+	sr suse_registry.Provider,
 	logger *slog.Logger,
 ) controller.SettingsApplier {
 	return &engineBus{
@@ -52,6 +55,7 @@ func NewEngineBus(
 		nvidiaDisc:   nd,
 		nvidiaDepl:   nde,
 		appCollect:   ac,
+		suseReg:      sr,
 		logger:       logger,
 	}
 }
@@ -76,6 +80,7 @@ func (b *engineBus) Apply(_ context.Context, s controller.SettingsSnapshot) erro
 	b.nvidiaDisc.UpdateSettings(b.projectNvidiaDiscovery(s))
 	b.nvidiaDepl.UpdateSettings(b.projectNvidiaDeployer(s))
 	b.appCollect.UpdateSettings(b.projectAppCo(s))
+	b.suseReg.UpdateSettings(b.projectSUSERegistry(s))
 	b.logger.Info("settings applied to engines",
 		slog.String("component", "manager.engine_bus"),
 		slog.String("registry_endpoint", s.SUSERegistry),
@@ -166,4 +171,12 @@ func (b *engineBus) projectFleet(s controller.SettingsSnapshot) fleet.FleetSetti
 		}}
 	}
 	return out
+}
+
+func (b *engineBus) projectSUSERegistry(s controller.SettingsSnapshot) suse_registry.EngineSettings {
+	return suse_registry.EngineSettings{
+		RegistryEndpoint: s.SUSERegistry,
+		Username:         s.SUSERegistryUser,
+		Token:            s.SUSERegistryToken,
+	}
 }

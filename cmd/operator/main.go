@@ -25,8 +25,10 @@ import (
 	"github.com/SUSE/aif/pkg/git"
 	"github.com/SUSE/aif/pkg/helm"
 	"github.com/SUSE/aif/pkg/nvidia"
+	"github.com/SUSE/aif/pkg/oci"
 	"github.com/SUSE/aif/pkg/publish"
 	"github.com/SUSE/aif/pkg/source_collection"
+	"github.com/SUSE/aif/pkg/suse_registry"
 	"github.com/SUSE/aif/pkg/workload"
 	fleetv1 "github.com/rancher/fleet/pkg/apis/fleet.cattle.io/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -92,6 +94,9 @@ func main() {
 	}
 	gitEngine := git.NewEngine(logger)
 	nvidiaDiscovery, nvidiaAnnReader := nvidia.NewDiscovery(logger)
+	suseRegistryWalker := oci.NewWalker(logger)
+	suseRegistryAnnReader := oci.NewAnnotationReader(logger, suseRegistryWalker)
+	suseRegistryProvider := suse_registry.NewProvider(logger, suseRegistryWalker, suseRegistryAnnReader)
 	nvidiaDeployer := nvidia.NewDeployer(logger)
 	appcoClient, appcoAnnReader := source_collection.NewClient(logger)
 
@@ -104,6 +109,7 @@ func main() {
 	appsCatalog := apps.New(logger, catalogRefreshDuration)
 	appsCatalog.AddSource(apps.NewNVIDIASource(nvidiaDiscovery, nvidiaAnnReader, logger, catalogRefreshDuration))
 	appsCatalog.AddSource(apps.NewAppCoSource(appcoClient, appcoAnnReader, logger, catalogRefreshDuration))
+	appsCatalog.AddSource(apps.NewSUSERegistrySource(suseRegistryProvider, logger, catalogRefreshDuration))
 	blueprintManager := blueprint.New(logger)
 	// publish.Workflow takes Repository ports; the Repositories are constructed
 	// after ctrl.NewManager below (they need the manager's client). Defer
@@ -145,7 +151,7 @@ func main() {
 	fleetGitRepoEngine := fleet.NewGitRepoEngine(logger, fleetClient, gitEngine)
 
 	// Bus that propagates Settings to all engines on every reconcile (P5-7).
-	engineBus := manager.NewEngineBus(helmEngine, fleetBundleEngine, fleetGitRepoEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, logger)
+	engineBus := manager.NewEngineBus(helmEngine, fleetBundleEngine, fleetGitRepoEngine, nvidiaDiscovery, nvidiaDeployer, appcoClient, suseRegistryProvider, logger)
 
 	// Log manager types so vars stay "used" while their consumers (later
 	// stories wire gitEngine, etc.) come online. Logging the values
@@ -159,6 +165,7 @@ func main() {
 		"gitEngine", fmt.Sprintf("%T", gitEngine),
 		"nvidiaDiscovery", fmt.Sprintf("%T", nvidiaDiscovery),
 		"nvidiaDeployer", fmt.Sprintf("%T", nvidiaDeployer),
+		"suseRegistryProvider", fmt.Sprintf("%T", suseRegistryProvider),
 		"appsCatalog", fmt.Sprintf("%T", appsCatalog),
 		"blueprintManager", fmt.Sprintf("%T", blueprintManager),
 	)
