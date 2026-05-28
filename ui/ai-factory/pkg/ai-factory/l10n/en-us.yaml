@@ -18,36 +18,27 @@ aif:
     apps:
       title: 'Apps'
       toolbar:
-        search: 'Search apps...'
-        sourceAll: 'All Sources'
-        sourceNvidia: 'NVIDIA'
-        sourceSuse: 'SUSE'
-        categoryAll: 'All Categories'
+        search: 'Search applications'
+        registrySuseLibrary: 'SUSE AI Library'
+        registryNvidia: 'Nvidia NGC'
+        refresh: 'Refresh'
         viewTile: 'Tile View'
         viewList: 'List View'
-        includeRefBlueprints: 'Include Reference Blueprints'
-        refresh: 'Refresh'
-      header:
-        total: '{count} Apps'
-        nvidia: '{count} NVIDIA'
-        suse: '{count} SUSE'
+      resultsSummary: '{count} application(s)'
+      packaging:
+        helm: 'Helm'
+        container: 'Container'
       card:
-        install: 'Install'
-        installDisabled: 'Deploy wizard coming soon'
         externalLink: 'Open project page'
       badge:
         nvidia: 'NVIDIA'
         suse: 'SUSE'
-        referenceBlueprint: 'Reference Blueprint'
       list:
         name: 'Name'
-        publisher: 'Publisher'
-        category: 'Category'
-        version: 'Version'
-        updated: 'Updated'
+        description: 'Description'
         actions: 'Actions'
       empty:
-        noResults: 'No applications match your filters. Try clearing the search or changing the source filter.'
+        noResults: 'No applications match your search. Try a different keyword or switch registries.'
         noCatalog: 'No apps found. Configure NVIDIA and SUSE credentials in Settings, then sync the catalog.'
         error: 'Failed to load applications'
     blueprints:

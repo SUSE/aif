@@ -82,12 +82,3 @@ test('utils/operator-api.ts App interface fields align with Go types', () => {
     assert.match(api, new RegExp(`${tag}[?]?:\\s`), `Missing TS field for Go JSON tag: ${tag}`);
   }
 });
-
-test('localStorage key is consistent between toggle handler and onMounted', () => {
-  const page = read('pages/apps.vue');
-
-  // The STORAGE_KEY constant should be used in both places
-  assert.match(page, /STORAGE_KEY/);
-  assert.match(page, /localStorage\.getItem\(STORAGE_KEY\)/);
-  assert.match(page, /localStorage\.setItem\(STORAGE_KEY/);
-});

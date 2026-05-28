@@ -24,17 +24,23 @@ test('AppCard.vue renders publisher badge with source-based styling', () => {
   assert.match(source, /suse/i);
 });
 
-test('AppCard.vue renders reference blueprint badge conditionally', () => {
-  const source = read('components/apps/AppCard.vue');
+test('AppCard.vue: whole card is clickable and emits install/select', () => {
+  const src = read('components/apps/AppCard.vue');
 
-  assert.match(source, /referenceBlueprint/);
-  assert.match(source, /aif\.pages\.apps\.badge\.referenceBlueprint/);
+  assert.match(src, /@click/);
+  assert.match(src, /\$emit\(\s*['"](install|select)['"]/);
 });
 
-test('AppCard.vue has Install button', () => {
-  const source = read('components/apps/AppCard.vue');
+test('AppCard.vue: Add to Bundle button removed', () => {
+  const src = read('components/apps/AppCard.vue');
 
-  assert.match(source, /aif\.pages\.apps\.card\.install/);
+  assert.doesNotMatch(src, /add-to-bundle/);
+});
+
+test('AppCard.vue: shows packaging badge (Helm/Container)', () => {
+  const src = read('components/apps/AppCard.vue');
+
+  assert.match(src, /aif\.pages\.apps\.packaging\.(helm|container)|assetType/);
 });
 
 test('AppCard.vue emits install event', () => {
@@ -54,12 +60,6 @@ test('AppCard.vue renders description with line clamp', () => {
   const source = read('components/apps/AppCard.vue');
 
   assert.match(source, /line-clamp|webkit-line-clamp/);
-});
-
-test('AppCard.vue renders tags from categories', () => {
-  const source = read('components/apps/AppCard.vue');
-
-  assert.match(source, /categories|tags/);
 });
 
 test('AppCard.vue renders external link when projectURL exists', () => {
