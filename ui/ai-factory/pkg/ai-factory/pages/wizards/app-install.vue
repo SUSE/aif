@@ -89,7 +89,7 @@
       <button v-if="currentStep < steps.length - 1" class="btn role-primary" @click="next">
         {{ t('aif.pages.wizards.install.next') }}
       </button>
-      <button v-else class="btn role-primary" :disabled="installing" @click="install">
+      <button v-else class="btn role-primary" :disabled="installing || !canInstall" @click="install">
         {{ installing ? t('aif.pages.wizards.install.installing') : t('aif.pages.wizards.install.install') }}
       </button>
     </div>
@@ -111,7 +111,7 @@ import { defineComponent } from 'vue';
 import Loading from '@shell/components/Loading';
 import yaml from 'js-yaml';
 import WizardStepIndicator from '../../components/wizards/WizardStepIndicator.vue';
-import InstallProgressModal from '../../components/wizards/InstallProgressModal.vue';
+import InstallProgressModal, { PROGRESS_STATUS } from '../../components/wizards/InstallProgressModal.vue';
 import { getApp, getAppValues, createWorkload } from '../../utils/operator-api';
 import { PRODUCT_NAME, MANAGEMENT_CLUSTER, PAGE_IDS } from '../../config/types';
 
@@ -206,6 +206,15 @@ export default defineComponent({
         { label: this.t('aif.pages.wizards.steps.review') },
       ];
     },
+
+    // Install is gated on (1) App loaded — required for repo/chart fields the
+    // CRD enforces non-empty, (2) at least one target cluster — empty list
+    // would leave the Workload Pending forever, (3) DNS-1123 valid name.
+    canInstall() {
+      return Boolean(this.app) &&
+        this.form.targetClusters.length > 0 &&
+        DNS_LABEL.test(this.form.name);
+    },
   },
 
   methods: {
@@ -280,17 +289,30 @@ export default defineComponent({
     },
 
     async install() {
+      // canInstall already gates the button; re-check here so a keyboard
+      // submission or programmatic call can't bypass the precondition.
       if (!DNS_LABEL.test(this.form.name)) {
         this.installError = new Error(this.t('aif.pages.wizards.install.nameInvalid'));
 
         return;
       }
+      if (!this.app) {
+        this.installError = new Error(this.t('aif.pages.wizards.install.appNotLoaded'));
+
+        return;
+      }
+      if (this.form.targetClusters.length === 0) {
+        this.installError = new Error(this.t('aif.pages.wizards.install.targetClustersRequired'));
+
+        return;
+      }
+
       this.installing      = true;
       this.installError    = null;
-      this.installProgress = (this.form.targetClusters.length ? this.form.targetClusters : ['local']).map((c) => ({
+      this.installProgress = this.form.targetClusters.map((c) => ({
         clusterId:   c,
         clusterName: c,
-        status:      'installing',
+        status:      PROGRESS_STATUS.INSTALLING,
         message:     this.t('aif.pages.wizards.install.creating'),
       }));
       this.showProgressModal = true;
@@ -301,8 +323,8 @@ export default defineComponent({
             source: {
               kind: 'App',
               app:  {
-                repo:    this.app?.chartRef?.repo || '',
-                chart:   this.app?.chartRef?.chart || this.appId,
+                repo:    this.app.chartRef.repo,
+                chart:   this.app.chartRef.chart,
                 version: this.form.chartVersion,
               },
             },
@@ -314,13 +336,13 @@ export default defineComponent({
           },
         });
         this.installProgress = this.installProgress.map((p) => ({
-          ...p, status: 'success', message: this.t('aif.pages.wizards.install.created'),
+          ...p, status: PROGRESS_STATUS.SUCCESS, message: this.t('aif.pages.wizards.install.created'),
         }));
         this.clearStorage();
       } catch (e) {
         this.installError    = e;
         this.installProgress = this.installProgress.map((p) => ({
-          ...p, status: 'failed', message: e?.message || 'Error',
+          ...p, status: PROGRESS_STATUS.FAILED, message: e?.message || 'Error',
         }));
       } finally {
         this.installing = false;

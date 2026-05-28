@@ -219,6 +219,8 @@ aif:
         install:         'Install'
         installing:      'Installing…'
         nameInvalid:     'Instance name must be a DNS label: lowercase letters, digits and hyphens, 1-63 characters.'
+        appNotLoaded:    'App details did not load. Refresh the page and try again.'
+        targetClustersRequired: 'Select at least one target cluster before installing.'
         creating:        'Creating workload…'
         created:         'Workload created'
       steps:
