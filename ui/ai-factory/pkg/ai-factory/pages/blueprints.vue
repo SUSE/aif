@@ -9,6 +9,12 @@
         <span class="bp-page__pill">
           {{ t('aif.pages.blueprints.header.versions', { count: totalVersions }) }}
         </span>
+        <button
+          class="btn role-primary"
+          @click="$router.push({ name: `${ PRODUCT_NAME }-c-cluster-blueprint-create`, params: { cluster: MANAGEMENT_CLUSTER } })"
+        >
+          {{ t('aif.pages.blueprints.newBlueprint') }}
+        </button>
       </div>
     </header>
 
@@ -79,7 +85,7 @@ import { Checkbox } from '@components/Form/Checkbox';
 import BlueprintCard from '../components/blueprints/BlueprintCard.vue';
 import BlueprintVersionsPanel from '../components/blueprints/BlueprintVersionsPanel.vue';
 import { groupByLineage, readUnreachable, readPublisherOverride } from '../utils/blueprint';
-import { CRD_TYPES } from '../config/types';
+import { CRD_TYPES, PRODUCT_NAME, MANAGEMENT_CLUSTER } from '../config/types';
 
 export default defineComponent({
   name: 'BlueprintsPage',
@@ -108,7 +114,9 @@ export default defineComponent({
       search:        '',
       useCaseFilter: '',
       showWithdrawn: false,
-      panelLineage:  null
+      panelLineage:  null,
+      PRODUCT_NAME,
+      MANAGEMENT_CLUSTER
     };
   },
 

@@ -45,8 +45,16 @@ const routes = [
     path:      `/c/:cluster/${ PRODUCT_NAME }/workloads/:ns/:name/manage`,
     component: () => import('../pages/manage.vue'),
     meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.WORKLOADS }
-  }
+  },
   // AIDEV: /task-3-2
+  // AIDEV: 2-3 — Blueprint Create wizard route
+  {
+    name:      `${ PRODUCT_NAME }-c-cluster-blueprint-create`,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/blueprints/create`,
+    component: () => import('../pages/wizards/blueprint-create.vue'),
+    meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.BLUEPRINTS }
+  }
+  // AIDEV: /2-3
 ];
 
 export default routes;

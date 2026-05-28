@@ -109,6 +109,7 @@ aif:
         noResults: 'No blueprints match your search.'
         unreachable: 'Cannot refresh wrapped Reference Blueprints from the configured registry. Vendor-chart auto-wrapping is paused. Existing Blueprints (both vendor-wrapped and internally published) remain visible and deployable from the cached state. Check Settings → Advanced → Registry Endpoints.'
         loadError: 'Failed to load Blueprints: {message}'
+      newBlueprint: 'New Blueprint'
     workloads:
       title: 'Workloads'
       comingSoon: 'Workload monitoring coming soon'
@@ -239,6 +240,41 @@ aif:
         applySuccess: 'Workload updated.'
         fetchError: 'Failed to load workload: {message}'
         appOnly: 'Manage is only available for App-sourced workloads. Use the upgrade action on Blueprint workloads.'
+      create:
+        title: 'New Blueprint'
+        editTitle: 'Edit Blueprint'
+        blueprintName: 'Blueprint Name (lineage identifier)'
+        version: 'Version (e.g. 1.0.0)'
+        versionInvalid: 'Version must be valid semver (e.g. 1.0.0).'
+        useCase: 'Use Case'
+        useCaseOptions:
+          rag: 'RAG'
+          vision: 'Vision'
+          fineTuning: 'Fine-Tuning'
+          inference: 'Inference'
+          other: 'Other'
+        description: 'Description (optional)'
+        steps:
+          basicInfo: 'Basic Info'
+          selectApps: 'Select Apps'
+          configuration: 'Configuration'
+          review: 'Review'
+        selectApps:
+          search: 'Search applications'
+          empty: 'No apps selected yet — search and add at least one.'
+          add: 'Add'
+          remove: 'Remove'
+          version: 'Version'
+        config:
+          intro: 'Set default Helm values for each app in this blueprint.'
+          loadDefaults: 'Load defaults'
+          valuesPlaceholder: 'Helm values (YAML) — leave blank to use chart defaults'
+        publish: 'Publish Blueprint'
+        publishing: 'Publishing...'
+        saveAsNewVersion: 'Save as New Version'
+        cancel: 'Cancel'
+        back: 'Back'
+        next: 'Next'
 
   wizards:
     installProgress:
