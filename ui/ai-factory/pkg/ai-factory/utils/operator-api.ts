@@ -148,6 +148,24 @@ export function getBlueprintVersion(name: string, version: string): Promise<any>
   return operatorFetch(`/api/v1/blueprints/${ name }/versions/${ version }`);
 }
 
+export function createBlueprint(spec: any): Promise<any> {
+  return operatorFetch('/api/v1/blueprints', {
+    method: 'POST',
+    body:   JSON.stringify(spec),
+  });
+}
+
+export function deprecateBlueprint(name: string, version: string, deprecated: boolean): Promise<any> {
+  return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }/${ encodeURIComponent(version) }`, {
+    method: 'PATCH',
+    body:   JSON.stringify({ deprecated }),
+  });
+}
+
+export function deleteBlueprint(name: string, version: string): Promise<void> {
+  return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }/${ encodeURIComponent(version) }`, { method: 'DELETE' });
+}
+
 // ── Workloads ─────────────────────────────────────────────────────────────────
 
 export function listWorkloads(): Promise<any> {

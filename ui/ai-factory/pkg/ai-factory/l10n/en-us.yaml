@@ -74,6 +74,30 @@ aif:
         publisherEndpointComingSoon: 'Backend endpoint not yet available'
         publisherRoleRequired: 'Requires the Blueprint Publisher role'
         publisherLabel: 'Publisher'
+      createModal:
+        title: 'Create Blueprint'
+        blueprintName: 'Blueprint Name'
+        version: 'Version'
+        useCase: 'Use Case'
+        description: 'Description'
+        components: 'Components'
+        cancel: 'Cancel'
+        create: 'Create'
+      deprecateModal:
+        title: 'Deprecate Blueprint'
+        body: 'Deprecate {name} v{version}? Deprecated blueprints are hidden by default; existing workloads keep running.'
+        confirm: 'Deprecate'
+        cancel: 'Cancel'
+      undeprecateModal:
+        title: 'Undeprecate Blueprint'
+        body: 'Undeprecate {name} v{version} as a recommended version?'
+        confirm: 'Undeprecate'
+        cancel: 'Cancel'
+      deleteModal:
+        title: 'Delete Blueprint'
+        body: 'Delete {name} v{version}?'
+        confirm: 'Delete'
+        cancel: 'Cancel'
       versionsPanel:
         title: 'Versions of {lineage}'
         close: 'Close'
