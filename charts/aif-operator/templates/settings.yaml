@@ -2,7 +2,7 @@ apiVersion: ai.suse.com/v1alpha1
 kind: Settings
 metadata:
   name: settings
-  namespace: aif
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
   annotations:

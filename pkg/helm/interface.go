@@ -24,6 +24,11 @@ type Engine interface {
 	// History returns release revision history (newest first).
 	History(ctx context.Context, namespace, releaseName string) ([]RevisionInfo, error)
 
+	// InstallFromRepoURL installs a chart resolved by name from an HTTP chart
+	// repository URL (e.g. a ClusterRepo service endpoint or a raw GitHub URL).
+	// Idempotent: if the release exists, performs an upgrade.
+	InstallFromRepoURL(ctx context.Context, req InstallFromRepoURLRequest) (ReleaseStatus, error)
+
 	// UpdateSettings is called by SettingsReconciler.applySettingsToEngines to push
 	// the latest registry endpoints + image-rewrite rules. Engine holds no Settings
 	// reference; the reconciler pushes scalars on every reconcile (per §4.5 defaults
@@ -67,6 +72,20 @@ type InstallRequest struct {
 	// ErrMissingImageRepository otherwise. AI-workload deployers (pkg/workload)
 	// set this; non-image charts like UIPlugin extensions leave it false.
 	RequireImageRepository bool
+}
+
+// InstallFromRepoURLRequest is the input for InstallFromRepoURL.
+// Unlike InstallRequest (OCI-based), this resolves a chart by name from an
+// HTTP Helm repository URL — used for installing UI extension charts from
+// ClusterRepo endpoints.
+type InstallFromRepoURLRequest struct {
+	Namespace   string
+	ReleaseName string
+	ChartName   string        // chart name as listed in the repo's index.yaml
+	RepoURL     string        // HTTP URL of the Helm chart repository
+	Version     string        // chart version constraint
+	Wait        bool
+	Timeout     time.Duration
 }
 
 // ReleaseStatus represents the current state of a Helm release.

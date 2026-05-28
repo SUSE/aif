@@ -1250,8 +1250,14 @@ github.com/SUSE/aif/
 │   │   ├── blueprint_controller.go
 │   │   ├── bundle_controller.go
 │   │   ├── installaiextension_controller.go
+│   │   ├── installaiextension_health.go      Deployment/Pod/Service health checks
 │   │   ├── settings_controller.go
 │   │   └── workload_controller.go
+│   ├── infra/
+│   │   └── rancher/
+│   │       ├── catalog.go          CatalogManager interface + opts types
+│   │       ├── fake_catalog.go     Recording fake for tests
+│   │       └── manager.go          Concrete impl (ClusterRepo, UIPlugin, CRD checks)
 │   ├── manager/
 │   │   ├── routes.go            mux setup + handler registration
 │   │   └── setup.go             controller-runtime manager + webhook setup
@@ -2292,11 +2298,13 @@ The reconciler runs synchronously WRT the apply, but the handler doesn't wait fo
 
 **InstallAIExtensionReconciler**
 - Watch: `InstallAIExtension` CR
-- Checks if `UIPlugin` CRD exists in cluster; if not, sets `Failed` with reason `UIPluginCRDMissing`
-- Installs referenced Helm chart to `cattle-ui-plugin-system` namespace (release name `aif-ui`) via `pkg/helm`
-- Verifies `UIPlugin` resource was created in `cattle-ui-plugin-system` by the Helm chart, using non-blocking requeue pattern (`RequeueAfter: 5s` when not found)
-- Sets `phase=Installing` while waiting for UIPlugin creation, `phase=Installed` when verified
-- Sets `Ready=True` condition when UIPlugin verified
+- Dual source modes: Helm (OCI chart) and Git (GitHub repo + branch)
+- Delegates Rancher resource CRUD to `internal/infra/rancher.CatalogManager`: CheckCRDs, EnsureClusterRepo, EnsureUIPlugin, DeleteClusterRepo, DeleteUIPlugin, FetchIndexMetadata
+- Installs Helm chart via `pkg/helm.Engine`, checks Deployment readiness with pod-level diagnostics (ImagePullBackOff, CrashLoopBackOff, scheduling failures) in `installaiextension_health.go`
+- Discovers Service URL for UIPlugin endpoint registration
+- Tracks `activeExtensionName` and `activeSourceKind` in status to detect spec changes and clean up stale resources (orphaned ClusterRepo, UIPlugin, Helm releases)
+- Phase transitions: "" → Installing → Installed | Failed
+- Non-blocking on Helm install failure to avoid blocking CR deletion
 
 ### 8.3 Validating Admission Webhook (`internal/webhook/blueprint_immutability.go`)
 

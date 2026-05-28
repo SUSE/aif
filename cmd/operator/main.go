@@ -42,6 +42,7 @@ var (
 	metricsBindAddress     string
 	webhookBindAddress     string
 	chartsDir              string
+	gitDir                 string
 	leaderElect            bool
 	logLevel               string
 	logFormat              string
@@ -55,7 +56,8 @@ func main() {
 	flag.StringVar(&healthProbeBindAddress, "health-probe-bind-address", ":8081", "Health probe bind address")
 	flag.StringVar(&metricsBindAddress, "metrics-bind-address", ":8082", "Metrics bind address")
 	flag.StringVar(&webhookBindAddress, "webhook-bind-address", ":9443", "Webhook bind address")
-	flag.StringVar(&chartsDir, "charts-dir", "/charts", "Directory containing Helm charts")
+	flag.StringVar(&chartsDir, "charts-dir", "/data/charts", "Writable directory for Helm chart downloads and repository cache")
+	flag.StringVar(&gitDir, "git-dir", "/data/git", "Directory for Git operations")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	flag.StringVar(&logFormat, "log-format", "json", "Log format (json, text)")
@@ -81,7 +83,7 @@ func main() {
 	k8sConfig := ctrl.GetConfigOrDie()
 
 	// Create manager components
-	helmEngine := helm.New(logger, k8sConfig)
+	helmEngine := helm.New(logger, k8sConfig, helm.WithChartDir(chartsDir))
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(k8sConfig)
 	if err != nil {
 		logger.Error("failed to create discovery client", slog.Any("error", err))

@@ -36,6 +36,13 @@ rules:
   - apiGroups:
       - ""
     resources:
+      - namespaces
+    verbs:
+      - create
+      - get
+  - apiGroups:
+      - ""
+    resources:
       - pods
       - services
       - configmaps
@@ -53,6 +60,7 @@ rules:
       - apps
     resources:
       - deployments
+      - replicasets
       - statefulsets
     verbs:
       - get
@@ -76,6 +84,7 @@ rules:
       - delete
   - apiGroups:
       - ""
+      - events.k8s.io
     resources:
       - events
     verbs:

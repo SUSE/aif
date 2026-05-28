@@ -42,7 +42,7 @@ spec:
           image: {{ include "aif-operator.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /opt/aif/bin/operator
+            - /aif-operator
           args:
             - --addr=:{{ .Values.service.ports.api }}
             - --health-probe-bind-address=:{{ .Values.service.ports.health }}
@@ -50,7 +50,14 @@ spec:
             - --webhook-bind-address=:{{ .Values.service.ports.webhook }}
             - --log-level={{ .Values.operator.logLevel }}
             - --log-format={{ .Values.operator.logFormat }}
+            - --charts-dir=/data/charts
+            - --git-dir=/data/git
             - --catalog-refresh={{ .Values.operator.catalogRefresh }}
+          env:
+            - name: HELM_CACHE_HOME
+              value: /data/charts/helm-cache
+            - name: HELM_CONFIG_HOME
+              value: /data/charts/helm-config
           ports:
             - name: api
               containerPort: {{ .Values.service.ports.api }}

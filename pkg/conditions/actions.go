@@ -13,4 +13,6 @@ const (
 	ActionWaiting     = "Waiting"
 	ActionApplying    = "Applying"
 	ActionResolving   = "Resolving"
+	ActionCreating    = "Creating"
+	ActionVerifying   = "Verifying"
 )

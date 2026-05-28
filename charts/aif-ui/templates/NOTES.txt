@@ -1,9 +1,11 @@
-AIF UI extension has been registered.
+{{ .Chart.Name }} has been deployed.
 
-UIPlugin: {{ .Values.plugin.name }} v{{ .Values.plugin.version }}
-Endpoint: {{ .Values.endpoint }}
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
 
-Verify the plugin is registered:
-  kubectl get uiplugin {{ .Values.plugin.name }} -n cattle-ui-plugin-system
+Chart repository URL (for ClusterRepo / Rancher Extensions page):
+  http://{{ include "aif-ui.fullname" . }}-svc.{{ .Release.Namespace }}:{{ .Values.service.port }}
 
-The extension will appear in the Rancher Dashboard after the next page refresh.
+Verify the deployment:
+  kubectl get deploy {{ include "aif-ui.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get svc {{ include "aif-ui.fullname" . }}-svc -n {{ .Release.Namespace }}

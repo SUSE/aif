@@ -12,6 +12,15 @@ const (
 	TypeDegraded    = "Degraded"    // resource running but in a degraded state
 )
 
+// InstallAIExtension-specific condition Types
+const (
+	TypeDeploymentReady  = "DeploymentReady"  // container-mode Deployment is available
+	TypeServiceReady     = "ServiceReady"     // container-mode Service has a ClusterIP
+	TypeClusterRepoReady = "ClusterRepoReady" // ClusterRepo exists and index is synced
+	TypeHelmInstalled    = "HelmInstalled"    // Helm chart successfully installed from ClusterRepo
+	TypeUIPluginReady    = "UIPluginReady"    // UIPlugin CR exists (created by Helm chart)
+)
+
 // Condition Reasons used across controllers
 const (
 	// Generic
@@ -76,4 +85,16 @@ const (
 	ReasonInstallFailed      = "InstallFailed"      // Helm chart installation failed
 	ReasonUIPluginNotCreated = "UIPluginNotCreated" // UIPlugin resource creation failed
 	// ReasonInstalled is defined above (shared with Workload)
+
+	// InstallAIExtension sub-resource lifecycle reasons
+	ReasonDeploymentCreated   = "DeploymentCreated"   // Deployment created, waiting for availability
+	ReasonDeploymentAvailable = "DeploymentAvailable"  // Deployment has minimum available replicas
+	ReasonDeploymentFailed    = "DeploymentFailed"     // Deployment creation or rollout failed
+	ReasonServiceCreated      = "ServiceCreated"       // Service created successfully
+	ReasonServiceFailed       = "ServiceFailed"        // Service creation failed
+	ReasonClusterRepoCreated  = "ClusterRepoCreated"   // ClusterRepo created, waiting for sync
+	ReasonClusterRepoSynced   = "ClusterRepoSynced"    // ClusterRepo has synced its index
+	ReasonClusterRepoFailed   = "ClusterRepoFailed"    // ClusterRepo creation or sync failed
+	ReasonHelmInstallStarted  = "HelmInstallStarted"   // Helm install initiated
+	ReasonUIPluginVerified    = "UIPluginVerified"      // UIPlugin exists and matches expected name
 )

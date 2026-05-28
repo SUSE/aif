@@ -3,8 +3,11 @@ package manager
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
+	"time"
 
 	"github.com/SUSE/aif/internal/controller"
+	"github.com/SUSE/aif/internal/infra/rancher"
 	"github.com/SUSE/aif/pkg/blueprint"
 	"github.com/SUSE/aif/pkg/fleet"
 	"github.com/SUSE/aif/pkg/helm"
@@ -35,8 +38,8 @@ type Options struct {
 	// are both satisfied by the same concrete *engine; main.go composes
 	// them at wire time — see pkg/helm/interface.go ValueRenderer doc).
 	HelmRenderer helm.ValueRenderer
-	Discovery    discovery.DiscoveryInterface
-	Logger       *slog.Logger
+	Discovery discovery.DiscoveryInterface
+	Logger    *slog.Logger
 
 	// EngineBus pushes Settings snapshots to all settings-aware engines on
 	// every reconcile. Constructed in cmd/operator/main.go via NewEngineBus
@@ -175,9 +178,8 @@ func setupControllers(mgr ctrlmanager.Manager, opts Options) error {
 	installExtReconciler := &controller.InstallAIExtensionReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
-		Logger:     opts.Logger,
 		HelmEngine: opts.HelmEngine,
-		Discovery:  opts.Discovery,
+		Catalog:    rancher.New(mgr.GetClient(), opts.Discovery, &http.Client{Timeout: 30 * time.Second}),
 		Recorder:   mgr.GetEventRecorder("installaiextension-controller"),
 	}
 	if err := installExtReconciler.SetupWithManager(mgr); err != nil {

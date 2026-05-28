@@ -1,17 +1,39 @@
 # AIF UI Helm Chart
 
-Registers the SUSE AI Factory UI plugin with Rancher via a `UIPlugin` custom resource in `cattle-ui-plugin-system`.
+Deploys the SUSE AI Factory UI extension as a container-based Rancher Dashboard extension.
+
+The chart creates a Deployment and Service that serve the built extension assets (including `index.yaml`). The InstallAIExtension controller then creates a ClusterRepo pointing to the Service and a UIPlugin referencing the chart metadata.
 
 ## Prerequisites
 
-- Rancher with UI Extensions support (`catalog.cattle.io/v1` API)
-- AIF operator deployed and serving the UI endpoint
+- Rancher 2.10+ with UI Extensions support (`catalog.cattle.io/v1` API)
+- Target namespace: `cattle-ui-plugin-system`
 
 ## Values
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `endpoint` | string | `http://aif-operator.aif.svc.cluster.local:8080/ui` | AIF operator UI endpoint URL |
-| `plugin.name` | string | `ai-factory` | UIPlugin name registered in Rancher |
-| `plugin.version` | string | `1.0.0` | Plugin version |
-| `plugin.noCache` | boolean | `false` | Disable browser caching of plugin assets |
+| `replicaCount` | int | `1` | Number of replicas |
+| `image.registry` | string | `ghcr.io` | Container image registry |
+| `image.repository` | string | `suse/aif-ui` | Container image repository |
+| `image.tag` | string | `""` (uses `appVersion`) | Container image tag |
+| `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `global.imageRegistry` | string | `""` | Global registry override (air-gap) |
+| `global.imagePullSecrets` | list | `[]` | Global image pull secrets |
+| `imagePullSecrets` | list | `[]` | Image pull secrets |
+| `nameOverride` | string | `""` | Override chart name |
+| `fullnameOverride` | string | `""` | Override full release name |
+| `service.type` | string | `ClusterIP` | Service type |
+| `service.port` | int | `8080` | Service port |
+| `podAnnotations` | object | `{}` | Pod annotations |
+| `podLabels` | object | `{}` | Additional pod labels |
+| `podSecurityContext` | object | See `values.yaml` | Pod-level security context |
+| `containerSecurityContext` | object | See `values.yaml` | Container-level security context |
+| `resources` | object | `{}` | Container resource requests/limits |
+| `probes.liveness.enabled` | bool | `true` | Enable liveness probe |
+| `probes.readiness.enabled` | bool | `true` | Enable readiness probe |
+| `nodeSelector` | object | `{}` | Node selector |
+| `tolerations` | list | `[]` | Tolerations |
+| `affinity` | object | `{}` | Affinity rules |
+| `rollingUpdate.maxSurge` | string | `25%` | Rolling update max surge |
+| `rollingUpdate.maxUnavailable` | string | `25%` | Rolling update max unavailable |

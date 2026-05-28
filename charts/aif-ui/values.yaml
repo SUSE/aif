@@ -1,5 +1,60 @@
-endpoint: http://aif-operator.aif.svc.cluster.local:8080/ui
-plugin:
-  name: ai-factory
-  version: "1.0.0"
-  noCache: false
+replicaCount: 1
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+image:
+  registry: ghcr.io
+  repository: suse/aif-ui
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+resources: {}
+
+probes:
+  liveness:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 10
+  readiness:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    periodSeconds: 10
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%

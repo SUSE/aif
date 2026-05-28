@@ -40,8 +40,9 @@ type FakeEngine struct {
 	mu    sync.Mutex
 	Calls []FakeCall
 
-	InstallResult   func(InstallRequest) (ReleaseStatus, error)
-	UninstallResult func(ns, name string) error
+	InstallResult        func(InstallRequest) (ReleaseStatus, error)
+	InstallFromRepoResult func(InstallFromRepoURLRequest) (ReleaseStatus, error)
+	UninstallResult      func(ns, name string) error
 	StatusResult    func(ns, name string) (ReleaseStatus, error)
 	HistoryResult   func(ns, name string) ([]RevisionInfo, error)
 	RollbackResult  func(ns, name string, rev int) error
@@ -78,6 +79,31 @@ func (f *FakeEngine) InstallChartFromRepo(_ context.Context, req InstallRequest)
 		return outcome.Status, outcome.Err
 	}
 	stub := f.InstallResult
+	f.mu.Unlock()
+
+	if stub != nil {
+		return stub(req)
+	}
+	return ReleaseStatus{
+		Name:     req.ReleaseName,
+		Revision: 1,
+		Status:   "deployed",
+		Updated:  time.Now(),
+	}, nil
+}
+
+func (f *FakeEngine) InstallFromRepoURL(_ context.Context, req InstallFromRepoURLRequest) (ReleaseStatus, error) {
+	f.mu.Lock()
+	f.Calls = append(f.Calls, FakeCall{
+		Method:    "InstallFromRepoURL",
+		Namespace: req.Namespace,
+		Name:      req.ReleaseName,
+	})
+	if outcome, ok := f.InstallByRelease[req.ReleaseName]; ok {
+		f.mu.Unlock()
+		return outcome.Status, outcome.Err
+	}
+	stub := f.InstallFromRepoResult
 	f.mu.Unlock()
 
 	if stub != nil {

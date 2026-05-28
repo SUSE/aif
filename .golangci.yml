@@ -19,6 +19,5 @@ issues:
   exclude-dirs:
     - dashboard
     - harvester-ui-extension
-    - suse-ai-lifecycle-manager
     - hack
     - ui

@@ -13,6 +13,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -173,14 +174,88 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 // InstallChartFromRepo.
 func (e *engine) Render(ctx context.Context, repo, chart, version string, ov Overrides) (map[string]any, error) {
 	chartRef := fmt.Sprintf("oci://%s/%s:%s", repo, chart, version)
-	// Use synthetic namespace "aif-render" for the action config. No release is
-	// created by renderValues; the namespace is only needed for cfgFactory.
 	merged, _, cleanup, err := e.renderValues(ctx, "aif-render", chartRef, ov)
 	defer cleanup()
 	if err != nil {
 		return nil, err
 	}
 	return merged, nil
+}
+
+// InstallFromRepoURL installs a chart resolved by name from an HTTP chart
+// repository URL. Used for UI extension charts where the ClusterRepo (or raw
+// GitHub URL) serves index.yaml + chart tarballs.
+//
+// Unlike InstallChartFromRepo, this method does not accept Overrides and
+// installs with chart defaults only — no §6.6 merge layers or image rewrite.
+// This is acceptable for Git-mode UIPlugin installs which use the chart's
+// baked-in image references. If air-gap image rewrite is needed for this
+// path, thread Overrides through InstallFromRepoURLRequest.
+func (e *engine) InstallFromRepoURL(ctx context.Context, req InstallFromRepoURLRequest) (ReleaseStatus, error) {
+	e.logger.Info("installing chart from repo URL",
+		slog.String("component", "helm.engine"),
+		slog.String("namespace", req.Namespace),
+		slog.String("release", req.ReleaseName),
+		slog.String("chart", req.ChartName),
+		slog.String("repo_url", req.RepoURL),
+		slog.String("version", req.Version))
+
+	cfg, err := e.cfgFactory(req.Namespace)
+	if err != nil {
+		return ReleaseStatus{}, fmt.Errorf("failed to create action config: %w", err)
+	}
+
+	exists, err := e.runner.Exists(ctx, cfg, req.ReleaseName)
+	if err != nil && !errors.Is(err, driver.ErrReleaseNotFound) {
+		return ReleaseStatus{}, fmt.Errorf("failed to check release history: %w", err)
+	}
+
+	cpo := action.ChartPathOptions{
+		RepoURL: req.RepoURL,
+		Version: req.Version,
+	}
+	chartPath, err := cpo.LocateChart(req.ChartName, cli.New())
+	if err != nil {
+		return ReleaseStatus{}, fmt.Errorf("locate chart %s from %s: %w", req.ChartName, req.RepoURL, err)
+	}
+
+	ch, err := loader.Load(chartPath)
+	if err != nil {
+		return ReleaseStatus{}, fmt.Errorf("failed to load chart: %w", err)
+	}
+
+	timeout := req.Timeout
+	if timeout == 0 {
+		timeout = defaultInstallTimeout
+	}
+
+	if exists {
+		rel, err := e.runner.Upgrade(ctx, cfg, req.ReleaseName, upgradeArgs{
+			Namespace: req.Namespace,
+			Chart:     ch,
+			Values:    ch.Values,
+			Wait:      req.Wait,
+			Timeout:   timeout,
+		})
+		if err != nil {
+			return ReleaseStatus{}, fmt.Errorf("helm upgrade failed: %w", err)
+		}
+		return toReleaseStatus(rel), nil
+	}
+
+	rel, err := e.runner.Install(ctx, cfg, installArgs{
+		Namespace:       req.Namespace,
+		ReleaseName:     req.ReleaseName,
+		Chart:           ch,
+		Values:          ch.Values,
+		Wait:            req.Wait,
+		Timeout:         timeout,
+		CreateNamespace: true,
+	})
+	if err != nil {
+		return ReleaseStatus{}, fmt.Errorf("helm install failed: %w", err)
+	}
+	return toReleaseStatus(rel), nil
 }
 
 // Uninstall removes a release. Returns nil if the release doesn't exist.
