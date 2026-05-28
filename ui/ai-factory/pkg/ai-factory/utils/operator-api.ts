@@ -128,6 +128,10 @@ export async function listCategories(): Promise<string[]> {
   return operatorFetch('/api/v1/apps/categories');
 }
 
+export function getAppValues(id: string, version: string): Promise<{ values: Record<string, any>; questions: Record<string, any> | null }> {
+  return operatorFetch(`/api/v1/apps/${ encodeURIComponent(id) }/values?version=${ encodeURIComponent(version) }`);
+}
+
 // ── Blueprints ────────────────────────────────────────────────────────────────
 
 export function listBlueprints(params: Record<string, string> = {}): Promise<any> {
