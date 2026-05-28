@@ -8,16 +8,24 @@
         @error="onImgError"
       />
       <div class="app-card__info">
-        <h3 class="app-card__title">{{ app.displayName || app.name }}</h3>
+        <h3 class="app-card__title">
+          {{ app.displayName || app.name }}
+        </h3>
         <div class="app-card__badges">
           <span :class="['publisher-badge', `publisher-badge--${app.source}`]">
             {{ t(`aif.pages.apps.badge.${app.source}`) }}
           </span>
-          <span v-if="app.referenceBlueprint" class="publisher-badge publisher-badge--ref-blueprint">
+          <span
+            v-if="app.referenceBlueprint"
+            class="publisher-badge publisher-badge--ref-blueprint"
+          >
             {{ t('aif.pages.apps.badge.referenceBlueprint') }}
           </span>
           <span class="app-card__version">v{{ app.version }}</span>
-          <span v-if="formattedDate" class="app-card__updated">{{ formattedDate }}</span>
+          <span
+            v-if="formattedDate"
+            class="app-card__updated"
+          >{{ formattedDate }}</span>
         </div>
       </div>
       <a
@@ -33,10 +41,19 @@
       </a>
     </div>
 
-    <p class="app-card__description">{{ app.description || '—' }}</p>
+    <p class="app-card__description">
+      {{ app.description || '—' }}
+    </p>
 
-    <div v-if="displayTags.length" class="app-card__tags">
-      <span v-for="tag in displayTags" :key="tag" class="app-card__tag">{{ tag }}</span>
+    <div
+      v-if="displayTags.length"
+      class="app-card__tags"
+    >
+      <span
+        v-for="tag in displayTags"
+        :key="tag"
+        class="app-card__tag"
+      >{{ tag }}</span>
     </div>
 
     <div class="app-card__actions">
@@ -97,7 +114,9 @@ export default defineComponent({
       event.target.src = FALLBACK_LOGO;
     };
 
-    return { fallbackLogo, formattedDate, displayTags, onImgError, t };
+    return {
+      fallbackLogo, formattedDate, displayTags, onImgError, t
+    };
   }
 });
 </script>

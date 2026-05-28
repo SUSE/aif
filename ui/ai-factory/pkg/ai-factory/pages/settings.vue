@@ -1,20 +1,28 @@
 <script>
-import AsyncButton      from '@shell/components/AsyncButton';
-import { Banner }       from '@components/Banner';
-import Loading          from '@shell/components/Loading';
+import AsyncButton from '@shell/components/AsyncButton';
+import { Banner } from '@components/Banner';
+import Loading from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
-import LabeledSelect    from '@shell/components/form/LabeledSelect';
-import { Checkbox }     from '@components/Form/Checkbox';
-import SecretSelector   from '@shell/components/form/SecretSelector';
+import LabeledSelect from '@shell/components/form/LabeledSelect';
+import { Checkbox } from '@components/Form/Checkbox';
+import SecretSelector from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { OPERATOR_NAMESPACE } from '../config/types';
 
 function createEmptySpec() {
   return {
-    fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
-    applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
-    suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
-    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '' },
+    fleet:                 {
+      repoURL: '', branch: 'main', authType: '', credSecretRef: null
+    },
+    applicationCollection: {
+      userSecretRef: null, tokenSecretRef: null, categories: []
+    },
+    suseRegistry:          {
+      userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10
+    },
+    registryEndpoints:     {
+      suseRegistry: '', applicationCollection: '', applicationCollectionAPI: ''
+    },
     catalogDiscovery:      { applicationCollectionMode: 'api' },
     imageRewrite:          { enabled: false, rules: [] },
   };
@@ -37,7 +45,7 @@ export default {
     try {
       const data = await getSettings();
 
-      this.spec   = this.buildSpec(data.spec);
+      this.spec = this.buildSpec(data.spec);
       this.loaded = true;
     } catch (e) {
       if (e?.status === 404) {
@@ -58,8 +66,8 @@ export default {
       spec:              createEmptySpec(),
       fetchErrorMessage: null,
       errors:            [],
-      mode:      'edit',
-      expanded:  {
+      mode:              'edit',
+      expanded:          {
         fleet:         false,
         appCollection: true,
         suseRegistry:  false,
@@ -95,9 +103,7 @@ export default {
         return (this.spec.applicationCollection.categories || []).join(', ');
       },
       set(val) {
-        this.spec.applicationCollection.categories = val
-          ? val.split(',').map((s) => s.trim()).filter(Boolean)
-          : [];
+        this.spec.applicationCollection.categories = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [];
       },
     },
   },

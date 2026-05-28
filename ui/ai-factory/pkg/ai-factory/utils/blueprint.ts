@@ -5,51 +5,51 @@ export type BlueprintPhase = (typeof BLUEPRINT_PHASES)[number];
 export type BlueprintOrigin = 'Published' | 'WrapsVendorChart';
 
 export interface ComponentRef {
-  name:    string;
-  kind:    string;
-  app?:    { repo: string; chart: string; version: string };
+  name: string;
+  kind: string;
+  app?: { repo: string; chart: string; version: string };
 }
 
 export interface VendorChartRef {
   provider: string;
-  repo:     string;
-  chart:    string;
-  version:  string;
+  repo: string;
+  chart: string;
+  version: string;
 }
 
 export interface DeprecationStatus {
-  reason?:    string;
+  reason?: string;
   actionedBy: string;
   actionedAt: string;
 }
 
 export interface BlueprintVersion {
-  id:                string;
-  lineage:           string;
-  version:           string;
-  phase:             BlueprintPhase;
-  useCase:           string;
-  description:       string;
+  id: string;
+  lineage: string;
+  version: string;
+  phase: BlueprintPhase;
+  useCase: string;
+  description: string;
   changeDescription: string;
-  components:        ComponentRef[];
-  origin:            BlueprintOrigin;
-  vendorChart?:      VendorChartRef;
-  publishedBy:       string;
-  publishedAt:       string;
-  deprecation?:      DeprecationStatus;
-  raw:               any;
+  components: ComponentRef[];
+  origin: BlueprintOrigin;
+  vendorChart?: VendorChartRef;
+  publishedBy: string;
+  publishedAt: string;
+  deprecation?: DeprecationStatus;
+  raw: any;
 }
 
 export interface BlueprintLineage {
-  lineage:        string;
-  versions:       BlueprintVersion[]; // sorted desc, ALL phases
-  latestActive?:  BlueprintVersion;
+  lineage: string;
+  versions: BlueprintVersion[]; // sorted desc, ALL phases
+  latestActive?: BlueprintVersion;
 }
 
 const LINEAGE_LABEL = 'ai.suse.com/blueprint-name';
 
 export function toBlueprintVersion(cr: any): BlueprintVersion {
-  const spec   = cr?.spec   ?? {};
+  const spec = cr?.spec ?? {};
   const status = cr?.status ?? {};
   const source = spec.source ?? {};
   const origin: BlueprintOrigin = source.type === 'WrapsVendorChart' ? 'WrapsVendorChart' : 'Published';

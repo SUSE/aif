@@ -6,7 +6,10 @@
     tabindex="-1"
     @keydown.esc="$emit('close')"
   >
-    <div class="versions-panel__backdrop" @click="$emit('close')" />
+    <div
+      class="versions-panel__backdrop"
+      @click="$emit('close')"
+    />
     <div class="versions-panel__body">
       <header class="versions-panel__header">
         <h2>{{ t('aif.pages.blueprints.versionsPanel.title', { lineage: lineage.lineage }) }}</h2>
@@ -21,8 +24,15 @@
         </button>
       </header>
 
-      <ul v-if="lineage.versions.length" class="versions-panel__list">
-        <li v-for="v in lineage.versions" :key="v.id" class="versions-panel__item">
+      <ul
+        v-if="lineage.versions.length"
+        class="versions-panel__list"
+      >
+        <li
+          v-for="v in lineage.versions"
+          :key="v.id"
+          class="versions-panel__item"
+        >
           <div class="versions-panel__item-head">
             <span class="version-label">v{{ v.version }}</span>
             <BlueprintPhasePill :phase="v.phase" />
@@ -30,14 +40,20 @@
           <p class="versions-panel__meta">
             {{ t('aif.pages.blueprints.card.publishedBy', { user: v.publishedBy || '—', date: formatDate(v.publishedAt) }) }}
           </p>
-          <p v-if="v.changeDescription" class="versions-panel__change">
+          <p
+            v-if="v.changeDescription"
+            class="versions-panel__change"
+          >
             <strong>{{ t('aif.pages.blueprints.versionsPanel.changeDescription') }}:</strong>
             {{ v.changeDescription }}
           </p>
         </li>
       </ul>
 
-      <p v-else class="versions-panel__empty">
+      <p
+        v-else
+        class="versions-panel__empty"
+      >
         {{ t('aif.pages.blueprints.versionsPanel.empty') }}
       </p>
     </div>

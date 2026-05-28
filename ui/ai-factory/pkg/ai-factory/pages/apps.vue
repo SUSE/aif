@@ -19,26 +19,62 @@
         class="apps-page__search"
       />
 
-      <select v-model="sourceFilter" class="apps-page__select" @change="loadApps">
-        <option value="all">{{ t('aif.pages.apps.toolbar.sourceAll') }}</option>
-        <option value="nvidia">{{ t('aif.pages.apps.toolbar.sourceNvidia') }}</option>
-        <option value="suse">{{ t('aif.pages.apps.toolbar.sourceSuse') }}</option>
+      <select
+        v-model="sourceFilter"
+        class="apps-page__select"
+        @change="loadApps"
+      >
+        <option value="all">
+          {{ t('aif.pages.apps.toolbar.sourceAll') }}
+        </option>
+        <option value="nvidia">
+          {{ t('aif.pages.apps.toolbar.sourceNvidia') }}
+        </option>
+        <option value="suse">
+          {{ t('aif.pages.apps.toolbar.sourceSuse') }}
+        </option>
       </select>
 
-      <select v-model="categoryFilter" class="apps-page__select" @change="loadApps">
-        <option value="">{{ t('aif.pages.apps.toolbar.categoryAll') }}</option>
-        <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+      <select
+        v-model="categoryFilter"
+        class="apps-page__select"
+        @change="loadApps"
+      >
+        <option value="">
+          {{ t('aif.pages.apps.toolbar.categoryAll') }}
+        </option>
+        <option
+          v-for="cat in categories"
+          :key="cat"
+          :value="cat"
+        >
+          {{ cat }}
+        </option>
       </select>
 
       <label class="apps-page__toggle">
-        <input v-model="includeRefBlueprints" type="checkbox" @change="onToggleRefBlueprints" />
+        <input
+          v-model="includeRefBlueprints"
+          type="checkbox"
+          @change="onToggleRefBlueprints"
+        />
         {{ t('aif.pages.apps.toolbar.includeRefBlueprints') }}
       </label>
 
       <div class="apps-page__toolbar-right">
-        <button class="btn role-primary btn-sm apps-page__refresh" :disabled="loading" @click="$event.currentTarget.blur(); refresh()">
-          <i v-if="loading" class="icon icon-spinner icon-spin" />
-          <i v-else class="icon icon-refresh" />
+        <button
+          class="btn role-primary btn-sm apps-page__refresh"
+          :disabled="loading"
+          @click="$event.currentTarget.blur(); refresh()"
+        >
+          <i
+            v-if="loading"
+            class="icon icon-spinner icon-spin"
+          />
+          <i
+            v-else
+            class="icon icon-refresh"
+          />
           {{ t('aif.pages.apps.toolbar.refresh') }}
         </button>
 
@@ -62,17 +98,28 @@
     </div>
 
     <!-- Error banner -->
-    <Banner v-if="error" color="error" :label="error" class="apps-page__error" />
+    <Banner
+      v-if="error"
+      color="error"
+      :label="error"
+      class="apps-page__error"
+    />
 
     <!-- Loading -->
-    <div v-if="loading" class="apps-page__loading">
+    <div
+      v-if="loading"
+      class="apps-page__loading"
+    >
       <i class="icon icon-spinner icon-spin icon-3x" />
     </div>
 
     <!-- Content -->
     <template v-else-if="!error">
       <!-- Tile view -->
-      <div v-if="viewMode === 'tiles' && filteredApps.length" class="apps-page__tiles-grid">
+      <div
+        v-if="viewMode === 'tiles' && filteredApps.length"
+        class="apps-page__tiles-grid"
+      >
         <AppCard
           v-for="app in filteredApps"
           :key="app.id"
@@ -83,7 +130,10 @@
       </div>
 
       <!-- List view -->
-      <div v-if="viewMode === 'list' && filteredApps.length" class="apps-page__list-view">
+      <div
+        v-if="viewMode === 'list' && filteredApps.length"
+        class="apps-page__list-view"
+      >
         <table class="sortable-table">
           <thead>
             <tr>
@@ -93,17 +143,31 @@
               <th>{{ t('aif.pages.apps.list.category') }}</th>
               <th>{{ t('aif.pages.apps.list.version') }}</th>
               <th>{{ t('aif.pages.apps.list.updated') }}</th>
-              <th class="text-right">{{ t('aif.pages.apps.list.actions') }}</th>
+              <th class="text-right">
+                {{ t('aif.pages.apps.list.actions') }}
+              </th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="app in filteredApps" :key="app.id" class="main-row">
+            <tr
+              v-for="app in filteredApps"
+              :key="app.id"
+              class="main-row"
+            >
               <td class="col-logo">
-                <img :src="app.logoURL || fallbackLogo" :alt="app.name" class="table-logo" @error="onImgError" />
+                <img
+                  :src="app.logoURL || fallbackLogo"
+                  :alt="app.name"
+                  class="table-logo"
+                  @error="onImgError"
+                />
               </td>
               <td class="col-name">
                 <span class="app-name">{{ app.displayName || app.name }}</span>
-                <span v-if="app.referenceBlueprint" class="ref-badge">{{ t('aif.pages.apps.badge.referenceBlueprint') }}</span>
+                <span
+                  v-if="app.referenceBlueprint"
+                  class="ref-badge"
+                >{{ t('aif.pages.apps.badge.referenceBlueprint') }}</span>
               </td>
               <td>
                 <span :class="['publisher-badge', `publisher-badge--${app.source}`]">{{ app.publisher }}</span>
@@ -112,10 +176,18 @@
               <td>{{ app.version }}</td>
               <td>{{ formatDate(app.lastUpdatedAt) }}</td>
               <td class="text-right col-actions">
-                <button class="btn btn-sm role-primary" disabled :title="t('aif.pages.apps.card.installDisabled')" @click.stop="onInstall(app)">
+                <button
+                  class="btn btn-sm role-primary"
+                  disabled
+                  :title="t('aif.pages.apps.card.installDisabled')"
+                  @click.stop="onInstall(app)"
+                >
                   {{ t('aif.pages.apps.card.install') }}
                 </button>
-                <button class="btn btn-sm role-secondary" @click.stop="$event.currentTarget.blur(); onAddToBundle(app)">
+                <button
+                  class="btn btn-sm role-secondary"
+                  @click.stop="$event.currentTarget.blur(); onAddToBundle(app)"
+                >
                   {{ t('aif.pages.apps.card.addToBundle') }}
                 </button>
               </td>
@@ -125,12 +197,18 @@
       </div>
 
       <!-- Empty: no results after filtering -->
-      <div v-if="!filteredApps.length && apps.length" class="apps-page__empty">
+      <div
+        v-if="!filteredApps.length && apps.length"
+        class="apps-page__empty"
+      >
         <p>{{ t('aif.pages.apps.empty.noResults') }}</p>
       </div>
 
       <!-- Empty: no catalog at all -->
-      <div v-if="!filteredApps.length && !apps.length && !loading" class="apps-page__empty">
+      <div
+        v-if="!filteredApps.length && !apps.length && !loading"
+        class="apps-page__empty"
+      >
         <p>{{ t('aif.pages.apps.empty.noCatalog') }}</p>
       </div>
     </template>
@@ -146,7 +224,9 @@
 </template>
 
 <script>
-import { defineComponent, ref, computed, onMounted, getCurrentInstance } from 'vue';
+import {
+  defineComponent, ref, computed, onMounted, getCurrentInstance
+} from 'vue';
 import AppCard from '../components/apps/AppCard.vue';
 import AddToBundleDialog from '../components/apps/AddToBundleDialog.vue';
 import { listApps, listCategories } from '../utils/operator-api';
@@ -159,7 +239,9 @@ const STORAGE_KEY = 'aif-include-reference-blueprints';
 export default defineComponent({
   name: 'AppsPage',
 
-  components: { AppCard, AddToBundleDialog, Banner },
+  components: {
+    AppCard, AddToBundleDialog, Banner
+  },
 
   setup() {
     const instance = getCurrentInstance();
@@ -195,7 +277,7 @@ export default defineComponent({
     const nvidiaCount = computed(() => apps.value.filter((a) => a.source === 'nvidia').length);
     const suseCount = computed(() => apps.value.filter((a) => a.source === 'suse').length);
 
-    const loadApps = async () => {
+    const loadApps = async() => {
       loading.value = true;
       error.value = '';
 
@@ -213,7 +295,7 @@ export default defineComponent({
       }
     };
 
-    const loadCategories = async () => {
+    const loadCategories = async() => {
       try {
         categories.value = await listCategories();
       } catch (err) {
@@ -222,7 +304,7 @@ export default defineComponent({
       }
     };
 
-    const refresh = async () => {
+    const refresh = async() => {
       await Promise.all([loadApps(), loadCategories()]);
     };
 
@@ -246,9 +328,7 @@ export default defineComponent({
       showAddToBundleDialog.value = false;
       dialogApp.value = null;
 
-      const title = result.mode === 'new'
-        ? t('aif.pages.apps.dialog.successNew')
-        : t('aif.pages.apps.dialog.successExisting');
+      const title = result.mode === 'new' ? t('aif.pages.apps.dialog.successNew') : t('aif.pages.apps.dialog.successExisting');
 
       instance?.proxy?.$store?.dispatch('growl/success', {
         title,

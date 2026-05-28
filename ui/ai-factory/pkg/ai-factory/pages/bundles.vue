@@ -6,9 +6,7 @@
 </template>
 
 <script>
-export default {
-  name: 'BundlesPage'
-};
+export default { name: 'BundlesPage' };
 </script>
 
 <style scoped>

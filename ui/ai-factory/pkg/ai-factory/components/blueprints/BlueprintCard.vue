@@ -2,7 +2,9 @@
   <div class="bp-card">
     <header class="bp-card__header">
       <div class="bp-card__title-row">
-        <h3 class="bp-card__title">{{ lineage.lineage }}</h3>
+        <h3 class="bp-card__title">
+          {{ lineage.lineage }}
+        </h3>
         <BlueprintPhasePill :phase="selected.phase" />
       </div>
       <BlueprintVersionPicker
@@ -25,9 +27,14 @@
       </span>
     </div>
 
-    <p class="bp-card__description">{{ selected.description || '—' }}</p>
+    <p class="bp-card__description">
+      {{ selected.description || '—' }}
+    </p>
 
-    <div v-if="selected.components.length" class="bp-card__components">
+    <div
+      v-if="selected.components.length"
+      class="bp-card__components"
+    >
       <span class="bp-card__components-label">
         {{ t('aif.pages.blueprints.card.components') }}:
       </span>
@@ -70,7 +77,10 @@
       </button>
     </div>
 
-    <div v-if="isPublisher" class="bp-card__publisher-actions">
+    <div
+      v-if="isPublisher"
+      class="bp-card__publisher-actions"
+    >
       <span class="bp-card__publisher-label">
         {{ t('aif.pages.blueprints.actions.publisherLabel') }}
       </span>
@@ -136,8 +146,7 @@ export default defineComponent({
 
   setup(props) {
     const selectedId = ref(selectDefaultVersion(props.lineage).id);
-    const selected = computed(() =>
-      props.lineage.versions.find((v) => v.id === selectedId.value)
+    const selected = computed(() => props.lineage.versions.find((v) => v.id === selectedId.value)
     );
 
     watch(() => props.lineage, (next) => {
@@ -156,8 +165,7 @@ export default defineComponent({
       }
     });
 
-    const originKey = computed(() =>
-      selected.value.origin === 'WrapsVendorChart' ? 'wrapsVendorChart' : 'published'
+    const originKey = computed(() => selected.value.origin === 'WrapsVendorChart' ? 'wrapsVendorChart' : 'published'
     );
 
     const originTooltip = computed(() => {
@@ -166,9 +174,13 @@ export default defineComponent({
       return `${ selected.value.vendorChart.chart } @ ${ selected.value.vendorChart.version }`;
     });
 
-    const onVersionChange = (id) => { selectedId.value = id; };
+    const onVersionChange = (id) => {
+      selectedId.value = id;
+    };
 
-    return { selectedId, selected, originKey, originTooltip, onVersionChange, formatDate };
+    return {
+      selectedId, selected, originKey, originTooltip, onVersionChange, formatDate
+    };
   }
 });
 </script>
