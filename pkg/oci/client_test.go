@@ -69,3 +69,39 @@ func TestEnumerateCharts_NotConfigured(t *testing.T) {
 		t.Fatalf("want ErrNotConfigured, got %v", err)
 	}
 }
+
+// TestEnumerateCharts_DropsSigstoreTags asserts cosign-shaped tags are
+// filtered out so they never surface to downstream catalog consumers.
+func TestEnumerateCharts_DropsSigstoreTags(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/_catalog", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"repositories":["ai/charts/example/foo"]}`)
+	})
+	mux.HandleFunc("/v2/ai/charts/example/foo/tags/list", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"name":"ai/charts/example/foo","tags":[
+			"1.0.0",
+			"sha256-2da536d9d3e093af219f235df2dbdac6d948f4536f11f69342f78ee6c2f7d911.sig",
+			"sha256-2da536d9d3e093af219f235df2dbdac6d948f4536f11f69342f78ee6c2f7d911.att",
+			"sha256-2da536d9d3e093af219f235df2dbdac6d948f4536f11f69342f78ee6c2f7d911.sbom",
+			"2.0.0"
+		]}`)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	w := NewWalker(silentLogger())
+	w.UpdateSettings(EngineSettings{Endpoint: ts.URL})
+
+	got, err := w.EnumerateCharts(context.Background(), "ai/charts/", nil)
+	if err != nil {
+		t.Fatalf("EnumerateCharts: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 coordinates (foo:1.0.0, foo:2.0.0), got %d: %+v", len(got), got)
+	}
+	for _, c := range got {
+		if isSigstoreTag(c.Tag) {
+			t.Errorf("sigstore tag leaked: %+v", c)
+		}
+	}
+}

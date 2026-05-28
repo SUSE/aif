@@ -122,6 +122,7 @@ func (w *walker) listRepositories(ctx context.Context) ([]string, error) {
 
 func (w *walker) listTagsInternal(ctx context.Context, repo string) ([]string, error) {
 	var all []string
+	var droppedSigstore int
 	next := "/v2/" + repo + "/tags/list"
 	for page := 1; next != ""; page++ {
 		start := time.Now()
@@ -130,11 +131,20 @@ func (w *walker) listTagsInternal(ctx context.Context, repo string) ([]string, e
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, body.Tags...)
+		for _, tag := range body.Tags {
+			if isSigstoreTag(tag) {
+				droppedSigstore++
+				continue
+			}
+			all = append(all, tag)
+		}
 		w.debug("oci tags/list page fetched",
 			"repo", repo, "page", page, "items", len(body.Tags), "running_total", len(all),
 			"duration", time.Since(start), "has_next", nextLink != "")
 		next = nextLink
+	}
+	if droppedSigstore > 0 {
+		w.debug("oci tags/list sigstore tags filtered", "repo", repo, "dropped", droppedSigstore)
 	}
 	return all, nil
 }

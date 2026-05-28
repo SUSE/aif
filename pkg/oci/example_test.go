@@ -27,7 +27,7 @@ func ExampleWalker_EnumerateCharts() {
 		]}`)
 	})
 	tags := map[string]string{
-		"ai/charts/example/foo": `{"name":"ai/charts/example/foo","tags":["1.0.0"]}`,
+		"ai/charts/example/foo": `{"name":"ai/charts/example/foo","tags":["1.0.0","sha256-2da536d9d3e093af219f235df2dbdac6d948f4536f11f69342f78ee6c2f7d911.sig"]}`,
 		"ai/charts/example/bar": `{"name":"ai/charts/example/bar","tags":["2.0.0","2.1.0"]}`,
 	}
 	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
