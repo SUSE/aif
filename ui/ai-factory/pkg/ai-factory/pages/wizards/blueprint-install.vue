@@ -58,7 +58,7 @@
     <!-- Step 2: Review -->
     <div v-if="currentStep === 2" class="aif-wizard__step aif-wizard__review">
       <dl>
-        <dt>Blueprint</dt>
+        <dt>{{ t('aif.pages.wizards.install.blueprint') }}</dt>
         <dd>{{ bpName }} v{{ bpVersion }}</dd>
         <dt>{{ t('aif.pages.wizards.install.instanceName') }}</dt>
         <dd>{{ form.name }}</dd>
