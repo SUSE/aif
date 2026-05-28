@@ -119,7 +119,11 @@ import { createBlueprint, listApps, getAppValues } from '../../utils/operator-ap
 import { PRODUCT_NAME, MANAGEMENT_CLUSTER } from '../../config/types';
 import yaml from 'js-yaml';
 
-const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// Mirror api/v1alpha1/blueprint_types.go BlueprintSpec.Version
+// (+kubebuilder:validation:Pattern=`^\d+\.\d+\.\d+$`); pre-release /
+// build suffixes are rejected by the CRD, so reject them here too rather
+// than letting Publish hit a generic 400.
+const SEMVER = /^\d+\.\d+\.\d+$/;
 
 export default defineComponent({
   name: 'BlueprintCreateWizard',
