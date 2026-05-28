@@ -36,8 +36,9 @@
 </template>
 
 <script>
-// AIDEV-NOTE: first consumer is the App-install wizard (Group 1 Task 1-1 / P6-3).
-// Component shape may evolve when wired up; revisit prop names + emits there.
+// AIDEV-NOTE (P6-3): first consumer is the App-install wizard (Group 1 Task 1-1).
+// See PROJECT_PLAN.md story P6-3 for acceptance criteria. Component shape may
+// evolve when wired up; revisit prop names + emits there.
 import { defineComponent } from 'vue';
 import ModalWithCard from '@shell/components/ModalWithCard';
 
