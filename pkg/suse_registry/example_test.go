@@ -43,7 +43,7 @@ func ExampleProvider_List() {
 		]}`)
 	})
 	mux.HandleFunc("/v2/ai/charts/example-chart/tags/list", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"name":"ai/charts/example-chart","tags":["1.0.0"]}`)
+		_, _ = io.WriteString(w, `{"name":"ai/charts/example-chart","tags":["0.9.0","1.0.0","1.0.0-rc1"]}`)
 	})
 	mux.HandleFunc("/v2/ai/charts/example-chart/manifests/1.0.0", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Docker-Content-Digest", manifestDigest)

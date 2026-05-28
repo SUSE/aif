@@ -83,16 +83,34 @@ func (p *providerImpl) Refresh(ctx context.Context) error {
 		return translateOCIError(err)
 	}
 
-	next := make(map[string]SUSEChart, len(coords))
+	// Group tags by chart so pickLatestSemver sees the full version
+	// candidate list per chart. Empty groups (zero semver tags) are
+	// dropped, matching spec acceptance criteria.
+	tagsByChart := make(map[string][]string)
 	for _, c := range coords {
 		chart := strings.TrimPrefix(c.Repository, suseChartsPrefix)
-		id := chart + ":" + c.Tag
+		tagsByChart[chart] = append(tagsByChart[chart], c.Tag)
+	}
+
+	next := make(map[string]SUSEChart, len(tagsByChart))
+	var droppedCharts int
+	for chart, tags := range tagsByChart {
+		latest, ok := pickLatestSemver(tags)
+		if !ok {
+			droppedCharts++
+			if p.logger != nil {
+				p.logger.Debug("suse_registry: chart dropped (no semver tags)",
+					"chart", chart, "tag_count", len(tags))
+			}
+			continue
+		}
+		id := chart + ":" + latest
 		next[id] = SUSEChart{
 			ID:          id,
 			Chart:       chart,
-			Version:     c.Tag,
+			Version:     latest,
 			DisplayName: chart,
-			ChartRef:    "oci://" + oci.StripScheme(endpoint) + "/" + c.Repository + ":" + c.Tag,
+			ChartRef:    "oci://" + oci.StripScheme(endpoint) + "/" + suseChartsPrefix + chart + ":" + latest,
 		}
 	}
 
@@ -105,6 +123,7 @@ func (p *providerImpl) Refresh(ctx context.Context) error {
 	if p.logger != nil {
 		p.logger.Debug("suse_registry.Provider refresh complete",
 			"entries", len(next),
+			"charts_dropped_no_semver", droppedCharts,
 			"duration", time.Since(start))
 	}
 	return nil
