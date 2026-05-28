@@ -223,6 +223,7 @@ aif:
         targetClustersRequired: 'Select at least one target cluster before installing.'
         creating:        'Creating workload…'
         created:         'Workload created'
+        valuesError:     'Failed to load chart defaults: {message}'
       steps:
         basicInfo:     'Basic Info'
         target:        'Target'

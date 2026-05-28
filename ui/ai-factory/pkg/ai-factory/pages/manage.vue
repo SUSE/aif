@@ -1,27 +1,27 @@
 <template>
-  <div class="aif-wizard">
+  <div class="aif-form">
     <h1>{{ t('aif.pages.wizards.manage.title', { name: workloadName }) }}</h1>
 
-    <div v-if="loading" class="aif-wizard__loading">
+    <div v-if="loading" class="aif-form__loading">
       <Loading />
     </div>
 
     <template v-else>
-      <div v-if="fetchError" class="aif-wizard__error">
-        {{ t('aif.pages.wizards.manage.fetchError', { message: fetchError.message }) }}
+      <div v-if="fetchError" class="aif-form__error">
+        {{ t('aif.pages.wizards.manage.fetchError', { message: fetchError.message || String(fetchError) }) }}
       </div>
 
       <template v-else>
-        <div class="aif-wizard__step">
+        <div class="aif-form__section">
           <label>
             {{ t('aif.pages.wizards.manage.chartVersion') }}
             <input v-model="form.chartVersion" type="text" class="input" />
           </label>
           <label>{{ t('aif.pages.wizards.manage.helmValues') }}</label>
-          <textarea v-model="form.valuesYaml" class="aif-wizard__yaml-editor" rows="16" />
+          <textarea v-model="form.valuesYaml" class="aif-form__yaml-editor" rows="16" />
         </div>
 
-        <div class="aif-wizard__nav">
+        <div class="aif-form__nav">
           <button class="btn role-secondary" @click="cancel">
             {{ t('aif.pages.wizards.manage.cancel') }}
           </button>
@@ -30,8 +30,8 @@
           </button>
         </div>
 
-        <div v-if="applyError" class="aif-wizard__error">{{ applyError.message }}</div>
-        <div v-if="applySuccess" class="aif-wizard__success">{{ t('aif.pages.wizards.manage.applySuccess') }}</div>
+        <div v-if="applyError" class="aif-form__error">{{ applyError.message || String(applyError) }}</div>
+        <div v-if="applySuccess" class="aif-form__success">{{ t('aif.pages.wizards.manage.applySuccess') }}</div>
       </template>
     </template>
   </div>
@@ -123,36 +123,36 @@ export default defineComponent({
 </script>
 
 <style scoped>
-.aif-wizard {
+.aif-form {
   max-width: 720px;
   padding: 24px;
 }
 
-.aif-wizard__step {
+.aif-form__section {
   display: flex;
   flex-direction: column;
   gap: 16px;
   margin-bottom: 24px;
 }
 
-.aif-wizard__yaml-editor {
+.aif-form__yaml-editor {
   width: 100%;
   font-family: monospace;
   font-size: 0.85rem;
 }
 
-.aif-wizard__nav {
+.aif-form__nav {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
 }
 
-.aif-wizard__error {
+.aif-form__error {
   color: var(--error);
   margin-top: 12px;
 }
 
-.aif-wizard__success {
+.aif-form__success {
   color: var(--success);
   margin-top: 12px;
 }

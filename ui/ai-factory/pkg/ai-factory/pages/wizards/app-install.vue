@@ -58,6 +58,9 @@
         <Loading />
       </div>
       <textarea v-else v-model="form.valuesYaml" class="aif-wizard__yaml-editor" rows="16" />
+      <div v-if="valuesError" class="aif-wizard__error">
+        {{ t('aif.pages.wizards.install.valuesError', { message: valuesError.message || String(valuesError) }) }}
+      </div>
       <button class="btn btn-sm role-secondary" :disabled="loadingValues" @click="resetValues">
         {{ t('aif.pages.wizards.install.resetDefaults') }}
       </button>
@@ -94,7 +97,7 @@
       </button>
     </div>
 
-    <div v-if="installError" class="aif-wizard__error">{{ installError.message }}</div>
+    <div v-if="installError" class="aif-wizard__error">{{ installError.message || String(installError) }}</div>
 
     <InstallProgressModal
       :show="showProgressModal"
@@ -138,6 +141,8 @@ export default defineComponent({
     try {
       const clusters = await this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' });
 
+      // Filter out the Rancher local (management) cluster — AIF workloads run
+      // on downstream managed clusters, never on the Rancher control plane.
       this.availableClusters = (clusters || []).filter((c) => c.id !== 'local');
     } catch (_) {
       this.availableClusters = [];
@@ -164,6 +169,9 @@ export default defineComponent({
       currentStep:       0,
       installing:        false,
       installError:      null,
+      // Separate from installError so a failed chart-defaults fetch surfaces
+      // inside the Configuration step, not next to the Install button on Review.
+      valuesError:       null,
       loadingValues:     false,
       valuesLoaded:      false,
       showProgressModal: false,
@@ -268,13 +276,16 @@ export default defineComponent({
 
     async loadDefaultValues() {
       this.loadingValues = true;
+      this.valuesError = null;
       try {
         const { values } = await getAppValues(this.appId, this.form.chartVersion);
 
         this.form.valuesYaml = yaml.dump(values || {});
         this.valuesLoaded = true;
       } catch (e) {
-        this.installError = e;
+        // Scope to Configuration step — installError is reserved for the
+        // createWorkload POST so the Review/Install error band stays meaningful.
+        this.valuesError = e;
       } finally {
         this.loadingValues = false;
       }
@@ -309,6 +320,13 @@ export default defineComponent({
 
       this.installing      = true;
       this.installError    = null;
+      // AIDEV-NOTE: createWorkload is a single POST that creates one Workload
+      // CR carrying spec.targetClusters; per-cluster Fleet reconciliation status
+      // is not surfaced through this endpoint. We seed one progress row per
+      // selected cluster so the modal scales with the user's selection, but all
+      // rows are stamped SUCCESS/FAILED together based on the create result.
+      // Per-cluster status will arrive in a later wave when the Workloads list
+      // polls bundleDeployments for each target. See PR #59 round-1 review.
       this.installProgress = this.form.targetClusters.map((c) => ({
         clusterId:   c,
         clusterName: c,
