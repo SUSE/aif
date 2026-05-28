@@ -62,7 +62,9 @@ test('workloads.vue: renders Deploy and Version columns', () => {
 test('workloads.vue: Manage button shown only for App source workloads', () => {
   const src = read('pages/workloads.vue');
   assert.match(src, /aif\.pages\.workloads\.actions\.manage/);
-  assert.match(src, /source\.kind.*['"']App['"]|['"']App['"].*source\.kind/);
+  // Accept either `source.kind` or `source?.kind` — the optional-chain form
+  // is preferred but the gate logic is what we are pinning here.
+  assert.match(src, /source\??\.kind.*['"']App['"]|['"']App['"].*source\??\.kind/);
 });
 
 test('workloads.vue: Manage button disabled when phase is not Running', () => {

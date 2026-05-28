@@ -48,11 +48,11 @@
               <span class="badge badge--primary">{{ sourceKind(wl) }}</span>
               {{ sourceName(wl) }}
             </td>
-            <td><span class="badge badge--secondary">{{ wl.spec.deployStrategy || 'helm' }}</span></td>
+            <td><span class="badge badge--secondary">{{ wl.spec?.deployStrategy || 'helm' }}</span></td>
             <td>{{ sourceVersion(wl) }}</td>
             <td class="aif-workloads__actions">
               <button
-                v-if="wl.spec.source && wl.spec.source.kind === 'App'"
+                v-if="wl.spec?.source?.kind === 'App'"
                 class="btn btn-sm role-secondary"
                 :disabled="wl.status?.phase !== 'Running'"
                 @click="navigateManage(wl)"
@@ -120,7 +120,6 @@ export default defineComponent({
       if (!q) return this.workloads;
       return this.workloads.filter((wl) => (
         wl.metadata.name.toLowerCase().includes(q) ||
-        (wl.spec?.displayName || '').toLowerCase().includes(q) ||
         wl.metadata.namespace.toLowerCase().includes(q) ||
         (wl.spec?.source?.kind || '').toLowerCase().includes(q)
       ));
