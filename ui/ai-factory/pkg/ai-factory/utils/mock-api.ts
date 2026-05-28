@@ -146,10 +146,6 @@ const MOCK_APPS: App[] = [
 ];
 
 export const mockAPI = {
-  bundles: {
-    // submit, withdraw, approve, requestChanges, testDeploy, pendingReview
-  },
-
   blueprints: {
     // versions, deploy, deprecate, withdraw, reactivate
   },
@@ -197,8 +193,8 @@ export const mockAPI = {
 // Set USE_MOCK_API=true in the build environment to enable; the value is frozen into the bundle.
 //
 // Scope: only operator HTTP reads in operator-api.ts (listApps, listCategories, etc.) are mocked.
-// Anything that goes through Rancher's Steve store directly — e.g. AddToBundleDialog creating a
-// Bundle CR — bypasses this flag entirely and requires the AIF CRDs to be installed on the cluster
-// (kubectl apply -f charts/aif-operator/crds/). Without them, Steve cannot resolve the schema and
-// throws "Cannot read properties of undefined (reading 'linkFor')".
+// Anything that goes through Rancher's Steve store directly bypasses this flag entirely and
+// requires the AIF CRDs to be installed on the cluster (kubectl apply -f charts/aif-operator/crds/).
+// Without them, Steve cannot resolve the schema and throws
+// "Cannot read properties of undefined (reading 'linkFor')".
 export const USE_MOCK_API = process.env.USE_MOCK_API === 'true';

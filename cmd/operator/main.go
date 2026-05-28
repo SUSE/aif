@@ -31,6 +31,7 @@ import (
 	fleetv1 "github.com/rancher/fleet/pkg/apis/fleet.cattle.io/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -244,12 +245,25 @@ func main() {
 	//   - blueprintReader: blueprintReader (GetForUpgrade)
 	//   - upgradeRecorder: UpgradeEventRecorder (k8s events adapter)
 	// All reads go through mgr.GetClient() so they hit the informer cache.
-	workloadRepo := workload.NewK8sRepository(mgr.GetClient()).AsRepository()
+	workloadK8sRepo := workload.NewK8sRepository(mgr.GetClient())
+	workloadRepo := workloadK8sRepo.AsRepository()
 	upgradeStore := internalworkload.NewUpgradeStore(workloadRepo)
 	upgradeBlueprintReader := internalworkload.NewBlueprintReader(blueprintRepo)
 	upgradeRecorder := internalworkload.NewEventRecorder(mgr.GetEventRecorder("workload-upgrader"))
 	workloadUpgrader := workload.NewUpgrader(upgradeStore, upgradeBlueprintReader, upgradeRecorder, logger)
-	workloadsHandler := api.NewWorkloadsHandler(workloadUpgrader, logger)
+	// SAR-backed AuthChecker for the workload CRUD endpoints. Built once and
+	// shared with the workloads handler; the underlying cache is goroutine-
+	// safe (sync.Map).
+	kubeClient, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		logger.Error("failed to create kubernetes client for SAR checker", slog.Any("error", err))
+		os.Exit(1)
+	}
+	sarChecker := api.NewSARAuthChecker(kubeClient)
+	// The same K8s adapter serves the upgrader workflow and the CRUD handler —
+	// two narrow ports (workload.Reader + the consumer-defined mutator port in
+	// internal/api), one backing struct.
+	workloadsHandler := api.NewWorkloadsHandler(workloadUpgrader, workloadK8sRepo, workloadK8sRepo, sarChecker, logger)
 
 	// Setup API server
 	mux := http.NewServeMux()

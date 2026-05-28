@@ -14,8 +14,6 @@ const pages = [
   ['overview',        'OverviewPage',        'Overview',        'overview'],
   ['apps',            'AppsPage',            'Apps',            'apps'],
   ['blueprints',      'BlueprintsPage',      'Blueprints',      'blueprints'],
-  ['bundles',         'BundlesPage',         'Bundles',         'bundles'],
-  ['pending-reviews', 'PendingReviewsPage',  'Pending Reviews', 'pendingReviews'],
   ['workloads',       'WorkloadsPage',       'Workloads',       'workloads'],
   ['settings',        'SettingsPage',        'Settings',        'settings']
 ];
@@ -33,7 +31,7 @@ test('P6-1 type constants define product, pages, and CRD types', () => {
     assert.match(source, new RegExp(`${ toConst(page) }:\\s*'${ page }'`));
   }
 
-  for (const crd of ['bundle', 'blueprint', 'workload', 'settings']) {
+  for (const crd of ['blueprint', 'workload', 'settings']) {
     assert.match(source, new RegExp(`ai\\.suse\\.com\\.${ crd }`));
   }
 });
@@ -47,14 +45,11 @@ test('P6-1 product registration exposes flat navigation', () => {
   assert.match(source, /showClusterSwitcher:\s*false/);
 
   // Pin complete navigation order per P6-1-refactor acceptance criteria
-  assert.match(source, /basicType\(\[\s*PAGE_IDS\.OVERVIEW,\s*PAGE_IDS\.APPS,\s*PAGE_IDS\.BLUEPRINTS,\s*PAGE_IDS\.BUNDLES,\s*PAGE_IDS\.PENDING_REVIEWS,\s*PAGE_IDS\.WORKLOADS,\s*PAGE_IDS\.SETTINGS\s*\]\)/);
+  assert.match(source, /basicType\(\[\s*PAGE_IDS\.OVERVIEW,\s*PAGE_IDS\.APPS,\s*PAGE_IDS\.BLUEPRINTS,\s*PAGE_IDS\.WORKLOADS,\s*PAGE_IDS\.SETTINGS\s*\]\)/);
 
-  assert.match(source, /basicType\(\[CRD_TYPES\.BUNDLE,\s*CRD_TYPES\.BLUEPRINT,\s*CRD_TYPES\.WORKLOAD,\s*CRD_TYPES\.SETTINGS\]\)/);
-  assert.match(source, /configureType\(CRD_TYPES\.BUNDLE,\s*\{[^}]*isRemovable:\s*true/s);
+  assert.match(source, /basicType\(\[CRD_TYPES\.BLUEPRINT,\s*CRD_TYPES\.WORKLOAD,\s*CRD_TYPES\.SETTINGS\]\)/);
   assert.match(source, /configureType\(CRD_TYPES\.BLUEPRINT,\s*\{[^}]*isCreatable:\s*false/s);
   assert.match(source, /configureType\(CRD_TYPES\.BLUEPRINT,\s*\{[^}]*isRemovable:\s*false/s);
-  assert.match(source, /configureType\(CRD_TYPES\.WORKLOAD,\s*\{[^}]*isCreatable:\s*false/s);
-  assert.match(source, /configureType\(CRD_TYPES\.WORKLOAD,\s*\{[^}]*isRemovable:\s*false/s);
   assert.match(source, /configureType\(CRD_TYPES\.SETTINGS,\s*\{[^}]*isRemovable:\s*false/s);
   assert.doesNotMatch(source, /weightGroup/);
 
@@ -138,7 +133,7 @@ test('P6-1 brand CSS registers the AI Factory sidebar icon', () => {
 test('P6-1 mock API stub exports future resource groups', () => {
   const source = read('utils/mock-api.ts');
 
-  for (const group of ['bundles', 'blueprints', 'workloads', 'apps', 'settings']) {
+  for (const group of ['blueprints', 'workloads', 'apps', 'settings']) {
     assert.match(source, new RegExp(`${ group }: \\{`));
   }
 

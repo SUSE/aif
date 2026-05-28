@@ -2,6 +2,7 @@ package workload
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	aifv1 "github.com/SUSE/aif/api/v1alpha1"
@@ -66,5 +67,76 @@ func TestFakeRepository_Patch_Conflict(t *testing.T) {
 	err := f.Patch(context.Background(), mutated, orig)
 	if err == nil || !apierrors.IsConflict(err) {
 		t.Fatalf("expected apierrors.IsConflict, got %v", err)
+	}
+}
+
+func TestFakeRepository_Create(t *testing.T) {
+	f := NewFakeRepository()
+	w := &aifv1.Workload{}
+	w.Namespace = "ns"
+	w.Name = "wl"
+	w.Spec.Source.Kind = aifv1.WorkloadSourceKindApp
+
+	if err := f.Create(context.Background(), w); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := f.Get(context.Background(), "ns", "wl")
+	if err != nil {
+		t.Fatalf("Get after Create: %v", err)
+	}
+	if got.Spec.Source.Kind != aifv1.WorkloadSourceKindApp {
+		t.Errorf("source kind = %v, want App", got.Spec.Source.Kind)
+	}
+}
+
+func TestFakeRepository_Create_ErrorInjection(t *testing.T) {
+	f := NewFakeRepository()
+	f.CreateErr = fmt.Errorf("injected")
+	w := &aifv1.Workload{}
+	w.Namespace = "ns"
+	w.Name = "wl"
+
+	if err := f.Create(context.Background(), w); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestFakeRepository_Delete(t *testing.T) {
+	f := NewFakeRepository()
+	w := &aifv1.Workload{}
+	w.Namespace = "ns"
+	w.Name = "wl"
+	f.Seed(w)
+
+	if err := f.Delete(context.Background(), "ns", "wl"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := f.Get(context.Background(), "ns", "wl"); err == nil {
+		t.Fatal("expected NotFound after Delete, got nil")
+	}
+}
+
+func TestFakeRepository_Delete_NotFound(t *testing.T) {
+	f := NewFakeRepository()
+	err := f.Delete(context.Background(), "ns", "missing")
+	if err == nil {
+		t.Fatal("expected error for missing workload, got nil")
+	}
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("expected NotFound error, got %v", err)
+	}
+}
+
+func TestFakeRepository_Delete_ErrorInjection(t *testing.T) {
+	f := NewFakeRepository()
+	w := &aifv1.Workload{}
+	w.Namespace = "ns"
+	w.Name = "wl"
+	f.Seed(w)
+	f.DeleteErr = fmt.Errorf("injected delete error")
+
+	if err := f.Delete(context.Background(), "ns", "wl"); err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }

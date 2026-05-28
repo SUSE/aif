@@ -8,9 +8,7 @@ aif:
     overview: 'Overview'
     apps: 'Apps'
     blueprints: 'Blueprints'
-    bundles: 'Bundles'
     workloads: 'Workloads'
-    pendingReviews: 'Pending Reviews'
     settings: 'Settings'
 
   pages:
@@ -36,7 +34,6 @@ aif:
       card:
         install: 'Install'
         installDisabled: 'Deploy wizard coming soon'
-        addToBundle: 'Add to Bundle'
         externalLink: 'Open project page'
       badge:
         nvidia: 'NVIDIA'
@@ -53,21 +50,6 @@ aif:
         noResults: 'No applications match your filters. Try clearing the search or changing the source filter.'
         noCatalog: 'No apps found. Configure NVIDIA and SUSE credentials in Settings, then sync the catalog.'
         error: 'Failed to load applications'
-      dialog:
-        title: 'Add to Bundle'
-        modeExisting: 'Add to existing Draft Bundle'
-        modeNew: 'Create new Bundle'
-        selectBundle: 'Select a Draft Bundle'
-        noDrafts: 'No Draft Bundles available'
-        newBundleName: 'Bundle name'
-        newBundleNamespace: 'Namespace'
-        cancel: 'Cancel'
-        confirm: 'Add'
-        notYetAvailable: 'Bundle workflow not yet available'
-        successNew: 'Bundle created'
-        successExisting: 'App added to bundle'
-        successMessage: 'Added {app} to bundle {bundle}'
-        errorAdd: 'Failed to add app to bundle'
     blueprints:
       title: 'Blueprints'
       header:
@@ -111,15 +93,9 @@ aif:
         noResults: 'No blueprints match your search.'
         unreachable: 'Cannot refresh wrapped Reference Blueprints from the configured registry. Vendor-chart auto-wrapping is paused. Existing Blueprints (both vendor-wrapped and internally published) remain visible and deployable from the cached state. Check Settings → Advanced → Registry Endpoints.'
         loadError: 'Failed to load Blueprints: {message}'
-    bundles:
-      title: 'Bundles'
-      comingSoon: 'Bundle management coming soon'
     workloads:
       title: 'Workloads'
       comingSoon: 'Workload monitoring coming soon'
-    pendingReviews:
-      title: 'Pending Reviews'
-      comingSoon: 'Bundle review queue coming soon'
     settings:
       title: 'Settings'
       apply: 'Apply'
@@ -208,3 +184,10 @@ aif:
               add: 'Add Rule'
 
       notConfigured: 'No settings configured yet. Fill in the form and save to create them.'
+
+  wizards:
+    installProgress:
+      title:  'Installing'
+      done:   'Done'
+      close:  'Close'
+      cancel: 'Cancel'

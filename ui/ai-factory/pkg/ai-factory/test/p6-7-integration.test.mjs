@@ -8,12 +8,10 @@ test('apps.vue imports match existing files', () => {
   const page = read('pages/apps.vue');
 
   assert.match(page, /from '\.\.\/components\/apps\/AppCard\.vue'/);
-  assert.match(page, /from '\.\.\/components\/apps\/AddToBundleDialog\.vue'/);
   assert.match(page, /from '\.\.\/utils\/operator-api'/);
 
   // Verify the imported files exist by reading them (throws if missing)
   read('components/apps/AppCard.vue');
-  read('components/apps/AddToBundleDialog.vue');
   read('utils/operator-api.ts');
 });
 
@@ -21,8 +19,7 @@ test('all i18n keys used in templates exist in en-us.yaml', () => {
   const l10n = read('l10n/en-us.yaml');
   const files = [
     read('pages/apps.vue'),
-    read('components/apps/AppCard.vue'),
-    read('components/apps/AddToBundleDialog.vue')
+    read('components/apps/AppCard.vue')
   ];
 
   const usedKeys = [];
@@ -48,23 +45,13 @@ test('all i18n keys used in templates exist in en-us.yaml', () => {
   }
 });
 
-test('AddToBundleDialog uses CRD_TYPES.BUNDLE from config/types', () => {
-  const dialog = read('components/apps/AddToBundleDialog.vue');
-
-  assert.match(dialog, /CRD_TYPES/);
-  assert.match(dialog, /import.*CRD_TYPES.*from.*config\/types/s);
-});
-
 test('AppCard emits match what apps.vue listens for', () => {
   const card = read('components/apps/AppCard.vue');
   const page = read('pages/apps.vue');
 
-  // Card emits install and add-to-bundle
-  assert.match(card, /emits:.*'install'.*'add-to-bundle'/s);
+  assert.match(card, /emits:\s*\[\s*'install'\s*\]/);
 
-  // Page listens for those events
   assert.match(page, /@install/);
-  assert.match(page, /@add-to-bundle/);
 });
 
 test('utils/operator-api.ts App interface fields align with Go types', () => {

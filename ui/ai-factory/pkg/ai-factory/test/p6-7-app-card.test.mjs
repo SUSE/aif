@@ -31,18 +31,16 @@ test('AppCard.vue renders reference blueprint badge conditionally', () => {
   assert.match(source, /aif\.pages\.apps\.badge\.referenceBlueprint/);
 });
 
-test('AppCard.vue has Install and Add to Bundle buttons', () => {
+test('AppCard.vue has Install button', () => {
   const source = read('components/apps/AppCard.vue');
 
   assert.match(source, /aif\.pages\.apps\.card\.install/);
-  assert.match(source, /aif\.pages\.apps\.card\.addToBundle/);
 });
 
-test('AppCard.vue emits install and add-to-bundle events', () => {
+test('AppCard.vue emits install event', () => {
   const source = read('components/apps/AppCard.vue');
 
-  assert.match(source, /emit.*install|'install'/s);
-  assert.match(source, /emit.*add-to-bundle|'add-to-bundle'/s);
+  assert.match(source, /emits:\s*\[\s*'install'\s*\]/);
 });
 
 test('AppCard.vue renders logo with fallback', () => {

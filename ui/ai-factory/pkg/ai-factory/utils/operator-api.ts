@@ -128,28 +128,6 @@ export async function listCategories(): Promise<string[]> {
   return operatorFetch('/api/v1/apps/categories');
 }
 
-// ── Bundles ───────────────────────────────────────────────────────────────────
-
-export function listBundles(): Promise<any> {
-  return operatorFetch('/api/v1/bundles');
-}
-
-export function getBundle(namespace: string, name: string): Promise<any> {
-  return operatorFetch(`/api/v1/bundles/${ namespace }/${ name }`);
-}
-
-export function createBundle(spec: any): Promise<any> {
-  return operatorFetch('/api/v1/bundles', { method: 'POST', body: JSON.stringify(spec) });
-}
-
-export function patchBundle(namespace: string, name: string, spec: any): Promise<any> {
-  return operatorFetch(`/api/v1/bundles/${ namespace }/${ name }`, { method: 'PATCH', body: JSON.stringify(spec) });
-}
-
-export function deleteBundle(namespace: string, name: string): Promise<void> {
-  return operatorFetch(`/api/v1/bundles/${ namespace }/${ name }`, { method: 'DELETE' });
-}
-
 // ── Blueprints ────────────────────────────────────────────────────────────────
 
 export function listBlueprints(params: Record<string, string> = {}): Promise<any> {
@@ -173,9 +151,23 @@ export function listWorkloads(): Promise<any> {
 }
 
 export function getWorkload(namespace: string, name: string): Promise<any> {
-  return operatorFetch(`/api/v1/workloads/${ namespace }/${ name }`);
+  return operatorFetch(`/api/v1/workloads/${ encodeURIComponent(namespace) }/${ encodeURIComponent(name) }`);
+}
+
+export function createWorkload(payload: { metadata: { name: string; namespace: string }; spec: any }): Promise<any> {
+  return operatorFetch('/api/v1/workloads', {
+    method: 'POST',
+    body:   JSON.stringify(payload),
+  });
+}
+
+export function putWorkload(namespace: string, name: string, spec: any): Promise<any> {
+  return operatorFetch(`/api/v1/workloads/${ encodeURIComponent(namespace) }/${ encodeURIComponent(name) }`, {
+    method: 'PUT',
+    body:   JSON.stringify({ spec }),
+  });
 }
 
 export function deleteWorkload(namespace: string, name: string): Promise<void> {
-  return operatorFetch(`/api/v1/workloads/${ namespace }/${ name }`, { method: 'DELETE' });
+  return operatorFetch(`/api/v1/workloads/${ encodeURIComponent(namespace) }/${ encodeURIComponent(name) }`, { method: 'DELETE' });
 }

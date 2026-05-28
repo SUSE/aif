@@ -49,12 +49,6 @@
       >
         {{ t('aif.pages.apps.card.install') }}
       </button>
-      <button
-        class="btn role-secondary btn-sm"
-        @click.stop="$event.currentTarget.blur(); $emit('add-to-bundle', app)"
-      >
-        {{ t('aif.pages.apps.card.addToBundle') }}
-      </button>
     </div>
   </div>
 </template>
@@ -74,7 +68,7 @@ export default defineComponent({
     }
   },
 
-  emits: ['install', 'add-to-bundle'],
+  emits: ['install'],
 
   setup(props) {
     const instance = getCurrentInstance();
