@@ -15,6 +15,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,7 +56,39 @@ func TestLive_EnumeratesSUSECharts(t *testing.T) {
 		t.Fatalf("List failed: %v", err)
 	}
 	t.Logf("Bearer exchange succeeded; discovered %d SUSE charts under ai/charts/ (excluding nvidia/):", len(entries))
+
+	if len(entries) == 0 {
+		t.Fatal("no entries returned; broken Refresh or empty registry")
+	}
+
+	seenCharts := make(map[string]string)
 	for _, e := range entries {
 		t.Logf("  %-40s  display=%s", e.ID, e.DisplayName)
+
+		// (a) No cosign-shaped IDs.
+		if isSigstoreLikeID(e.ID) {
+			t.Errorf("sigstore manifest leaked into catalog: %q", e.ID)
+		}
+
+		// (b) Each chart appears at most once.
+		if prev, ok := seenCharts[e.Chart]; ok {
+			t.Errorf("chart %q appears multiple times: %q and %q", e.Chart, prev, e.ID)
+		}
+		seenCharts[e.Chart] = e.ID
 	}
+}
+
+// sigstoreVersionPattern mirrors pkg/oci's production tag filter exactly
+// (lowercase hex, 64 chars). Duplicated rather than exported so the
+// production package's surface stays minimal for a single test assertion.
+var sigstoreVersionPattern = regexp.MustCompile(`^sha256-[a-f0-9]{64}\.(sig|att|sbom)$`)
+
+// isSigstoreLikeID returns true when an ID's version segment matches
+// the cosign manifest tag shape that pkg/oci.Walker is supposed to filter.
+func isSigstoreLikeID(id string) bool {
+	i := strings.LastIndexByte(id, ':')
+	if i < 0 {
+		return false
+	}
+	return sigstoreVersionPattern.MatchString(id[i+1:])
 }
