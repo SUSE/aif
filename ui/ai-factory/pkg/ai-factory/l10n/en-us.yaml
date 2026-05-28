@@ -20,7 +20,7 @@ aif:
       toolbar:
         search: 'Search applications'
         registrySuseLibrary: 'SUSE AI Library'
-        registryNvidia: 'Nvidia NGC'
+        registryNvidia: 'NVIDIA NGC'
         refresh: 'Refresh'
         viewTile: 'Tile View'
         viewList: 'List View'

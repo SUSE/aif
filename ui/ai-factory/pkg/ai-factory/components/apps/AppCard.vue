@@ -1,6 +1,6 @@
 <template>
   <div
-    :class="['app-card', { 'app-card--ref-blueprint': app.referenceBlueprint }]"
+    class="app-card"
     role="button"
     tabindex="0"
     @click="$emit('install', app)"
