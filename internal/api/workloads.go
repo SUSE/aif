@@ -90,6 +90,12 @@ func (h *WorkloadsHandler) Register(mux *http.ServeMux) {
 // checker (test setups), the wrapper is a no-op — handlers still self-check
 // that Impersonate-User is present so the existing 403-on-missing-user
 // contract is preserved.
+//
+// Checking h.authMiddleware (not h.checker) is intentional: the constructor
+// binds authMiddleware = NewAuthMiddleware(checker) iff checker != nil, so
+// the two are equivalent here. h.checker is retained as a separate field
+// because createWorkload uses it directly (the namespace comes from the
+// request body, not the URL, so the middleware shape doesn't fit).
 func (h *WorkloadsHandler) guard(verb string, selector ResourceSelector, next http.HandlerFunc) http.HandlerFunc {
 	if h.authMiddleware == nil {
 		return next
