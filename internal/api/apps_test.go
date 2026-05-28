@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/SUSE/aif/pkg/apps"
+	"github.com/SUSE/aif/pkg/helm"
 )
 
 // fakeCatalog is a stub apps.Catalog for handler-level tests. List
@@ -83,8 +85,36 @@ func sampleApps() []apps.App {
 
 func newAppsHandlerForTest(c apps.Catalog) http.Handler {
 	mux := http.NewServeMux()
-	NewAppsHandler(c).Register(mux)
+	NewAppsHandler(c, &fakeInspector{}).Register(mux)
 	return mux
+}
+
+// newAppsHandlerWithInspector lets the chart-values tests inject a
+// custom helm.ChartInspector while reusing the same registration path
+// as production callers.
+func newAppsHandlerWithInspector(c apps.Catalog, ins helm.ChartInspector) http.Handler {
+	mux := http.NewServeMux()
+	NewAppsHandler(c, ins).Register(mux)
+	return mux
+}
+
+// fakeInspector is a stub helm.ChartInspector for handler-level tests.
+// It records the (repo, chart, version) triple the handler forwarded so
+// tests can pin the normalization contract (oci:// scheme stripping).
+type fakeInspector struct {
+	values    map[string]any
+	questions map[string]any
+	err       error
+
+	gotRepo, gotChart, gotVersion string
+}
+
+func (f *fakeInspector) DefaultValues(_ context.Context, repo, chart, version string) (map[string]any, map[string]any, error) {
+	f.gotRepo, f.gotChart, f.gotVersion = repo, chart, version
+	if f.err != nil {
+		return nil, nil, f.err
+	}
+	return f.values, f.questions, nil
 }
 
 // --- GET /api/v1/apps: default (RBs hidden) ---
@@ -186,9 +216,9 @@ func TestAppsHandler_List_IncludeReferenceBlueprints_AcceptsCommonBoolForms(t *t
 		{"false", false},
 		{"False", false},
 		{"0", false},
-		{"", false},        // absent → default false
-		{"yes", false},     // garbage → default false
-		{"banana", false},  // garbage → default false
+		{"", false},       // absent → default false
+		{"yes", false},    // garbage → default false
+		{"banana", false}, // garbage → default false
 	}
 
 	for _, tc := range cases {
@@ -481,7 +511,7 @@ func TestAppsHandler_LogCatalogErr_PropagatesRequestID(t *testing.T) {
 	//    triggers logCatalogErr.
 	cat := &fakeCatalog{getErr: apps.ErrAppNotFound}
 	mux := http.NewServeMux()
-	NewAppsHandler(cat).Register(mux)
+	NewAppsHandler(cat, &fakeInspector{}).Register(mux)
 
 	// 3. Stash the child logger in the request context the same way
 	//    LoggingMiddleware does. Bypassing the middleware chain in this
@@ -513,6 +543,185 @@ func TestAppsHandler_LogCatalogErr_PropagatesRequestID(t *testing.T) {
 	}
 }
 
+// --- GET /api/v1/apps/{id}/values: happy path ---
+//
+// The Configuration step of the App Install Wizard renders the chart's
+// real defaults in an editable textarea. The handler must look up the
+// App via the catalog, forward its ChartRef.Repo/Chart and the ?version
+// query string to the inspector, and return {values, questions}.
+
+func TestAppValues_HappyPath_Returns200WithMergedShape(t *testing.T) {
+	app := apps.App{
+		ID:     "nvidia.nim-llm:1.0.0",
+		Name:   "nim-llm",
+		Source: "nvidia",
+		// App.ChartRef.Repo is stored with the oci:// scheme (see
+		// pkg/apps/nvidia_source.go). The handler strips it before
+		// calling DefaultValues so the inspector receives the bare
+		// host/path the helm engine expects.
+		ChartRef: apps.ChartRef{
+			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
+			Chart:   "nim-llm",
+			Version: "1.0.0",
+		},
+	}
+	cat := &fakeCatalog{getResult: app}
+	ins := &fakeInspector{
+		values:    map[string]any{"replicaCount": float64(1)},
+		questions: map[string]any{"variables": []any{}},
+	}
+	h := newAppsHandlerWithInspector(cat, ins)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values?version=1.0.0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Values    map[string]any `json:"values"`
+		Questions map[string]any `json:"questions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, rec.Body.String())
+	}
+	if got := body.Values["replicaCount"]; got != float64(1) {
+		t.Errorf("values.replicaCount = %v, want 1", got)
+	}
+	if body.Questions == nil {
+		t.Errorf("expected non-nil questions when inspector returned a map")
+	}
+
+	// Pin the normalization contract: the handler stripped oci:// before
+	// calling the inspector.
+	if ins.gotRepo != "registry.suse.com/ai/charts/nvidia" {
+		t.Errorf("inspector received repo=%q, want %q (oci:// must be stripped)",
+			ins.gotRepo, "registry.suse.com/ai/charts/nvidia")
+	}
+	if ins.gotChart != "nim-llm" {
+		t.Errorf("inspector received chart=%q, want %q", ins.gotChart, "nim-llm")
+	}
+	if ins.gotVersion != "1.0.0" {
+		t.Errorf("inspector received version=%q, want %q", ins.gotVersion, "1.0.0")
+	}
+}
+
+// --- GET /api/v1/apps/{id}/values: unknown app → 404 ---
+
+func TestAppValues_NotFound_Returns404(t *testing.T) {
+	cat := &fakeCatalog{getErr: apps.ErrAppNotFound}
+	ins := &fakeInspector{}
+	h := newAppsHandlerWithInspector(cat, ins)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.does-not-exist:9.9.9/values?version=9.9.9", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	var apiErr APIError
+	_ = json.Unmarshal(rec.Body.Bytes(), &apiErr)
+	if apiErr.Code != ErrCodeNotFound {
+		t.Errorf("error code = %q, want %q", apiErr.Code, ErrCodeNotFound)
+	}
+	// The inspector must NOT have been called when the app lookup fails.
+	if ins.gotRepo != "" || ins.gotChart != "" || ins.gotVersion != "" {
+		t.Errorf("inspector should not be called on app-not-found; got repo=%q chart=%q version=%q",
+			ins.gotRepo, ins.gotChart, ins.gotVersion)
+	}
+}
+
+// --- GET /api/v1/apps/{id}/values: missing ?version → 400 ---
+
+func TestAppValues_MissingVersion_Returns400(t *testing.T) {
+	cat := &fakeCatalog{getResult: apps.App{
+		ID: "nvidia.nim-llm:1.0.0",
+		ChartRef: apps.ChartRef{
+			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
+			Chart:   "nim-llm",
+			Version: "1.0.0",
+		},
+	}}
+	ins := &fakeInspector{}
+	h := newAppsHandlerWithInspector(cat, ins)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	var apiErr APIError
+	_ = json.Unmarshal(rec.Body.Bytes(), &apiErr)
+	if apiErr.Code != ErrCodeInvalidInput {
+		t.Errorf("error code = %q, want %q", apiErr.Code, ErrCodeInvalidInput)
+	}
+	if ins.gotRepo != "" || ins.gotChart != "" || ins.gotVersion != "" {
+		t.Errorf("inspector should not be called on missing-version; got repo=%q chart=%q version=%q",
+			ins.gotRepo, ins.gotChart, ins.gotVersion)
+	}
+}
+
+// --- GET /api/v1/apps/{id}/values: inspector failure → 500 ---
+
+func TestAppValues_InspectorError_Returns500(t *testing.T) {
+	app := apps.App{
+		ID: "nvidia.nim-llm:1.0.0",
+		ChartRef: apps.ChartRef{
+			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
+			Chart:   "nim-llm",
+			Version: "1.0.0",
+		},
+	}
+	cat := &fakeCatalog{getResult: app}
+	ins := &fakeInspector{err: errors.New("pull failed: connection refused")}
+	h := newAppsHandlerWithInspector(cat, ins)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values?version=1.0.0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- GET /api/v1/apps/{id}/values: nil questions → null in JSON ---
+
+func TestAppValues_NilQuestions_SerializesAsNull(t *testing.T) {
+	app := apps.App{
+		ID: "nvidia.nim-llm:1.0.0",
+		ChartRef: apps.ChartRef{
+			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
+			Chart:   "nim-llm",
+			Version: "1.0.0",
+		},
+	}
+	cat := &fakeCatalog{getResult: app}
+	ins := &fakeInspector{
+		values:    map[string]any{"foo": "bar"},
+		questions: nil,
+	}
+	h := newAppsHandlerWithInspector(cat, ins)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values?version=1.0.0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// Inspect raw JSON: questions must serialize as null, not be omitted,
+	// so the UI's optional handling works uniformly.
+	if !strings.Contains(rec.Body.String(), `"questions":null`) {
+		t.Errorf("expected questions field present as null; body=%s", rec.Body.String())
+	}
+}
+
 // And the same for the list path, since logCatalogErr is shared.
 func TestAppsHandler_List_LogCatalogErr_PropagatesRequestID(t *testing.T) {
 	var buf bytes.Buffer
@@ -522,7 +731,7 @@ func TestAppsHandler_List_LogCatalogErr_PropagatesRequestID(t *testing.T) {
 
 	cat := &fakeCatalog{listErr: apps.ErrUnknownSource}
 	mux := http.NewServeMux()
-	NewAppsHandler(cat).Register(mux)
+	NewAppsHandler(cat, &fakeInspector{}).Register(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps", nil)
 	req = req.WithContext(ContextWithLogger(req.Context(), childLogger))

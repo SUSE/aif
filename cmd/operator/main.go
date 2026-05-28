@@ -167,12 +167,18 @@ func main() {
 	logger.Info("Creating controller-runtime manager")
 
 	// helm.New returns the narrow Engine interface, but the underlying
-	// *engine also satisfies helm.ValueRenderer (per ValueRenderer doc).
-	// Assert here to expose both ports without changing the constructor's
-	// return type.
+	// *engine also satisfies helm.ValueRenderer (per ValueRenderer doc)
+	// and helm.ChartInspector (per ChartInspector doc). Assert here to
+	// expose all three ports without changing the constructor's return
+	// type.
 	helmRenderer, ok := helmEngine.(helm.ValueRenderer)
 	if !ok {
 		logger.Error("helm.Engine does not satisfy helm.ValueRenderer — unexpected helm package contract change")
+		os.Exit(1)
+	}
+	helmInspector, ok := helmEngine.(helm.ChartInspector)
+	if !ok {
+		logger.Error("helm.Engine does not satisfy helm.ChartInspector — unexpected helm package contract change")
 		os.Exit(1)
 	}
 
@@ -269,7 +275,7 @@ func main() {
 	mux := http.NewServeMux()
 	// Register the REST handlers via the api.Handler interface. Future
 	// handlers plug in the same way — pass them as additional varargs.
-	appsAPIHandler := api.NewAppsHandler(appsCatalog)
+	appsAPIHandler := api.NewAppsHandler(appsCatalog, helmInspector)
 	nimHandler := api.NewNIMHandler(nvidiaDiscovery)
 	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler, settingsHandler, workloadsHandler)
 

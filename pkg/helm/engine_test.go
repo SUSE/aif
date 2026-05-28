@@ -584,9 +584,86 @@ func TestInstallChartFromRepo_ReturnsErrMissingImageRepository(t *testing.T) {
 	}
 }
 
+// TestEngine_DefaultValues_HappyPath confirms the chart-inspection path
+// pulls + loads the chart and returns its raw values (chart.Values).
+// No merge layers are applied — DefaultValues is layer-1 only.
+func TestEngine_DefaultValues_HappyPath(t *testing.T) {
+	chartDefaults := map[string]any{
+		"image":    map[string]any{"repository": "registry.example.com/app"},
+		"replicas": 1,
+	}
+	fr := &fakeRunner{
+		pullPath: writeTinyChartWithValues(t, t.TempDir(), chartDefaults),
+	}
+	e := newTestEngine(t, fr)
+
+	values, questions, err := e.DefaultValues(context.Background(),
+		"registry.example.com", "ai/charts/nim-llm", "1.2.3")
+	if err != nil {
+		t.Fatalf("DefaultValues: %v", err)
+	}
+	if values == nil {
+		t.Fatalf("values must be non-nil")
+	}
+	// Helm's YAML loader parses scalars dynamically — pin via Sprint so
+	// the test isn't tightly coupled to int vs float64 boxing.
+	if got := fmt.Sprint(values["replicas"]); got != "1" {
+		t.Errorf("values.replicas = %v (%T), want 1", values["replicas"], values["replicas"])
+	}
+	// No questions.yaml in the tiny chart → questions is nil.
+	if questions != nil {
+		t.Errorf("expected nil questions for tiny chart; got %v", questions)
+	}
+	// Only the Pull call is observed — no install / no exists probe.
+	wantCalls := []string{"Pull"}
+	if !equalStrings(fr.calls, wantCalls) {
+		t.Errorf("call order = %v, want %v", fr.calls, wantCalls)
+	}
+}
+
+// TestEngine_DefaultValues_QuestionsParsed confirms questions.yaml at
+// the chart root is detected, parsed, and returned.
+func TestEngine_DefaultValues_QuestionsParsed(t *testing.T) {
+	tmp := t.TempDir()
+	chartDir := writeTinyChart(t, tmp)
+	if err := os.WriteFile(chartDir+"/questions.yaml",
+		[]byte("variables:\n  - variable: replicas\n    label: Replicas\n    default: 1\n"),
+		0o644); err != nil {
+		t.Fatalf("write questions.yaml: %v", err)
+	}
+	fr := &fakeRunner{pullPath: chartDir}
+	e := newTestEngine(t, fr)
+
+	_, questions, err := e.DefaultValues(context.Background(),
+		"r.example.com", "c", "1.0")
+	if err != nil {
+		t.Fatalf("DefaultValues: %v", err)
+	}
+	if questions == nil {
+		t.Fatalf("questions must be non-nil when questions.yaml is present")
+	}
+	vars, ok := questions["variables"].([]any)
+	if !ok || len(vars) != 1 {
+		t.Fatalf("questions.variables = %v, want one entry", questions["variables"])
+	}
+}
+
+// TestEngine_DefaultValues_PullFailure surfaces ErrPullFailed so the
+// REST handler can map it to a 500 (or future 502).
+func TestEngine_DefaultValues_PullFailure(t *testing.T) {
+	fr := &fakeRunner{pullErr: fmt.Errorf("connection refused")}
+	e := newTestEngine(t, fr)
+
+	_, _, err := e.DefaultValues(context.Background(),
+		"r.example.com", "c", "1.0")
+	if !errors.Is(err, ErrPullFailed) {
+		t.Errorf("err = %v, want errors.Is ErrPullFailed", err)
+	}
+}
+
 func TestEngine_Render_DoesNotInstall(t *testing.T) {
 	chartDefaults := map[string]any{
-		"image": map[string]any{"repository": "registry.example.com/app"},
+		"image":    map[string]any{"repository": "registry.example.com/app"},
 		"replicas": 1,
 	}
 	fr := &fakeRunner{
