@@ -201,6 +201,32 @@ aif:
 
       notConfigured: 'No settings configured yet. Fill in the form and save to create them.'
 
+    wizards:
+      install:
+        title:           'Install {name}'
+        instanceName:    'Instance name'
+        namespace:       'Namespace'
+        chartVersion:    'Chart version'
+        targetClusters:  'Target clusters'
+        deliveryStrategy: 'Delivery strategy'
+        strategyHelm:    'Helm'
+        strategyGitops:  'GitOps'
+        helmValues:      'Helm values'
+        resetDefaults:   'Reset to defaults'
+        back:            'Back'
+        cancel:          'Cancel'
+        next:            'Next'
+        install:         'Install'
+        installing:      'Installing…'
+        nameInvalid:     'Instance name must be a DNS label: lowercase letters, digits and hyphens, 1-63 characters.'
+        creating:        'Creating workload…'
+        created:         'Workload created'
+      steps:
+        basicInfo:     'Basic Info'
+        target:        'Target'
+        configuration: 'Configuration'
+        review:        'Review'
+
   wizards:
     installProgress:
       title:  'Installing'
