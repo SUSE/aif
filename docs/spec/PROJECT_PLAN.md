@@ -2955,6 +2955,13 @@ kubectl apply -f testdata/installaiextension-cr.yaml
 - [ ] All steps must pass for PR to merge
 - [ ] Workflow is verified to appear in the GitHub Actions tab on a test PR
 
+> **Follow-up (post-merge):**
+> - Replace `tsc` with `vue-tsc` for `.vue` SFC type checking — blocked by upstream `@rancher/shell` type error in `LabeledInput.vue`. Revisit when shell updates.
+> - Enforce `--max-warnings 0` on ESLint after clearing the 39 existing `@typescript-eslint/no-explicit-any` warnings.
+> - Add coverage threshold once test count exceeds 100+. `yarn test:coverage` is already wired.
+> - Add build artifact upload (`dist-pkg/`) when QA or a release pipeline needs it.
+> - E2E tests (Cypress/Playwright against a live Rancher instance) are a separate story (P8-6 scope).
+
 ---
 
 **ID:** P6-13
