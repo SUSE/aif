@@ -173,6 +173,10 @@ func (b *engineBus) projectFleet(s controller.SettingsSnapshot) fleet.FleetSetti
 	return out
 }
 
+// projectSUSERegistry reuses the SUSE Registry credentials slice already
+// pushed to pkg/nvidia. The SUSERegistry library walker (ai/charts/*
+// excluding nvidia/) and the NIM walker (ai/charts/nvidia/) share one
+// set of credentials by design.
 func (b *engineBus) projectSUSERegistry(s controller.SettingsSnapshot) suse_registry.EngineSettings {
 	return suse_registry.EngineSettings{
 		RegistryEndpoint: s.SUSERegistry,
