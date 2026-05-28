@@ -1,0 +1,40 @@
+name: AI Factory UI Extension CI
+
+on:
+  pull_request:
+    paths:
+      - 'ui/ai-factory/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ui/ai-factory
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version-file: ui/ai-factory/.nvmrc
+          cache: yarn
+          cache-dependency-path: ui/ai-factory/yarn.lock
+
+      - run: yarn install --frozen-lockfile
+
+      - run: yarn lint
+
+      - run: yarn lint:l10n
+
+      - run: npx tsc --noEmit -p pkg/ai-factory/tsconfig.json
+
+      - run: yarn build-pkg ai-factory
+
+      - run: yarn test
+
+      - run: yarn test:unit --run

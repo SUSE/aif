@@ -220,6 +220,7 @@ module.exports = {
     'vue/v-slot-style':                  'off',
     'vue/component-tags-order':          'off',
     'vue/no-mutating-props':             'off',
+    '@typescript-eslint/no-var-requires': 'off',
     '@typescript-eslint/no-unused-vars': 'off',
     'array-callback-return':             'off',
     'vue/one-component-per-file':        'off',

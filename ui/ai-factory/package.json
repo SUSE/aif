@@ -20,6 +20,8 @@
     "serve-pkgs": "./node_modules/@rancher/shell/scripts/serve-pkgs",
     "publish-pkgs": "./node_modules/@rancher/shell/scripts/extension/publish",
     "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name",
+    "lint": "eslint --ext .js,.ts,.vue pkg/ai-factory/",
+    "lint:l10n": "node -e \"require('js-yaml').load(require('fs').readFileSync('pkg/ai-factory/l10n/en-us.yaml','utf8')); console.log('l10n YAML valid')\"",
     "test": "node --test pkg/ai-factory/test/*.test.mjs",
     "test:unit": "vitest",
     "test:unit:ui": "vitest --ui",
@@ -29,9 +31,14 @@
     "@types/lodash": "4.17.5",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vitest/ui": "^4.1.6",
+    "@vue/eslint-config-standard": "6.1.0",
+    "@vue/eslint-config-typescript": "11.0.3",
     "@vue/test-utils": "^2.4.10",
+    "eslint-plugin-node": "11.1.0",
+    "eslint-plugin-promise": "5.2.0",
     "happy-dom": "^20.9.0",
     "vite": "^8.0.12",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.6",
+    "vue-tsc": "^2.2.12"
   }
 }
