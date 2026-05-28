@@ -232,6 +232,7 @@ aif:
     wizards:
       install:
         title:           'Install {name}'
+        blueprint:       'Blueprint'
         instanceName:    'Instance name'
         namespace:       'Namespace'
         chartVersion:    'Chart version'
