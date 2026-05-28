@@ -28,6 +28,11 @@ type FakeRepository struct {
 	CreateErr       error
 	WithdrawErr     error
 	ListWrappedErr  error
+	// CreateCRErr injects errors into the typed-CR Create path used by the
+	// HTTP handler (distinct from the wrapper-store Create above which takes
+	// a domain Blueprint).
+	CreateCRErr error
+	DeleteErr   error
 }
 
 // NewFakeRepository returns an empty FakeRepository.
@@ -112,7 +117,7 @@ func (f *FakeRepository) ListWrapped(_ context.Context) ([]Blueprint, error) {
 	return out, nil
 }
 
-func (f *FakeRepository) Create(_ context.Context, b Blueprint) (bool, error) {
+func (f *FakeRepository) CreateWrapped(_ context.Context, b Blueprint) (bool, error) {
 	if f.CreateErr != nil {
 		return false, f.CreateErr
 	}
@@ -124,6 +129,43 @@ func (f *FakeRepository) Create(_ context.Context, b Blueprint) (bool, error) {
 	}
 	f.items[cr.Name] = cr
 	return true, nil
+}
+
+// Create persists a Blueprint CR by name. Returns apierrors.IsAlreadyExists
+// on collision so HTTP handler callers can map to 409. Mirror of
+// k8sRepository.Create.
+func (f *FakeRepository) Create(_ context.Context, bp *aifv1.Blueprint) error {
+	if f.CreateCRErr != nil {
+		return f.CreateCRErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.items[bp.Name]; exists {
+		return apierrors.NewAlreadyExists(schema.GroupResource{Group: "ai.suse.com", Resource: "blueprints"}, bp.Name)
+	}
+	f.items[bp.Name] = bp.DeepCopy()
+	return nil
+}
+
+// Delete removes a Blueprint CR by name. Returns apierrors.IsNotFound when
+// the name is absent. Mirror of k8sRepository.Delete.
+func (f *FakeRepository) Delete(_ context.Context, name string) error {
+	if f.DeleteErr != nil {
+		return f.DeleteErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[name]; !ok {
+		return apierrors.NewNotFound(schema.GroupResource{Group: "ai.suse.com", Resource: "blueprints"}, name)
+	}
+	delete(f.items, name)
+	return nil
+}
+
+// FindByLineageVersion looks up a Blueprint by "{lineage}.{version}" name.
+// Mirror of k8sRepository.FindByLineageVersion.
+func (f *FakeRepository) FindByLineageVersion(ctx context.Context, lineage, version string) (*aifv1.Blueprint, error) {
+	return f.Get(ctx, lineage+"."+version)
 }
 
 func (f *FakeRepository) Withdraw(_ context.Context, name string) error {

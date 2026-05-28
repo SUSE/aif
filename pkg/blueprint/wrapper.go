@@ -49,7 +49,7 @@ func (w *wrapper) WrapDetectedCharts(ctx context.Context) error {
 
 	for name, a := range rbSet {
 		bp := blueprintFromApp(a, name)
-		created, err := w.store.Create(ctx, bp)
+		created, err := w.store.CreateWrapped(ctx, bp)
 		if err != nil {
 			return fmt.Errorf("creating blueprint %s: %w", name, err)
 		}

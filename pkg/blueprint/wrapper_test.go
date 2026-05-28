@@ -207,7 +207,7 @@ func seedWrappedBlueprint(store *FakeRepository, source, chart, version string) 
 			Version: version,
 		},
 	}, source+"-"+chart+"."+version)
-	store.Create(context.Background(), bp) //nolint:errcheck
+	store.CreateWrapped(context.Background(), bp) //nolint:errcheck
 }
 
 func TestWrapper_WithdrawsOrphaned(t *testing.T) {

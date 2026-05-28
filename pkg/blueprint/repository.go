@@ -23,8 +23,12 @@ type Repository interface {
 // it serves a different consumer (Wrapper) and speaks domain types
 // instead of aifv1 — wrapper.go cannot import aifv1 per the layering
 // rule. The same k8sRepository struct implements both.
+//
+// CreateWrapped is named distinctly from the typed-CR Create method on
+// k8sRepository (used by the HTTP write handler) to avoid a same-name,
+// different-signature collision on the shared backing struct.
 type WrappedBlueprintStore interface {
 	ListWrapped(ctx context.Context) ([]Blueprint, error)
-	Create(ctx context.Context, b Blueprint) (created bool, err error)
+	CreateWrapped(ctx context.Context, b Blueprint) (created bool, err error)
 	Withdraw(ctx context.Context, name string) error
 }

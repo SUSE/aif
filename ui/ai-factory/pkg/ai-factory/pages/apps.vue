@@ -3,11 +3,6 @@
     <!-- Header -->
     <div class="apps-page__header">
       <h1>{{ t('aif.pages.apps.title') }}</h1>
-      <div class="apps-page__counts">
-        <span class="apps-page__pill">{{ t('aif.pages.apps.header.total', { count: apps.length }) }}</span>
-        <span class="apps-page__pill apps-page__pill--nvidia">{{ t('aif.pages.apps.header.nvidia', { count: nvidiaCount }) }}</span>
-        <span class="apps-page__pill apps-page__pill--suse">{{ t('aif.pages.apps.header.suse', { count: suseCount }) }}</span>
-      </div>
     </div>
 
     <!-- Toolbar -->
@@ -19,21 +14,10 @@
         class="apps-page__search"
       />
 
-      <select v-model="sourceFilter" class="apps-page__select" @change="loadApps">
-        <option value="all">{{ t('aif.pages.apps.toolbar.sourceAll') }}</option>
-        <option value="nvidia">{{ t('aif.pages.apps.toolbar.sourceNvidia') }}</option>
-        <option value="suse">{{ t('aif.pages.apps.toolbar.sourceSuse') }}</option>
+      <select v-model="registry" class="apps-page__select" @change="loadApps">
+        <option value="suse">{{ t('aif.pages.apps.toolbar.registrySuseLibrary') }}</option>
+        <option value="nvidia">{{ t('aif.pages.apps.toolbar.registryNvidia') }}</option>
       </select>
-
-      <select v-model="categoryFilter" class="apps-page__select" @change="loadApps">
-        <option value="">{{ t('aif.pages.apps.toolbar.categoryAll') }}</option>
-        <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
-      </select>
-
-      <label class="apps-page__toggle">
-        <input v-model="includeRefBlueprints" type="checkbox" @change="onToggleRefBlueprints" />
-        {{ t('aif.pages.apps.toolbar.includeRefBlueprints') }}
-      </label>
 
       <div class="apps-page__toolbar-right">
         <button class="btn role-primary btn-sm apps-page__refresh" :disabled="loading" @click="$event.currentTarget.blur(); refresh()">
@@ -60,6 +44,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Results summary -->
+    <div class="apps-page__summary">{{ t('aif.pages.apps.resultsSummary', { count: filteredApps.length }) }}</div>
 
     <!-- Error banner -->
     <Banner v-if="error" color="error" :label="error" class="apps-page__error" />
@@ -88,32 +75,22 @@
             <tr>
               <th></th>
               <th>{{ t('aif.pages.apps.list.name') }}</th>
-              <th>{{ t('aif.pages.apps.list.publisher') }}</th>
-              <th>{{ t('aif.pages.apps.list.category') }}</th>
-              <th>{{ t('aif.pages.apps.list.version') }}</th>
-              <th>{{ t('aif.pages.apps.list.updated') }}</th>
+              <th>{{ t('aif.pages.apps.list.description') }}</th>
               <th class="text-right">{{ t('aif.pages.apps.list.actions') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="app in filteredApps" :key="app.id" class="main-row">
+            <tr v-for="app in filteredApps" :key="app.id" class="main-row" tabindex="0" @click="onInstall(app)" @keydown.enter="onInstall(app)" @keydown.space.prevent="onInstall(app)">
               <td class="col-logo">
                 <img :src="app.logoURL || fallbackLogo" :alt="app.name" class="table-logo" @error="onImgError" />
               </td>
               <td class="col-name">
                 <span class="app-name">{{ app.displayName || app.name }}</span>
-                <span v-if="app.referenceBlueprint" class="ref-badge">{{ t('aif.pages.apps.badge.referenceBlueprint') }}</span>
+                <span class="packaging-badge">{{ app.assetType === 'chart' ? t('aif.pages.apps.packaging.helm') : t('aif.pages.apps.packaging.container') }}</span>
               </td>
-              <td>
-                <span :class="['publisher-badge', `publisher-badge--${app.source}`]">{{ app.publisher }}</span>
-              </td>
-              <td>{{ (app.categories || []).join(', ') || '—' }}</td>
-              <td>{{ app.version }}</td>
-              <td>{{ formatDate(app.lastUpdatedAt) }}</td>
+              <td class="col-description">{{ app.description || '—' }}</td>
               <td class="text-right col-actions">
-                <button class="btn btn-sm role-primary" disabled :title="t('aif.pages.apps.card.installDisabled')" @click.stop="onInstall(app)">
-                  {{ t('aif.pages.apps.card.install') }}
-                </button>
+                <i class="icon icon-chevron-right" />
               </td>
             </tr>
           </tbody>
@@ -137,12 +114,10 @@
 <script>
 import { defineComponent, ref, computed, onMounted, getCurrentInstance } from 'vue';
 import AppCard from '../components/apps/AppCard.vue';
-import { listApps, listCategories } from '../utils/operator-api';
-import { formatDate } from '../utils/date';
+import { listApps } from '../utils/operator-api';
 import { FALLBACK_LOGO } from '../config/constants';
+import { PRODUCT_NAME, MANAGEMENT_CLUSTER } from '../config/types';
 import { Banner } from '@components/Banner';
-
-const STORAGE_KEY = 'aif-include-reference-blueprints';
 
 export default defineComponent({
   name: 'AppsPage',
@@ -156,12 +131,9 @@ export default defineComponent({
     const loading = ref(true);
     const error = ref('');
     const apps = ref([]);
-    const categories = ref([]);
     const search = ref('');
-    const sourceFilter = ref('all');
-    const categoryFilter = ref('');
+    const registry = ref('suse');
     const viewMode = ref('tiles');
-    const includeRefBlueprints = ref(false);
     const fallbackLogo = FALLBACK_LOGO;
 
     const filteredApps = computed(() => {
@@ -177,19 +149,12 @@ export default defineComponent({
       });
     });
 
-    const nvidiaCount = computed(() => apps.value.filter((a) => a.source === 'nvidia').length);
-    const suseCount = computed(() => apps.value.filter((a) => a.source === 'suse').length);
-
     const loadApps = async () => {
       loading.value = true;
       error.value = '';
 
       try {
-        apps.value = await listApps({
-          source:                     sourceFilter.value,
-          category:                   categoryFilter.value || undefined,
-          includeReferenceBlueprints: includeRefBlueprints.value
-        });
+        apps.value = await listApps({ source: registry.value });
       } catch (err) {
         error.value = err.message || t('aif.pages.apps.empty.error');
         apps.value = [];
@@ -198,26 +163,15 @@ export default defineComponent({
       }
     };
 
-    const loadCategories = async () => {
-      try {
-        categories.value = await listCategories();
-      } catch (err) {
-        console.error('AppsPage: failed to load categories', err); // eslint-disable-line no-console
-        categories.value = [];
-      }
-    };
-
     const refresh = async () => {
-      await Promise.all([loadApps(), loadCategories()]);
+      await loadApps();
     };
 
-    const onToggleRefBlueprints = () => {
-      localStorage.setItem(STORAGE_KEY, String(includeRefBlueprints.value));
-      loadApps();
-    };
-
-    const onInstall = (_app) => {
-      // P6-8 stub: Deploy Wizard not yet available
+    const onInstall = (app) => {
+      instance?.proxy?.$router.push({
+        name:   `${ PRODUCT_NAME }-c-cluster-app-install`,
+        params: { cluster: MANAGEMENT_CLUSTER, id: app.id },
+      });
     };
 
     const onImgError = (event) => {
@@ -225,11 +179,6 @@ export default defineComponent({
     };
 
     onMounted(() => {
-      const stored = localStorage.getItem(STORAGE_KEY);
-
-      if (stored === 'true') {
-        includeRefBlueprints.value = true;
-      }
       refresh();
     });
 
@@ -237,21 +186,14 @@ export default defineComponent({
       loading,
       error,
       apps,
-      categories,
       search,
-      sourceFilter,
-      categoryFilter,
+      registry,
       viewMode,
-      includeRefBlueprints,
       filteredApps,
-      nvidiaCount,
-      suseCount,
       fallbackLogo,
       loadApps,
       refresh,
-      onToggleRefBlueprints,
       onInstall,
-      formatDate,
       onImgError,
       t
     };
@@ -277,33 +219,11 @@ export default defineComponent({
   }
 }
 
-.apps-page__counts {
-  display: flex;
-  gap: 8px;
-}
-
-.apps-page__pill {
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
-
-  &--nvidia {
-    background: var(--success-banner-bg, #dcfce7);
-    color: var(--success, #166534);
-  }
-
-  &--suse {
-    background: var(--info-banner-bg, #dbeafe);
-    color: var(--info, #1d4ed8);
-  }
-}
-
 .apps-page__toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   flex-wrap: wrap;
 
   > * {
@@ -333,7 +253,7 @@ export default defineComponent({
   color: var(--body-text);
   font-size: 14px;
   width: auto;
-  min-width: 140px;
+  min-width: 180px;
   display: inline-block;
 }
 
@@ -366,21 +286,10 @@ export default defineComponent({
   }
 }
 
-.apps-page__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.apps-page__summary {
   font-size: 13px;
-  color: var(--body-text);
-  cursor: pointer;
-  margin-left: 8px;
-  width: auto;
-  white-space: nowrap;
-
-  input[type="checkbox"] {
-    width: auto;
-    display: inline-block;
-  }
+  color: var(--muted);
+  margin-bottom: 12px;
 }
 
 .apps-page__error {
@@ -424,8 +333,12 @@ export default defineComponent({
       vertical-align: middle;
     }
 
-    .main-row:hover {
-      background: var(--sortable-table-accent-bg);
+    .main-row {
+      cursor: pointer;
+
+      &:hover {
+        background: var(--sortable-table-accent-bg);
+      }
     }
   }
 
@@ -445,39 +358,24 @@ export default defineComponent({
     font-weight: 600;
   }
 
-  .ref-badge {
-    margin-left: 6px;
-    background: var(--warning-banner-bg, #fff3e0);
-    color: var(--warning, #e65100);
+  .packaging-badge {
+    margin-left: 8px;
     padding: 1px 6px;
     border-radius: 8px;
     font-size: 10px;
     font-weight: 600;
+    background: var(--accent-btn, #f5f5f5);
+    color: var(--muted);
+  }
+
+  .col-description {
+    color: var(--body-text);
+    font-size: 13px;
   }
 
   .col-actions {
     white-space: nowrap;
-
-    .btn + .btn {
-      margin-left: 4px;
-    }
-  }
-}
-
-.publisher-badge {
-  padding: 2px 8px;
-  border-radius: 8px;
-  font-size: 11px;
-  font-weight: 600;
-
-  &--nvidia {
-    background: var(--success-banner-bg, #dcfce7);
-    color: var(--success, #166534);
-  }
-
-  &--suse {
-    background: var(--info-banner-bg, #dbeafe);
-    color: var(--info, #1d4ed8);
+    color: var(--muted);
   }
 }
 

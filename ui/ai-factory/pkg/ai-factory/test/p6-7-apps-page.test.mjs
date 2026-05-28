@@ -24,11 +24,10 @@ test('apps.vue imports and uses AppCard component', () => {
   assert.match(source, /AppCard/);
 });
 
-test('apps.vue imports listApps and listCategories from operator-api', () => {
+test('apps.vue imports listApps from operator-api', () => {
   const source = read('pages/apps.vue');
 
   assert.match(source, /import.*listApps.*from.*utils\/operator-api/s);
-  assert.match(source, /import.*listCategories.*from.*utils\/operator-api/s);
 });
 
 test('apps.vue has search input with correct i18n placeholder', () => {
@@ -38,19 +37,40 @@ test('apps.vue has search input with correct i18n placeholder', () => {
   assert.match(source, /type="search"|type='search'/);
 });
 
-test('apps.vue has source filter select', () => {
-  const source = read('pages/apps.vue');
+test('apps.vue: registry selector has SUSE AI Library and Nvidia NGC only', () => {
+  const src = read('pages/apps.vue');
 
-  assert.match(source, /aif\.pages\.apps\.toolbar\.sourceAll/);
-  assert.match(source, /aif\.pages\.apps\.toolbar\.sourceNvidia/);
-  assert.match(source, /aif\.pages\.apps\.toolbar\.sourceSuse/);
+  assert.match(src, /aif\.pages\.apps\.toolbar\.registrySuseLibrary/);
+  assert.match(src, /aif\.pages\.apps\.toolbar\.registryNvidia/);
+  // no "All" option
+  assert.doesNotMatch(src, /toolbar\.sourceAll/);
 });
 
-test('apps.vue has category filter select', () => {
-  const source = read('pages/apps.vue');
+test('apps.vue: category filter and reference-blueprints toggle removed', () => {
+  const src = read('pages/apps.vue');
 
-  assert.match(source, /aif\.pages\.apps\.toolbar\.categoryAll/);
-  assert.match(source, /categories/);
+  assert.doesNotMatch(src, /categoryFilter/);
+  assert.doesNotMatch(src, /includeRefBlueprints|includeReferenceBlueprints/);
+});
+
+test('apps.vue: Add to Bundle removed', () => {
+  const src = read('pages/apps.vue');
+
+  assert.doesNotMatch(src, /AddToBundle|add-to-bundle/);
+});
+
+test('apps.vue: results summary replaces count pills', () => {
+  const src = read('pages/apps.vue');
+
+  assert.match(src, /aif\.pages\.apps\.resultsSummary/);
+  assert.doesNotMatch(src, /apps-page__pill/);
+});
+
+test('apps.vue: card selection navigates to app-install route', () => {
+  const src = read('pages/apps.vue');
+
+  assert.match(src, /app-install/);
+  assert.match(src, /\.id/);
 });
 
 test('apps.vue has tile/list view toggle', () => {
@@ -61,26 +81,11 @@ test('apps.vue has tile/list view toggle', () => {
   assert.match(source, /list/);
 });
 
-test('apps.vue has Include Reference Blueprints toggle', () => {
-  const source = read('pages/apps.vue');
-
-  assert.match(source, /includeReferenceBlueprints|includeRefBlueprints/);
-  assert.match(source, /aif\.pages\.apps\.toolbar\.includeRefBlueprints/);
-  assert.match(source, /localStorage/);
-});
-
 test('apps.vue has refresh button', () => {
   const source = read('pages/apps.vue');
 
   assert.match(source, /aif\.pages\.apps\.toolbar\.refresh/);
   assert.match(source, /refresh/);
-});
-
-test('apps.vue has header with per-source pill counts', () => {
-  const source = read('pages/apps.vue');
-
-  assert.match(source, /nvidiaCount|nvidia-count/);
-  assert.match(source, /suseCount|suse-count/);
 });
 
 test('apps.vue renders tile grid when viewMode is tiles', () => {
@@ -95,7 +100,6 @@ test('apps.vue renders table when viewMode is list', () => {
 
   assert.match(source, /<table|list-view/);
   assert.match(source, /aif\.pages\.apps\.list\.name/);
-  assert.match(source, /aif\.pages\.apps\.list\.publisher/);
 });
 
 test('apps.vue has client-side search filter on name and description', () => {
@@ -124,14 +128,6 @@ test('apps.vue has loading state', () => {
   const source = read('pages/apps.vue');
 
   assert.match(source, /loading/);
-});
-
-test('apps.vue persists includeRefBlueprints toggle to localStorage', () => {
-  const source = read('pages/apps.vue');
-
-  assert.match(source, /const STORAGE_KEY = 'aif-include-reference-blueprints'/);
-  assert.match(source, /localStorage\.getItem\(STORAGE_KEY\)/);
-  assert.match(source, /localStorage\.setItem\(STORAGE_KEY/);
 });
 
 test('apps.vue injects t() into setup with proxy binding so runtime calls do not lose this', () => {

@@ -28,6 +28,12 @@ type RenderCall struct {
 	Overrides            Overrides
 }
 
+// DefaultValuesCall records one invocation of DefaultValues against
+// FakeEngine. Inspect FakeEngine.Inspected in tests.
+type DefaultValuesCall struct {
+	Repo, Chart, Version string
+}
+
 // FakeEngine is a recording fake satisfying Engine and ValueRenderer.
 // Pass it to controllers and HTTP handlers under test; assert on Calls and
 // Rendered afterwards.
@@ -59,6 +65,23 @@ type FakeEngine struct {
 
 	// Rendered records every Render invocation. Inspect in tests.
 	Rendered []RenderCall
+
+	// DefaultValuesFn overrides the default empty-map behavior for
+	// DefaultValues. When nil, DefaultValues returns the
+	// DefaultValuesResult fields (or empty maps if both are nil).
+	DefaultValuesFn func(ctx context.Context, repo, chart, version string) (map[string]any, map[string]any, error)
+
+	// DefaultValuesResult is the canned output for DefaultValues when
+	// DefaultValuesFn is nil. Tests that don't need per-call dynamic
+	// behavior set these fields directly.
+	DefaultValuesResult struct {
+		Values    map[string]any
+		Questions map[string]any
+		Err       error
+	}
+
+	// Inspected records every DefaultValues invocation. Inspect in tests.
+	Inspected []DefaultValuesCall
 
 	Settings EngineSettings // last applied
 }
@@ -189,6 +212,23 @@ func (f *FakeEngine) Render(ctx context.Context, repo, chart, version string, ov
 		}
 	}
 	return out, nil
+}
+
+func (f *FakeEngine) DefaultValues(ctx context.Context, repo, chart, version string) (map[string]any, map[string]any, error) {
+	f.mu.Lock()
+	f.Inspected = append(f.Inspected, DefaultValuesCall{Repo: repo, Chart: chart, Version: version})
+	stub := f.DefaultValuesFn
+	result := f.DefaultValuesResult
+	f.mu.Unlock()
+
+	if stub != nil {
+		return stub(ctx, repo, chart, version)
+	}
+	values := result.Values
+	if values == nil {
+		values = map[string]any{}
+	}
+	return values, result.Questions, result.Err
 }
 
 func (f *FakeEngine) UpdateSettings(s EngineSettings) {

@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/SUSE/aif/pkg/apps"
+	"github.com/SUSE/aif/pkg/helm"
 )
 
 // AppsHandler serves the /api/v1/apps* REST endpoints. It depends on
@@ -23,12 +25,15 @@ import (
 // which retrieves the request_id-decorated child logger built by
 // LoggingMiddleware (per CLAUDE.md "structured logging with request_id").
 type AppsHandler struct {
-	catalog apps.Catalog
+	catalog   apps.Catalog
+	inspector helm.ChartInspector
 }
 
-// NewAppsHandler constructs an AppsHandler bound to the catalog port.
-func NewAppsHandler(catalog apps.Catalog) *AppsHandler {
-	return &AppsHandler{catalog: catalog}
+// NewAppsHandler constructs an AppsHandler bound to the catalog port
+// and the chart-inspection port. The inspector backs
+// GET /api/v1/apps/{id}/values; the catalog backs the rest.
+func NewAppsHandler(catalog apps.Catalog, inspector helm.ChartInspector) *AppsHandler {
+	return &AppsHandler{catalog: catalog, inspector: inspector}
 }
 
 // Register wires this handler's routes onto the provided mux. App IDs
@@ -40,6 +45,7 @@ func (h *AppsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/apps", h.list)
 	mux.HandleFunc("GET /api/v1/apps/categories", h.categories)
 	mux.HandleFunc("GET /api/v1/apps/{id}", h.get)
+	mux.HandleFunc("GET /api/v1/apps/{id}/values", h.values)
 }
 
 // list serves GET /api/v1/apps. Query params:
@@ -116,6 +122,74 @@ func (h *AppsHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, app)
+}
+
+// values serves GET /api/v1/apps/{id}/values?version={v}. Returns the
+// chart's published default values.yaml + optional questions.yaml so
+// the App Install wizard's Configuration step can render an editable
+// view of the chart-as-published.
+//
+//	{ "values": { ... }, "questions": { ... } | null }
+//
+// Error mapping:
+//
+//	missing ?version              → 400 INVALID_INPUT
+//	apps.ErrAppNotFound          → 404 NOT_FOUND
+//	apps.ErrUnknownSource        → 400 INVALID_INPUT
+//	inspector failures           → 500 INTERNAL_ERROR
+//
+// The version query param is required even though the App carries a
+// ChartRef.Version: the wizard lets the user pick from
+// availableVersions[], and we want the user's choice to drive the pull
+// rather than the catalog snapshot.
+func (h *AppsHandler) values(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	version := r.URL.Query().Get("version")
+	if version == "" {
+		err := fmt.Errorf("%w: query param 'version' is required", ErrInvalidInput)
+		writeError(w, errorStatus(err), err)
+		return
+	}
+
+	app, err := h.catalog.Get(r.Context(), id)
+	if err != nil {
+		mapped := mapCatalogErr(err, id)
+		h.logCatalogErr(r, "values.Get", err, "id", id, "version", version)
+		writeError(w, errorStatus(mapped), mapped)
+		return
+	}
+
+	// Engine.DefaultValues expects the bare host/path (no oci:// scheme)
+	// — same contract as Render. App.ChartRef.Repo is stored with the
+	// scheme attached (see pkg/apps/nvidia_source.go), so strip it here
+	// at the integration boundary.
+	repo := strings.TrimPrefix(app.ChartRef.Repo, "oci://")
+	chart := app.ChartRef.Chart
+
+	values, questions, err := h.inspector.DefaultValues(r.Context(), repo, chart, version)
+	if err != nil {
+		LoggerFromContext(r.Context()).Warn("apps handler: chart inspect failed",
+			slog.String("op", "values.DefaultValues"),
+			slog.String("id", id),
+			slog.String("version", version),
+			slog.String("repo", repo),
+			slog.String("chart", chart),
+			slog.Any("error", err),
+		)
+		// Wrap as ErrInternal so the writeError envelope gets the
+		// INTERNAL_ERROR code instead of leaking the raw helm error
+		// classification. The Warn log above carries the underlying err.
+		writeError(w, http.StatusInternalServerError,
+			fmt.Errorf("%w: failed to inspect chart %s/%s:%s", ErrInternal, repo, chart, version))
+		return
+	}
+
+	// questions is optional and serialized as null when absent so the UI
+	// has a uniform shape to check.
+	writeJSON(w, http.StatusOK, struct {
+		Values    map[string]any `json:"values"`
+		Questions map[string]any `json:"questions"`
+	}{Values: values, Questions: questions})
 }
 
 // mapCatalogErr translates pkg/apps sentinels into the api package's

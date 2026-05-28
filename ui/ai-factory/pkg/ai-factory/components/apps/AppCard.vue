@@ -1,5 +1,12 @@
 <template>
-  <div :class="['app-card', { 'app-card--ref-blueprint': app.referenceBlueprint }]">
+  <div
+    class="app-card"
+    role="button"
+    tabindex="0"
+    @click="$emit('install', app)"
+    @keydown.enter="$emit('install', app)"
+    @keydown.space.prevent="$emit('install', app)"
+  >
     <div class="app-card__header">
       <img
         :src="app.logoURL || fallbackLogo"
@@ -13,12 +20,10 @@
           <span :class="['publisher-badge', `publisher-badge--${app.source}`]">
             {{ t(`aif.pages.apps.badge.${app.source}`) }}
           </span>
-          <span v-if="app.referenceBlueprint" class="publisher-badge publisher-badge--ref-blueprint">
-            {{ t('aif.pages.apps.badge.referenceBlueprint') }}
+          <span class="packaging-badge">
+            {{ app.assetType === 'chart' ? t('aif.pages.apps.packaging.helm') : t('aif.pages.apps.packaging.container') }}
           </span>
           <span v-if="formattedVersion" class="app-card__version">{{ formattedVersion }}</span>
-          <span v-if="formattedVersion && formattedDate" class="app-card__meta-sep" aria-hidden="true">·</span>
-          <span v-if="formattedDate" class="app-card__updated">{{ formattedDate }}</span>
         </div>
       </div>
       <a
@@ -35,27 +40,11 @@
     </div>
 
     <p class="app-card__description">{{ app.description || '—' }}</p>
-
-    <div v-if="displayTags.length" class="app-card__tags">
-      <span v-for="tag in displayTags" :key="tag" class="app-card__tag">{{ tag }}</span>
-    </div>
-
-    <div class="app-card__actions">
-      <button
-        class="btn role-primary btn-sm"
-        disabled
-        :title="t('aif.pages.apps.card.installDisabled')"
-        @click.stop="$emit('install', app)"
-      >
-        {{ t('aif.pages.apps.card.install') }}
-      </button>
-    </div>
   </div>
 </template>
 
 <script>
 import { defineComponent, computed, getCurrentInstance } from 'vue';
-import { formatDate } from '../../utils/date';
 import { FALLBACK_LOGO } from '../../config/constants';
 
 export default defineComponent({
@@ -75,12 +64,6 @@ export default defineComponent({
     const t = instance?.proxy?.t?.bind(instance.proxy) || ((key) => key);
     const fallbackLogo = FALLBACK_LOGO;
 
-    const formattedDate = computed(() => {
-      const formatted = formatDate(props.app.lastUpdatedAt);
-
-      return formatted === '—' ? '' : formatted;
-    });
-
     const formattedVersion = computed(() => {
       const v = props.app.version;
 
@@ -91,18 +74,11 @@ export default defineComponent({
       return /^\d/.test(v) ? `v${ v }` : v;
     });
 
-    const displayTags = computed(() => {
-      const all = [...(props.app.categories || []), ...(props.app.tags || [])];
-      const unique = [...new Set(all)];
-
-      return unique.slice(0, 2);
-    });
-
     const onImgError = (event) => {
       event.target.src = FALLBACK_LOGO;
     };
 
-    return { fallbackLogo, formattedDate, formattedVersion, displayTags, onImgError, t };
+    return { fallbackLogo, formattedVersion, onImgError, t };
   }
 });
 </script>
@@ -115,15 +91,15 @@ export default defineComponent({
   border-radius: 8px;
   padding: 16px;
   gap: 12px;
-  min-height: 200px;
-  transition: border-color 0.2s ease;
+  min-height: 160px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 
-  &:hover {
+  &:hover,
+  &:focus {
     border-color: var(--primary);
-  }
-
-  &--ref-blueprint {
-    border-left: 3px solid var(--warning, #ff9800);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    outline: none;
   }
 }
 
@@ -180,16 +156,18 @@ export default defineComponent({
     background: var(--info-banner-bg, #dbeafe);
     color: var(--info, #1d4ed8);
   }
-
-  &--ref-blueprint {
-    background: var(--warning-banner-bg, #fff3e0);
-    color: var(--warning, #e65100);
-  }
 }
 
-.app-card__version,
-.app-card__updated,
-.app-card__meta-sep {
+.packaging-badge {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent-btn, #f5f5f5);
+  color: var(--muted);
+}
+
+.app-card__version {
   color: var(--muted);
   font-size: 10px;
 }
@@ -216,28 +194,5 @@ export default defineComponent({
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.app-card__tags {
-  display: flex;
-  gap: 4px;
-}
-
-.app-card__tag {
-  background: var(--accent-btn, #f5f5f5);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.app-card__actions {
-  display: flex;
-  gap: 8px;
-  margin-top: auto;
-
-  .btn {
-    flex: 1;
-  }
 }
 </style>

@@ -53,6 +53,39 @@ func (r *k8sRepository) UpdateStatus(ctx context.Context, bp *aifv1.Blueprint) e
 	return r.c.Status().Update(ctx, bp)
 }
 
+// Create persists a new Blueprint CR. Blueprint is cluster-scoped, so the
+// caller must set bp.Name to the canonical "{lineage}.{version}" form.
+// Surfaces apierrors.IsAlreadyExists when the name collides — callers map
+// that to HTTP 409.
+//
+// Not part of the Repository interface (ISP — Repository is already at 4
+// methods serving the reconciler + wrapper). The HTTP handler declares a
+// consumer-defined port that this method satisfies.
+func (r *k8sRepository) Create(ctx context.Context, bp *aifv1.Blueprint) error {
+	return r.c.Create(ctx, bp)
+}
+
+// Delete removes a Blueprint CR by name. Surfaces apierrors.IsNotFound when
+// the name doesn't exist — callers map that to HTTP 404.
+//
+// Not part of the Repository interface; see Create above.
+func (r *k8sRepository) Delete(ctx context.Context, name string) error {
+	bp := &aifv1.Blueprint{}
+	bp.Name = name
+	return r.c.Delete(ctx, bp)
+}
+
+// FindByLineageVersion looks up a Blueprint CR by its lineage name + version
+// using the canonical "{lineage}.{version}" object name. This is cheaper than
+// a List+filter and avoids the label-index dependency, but assumes callers
+// (POST handler today) keep CR.Name in that form.
+//
+// Returns apierrors.IsNotFound when no Blueprint with that name exists.
+// Not part of the Repository interface; see Create above.
+func (r *k8sRepository) FindByLineageVersion(ctx context.Context, lineage, version string) (*aifv1.Blueprint, error) {
+	return r.Get(ctx, lineage+"."+version)
+}
+
 func (r *k8sRepository) ListWrapped(ctx context.Context) ([]Blueprint, error) {
 	sel, err := labels.Parse("ai.suse.com/blueprint-source=" + LabelValueWrapsVendorChart)
 	if err != nil {
@@ -69,7 +102,9 @@ func (r *k8sRepository) ListWrapped(ctx context.Context) ([]Blueprint, error) {
 	return out, nil
 }
 
-func (r *k8sRepository) Create(ctx context.Context, b Blueprint) (bool, error) {
+// CreateWrapped persists a wrapped Blueprint (origin: WrapsVendorChart).
+// See WrappedBlueprintStore for the naming rationale.
+func (r *k8sRepository) CreateWrapped(ctx context.Context, b Blueprint) (bool, error) {
 	cr := ToWrappedCR(b)
 	if err := r.c.Create(ctx, cr); err != nil {
 		if apierrors.IsAlreadyExists(err) {

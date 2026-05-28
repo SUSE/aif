@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/yaml"
 )
 
 const defaultInstallTimeout = 5 * time.Minute
@@ -160,6 +161,105 @@ func (e *engine) InstallChartFromRepo(ctx context.Context, req InstallRequest) (
 		return ReleaseStatus{}, fmt.Errorf("helm install failed: %w", err)
 	}
 	return toReleaseStatus(rel), nil
+}
+
+// loadChart pulls the chart referenced by chartRef and returns the parsed
+// *chart.Chart plus a cleanup func the caller MUST defer. The namespace
+// arg is only needed by e.cfgFactory; loadChart neither installs nor
+// touches the cluster. Used by DefaultValues (pure inspection — no merge,
+// no install). renderValues uses a slightly heavier path because it also
+// applies the §6.6 merge layers.
+func (e *engine) loadChart(ctx context.Context, namespace, chartRef string) (*chart.Chart, func(), error) {
+	cfg, err := e.cfgFactory(namespace)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("failed to create action config: %w", err)
+	}
+	chartPath, err := e.runner.Pull(ctx, cfg, chartRef, e.chartDir)
+	if err != nil {
+		return nil, func() {}, errors.Join(ErrPullFailed, fmt.Errorf("ref %s: %w", chartRef, err))
+	}
+	cleanup := func() { _ = os.RemoveAll(filepath.Dir(chartPath)) }
+	ch, err := loader.Load(chartPath)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("failed to load chart: %w", err)
+	}
+	return ch, cleanup, nil
+}
+
+// DefaultValues satisfies the helm.ChartInspector port. It pulls the
+// chart, loads it, and returns the raw chart.Values map plus the parsed
+// questions.yaml (if present). No §6.6 merge layers are applied — this
+// is layer-1 only, so the UI shows the chart's published defaults to the
+// user verbatim.
+//
+// questions is best-effort: nil when the chart has no questions.yaml.
+// A malformed questions.yaml is logged at Warn and treated as absent;
+// the values map still returns. This matches the spec's "questions is
+// best-effort" guarantee.
+//
+// chartRef is assembled from (repo, chart, version) as
+// "oci://{repo}/{chart}:{version}" — same contract as Render.
+func (e *engine) DefaultValues(ctx context.Context, repo, chartName, version string) (map[string]any, map[string]any, error) {
+	chartRef := fmt.Sprintf("oci://%s/%s:%s", repo, chartName, version)
+	ch, cleanup, err := e.loadChart(ctx, "aif-inspect", chartRef)
+	defer cleanup()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	questions := extractQuestions(ch, e.logger)
+	// chart.Values is already a parsed map[string]any — return it directly.
+	// Nil Values is a valid (empty-defaults) chart; surface as an empty map
+	// so the JSON envelope reads `{"values": {}, ...}` not `{"values": null, ...}`.
+	values := ch.Values
+	if values == nil {
+		values = map[string]any{}
+	}
+	return values, questions, nil
+}
+
+// extractQuestions scans the chart's Raw + Files lists for a top-level
+// questions.yaml (Rancher catalog metadata). Returns nil when the file
+// is absent, malformed, or empty. Errors are logged at Warn and swallowed
+// — questions are best-effort per the ChartInspector contract.
+func extractQuestions(ch *chart.Chart, logger *slog.Logger) map[string]any {
+	if ch == nil {
+		return nil
+	}
+	// Rancher's convention is a chart-root questions.yaml. chart.Raw
+	// contains the original file list from the archive; chart.Files
+	// carries miscellaneous files preserved after parsing. Check Raw
+	// first (preserved unmodified), fall back to Files.
+	var data []byte
+	for _, f := range ch.Raw {
+		if f != nil && f.Name == "questions.yaml" {
+			data = f.Data
+			break
+		}
+	}
+	if data == nil {
+		for _, f := range ch.Files {
+			if f != nil && f.Name == "questions.yaml" {
+				data = f.Data
+				break
+			}
+		}
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	var out map[string]any
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		// Best-effort: log + drop. Returning an error here would force
+		// the UI to fail-open or fail-closed, neither of which matches
+		// "questions are optional metadata".
+		logger.Warn("helm: failed to parse questions.yaml; treating as absent",
+			slog.String("component", "helm.engine"),
+			slog.Any("error", err))
+		return nil
+	}
+	return out
 }
 
 // Render satisfies the helm.ValueRenderer port. It pulls the chart, loads it,
@@ -430,6 +530,6 @@ type simpleClientConfig struct {
 func (s *simpleClientConfig) RawConfig() (clientcmdapi.Config, error) {
 	return clientcmdapi.Config{}, errors.New("raw config not available")
 }
-func (s *simpleClientConfig) ClientConfig() (*rest.Config, error) { return s.config, nil }
-func (s *simpleClientConfig) Namespace() (string, bool, error)    { return s.namespace, false, nil }
+func (s *simpleClientConfig) ClientConfig() (*rest.Config, error)  { return s.config, nil }
+func (s *simpleClientConfig) Namespace() (string, bool, error)     { return s.namespace, false, nil }
 func (s *simpleClientConfig) ConfigAccess() clientcmd.ConfigAccess { return nil }

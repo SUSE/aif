@@ -167,12 +167,18 @@ func main() {
 	logger.Info("Creating controller-runtime manager")
 
 	// helm.New returns the narrow Engine interface, but the underlying
-	// *engine also satisfies helm.ValueRenderer (per ValueRenderer doc).
-	// Assert here to expose both ports without changing the constructor's
-	// return type.
+	// *engine also satisfies helm.ValueRenderer (per ValueRenderer doc)
+	// and helm.ChartInspector (per ChartInspector doc). Assert here to
+	// expose all three ports without changing the constructor's return
+	// type.
 	helmRenderer, ok := helmEngine.(helm.ValueRenderer)
 	if !ok {
 		logger.Error("helm.Engine does not satisfy helm.ValueRenderer — unexpected helm package contract change")
+		os.Exit(1)
+	}
+	helmInspector, ok := helmEngine.(helm.ChartInspector)
+	if !ok {
+		logger.Error("helm.Engine does not satisfy helm.ChartInspector — unexpected helm package contract change")
 		os.Exit(1)
 	}
 
@@ -265,13 +271,21 @@ func main() {
 	// internal/api), one backing struct.
 	workloadsHandler := api.NewWorkloadsHandler(workloadUpgrader, workloadK8sRepo, workloadK8sRepo, sarChecker, logger)
 
+	// AIDEV-NOTE(wave-1-task-2-1): Blueprint write handler. blueprintRepo is
+	// the concrete *k8sRepository (NewK8sRepository returns the struct, not
+	// the narrow Repository interface), so the handler's consumer-defined
+	// port pulls Create/Delete/FindByLineageVersion/UpdateStatus directly.
+	// The deployment counter comes from the workload K8s repo — DELETE
+	// refuses to proceed while any Workload still references the blueprint.
+	blueprintsHandler := api.NewBlueprintsHandler(blueprintRepo, workloadK8sRepo.AsDeploymentCounter(), sarChecker, logger)
+
 	// Setup API server
 	mux := http.NewServeMux()
 	// Register the REST handlers via the api.Handler interface. Future
 	// handlers plug in the same way — pass them as additional varargs.
-	appsAPIHandler := api.NewAppsHandler(appsCatalog)
+	appsAPIHandler := api.NewAppsHandler(appsCatalog, helmInspector)
 	nimHandler := api.NewNIMHandler(nvidiaDiscovery)
-	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler, settingsHandler, workloadsHandler)
+	handler := manager.Register(mux, logger, allowedOrigin, appsAPIHandler, nimHandler, publishHandler, settingsHandler, workloadsHandler, blueprintsHandler)
 
 	apiServer := &http.Server{
 		Addr:    addr,

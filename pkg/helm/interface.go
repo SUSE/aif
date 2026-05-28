@@ -62,7 +62,7 @@ type Overrides struct {
 type InstallRequest struct {
 	Namespace   string
 	ReleaseName string
-	ChartRef    string        // OCI ref, e.g. "oci://registry.suse.com/ai/charts/nim-llm:1.2.0"
+	ChartRef    string // OCI ref, e.g. "oci://registry.suse.com/ai/charts/nim-llm:1.2.0"
 	Overrides   Overrides
 	Wait        bool          // block until release reaches deployed
 	Timeout     time.Duration // default 5min
@@ -92,7 +92,7 @@ type InstallFromRepoURLRequest struct {
 type ReleaseStatus struct {
 	Name     string
 	Revision int
-	Status   string    // helm.sh/helm/v3/pkg/release status verbatim per §4.4
+	Status   string // helm.sh/helm/v3/pkg/release status verbatim per §4.4
 	Updated  time.Time
 }
 
@@ -142,6 +142,28 @@ type ImageRewriteRule struct {
 
 	// Replace is the substitution prefix.
 	Replace string
+}
+
+// ChartInspector reads a chart's raw, layer-1 defaults without
+// rendering the §6.6 merge stack. Used by the App Install wizard's
+// Configuration step (P3-0): the UI shows the chart's published
+// defaults so the user can edit them, then submits a workload with
+// the resulting valueOverrides.
+//
+// Single method (within ISP target). The same concrete *engine type
+// satisfies Engine, ValueRenderer, and ChartInspector — wire-time
+// composition in cmd/operator/main.go.
+type ChartInspector interface {
+	// DefaultValues pulls the chart, loads it, and returns the chart's
+	// raw default values.yaml as a parsed map. questions is the chart's
+	// optional questions.yaml (Rancher's catalog metadata) parsed the
+	// same way; it is nil when the chart ships no questions.yaml.
+	//
+	// repo is the bare OCI host/path WITHOUT scheme (e.g.
+	// "registry.suse.com/ai/charts/nvidia") — same contract as Render.
+	// No §6.6 merge layers are applied; image-rewrite and overrides
+	// are deliberately omitted so the UI shows the chart as published.
+	DefaultValues(ctx context.Context, repo, chart, version string) (values map[string]any, questions map[string]any, err error)
 }
 
 // ValueRenderer renders the post-merge Helm values for one chart
