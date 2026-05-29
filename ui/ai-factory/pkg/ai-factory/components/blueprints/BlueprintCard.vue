@@ -54,7 +54,7 @@
       </button>
       <ActionMenuShell
         button-variant="tertiary"
-        button-aria-label="More options"
+        :button-aria-label="t('aif.pages.blueprints.actions.moreOptionsAria')"
         :custom-actions="tileActions"
         @action-invoked="onAction"
       />
