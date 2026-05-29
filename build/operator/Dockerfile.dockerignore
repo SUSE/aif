@@ -5,8 +5,12 @@ bin
 charts
 docs
 examples
+hack
+test
 tmp
 ui
+.env
+.env.example
 .dockerignore
 .gitignore
 .golangci.yml
