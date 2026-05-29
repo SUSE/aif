@@ -1,6 +1,6 @@
 <template>
   <div class="aif-wizard">
-    <h1>{{ t('aif.pages.wizards.create.title') }}</h1>
+    <h1>{{ editMode ? t('aif.pages.wizards.create.editTitle') : t('aif.pages.wizards.create.title') }}</h1>
 
     <WizardStepIndicator
       :steps="steps"
@@ -9,6 +9,11 @@
     />
 
     <div v-if="currentStep === 0" class="aif-wizard__step">
+      <Banner
+        v-if="editMode"
+        color="info"
+        :label="t('aif.pages.wizards.create.editHint', { name: form.blueprintName })"
+      />
       <label>
         {{ t('aif.pages.wizards.create.blueprintName') }}
         <input v-model="form.blueprintName" type="text" class="input" :disabled="editMode" />
@@ -114,6 +119,7 @@
 
 <script>
 import { defineComponent } from 'vue';
+import { Banner } from '@components/Banner';
 import WizardStepIndicator from '../../components/wizards/WizardStepIndicator.vue';
 import { createBlueprint, listApps, getAppValues } from '../../utils/operator-api';
 import { PRODUCT_NAME, MANAGEMENT_CLUSTER, CRD_TYPES } from '../../config/types';
@@ -128,7 +134,7 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 export default defineComponent({
   name: 'BlueprintCreateWizard',
 
-  components: { WizardStepIndicator },
+  components: { WizardStepIndicator, Banner },
 
   async fetch() {
     try {
@@ -266,7 +272,16 @@ export default defineComponent({
           return;
         }
         this.form.blueprintName = source.spec.blueprintName;
-        this.form.version       = source.spec.version;
+        // Blueprint specs are immutable per version (see CLAUDE.md
+        // critical constraint #4). "Edit" therefore really forks a new
+        // version of the same lineage — the user must type a fresh
+        // version that doesn't yet exist. Pre-filling the source's
+        // version would always 409 on Publish.
+        // Copy mode targets a different lineage, so version collision
+        // doesn't apply and we keep the source value for convenience.
+        if (!this.editMode) {
+          this.form.version = source.spec.version;
+        }
         this.form.useCase       = source.spec.useCase || 'inference';
         this.form.description   = source.spec.description || '';
         this.form.components    = (source.spec.components || []).map((c) => ({

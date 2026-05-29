@@ -270,7 +270,8 @@ aif:
         appOnly: 'Manage is only available for App-sourced workloads. Use the upgrade action on Blueprint workloads.'
       create:
         title: 'New Blueprint'
-        editTitle: 'Edit Blueprint'
+        editTitle: 'New Version of Blueprint'
+        editHint: 'Creating a new version of {name}. Blueprint versions are immutable; pick a version that does not yet exist.'
         blueprintName: 'Blueprint Name (lineage identifier)'
         version: 'Version (e.g. 1.0.0)'
         versionInvalid: 'Version must be valid semver (e.g. 1.0.0).'
