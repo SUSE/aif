@@ -302,6 +302,8 @@ aif:
           intro: 'Set default Helm values for each app in this blueprint.'
           loadDefaults: 'Load defaults'
           valuesPlaceholder: 'Helm values (YAML) — leave blank to use chart defaults'
+        review:
+          customValues: 'custom values set'
         publish: 'Publish Blueprint'
         publishing: 'Publishing...'
         saveAsNewVersion: 'Save as New Version'

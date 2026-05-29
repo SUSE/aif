@@ -88,7 +88,7 @@
       <ul>
         <li v-for="comp in form.components" :key="comp.name">
           {{ comp.name }} — {{ comp.repo }}/{{ comp.chart }}@{{ comp.version }}
-          <em v-if="form.valueOverrides[comp.name]">({{ t('aif.pages.wizards.create.config.loadDefaults') }})</em>
+          <em v-if="form.valueOverrides[comp.name]">({{ t('aif.pages.wizards.create.review.customValues') }})</em>
         </li>
       </ul>
     </div>
