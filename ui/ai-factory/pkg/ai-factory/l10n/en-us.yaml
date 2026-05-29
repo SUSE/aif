@@ -68,7 +68,7 @@ aif:
         undeprecate: 'Undeprecate'
         delete: 'Delete'
         moreOptionsAria: 'More options'
-      activeWorkloadsWarning: '{count} active workload(s) use this blueprint version and will lose their source reference.'
+      activeWorkloadsWarning: '{count} active workload(s) reference this blueprint version.'
       createModal:
         title: 'Create Blueprint'
         blueprintName: 'Blueprint Name'
