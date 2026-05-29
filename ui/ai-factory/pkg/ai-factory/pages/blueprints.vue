@@ -224,7 +224,7 @@ export default defineComponent({
       this.$router.push({
         name:   `${ PRODUCT_NAME }-c-cluster-blueprint-install`,
         params: { cluster: MANAGEMENT_CLUSTER },
-        query:  { bpName: v.lineage || v.blueprintName, bpVersion: v.version || v.id },
+        query:  { bpName: v.lineage, bpVersion: v.version },
       });
     },
 
@@ -232,7 +232,7 @@ export default defineComponent({
       this.$router.push({
         name:   `${ PRODUCT_NAME }-c-cluster-blueprint-create`,
         params: { cluster: MANAGEMENT_CLUSTER },
-        query:  { copyFrom: v.lineage || v.blueprintName, copyVersion: v.version || v.id },
+        query:  { copyFrom: v.lineage, copyVersion: v.version },
       });
     },
 
@@ -240,14 +240,14 @@ export default defineComponent({
       this.$router.push({
         name:   `${ PRODUCT_NAME }-c-cluster-blueprint-create`,
         params: { cluster: MANAGEMENT_CLUSTER },
-        query:  { editFrom: v.lineage || v.blueprintName, editVersion: v.version || v.id },
+        query:  { editFrom: v.lineage, editVersion: v.version },
       });
     },
 
     async onCardDeprecate(v) {
       this.crudError = null;
-      const lineage = v.lineage || v.blueprintName;
-      const version = v.version || v.id;
+      const lineage = v.lineage;
+      const version = v.version;
       const currentlyDeprecated = v.phase !== 'Active';
       this.deprecateTarget = {
         lineage,
@@ -272,8 +272,8 @@ export default defineComponent({
 
     async onCardDelete(v) {
       this.crudError = null;
-      const lineage = v.lineage || v.blueprintName;
-      const version = v.version || v.id;
+      const lineage = v.lineage;
+      const version = v.version;
       this.deleteTarget = { lineage, version, activeWorkloads: await this.fetchActiveWorkloads(lineage, version) };
     },
 
