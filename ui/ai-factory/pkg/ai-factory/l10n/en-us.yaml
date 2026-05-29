@@ -251,6 +251,9 @@ aif:
         targetClustersRequired: 'Select at least one target cluster before installing.'
         creating:        'Creating workload…'
         created:         'Workload created'
+        createFailed:    'Workload creation failed'
+        missingBlueprint: 'No blueprint selected. Open the Install action from a card on the Blueprints page.'
+        backToBlueprints: 'Back to Blueprints'
         valuesError:     'Failed to load chart defaults: {message}'
       steps:
         basicInfo:     'Basic Info'

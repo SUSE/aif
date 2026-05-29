@@ -276,9 +276,15 @@ export default defineComponent({
           ...p, status: PROGRESS_STATUS.SUCCESS, message: this.t('aif.pages.wizards.install.created'),
         }));
       } catch (e) {
-        this.installError    = e;
+        this.installError = e;
+        // createWorkload is a single POST; a 4xx is a single rejection
+        // of the whole submission, not per-cluster failures. Stamp every
+        // row with a scope-neutral message so the modal doesn't imply
+        // the request reached each cluster (it didn't).
+        const failMsg = `${ this.t('aif.pages.wizards.install.createFailed') }: ${ e?.message || 'Error' }`;
+
         this.installProgress = this.installProgress.map((p) => ({
-          ...p, status: PROGRESS_STATUS.FAILED, message: e?.message || 'Error',
+          ...p, status: PROGRESS_STATUS.FAILED, message: failMsg,
         }));
       } finally {
         this.installing = false;
