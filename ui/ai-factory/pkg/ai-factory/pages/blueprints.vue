@@ -76,9 +76,11 @@
         <p>{{ deprecateTarget.currentlyDeprecated
           ? t('aif.pages.blueprints.undeprecateModal.body', { name: deprecateTarget.lineage, version: deprecateTarget.version })
           : t('aif.pages.blueprints.deprecateModal.body', { name: deprecateTarget.lineage, version: deprecateTarget.version }) }}</p>
-        <Banner v-if="!deprecateTarget.currentlyDeprecated && deprecateTarget.activeWorkloads.length" color="warning">
-          {{ t('aif.pages.blueprints.activeWorkloadsWarning', { count: deprecateTarget.activeWorkloads.length }) }}
-        </Banner>
+        <Banner
+          v-if="!deprecateTarget.currentlyDeprecated && deprecateTarget.activeWorkloads.length"
+          color="warning"
+          :label="t('aif.pages.blueprints.activeWorkloadsWarning', { count: deprecateTarget.activeWorkloads.length })"
+        />
         <div class="aif-modal__actions">
           <button class="btn role-secondary" @click="deprecateTarget = null">{{ t('aif.pages.blueprints.deprecateModal.cancel') }}</button>
           <button class="btn role-primary" @click="doDeprecate">
@@ -95,9 +97,11 @@
       <div class="aif-modal">
         <h3>{{ t('aif.pages.blueprints.deleteModal.title') }}</h3>
         <p>{{ t('aif.pages.blueprints.deleteModal.body', { name: deleteTarget.lineage, version: deleteTarget.version }) }}</p>
-        <Banner v-if="deleteTarget.activeWorkloads.length" color="warning">
-          {{ t('aif.pages.blueprints.activeWorkloadsWarning', { count: deleteTarget.activeWorkloads.length }) }}
-        </Banner>
+        <Banner
+          v-if="deleteTarget.activeWorkloads.length"
+          color="warning"
+          :label="t('aif.pages.blueprints.activeWorkloadsWarning', { count: deleteTarget.activeWorkloads.length })"
+        />
         <div class="aif-modal__actions">
           <button class="btn role-secondary" @click="deleteTarget = null">{{ t('aif.pages.blueprints.deleteModal.cancel') }}</button>
           <button class="btn role-danger" @click="doDelete">{{ t('aif.pages.blueprints.deleteModal.confirm') }}</button>
