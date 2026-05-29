@@ -14,7 +14,29 @@ aif:
   pages:
     overview:
       title: 'Overview'
-      comingSoon: 'Overview dashboard coming soon'
+      refresh: 'Refresh'
+      cards:
+        totalWorkloads: 'Total Workloads'
+        running: 'Running'
+        withIssues: 'With Issues'
+        activeBlueprints: 'Active Blueprints'
+      recentWorkloads:
+        title: 'Recent Workloads'
+        viewAll: 'View all'
+        empty: 'No workloads yet'
+      activeBlueprints:
+        title: 'Active Blueprints'
+        viewAll: 'View all'
+        empty: 'No blueprints yet'
+      quickActions:
+        title: 'Quick Actions'
+        browseApps: 'Browse Apps'
+        browseAppsDesc: 'Explore and install AI applications'
+        manageBlueprints: 'Manage Blueprints'
+        manageBlueprintsDesc: 'Create and deploy AI stacks'
+        viewWorkloads: 'View Workloads'
+        viewWorkloadsDesc: 'Monitor running deployments'
+      error: 'Failed to load overview data'
     apps:
       title: 'Apps'
       toolbar:
