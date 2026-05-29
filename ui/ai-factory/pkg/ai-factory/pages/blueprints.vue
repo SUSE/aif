@@ -207,7 +207,7 @@ export default defineComponent({
     async fetchActiveWorkloads(lineage, version) {
       try {
         const res = await listWorkloads();
-        return (res.items || res || []).filter((wl) => {
+        return (res ?? []).filter((wl) => {
           const bp = wl.spec?.source?.blueprint;
           return bp?.name === lineage && bp?.version === version;
         });
