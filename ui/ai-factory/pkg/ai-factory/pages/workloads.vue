@@ -59,6 +59,14 @@
               >
                 {{ t('aif.pages.workloads.actions.manage') }}
               </button>
+              <button
+                v-else
+                class="btn btn-sm role-secondary"
+                :disabled="wl.status?.phase !== 'Running'"
+                @click="confirmUpgrade(wl)"
+              >
+                {{ t('aif.pages.workloads.actions.upgrade') }}
+              </button>
               <button class="btn btn-sm role-danger" @click="confirmDelete(wl)">
                 {{ t('aif.pages.workloads.actions.delete') }}
               </button>
@@ -83,6 +91,28 @@
         </div>
       </div>
     </div>
+
+    <!-- Upgrade version modal -->
+    <div v-if="upgradeTarget" class="aif-workloads__modal-backdrop" @click.self="upgradeTarget = null">
+      <div class="aif-workloads__modal">
+        <h3>{{ t('aif.pages.workloads.upgradeModal.title') }}</h3>
+        <p>{{ t('aif.pages.workloads.upgradeModal.body', { name: upgradeTarget.metadata.name }) }}</p>
+        <label>
+          {{ t('aif.pages.workloads.upgradeModal.selectVersion') }}
+          <select v-model="upgradeSelectedVersion" class="select">
+            <option v-for="v in availableVersions" :key="v" :value="v">{{ v }}</option>
+          </select>
+        </label>
+        <div class="aif-workloads__modal-actions">
+          <button class="btn role-secondary" @click="upgradeTarget = null">
+            {{ t('aif.pages.workloads.upgradeModal.cancel') }}
+          </button>
+          <button class="btn role-primary" :disabled="upgrading" @click="doUpgrade">
+            {{ t('aif.pages.workloads.upgradeModal.confirm') }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -90,8 +120,8 @@
 import { defineComponent } from 'vue';
 import Loading from '@shell/components/Loading';
 import { Banner } from '@components/Banner';
-import { listWorkloads, deleteWorkload } from '../utils/operator-api';
-import { PRODUCT_NAME, MANAGEMENT_CLUSTER } from '../config/types';
+import { listWorkloads, deleteWorkload, upgradeWorkload } from '../utils/operator-api';
+import { PRODUCT_NAME, MANAGEMENT_CLUSTER, CRD_TYPES } from '../config/types';
 
 export default defineComponent({
   name: 'WorkloadsPage',
@@ -104,13 +134,18 @@ export default defineComponent({
 
   data() {
     return {
-      workloads:    [],
-      loading:      false,
-      error:        null,
-      deleteTarget: null,
-      deleting:     false,
-      search:       '',
-      _timer:       null,
+      workloads:              [],
+      blueprints:             [],
+      loading:                false,
+      error:                  null,
+      deleteTarget:           null,
+      deleting:               false,
+      upgradeTarget:          null,
+      upgradeSelectedVersion: '',
+      availableVersions:      [],
+      upgrading:              false,
+      search:                 '',
+      _timer:                 null,
     };
   },
 
@@ -142,6 +177,9 @@ export default defineComponent({
       this.error = null;
       try {
         this.workloads = await listWorkloads();
+        // Blueprints power the lineage→versions picker in the upgrade modal.
+        // Fetch via Steve so we share the management-cluster cache.
+        this.blueprints = await this.$store.dispatch('management/findAll', { type: CRD_TYPES.BLUEPRINT });
       } catch (e) {
         this.error = e;
       } finally {
@@ -183,6 +221,41 @@ export default defineComponent({
         this.error = e;
       } finally {
         this.deleting = false;
+      }
+    },
+
+    blueprintVersionsForLineage(lineageName) {
+      return this.blueprints
+        .filter((b) => b.spec.blueprintName === lineageName)
+        .map((b) => b.spec.version)
+        .sort();
+    },
+
+    confirmUpgrade(wl) {
+      this.upgradeTarget          = wl;
+      this.upgradeSelectedVersion = wl.spec?.source?.blueprint?.version || '';
+      this.availableVersions      = this.blueprintVersionsForLineage(
+        wl.spec?.source?.blueprint?.name || '',
+      );
+    },
+
+    async doUpgrade() {
+      if (!this.upgradeTarget || !this.upgradeSelectedVersion) {
+        return;
+      }
+      this.upgrading = true;
+      try {
+        await upgradeWorkload(
+          this.upgradeTarget.metadata.namespace,
+          this.upgradeTarget.metadata.name,
+          this.upgradeSelectedVersion,
+        );
+        this.upgradeTarget = null;
+        await this.loadWorkloads();
+      } catch (e) {
+        this.error = e;
+      } finally {
+        this.upgrading = false;
       }
     },
 

@@ -84,3 +84,24 @@ test('workloads.vue: has search input', () => {
   const src = read('pages/workloads.vue');
   assert.match(src, /aif\.pages\.workloads\.toolbar\.search/);
 });
+
+test('workloads.vue: has upgrade action for Blueprint workloads', () => {
+  const src = read('pages/workloads.vue');
+  assert.match(src, /aif\.pages\.workloads\.actions\.upgrade/);
+  assert.match(src, /upgradeTarget/);
+});
+
+test('workloads.vue: Upgrade button is Blueprint-only (v-else branch) and disabled when not Running', () => {
+  const src = read('pages/workloads.vue');
+  // Upgrade rendered via v-else to the App-only Manage button
+  assert.match(src, /v-else/);
+  // Disabled binding checks phase === Running
+  assert.match(src, /phase.*Running|Running.*phase/);
+  assert.match(src, /:disabled/);
+});
+
+test('workloads.vue: has upgrade modal with version picker', () => {
+  const src = read('pages/workloads.vue');
+  assert.match(src, /aif\.pages\.workloads\.upgradeModal\.title/);
+  assert.match(src, /upgradeWorkload/);
+});

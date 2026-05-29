@@ -130,6 +130,12 @@ aif:
         body: 'Delete workload "{name}"? This also removes the Fleet Bundle or GitRepo that drives it.'
         confirm: 'Delete'
         cancel: 'Cancel'
+      upgradeModal:
+        title: 'Upgrade Blueprint Workload'
+        body: 'Select a new version for "{name}".'
+        selectVersion: 'Target Version'
+        confirm: 'Upgrade'
+        cancel: 'Cancel'
       empty:
         none: 'No workloads yet. Install an App or Blueprint to create one.'
         error: 'Failed to load workloads'
