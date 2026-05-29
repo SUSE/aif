@@ -11,11 +11,16 @@ test('blueprints.vue imports resolve to files that exist', () => {
     'components/blueprints/BlueprintCard.vue',
     'components/blueprints/BlueprintVersionPicker.vue',
     'components/blueprints/BlueprintPhasePill.vue',
-    'components/blueprints/BlueprintVersionsPanel.vue',
-    'utils/blueprint.ts'
+    'utils/blueprint.ts',
+    'utils/operator-api.ts'
   ]) {
     assert.ok(existsSync(here(p)), `Missing ${ p }`);
   }
+});
+
+test('BlueprintVersionsPanel.vue is removed (reference-parity rework)', () => {
+  assert.ok(!existsSync(here('components/blueprints/BlueprintVersionsPanel.vue')),
+    'BlueprintVersionsPanel.vue should have been deleted');
 });
 
 test('all aif.pages.blueprints.* keys used in templates exist in en-us.yaml', () => {
@@ -24,8 +29,7 @@ test('all aif.pages.blueprints.* keys used in templates exist in en-us.yaml', ()
     read('pages/blueprints.vue'),
     read('components/blueprints/BlueprintCard.vue'),
     read('components/blueprints/BlueprintVersionPicker.vue'),
-    read('components/blueprints/BlueprintPhasePill.vue'),
-    read('components/blueprints/BlueprintVersionsPanel.vue')
+    read('components/blueprints/BlueprintPhasePill.vue')
   ];
   const usedKeys = new Set();
 
@@ -47,12 +51,14 @@ test('all aif.pages.blueprints.* keys used in templates exist in en-us.yaml', ()
   }
 });
 
-test('BlueprintCard emits view-versions; page listens for it', () => {
+test('BlueprintCard emits the reference-parity action set; page binds them', () => {
   const card = read('components/blueprints/BlueprintCard.vue');
   const page = read('pages/blueprints.vue');
 
-  assert.match(card, /emits:\s*\[[^\]]*'view-versions'/);
-  assert.match(page, /@view-versions=/);
+  for (const ev of ['deploy', 'copy', 'edit', 'deprecate', 'delete']) {
+    assert.match(card, new RegExp(`['"]${ ev }['"]`));
+    assert.match(page, new RegExp(`@${ ev }=`));
+  }
 });
 
 test('BlueprintVersionPicker emits update:modelValue; card binds it', () => {
@@ -61,14 +67,6 @@ test('BlueprintVersionPicker emits update:modelValue; card binds it', () => {
 
   assert.match(picker, /emits:\s*\[\s*'update:modelValue'\s*\]/);
   assert.match(card, /@update:model-value=/);
-});
-
-test('BlueprintVersionsPanel emits close; page binds it', () => {
-  const panel = read('components/blueprints/BlueprintVersionsPanel.vue');
-  const page  = read('pages/blueprints.vue');
-
-  assert.match(panel, /emits:\s*\[\s*'close'\s*\]/);
-  assert.match(page, /@close=/);
 });
 
 test('config/types and routing did NOT drift in P6-5', () => {

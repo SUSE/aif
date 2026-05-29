@@ -28,7 +28,7 @@ export default defineComponent({
       type:     String,
       required: true
     },
-    showWithdrawn: {
+    showDeprecated: {
       type:    Boolean,
       default: false
     }
@@ -46,7 +46,7 @@ export default defineComponent({
     // exposes an option slot, or when we move to a custom dropdown component.
     const options = computed(() =>
       (props.versions ?? [])
-        .filter((v) => props.showWithdrawn || v.phase !== 'Withdrawn')
+        .filter((v) => props.showDeprecated || v.phase === 'Active')
         .map((v) => ({
           label: `v${ v.version } — ${ v.phase }`,
           value: v.id

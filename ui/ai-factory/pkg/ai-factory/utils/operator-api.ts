@@ -193,3 +193,10 @@ export function putWorkload(namespace: string, name: string, spec: any): Promise
 export function deleteWorkload(namespace: string, name: string): Promise<void> {
   return operatorFetch(`/api/v1/workloads/${ encodeURIComponent(namespace) }/${ encodeURIComponent(name) }`, { method: 'DELETE' });
 }
+
+export function upgradeWorkload(namespace: string, name: string, toBlueprintVersion: string): Promise<any> {
+  return operatorFetch(`/api/v1/workloads/${ encodeURIComponent(namespace) }/${ encodeURIComponent(name) }/upgrade`, {
+    method: 'POST',
+    body:   JSON.stringify({ toBlueprintVersion }),
+  });
+}

@@ -17,12 +17,12 @@ test('BlueprintVersionPicker: uses Rancher LabeledSelect', () => {
   assert.match(src, /<LabeledSelect/);
 });
 
-test('BlueprintVersionPicker: declares versions, modelValue, showWithdrawn props', () => {
+test('BlueprintVersionPicker: declares versions, modelValue, showDeprecated props', () => {
   const src = read('components/blueprints/BlueprintVersionPicker.vue');
 
   assert.match(src, /versions:\s*\{/);
   assert.match(src, /modelValue:\s*\{/);
-  assert.match(src, /showWithdrawn:\s*\{/);
+  assert.match(src, /showDeprecated:\s*\{/);
 });
 
 test('BlueprintVersionPicker: emits update:modelValue', () => {
@@ -31,10 +31,10 @@ test('BlueprintVersionPicker: emits update:modelValue', () => {
   assert.match(src, /emits:\s*\[\s*'update:modelValue'\s*\]/);
 });
 
-test('BlueprintVersionPicker: filters Withdrawn options when showWithdrawn=false', () => {
+test('BlueprintVersionPicker: filters non-Active options when showDeprecated=false', () => {
   const src = read('components/blueprints/BlueprintVersionPicker.vue');
 
-  // The computed options list must reference both showWithdrawn and the Withdrawn phase
-  assert.match(src, /showWithdrawn/);
-  assert.match(src, /Withdrawn/);
+  // The computed options list must reference both showDeprecated and the Active phase filter
+  assert.match(src, /showDeprecated/);
+  assert.match(src, /phase\s*===\s*'Active'/);
 });

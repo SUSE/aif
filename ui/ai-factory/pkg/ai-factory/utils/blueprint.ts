@@ -75,22 +75,27 @@ export function toBlueprintVersion(cr: any): BlueprintVersion {
   };
 }
 
-function parseVersion(v: string): [number, number, number] {
-  const parts = v.split('.').map((n) => Number(n) || 0);
+export function parseVersion(v: string): [number, number, number] {
+  const parts = (v ?? '').split('.').map((n) => Number(n) || 0);
 
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 
+// Returns negative when a < b, zero when equal, positive when a > b.
+// Compares major.minor.patch numerically; useful for upgrade-target
+// filtering ("strictly greater than current") in workloads.vue.
+export function compareVersions(a: string, b: string): number {
+  const [aa, ab, ac] = parseVersion(a);
+  const [ba, bb, bc] = parseVersion(b);
+
+  if (aa !== ba) return aa - ba;
+  if (ab !== bb) return ab - bb;
+
+  return ac - bc;
+}
+
 export function sortVersionsDesc(vs: BlueprintVersion[]): BlueprintVersion[] {
-  return [...vs].sort((x, y) => {
-    const [xa, xb, xc] = parseVersion(x.version);
-    const [ya, yb, yc] = parseVersion(y.version);
-
-    if (xa !== ya) return ya - xa;
-    if (xb !== yb) return yb - xb;
-
-    return yc - xc;
-  });
+  return [...vs].sort((x, y) => compareVersions(y.version, x.version));
 }
 
 export function groupByLineage(crs: any[]): BlueprintLineage[] {

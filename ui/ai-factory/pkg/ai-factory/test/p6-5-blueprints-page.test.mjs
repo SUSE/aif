@@ -17,14 +17,6 @@ test('blueprints.vue: uses defineComponent (Options-API style, matches settings.
   assert.match(src, /async fetch\s*\(/);
 });
 
-test('blueprints.vue: imports the gallery components and helpers', () => {
-  const src = read('pages/blueprints.vue');
-
-  assert.match(src, /import BlueprintCard from '\.\.\/components\/blueprints\/BlueprintCard\.vue'/);
-  assert.match(src, /import BlueprintVersionsPanel from '\.\.\/components\/blueprints\/BlueprintVersionsPanel\.vue'/);
-  assert.match(src, /import.*groupByLineage.*readUnreachable.*readPublisherOverride[\s\S]*from '\.\.\/utils\/blueprint'/);
-});
-
 test('blueprints.vue: dispatches Steve findAll for blueprint AND settings', () => {
   const src = read('pages/blueprints.vue');
 
@@ -52,23 +44,73 @@ test('blueprints.vue: surfaces the no-blueprints empty copy', () => {
   assert.match(src, /aif\.pages\.blueprints\.empty\.none/);
 });
 
-test('blueprints.vue: has a search input and show-withdrawn toggle', () => {
-  const src = read('pages/blueprints.vue');
-
-  assert.match(src, /aif\.pages\.blueprints\.toolbar\.search/);
-  assert.match(src, /aif\.pages\.blueprints\.toolbar\.showWithdrawn/);
+// ── BlueprintCard: three-dot menu + Install, no legacy chrome ────────────────
+test('BlueprintCard.vue: uses ActionMenuShell three-dot menu', () => {
+  const src = read('components/blueprints/BlueprintCard.vue');
+  assert.match(src, /ActionMenuShell/);
 });
 
-test('blueprints.vue: listens for the card view-versions event', () => {
-  const src = read('pages/blueprints.vue');
-
-  assert.match(src, /@view-versions/);
+test('BlueprintCard.vue: emits copy, edit, deprecate, delete, deploy', () => {
+  const src = read('components/blueprints/BlueprintCard.vue');
+  for (const ev of ['copy', 'edit', 'deprecate', 'delete', 'deploy']) {
+    assert.match(src, new RegExp(`['"]${ ev }['"]`));
+  }
 });
 
-test('blueprints.vue: hides all-Withdrawn lineages when showWithdrawn=false', () => {
-  const src = read('pages/blueprints.vue');
+test('BlueprintCard.vue: admin-only actions gated on isAdmin', () => {
+  const src = read('components/blueprints/BlueprintCard.vue');
+  assert.match(src, /isAdmin/);
+});
 
-  // The filter must consider the showWithdrawn flag AND every-version-Withdrawn case
-  assert.match(src, /showWithdrawn/);
-  assert.match(src, /every[\s\S]*Withdrawn|Withdrawn[\s\S]*every/);
+test('BlueprintCard.vue: legacy chrome removed (publisher, Start Bundle, view-versions, withdraw/reactivate)', () => {
+  const src = read('components/blueprints/BlueprintCard.vue');
+  assert.doesNotMatch(src, /isPublisher|publisher-actions/);
+  assert.doesNotMatch(src, /startBundle/i);
+  assert.doesNotMatch(src, /view-versions/);
+  assert.doesNotMatch(src, /withdraw|reactivate/i);
+});
+
+// ── blueprints.vue: admin role, toolbar, toggle, modals ──────────────────────
+test('blueprints.vue: checks admin role via globalrolebinding', () => {
+  const src = read('pages/blueprints.vue');
+  assert.match(src, /globalrolebinding/);
+  assert.match(src, /globalRoleName/);
+  assert.match(src, /isAdmin/);
+});
+
+test('blueprints.vue: toolbar has Create and Refresh', () => {
+  const src = read('pages/blueprints.vue');
+  assert.match(src, /aif\.pages\.blueprints\.toolbar\.create/);
+  assert.match(src, /aif\.pages\.blueprints\.toolbar\.refresh/);
+});
+
+test('blueprints.vue: Show deprecated toggle replaces Show withdrawn', () => {
+  const src = read('pages/blueprints.vue');
+  assert.match(src, /showDeprecated/);
+  assert.match(src, /aif\.pages\.blueprints\.toolbar\.showDeprecated/);
+  assert.doesNotMatch(src, /showWithdrawn/);
+});
+
+test('blueprints.vue: legacy chrome removed (use-case filter, versions panel)', () => {
+  const src = read('pages/blueprints.vue');
+  assert.doesNotMatch(src, /useCaseFilter/);
+  assert.doesNotMatch(src, /BlueprintVersionsPanel/);
+});
+
+test('blueprints.vue: imports blueprint write functions', () => {
+  const src = read('pages/blueprints.vue');
+  assert.match(src, /deprecateBlueprint/);
+  assert.match(src, /deleteBlueprint/);
+});
+
+test('blueprints.vue: deprecate is a toggle (deprecate/undeprecate)', () => {
+  const src = read('pages/blueprints.vue');
+  assert.match(src, /currentlyDeprecated/);
+  assert.match(src, /aif\.pages\.blueprints\.undeprecateModal\.title/);
+});
+
+test('blueprints.vue: delete & deprecate modals warn about active workloads', () => {
+  const src = read('pages/blueprints.vue');
+  assert.match(src, /listWorkloads/);
+  assert.match(src, /activeWorkloads/);
 });

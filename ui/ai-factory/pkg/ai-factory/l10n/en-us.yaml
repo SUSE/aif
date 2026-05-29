@@ -43,37 +43,31 @@ aif:
         error: 'Failed to load applications'
     blueprints:
       title: 'Blueprints'
-      header:
-        lineages: '{count} blueprints'
-        versions: '{count} versions'
       phase:
         active: 'Active'
         deprecated: 'Deprecated'
         withdrawn: 'Withdrawn'
       toolbar:
         search: 'Search blueprints'
-        useCaseAll: 'All use cases'
-        showWithdrawn: 'Show withdrawn versions'
+        showDeprecated: 'Show deprecated'
+        create: 'Create'
+        refresh: 'Refresh'
       card:
-        useCase: 'Use case'
         version: 'Version'
         origin:
           published: 'Published from Bundle'
           wrapsVendorChart: 'Wraps vendor chart'
         components: 'Components'
         publishedBy: 'Published by {user} on {date}'
-        viewVersions: 'View versions'
       actions:
-        deploy: 'Deploy'
-        deployComingSoon: 'Available once the Install & Deploy wizard ships (P6-8)'
-        startBundle: 'Start Bundle from Blueprint'
-        startBundleComingSoon: 'Available once the Bundle compose flow ships (P6-3)'
+        install: 'Install'
+        copy: 'Copy'
+        edit: 'Edit'
         deprecate: 'Deprecate'
-        withdraw: 'Withdraw'
-        reactivate: 'Reactivate'
-        publisherEndpointComingSoon: 'Backend endpoint not yet available'
-        publisherRoleRequired: 'Requires the Blueprint Publisher role'
-        publisherLabel: 'Publisher'
+        undeprecate: 'Undeprecate'
+        delete: 'Delete'
+        moreOptionsAria: 'More options'
+      activeWorkloadsWarning: '{count} active workload(s) reference this blueprint version.'
       createModal:
         title: 'Create Blueprint'
         blueprintName: 'Blueprint Name'
@@ -86,7 +80,6 @@ aif:
       deprecateModal:
         title: 'Deprecate Blueprint'
         body: 'Deprecate {name} v{version}?'
-        bodySecondary: 'Deprecated blueprints are hidden by default. Existing workloads keep running.'
         confirm: 'Deprecate'
         cancel: 'Cancel'
       undeprecateModal:
@@ -99,17 +92,11 @@ aif:
         body: 'Delete {name} v{version}?'
         confirm: 'Delete'
         cancel: 'Cancel'
-      versionsPanel:
-        title: 'Versions of {lineage}'
-        close: 'Close'
-        changeDescription: 'Change description'
-        empty: 'No published versions.'
       empty:
         none: 'No blueprints available yet. Sync the catalog from Settings to wrap vendor Reference Blueprint charts as AIF Blueprints, or compose and publish a Bundle to create your first internally-authored Blueprint.'
         noResults: 'No blueprints match your search.'
         unreachable: 'Cannot refresh wrapped Reference Blueprints from the configured registry. Vendor-chart auto-wrapping is paused. Existing Blueprints (both vendor-wrapped and internally published) remain visible and deployable from the cached state. Check Settings → Advanced → Registry Endpoints.'
         loadError: 'Failed to load Blueprints: {message}'
-      newBlueprint: 'New Blueprint'
     workloads:
       title: 'Workloads'
       toolbar:
@@ -125,14 +112,24 @@ aif:
       actions:
         delete: 'Delete'
         manage: 'Manage'
+        upgrade: 'Upgrade'
+        noUpgradeAvailable: 'No newer blueprint version is available.'
       deleteModal:
         title: 'Delete Workload'
         body: 'Delete workload "{name}"? This also removes the Fleet Bundle or GitRepo that drives it.'
         confirm: 'Delete'
         cancel: 'Cancel'
+      upgradeModal:
+        title: 'Upgrade Blueprint Workload'
+        body: 'Select a new version for "{name}".'
+        selectVersion: 'Target Version'
+        candidateLabel: '{version} ({phase})'
+        confirm: 'Upgrade'
+        cancel: 'Cancel'
       empty:
         none: 'No workloads yet. Install an App or Blueprint to create one.'
         error: 'Failed to load workloads'
+      actionFailedGeneric: 'Action failed'
       phase:
         running: 'Running'
         pending: 'Pending'
@@ -275,7 +272,8 @@ aif:
         appOnly: 'Manage is only available for App-sourced workloads. Use the upgrade action on Blueprint workloads.'
       create:
         title: 'New Blueprint'
-        editTitle: 'Edit Blueprint'
+        editTitle: 'New Version of Blueprint'
+        editHint: 'Creating a new version of {name}. Blueprint versions are immutable; pick a version that does not yet exist.'
         blueprintName: 'Blueprint Name (lineage identifier)'
         version: 'Version (e.g. 1.0.0)'
         versionInvalid: 'Version must be valid semver (e.g. 1.0.0).'

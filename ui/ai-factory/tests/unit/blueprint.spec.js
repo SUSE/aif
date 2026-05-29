@@ -5,7 +5,9 @@ import {
   sortVersionsDesc,
   selectDefaultVersion,
   readUnreachable,
-  readPublisherOverride
+  readPublisherOverride,
+  parseVersion,
+  compareVersions
 } from '@pkg/ai-factory/utils/blueprint';
 
 function bp({ name, lineage, version, phase, source = 'Published' }) {
@@ -77,6 +79,50 @@ describe('sortVersionsDesc', () => {
     // so they end up grouped together in the tail in stable order.
     expect(sorted[0]).toBe('2.0.0');
     expect(sorted.slice(1).sort()).toEqual(['1', '1.0', '1.0.0']);
+  });
+});
+
+describe('parseVersion', () => {
+  it('parses canonical major.minor.patch into a numeric triple', () => {
+    expect(parseVersion('1.2.3')).toEqual([1, 2, 3]);
+    expect(parseVersion('10.20.30')).toEqual([10, 20, 30]);
+  });
+
+  it('fills missing parts with 0 (CRD pattern bounds this in practice)', () => {
+    expect(parseVersion('1')).toEqual([1, 0, 0]);
+    expect(parseVersion('1.2')).toEqual([1, 2, 0]);
+    expect(parseVersion('')).toEqual([0, 0, 0]);
+  });
+
+  it('coerces non-numeric parts to 0 (defense in depth, not a contract for callers)', () => {
+    // The CRD's ^\d+\.\d+\.\d+$ pattern rejects these shapes before they reach the UI.
+    // These assertions pin current behavior so a future strict-parse rewrite can't
+    // silently flip the upgrade-target filter from "include nothing" to "include all".
+    expect(parseVersion('v1.2.3')).toEqual([0, 2, 3]);
+    expect(parseVersion('1.2-beta.3')).toEqual([1, 0, 3]);
+    expect(parseVersion('abc')).toEqual([0, 0, 0]);
+  });
+});
+
+describe('compareVersions', () => {
+  it('returns negative when a < b, zero when equal, positive when a > b', () => {
+    expect(compareVersions('1.0.0', '2.0.0')).toBeLessThan(0);
+    expect(compareVersions('1.0.0', '1.0.0')).toBe(0);
+    expect(compareVersions('2.0.0', '1.0.0')).toBeGreaterThan(0);
+  });
+
+  it('compares numerically (1.10.0 > 1.9.0), not lexically', () => {
+    expect(compareVersions('1.10.0', '1.9.0')).toBeGreaterThan(0);
+    expect(compareVersions('1.2.10', '1.2.9')).toBeGreaterThan(0);
+  });
+
+  it('treats malformed inputs as 0.0.0 (matches parseVersion contract)', () => {
+    // If a malformed string ever reaches this comparator it will appear strictly
+    // less than any non-zero version on the other side — keeps the upgrade-target
+    // filter from accidentally promoting garbage to "newer than current."
+    expect(compareVersions('abc', '0.0.1')).toBeLessThan(0);
+    expect(compareVersions('1.0.0', 'abc')).toBeGreaterThan(0);
+    expect(compareVersions('abc', 'xyz')).toBe(0);
   });
 });
 

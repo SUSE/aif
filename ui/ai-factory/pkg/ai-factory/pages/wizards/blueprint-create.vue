@@ -1,6 +1,6 @@
 <template>
   <div class="aif-wizard">
-    <h1>{{ t('aif.pages.wizards.create.title') }}</h1>
+    <h1>{{ editMode ? t('aif.pages.wizards.create.editTitle') : t('aif.pages.wizards.create.title') }}</h1>
 
     <WizardStepIndicator
       :steps="steps"
@@ -9,9 +9,14 @@
     />
 
     <div v-if="currentStep === 0" class="aif-wizard__step">
+      <Banner
+        v-if="editMode"
+        color="info"
+        :label="t('aif.pages.wizards.create.editHint', { name: form.blueprintName })"
+      />
       <label>
         {{ t('aif.pages.wizards.create.blueprintName') }}
-        <input v-model="form.blueprintName" type="text" class="input" />
+        <input v-model="form.blueprintName" type="text" class="input" :disabled="editMode" />
       </label>
       <label>
         {{ t('aif.pages.wizards.create.version') }}
@@ -114,9 +119,10 @@
 
 <script>
 import { defineComponent } from 'vue';
+import { Banner } from '@components/Banner';
 import WizardStepIndicator from '../../components/wizards/WizardStepIndicator.vue';
 import { createBlueprint, listApps, getAppValues } from '../../utils/operator-api';
-import { PRODUCT_NAME, MANAGEMENT_CLUSTER } from '../../config/types';
+import { PRODUCT_NAME, MANAGEMENT_CLUSTER, CRD_TYPES } from '../../config/types';
 import yaml from 'js-yaml';
 
 // Mirror api/v1alpha1/blueprint_types.go BlueprintSpec.Version
@@ -128,7 +134,7 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 export default defineComponent({
   name: 'BlueprintCreateWizard',
 
-  components: { WizardStepIndicator },
+  components: { WizardStepIndicator, Banner },
 
   async fetch() {
     try {
@@ -146,6 +152,7 @@ export default defineComponent({
       catalogApps:     [],
       appSearch:       '',
       loadingDefaults: {},
+      editMode:        false,
       form:            {
         blueprintName:  '',
         version:        '',
@@ -155,6 +162,17 @@ export default defineComponent({
         valueOverrides: {},
       },
     };
+  },
+
+  async created() {
+    const { copyFrom, copyVersion, editFrom, editVersion } = this.$route?.query || {};
+
+    if (copyFrom && copyVersion) {
+      await this.loadSourceBlueprint(copyFrom, copyVersion);
+    } else if (editFrom && editVersion) {
+      this.editMode = true;
+      await this.loadSourceBlueprint(editFrom, editVersion);
+    }
   },
 
   computed: {
@@ -240,6 +258,43 @@ export default defineComponent({
 
       if (removed) {
         delete this.form.valueOverrides[removed.name];
+      }
+    },
+
+    async loadSourceBlueprint(lineage, version) {
+      try {
+        const blueprints = await this.$store.dispatch('management/findAll', { type: CRD_TYPES.BLUEPRINT });
+        const source = blueprints.find(
+          (b) => b.spec.blueprintName === lineage && b.spec.version === version,
+        );
+
+        if (!source) {
+          return;
+        }
+        this.form.blueprintName = source.spec.blueprintName;
+        // Blueprint specs are immutable per version (see CLAUDE.md
+        // critical constraint #4). "Edit" therefore really forks a new
+        // version of the same lineage — the user must type a fresh
+        // version that doesn't yet exist. Pre-filling the source's
+        // version would always 409 on Publish.
+        // Copy mode targets a different lineage, so version collision
+        // doesn't apply and we keep the source value for convenience.
+        if (!this.editMode) {
+          this.form.version = source.spec.version;
+        }
+        this.form.useCase       = source.spec.useCase || 'inference';
+        this.form.description   = source.spec.description || '';
+        this.form.components    = (source.spec.components || []).map((c) => ({
+          name:    c.name,
+          appId:   '',
+          repo:    c.app?.repo || '',
+          chart:   c.app?.chart || '',
+          version: c.app?.version || '',
+        }));
+        // Carry over the source blueprint's per-component value overrides.
+        this.form.valueOverrides = { ...(source.spec.valueOverrides || {}) };
+      } catch (e) {
+        // non-fatal — wizard opens empty if source not found
       }
     },
 

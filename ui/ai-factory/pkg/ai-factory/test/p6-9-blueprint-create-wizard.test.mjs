@@ -62,3 +62,27 @@ test('blueprints.vue: has New Blueprint navigation button', () => {
   const src = read('pages/blueprints.vue');
   assert.match(src, /blueprint-create/);
 });
+
+test('blueprint-create.vue: reads copyFrom and copyVersion from route query', () => {
+  const src = read('pages/wizards/blueprint-create.vue');
+  assert.match(src, /copyFrom|query\.copyFrom/);
+  assert.match(src, /copyVersion|query\.copyVersion/);
+});
+
+test('blueprint-create.vue: reads editFrom and editVersion from route query', () => {
+  const src = read('pages/wizards/blueprint-create.vue');
+  assert.match(src, /editFrom|query\.editFrom/);
+  assert.match(src, /editVersion|query\.editVersion/);
+});
+
+test('blueprint-create.vue: has loadSourceBlueprint method', () => {
+  const src = read('pages/wizards/blueprint-create.vue');
+  assert.match(src, /loadSourceBlueprint/);
+});
+
+test('blueprint-create.vue: locks blueprintName field in edit mode', () => {
+  const src = read('pages/wizards/blueprint-create.vue');
+  // The name input is disabled/readonly when editing an existing lineage
+  assert.match(src, /isEditMode|editMode|editFrom/);
+  assert.match(src, /:disabled|:readonly/);
+});

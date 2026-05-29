@@ -8,15 +8,12 @@
       <BlueprintVersionPicker
         :versions="lineage.versions"
         :model-value="selectedId"
-        :show-withdrawn="showWithdrawn"
+        :show-deprecated="showDeprecated"
         @update:model-value="onVersionChange"
       />
     </header>
 
     <div class="bp-card__meta">
-      <span class="bp-card__chip bp-card__chip--use-case">
-        {{ t('aif.pages.blueprints.card.useCase') }}: {{ selected.useCase || '—' }}
-      </span>
       <span
         class="bp-card__chip bp-card__chip--origin"
         :title="originTooltip"
@@ -47,66 +44,24 @@
     <div class="bp-card__actions">
       <button
         type="button"
-        class="btn btn-sm role-secondary"
-        @click="$event.currentTarget.blur(); $emit('view-versions', lineage)"
-      >
-        {{ t('aif.pages.blueprints.card.viewVersions') }}
-      </button>
-      <button
-        type="button"
-        class="btn btn-sm role-secondary"
-        :disabled="true"
-        :title="t('aif.pages.blueprints.actions.startBundleComingSoon')"
-      >
-        {{ t('aif.pages.blueprints.actions.startBundle') }}
-      </button>
-      <button
-        type="button"
         class="btn btn-sm role-primary"
-        :disabled="true"
-        :title="t('aif.pages.blueprints.actions.deployComingSoon')"
+        @click="$emit('deploy', selected)"
       >
-        {{ t('aif.pages.blueprints.actions.deploy') }}
+        {{ t('aif.pages.blueprints.actions.install') }}
       </button>
-    </div>
-
-    <div v-if="isPublisher" class="bp-card__publisher-actions">
-      <span class="bp-card__publisher-label">
-        {{ t('aif.pages.blueprints.actions.publisherLabel') }}
-      </span>
-      <button
-        v-if="selected.phase === 'Active'"
-        type="button"
-        class="btn btn-sm role-secondary"
-        :disabled="true"
-        :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
-      >
-        {{ t('aif.pages.blueprints.actions.deprecate') }}
-      </button>
-      <button
-        v-if="selected.phase === 'Active'"
-        type="button"
-        class="btn btn-sm role-secondary"
-        :disabled="true"
-        :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
-      >
-        {{ t('aif.pages.blueprints.actions.withdraw') }}
-      </button>
-      <button
-        v-if="selected.phase === 'Withdrawn'"
-        type="button"
-        class="btn btn-sm role-secondary"
-        :disabled="true"
-        :title="t('aif.pages.blueprints.actions.publisherEndpointComingSoon')"
-      >
-        {{ t('aif.pages.blueprints.actions.reactivate') }}
-      </button>
+      <ActionMenuShell
+        button-variant="tertiary"
+        :button-aria-label="t('aif.pages.blueprints.actions.moreOptionsAria')"
+        :custom-actions="tileActions"
+        @action-invoked="onAction"
+      />
     </div>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref, computed, watch } from 'vue';
+import { defineComponent, ref, computed, watch, getCurrentInstance } from 'vue';
+import ActionMenuShell from '@shell/components/ActionMenuShell';
 import BlueprintPhasePill from './BlueprintPhasePill.vue';
 import BlueprintVersionPicker from './BlueprintVersionPicker.vue';
 import { selectDefaultVersion } from '../../utils/blueprint';
@@ -115,26 +70,27 @@ import { formatDate } from '../../utils/date';
 export default defineComponent({
   name: 'BlueprintCard',
 
-  components: { BlueprintPhasePill, BlueprintVersionPicker },
+  components: { ActionMenuShell, BlueprintPhasePill, BlueprintVersionPicker },
 
   props: {
     lineage: {
       type:     Object,
       required: true
     },
-    isPublisher: {
+    isAdmin: {
       type:    Boolean,
       default: false
     },
-    showWithdrawn: {
+    showDeprecated: {
       type:    Boolean,
       default: false
     }
   },
 
-  emits: ['view-versions'],
+  emits: ['deploy', 'copy', 'edit', 'deprecate', 'delete'],
 
-  setup(props) {
+  setup(props, { emit }) {
+    const vm = getCurrentInstance().proxy;
     const selectedId = ref(selectDefaultVersion(props.lineage).id);
     const selected = computed(() =>
       props.lineage.versions.find((v) => v.id === selectedId.value)
@@ -144,14 +100,14 @@ export default defineComponent({
       selectedId.value = selectDefaultVersion(next).id;
     });
 
-    // When hiding withdrawn versions, reset the selection if the currently
-    // selected version is Withdrawn. Re-derive from props directly rather
+    // When hiding deprecated versions, reset the selection if the currently
+    // selected version is deprecated. Re-derive from props directly rather
     // than reading the `selected` computed to make the dependency obvious.
-    watch(() => props.showWithdrawn, (next) => {
+    watch(() => props.showDeprecated, (next) => {
       if (next) return;
       const current = props.lineage.versions.find((v) => v.id === selectedId.value);
 
-      if (current?.phase === 'Withdrawn') {
+      if (current && current.phase !== 'Active') {
         selectedId.value = selectDefaultVersion(props.lineage).id;
       }
     });
@@ -168,7 +124,35 @@ export default defineComponent({
 
     const onVersionChange = (id) => { selectedId.value = id; };
 
-    return { selectedId, selected, originKey, originTooltip, onVersionChange, formatDate };
+    const isDeprecated = computed(() => selected.value.phase !== 'Active');
+
+    const tileActions = computed(() => {
+      const actions = [
+        { action: 'copy', label: vm.t('aif.pages.blueprints.actions.copy'), enabled: true },
+      ];
+      if (props.isAdmin) {
+        actions.push(
+          { action: 'edit', label: vm.t('aif.pages.blueprints.actions.edit'), enabled: true },
+          {
+            action:  'deprecate',
+            label:   isDeprecated.value
+              ? vm.t('aif.pages.blueprints.actions.undeprecate')
+              : vm.t('aif.pages.blueprints.actions.deprecate'),
+            enabled: true,
+          },
+          { divider: true, label: '', enabled: false },
+          { action: 'delete', label: vm.t('aif.pages.blueprints.actions.delete'), enabled: true },
+        );
+      }
+      return actions;
+    });
+
+    function onAction(payload) {
+      // payload.action is one of copy|edit|deprecate|delete
+      emit(payload.action, selected.value);
+    }
+
+    return { selectedId, selected, originKey, originTooltip, onVersionChange, formatDate, tileActions, onAction };
   }
 });
 </script>
@@ -233,23 +217,6 @@ export default defineComponent({
     justify-content: flex-end;
     gap:             6px;
     margin-top:      6px;
-  }
-  &__publisher-actions {
-    display:        flex;
-    flex-wrap:      wrap;
-    align-items:    center;
-    justify-content: flex-end;
-    gap:            6px;
-    margin-top:     10px;
-    padding-top:    10px;
-    border-top:     1px dashed var(--border);
-  }
-  &__publisher-label {
-    color:          var(--muted);
-    font-size:      0.75em;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-right:   2px;
   }
 }
 </style>

@@ -7,17 +7,21 @@
       </button>
     </div>
 
-    <Banner v-if="error" color="error" :label="t('aif.pages.workloads.empty.error')" />
+    <Banner v-if="loadError" color="error" :label="t('aif.pages.workloads.empty.error')" />
+    <Banner v-if="actionError" color="error" :label="actionError.message || t('aif.pages.workloads.actionFailedGeneric')" />
 
-    <div v-else-if="loading" class="aif-workloads__loading">
+    <div v-if="loading" class="aif-workloads__loading">
       <Loading />
     </div>
 
-    <div v-else-if="workloads.length === 0" class="aif-workloads__empty">
+    <!-- loadError gates the empty/data branch so a failed initial load
+         doesn't render an empty table; an action failure leaves the
+         previously-loaded data intact and surfaces actionError above. -->
+    <div v-else-if="!loadError && workloads.length === 0" class="aif-workloads__empty">
       <p>{{ t('aif.pages.workloads.empty.none') }}</p>
     </div>
 
-    <template v-else>
+    <template v-else-if="!loadError">
       <input
         v-model="search"
         type="search"
@@ -59,6 +63,15 @@
               >
                 {{ t('aif.pages.workloads.actions.manage') }}
               </button>
+              <button
+                v-else
+                class="btn btn-sm role-secondary"
+                :disabled="wl.status?.phase !== 'Running' || !hasUpgradeCandidates(wl)"
+                :title="hasUpgradeCandidates(wl) ? '' : t('aif.pages.workloads.actions.noUpgradeAvailable')"
+                @click="confirmUpgrade(wl)"
+              >
+                {{ t('aif.pages.workloads.actions.upgrade') }}
+              </button>
               <button class="btn btn-sm role-danger" @click="confirmDelete(wl)">
                 {{ t('aif.pages.workloads.actions.delete') }}
               </button>
@@ -83,6 +96,28 @@
         </div>
       </div>
     </div>
+
+    <!-- Upgrade version modal -->
+    <div v-if="upgradeTarget" class="aif-workloads__modal-backdrop" @click.self="upgradeTarget = null">
+      <div class="aif-workloads__modal">
+        <h3>{{ t('aif.pages.workloads.upgradeModal.title') }}</h3>
+        <p>{{ t('aif.pages.workloads.upgradeModal.body', { name: upgradeTarget.metadata.name }) }}</p>
+        <label>
+          {{ t('aif.pages.workloads.upgradeModal.selectVersion') }}
+          <select v-model="upgradeSelectedVersion" class="select">
+            <option v-for="v in availableVersions" :key="v.version" :value="v.version">{{ optionLabel(v) }}</option>
+          </select>
+        </label>
+        <div class="aif-workloads__modal-actions">
+          <button class="btn role-secondary" @click="upgradeTarget = null">
+            {{ t('aif.pages.workloads.upgradeModal.cancel') }}
+          </button>
+          <button class="btn role-primary" :disabled="upgrading" @click="doUpgrade">
+            {{ t('aif.pages.workloads.upgradeModal.confirm') }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -90,8 +125,9 @@
 import { defineComponent } from 'vue';
 import Loading from '@shell/components/Loading';
 import { Banner } from '@components/Banner';
-import { listWorkloads, deleteWorkload } from '../utils/operator-api';
-import { PRODUCT_NAME, MANAGEMENT_CLUSTER } from '../config/types';
+import { listWorkloads, deleteWorkload, upgradeWorkload } from '../utils/operator-api';
+import { compareVersions } from '../utils/blueprint';
+import { PRODUCT_NAME, MANAGEMENT_CLUSTER, CRD_TYPES } from '../config/types';
 
 export default defineComponent({
   name: 'WorkloadsPage',
@@ -104,13 +140,24 @@ export default defineComponent({
 
   data() {
     return {
-      workloads:    [],
-      loading:      false,
-      error:        null,
-      deleteTarget: null,
-      deleting:     false,
-      search:       '',
-      _timer:       null,
+      workloads:              [],
+      blueprints:             [],
+      loading:                false,
+      // loadError is set by loadWorkloads only — its banner reads
+      // "Failed to load workloads". actionError is set by per-row
+      // actions (delete/upgrade) and carries the upstream message.
+      // Keeping them separate prevents an upgrade 400 from rendering
+      // a misleading "Failed to load workloads" toast.
+      loadError:              null,
+      actionError:            null,
+      deleteTarget:           null,
+      deleting:               false,
+      upgradeTarget:          null,
+      upgradeSelectedVersion: '',
+      availableVersions:      [],
+      upgrading:              false,
+      search:                 '',
+      _timer:                 null,
     };
   },
 
@@ -139,11 +186,14 @@ export default defineComponent({
   methods: {
     async loadWorkloads() {
       this.loading = this.workloads.length === 0;
-      this.error = null;
+      this.loadError = null;
       try {
         this.workloads = await listWorkloads();
+        // Blueprints power the lineage→versions picker in the upgrade modal.
+        // Fetch via Steve so we share the management-cluster cache.
+        this.blueprints = await this.$store.dispatch('management/findAll', { type: CRD_TYPES.BLUEPRINT });
       } catch (e) {
-        this.error = e;
+        this.loadError = e;
       } finally {
         this.loading = false;
       }
@@ -167,6 +217,7 @@ export default defineComponent({
     },
 
     confirmDelete(wl) {
+      this.actionError = null;
       this.deleteTarget = wl;
     },
 
@@ -174,16 +225,90 @@ export default defineComponent({
       if (!this.deleteTarget) {
         return;
       }
+      this.actionError = null;
       this.deleting = true;
       try {
         await deleteWorkload(this.deleteTarget.metadata.namespace, this.deleteTarget.metadata.name);
         this.deleteTarget = null;
         await this.loadWorkloads();
       } catch (e) {
-        this.error = e;
+        this.actionError = e;
       } finally {
         this.deleting = false;
       }
+    },
+
+    // Returns versions of `lineageName` strictly greater than `currentVersion`,
+    // sorted ascending (so the picker lists the lowest valid upgrade first).
+    // Mirrors pkg/workload/upgrader.go: it rejects Withdrawn and same-or-lower
+    // versions but accepts Deprecated targets — deprecation is "discouraged,
+    // not forbidden". The picker reflects the same policy and renders the
+    // phase suffix on Deprecated options so the user can choose informedly.
+    blueprintUpgradeCandidates(lineageName, currentVersion) {
+      return this.blueprints
+        .filter((b) => b.spec?.blueprintName === lineageName)
+        .filter((b) => b.status?.phase !== 'Withdrawn')
+        .map((b) => ({ version: b.spec.version, phase: b.status?.phase || 'Active' }))
+        .filter((c) => compareVersions(c.version, currentVersion) > 0)
+        .sort((a, b) => compareVersions(a.version, b.version));
+    },
+
+    confirmUpgrade(wl) {
+      const lineage = wl.spec?.source?.blueprint?.name || '';
+      const current = wl.spec?.source?.blueprint?.version || '';
+      const candidates = this.blueprintUpgradeCandidates(lineage, current);
+
+      // The row's Upgrade button is gated on candidates.length > 0
+      // (hasUpgradeCandidates), so this is defence-in-depth: if a click
+      // somehow races a refresh that emptied the list, do nothing.
+      if (candidates.length === 0) {
+        return;
+      }
+      this.actionError            = null;
+      this.upgradeTarget          = wl;
+      this.availableVersions      = candidates;
+      this.upgradeSelectedVersion = candidates[0].version;
+    },
+
+    hasUpgradeCandidates(wl) {
+      if (wl.spec?.source?.kind !== 'Blueprint') {
+        return false;
+      }
+      const lineage = wl.spec?.source?.blueprint?.name || '';
+      const current = wl.spec?.source?.blueprint?.version || '';
+
+      return this.blueprintUpgradeCandidates(lineage, current).length > 0;
+    },
+
+    async doUpgrade() {
+      if (!this.upgradeTarget || !this.upgradeSelectedVersion) {
+        return;
+      }
+      this.actionError = null;
+      this.upgrading = true;
+      try {
+        await upgradeWorkload(
+          this.upgradeTarget.metadata.namespace,
+          this.upgradeTarget.metadata.name,
+          this.upgradeSelectedVersion,
+        );
+        this.upgradeTarget = null;
+        await this.loadWorkloads();
+      } catch (e) {
+        this.actionError = e;
+      } finally {
+        this.upgrading = false;
+      }
+    },
+
+    optionLabel(v) {
+      if (v.phase === 'Active') {
+        return v.version;
+      }
+      return this.t('aif.pages.workloads.upgradeModal.candidateLabel', {
+        version: v.version,
+        phase:   this.t(`aif.pages.blueprints.phase.${ v.phase.toLowerCase() }`),
+      });
     },
 
     phaseBadge(wl) {
