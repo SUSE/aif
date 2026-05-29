@@ -42,7 +42,7 @@
         <table v-else class="aif-overview__mini-table">
           <tbody>
             <tr v-for="wl in recentWorkloads" :key="`${ wl.metadata?.namespace }/${ wl.metadata?.name }`">
-              <td><span :class="`badge badge--${ phaseBadge(wl) }`">{{ wl.status?.phase || 'Unknown' }}</span></td>
+              <td><span :class="`badge badge--${ phaseBadge(wl) }`">{{ phaseLabel(wl) }}</span></td>
               <td>{{ wl.metadata?.name }}</td>
               <td>{{ sourceLabel(wl) }}</td>
             </tr>
@@ -207,6 +207,15 @@ export default defineComponent({
         case 'Failed':   return 'error';
         default:         return 'info';
       }
+    },
+
+    // Reuses the workloads page l10n namespace so the two pages render the
+    // same translated label for a given phase. Falls back to the raw CRD
+    // value if no translation is registered.
+    phaseLabel(wl) {
+      const phase = wl.status?.phase || 'Unknown';
+      const key   = `aif.pages.workloads.phase.${ phase.toLowerCase() }`;
+      return this.t(key, undefined, true) || phase;
     },
   },
 });
