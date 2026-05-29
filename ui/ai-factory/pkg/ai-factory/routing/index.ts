@@ -45,8 +45,26 @@ const routes = [
     path:      `/c/:cluster/${ PRODUCT_NAME }/workloads/:ns/:name/manage`,
     component: () => import('../pages/manage.vue'),
     meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.WORKLOADS }
-  }
+  },
   // AIDEV: /task-3-2
+  // AIDEV: 2-3 — Blueprint Create wizard route
+  {
+    name:      `${ PRODUCT_NAME }-c-cluster-blueprint-create`,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/blueprints/create`,
+    component: () => import('../pages/wizards/blueprint-create.vue'),
+    meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.BLUEPRINTS }
+  },
+  // AIDEV: /2-3
+  // AIDEV: 4-1 — Blueprint Install wizard route (3-step). The card pushes
+  // here with `query: { bpName, bpVersion }` so the wizard reads them from
+  // $route.query; $route.params is supported as a fallback.
+  {
+    name:      `${ PRODUCT_NAME }-c-cluster-blueprint-install`,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/${ PAGE_IDS.BLUEPRINTS }/install`,
+    component: () => import('../pages/wizards/blueprint-install.vue'),
+    meta:      { product: PRODUCT_NAME, pageId: PAGE_IDS.BLUEPRINTS }
+  }
+  // AIDEV: /4-1
 ];
 
 export default routes;
