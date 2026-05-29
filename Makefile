@@ -61,7 +61,7 @@ run: dev-certs
 
 docker-build:
 	@echo "Building Docker image $(DOCKER_IMAGE):$(DOCKER_TAG)..."
-	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) -f build/operator/Dockerfile .
 
 docker-push:
 	@echo "Pushing Docker image $(DOCKER_IMAGE):$(DOCKER_TAG)..."

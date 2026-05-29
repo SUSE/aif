@@ -1,0 +1,7 @@
+*
+!go.mod
+!go.sum
+!cmd/
+!api/
+!internal/
+!pkg/
