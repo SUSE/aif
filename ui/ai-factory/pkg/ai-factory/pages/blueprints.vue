@@ -241,6 +241,7 @@ export default defineComponent({
     },
 
     async onCardDeprecate(v) {
+      this.crudError = null;
       const lineage = v.lineage || v.blueprintName;
       const version = v.version || v.id;
       const currentlyDeprecated = v.phase !== 'Active';
@@ -253,6 +254,7 @@ export default defineComponent({
     },
 
     async doDeprecate() {
+      this.crudError = null;
       const { lineage, version, currentlyDeprecated } = this.deprecateTarget;
       try {
         await deprecateBlueprint(lineage, version, !currentlyDeprecated);
@@ -265,12 +267,14 @@ export default defineComponent({
     },
 
     async onCardDelete(v) {
+      this.crudError = null;
       const lineage = v.lineage || v.blueprintName;
       const version = v.version || v.id;
       this.deleteTarget = { lineage, version, activeWorkloads: await this.fetchActiveWorkloads(lineage, version) };
     },
 
     async doDelete() {
+      this.crudError = null;
       const { lineage, version } = this.deleteTarget;
       try {
         await deleteBlueprint(lineage, version);
