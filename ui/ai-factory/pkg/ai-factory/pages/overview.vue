@@ -177,9 +177,11 @@ export default defineComponent({
 
   mounted() {
     // Background poll is silent (see silentRefresh) — no spinner, no error flash.
-    // Pass the bound method directly so silentRefresh is the visible callee
-    // (rather than wrapping in an arrow), which is also what the scaffold test asserts.
-    this._timer = setInterval(this.silentRefresh, 10 * 1000);
+    // Mirrors the workloads.vue setInterval form so the only two auto-polling
+    // pages share a single shape; the .bind(this) is redundant under Vue 3
+    // Options API but matches the existing precedent. Follow-up: drop the
+    // redundant .bind from both call sites in one pass.
+    this._timer = setInterval(this.silentRefresh.bind(this), 10 * 1000);
   },
 
   beforeUnmount() {
