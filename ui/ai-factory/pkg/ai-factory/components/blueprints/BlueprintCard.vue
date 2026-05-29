@@ -143,7 +143,7 @@ export default defineComponent({
               : vm.t('aif.pages.blueprints.actions.deprecate'),
             enabled: true,
           },
-          { divider: true, label: '', enabled: true },
+          { divider: true, label: '', enabled: false },
           { action: 'delete', label: vm.t('aif.pages.blueprints.actions.delete'), enabled: true },
         );
       }
