@@ -21,7 +21,8 @@ func (c *apiClient) ChartAnnotations(ctx context.Context, repo, chart, version s
 		return nil, err
 	}
 
-	manifestPath := strings.TrimRight(settings.OCIHost, "/") + "/v2/" + repo + "/" + chart + "/manifests/" + version
+	base := registryBaseURL(settings.OCIHost) + "/v2/" + normalizeRepoPath(repo) + "/" + chart
+	manifestPath := base + "/manifests/" + version
 
 	digest, err := c.headOCIManifest(ctx, settings, manifestPath)
 	if err != nil {
@@ -43,7 +44,7 @@ func (c *apiClient) ChartAnnotations(ctx context.Context, repo, chart, version s
 	if err != nil {
 		return nil, fmt.Errorf("source_collection: %w", err)
 	}
-	blobPath := strings.TrimRight(settings.OCIHost, "/") + "/v2/" + repo + "/" + chart + "/blobs/" + layerDigest
+	blobPath := base + "/blobs/" + layerDigest
 	body, err := c.getOCIBytes(ctx, settings, blobPath)
 	if err != nil {
 		return nil, err
@@ -57,6 +58,32 @@ func (c *apiClient) ChartAnnotations(ctx context.Context, repo, chart, version s
 	c.annCache[chart] = annotationCacheEntry{digest: digest, annotations: annotations}
 	c.mu.Unlock()
 	return annotations, nil
+}
+
+// registryBaseURL turns the OCIHost setting into a scheme-bearing base URL.
+// buildChartRef (api_client.go) documents OCIHost as a bare host, but it also
+// tolerates a scheme; mirror that here so a misconfigured "https://host" or
+// "http://host" still produces a valid URL.
+func registryBaseURL(host string) string {
+	host = strings.TrimRight(host, "/")
+	if strings.Contains(host, "://") {
+		return host
+	}
+	return "https://" + host
+}
+
+// normalizeRepoPath drops the "oci://<host>/" prefix that parseAppCoChartRef
+// leaves on App.ChartRef.Repo. The annotation reader needs only the path
+// portion ("charts") to compose registry URLs; the scheme + host come from
+// OCIHost. Callers that already pass a bare path component pass through.
+func normalizeRepoPath(repo string) string {
+	if rest, ok := strings.CutPrefix(repo, "oci://"); ok {
+		if i := strings.Index(rest, "/"); i >= 0 {
+			return strings.Trim(rest[i+1:], "/")
+		}
+		return ""
+	}
+	return strings.Trim(repo, "/")
 }
 
 func (c *apiClient) effectiveAnnotationSettings() (EngineSettings, error) {

@@ -135,6 +135,51 @@ func TestAppcoAnnotationReader_404_ReturnsErrChartNotFound(t *testing.T) {
 	}
 }
 
+// TestAppcoAnnotationReader_ProductionShapedInputs pins the URL composition
+// against the inputs the AppCoSource actually passes in production:
+//   - OCIHost is the bare host "dp.apps.rancher.io" (no scheme), per
+//     buildChartRef's contract in api_client.go.
+//   - repo is the full "oci://<host>/charts" segment carried on
+//     ChartRef.Repo (see parseAppCoChartRef in pkg/apps/appco_source.go).
+//
+// Both inputs needed normalizing inside the reader; without it, the
+// composed manifest URL was "dp.apps.rancher.io/v2/oci://dp.apps.rancher.io/charts/<chart>/manifests/<v>"
+// which http.NewRequest rejected with "unsupported protocol scheme".
+func TestAppcoAnnotationReader_ProductionShapedInputs(t *testing.T) {
+	stub := &appcoOCIStub{
+		chart:   "milvus",
+		version: "2.4.0",
+		chartYaml: `apiVersion: v2
+name: milvus
+annotations:
+  ai.suse.com/role: reference-blueprint
+`,
+	}
+	// TLS server: production OCIHost is a bare hostname that the reader
+	// resolves under https://; an http test server would mask the scheme bug.
+	ts := httptest.NewTLSServer(stub)
+	defer ts.Close()
+
+	bareHost := strings.TrimPrefix(ts.URL, "https://")
+
+	c := &apiClient{
+		httpClient: ts.Client(),
+		limiter:    rate.NewLimiter(rate.Inf, 0),
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		annCache:   map[string]annotationCacheEntry{},
+		settings:   EngineSettings{OCIHost: bareHost},
+	}
+
+	got, err := c.ChartAnnotations(context.Background(),
+		"oci://"+bareHost+"/charts", "milvus", "2.4.0")
+	if err != nil {
+		t.Fatalf("ChartAnnotations: %v", err)
+	}
+	if got["ai.suse.com/role"] != "reference-blueprint" {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestAppcoAnnotationReader_NotConfigured(t *testing.T) {
 	c := &apiClient{
 		httpClient: &http.Client{Timeout: time.Second},
