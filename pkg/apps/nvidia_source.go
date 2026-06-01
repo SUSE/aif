@@ -25,6 +25,12 @@ type NVIDIASource struct {
 	logger          *slog.Logger
 	refreshInterval time.Duration
 
+	// wake is a 1-slot drop-on-full channel. UpdateSettings issues a
+	// non-blocking send so the Start ticker loop refreshes immediately
+	// with the new credentials/endpoint, instead of waiting up to
+	// refreshInterval (often 10m) for the next tick.
+	wake chan struct{}
+
 	mu     sync.RWMutex
 	cache  []App
 	status SourceStatus
@@ -38,6 +44,7 @@ func NewNVIDIASource(d nvidia.Discovery, a nvidia.AnnotationReader, logger *slog
 		annReader:       a,
 		logger:          logger,
 		refreshInterval: refreshInterval,
+		wake:            make(chan struct{}, 1),
 	}
 }
 
@@ -102,6 +109,11 @@ func (n *NVIDIASource) UpdateSettings(s EngineSettings) {
 		Token:            s.SUSERegistry.Token,
 		RefreshInterval:  effectiveInterval,
 	})
+
+	select {
+	case n.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Status returns a snapshot of the per-Source health state. Used by
@@ -120,12 +132,7 @@ func (n *NVIDIASource) Status() SourceStatus {
 func (n *NVIDIASource) Start(ctx context.Context) {
 	go func() {
 		_ = n.Refresh(ctx)
-		n.mu.RLock()
-		interval := n.refreshInterval
-		n.mu.RUnlock()
-		if interval <= 0 {
-			interval = 10 * time.Minute
-		}
+		interval := n.currentInterval()
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
@@ -134,9 +141,28 @@ func (n *NVIDIASource) Start(ctx context.Context) {
 				return
 			case <-t.C:
 				_ = n.Refresh(ctx)
+			case <-n.wake:
+				_ = n.Refresh(ctx)
+				// Reset the ticker so the next scheduled tick is one
+				// full interval from this wake-driven refresh — and
+				// pick up any interval change UpdateSettings made.
+				t.Reset(n.currentInterval())
 			}
 		}
 	}()
+}
+
+// currentInterval reads refreshInterval under the read lock and applies
+// the 10m default if unset. Extracted so Start can call it on both initial
+// ticker creation and on wake-driven ticker reset.
+func (n *NVIDIASource) currentInterval() time.Duration {
+	n.mu.RLock()
+	interval := n.refreshInterval
+	n.mu.RUnlock()
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	return interval
 }
 
 // recordError updates SourceStatus.LastError without touching the

@@ -31,6 +31,12 @@ type AppCoSource struct {
 	logger          *slog.Logger
 	refreshInterval time.Duration
 
+	// wake is a 1-slot drop-on-full channel. UpdateSettings issues a
+	// non-blocking send so the Start ticker loop refreshes immediately
+	// with the new credentials/endpoint, instead of waiting up to
+	// refreshInterval (often 10m) for the next tick.
+	wake chan struct{}
+
 	mu     sync.RWMutex
 	cache  []App
 	status SourceStatus
@@ -44,6 +50,7 @@ func NewAppCoSource(c source_collection.Client, ar source_collection.AnnotationR
 		annReader:       ar,
 		logger:          logger,
 		refreshInterval: refreshInterval,
+		wake:            make(chan struct{}, 1),
 	}
 }
 
@@ -100,6 +107,11 @@ func (a *AppCoSource) UpdateSettings(s EngineSettings) {
 		Username: s.ApplicationCollection.Username,
 		Token:    s.ApplicationCollection.Token,
 	})
+
+	select {
+	case a.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Status returns a snapshot of the per-Source health state.
@@ -116,13 +128,7 @@ func (a *AppCoSource) Status() SourceStatus {
 func (a *AppCoSource) Start(ctx context.Context) {
 	go func() {
 		_ = a.Refresh(ctx)
-		a.mu.RLock()
-		interval := a.refreshInterval
-		a.mu.RUnlock()
-		if interval <= 0 {
-			interval = 10 * time.Minute
-		}
-		t := time.NewTicker(interval)
+		t := time.NewTicker(a.currentInterval())
 		defer t.Stop()
 		for {
 			select {
@@ -130,9 +136,27 @@ func (a *AppCoSource) Start(ctx context.Context) {
 				return
 			case <-t.C:
 				_ = a.Refresh(ctx)
+			case <-a.wake:
+				_ = a.Refresh(ctx)
+				// Reset the ticker so the next scheduled tick is one
+				// full interval from this wake-driven refresh — and
+				// pick up any interval change UpdateSettings made.
+				t.Reset(a.currentInterval())
 			}
 		}
 	}()
+}
+
+// currentInterval reads refreshInterval under the read lock and applies
+// the 10m default if unset.
+func (a *AppCoSource) currentInterval() time.Duration {
+	a.mu.RLock()
+	interval := a.refreshInterval
+	a.mu.RUnlock()
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	return interval
 }
 
 func (a *AppCoSource) recordError(err error) {

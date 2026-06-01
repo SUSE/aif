@@ -343,6 +343,52 @@ func TestNVIDIASource_Start_TickerTriggersRefresh(t *testing.T) {
 	}
 }
 
+// TestNVIDIASource_UpdateSettings_WakesTickerForImmediateRefresh pins the
+// fix for the "settings change took ~10 minutes to take effect" bug
+// observed live: after SettingsReconciler pushes new credentials, the
+// per-Source ticker must not wait for the next tick to consume them.
+// Uses a 1-hour interval so we can be confident the extra refresh comes
+// from the wake path, not from a ticker fire.
+func TestNVIDIASource_UpdateSettings_WakesTickerForImmediateRefresh(t *testing.T) {
+	d := &fakeNVIDIADiscovery{indexResult: sampleNIMEntries()}
+	s := NewNVIDIASource(d, &fakeNvidiaAnnotationReader{}, discardLogger(), time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+
+	// Wait for the initial Refresh to land.
+	if !waitForRefreshCalls(d, 1, time.Second) {
+		t.Fatalf("initial Refresh did not run within 1s")
+	}
+
+	// Push settings. With a 1-hour ticker, the only way refreshCalls
+	// can increment again within 1s is via the wake channel.
+	s.UpdateSettings(EngineSettings{
+		SUSERegistry: RegistrySettings{Endpoint: "registry.example.com", Username: "u", Token: "t"},
+	})
+	if !waitForRefreshCalls(d, 2, time.Second) {
+		d.mu.Lock()
+		calls := d.refreshCalls
+		d.mu.Unlock()
+		t.Fatalf("expected wake-driven Refresh within 1s; got %d total refresh calls", calls)
+	}
+}
+
+func waitForRefreshCalls(d *fakeNVIDIADiscovery, want int, max time.Duration) bool {
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		got := d.refreshCalls
+		d.mu.Unlock()
+		if got >= want {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
 func TestNVIDIASource_Refresh_PopulatesReferenceBlueprintAndOverrides(t *testing.T) {
 	disc := &fakeNVIDIADiscovery{
 		indexResult: []nvidia.NIMEntry{

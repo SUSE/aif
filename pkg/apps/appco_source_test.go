@@ -282,6 +282,54 @@ func (f *fakeAppcoAnnotationReader) ChartAnnotations(_ context.Context, repo, ch
 	return f.annotations[key], nil
 }
 
+// TestAppCoSource_UpdateSettings_WakesTickerForImmediateRefresh pins the
+// fix for the "settings change took ~10 minutes to take effect" bug
+// observed live: after SettingsReconciler pushes new credentials, the
+// per-Source ticker must not wait for the next tick to consume them.
+// Uses a 1-hour interval so we can be confident the extra refresh comes
+// from the wake path, not from a ticker fire.
+func TestAppCoSource_UpdateSettings_WakesTickerForImmediateRefresh(t *testing.T) {
+	c := &fakeAppCoClient{listResult: sampleCatalogApps()}
+	s := NewAppCoSource(c, &fakeAppcoAnnotationReader{}, discardLogger(), time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+
+	if !waitForAppCoListCalls(c, 1, time.Second) {
+		t.Fatalf("initial Refresh did not run within 1s")
+	}
+
+	s.UpdateSettings(EngineSettings{
+		ApplicationCollection: AppCollectionSettings{
+			APIURL:   "https://api.example.com",
+			OCIHost:  "oci.example.com",
+			Username: "u",
+			Token:    "t",
+		},
+	})
+	if !waitForAppCoListCalls(c, 2, time.Second) {
+		c.mu.Lock()
+		calls := c.listCalls
+		c.mu.Unlock()
+		t.Fatalf("expected wake-driven Refresh within 1s; got %d total client.List calls", calls)
+	}
+}
+
+func waitForAppCoListCalls(c *fakeAppCoClient, want int, max time.Duration) bool {
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		got := c.listCalls
+		c.mu.Unlock()
+		if got >= want {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
 func TestAppCoSource_Refresh_PopulatesReferenceBlueprintAndOverrides(t *testing.T) {
 	upstream := []source_collection.CatalogApp{
 		{
