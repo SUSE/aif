@@ -12,8 +12,9 @@ import "time"
 // the dot separator is chosen so the REST surface uses a plain
 // path-segment route (`/api/v1/apps/{id}`) rather than a wildcard:
 //
-//	nvidia.<chart>:<version>     e.g. nvidia.nim-llm:1.2.0
-//	suse.<slug>:<version>        e.g. suse.ollama:0.4.1
+//	nvidia.ngc.<chart>:<version>      e.g. nvidia.ngc.nim-llm:1.2.0
+//	suse.appco.<slug>:<version>       e.g. suse.appco.ollama:0.4.1
+//	suse.registry.<chart>:<version>   e.g. suse.registry.kubeflow:0.3.2
 type App struct {
 	ID                 string     `json:"id"`                 // namespaced; canonical key for dedupe + Get
 	Name               string     `json:"name"`               // bare chart/slug name (no namespace, no version)

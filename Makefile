@@ -399,7 +399,7 @@ smoke-e2e:
 verify-all-live:
 	@set +e; \
 	fail=0; results=""; \
-	for t in nim appco apps wrapper fleet git; do \
+	for t in nim appco suse-registry apps wrapper fleet git; do \
 		echo "=== verify-$$t-live ==="; \
 		$(MAKE) verify-$$t-live; rc=$$?; \
 		if [ $$rc -eq 0 ]; then results="$$results\nverify-$$t-live: PASS"; \

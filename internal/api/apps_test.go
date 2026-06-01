@@ -310,7 +310,7 @@ func TestAppsHandler_Get_HappyPath_Returns200AndApp(t *testing.T) {
 	cat := &fakeCatalog{getResult: want}
 	h := newAppsHandlerForTest(cat)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.ngc.nim-llm:1.0.0", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -552,7 +552,7 @@ func TestAppsHandler_LogCatalogErr_PropagatesRequestID(t *testing.T) {
 
 func TestAppValues_HappyPath_Returns200WithMergedShape(t *testing.T) {
 	app := apps.App{
-		ID:     "nvidia.nim-llm:1.0.0",
+		ID:     "nvidia.ngc.nim-llm:1.0.0",
 		Name:   "nim-llm",
 		Source: "nvidia",
 		// App.ChartRef.Repo is stored with the oci:// scheme (see
@@ -572,7 +572,7 @@ func TestAppValues_HappyPath_Returns200WithMergedShape(t *testing.T) {
 	}
 	h := newAppsHandlerWithInspector(cat, ins)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values?version=1.0.0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.ngc.nim-llm:1.0.0/values?version=1.0.0", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -638,7 +638,7 @@ func TestAppValues_NotFound_Returns404(t *testing.T) {
 
 func TestAppValues_MissingVersion_Returns400(t *testing.T) {
 	cat := &fakeCatalog{getResult: apps.App{
-		ID: "nvidia.nim-llm:1.0.0",
+		ID: "nvidia.ngc.nim-llm:1.0.0",
 		ChartRef: apps.ChartRef{
 			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
 			Chart:   "nim-llm",
@@ -648,7 +648,7 @@ func TestAppValues_MissingVersion_Returns400(t *testing.T) {
 	ins := &fakeInspector{}
 	h := newAppsHandlerWithInspector(cat, ins)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.ngc.nim-llm:1.0.0/values", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -670,7 +670,7 @@ func TestAppValues_MissingVersion_Returns400(t *testing.T) {
 
 func TestAppValues_InspectorError_Returns500(t *testing.T) {
 	app := apps.App{
-		ID: "nvidia.nim-llm:1.0.0",
+		ID: "nvidia.ngc.nim-llm:1.0.0",
 		ChartRef: apps.ChartRef{
 			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
 			Chart:   "nim-llm",
@@ -681,7 +681,7 @@ func TestAppValues_InspectorError_Returns500(t *testing.T) {
 	ins := &fakeInspector{err: errors.New("pull failed: connection refused")}
 	h := newAppsHandlerWithInspector(cat, ins)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values?version=1.0.0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.ngc.nim-llm:1.0.0/values?version=1.0.0", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -694,7 +694,7 @@ func TestAppValues_InspectorError_Returns500(t *testing.T) {
 
 func TestAppValues_NilQuestions_SerializesAsNull(t *testing.T) {
 	app := apps.App{
-		ID: "nvidia.nim-llm:1.0.0",
+		ID: "nvidia.ngc.nim-llm:1.0.0",
 		ChartRef: apps.ChartRef{
 			Repo:    "oci://registry.suse.com/ai/charts/nvidia",
 			Chart:   "nim-llm",
@@ -708,7 +708,7 @@ func TestAppValues_NilQuestions_SerializesAsNull(t *testing.T) {
 	}
 	h := newAppsHandlerWithInspector(cat, ins)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.nim-llm:1.0.0/values?version=1.0.0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/nvidia.ngc.nim-llm:1.0.0/values?version=1.0.0", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
