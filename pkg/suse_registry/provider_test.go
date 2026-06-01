@@ -141,3 +141,53 @@ func TestEnrichWithAnnotations_NoConcurrentMapAccess(t *testing.T) {
 		}
 	}
 }
+
+// stubAnnotationReader returns a canned annotation map for every
+// repo/tag query — lets tests assert which key wins when annotations
+// from multiple namespaces are present.
+type stubAnnotationReader struct {
+	annotations map[string]string
+}
+
+func (s stubAnnotationReader) ChartAnnotations(_ context.Context, _, _ string) (map[string]string, error) {
+	return s.annotations, nil
+}
+
+// TestEnrichWithAnnotations_FallsBackToCattleDisplayName covers the case
+// where a chart carries the Rancher catalog convention but no
+// ai.suse.com/* block (kubeflow et al on registry.suse.com today).
+func TestEnrichWithAnnotations_FallsBackToCattleDisplayName(t *testing.T) {
+	cases := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+	}{
+		{
+			name:        "ai.suse.com wins when both present",
+			annotations: map[string]string{"ai.suse.com/display-name": "SUSE", "catalog.cattle.io/display-name": "Rancher"},
+			want:        "SUSE",
+		},
+		{
+			name:        "falls back to catalog.cattle.io when ai.suse.com missing",
+			annotations: map[string]string{"catalog.cattle.io/display-name": "Rancher"},
+			want:        "Rancher",
+		},
+		{
+			name:        "leaves DisplayName as chart name when neither present",
+			annotations: map[string]string{"ai.suse.com/description": "irrelevant"},
+			want:        "foo",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newProvider(silentLogger(), nil, stubAnnotationReader{annotations: tc.annotations})
+			entries := map[string]SUSEChart{
+				"foo:1.0.0": {ID: "foo:1.0.0", Chart: "foo", Version: "1.0.0", DisplayName: "foo"},
+			}
+			p.enrichWithAnnotations(context.Background(), entries)
+			if got := entries["foo:1.0.0"].DisplayName; got != tc.want {
+				t.Fatalf("DisplayName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

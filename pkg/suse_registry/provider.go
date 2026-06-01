@@ -176,6 +176,11 @@ func (p *providerImpl) enrichWithAnnotations(ctx context.Context, entries map[st
 			}
 			if v, ok := ann["ai.suse.com/display-name"]; ok {
 				entry.DisplayName = v
+			} else if v, ok := ann["catalog.cattle.io/display-name"]; ok {
+				// Rancher catalog convention used by upstream-mirrored
+				// charts (kubeflow, etc.) that don't carry an
+				// ai.suse.com/* annotation block.
+				entry.DisplayName = v
 			}
 			if v, ok := ann["ai.suse.com/description"]; ok {
 				entry.Description = v
