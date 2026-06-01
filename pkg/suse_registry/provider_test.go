@@ -3,9 +3,11 @@ package suse_registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/SUSE/aif/pkg/oci"
 )
@@ -108,5 +110,34 @@ func TestRefresh_DropsChartsWithNoSemverTags(t *testing.T) {
 	}
 	if got[0].Chart != "foo" {
 		t.Errorf("want chart foo, got %q", got[0].Chart)
+	}
+}
+
+// slowAnnotationReader sleeps before returning so the errgroup
+// fan-out in enrichWithAnnotations actually interleaves under -race.
+type slowAnnotationReader struct{}
+
+func (slowAnnotationReader) ChartAnnotations(_ context.Context, _, _ string) (map[string]string, error) {
+	time.Sleep(2 * time.Millisecond)
+	return map[string]string{"ai.suse.com/display-name": "x"}, nil
+}
+
+// TestEnrichWithAnnotations_NoConcurrentMapAccess is a regression net
+// for an earlier bug: enrichWithAnnotations's fan-out goroutines were
+// reading entries[k] without holding mu while other goroutines wrote
+// to entries[k] under mu, which trips Go's map race detector.
+// Must be run with -race to catch the regression.
+func TestEnrichWithAnnotations_NoConcurrentMapAccess(t *testing.T) {
+	p := newProvider(silentLogger(), nil, slowAnnotationReader{})
+	entries := make(map[string]SUSEChart, 64)
+	for i := 0; i < 64; i++ {
+		k := fmt.Sprintf("chart-%d:1.0.0", i)
+		entries[k] = SUSEChart{ID: k, Chart: fmt.Sprintf("chart-%d", i), Version: "1.0.0"}
+	}
+	p.enrichWithAnnotations(context.Background(), entries)
+	for k, e := range entries {
+		if e.DisplayName != "x" {
+			t.Fatalf("entries[%q].DisplayName = %q, want %q", k, e.DisplayName, "x")
+		}
 	}
 }

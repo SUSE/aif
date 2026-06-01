@@ -33,9 +33,9 @@ type providerImpl struct {
 }
 
 // NewProvider returns a Provider bound to the given OCI walker and
-// AnnotationReader. cmd/operator/main.go shares one walker between
-// pkg/nvidia and pkg/suse_registry to avoid two HTTP clients against
-// the same registry.
+// AnnotationReader. Each engine constructs its own oci.Walker today;
+// the sharing happens at the package level (one pkg/oci, multiple
+// consumers) rather than via shared walker state.
 func NewProvider(logger *slog.Logger, walker oci.Walker, annR oci.AnnotationReader) Provider {
 	return newProvider(logger, walker, annR)
 }
@@ -156,7 +156,12 @@ func (p *providerImpl) enrichWithAnnotations(ctx context.Context, entries map[st
 	var mu sync.Mutex
 	for _, k := range keys {
 		g.Go(func() error {
+			// Map access under mu — Go maps are not safe for concurrent
+			// read+write at any keys, even disjoint ones. The network call
+			// happens outside the lock so fan-out stays parallel.
+			mu.Lock()
 			entry := entries[k]
+			mu.Unlock()
 			repo := suseChartsPrefix + entry.Chart
 			ann, err := p.annR.ChartAnnotations(gctx, repo, entry.Version)
 			if err != nil {
