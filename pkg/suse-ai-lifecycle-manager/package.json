@@ -1,12 +1,12 @@
 {
   "name": "suse-ai-lifecycle-manager",
-  "description": "SUSE AI Lifecycle Manager",
+  "description": "SUSE AI Factory",
   "version": "1.1.0",
   "private": false,
   "rancher": {
     "annotations": {
       "catalog.cattle.io/rancher-version": ">= 2.10.0",
-      "catalog.cattle.io/display-name": "SUSE AI Lifecycle Manager",
+      "catalog.cattle.io/display-name": "SUSE AI Factory",
       "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
     }
   },
