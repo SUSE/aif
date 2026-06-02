@@ -155,6 +155,37 @@ spec:
                       type: object
                     type: array
                 type: object
+              nvidia:
+                description: Nvidia configures NVIDIA NGC integration.
+                properties:
+                  tokenSecretRef:
+                    description: TokenSecretRef references the NGC API key secret.
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  userSecretRef:
+                    description: UserSecretRef references the username secret (NGC
+                      username; conventionally "$oauthtoken").
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
               registryEndpoints:
                 description: RegistryEndpoints overrides upstream registry defaults
                   for air-gap deployments.
@@ -166,6 +197,10 @@ spec:
                   applicationCollectionAPI:
                     description: ApplicationCollectionAPI overrides the SUSE App Collection
                       HTTP API URL.
+                    type: string
+                  nvidia:
+                    description: Nvidia overrides the default NVIDIA image registry
+                      host (nvcr.io) used for image pull secrets.
                     type: string
                   suseRegistry:
                     description: SUSERegistry overrides the default SUSE Registry

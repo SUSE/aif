@@ -249,7 +249,7 @@ import { defineComponent, computed, getCurrentInstance, onMounted, ref } from 'v
 import type { RouteLocationRaw } from 'vue-router';
 import { Checkbox } from '@components/Form/Checkbox';
 import type { AppCollectionItem } from '../services/app-collection';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, getClusterRepoNameFromUrl } from '../services/app-collection';
 import { discoverExistingInstall, getClusters } from '../services/rancher-apps';
 
 type InstallInfo = {
@@ -285,14 +285,19 @@ export default defineComponent({
     const installedMap = ref<Record<string, InstallInfo>>({});
     const showInstalledOnly = ref(false);
 
-    // "SUSE AI Library" is the built-in merged source (App Collection + SUSE Registry).
-    // Additional repos configured in Settings will be appended here in a future iteration.
     const repositoryOptions = computed(() => [
       { label: 'SUSE AI Library', value: 'suse-ai' },
+      { label: 'Nvidia Library', value: 'nvidia' },
     ]);
 
     const filteredApps = computed(() => {
       let arr = items.value.slice();
+
+      // Filter by the selected library ('suse-ai' | 'nvidia'). A falsy value
+      // (e.g. a future "All libraries" option) intentionally shows everything.
+      if (selectedRepo.value) {
+        arr = arr.filter((app: AppCollectionItem) => app.library === selectedRepo.value);
+      }
 
       if (showInstalledOnly.value) {
         arr = arr.filter((app: AppCollectionItem) => getInstallationInfo(app.slug_name).installed);
@@ -353,8 +358,11 @@ export default defineComponent({
 
     const loadApps = async () => {
       try {
-        const apps = await fetchSuseAiApps(store);
-        items.value = apps;
+        const [suseApps, nvidiaApps] = await Promise.all([
+          fetchSuseAiApps(store),
+          fetchNvidiaApps(store),
+        ]);
+        items.value = [...suseApps, ...nvidiaApps];
         await loadInstallationStates();
       } catch (err) {
         console.error('Failed to load apps:', err);

@@ -111,12 +111,14 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 const (
 	defaultAppCollectionHost = "dp.apps.rancher.io"
 	defaultSUSERegistryHost  = "registry.suse.com"
+	defaultNvidiaHost        = "nvcr.io"
 )
 
 // RegistryCredentials holds decoded registry credentials from Settings secret refs.
 type RegistryCredentials struct {
 	ApplicationCollection *RegistryCred `json:"applicationCollection,omitempty"`
 	SUSERegistry          *RegistryCred `json:"suseRegistry,omitempty"`
+	Nvidia                *RegistryCred `json:"nvidia,omitempty"`
 }
 
 // RegistryCred is a single registry's decoded credentials.
@@ -160,6 +162,20 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 		if err1 == nil && err2 == nil {
 			creds.SUSERegistry = &RegistryCred{
 				Username: user, Password: pass, RegistryHost: suseHost,
+			}
+		}
+	}
+
+	nvidiaHost := defaultNvidiaHost
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
+		nvidiaHost = s.Spec.RegistryEndpoints.Nvidia
+	}
+	if s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil {
+		user, err1 := h.readSecretKey(r.Context(), s.Spec.Nvidia.UserSecretRef)
+		pass, err2 := h.readSecretKey(r.Context(), s.Spec.Nvidia.TokenSecretRef)
+		if err1 == nil && err2 == nil {
+			creds.Nvidia = &RegistryCred{
+				Username: user, Password: pass, RegistryHost: nvidiaHost,
 			}
 		}
 	}

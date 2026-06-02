@@ -2,6 +2,7 @@ import yaml from 'js-yaml';
 import { log as logger } from '../utils/logger';
 import { createChartValuesService } from './chart-values';
 import { getClusterContext } from '../utils/cluster-operations';
+import { filterAndSortVersions } from '../utils/chart-version';
 import type {
   RancherStore,
   ClusterResource,
@@ -17,23 +18,6 @@ function normName(s?: string): string {
 function sameName(a?: string, b?: string): boolean {
   return !!a && !!b && normName(a) === normName(b);
 }
-
-function uniqStr(arr: string[]): string[] {
-  return Array.from(new Set(arr));
-}
-
-function semverDesc(a: string, b: string): number {
-  const pa = a.split('.').map(n => parseInt(n, 10) || 0);
-  const pb = b.split('.').map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const da = pa[i] || 0;
-    const db = pb[i] || 0;
-    if (da !== db) return db - da;
-  }
-  return b.localeCompare(a);
-}
-
-const SEMVER_CORE = /^\d+\.\d+\.\d+(\+up\d+\.\d+\.\d+)?$/; // show x.y.z or x.y.z+upA.B.C (Rancher chart format)
 
 // Helper functions for file content processing
 function decodeMaybeB64(s?: string): string {
@@ -159,10 +143,7 @@ export class ChartService {
       const match = names.find((n: string) => sameName(n, slug));
 
       if (match && index) {
-        const vers = (index.entries[match] || [])
-          .map((v: { version: string }) => v.version)
-          .filter((v: string) => SEMVER_CORE.test(v));
-        const latest = uniqStr(vers).sort(semverDesc)[0];
+        const latest = filterAndSortVersions((index.entries[match] || []).map((v: { version: string }) => v.version))[0];
 
         if (latest) {
           logger.info('Chart found in repository', {
@@ -198,9 +179,7 @@ export class ChartService {
       const match = names.find((n: string) => sameName(n, chartName));
 
       if (match && index) {
-        const out = uniqStr((index.entries[match] || []).map((v: { version: string }) => v.version))
-          .filter((v: string) => SEMVER_CORE.test(v))
-          .sort(semverDesc);
+        const out = filterAndSortVersions((index.entries[match] || []).map((v: { version: string }) => v.version));
 
         logger.debug('Chart versions listed', {
           component: 'ChartService',

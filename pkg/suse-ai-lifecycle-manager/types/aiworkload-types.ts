@@ -67,4 +67,5 @@ export interface RegistryCred {
 export interface RegistryCredentials {
   applicationCollection?: RegistryCred;
   suseRegistry?:          RegistryCred;
+  nvidia?:                RegistryCred;
 }

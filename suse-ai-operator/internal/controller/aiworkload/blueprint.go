@@ -184,6 +184,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 const (
 	defaultAppCollectionHost = "dp.apps.rancher.io"
 	defaultSUSERegistryHost  = "registry.suse.com"
+	defaultNvidiaHost        = "nvcr.io"
 	combinedPullSecretName   = "suse-ai-pull-combined"
 )
 
@@ -229,6 +230,18 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 			p, err2 := r.readSettingsSecretKey(ctx, s.Spec.SUSERegistry.TokenSecretRef)
 			if err1 == nil && err2 == nil && u != "" && p != "" {
 				auths[suseHost] = dockerAuthEntry(u, p)
+			}
+		}
+
+		nvidiaHost := defaultNvidiaHost
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
+			nvidiaHost = s.Spec.RegistryEndpoints.Nvidia
+		}
+		if s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil {
+			u, err1 := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
+			p, err2 := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
+			if err1 == nil && err2 == nil && u != "" && p != "" {
+				auths[nvidiaHost] = dockerAuthEntry(u, p)
 			}
 		}
 	}

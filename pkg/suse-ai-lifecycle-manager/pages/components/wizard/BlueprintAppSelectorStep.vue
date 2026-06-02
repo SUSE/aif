@@ -63,7 +63,7 @@
 import { ref, onMounted, getCurrentInstance } from 'vue';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl } from '../../../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, getClusterRepoNameFromUrl } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
 
 const genericIcon = require('../../../assets/generic-app.svg');
@@ -82,13 +82,22 @@ const allApps       = ref<AppCollectionItem[]>([]);
 const versionMap    = ref<Record<string, string[]>>({});
 const logoMap       = ref<Record<string, string>>({});
 
+// Combined catalog: SUSE AI Library + Nvidia Library (mirrors the Apps catalog selector).
+async function loadAllApps(): Promise<AppCollectionItem[]> {
+  const [suseApps, nvidiaApps] = await Promise.all([
+    fetchSuseAiApps(store),
+    fetchNvidiaApps(store),
+  ]);
+  return [...suseApps, ...nvidiaApps];
+}
+
 // Backfill logos and versions for components selected before this mount (navigate-back / edit flow).
 onMounted(async () => {
   if (!props.components.length) return;
 
   // Logos — one fetch covers all components.
   try {
-    const apps = await fetchSuseAiApps(store);
+    const apps = await loadAllApps();
     allApps.value = apps;
     const logoUpdates: Record<string, string> = {};
     for (const comp of props.components) {
@@ -117,7 +126,7 @@ async function onSearch() {
   const q = searchQuery.value.toLowerCase();
   if (!q) { searchResults.value = []; return; }
   if (!allApps.value.length) {
-    allApps.value = await fetchSuseAiApps(store);
+    allApps.value = await loadAllApps();
   }
   const existing = new Set(props.components.map(c => c.chartName));
   searchResults.value = allApps.value
