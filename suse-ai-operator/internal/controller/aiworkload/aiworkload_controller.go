@@ -40,7 +40,7 @@ type AIWorkloadReconciler struct {
 	OperatorNamespace string
 }
 
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch

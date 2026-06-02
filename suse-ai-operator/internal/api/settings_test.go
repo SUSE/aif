@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -37,6 +38,9 @@ func newSettingsScheme(t *testing.T) *kruntime.Scheme {
 	s := kruntime.NewScheme()
 	if err := aiplatformv1alpha1.AddToScheme(s); err != nil {
 		t.Fatalf("add scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("add corev1 scheme: %v", err)
 	}
 	return s
 }
@@ -198,7 +202,53 @@ func TestGetRegistryCredentials_NoSettings(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("parse body: %v", err)
 	}
-	if body["applicationCollection"] != nil || body["suseRegistry"] != nil {
+	if body["applicationCollection"] != nil || body["suseRegistry"] != nil || body["nvidia"] != nil {
 		t.Errorf("expected empty credentials when settings not found, got %v", body)
+	}
+}
+
+func TestGetRegistryCredentials_Nvidia(t *testing.T) {
+	const ns = "suse-ai-system"
+
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("$oauthtoken")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("nvapi-secret")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+			},
+		},
+	}
+
+	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body RegistryCredentials
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body.Nvidia == nil {
+		t.Fatalf("expected nvidia creds, got nil")
+	}
+	if body.Nvidia.Username != "$oauthtoken" || body.Nvidia.Password != "nvapi-secret" {
+		t.Errorf("unexpected creds: %+v", body.Nvidia)
+	}
+	if body.Nvidia.RegistryHost != "nvcr.io" {
+		t.Errorf("expected host nvcr.io, got %q", body.Nvidia.RegistryHost)
 	}
 }

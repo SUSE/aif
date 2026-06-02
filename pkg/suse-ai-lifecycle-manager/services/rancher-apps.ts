@@ -1,5 +1,5 @@
 import yaml from 'js-yaml';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL } from './app-collection';
+import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from './app-collection';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
 function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
@@ -43,6 +43,7 @@ import type {
   isRancherError
 } from '../types/rancher-types';
 import { getClusterContext } from '../utils/cluster-operations';
+import { filterAndSortVersions } from '../utils/chart-version';
 
 export interface ChartRef {
   repoName: string;   // ClusterRepo metadata.name
@@ -572,18 +573,6 @@ export async function discoverExistingInstall(
 
 /* =========================== charts: index + versions =========================== */
 
-function uniqStr(arr: string[]): string[] { return Array.from(new Set(arr)); }
-function semverDesc(a: string, b: string): number {
-  const pa = a.split('.').map(n => parseInt(n, 10) || 0);
-  const pb = b.split('.').map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const da = pa[i] || 0; const db = pb[i] || 0;
-    if (da !== db) return db - da;
-  }
-  return b.localeCompare(a);
-}
-const SEMVER_CORE = /^\d+\.\d+\.\d+(\+up\d+\.\d+\.\d+)?$/; // show x.y.z or x.y.z+upA.B.C (Rancher chart format)
-
 async function getRepoIndexLink($store: RancherStore, repoName: string): Promise<string | null> {
   const found = await getClusterContext($store, { repoName: repoName});
   if (!found) {
@@ -629,8 +618,7 @@ export async function findChartInRepo(
   const names = index?.entries ? Object.keys(index.entries) : [];
   const match = names.find((n: string) => sameName(n, slug));
   if (match && index) {
-    const vers = (index.entries[match] || []).map((v: { version: string }) => v.version).filter((v: string) => SEMVER_CORE.test(v));
-    const latest = uniqStr(vers).sort(semverDesc)[0];
+    const latest = filterAndSortVersions((index.entries[match] || []).map((v: { version: string }) => v.version))[0];
     if (latest) return { chartName: match, version: latest };
   }
   return null;
@@ -646,9 +634,7 @@ export async function listChartVersions(
   const names = index?.entries ? Object.keys(index.entries) : [];
   const match = names.find((n: string) => sameName(n, chartName));
   if (match && index) {
-    const out = uniqStr((index.entries[match] || []).map((v: { version: string }) => v.version))
-      .filter((v: string) => SEMVER_CORE.test(v))
-      .sort(semverDesc);
+    const out = filterAndSortVersions((index.entries[match] || []).map((v: { version: string }) => v.version));
     log('listChartVersions via index:', { chart: match, count: out.length });
     return out;
   }
@@ -801,12 +787,14 @@ export async function inferClusterRepoForChart(
 }
 
 
-function clusterRepoNameFromUrl(ociUrl: string): string {
+function clusterRepoNameFromUrl(repoUrl: string): string {
   const KNOWN: Record<string, string> = {
-    [APP_COLLECTION_REPO_URL]: 'application-collection',
-    [SUSE_REGISTRY_REPO_URL]:  'suse-ai-registry',
+    [APP_COLLECTION_REPO_URL]:    'application-collection',
+    [SUSE_REGISTRY_REPO_URL]:     'suse-ai-registry',
+    [NVIDIA_REPO_URL]:            'nvidia',
+    [NVIDIA_BLUEPRINT_REPO_URL]:  'nvidia-blueprint',
   };
-  return KNOWN[ociUrl] ?? ociUrl
+  return KNOWN[repoUrl] ?? repoUrl
     .replace(/^oci:\/\//, '')
     .replace(/[^a-z0-9]+/gi, '-')
     .toLowerCase()

@@ -8,6 +8,10 @@ import { getSettings } from '../utils/operator-api';
 export const APP_COLLECTION_REPO_URL = 'oci://dp.apps.rancher.io/charts';
 export const SUSE_REGISTRY_REPO_URL  = 'oci://registry.suse.com/ai/charts';
 
+// NVIDIA NGC Helm repositories (HTTPS, public charts). Images are gated behind nvcr.io.
+export const NVIDIA_REPO_URL           = 'https://helm.ngc.nvidia.com/nvidia';
+export const NVIDIA_BLUEPRINT_REPO_URL = 'https://helm.ngc.nvidia.com/nvidia/blueprint';
+
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';
 
 export interface AppCollectionItem {
@@ -23,6 +27,7 @@ export interface AppCollectionItem {
   last_updated_at?: string;
   packaging_format?: PackagingFormat;
   repository_url?: string;
+  library?: 'suse-ai' | 'nvidia';
 }
 
 function normalizeLogoUrl(logo?: string): string | undefined {
@@ -63,10 +68,10 @@ export async function fetchSuseAiApps($store: any): Promise<AppCollectionItem[]>
 
   const [appCollectionApps, suseRegistryApps] = await Promise.all([
     appCollectionRepo
-      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: acUrl })))
+      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: acUrl, library: 'suse-ai' as const })))
       : Promise.resolve([] as AppCollectionItem[]),
     suseRegistryRepo
-      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: srUrl })))
+      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: srUrl, library: 'suse-ai' as const })))
       : Promise.resolve([] as AppCollectionItem[]),
   ]);
 
@@ -77,6 +82,28 @@ export async function fetchSuseAiApps($store: any): Promise<AppCollectionItem[]>
     if (!appMap.has(app.slug_name)) appMap.set(app.slug_name, app);
   }
 
+  return Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Fetch apps from the two NVIDIA NGC repositories, tagged with library 'nvidia'. */
+export async function fetchNvidiaApps($store: any): Promise<AppCollectionItem[]> {
+  const repos = await fetchClusterRepositories($store);
+  const urls = [NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL];
+
+  const perRepo = await Promise.all(urls.map(async (url) => {
+    const repo = repos.find(r => r.url === url);
+    if (!repo) return [] as AppCollectionItem[];
+    const apps = await fetchAppsFromRepository($store, repo.name);
+    return apps.map(a => ({ ...a, repository_url: url, library: 'nvidia' as const }));
+  }));
+
+  // Dedup by slug across the two NVIDIA repos; first occurrence wins.
+  const appMap = new Map<string, AppCollectionItem>();
+  for (const apps of perRepo) {
+    for (const app of apps) {
+      if (!appMap.has(app.slug_name)) appMap.set(app.slug_name, app);
+    }
+  }
   return Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 

@@ -40,6 +40,8 @@ rules:
   - ai-platform.suse.com
   resources:
   - aiworkloads
+  - installaiextensions
+  - settings
   verbs:
   - create
   - delete
@@ -72,19 +74,6 @@ rules:
   verbs:
   - get
   - list
-  - watch
-- apiGroups:
-  - ai-platform.suse.com
-  resources:
-  - installaiextensions
-  - settings
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - apiextensions.k8s.io

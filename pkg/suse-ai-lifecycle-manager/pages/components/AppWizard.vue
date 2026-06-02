@@ -509,6 +509,19 @@ async function loadDefaultValues(options: { skipVersionInfoFetch?: boolean } = {
 }
 
 /**
+ * Handler for the "Load defaults" button. Loading chart defaults replaces
+ * form.values wholesale (dropping any injected imagePullSecrets), so we must
+ * re-inject the registry pull secrets afterwards — the same sequence the
+ * programmatic version-change flow uses. Without this, a Helm upgrade started
+ * after clicking "Load defaults" ships values with no imagePullSecrets and the
+ * upgraded pods hit ImagePullBackOff.
+ */
+async function onLoadDefaults() {
+  await loadDefaultValues();
+  await resolvePullSecretNames();
+}
+
+/**
  * Resolve pull secret names from Settings registry credentials,
  * then inject them into form.values so the user can see them in the Configuration step.
  */
@@ -516,7 +529,7 @@ async function resolvePullSecretNames() {
   if (!form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) return;
   try {
     const creds = await getRegistryCredentials(5000);
-    const secrets = [creds.applicationCollection, creds.suseRegistry]
+    const secrets = [creds.applicationCollection, creds.suseRegistry, creds.nvidia]
       .filter(Boolean)
       .map(cred => ({
         name: `suse-ai-pull-secret-${ cred!.registryHost.replace(/[^a-z0-9]/g, '-') }`,
@@ -755,11 +768,11 @@ async function performFleetBundleInstall() {
   try {
     // Pre-create pull secrets for ALL configured registries so subchart images from a
     // different registry than the parent chart are also covered.
-    let creds: { applicationCollection?: any; suseRegistry?: any } = {};
+    let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
     try { creds = await getRegistryCredentials(5000); } catch (e) {
       console.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', e);
     }
-    const activeCreds = [creds.applicationCollection, creds.suseRegistry].filter(Boolean);
+    const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
     const secretResults = await Promise.all(
       form.value.clusters.flatMap(clusterId =>
         activeCreds.map(async cred => {
@@ -822,7 +835,7 @@ async function performGitOpsInstall() {
     const creds = await getRegistryCredentials(5000);
     const pullSecretNames: string[] = [];
     for (const clusterId of form.value.clusters) {
-      for (const cred of [creds.applicationCollection, creds.suseRegistry]) {
+      for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
         if (!cred) continue;
         try {
           const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
@@ -1069,14 +1082,14 @@ async function installToCluster(
 
   onProgress(25, 'Setting up registry credentials...');
 
-  let creds: { applicationCollection?: any; suseRegistry?: any } = {};
+  let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
   try {
     creds = await getRegistryCredentials(5000);
   } catch (e: any) {
     console.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', e?.message || e);
   }
 
-  for (const cred of [creds.applicationCollection, creds.suseRegistry]) {
+  for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
     if (!cred) continue;
     try {
       const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
@@ -1202,11 +1215,11 @@ async function performFleetBundleUpgrade() {
   showProgressModal.value = true;
 
   try {
-    let creds: { applicationCollection?: any; suseRegistry?: any } = {};
+    let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
     try { creds = await getRegistryCredentials(5000); } catch (e) {
       console.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', e);
     }
-    const activeCreds = [creds.applicationCollection, creds.suseRegistry].filter(Boolean);
+    const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
     const secretResults = await Promise.all(
       form.value.clusters.flatMap(clusterId =>
         activeCreds.map(async cred => {
@@ -1270,7 +1283,7 @@ async function performGitOpsUpgrade() {
     const creds = await getRegistryCredentials(5000);
     const pullSecretNames: string[] = [];
     for (const clusterId of form.value.clusters) {
-      for (const cred of [creds.applicationCollection, creds.suseRegistry]) {
+      for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
         if (!cred) continue;
         try {
           const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
@@ -1488,7 +1501,7 @@ function previousStep() {
             :target-namespace="form.namespace"
             :mode="props.mode"
             :in-store="inStore"
-            @load-defaults="loadDefaultValues"
+            @load-defaults="onLoadDefaults"
             @values-edited="onValuesEdited"
           />
 

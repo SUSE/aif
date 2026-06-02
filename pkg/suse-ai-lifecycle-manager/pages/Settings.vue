@@ -9,14 +9,15 @@ import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { OPERATOR_NAMESPACE } from '../utils/constants';
 import { ensureClusterRepo } from '../services/rancher-apps';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL } from '../services/app-collection';
+import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 
 function createEmptySpec() {
   return {
     fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
     applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
-    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '' },
+    nvidia:                { userSecretRef: null, tokenSecretRef: null },
+    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '', nvidia: '' },
     catalogDiscovery:      { applicationCollectionMode: 'api' },
     imageRewrite:          { enabled: false, rules: [] },
   };
@@ -64,6 +65,7 @@ export default {
         fleet:         false,
         appCollection: true,
         suseRegistry:  false,
+        nvidia:        false,
         advanced:      false,
       },
     };
@@ -133,6 +135,12 @@ export default {
           refreshIntervalMinutes: crdSpec.suseRegistry.refreshIntervalMinutes ?? 10,
         };
       }
+      if (crdSpec.nvidia) {
+        s.nvidia = {
+          userSecretRef:  crdSpec.nvidia.userSecretRef || null,
+          tokenSecretRef: crdSpec.nvidia.tokenSecretRef || null,
+        };
+      }
       if (crdSpec.registryEndpoints) {
         s.registryEndpoints = { ...s.registryEndpoints, ...crdSpec.registryEndpoints };
       }
@@ -178,13 +186,22 @@ export default {
         if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
       }
 
+      const nv = spec.nvidia;
+
+      if (nv.userSecretRef?.name || nv.tokenSecretRef?.name) {
+        out.nvidia = {};
+        if (nv.userSecretRef?.name) out.nvidia.userSecretRef = nv.userSecretRef;
+        if (nv.tokenSecretRef?.name) out.nvidia.tokenSecretRef = nv.tokenSecretRef;
+      }
+
       const re = spec.registryEndpoints;
 
-      if (re.suseRegistry || re.applicationCollection || re.applicationCollectionAPI) {
+      if (re.suseRegistry || re.applicationCollection || re.applicationCollectionAPI || re.nvidia) {
         out.registryEndpoints = {};
         if (re.suseRegistry) out.registryEndpoints.suseRegistry = re.suseRegistry;
         if (re.applicationCollection) out.registryEndpoints.applicationCollection = re.applicationCollection;
         if (re.applicationCollectionAPI) out.registryEndpoints.applicationCollectionAPI = re.applicationCollectionAPI;
+        if (re.nvidia) out.registryEndpoints.nvidia = re.nvidia;
       }
 
       if (spec.catalogDiscovery.applicationCollectionMode !== 'api') {
@@ -280,6 +297,16 @@ export default {
       if (acCreds) tasks.push(ensureClusterRepo(store, acUrl, acCreds));
       if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
       await Promise.all(tasks);
+
+      // NVIDIA chart repos are public HTTPS Helm repos — create them (no clientSecret)
+      // only when the NVIDIA credential is configured.
+      const nv = this.spec.nvidia;
+      if (nv.userSecretRef?.name && nv.tokenSecretRef?.name) {
+        await Promise.all([
+          ensureClusterRepo(store, NVIDIA_REPO_URL),
+          ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
+        ]);
+      }
     },
 
     async save(buttonDone) {
@@ -460,6 +487,63 @@ export default {
         </div>
       </div>
 
+      <!-- NVIDIA -->
+      <div class="box mt-10">
+        <div
+          class="accordion-header"
+          role="button"
+          tabindex="0"
+          @click="toggle('nvidia')"
+          @keydown.space.enter.prevent="toggle('nvidia')"
+        >
+          <i :class="expanded.nvidia ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+          <h2>{{ t('suseai.pages.settings.sections.nvidia.title') }}</h2>
+        </div>
+
+        <div
+          v-if="expanded.nvidia"
+          class="mt-15"
+        >
+          <p class="text-muted mb-15">
+            {{ t('suseai.pages.settings.sections.nvidia.description') }}
+          </p>
+
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.nvidia.userSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.nvidia.userSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.nvidia.userSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.nvidia.userSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.nvidia.userSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.nvidia.tokenSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.nvidia.tokenSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.nvidia.tokenSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.nvidia.tokenSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.nvidia.tokenSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Fleet / GitOps -->
       <div class="box mt-10">
         <div
@@ -579,6 +663,16 @@ export default {
                 v-model:value="spec.registryEndpoints.applicationCollectionAPI"
                 :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollectionAPI.label')"
                 :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollectionAPI.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+          <div class="row mb-20">
+            <div class="col span-6">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.nvidia"
+                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.nvidia.label')"
+                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.nvidia.placeholder')"
                 :mode="mode"
               />
             </div>

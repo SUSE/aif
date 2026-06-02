@@ -73,6 +73,16 @@ type SUSERegistrySettings struct {
 	RefreshIntervalMinutes int32 `json:"refreshIntervalMinutes,omitempty"`
 }
 
+// NvidiaSettings configures NVIDIA NGC integration.
+type NvidiaSettings struct {
+	// UserSecretRef references the username secret (NGC username; conventionally "$oauthtoken").
+	// +optional
+	UserSecretRef *SecretKeyRef `json:"userSecretRef,omitempty"`
+	// TokenSecretRef references the NGC API key secret.
+	// +optional
+	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+}
+
 // RegistryEndpointsSettings overrides upstream registry hosts for air-gap deployments.
 type RegistryEndpointsSettings struct {
 	// SUSERegistry overrides the default SUSE Registry hostname.
@@ -84,6 +94,9 @@ type RegistryEndpointsSettings struct {
 	// ApplicationCollectionAPI overrides the SUSE App Collection HTTP API URL.
 	// +optional
 	ApplicationCollectionAPI string `json:"applicationCollectionAPI,omitempty"`
+	// Nvidia overrides the default NVIDIA image registry host (nvcr.io) used for image pull secrets.
+	// +optional
+	Nvidia string `json:"nvidia,omitempty"`
 }
 
 // CatalogDiscoverySettings controls how the SUSE Application Collection is discovered.
@@ -126,6 +139,9 @@ type SettingsSpec struct {
 	// SUSERegistry configures SUSE Registry integration.
 	// +optional
 	SUSERegistry SUSERegistrySettings `json:"suseRegistry,omitempty"`
+	// Nvidia configures NVIDIA NGC integration.
+	// +optional
+	Nvidia NvidiaSettings `json:"nvidia,omitempty"`
 	// RegistryEndpoints overrides upstream registry defaults for air-gap deployments.
 	// +optional
 	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
