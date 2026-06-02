@@ -1,7 +1,7 @@
 {
-  "name": "suse-ai-lifecycle-manager",
+  "name": "aif-ui",
   "description": "SUSE AI Factory",
-  "version": "1.1.0",
+  "version": "0.1.0",
   "private": false,
   "rancher": {
     "annotations": {
