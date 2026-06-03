@@ -100,19 +100,19 @@
               "title": "Registry Endpoints",
               "suseRegistry": {
                 "label": "SUSE Registry (OCI)",
-                "placeholder": "registry.suse.com"
+                "placeholder": "oci://registry.example.com/charts"
               },
               "applicationCollection": {
                 "label": "Application Collection (OCI)",
-                "placeholder": "dp.apps.rancher.io"
+                "placeholder": "oci://registry.example.com/charts"
               },
               "applicationCollectionAPI": {
                 "label": "Application Collection API",
                 "placeholder": "https://api.apps.rancher.io"
               },
               "nvidia": {
-                "label": "NVIDIA Images (OCI)",
-                "placeholder": "nvcr.io"
+                "label": "NVIDIA Charts (OCI)",
+                "placeholder": "oci://registry.example.com/nvidia/charts"
               }
             },
             "catalogDiscovery": {

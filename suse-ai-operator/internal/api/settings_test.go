@@ -252,3 +252,51 @@ func TestGetRegistryCredentials_Nvidia(t *testing.T) {
 		t.Errorf("expected host nvcr.io, got %q", body.Nvidia.RegistryHost)
 	}
 }
+
+func TestGetRegistryCredentials_AppCollectionHostFromOCIURL(t *testing.T) {
+	const ns = "suse-ai-system"
+
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ac-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("u")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ac-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("p")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+				ApplicationCollection: "oci://registry.example.com/charts",
+			},
+			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ac-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ac-token", Key: "token"},
+			},
+		},
+	}
+
+	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body RegistryCredentials
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body.ApplicationCollection == nil {
+		t.Fatalf("expected applicationCollection creds, got nil")
+	}
+	// The endpoint override is a full OCI chart-repo URL; the image-pull-secret
+	// host must be just the registry host, not the whole URL.
+	if body.ApplicationCollection.RegistryHost != "registry.example.com" {
+		t.Errorf("expected host registry.example.com (base of OCI URL), got %q", body.ApplicationCollection.RegistryHost)
+	}
+}

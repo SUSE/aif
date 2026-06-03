@@ -199,8 +199,10 @@ spec:
                       HTTP API URL.
                     type: string
                   nvidia:
-                    description: Nvidia overrides the default NVIDIA image registry
-                      host (nvcr.io) used for image pull secrets.
+                    description: |-
+                      Nvidia is the OCI URL of a mirrored NVIDIA chart repository for air-gapped installs
+                      (e.g. oci://registry.example.com/nvidia). When empty, NVIDIA charts are pulled from the
+                      public NGC HTTPS repositories; when set, a single gated OCI ClusterRepo is created at this URL.
                     type: string
                   suseRegistry:
                     description: SUSERegistry overrides the default SUSE Registry

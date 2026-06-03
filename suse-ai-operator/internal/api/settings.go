@@ -140,7 +140,7 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 
 	appHost := defaultAppCollectionHost
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-		appHost = s.Spec.RegistryEndpoints.ApplicationCollection
+		appHost = registryHostFromURL(s.Spec.RegistryEndpoints.ApplicationCollection)
 	}
 	if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
 		user, err1 := h.readSecretKey(r.Context(), s.Spec.ApplicationCollection.UserSecretRef)
@@ -154,7 +154,7 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 
 	suseHost := defaultSUSERegistryHost
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-		suseHost = s.Spec.RegistryEndpoints.SUSERegistry
+		suseHost = registryHostFromURL(s.Spec.RegistryEndpoints.SUSERegistry)
 	}
 	if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
 		user, err1 := h.readSecretKey(r.Context(), s.Spec.SUSERegistry.UserSecretRef)
@@ -166,21 +166,35 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 		}
 	}
 
-	nvidiaHost := defaultNvidiaHost
-	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
-		nvidiaHost = s.Spec.RegistryEndpoints.Nvidia
-	}
+	// NVIDIA images are pulled from nvcr.io in connected installs. The registryEndpoints.nvidia
+	// field is the chart-repo OCI URL (not an image host); air-gap image redirection is handled
+	// by a node-level registry proxy, so the pull-secret host is always nvcr.io here.
 	if s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil {
 		user, err1 := h.readSecretKey(r.Context(), s.Spec.Nvidia.UserSecretRef)
 		pass, err2 := h.readSecretKey(r.Context(), s.Spec.Nvidia.TokenSecretRef)
 		if err1 == nil && err2 == nil {
 			creds.Nvidia = &RegistryCred{
-				Username: user, Password: pass, RegistryHost: nvidiaHost,
+				Username: user, Password: pass, RegistryHost: defaultNvidiaHost,
 			}
 		}
 	}
 
 	writeJSON(w, http.StatusOK, creds)
+}
+
+// registryHostFromURL extracts the registry host from a chart-repo URL such as
+// "oci://registry.example.com/charts" -> "registry.example.com". A bare host is
+// returned unchanged, so an OCI (or HTTP/S) chart-repo override doubles as a
+// valid image-pull-secret host.
+func registryHostFromURL(repoURL string) string {
+	host := repoURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	return host
 }
 
 func (h *SettingsHandler) readSecretKey(ctx context.Context, ref *aiplatformv1alpha1.SecretKeyRef) (string, error) {

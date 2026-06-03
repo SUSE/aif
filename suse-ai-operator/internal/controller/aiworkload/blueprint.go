@@ -211,7 +211,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err == nil {
 		appHost := defaultAppCollectionHost
 		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-			appHost = s.Spec.RegistryEndpoints.ApplicationCollection
+			appHost = repoURLToHost(s.Spec.RegistryEndpoints.ApplicationCollection)
 		}
 		if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
 			u, err1 := r.readSettingsSecretKey(ctx, s.Spec.ApplicationCollection.UserSecretRef)
@@ -223,7 +223,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 
 		suseHost := defaultSUSERegistryHost
 		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-			suseHost = s.Spec.RegistryEndpoints.SUSERegistry
+			suseHost = repoURLToHost(s.Spec.RegistryEndpoints.SUSERegistry)
 		}
 		if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
 			u, err1 := r.readSettingsSecretKey(ctx, s.Spec.SUSERegistry.UserSecretRef)
@@ -233,15 +233,13 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 			}
 		}
 
-		nvidiaHost := defaultNvidiaHost
-		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
-			nvidiaHost = s.Spec.RegistryEndpoints.Nvidia
-		}
+		// NVIDIA images come from nvcr.io (connected); registryEndpoints.nvidia is the chart-repo
+		// OCI URL, not an image host, and air-gap redirection is a node-level concern.
 		if s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil {
 			u, err1 := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
 			p, err2 := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
 			if err1 == nil && err2 == nil && u != "" && p != "" {
-				auths[nvidiaHost] = dockerAuthEntry(u, p)
+				auths[defaultNvidiaHost] = dockerAuthEntry(u, p)
 			}
 		}
 	}
@@ -281,9 +279,14 @@ func (r *AIWorkloadReconciler) readSettingsSecretKey(ctx context.Context, ref *a
 	return string(val), nil
 }
 
-// repoURLToHost derives the registry hostname from an OCI repo URL.
+// repoURLToHost derives the registry hostname from a chart-repo URL, e.g.
+// "oci://registry.example.com/charts" or "https://helm.example.com/x" ->
+// "registry.example.com" / "helm.example.com". A bare host is returned unchanged.
 func repoURLToHost(url string) string {
-	host := strings.TrimPrefix(url, "oci://")
+	host := url
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
 	if idx := strings.IndexByte(host, '/'); idx >= 0 {
 		host = host[:idx]
 	}

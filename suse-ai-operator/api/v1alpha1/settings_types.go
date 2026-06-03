@@ -94,7 +94,9 @@ type RegistryEndpointsSettings struct {
 	// ApplicationCollectionAPI overrides the SUSE App Collection HTTP API URL.
 	// +optional
 	ApplicationCollectionAPI string `json:"applicationCollectionAPI,omitempty"`
-	// Nvidia overrides the default NVIDIA image registry host (nvcr.io) used for image pull secrets.
+	// Nvidia is the OCI URL of a mirrored NVIDIA chart repository for air-gapped installs
+	// (e.g. oci://registry.example.com/nvidia). When empty, NVIDIA charts are pulled from the
+	// public NGC HTTPS repositories; when set, a single gated OCI ClusterRepo is created at this URL.
 	// +optional
 	Nvidia string `json:"nvidia,omitempty"`
 }

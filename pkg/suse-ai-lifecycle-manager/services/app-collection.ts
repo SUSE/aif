@@ -85,10 +85,17 @@ export async function fetchSuseAiApps($store: any): Promise<AppCollectionItem[]>
   return Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Fetch apps from the two NVIDIA NGC repositories, tagged with library 'nvidia'. */
+/**
+ * Fetch NVIDIA catalog apps, tagged with library 'nvidia'.
+ *  - Connected (registryEndpoints.nvidia empty): the two public NGC HTTPS repos.
+ *  - Air-gapped (registryEndpoints.nvidia set): the single mirrored OCI repo at that URL.
+ */
 export async function fetchNvidiaApps($store: any): Promise<AppCollectionItem[]> {
+  const settings = await getSettings().catch(() => null);
+  const nvUrl = settings?.spec?.registryEndpoints?.nvidia;
+  const urls = nvUrl ? [nvUrl] : [NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL];
+
   const repos = await fetchClusterRepositories($store);
-  const urls = [NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL];
 
   const perRepo = await Promise.all(urls.map(async (url) => {
     const repo = repos.find(r => r.url === url);
@@ -97,7 +104,7 @@ export async function fetchNvidiaApps($store: any): Promise<AppCollectionItem[]>
     return apps.map(a => ({ ...a, repository_url: url, library: 'nvidia' as const }));
   }));
 
-  // Dedup by slug across the two NVIDIA repos; first occurrence wins.
+  // Dedup by slug; first occurrence wins.
   const appMap = new Map<string, AppCollectionItem>();
   for (const apps of perRepo) {
     for (const app of apps) {

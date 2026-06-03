@@ -261,6 +261,7 @@ export default {
       const store = this.$store;
       const ac = this.spec.applicationCollection;
       const sr = this.spec.suseRegistry;
+      const nv = this.spec.nvidia;
 
       // Read all unique secrets referenced in settings (deduped)
       const secretNames = [...new Set([
@@ -268,6 +269,8 @@ export default {
         ac.tokenSecretRef?.name,
         sr.userSecretRef?.name,
         sr.tokenSecretRef?.name,
+        nv.userSecretRef?.name,
+        nv.tokenSecretRef?.name,
       ].filter(Boolean))];
 
       const secretCache = {};
@@ -298,14 +301,19 @@ export default {
       if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
       await Promise.all(tasks);
 
-      // NVIDIA chart repos are public HTTPS Helm repos — create them (no clientSecret)
-      // only when the NVIDIA credential is configured.
-      const nv = this.spec.nvidia;
+      // NVIDIA chart repos.
+      //  - Connected (registryEndpoints.nvidia empty): two PUBLIC HTTPS NGC repos, no clientSecret.
+      //  - Air-gapped (registryEndpoints.nvidia set): one PRIVATE OCI repo at that URL, with credentials.
       if (nv.userSecretRef?.name && nv.tokenSecretRef?.name) {
-        await Promise.all([
-          ensureClusterRepo(store, NVIDIA_REPO_URL),
-          ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
-        ]);
+        if (re.nvidia) {
+          const nvCreds = buildCreds(nv.userSecretRef, nv.tokenSecretRef);
+          if (nvCreds) await ensureClusterRepo(store, re.nvidia, nvCreds);
+        } else {
+          await Promise.all([
+            ensureClusterRepo(store, NVIDIA_REPO_URL),
+            ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
+          ]);
+        }
       }
     },
 
