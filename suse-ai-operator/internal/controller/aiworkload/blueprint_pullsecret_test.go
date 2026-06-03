@@ -223,3 +223,64 @@ func TestNvidiaInjector_CreatesBothSecrets(t *testing.T) {
 		t.Errorf("NGC_API_KEY = %q, want %q", got, "nvapi-xyz")
 	}
 }
+
+func TestNvidiaInjector_HostOverride(t *testing.T) {
+	const opNS = "suse-ai-operator"
+	const targetNS = "rag"
+	const customHost = "mirror.example.com"
+
+	scheme := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: opNS},
+		Data:       map[string][]byte{"username": []byte("$oauthtoken")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: opNS},
+		Data:       map[string][]byte{"token": []byte("nvapi-xyz")},
+	}
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: opNS},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: customHost},
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(userSecret, tokenSecret, settings).Build()
+	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	inj := &nvidiaInjector{r: r}
+
+	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	pull := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: nvidiaImagePullSecretName}, pull); err != nil {
+		t.Fatalf("get pull secret: %v", err)
+	}
+	var cfg struct {
+		Auths map[string]struct {
+			Auth string `json:"auth"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(pull.Data[corev1.DockerConfigJsonKey], &cfg); err != nil {
+		t.Fatalf("parse dockerconfigjson: %v", err)
+	}
+	if _, ok := cfg.Auths[customHost]; !ok {
+		t.Errorf("expected %q auth entry, got %v", customHost, cfg.Auths)
+	}
+	if _, ok := cfg.Auths["nvcr.io"]; ok {
+		t.Errorf("did not expect default nvcr.io entry when override set, got %v", cfg.Auths)
+	}
+}
