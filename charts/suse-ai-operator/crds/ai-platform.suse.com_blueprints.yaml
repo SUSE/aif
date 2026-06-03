@@ -71,6 +71,15 @@ spec:
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
+                    vendor:
+                      default: suse
+                      description: |-
+                        Vendor selects the secret-injection profile. Defaults to "suse" so
+                        existing blueprints behave identically after CRD upgrade.
+                      enum:
+                      - suse
+                      - nvidia
+                      type: string
                   required:
                   - chartName
                   - chartRepo

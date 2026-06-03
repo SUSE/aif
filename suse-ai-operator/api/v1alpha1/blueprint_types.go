@@ -26,6 +26,18 @@ const (
 	BlueprintVersionLabel = "ai-platform.suse.com/blueprint-version"
 )
 
+// ComponentVendor selects the secret-injection profile for a Blueprint
+// component. "suse" preserves the historical combined-secret + global.imagePullSecrets
+// behavior. "nvidia" creates ngc-secret + ngc-api in the target namespace
+// and writes both common pull-secret value paths.
+// +kubebuilder:validation:Enum=suse;nvidia
+type ComponentVendor string
+
+const (
+	ComponentVendorSUSE   ComponentVendor = "suse"
+	ComponentVendorNvidia ComponentVendor = "nvidia"
+)
+
 // BlueprintComponent defines one Helm chart in a Blueprint.
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name.
@@ -37,6 +49,11 @@ type BlueprintComponent struct {
 	// ChartVersion is the semver chart version.
 	// +kubebuilder:validation:MinLength=1
 	ChartVersion string `json:"chartVersion"`
+	// Vendor selects the secret-injection profile. Defaults to "suse" so
+	// existing blueprints behave identically after CRD upgrade.
+	// +kubebuilder:default=suse
+	// +optional
+	Vendor ComponentVendor `json:"vendor,omitempty"`
 	// Values are the Helm values for this component.
 	// +optional
 	Values *apixv1.JSON `json:"values,omitempty"`
