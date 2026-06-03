@@ -50,6 +50,27 @@ export async function findRepositoryByUrl($store: any, targetUrl: string): Promi
   }
 }
 
+/** Determine library type from repository URL */
+export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | undefined {
+  // Normalize URL by removing trailing slashes and converting to lowercase for comparison
+  const normalize = (url: string) => url.trim().toLowerCase().replace(/\/+$/, '');
+  const normalized = normalize(repoUrl);
+
+  // Check NVIDIA repositories
+  if (normalized === normalize(NVIDIA_REPO_URL) ||
+      normalized === normalize(NVIDIA_BLUEPRINT_REPO_URL)) {
+    return 'nvidia';
+  }
+
+  // Check SUSE AI repositories
+  if (normalized === normalize(APP_COLLECTION_REPO_URL) ||
+      normalized === normalize(SUSE_REGISTRY_REPO_URL)) {
+    return 'suse-ai';
+  }
+
+  return undefined;
+}
+
 /** Get cluster repository name from repository URL */
 export async function getClusterRepoNameFromUrl($store: any, repoUrl: string): Promise<string | null> {
   return await findRepositoryByUrl($store, repoUrl);

@@ -11,6 +11,7 @@ export interface GitPublishParams {
   pullSecretNames:  string[];
   targetClusterIds: string[];
   targetNamespace:  string;
+  library?:         'suse-ai' | 'nvidia';
 }
 
 // publishToFleetGit builds the Fleet Bundle YAML and commits it to the git repo
@@ -26,6 +27,7 @@ export async function publishToFleetGit(params: GitPublishParams): Promise<strin
     pullSecretNames:  params.pullSecretNames,
     targetClusterIds: params.targetClusterIds,
     targetNamespace:  params.targetNamespace,
+    library:          params.library,
   });
 
   const { commit } = await operatorPublish(params.bundleName, yaml);

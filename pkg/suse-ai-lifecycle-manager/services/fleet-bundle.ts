@@ -10,6 +10,7 @@ export interface FleetBundleParams {
   targetNamespace:         string;
   targetClusterIds:        string[];
   additionalPullSecretNames?: string[]; // pre-created pull secrets for extra registries (e.g. subchart registries)
+  library?:                'suse-ai' | 'nvidia'; // library source to determine imagePullSecrets handling
 }
 
 // buildBundleName returns a deterministic Fleet HelmOp name for an app install.
@@ -122,6 +123,7 @@ export function buildFleetBundleYAML(params: {
   pullSecretNames:  string[];
   targetClusterIds: string[];
   targetNamespace:  string;
+  library?:         'suse-ai' | 'nvidia';
 }): string {
   const targets = params.targetClusterIds.map(id =>
     id === 'local'
@@ -132,9 +134,10 @@ export function buildFleetBundleYAML(params: {
   const fleetNamespace = isLocalOnly ? 'fleet-local' : 'fleet-default';
 
   const values = JSON.parse(JSON.stringify(params.values));
-  if (params.pullSecretNames.length > 0) {
+  if (params.pullSecretNames.length > 0 && params.library !== 'nvidia') {
+    // NVIDIA charts don't have imagePullSecrets in their original values, so don't add them
     const secrets = params.pullSecretNames.map(name => ({ name }));
-    values.global        = { ...(values.global || {}), imagePullSecrets: secrets };
+    values.global = { ...(values.global || {}), imagePullSecrets: secrets };
     values.imagePullSecrets = secrets;
   }
 
@@ -215,7 +218,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     version:     params.chartVersion,
     repo:        ociRepo,
     releaseName: params.bundleName,
-    values:      addPullSecretsToValues(params.values, pullSecretNames),
+    values:      addPullSecretsToValues(params.values, pullSecretNames, params.library),
   };
 
   const baseSpec: Record<string, any> = { namespace: params.targetNamespace, helm: helmSpec };
@@ -242,8 +245,8 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   return params.bundleName;
 }
 
-function addPullSecretsToValues(values: Record<string, any>, names: string[]): Record<string, any> {
-  if (names.length === 0) return values;
+function addPullSecretsToValues(values: Record<string, any>, names: string[], library?: 'suse-ai' | 'nvidia'): Record<string, any> {
+  if (names.length === 0 || library === 'nvidia') return values;
   const secrets = names.map(name => ({ name }));
   return {
     ...values,

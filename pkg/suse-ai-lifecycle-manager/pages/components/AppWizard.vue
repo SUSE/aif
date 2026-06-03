@@ -26,7 +26,7 @@ import {
   listNamespaces,
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl } from '../../services/app-collection';
+import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { createFleetBundle, buildBundleName }        from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
@@ -528,6 +528,18 @@ async function onLoadDefaults() {
 async function resolvePullSecretNames() {
   if (!form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) return;
   try {
+    // Determine library type from repository URL
+    const repos = await listClusterRepos(store);
+    const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+    const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+    const library = getLibraryFromRepoUrl(chartRepoUrl);
+
+    // NVIDIA charts don't have imagePullSecrets in their original values schema,
+    // so we skip injecting them into the form values to avoid schema validation errors
+    if (library === 'nvidia') {
+      return;
+    }
+
     const creds = await getRegistryCredentials(5000);
     const secrets = [creds.applicationCollection, creds.suseRegistry, creds.nvidia]
       .filter(Boolean)
@@ -803,6 +815,7 @@ async function performFleetBundleInstall() {
       targetNamespace:          form.value.namespace,
       targetClusterIds:         form.value.clusters,
       additionalPullSecretNames: extraPullSecretNames,
+      library:                  getLibraryFromRepoUrl(chartRepoUrl),
     });
 
     updateAllProgress(100, 'Fleet Bundle created — Fleet will deploy to selected clusters');
@@ -866,6 +879,7 @@ async function performGitOpsInstall() {
       pullSecretNames,
       targetClusterIds: form.value.clusters,
       targetNamespace:  form.value.namespace,
+      library:          getLibraryFromRepoUrl(chartRepoUrl),
     });
 
     updateAllProgress(100, 'Fleet Bundle YAML committed — Fleet will deploy to selected clusters');
@@ -1111,7 +1125,14 @@ async function installToCluster(
   const v = JSON.parse(JSON.stringify(form.value.values || {}));
   const pullSecrets = Array.from(allPullSecrets);
 
-  if (pullSecrets.length > 0) {
+  // Determine library type from repository URL
+  const repos = await listClusterRepos(store);
+  const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+  const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+  const library = getLibraryFromRepoUrl(chartRepoUrl);
+
+  // Only add pull secrets to values for non-NVIDIA charts
+  if (pullSecrets.length > 0 && library !== 'nvidia') {
     const secrets = pullSecrets.map(name => ({ name }));
     v.global = { ...(v.global || {}), imagePullSecrets: secrets };
     v.imagePullSecrets = secrets;
@@ -1250,6 +1271,7 @@ async function performFleetBundleUpgrade() {
       targetNamespace:          form.value.namespace,
       targetClusterIds:         form.value.clusters,
       additionalPullSecretNames: extraPullSecretNames,
+      library:                  getLibraryFromRepoUrl(chartRepoUrl),
     });
 
     updateAllProgress(100, 'Fleet Bundle updated — Fleet will reconcile selected clusters');
@@ -1314,6 +1336,7 @@ async function performGitOpsUpgrade() {
       pullSecretNames,
       targetClusterIds: form.value.clusters,
       targetNamespace:  form.value.namespace,
+      library:          getLibraryFromRepoUrl(chartRepoUrl),
     });
 
     updateAllProgress(100, 'Fleet Bundle YAML committed — Fleet will reconcile selected clusters');
