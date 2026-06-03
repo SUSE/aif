@@ -279,8 +279,7 @@ func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repo
 		return fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
 	}
 
-	// Values injection added in Task 6.
-	_ = vals
+	injectNvidiaPullSecretRefs(vals)
 	return nil
 }
 
@@ -647,4 +646,61 @@ func truncateName(s string, max int) string {
 		return s
 	}
 	return s[:max]
+}
+
+// injectNvidiaPullSecretRefs writes the ngc-secret reference into both common
+// pull-secret value paths used by NVIDIA charts. Merge rules:
+//   - path absent → create with [ngc-secret]
+//   - path present and ngc-secret already listed → leave unchanged
+//   - path present with other entries → prepend ngc-secret
+//   - path present with an unexpected shape → leave untouched (author intent)
+func injectNvidiaPullSecretRefs(vals map[string]any) {
+	// Top-level k8s pod-spec shape: list of objects with "name".
+	switch existing := vals["imagePullSecrets"].(type) {
+	case nil:
+		vals["imagePullSecrets"] = []any{map[string]any{"name": nvidiaImagePullSecretName}}
+	case []any:
+		if !containsObjectNamed(existing, nvidiaImagePullSecretName) {
+			vals["imagePullSecrets"] = append([]any{map[string]any{"name": nvidiaImagePullSecretName}}, existing...)
+		}
+	}
+
+	// k8s-nim-operator shape: image.pullSecrets is a flat string list. Only
+	// create the parent map if values["image"] is absent or already a map; if
+	// it's something unexpected, leave it alone.
+	imageRaw, present := vals["image"]
+	if !present {
+		vals["image"] = map[string]any{"pullSecrets": []any{nvidiaImagePullSecretName}}
+		return
+	}
+	image, ok := imageRaw.(map[string]any)
+	if !ok {
+		return
+	}
+	switch existing := image["pullSecrets"].(type) {
+	case nil:
+		image["pullSecrets"] = []any{nvidiaImagePullSecretName}
+	case []any:
+		if !containsString(existing, nvidiaImagePullSecretName) {
+			image["pullSecrets"] = append([]any{nvidiaImagePullSecretName}, existing...)
+		}
+	}
+}
+
+func containsObjectNamed(list []any, name string) bool {
+	for _, item := range list {
+		if obj, ok := item.(map[string]any); ok && obj["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(list []any, s string) bool {
+	for _, item := range list {
+		if v, ok := item.(string); ok && v == s {
+			return true
+		}
+	}
+	return false
 }

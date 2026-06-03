@@ -349,3 +349,66 @@ func TestNvidiaInjector_MissingTokenSecret(t *testing.T) {
 		t.Errorf("ngc-secret should not exist when referenced secret is missing")
 	}
 }
+
+func TestNvidiaInjector_WritesBothPathShapes(t *testing.T) {
+	const opNS = "suse-ai-operator"
+	const targetNS = "rag"
+
+	scheme := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: opNS},
+		Data:       map[string][]byte{"username": []byte("$oauthtoken")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: opNS},
+		Data:       map[string][]byte{"token": []byte("nvapi-xyz")},
+	}
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: opNS},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(userSecret, tokenSecret, settings).Build()
+	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	inj := &nvidiaInjector{r: r}
+
+	vals := map[string]any{}
+	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// Standard k8s pod-spec shape at top level.
+	topList, ok := vals["imagePullSecrets"].([]any)
+	if !ok || len(topList) != 1 {
+		t.Fatalf("imagePullSecrets = %#v, want one entry", vals["imagePullSecrets"])
+	}
+	entry, ok := topList[0].(map[string]any)
+	if !ok || entry["name"] != nvidiaImagePullSecretName {
+		t.Errorf("imagePullSecrets[0] = %#v, want {name: %q}", topList[0], nvidiaImagePullSecretName)
+	}
+
+	// k8s-nim-operator's flat-string shape.
+	image, ok := vals["image"].(map[string]any)
+	if !ok {
+		t.Fatalf("image = %#v, want map", vals["image"])
+	}
+	imgList, ok := image["pullSecrets"].([]any)
+	if !ok || len(imgList) != 1 || imgList[0] != nvidiaImagePullSecretName {
+		t.Errorf("image.pullSecrets = %#v, want [%q]", image["pullSecrets"], nvidiaImagePullSecretName)
+	}
+
+	// Must not touch global.
+	if _, ok := vals["global"]; ok {
+		t.Errorf("global key should not be set by nvidiaInjector, got %#v", vals["global"])
+	}
+}
