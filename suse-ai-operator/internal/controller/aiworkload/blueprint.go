@@ -115,14 +115,8 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	if c.Values != nil {
 		_ = json.Unmarshal(c.Values.Raw, &vals)
 	}
-	pullSecretName, err := r.ensureCombinedPullSecret(ctx, w.Spec.TargetNamespace, repoInfo)
-	if err != nil {
-		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", w.Spec.TargetNamespace)
-	}
-	if pullSecretName != "" {
-		pullSecrets := []any{map[string]any{"name": pullSecretName}}
-		vals["imagePullSecrets"] = pullSecrets
-		vals["global"] = map[string]any{"imagePullSecrets": pullSecrets}
+	if err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals); err != nil {
+		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
@@ -187,6 +181,55 @@ const (
 	defaultNvidiaHost        = "nvcr.io"
 	combinedPullSecretName   = "suse-ai-pull-combined"
 )
+
+// secretInjector configures Helm values for a blueprint component so its
+// rendered workloads can pull images and access vendor APIs. Each implementation
+// owns the namespace-scoped Secret objects it requires and the Helm-values paths
+// it writes. A no-op Apply (e.g., missing credentials) is acceptable; Helm will
+// surface the resulting ImagePullBackOff downstream.
+type secretInjector interface {
+	Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error
+}
+
+// suseInjector preserves the historical combined-secret behavior: one
+// dockerconfigjson covering every configured registry, written into both
+// imagePullSecrets and global.imagePullSecrets.
+type suseInjector struct{ r *AIWorkloadReconciler }
+
+func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error {
+	name, err := s.r.ensureCombinedPullSecret(ctx, targetNamespace, repoInfo)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", targetNamespace)
+		return nil
+	}
+	if name == "" {
+		return nil
+	}
+	pullSecrets := []any{map[string]any{"name": name}}
+	vals["imagePullSecrets"] = pullSecrets
+	vals["global"] = map[string]any{"imagePullSecrets": pullSecrets}
+	return nil
+}
+
+// nvidiaInjector is implemented in a later task; this stub keeps the build
+// green during the refactor.
+type nvidiaInjector struct{ r *AIWorkloadReconciler }
+
+func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error {
+	return nil
+}
+
+// injectorFor returns the secretInjector for a component vendor. Unknown or
+// empty vendors fall back to the SUSE profile defensively; the CRD default
+// fills the field in practice.
+func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVendor) secretInjector {
+	switch vendor {
+	case aiplatformv1alpha1.ComponentVendorNvidia:
+		return &nvidiaInjector{r: r}
+	default:
+		return &suseInjector{r: r}
+	}
+}
 
 // ensureCombinedPullSecret creates (or updates) a single kubernetes.io/dockerconfigjson secret
 // in targetNamespace whose "auths" map covers ALL configured registries: the component's own
@@ -353,14 +396,8 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	vals := map[string]any{}
-	pullSecretName, err := r.ensureCombinedPullSecret(ctx, w.Spec.TargetNamespace, repoInfo)
-	if err != nil {
-		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", w.Spec.TargetNamespace)
-	}
-	if pullSecretName != "" {
-		pullSecrets := []any{map[string]any{"name": pullSecretName}}
-		vals["imagePullSecrets"] = pullSecrets
-		vals["global"] = map[string]any{"imagePullSecrets": pullSecrets}
+	if err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals); err != nil {
+		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
