@@ -48,10 +48,14 @@ spec:
           readinessProbe:
             {{- omit .Values.manager.probes.readiness "enabled" | toYaml | nindent 12 }}
           {{- end }}
+          {{- with .Values.manager.resources }}
           resources:
-            {{- toYaml .Values.manager.resources | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.manager.securityContext }}
           securityContext:
-            {{- toYaml .Values.manager.securityContext | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: OPERATOR_NAMESPACE
               valueFrom:
@@ -71,8 +75,10 @@ spec:
       volumes:
         - emptyDir: {}
           name: helm-cache
+      {{- with .Values.manager.podSecurityContext }}
       securityContext:
-        {{- toYaml .Values.manager.podSecurityContext | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.manager.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

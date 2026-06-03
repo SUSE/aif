@@ -5,6 +5,7 @@ metadata:
   labels:
     {{- include "aif-operator.labels" . | nindent 4 }}
   name: {{ include "aif-operator.serviceName" (dict "context" . "suffix" "metrics") }}
+  namespace: {{ .Release.Namespace }}
 spec:
   ports:
     - name: https
