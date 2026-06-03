@@ -180,6 +180,10 @@ const (
 	defaultSUSERegistryHost  = "registry.suse.com"
 	defaultNvidiaHost        = "nvcr.io"
 	combinedPullSecretName   = "suse-ai-pull-combined"
+
+	nvidiaImagePullSecretName = "ngc-secret"
+	nvidiaAPISecretName       = "ngc-api"
+	nvidiaAPISecretKey        = "NGC_API_KEY"
 )
 
 // secretInjector configures Helm values for a blueprint component so its
@@ -211,11 +215,72 @@ func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoIn
 	return nil
 }
 
-// nvidiaInjector is implemented in a later task; this stub keeps the build
-// green during the refactor.
+// nvidiaInjector creates the conventional ngc-secret + ngc-api in the target
+// namespace and writes both common pull-secret value paths. NVIDIA charts honor
+// either the standard k8s pod-spec list-of-objects shape (imagePullSecrets) or
+// the k8s-nim-operator flat-string shape (image.pullSecrets); writing both
+// covers the surveyed NIM chart families.
 type nvidiaInjector struct{ r *AIWorkloadReconciler }
 
 func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error {
+	l := log.FromContext(ctx)
+
+	var s aiplatformv1alpha1.Settings
+	if err := n.r.Get(ctx, types.NamespacedName{Namespace: n.r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
+		l.Info("nvidia injector: settings not found, skipping", "namespace", targetNamespace, "err", err.Error())
+		return nil
+	}
+	if s.Spec.Nvidia.UserSecretRef == nil || s.Spec.Nvidia.TokenSecretRef == nil {
+		l.Info("nvidia injector: credentials not configured, skipping", "namespace", targetNamespace)
+		return nil
+	}
+	user, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
+	if err != nil || user == "" {
+		l.Info("nvidia injector: user secret unreadable, skipping", "namespace", targetNamespace, "err", fmt.Sprint(err))
+		return nil
+	}
+	token, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
+	if err != nil || token == "" {
+		l.Info("nvidia injector: token secret unreadable, skipping", "namespace", targetNamespace, "err", fmt.Sprint(err))
+		return nil
+	}
+
+	host := defaultNvidiaHost
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
+		host = s.Spec.RegistryEndpoints.Nvidia
+	}
+
+	dockerCfg, err := json.Marshal(map[string]any{
+		"auths": map[string]any{host: dockerAuthEntry(user, token)},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal ngc dockerconfigjson: %w", err)
+	}
+
+	pullSecret := &corev1.Secret{}
+	pullSecret.APIVersion = "v1"
+	pullSecret.Kind = "Secret"
+	pullSecret.Name = nvidiaImagePullSecretName
+	pullSecret.Namespace = targetNamespace
+	pullSecret.Type = corev1.SecretTypeDockerConfigJson
+	pullSecret.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
+	if err := n.r.Patch(ctx, pullSecret, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
+		return fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
+	}
+
+	apiSecret := &corev1.Secret{}
+	apiSecret.APIVersion = "v1"
+	apiSecret.Kind = "Secret"
+	apiSecret.Name = nvidiaAPISecretName
+	apiSecret.Namespace = targetNamespace
+	apiSecret.Type = corev1.SecretTypeOpaque
+	apiSecret.Data = map[string][]byte{nvidiaAPISecretKey: []byte(token)}
+	if err := n.r.Patch(ctx, apiSecret, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
+		return fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
+	}
+
+	// Values injection added in Task 6.
+	_ = vals
 	return nil
 }
 
