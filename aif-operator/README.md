@@ -95,7 +95,7 @@ helm uninstall aif-operator -n aif-operator-system
 
 3. **Delete the CRDs.** After uninstalling the operator, you remove the associated Custom Resource Definitions (CRDs). To delete the InstallAIExtension CRD, use:
 ```sh
-kubectl delete crd installaiextension.ai-platform.suse.com
+kubectl delete crd installaiextensions.ai-platform.suse.com
 ```
 
 ## Development
@@ -149,7 +149,7 @@ helm uninstall aif-operator -n aif-operator-system
 **Delete the APIs(CRDs) from the cluster:**
 
 ```sh
-kubectl delete crd installaiextension.ai-platform.suse.com
+kubectl delete crd installaiextensions.ai-platform.suse.com
 ```
 
 ## Testing
