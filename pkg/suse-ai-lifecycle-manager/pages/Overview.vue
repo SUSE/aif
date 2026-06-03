@@ -9,6 +9,9 @@ import { listBlueprints, groupBlueprintsByFamily, latestVersion } from '../utils
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
 import type { Blueprint }                   from '../types/blueprint-types';
 import { PRODUCT, PAGE_TYPES }              from '../config/suseai';
+import ClusterChips from '../formatters/ClusterChips.vue';
+import { getClusters } from '../services/cluster-service';
+import type { ClusterInfo } from '../types/rancher-types';
 
 const vm      = getCurrentInstance()!.proxy as any;
 const router  = vm.$router;
@@ -19,6 +22,7 @@ const loading    = ref(true);
 const error      = ref<string | null>(null);
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
+const clusters   = ref<ClusterInfo[]>([]);
 
 // ── Computed stats ─────────────────────────────────────────────────────────────
 const totalWorkloads   = computed(() => workloads.value.length);
@@ -86,12 +90,14 @@ async function refresh() {
   loading.value = true;
   error.value   = null;
   try {
-    const [wlResult, bpResult] = await Promise.all([
+    const [wlResult, bpResult, clResult] = await Promise.all([
       listAIWorkloads(),
       listBlueprints().catch(() => ({ items: [] as Blueprint[] })),
+      getClusters(vm.$store).catch(() => [] as ClusterInfo[]),
     ]);
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
+    clusters.value   = clResult;
   } catch (e: any) {
     error.value = e?.message || 'Failed to load overview data';
   } finally {
