@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -411,4 +412,99 @@ func TestNvidiaInjector_WritesBothPathShapes(t *testing.T) {
 	if _, ok := vals["global"]; ok {
 		t.Errorf("global key should not be set by nvidiaInjector, got %#v", vals["global"])
 	}
+}
+
+func TestNvidiaInjector_PreservesAuthorPullSecrets(t *testing.T) {
+	_, r := buildNvidiaInjectorFixture(t)
+	inj := &nvidiaInjector{r: r}
+
+	vals := map[string]any{
+		"imagePullSecrets": []any{map[string]any{"name": "author-secret"}},
+		"image":            map[string]any{"pullSecrets": []any{"author-string"}},
+	}
+	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	topList := vals["imagePullSecrets"].([]any)
+	if len(topList) != 2 ||
+		topList[0].(map[string]any)["name"] != nvidiaImagePullSecretName ||
+		topList[1].(map[string]any)["name"] != "author-secret" {
+		t.Errorf("imagePullSecrets = %#v, want [ngc-secret, author-secret]", topList)
+	}
+	imgList := vals["image"].(map[string]any)["pullSecrets"].([]any)
+	if len(imgList) != 2 || imgList[0] != nvidiaImagePullSecretName || imgList[1] != "author-string" {
+		t.Errorf("image.pullSecrets = %#v, want [ngc-secret, author-string]", imgList)
+	}
+}
+
+func TestNvidiaInjector_IdempotentSelfEntry(t *testing.T) {
+	_, r := buildNvidiaInjectorFixture(t)
+	inj := &nvidiaInjector{r: r}
+
+	vals := map[string]any{}
+	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+		t.Fatalf("first Apply: %v", err)
+	}
+	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+
+	topList := vals["imagePullSecrets"].([]any)
+	if len(topList) != 1 {
+		t.Errorf("imagePullSecrets duplicated after re-Apply: %#v", topList)
+	}
+	imgList := vals["image"].(map[string]any)["pullSecrets"].([]any)
+	if len(imgList) != 1 {
+		t.Errorf("image.pullSecrets duplicated after re-Apply: %#v", imgList)
+	}
+}
+
+func TestNvidiaInjector_LeavesUnexpectedShapesAlone(t *testing.T) {
+	_, r := buildNvidiaInjectorFixture(t)
+	inj := &nvidiaInjector{r: r}
+
+	// Author wrote an integer where we expect a slice — refuse to mutate.
+	vals := map[string]any{"imagePullSecrets": 42}
+	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if vals["imagePullSecrets"] != 42 {
+		t.Errorf("imagePullSecrets was mutated despite unexpected shape: %#v", vals["imagePullSecrets"])
+	}
+}
+
+// buildNvidiaInjectorFixture sets up a fake client with valid Nvidia
+// credentials wired up. Used by tests that focus on values-merge behavior.
+func buildNvidiaInjectorFixture(t *testing.T) (client.Client, *AIWorkloadReconciler) {
+	t.Helper()
+	const opNS = "suse-ai-operator"
+	scheme := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: opNS},
+		Data:       map[string][]byte{"username": []byte("$oauthtoken")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: opNS},
+		Data:       map[string][]byte{"token": []byte("nvapi-xyz")},
+	}
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: opNS},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(userSecret, tokenSecret, settings).Build()
+	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	return c, r
 }
