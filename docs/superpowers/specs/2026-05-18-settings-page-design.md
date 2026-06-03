@@ -23,10 +23,10 @@ Add a working Settings page to the SUSE AI Lifecycle Manager. This page lets pla
 └──────────────────┬──────────────────────────────────────┘
                    │  Rancher proxy
                    │  /k8s/clusters/local/api/v1/namespaces/
-                   │  <release-ns>/services/http:suse-ai-operator:8080/proxy
+                   │  <release-ns>/services/http:aif-operator:8080/proxy
                    │
 ┌──────────────────▼──────────────────────────────────────┐
-│  suse-ai-operator (Go)                                   │
+│  aif-operator (Go)                                   │
 │  ├── internal/api/handler.go      ← APIHandler struct   │
 │  ├── internal/api/settings.go     ← GET/PUT handlers    │
 │  ├── internal/controller/settings/settings_controller.go│
@@ -74,7 +74,7 @@ SettingsSpec
 
 `SettingsStatus` carries `conditions []metav1.Condition`, `lastApplied metav1.Time`, `observedGeneration int64`.
 
-## Helm Chart Changes (`charts/suse-ai-operator/`)
+## Helm Chart Changes (`charts/aif-operator/`)
 
 ### New files
 
@@ -93,7 +93,7 @@ metadata:
   name: settings
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "suse-ai-operator.labels" . | nindent 4 }}
+    {{- include "aif-operator.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
 spec: {}
@@ -104,7 +104,7 @@ The `helm.sh/resource-policy: keep` annotation means user-configured settings su
 ### `templates/api-service.yaml`
 
 Exposes port 8080 via a ClusterIP Service so the Rancher proxy URL
-`/k8s/clusters/local/api/v1/namespaces/<ns>/services/http:suse-ai-operator:8080/proxy`
+`/k8s/clusters/local/api/v1/namespaces/<ns>/services/http:aif-operator:8080/proxy`
 resolves to the operator's HTTP API.
 
 ### Updated files
@@ -115,7 +115,7 @@ resolves to the operator's HTTP API.
 | `templates/rbac/manager-role.yaml` | Add `settings` and `settings/status` to `ai-platform.suse.com` rules |
 | `values.yaml` | Add `api.port: 8080` |
 
-## Go Backend (`suse-ai-operator/`)
+## Go Backend (`aif-operator/`)
 
 ### New files
 
@@ -141,7 +141,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux)
 **`internal/api/settings.go`**
 
 - `GET /api/v1/settings` — fetches `settings` CR from `h.Namespace`. Returns 404 + `{ error: "NOT_FOUND", message: "..." }` when the CR doesn't exist (UI shows "not configured yet" info banner, matching AIF behaviour).
-- `PUT /api/v1/settings` — accepts `{ spec: {...} }` JSON body. Applies via Server-Side Apply with field manager `"suse-ai-operator-api"`. Returns the full updated CR. SSA creates-or-updates atomically, so no prior GET is needed.
+- `PUT /api/v1/settings` — accepts `{ spec: {...} }` JSON body. Applies via Server-Side Apply with field manager `"aif-operator-api"`. Returns the full updated CR. SSA creates-or-updates atomically, so no prior GET is needed.
 
 Both handlers share `writeJSON(w, v)` and `writeError(w, code, err)` helpers that produce consistent JSON envelopes.
 
@@ -163,7 +163,7 @@ Reconcile stamps `status.lastApplied = now` and patches the status subresource. 
 **`cmd/main.go`**
 
 1. Add `--api-bind-address` flag (default `:8080`)
-2. Add `--operator-namespace` flag (default: read from `NAMESPACE` env var, fallback `"suse-ai-operator"`)
+2. Add `--operator-namespace` flag (default: read from `NAMESPACE` env var, fallback `"aif-operator"`)
 3. Register `Settings` in the scheme
 4. Wire `SettingsReconciler` into the manager
 5. Start HTTP server in a goroutine before `mgr.Start`:
@@ -209,8 +209,8 @@ All four accordion sections are preserved as-is: Fleet/GitOps, SUSE Application 
 
 ```typescript
 export const MANAGEMENT_CLUSTER = 'local';
-export const OPERATOR_NAMESPACE = 'suse-ai-operator';
-export const OPERATOR_SERVICE   = 'suse-ai-operator';
+export const OPERATOR_NAMESPACE = 'aif-operator';
+export const OPERATOR_SERVICE   = 'aif-operator';
 export const OPERATOR_PORT      = 8080;
 ```
 
@@ -227,7 +227,7 @@ User edits form → clicks Apply
   → Settings.vue: save() → buildCrdSpec(this.spec)
   → operator-api.ts: putSettings(crdSpec)
   → PUT /api/v1/settings { spec: crdSpec }
-  → Rancher proxy → suse-ai-operator:8080
+  → Rancher proxy → aif-operator:8080
   → settings.go: handlePutSettings
   → Server-Side Apply → Kubernetes API
   → Settings CR updated
