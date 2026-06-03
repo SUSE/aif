@@ -201,6 +201,7 @@ onUnmounted(() => {
                   <th>State</th>
                   <th>Name</th>
                   <th>Source</th>
+                  <th>Cluster</th>
                 </tr>
               </thead>
               <tbody>
@@ -217,6 +218,14 @@ onUnmounted(() => {
                   </td>
                   <td class="col-name">{{ w.spec.displayName || w.metadata.name }}</td>
                   <td class="col-source">{{ workloadSourceLabel(w) }}</td>
+                  <td class="col-cluster">
+                    <ClusterChips
+                      :clusters="w.spec.targetClusters || []"
+                      :cluster-info="clusters"
+                      :show-label="false"
+                      :clickable="false"
+                    />
+                  </td>
                 </tr>
               </tbody>
             </table>
