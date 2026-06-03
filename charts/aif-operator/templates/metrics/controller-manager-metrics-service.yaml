@@ -3,8 +3,8 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    {{- include "suse-ai-operator.labels" . | nindent 4 }}
-  name: {{ include "suse-ai-operator.serviceName" (dict "context" . "suffix" "metrics") }}
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.serviceName" (dict "context" . "suffix" "metrics") }}
 spec:
   ports:
     - name: https
@@ -12,5 +12,5 @@ spec:
       protocol: TCP
       targetPort: {{ .Values.metrics.port }}
   selector:
-    {{- include "suse-ai-operator.selectorLabels" . | nindent 4 }}
+    {{- include "aif-operator.selectorLabels" . | nindent 4 }}
 {{- end }}

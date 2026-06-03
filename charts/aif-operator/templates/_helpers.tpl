@@ -2,7 +2,7 @@
 Name of the chart.
 Uses .Values.nameOverride if set, otherwise falls back to chart name.
 */}}
-{{- define "suse-ai-operator.name" -}}
+{{- define "aif-operator.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
@@ -10,11 +10,11 @@ Uses .Values.nameOverride if set, otherwise falls back to chart name.
 Full name of the chart.
 Always truncated to 63 chars for Kubernetes compatibility.
 */}}
-{{- define "suse-ai-operator.fullname" -}}
+{{- define "aif-operator.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else }}
-{{- include "suse-ai-operator.name" . | trunc 63 | trimSuffix "-" -}}
+{{- include "aif-operator.name" . | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 {{- end }}
 
@@ -22,7 +22,7 @@ Always truncated to 63 chars for Kubernetes compatibility.
 Namespace for generated references.
 Always uses the Helm release namespace.
 */}}
-{{- define "suse-ai-operator.namespaceName" -}}
+{{- define "aif-operator.namespaceName" -}}
 {{ .Release.Namespace }}
 {{- end }}
 
@@ -31,8 +31,8 @@ Service name with proper truncation for Kubernetes 63-character limit.
 Takes a context with .suffix for the service type (e.g., "webhook-service").
 If fullname + suffix exceeds 63 chars, truncates fullname to 45 chars.
 */}}
-{{- define "suse-ai-operator.serviceName" -}}
-{{- $fullname := include "suse-ai-operator.fullname" .context -}}
+{{- define "aif-operator.serviceName" -}}
+{{- $fullname := include "aif-operator.fullname" .context -}}
 {{- if gt (len $fullname) 45 -}}
 {{- printf "%s-%s" (trunc 45 $fullname | trimSuffix "-") .suffix | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -44,14 +44,12 @@ If fullname + suffix exceeds 63 chars, truncates fullname to 45 chars.
 Common labels for Helm charts.
 Includes app version, chart version, app name, instance, and managed-by labels.
 */}}
-{{- define "suse-ai-operator.labels" -}}
+{{- define "aif-operator.labels" -}}
 {{- if .Chart.AppVersion -}}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
-{{- if .Chart.Version }}
-helm.sh/chart: {{ .Chart.Version | quote }}
-{{- end }}
-app.kubernetes.io/name: {{ include "suse-ai-operator.name" . }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/name: {{ include "aif-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 control-plane: controller-manager
@@ -61,8 +59,8 @@ control-plane: controller-manager
 Selector labels for matching pods and services.
 Only includes name and instance for consistent selection.
 */}}
-{{- define "suse-ai-operator.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "suse-ai-operator.name" . }}
+{{- define "aif-operator.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "aif-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 control-plane: controller-manager
 {{- end }}
@@ -71,19 +69,14 @@ control-plane: controller-manager
 Namespace where AI extensions (UI plugins, workloads, secrets) are deployed.
 This is intentionally separate from the operator's release namespace.
 */}}
-{{- define "suse-ai-operator.extensionsNamespace" -}}
+{{- define "aif-operator.extensionsNamespace" -}}
 {{- .Values.extensionsNamespace | default "cattle-ui-plugin-system" -}}
 {{- end -}}
 
 {{/*
 Return the proper Docker Image Registry Secret Names
 */}}
-{{- define "suse-ai-operator.imagePullSecrets" -}}
-{{/*
-Helm 2.11 supports the assignment of a value to a variable defined in a different scope,
-but Helm 2.9 and 2.10 does not support it, so we need to implement this if-else logic.
-Also, we can not use a single if because lazy evaluation is not an option
-*/}}
+{{- define "aif-operator.imagePullSecrets" -}}
 {{- if .Values.global }}
 {{- if .Values.global.imagePullSecrets }}
 imagePullSecrets:

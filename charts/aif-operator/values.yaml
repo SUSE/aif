@@ -10,7 +10,7 @@ manager:
   
   image:
     registry: ghcr.io
-    repository: suse/suse-ai-operator
+    repository: suse/aif-operator
     tag: ""
     pullPolicy: IfNotPresent
 

@@ -5,7 +5,7 @@ Helm chart to deploy the SUSE AI Operator on Kubernetes.
 The SUSE AI Operator manages the lifecycle of the AI extension in a Rancher-managed cluster using the `InstallAIExtension` custom resource.
 It integrates with Rancher catalogs and UI plugins to enable declarative installation and management of the AI extension.
 
-**Homepage:** <https://github.com/SUSE/suse-ai-lifecycle-manager/suse-ai-operator>
+**Homepage:** <https://github.com/SUSE/suse-ai-lifecycle-manager/aif-operator>
 
 ## Maintainers
 
@@ -46,13 +46,13 @@ If CRDs are not installed automatically (for example, in restricted environments
 
 ## Installing the Chart
 
-This chart is distributed as an OCI Helm chart. Install the chart with the release name `suse-ai-operator`:
+This chart is distributed as an OCI Helm chart. Install the chart with the release name `aif-operator`:
 
 ```bash
-helm install suse-ai-operator \
-  -n suse-ai-operator-system \
+helm install aif-operator \
+  -n aif-operator-system \
   --create-namespace \
-  oci://ghcr.io/suse/chart/suse-ai-operator
+  oci://ghcr.io/suse/chart/aif-operator
 ```
 
 The command deploys the SUSE AI Operator using the default configuration. See the [Parameters](#parameters) section for configurable options.
@@ -62,7 +62,7 @@ The command deploys the SUSE AI Operator using the default configuration. See th
 To uninstall the operator:
 
 ```bash
-helm uninstall suse-ai-operator -n suse-ai-operator-system
+helm uninstall aif-operator -n aif-operator-system
 ```
 
 This removes all Kubernetes resources created by the chart **except CRDs**, which must be removed manually if desired.
@@ -97,7 +97,7 @@ For example:
 | Name                       | Description               | Default                 |
 | -------------------------- | ------------------------- | ----------------------- |
 | `manager.image.registry`   | Operator image registry   | `ghcr.io`               |
-| `manager.image.repository` | Operator image repository | `suse/suse-ai-operator` |
+| `manager.image.repository` | Operator image repository | `suse/aif-operator` |
 | `manager.image.tag`        | Operator image tag        | `""`                    |
 | `manager.image.pullPolicy` | Image pull policy         | `IfNotPresent`          |
 
@@ -192,13 +192,13 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 ### Check pod status
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=suse-ai-operator -n suse-ai-operator-system
+kubectl get pods -l app.kubernetes.io/name=aif-operator -n aif-operator-system
 ```
 
 ### Check logs
 
 ```bash
-kubectl logs deploy/suse-ai-operator -n suse-ai-operator-system -f
+kubectl logs deploy/aif-operator -n aif-operator-system -f
 ```
 
 ### Metrics endpoint not reachable
@@ -206,7 +206,7 @@ kubectl logs deploy/suse-ai-operator -n suse-ai-operator-system -f
 * Ensure `metrics.enable=true`
 * Verify the metrics Service exists:
 ``` bash
-kubectl get svc -n suse-ai-operator-system
+kubectl get svc -n aif-operator-system
 ```
 * Confirm RBAC permissions allow access to `/metrics`
 

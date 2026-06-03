@@ -4,6 +4,6 @@ metadata:
   name: settings
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "suse-ai-operator.labels" . | nindent 4 }}
+    {{- include "aif-operator.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep

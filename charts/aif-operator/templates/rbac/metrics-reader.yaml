@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "suse-ai-operator.serviceName" (dict "context" . "suffix" "metrics-reader") }}
+  name: {{ include "aif-operator.serviceName" (dict "context" . "suffix" "metrics-reader") }}
 rules:
   - nonResourceURLs:
       - /metrics

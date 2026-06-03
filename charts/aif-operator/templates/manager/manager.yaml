@@ -2,19 +2,22 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    {{- include "suse-ai-operator.labels" . | nindent 4 }}
-  name: {{ include "suse-ai-operator.fullname" . }}
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
 spec:
   replicas: {{ .Values.manager.replicaCount }}
   selector:
     matchLabels:
-      {{- include "suse-ai-operator.selectorLabels" . | nindent 6 }}
+      {{- include "aif-operator.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.manager.podAnnotations }}
       annotations:
-        {{- toYaml .Values.manager.podAnnotations | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
-        {{- include "suse-ai-operator.labels" . | nindent 8 }}
+        {{- include "aif-operator.labels" . | nindent 8 }}
     spec:
       containers:
         - name: manager
@@ -46,43 +49,39 @@ spec:
             {{- omit .Values.manager.probes.readiness "enabled" | toYaml | nindent 12 }}
           {{- end }}
           resources:
-            {{- if .Values.manager.resources }}
-            {{- toYaml .Values.manager.resources | nindent 20 }}
-            {{- else }}
-            {}
-            {{- end }}
+            {{- toYaml .Values.manager.resources | nindent 12 }}
           securityContext:
-            {{- if .Values.manager.securityContext }}
-            {{- toYaml .Values.manager.securityContext | nindent 20 }}
-            {{- else }}
-            {}
-            {{- end }}
+            {{- toYaml .Values.manager.securityContext | nindent 12 }}
           env:
             - name: OPERATOR_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: EXTENSION_NAMESPACE
+              value: {{ include "aif-operator.extensionsNamespace" . | quote }}
           {{- range .Values.manager.env }}
             - {{ toYaml . | nindent 14 | trim }}
           {{- end }}
           volumeMounts:
             - mountPath: /home/nonroot/.cache
               name: helm-cache
-      serviceAccountName: {{ include "suse-ai-operator.fullname" . }}
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "aif-operator.fullname" . }}
       terminationGracePeriodSeconds: 30
       volumes:
         - emptyDir: {}
           name: helm-cache
       securityContext:
-        {{- if .Values.manager.podSecurityContext }}
-        {{- toYaml .Values.manager.podSecurityContext | nindent 14 }}
-        {{- else }}
-        {}
-        {{- end }}
+        {{- toYaml .Values.manager.podSecurityContext | nindent 8 }}
+      {{- with .Values.manager.nodeSelector }}
       nodeSelector:
-        {{- toYaml .Values.manager.nodeSelector | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.manager.tolerations }}
       tolerations:
-        {{- toYaml .Values.manager.tolerations | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.manager.affinity }}
       affinity:
-        {{- toYaml .Values.manager.affinity | nindent 8 }}
-      
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
