@@ -107,7 +107,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
-		disablePreProcess: true,
+		"disablePreProcess": true,
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
@@ -351,7 +351,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
-		disablePreProcess: true,		
+		"disablePreProcess": true,		
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
