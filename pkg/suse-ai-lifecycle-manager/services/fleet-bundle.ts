@@ -150,6 +150,10 @@ export function buildFleetBundleYAML(params: {
       repo:        isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl,
       releaseName: params.bundleName,
       values,
+      // Disable Fleet's ${ } value templating: we resolve all values ourselves,
+      // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
+      // which Fleet would otherwise mis-parse as a template function.
+      disablePreProcess: true,
     },
     targets,
   };
@@ -219,6 +223,10 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     repo:        ociRepo,
     releaseName: params.bundleName,
     values:      addPullSecretsToValues(params.values, pullSecretNames, params.library),
+    // Disable Fleet's ${ } value templating: we resolve all values ourselves,
+    // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
+    // which Fleet would otherwise mis-parse as a template function.
+    disablePreProcess: true,
   };
 
   const baseSpec: Record<string, any> = { namespace: params.targetNamespace, helm: helmSpec };

@@ -104,6 +104,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	helmSpec := map[string]any{
 		"version":     c.ChartVersion,
 		"releaseName": bundleName,
+		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
+		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
+		// which Fleet would otherwise mis-parse as a template function.
+		disablePreProcess: true,
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
@@ -344,6 +348,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	helmSpec := map[string]any{
 		"version":     c.ChartVersion,
 		"releaseName": bundleName,
+		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
+		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
+		// which Fleet would otherwise mis-parse as a template function.
+		disablePreProcess: true,		
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
