@@ -408,7 +408,11 @@ export default {
             </div>
           </div>
 
-          <div class="row">
+          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
+          <div
+            v-if="false"
+            class="row"
+          >
             <div class="col span-8">
               <LabeledInput
                 v-model:value="categoriesString"
@@ -472,7 +476,11 @@ export default {
             </div>
           </div>
 
-          <div class="row">
+          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
+          <div
+            v-if="false"
+            class="row"
+          >
             <div class="col span-3">
               <LabeledInput
                 :value="spec.suseRegistry.refreshIntervalMinutes"
@@ -678,71 +686,77 @@ export default {
             </div>
           </div>
 
-          <h3 class="mb-10">
-            {{ t('suseai.pages.settings.sections.advanced.catalogDiscovery.title') }}
-          </h3>
-          <div class="row mb-20">
-            <div class="col span-4">
-              <LabeledSelect
-                v-model:value="spec.catalogDiscovery.applicationCollectionMode"
-                :label="t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.label')"
-                :options="catalogDiscoveryOptions"
-                :mode="mode"
-              />
+          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
+          <template v-if="false">
+            <h3 class="mb-10">
+              {{ t('suseai.pages.settings.sections.advanced.catalogDiscovery.title') }}
+            </h3>
+            <div class="row mb-20">
+              <div class="col span-4">
+                <LabeledSelect
+                  v-model:value="spec.catalogDiscovery.applicationCollectionMode"
+                  :label="t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.label')"
+                  :options="catalogDiscoveryOptions"
+                  :mode="mode"
+                />
+              </div>
             </div>
-          </div>
+          </template>
 
-          <h3 class="mb-10">
-            {{ t('suseai.pages.settings.sections.advanced.imageRewrite.title') }}
-          </h3>
-          <div class="row mb-10">
-            <div class="col span-12">
-              <Checkbox
-                v-model:value="spec.imageRewrite.enabled"
-                :label="t('suseai.pages.settings.sections.advanced.imageRewrite.enabled.label')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <template v-if="spec.imageRewrite.enabled">
-            <div
-              v-for="(rule, i) in spec.imageRewrite.rules"
-              :key="i"
-              class="row mb-5"
-            >
-              <div class="col span-5">
-                <LabeledInput
-                  v-model:value="rule.match"
-                  :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.label') : ''"
-                  :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.placeholder')"
+          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
+          <template v-if="false">
+            <h3 class="mb-10">
+              {{ t('suseai.pages.settings.sections.advanced.imageRewrite.title') }}
+            </h3>
+            <div class="row mb-10">
+              <div class="col span-12">
+                <Checkbox
+                  v-model:value="spec.imageRewrite.enabled"
+                  :label="t('suseai.pages.settings.sections.advanced.imageRewrite.enabled.label')"
                   :mode="mode"
                 />
               </div>
-              <div class="col span-5">
-                <LabeledInput
-                  v-model:value="rule.replace"
-                  :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.label') : ''"
-                  :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.placeholder')"
-                  :mode="mode"
-                />
-              </div>
-              <div class="col span-2 trash-col">
-                <button
-                  type="button"
-                  class="btn btn-sm role-link"
-                  @click="removeRewriteRule(i)"
-                >
-                  <i class="icon icon-trash" />
-                </button>
-              </div>
             </div>
-            <button
-              type="button"
-              class="btn btn-sm role-secondary mt-5"
-              @click="addRewriteRule"
-            >
-              {{ t('suseai.pages.settings.sections.advanced.imageRewrite.rules.add') }}
-            </button>
+            <template v-if="spec.imageRewrite.enabled">
+              <div
+                v-for="(rule, i) in spec.imageRewrite.rules"
+                :key="i"
+                class="row mb-5"
+              >
+                <div class="col span-5">
+                  <LabeledInput
+                    v-model:value="rule.match"
+                    :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.label') : ''"
+                    :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.placeholder')"
+                    :mode="mode"
+                  />
+                </div>
+                <div class="col span-5">
+                  <LabeledInput
+                    v-model:value="rule.replace"
+                    :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.label') : ''"
+                    :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.placeholder')"
+                    :mode="mode"
+                  />
+                </div>
+                <div class="col span-2 trash-col">
+                  <button
+                    type="button"
+                    class="btn btn-sm role-link"
+                    @click="removeRewriteRule(i)"
+                  >
+                    <i class="icon icon-trash" />
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm role-secondary mt-5"
+                @click="addRewriteRule"
+              >
+                {{ t('suseai.pages.settings.sections.advanced.imageRewrite.rules.add') }}
+              </button>
+            </template>
           </template>
         </div>
       </div>
