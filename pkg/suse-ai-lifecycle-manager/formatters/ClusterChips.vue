@@ -20,11 +20,7 @@
 <script lang="ts">
 import { defineComponent, getCurrentInstance } from 'vue';
 import type { PropType } from 'vue';
-
-type ClusterInfo = {
-  id: string;
-  name: string;
-};
+import type { ClusterInfo } from '../types/rancher-types';
 
 export default defineComponent({
   name: 'ClusterChips',
