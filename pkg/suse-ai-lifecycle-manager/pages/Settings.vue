@@ -476,7 +476,11 @@ export default {
             </div>
           </div>
 
-          <div class="row">
+          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
+          <div
+            v-if="false"
+            class="row"
+          >
             <div class="col span-3">
               <LabeledInput
                 :value="spec.suseRegistry.refreshIntervalMinutes"
