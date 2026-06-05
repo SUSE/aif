@@ -25,9 +25,9 @@ var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version
 var nonAlphanumBPRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 type clusterRepoInfo struct {
-	URL                string
-	ClientSecret       string // name of the basic-auth secret; empty if unauthenticated
-	ClientSecretNS     string // namespace of the basic-auth secret (typically cattle-system)
+	URL            string
+	ClientSecret   string // name of the basic-auth secret; empty if unauthenticated
+	ClientSecretNS string // namespace of the basic-auth secret (typically cattle-system)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -619,7 +619,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	}
 	// spec.clientSecret is an object {name, namespace}, not a plain string.
 	clientSecretName, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "name")
-	clientSecretNS, _, _   := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
+	clientSecretNS, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
 	if clientSecretNS == "" {
 		clientSecretNS = "cattle-system"
 	}

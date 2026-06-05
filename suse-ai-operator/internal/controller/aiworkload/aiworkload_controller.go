@@ -201,7 +201,7 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 		if clusterID == "" {
 			continue
 		}
-		state, _, _   := unstructured.NestedString(bd.Object, "status", "display", "state")
+		state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
 		message, _, _ := unstructured.NestedString(bd.Object, "status", "display", "message")
 
 		phase := fleetStateToClusterPhase(state)
