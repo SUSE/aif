@@ -34,13 +34,6 @@
             </select>
           </div>
 
-          <div class="filter-group-checkbox">
-            <Checkbox
-              v-model:value="showInstalledOnly"
-              :label="t('suseai.apps.showInstalledOnly', 'Installed')"
-            />
-          </div>
-
           <div class="view-controls" role="group" aria-label="View mode selection">
             <button
               :class="['btn', 'btn-sm', viewMode === 'tiles' ? 'role-primary' : 'role-secondary']"
@@ -138,21 +131,6 @@
 
             <div class="tile-content">
               <p class="tile-description">{{ app.description || '—' }}</p>
-
-              <!-- Installation status -->
-              <div v-if="getInstallationInfo(app.slug_name).installed" class="install-status">
-                <small class="status-label">Installed in:</small>
-                <div class="cluster-chips">
-                  <span
-                    v-for="cluster in getInstallationInfo(app.slug_name).clusters"
-                    :key="cluster"
-                    class="cluster-chip"
-                    :title="`${getInstallationInfo(app.slug_name).namespace}/${getInstallationInfo(app.slug_name).release}`"
-                  >
-                    {{ getClusterDisplayName(cluster) }}
-                  </span>
-                </div>
-              </div>
             </div>
           </div>
           <div
@@ -169,13 +147,12 @@
             <tr>
               <th>{{ t('suseai.apps.name', 'Name') }}</th>
               <th>{{ t('suseai.apps.description', 'Description') }}</th>
-              <th>{{ t('suseai.apps.clusters', 'Clusters') }}</th>
               <th class="text-right">{{ t('suseai.apps.actions', 'Actions') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!filteredApps.length" class="empty-row">
-              <td colspan="4" class="text-center text-muted">{{ t('suseai.apps.noApps', 'No applications found') }}</td>
+              <td colspan="3" class="text-center text-muted">{{ t('suseai.apps.noApps', 'No applications found') }}</td>
             </tr>
             <tr
               v-else
@@ -209,21 +186,6 @@
                 <span class="list-description">{{ app.description || '—' }}</span>
               </td>
 
-              <!-- Clusters -->
-              <td class="col-clusters">
-                <div v-if="getInstallationInfo(app.slug_name).installed" class="cluster-chips">
-                  <span
-                    v-for="cluster in getInstallationInfo(app.slug_name).clusters"
-                    :key="cluster"
-                    class="cluster-chip"
-                    :title="`${getInstallationInfo(app.slug_name).namespace}/${getInstallationInfo(app.slug_name).release}`"
-                  >
-                    {{ getClusterDisplayName(cluster) }}
-                  </span>
-                </div>
-                <span v-else class="text-muted">—</span>
-              </td>
-
               <!-- Actions -->
               <td class="col-actions text-right">
                 <i class="icon icon-chevron-right" aria-hidden="true"></i>
@@ -247,25 +209,11 @@
 <script lang="ts">
 import { defineComponent, computed, getCurrentInstance, onMounted, ref } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
-import { Checkbox } from '@components/Form/Checkbox';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
-import { discoverExistingInstall, getClusters } from '../services/rancher-apps';
-
-type InstallInfo = {
-  installed: boolean;
-  clusters: string[];
-  release?: string;
-  namespace?: string;
-};
 
 export default defineComponent({
   name: 'SuseAIApps',
-
-  components: {
-    Checkbox,
-    // LabeledSelect
-  },
 
   setup() {
     const vm = getCurrentInstance();
@@ -281,9 +229,6 @@ export default defineComponent({
     const selectedRepo = ref('suse-ai');
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
-    const clusters = ref<Array<{id: string; name: string}>>([]);
-    const installedMap = ref<Record<string, InstallInfo>>({});
-    const showInstalledOnly = ref(false);
 
     const repositoryOptions = computed(() => [
       { label: 'SUSE AI Library', value: 'suse-ai' },
@@ -299,10 +244,6 @@ export default defineComponent({
         arr = arr.filter((app: AppCollectionItem) => app.library === selectedRepo.value);
       }
 
-      if (showInstalledOnly.value) {
-        arr = arr.filter((app: AppCollectionItem) => getInstallationInfo(app.slug_name).installed);
-      }
-
       if (search.value) {
         const searchLower = search.value.toLowerCase();
         arr = arr.filter((app: AppCollectionItem) =>
@@ -316,22 +257,12 @@ export default defineComponent({
     });
 
     // Methods
-    const getInstallationInfo = (slugName: string): InstallInfo => {
-      return installedMap.value[slugName] || { installed: false, clusters: [] };
-    };
-
-
     const getBadgeClass = (format: string) => {
       return format === 'HELM_CHART' ? 'bg-success' : 'bg-info';
     };
 
     const formatPackagingType = (format: string) => {
       return format === 'HELM_CHART' ? 'Helm' : 'Container';
-    };
-
-    const getClusterDisplayName = (clusterId: string): string => {
-      const cluster = clusters.value.find(c => c.id === clusterId);
-      return cluster?.name || clusterId;
     };
 
     const logoFor = (item: AppCollectionItem): string => {
@@ -347,7 +278,7 @@ export default defineComponent({
       loading.value = true;
       error.value = null;
       try {
-        await Promise.all([loadApps(), loadClusters()]);
+        await loadApps();
       } catch (err) {
         console.error('Failed to refresh:', err);
         error.value = 'Failed to refresh applications';
@@ -364,39 +295,10 @@ export default defineComponent({
           fetchNvidiaApps(store, settings),
         ]);
         items.value = [...suseApps, ...nvidiaApps];
-        await loadInstallationStates();
       } catch (err) {
         console.error('Failed to load apps:', err);
         throw err;
       }
-    };
-
-    const loadClusters = async () => {
-      try {
-        const clusterList = await getClusters(store);
-        clusters.value = clusterList;
-      } catch (err) {
-        console.error('Failed to load clusters:', err);
-      }
-    };
-
-    const loadInstallationStates = async () => {
-      for (const app of items.value) {
-        try {
-          const installInfo = await discoverExistingInstall(store, currentClusterId, app.slug_name, app.slug_name);
-          if (installInfo) {
-            installedMap.value[app.slug_name] = {
-              installed: true,
-              clusters: installInfo.clusters || [currentClusterId],
-              release: installInfo.release,
-              namespace: installInfo.namespace
-            };
-          }
-        } catch (err) {
-          // App not installed, which is fine
-        }
-      }
-
     };
 
     const onTileClick = async (app: AppCollectionItem) => {
@@ -438,16 +340,12 @@ export default defineComponent({
       repositoryOptions,
       viewMode,
       filteredApps,
-      clusters,
-      showInstalledOnly,
 
       // Methods
       refresh,
       onTileClick,
-      getInstallationInfo,
       getBadgeClass,
       formatPackagingType,
-      getClusterDisplayName,
       logoFor,
       onImgError,
       t
