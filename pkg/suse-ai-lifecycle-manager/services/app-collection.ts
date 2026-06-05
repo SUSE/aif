@@ -55,10 +55,28 @@ export async function getClusterRepoNameFromUrl($store: any, repoUrl: string): P
   return await findRepositoryByUrl($store, repoUrl);
 }
 
-/** Fetch apps from SUSE Application Collection and SUSE Registry, merged and sorted alphabetically. */
-export async function fetchSuseAiApps($store: any): Promise<AppCollectionItem[]> {
-  const settings = await getSettings().catch(() => null);
-  const re = settings?.spec?.registryEndpoints || {};
+/**
+ * Fetch the operator Settings, returning null only when none exist yet (404).
+ * Real failures (operator unreachable, 5xx) are rethrown so callers don't silently
+ * fall back to default/public registry URLs — which in air-gap is exactly wrong.
+ */
+export async function fetchSettingsOrNull(): Promise<any | null> {
+  try {
+    return await getSettings();
+  } catch (e: any) {
+    if (e?.status === 404) return null;
+    throw e;
+  }
+}
+
+/**
+ * Fetch apps from SUSE Application Collection and SUSE Registry, merged and sorted alphabetically.
+ * Pass `settings` to reuse an already-fetched Settings object (avoids a duplicate round trip when
+ * the caller also calls fetchNvidiaApps). Omit it to fetch on demand.
+ */
+export async function fetchSuseAiApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
+  const s = settings !== undefined ? settings : await fetchSettingsOrNull();
+  const re = s?.spec?.registryEndpoints || {};
   const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
   const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
 
@@ -90,9 +108,9 @@ export async function fetchSuseAiApps($store: any): Promise<AppCollectionItem[]>
  *  - Connected (registryEndpoints.nvidia empty): the two public NGC HTTPS repos.
  *  - Air-gapped (registryEndpoints.nvidia set): the single mirrored OCI repo at that URL.
  */
-export async function fetchNvidiaApps($store: any): Promise<AppCollectionItem[]> {
-  const settings = await getSettings().catch(() => null);
-  const nvUrl = settings?.spec?.registryEndpoints?.nvidia;
+export async function fetchNvidiaApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
+  const s = settings !== undefined ? settings : await fetchSettingsOrNull();
+  const nvUrl = s?.spec?.registryEndpoints?.nvidia;
   const urls = nvUrl ? [nvUrl] : [NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL];
 
   const repos = await fetchClusterRepositories($store);
@@ -104,7 +122,12 @@ export async function fetchNvidiaApps($store: any): Promise<AppCollectionItem[]>
     return apps.map(a => ({ ...a, repository_url: url, library: 'nvidia' as const }));
   }));
 
-  // Dedup by slug; first occurrence wins.
+  // Single mirrored repo (air-gap): nothing to dedup.
+  if (urls.length === 1) {
+    return perRepo[0].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Connected: dedup by slug across the two public NGC repos; first occurrence wins.
   const appMap = new Map<string, AppCollectionItem>();
   for (const apps of perRepo) {
     for (const app of apps) {

@@ -97,6 +97,8 @@ type RegistryEndpointsSettings struct {
 	// Nvidia is the OCI URL of a mirrored NVIDIA chart repository for air-gapped installs
 	// (e.g. oci://registry.example.com/nvidia). When empty, NVIDIA charts are pulled from the
 	// public NGC HTTPS repositories; when set, a single gated OCI ClusterRepo is created at this URL.
+	// Note: this is the chart-repo URL only — NVIDIA container images still resolve to nvcr.io and
+	// require node-level registry redirection (e.g. containerd hosts.toml) in a true air-gap.
 	// +optional
 	Nvidia string `json:"nvidia,omitempty"`
 }

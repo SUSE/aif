@@ -63,7 +63,7 @@
 import { ref, onMounted, getCurrentInstance } from 'vue';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
-import { fetchSuseAiApps, fetchNvidiaApps, getClusterRepoNameFromUrl } from '../../../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
 
 const genericIcon = require('../../../assets/generic-app.svg');
@@ -84,9 +84,10 @@ const logoMap       = ref<Record<string, string>>({});
 
 // Combined catalog: SUSE AI Library + Nvidia Library (mirrors the Apps catalog selector).
 async function loadAllApps(): Promise<AppCollectionItem[]> {
+  const settings = await fetchSettingsOrNull();
   const [suseApps, nvidiaApps] = await Promise.all([
-    fetchSuseAiApps(store),
-    fetchNvidiaApps(store),
+    fetchSuseAiApps(store, settings),
+    fetchNvidiaApps(store, settings),
   ]);
   return [...suseApps, ...nvidiaApps];
 }

@@ -299,22 +299,32 @@ export default {
       const srCreds = buildCreds(sr.userSecretRef, sr.tokenSecretRef);
       if (acCreds) tasks.push(ensureClusterRepo(store, acUrl, acCreds));
       if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
-      await Promise.all(tasks);
 
       // NVIDIA chart repos.
-      //  - Connected (registryEndpoints.nvidia empty): two PUBLIC HTTPS NGC repos, no clientSecret.
-      //  - Air-gapped (registryEndpoints.nvidia set): one PRIVATE OCI repo at that URL, with credentials.
-      if (nv.userSecretRef?.name && nv.tokenSecretRef?.name) {
-        if (re.nvidia) {
-          const nvCreds = buildCreds(nv.userSecretRef, nv.tokenSecretRef);
-          if (nvCreds) await ensureClusterRepo(store, re.nvidia, nvCreds);
-        } else {
-          await Promise.all([
-            ensureClusterRepo(store, NVIDIA_REPO_URL),
-            ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
-          ]);
+      //  - Air-gapped (registryEndpoints.nvidia set): one OCI repo at that URL. Credentials are
+      //    attached when configured; an unauthenticated mirror is also supported.
+      //  - Connected (registryEndpoints.nvidia empty): the two PUBLIC HTTPS NGC repos, created
+      //    when NVIDIA credentials are configured (the creds signal that NVIDIA is in use).
+      const nvHasRefs = !!(nv.userSecretRef?.name && nv.tokenSecretRef?.name);
+      if (re.nvidia) {
+        const nvCreds = buildCreds(nv.userSecretRef, nv.tokenSecretRef);
+        // If secret refs are set but no usable credentials could be read, surface it rather
+        // than silently creating an unauthenticated repo against a gated mirror.
+        if (nvHasRefs && !nvCreds) {
+          throw new Error(
+            'NVIDIA secret references are set but no usable username/token could be read from them. ' +
+            'Check the selected secret and key names.'
+          );
         }
+        tasks.push(ensureClusterRepo(store, re.nvidia, nvCreds || undefined));
+      } else if (nvHasRefs) {
+        tasks.push(
+          ensureClusterRepo(store, NVIDIA_REPO_URL),
+          ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
+        );
       }
+
+      await Promise.all(tasks);
     },
 
     async save(buttonDone) {
@@ -325,10 +335,14 @@ export default {
         this.spec = this.buildSpec(data.spec);
         buttonDone(true);
 
-        // Fire-and-forget: ensure ClusterRepos exist on the local cluster with
-        // credentials so the install wizard can list chart versions.
+        // Settings are saved; now ensure ClusterRepos exist on the local cluster with
+        // credentials so the install wizard can list chart versions. This runs after the
+        // save succeeds, so on failure we surface a banner rather than failing the save.
         this.ensureClusterReposWithCredentials()
-          .catch(e => console.warn('[SUSE-AI] ClusterRepo setup (non-fatal):', e));
+          .catch((e) => {
+            console.warn('[SUSE-AI] ClusterRepo setup failed:', e);
+            this.errors = [`Settings saved, but chart repository setup failed: ${ e?.message || e }`];
+          });
       } catch (e) {
         this.errors = [e?.message || String(e)];
         buttonDone(false);

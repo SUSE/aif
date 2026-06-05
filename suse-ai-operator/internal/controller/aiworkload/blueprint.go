@@ -19,6 +19,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
 	igit "github.com/SUSE/suse-ai-operator/internal/git"
+	"github.com/SUSE/suse-ai-operator/internal/registryurl"
 )
 
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
@@ -201,7 +202,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 		src := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
 			if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
-				auths[repoURLToHost(repoInfo.URL)] = dockerAuthEntry(u, p)
+				auths[registryurl.Host(repoInfo.URL)] = dockerAuthEntry(u, p)
 			}
 		}
 	}
@@ -211,7 +212,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err == nil {
 		appHost := defaultAppCollectionHost
 		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-			appHost = repoURLToHost(s.Spec.RegistryEndpoints.ApplicationCollection)
+			appHost = registryurl.Host(s.Spec.RegistryEndpoints.ApplicationCollection)
 		}
 		if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
 			u, err1 := r.readSettingsSecretKey(ctx, s.Spec.ApplicationCollection.UserSecretRef)
@@ -223,7 +224,7 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 
 		suseHost := defaultSUSERegistryHost
 		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-			suseHost = repoURLToHost(s.Spec.RegistryEndpoints.SUSERegistry)
+			suseHost = registryurl.Host(s.Spec.RegistryEndpoints.SUSERegistry)
 		}
 		if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
 			u, err1 := r.readSettingsSecretKey(ctx, s.Spec.SUSERegistry.UserSecretRef)
@@ -277,20 +278,6 @@ func (r *AIWorkloadReconciler) readSettingsSecretKey(ctx context.Context, ref *a
 		return "", fmt.Errorf("key %q not found in secret %q", ref.Key, ref.Name)
 	}
 	return string(val), nil
-}
-
-// repoURLToHost derives the registry hostname from a chart-repo URL, e.g.
-// "oci://registry.example.com/charts" or "https://helm.example.com/x" ->
-// "registry.example.com" / "helm.example.com". A bare host is returned unchanged.
-func repoURLToHost(url string) string {
-	host := url
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
-	}
-	if idx := strings.IndexByte(host, '/'); idx >= 0 {
-		host = host[:idx]
-	}
-	return host
 }
 
 // dockerAuthEntry builds the auth object for a single registry in a dockerconfigjson auths map.

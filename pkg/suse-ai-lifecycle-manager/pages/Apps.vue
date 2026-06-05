@@ -249,7 +249,7 @@ import { defineComponent, computed, getCurrentInstance, onMounted, ref } from 'v
 import type { RouteLocationRaw } from 'vue-router';
 import { Checkbox } from '@components/Form/Checkbox';
 import type { AppCollectionItem } from '../services/app-collection';
-import { fetchSuseAiApps, fetchNvidiaApps, getClusterRepoNameFromUrl } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
 import { discoverExistingInstall, getClusters } from '../services/rancher-apps';
 
 type InstallInfo = {
@@ -358,9 +358,10 @@ export default defineComponent({
 
     const loadApps = async () => {
       try {
+        const settings = await fetchSettingsOrNull();
         const [suseApps, nvidiaApps] = await Promise.all([
-          fetchSuseAiApps(store),
-          fetchNvidiaApps(store),
+          fetchSuseAiApps(store, settings),
+          fetchNvidiaApps(store, settings),
         ]);
         items.value = [...suseApps, ...nvidiaApps];
         await loadInstallationStates();

@@ -25,6 +25,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
 	git "github.com/SUSE/suse-ai-operator/internal/git"
+	"github.com/SUSE/suse-ai-operator/internal/registryurl"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -140,7 +141,7 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 
 	appHost := defaultAppCollectionHost
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-		appHost = registryHostFromURL(s.Spec.RegistryEndpoints.ApplicationCollection)
+		appHost = registryurl.Host(s.Spec.RegistryEndpoints.ApplicationCollection)
 	}
 	if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
 		user, err1 := h.readSecretKey(r.Context(), s.Spec.ApplicationCollection.UserSecretRef)
@@ -154,7 +155,7 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 
 	suseHost := defaultSUSERegistryHost
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-		suseHost = registryHostFromURL(s.Spec.RegistryEndpoints.SUSERegistry)
+		suseHost = registryurl.Host(s.Spec.RegistryEndpoints.SUSERegistry)
 	}
 	if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
 		user, err1 := h.readSecretKey(r.Context(), s.Spec.SUSERegistry.UserSecretRef)
@@ -180,21 +181,6 @@ func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, creds)
-}
-
-// registryHostFromURL extracts the registry host from a chart-repo URL such as
-// "oci://registry.example.com/charts" -> "registry.example.com". A bare host is
-// returned unchanged, so an OCI (or HTTP/S) chart-repo override doubles as a
-// valid image-pull-secret host.
-func registryHostFromURL(repoURL string) string {
-	host := repoURL
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
-	}
-	if i := strings.IndexByte(host, '/'); i >= 0 {
-		host = host[:i]
-	}
-	return host
 }
 
 func (h *SettingsHandler) readSecretKey(ctx context.Context, ref *aiplatformv1alpha1.SecretKeyRef) (string, error) {
