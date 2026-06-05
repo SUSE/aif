@@ -168,7 +168,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		ho.SetGroupVersionKind(helmOpGVK)
 		ho.SetName(bundleName)
 		ho.SetNamespace(pair.ns)
-		_ = unstructured.SetNestedField(ho.Object, w.Spec.TargetNamespace, "spec", "namespace")
+		// defaultNamespace (not namespace): targets the release namespace without
+		// forcing every resource into it. Fleet's strict `namespace` field rejects
+		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+		// operator/CRD-bearing charts.
+		_ = unstructured.SetNestedField(ho.Object, w.Spec.TargetNamespace, "spec", "defaultNamespace")
 		_ = unstructured.SetNestedField(ho.Object, helmSpec, "spec", "helm")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
 		if repoInfo.ClientSecret != "" {
@@ -398,7 +402,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	helmOpSpec := map[string]any{
-		"namespace": w.Spec.TargetNamespace,
+		// defaultNamespace (not namespace): targets the release namespace without
+		// forcing every resource into it. Fleet's strict `namespace` field rejects
+		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+		// operator/CRD-bearing charts.
+		"defaultNamespace": w.Spec.TargetNamespace,
 		"helm":      helmSpec,
 		"targets":   targets,
 	}
