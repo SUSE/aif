@@ -2,7 +2,7 @@
 
 SUSE AI Lifecycle Manager is a Rancher UI Extension for managing SUSE AI components across Kubernetes clusters. This extension provides a unified interface for installing, managing, and monitoring AI workloads in Rancher-managed clusters.
 
-> **Note:** While this extension is open source (Apache 2.0), it requires an active [SUSE AI](https://www.suse.com/products/ai/) subscription to access the application catalog.
+> **Note:** This extension requires an active [SUSE AI](https://www.suse.com/products/ai/) subscription to access the application catalog.
 
 ## Development
 
@@ -17,7 +17,7 @@ SUSE AI Lifecycle Manager is a Rancher UI Extension for managing SUSE AI compone
 1. **Clone and install dependencies:**
    ```bash
    git clone <repository-url>
-   cd aif-ui
+   cd suse-ai-lifecycle-manager
    yarn install
    ```
 
