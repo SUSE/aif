@@ -9,6 +9,9 @@ import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api'
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
+import ClusterChips from '../formatters/ClusterChips.vue';
+import { getClusters } from '../services/cluster-service';
+import type { ClusterInfo } from '../types/rancher-types';
 
 const vm      = getCurrentInstance()!.proxy as any;
 const router  = vm.$router;
@@ -20,6 +23,7 @@ const error      = ref<string | null>(null);
 const search     = ref('');
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
+const clusters   = ref<ClusterInfo[]>([]);
 
 // ── Delete modal ───────────────────────────────────────────────────────────────
 const deleteModal = reactive({
@@ -101,12 +105,14 @@ async function refresh() {
   loading.value = true;
   error.value   = null;
   try {
-    const [wlResult, bpResult] = await Promise.all([
+    const [wlResult, bpResult, clResult] = await Promise.all([
       listAIWorkloads(),
       listBlueprints().catch(() => ({ items: [] as Blueprint[] })),
+      getClusters(vm.$store).catch(() => [] as ClusterInfo[]),
     ]);
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
+    clusters.value   = clResult;
   } catch (e: any) {
     error.value = e?.message || 'Failed to load workloads';
   } finally {
@@ -255,6 +261,7 @@ async function executeUpgrade() {
                 <th>State</th>
                 <th>Name</th>
                 <th>Namespace</th>
+                <th>Cluster</th>
                 <th>Source</th>
                 <th>Deploy</th>
                 <th>Version</th>
@@ -284,6 +291,16 @@ async function executeUpgrade() {
                 <!-- Namespace -->
                 <td class="col-namespace">
                   <span class="mono-chip">{{ w.metadata.namespace }}</span>
+                </td>
+
+                <!-- Cluster -->
+                <td class="col-cluster">
+                  <ClusterChips
+                    :clusters="w.spec.targetClusters || []"
+                    :cluster-info="clusters"
+                    :show-label="false"
+                    :clickable="false"
+                  />
                 </td>
 
                 <!-- Source -->
