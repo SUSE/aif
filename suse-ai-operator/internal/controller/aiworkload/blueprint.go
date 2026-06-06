@@ -115,9 +115,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	if c.Values != nil {
 		_ = json.Unmarshal(c.Values.Raw, &vals)
 	}
-	if err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals); err != nil {
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals)
+	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
+	w.Status.PullSecretNames = mergePullSecretNames(w.Status.PullSecretNames, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}
@@ -192,7 +194,11 @@ const (
 // it writes. A no-op Apply (e.g., missing credentials) is acceptable; Helm will
 // surface the resulting ImagePullBackOff downstream.
 type secretInjector interface {
-	Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error
+	// Apply writes any dockerconfigjson Secret(s) it needs to the target
+	// namespace and sets value-path references in vals. Returns the names
+	// of dockerconfigjson Secrets it wrote (used by reconcilePullSecrets
+	// downstream to attach them to ServiceAccounts).
+	Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) (createdSecretNames []string, err error)
 }
 
 // suseInjector preserves the historical combined-secret behavior: one
@@ -200,19 +206,19 @@ type secretInjector interface {
 // imagePullSecrets and global.imagePullSecrets.
 type suseInjector struct{ r *AIWorkloadReconciler }
 
-func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error {
+func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
 	name, err := s.r.ensureCombinedPullSecret(ctx, targetNamespace, repoInfo)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", targetNamespace)
-		return nil
+		return nil, nil
 	}
 	if name == "" {
-		return nil
+		return nil, nil
 	}
 	pullSecrets := []any{map[string]any{"name": name}}
 	vals["imagePullSecrets"] = pullSecrets
 	vals["global"] = map[string]any{"imagePullSecrets": pullSecrets}
-	return nil
+	return []string{name}, nil
 }
 
 // nvidiaInjector creates the conventional ngc-secret + ngc-api in the target
@@ -222,27 +228,27 @@ func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoIn
 // covers the surveyed NIM chart families.
 type nvidiaInjector struct{ r *AIWorkloadReconciler }
 
-func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) error {
+func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
 	l := log.FromContext(ctx)
 
 	var s aiplatformv1alpha1.Settings
 	if err := n.r.Get(ctx, types.NamespacedName{Namespace: n.r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
 		l.Info("nvidia injector: settings not found, skipping", "namespace", targetNamespace, "err", err.Error())
-		return nil
+		return nil, nil
 	}
 	if s.Spec.Nvidia.UserSecretRef == nil || s.Spec.Nvidia.TokenSecretRef == nil {
 		l.Info("nvidia injector: credentials not configured, skipping", "namespace", targetNamespace)
-		return nil
+		return nil, nil
 	}
 	user, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
 	if err != nil || user == "" {
 		l.Info("nvidia injector: user secret unreadable, skipping", "namespace", targetNamespace, "err", fmt.Sprint(err))
-		return nil
+		return nil, nil
 	}
 	token, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
 	if err != nil || token == "" {
 		l.Info("nvidia injector: token secret unreadable, skipping", "namespace", targetNamespace, "err", fmt.Sprint(err))
-		return nil
+		return nil, nil
 	}
 
 	host := defaultNvidiaHost
@@ -254,7 +260,7 @@ func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repo
 		"auths": map[string]any{host: dockerAuthEntry(user, token)},
 	})
 	if err != nil {
-		return fmt.Errorf("marshal ngc dockerconfigjson: %w", err)
+		return nil, fmt.Errorf("marshal ngc dockerconfigjson: %w", err)
 	}
 
 	pullSecret := &corev1.Secret{}
@@ -265,7 +271,7 @@ func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repo
 	pullSecret.Type = corev1.SecretTypeDockerConfigJson
 	pullSecret.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
 	if err := n.r.Patch(ctx, pullSecret, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
-		return fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
+		return nil, fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
 	}
 
 	apiSecret := &corev1.Secret{}
@@ -276,11 +282,11 @@ func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repo
 	apiSecret.Type = corev1.SecretTypeOpaque
 	apiSecret.Data = map[string][]byte{nvidiaAPISecretKey: []byte(token)}
 	if err := n.r.Patch(ctx, apiSecret, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
-		return fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
+		return nil, fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
 	}
 
 	injectNvidiaPullSecretRefs(vals)
-	return nil
+	return []string{nvidiaImagePullSecretName, nvidiaAPISecretName}, nil
 }
 
 // injectorFor returns the secretInjector for a component vendor. Unknown or
@@ -460,9 +466,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	vals := map[string]any{}
-	if err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals); err != nil {
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals)
+	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
+	w.Status.PullSecretNames = mergePullSecretNames(w.Status.PullSecretNames, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}

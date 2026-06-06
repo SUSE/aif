@@ -3,6 +3,7 @@ package aiworkload
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"helm.sh/helm/v3/pkg/action"
 	corev1 "k8s.io/api/core/v1"
@@ -49,7 +50,9 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=pods;services;configmaps;serviceaccounts;persistentvolumeclaims,verbs=get;list;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;patch;update
+// +kubebuilder:rbac:groups="",resources=services;configmaps;persistentvolumeclaims,verbs=get;list;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;delete
 
@@ -82,6 +85,16 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.Status().Update(ctx, &w); err != nil {
 		// The object may have been deleted by reconcileGitOpsStatus (HelmOp gone path).
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if len(w.Status.PullSecretNames) > 0 && w.Spec.TargetNamespace != "" {
+		settled, err := r.reconcilePullSecrets(ctx, &w, w.Status.PullSecretNames)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !settled {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
 	}
 
 	l.Info("reconciled AIWorkload", "phase", w.Status.Phase)

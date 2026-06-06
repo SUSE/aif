@@ -159,6 +159,12 @@ type AIWorkloadStatus struct {
 	// ClusterStatuses tracks per-cluster deployment outcome.
 	// +optional
 	ClusterStatuses []AIWorkloadClusterStatus `json:"clusterStatuses,omitempty"`
+	// PullSecretNames is the set of dockerconfigjson Secret names that
+	// injectors created in the target namespace for this workload. Used by
+	// reconcilePullSecrets to merge into SAs and by the finalizer to prune
+	// SA references on delete.
+	// +optional
+	PullSecretNames []string `json:"pullSecretNames,omitempty"`
 	// Conditions represent the latest observations of the AIWorkload state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

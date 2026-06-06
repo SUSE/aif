@@ -166,6 +166,11 @@ func (in *AIWorkloadStatus) DeepCopyInto(out *AIWorkloadStatus) {
 		*out = make([]AIWorkloadClusterStatus, len(*in))
 		copy(*out, *in)
 	}
+	if in.PullSecretNames != nil {
+		in, out := &in.PullSecretNames, &out.PullSecretNames
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

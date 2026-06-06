@@ -16,12 +16,30 @@ rules:
     resources:
       - configmaps
       - persistentvolumeclaims
-      - pods
-      - serviceaccounts
+      - services
     verbs:
       - delete
       - get
       - list
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - delete
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - patch
+      - update
+      - watch
   - apiGroups:
       - ""
     resources:
@@ -33,15 +51,6 @@ rules:
       - list
       - patch
       - update
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - services
-    verbs:
-      - delete
-      - get
-      - list
       - watch
   - apiGroups:
       - apps

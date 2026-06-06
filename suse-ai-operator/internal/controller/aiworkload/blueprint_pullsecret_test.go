@@ -182,7 +182,7 @@ func TestNvidiaInjector_CreatesBothSecrets(t *testing.T) {
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func TestNvidiaInjector_HostOverride(t *testing.T) {
 	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
-	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
+	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -306,7 +306,7 @@ func TestNvidiaInjector_NoCreds_NoOp(t *testing.T) {
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if len(vals) != 0 {
@@ -342,7 +342,7 @@ func TestNvidiaInjector_MissingTokenSecret(t *testing.T) {
 	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
-	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
+	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	pull := &corev1.Secret{}
@@ -384,7 +384,7 @@ func TestNvidiaInjector_WritesBothPathShapes(t *testing.T) {
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -422,7 +422,7 @@ func TestNvidiaInjector_PreservesAuthorPullSecrets(t *testing.T) {
 		"imagePullSecrets": []any{map[string]any{"name": "author-secret"}},
 		"image":            map[string]any{"pullSecrets": []any{"author-string"}},
 	}
-	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -443,10 +443,10 @@ func TestNvidiaInjector_IdempotentSelfEntry(t *testing.T) {
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("first Apply: %v", err)
 	}
-	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("second Apply: %v", err)
 	}
 
@@ -466,7 +466,7 @@ func TestNvidiaInjector_LeavesUnexpectedShapesAlone(t *testing.T) {
 
 	// Author wrote an integer where we expect a slice — refuse to mutate.
 	vals := map[string]any{"imagePullSecrets": 42}
-	if err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if vals["imagePullSecrets"] != 42 {

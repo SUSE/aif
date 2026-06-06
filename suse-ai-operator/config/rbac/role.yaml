@@ -9,12 +9,20 @@ rules:
   resources:
   - configmaps
   - persistentvolumeclaims
-  - pods
-  - serviceaccounts
   verbs:
   - delete
   - get
   - list
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
@@ -30,11 +38,12 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - services
+  - serviceaccounts
   verbs:
-  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - ai-platform.suse.com

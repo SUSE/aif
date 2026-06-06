@@ -262,6 +262,15 @@ spec:
                 - Failed
                 - Unknown
                 type: string
+              pullSecretNames:
+                description: |-
+                  PullSecretNames is the set of dockerconfigjson Secret names that
+                  injectors created in the target namespace for this workload. Used by
+                  reconcilePullSecrets to merge into SAs and by the finalizer to prune
+                  SA references on delete.
+                items:
+                  type: string
+                type: array
             type: object
         type: object
     served: true
