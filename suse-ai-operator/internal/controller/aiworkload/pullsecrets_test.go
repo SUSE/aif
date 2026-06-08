@@ -679,3 +679,176 @@ func TestPullSecretFactory_NoCredsReturnsNil(t *testing.T) {
 		t.Errorf("expected nil when creds not configured; got %+v", sec)
 	}
 }
+
+func TestCleanupPullSecretBundles(t *testing.T) {
+	scheme := newTestScheme(t)
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		newOwnedBundle("ai-pullsecrets-wl-c-aaa-ngc-secret", "fleet-default", "wl", "default"),
+		newOwnedBundle("ai-pullsecrets-wl-c-bbb-ngc-secret", "fleet-default", "wl", "default"),
+		newOwnedBundle("ai-pullsecrets-wl-c-aaa-ngc-api", "fleet-default", "wl", "default"),
+		// Unrelated bundle owned by a different workload — must NOT be deleted.
+		newOwnedBundle("ai-pullsecrets-other-c-aaa-ngc-secret", "fleet-default", "other", "default"),
+		// Bundle owned by a DIFFERENT workload that happens to share the
+		// same name in a different namespace — must NOT be deleted.
+		// This proves the label selector's AND semantics across both labels.
+		newOwnedBundle("ai-pullsecrets-wl-c-aaa-other-secret", "fleet-default", "wl", "other"),
+		// Bundle in a different fleet workspace owned by this workload — current
+		// scope is fleet-default only, but if cleanup uses label selector it
+		// should sweep this too. Document the chosen scope in the impl.
+	).Build()
+
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	w := &aiplatformv1alpha1.AIWorkload{ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"}}
+
+	if err := r.cleanupPullSecretBundles(context.Background(), w); err != nil {
+		t.Fatalf("cleanupPullSecretBundles: %v", err)
+	}
+
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	if len(bundles.Items) != 2 {
+		names := make([]string, 0, len(bundles.Items))
+		for _, b := range bundles.Items {
+			names = append(names, b.GetName())
+		}
+		t.Errorf("expected 2 unrelated bundles to remain (different owner-name AND different owner-namespace cases), got %d: %+v", len(bundles.Items), names)
+	}
+	// Verify both unrelated bundles are present, by name.
+	remaining := map[string]bool{}
+	for _, b := range bundles.Items {
+		remaining[b.GetName()] = true
+	}
+	if !remaining["ai-pullsecrets-other-c-aaa-ngc-secret"] {
+		t.Errorf("missing unrelated bundle (different owner-name); have %+v", remaining)
+	}
+	if !remaining["ai-pullsecrets-wl-c-aaa-other-secret"] {
+		t.Errorf("missing unrelated bundle (different owner-namespace); have %+v", remaining)
+	}
+}
+
+// newOwnedBundle constructs an unstructured Fleet Bundle with the operator's
+// owner labels for cleanup tests.
+func newOwnedBundle(name, ns, ownerName, ownerNS string) *unstructured.Unstructured {
+	b := &unstructured.Unstructured{}
+	b.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"})
+	b.SetName(name)
+	b.SetNamespace(ns)
+	b.SetLabels(map[string]string{
+		"ai-platform.suse.com/owner-name":      ownerName,
+		"ai-platform.suse.com/owner-namespace": ownerNS,
+	})
+	return b
+}
+
+func TestPruneLocalSAImagePullSecrets(t *testing.T) {
+	scheme := newTestScheme(t)
+	ns := "target-ns"
+
+	// SA has a workload-owned secret AND a pre-existing one. Only the
+	// workload-owned entry should be removed.
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: ns},
+		ImagePullSecrets: []corev1.LocalObjectReference{
+			{Name: "regcred"},    // pre-existing, must survive
+			{Name: "ngc-secret"}, // workload-owned, must be removed
+			{Name: "ngc-api"},    // workload-owned, must be removed
+		},
+	}
+	// Second SA with only a workload-owned entry — should end with empty list.
+	sa2 := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: ns},
+		ImagePullSecrets: []corev1.LocalObjectReference{
+			{Name: "ngc-secret"},
+		},
+	}
+	// Third SA with no overlap — must not be mutated (no Update call should
+	// happen for it; fake client doesn't track Update vs not, but checking
+	// the final state is sufficient).
+	sa3 := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: "untouched", Namespace: ns},
+		ImagePullSecrets: []corev1.LocalObjectReference{
+			{Name: "regcred"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sa, sa2, sa3).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ns},
+		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretNames: []string{"ngc-secret", "ngc-api"}},
+	}
+	if err := r.pruneLocalSAImagePullSecrets(context.Background(), w); err != nil {
+		t.Fatalf("pruneLocalSAImagePullSecrets: %v", err)
+	}
+
+	var got corev1.ServiceAccount
+
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "default"}, &got); err != nil {
+		t.Fatalf("get default SA: %v", err)
+	}
+	if !equalRefs(got.ImagePullSecrets, []corev1.LocalObjectReference{{Name: "regcred"}}) {
+		t.Errorf("default SA: expected [regcred] to remain, got %+v", got.ImagePullSecrets)
+	}
+
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "other"}, &got); err != nil {
+		t.Fatalf("get other SA: %v", err)
+	}
+	if len(got.ImagePullSecrets) != 0 {
+		t.Errorf("other SA: expected empty imagePullSecrets, got %+v", got.ImagePullSecrets)
+	}
+
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "untouched"}, &got); err != nil {
+		t.Fatalf("get untouched SA: %v", err)
+	}
+	if !equalRefs(got.ImagePullSecrets, []corev1.LocalObjectReference{{Name: "regcred"}}) {
+		t.Errorf("untouched SA: expected [regcred] preserved, got %+v", got.ImagePullSecrets)
+	}
+}
+
+func TestPruneLocalSAImagePullSecrets_NoTargetNamespaceIsNoOp(t *testing.T) {
+	scheme := newTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ""},
+		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretNames: []string{"ngc-secret"}},
+	}
+	if err := r.pruneLocalSAImagePullSecrets(context.Background(), w); err != nil {
+		t.Errorf("pruneLocalSAImagePullSecrets with empty TargetNamespace: got err %v, want nil", err)
+	}
+}
+
+func TestPruneLocalSAImagePullSecrets_EmptyStatusIsNoOp(t *testing.T) {
+	scheme := newTestScheme(t)
+	sa := &corev1.ServiceAccount{
+		ObjectMeta:       metav1.ObjectMeta{Name: "default", Namespace: "target-ns"},
+		ImagePullSecrets: []corev1.LocalObjectReference{{Name: "regcred"}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sa).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: "target-ns"},
+		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretNames: nil},
+	}
+	if err := r.pruneLocalSAImagePullSecrets(context.Background(), w); err != nil {
+		t.Fatalf("pruneLocalSAImagePullSecrets: %v", err)
+	}
+	var got corev1.ServiceAccount
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "target-ns", Name: "default"}, &got); err != nil {
+		t.Fatalf("get SA: %v", err)
+	}
+	if !equalRefs(got.ImagePullSecrets, []corev1.LocalObjectReference{{Name: "regcred"}}) {
+		t.Errorf("expected regcred preserved (no-op), got %+v", got.ImagePullSecrets)
+	}
+}

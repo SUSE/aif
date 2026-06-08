@@ -263,6 +263,13 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 		}
 	}
 
+	if err := r.cleanupPullSecretBundles(ctx, w); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.pruneLocalSAImagePullSecrets(ctx, w); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	controllerutil.RemoveFinalizer(w, aiWorkloadFinalizer)
 	return ctrl.Result{}, r.Update(ctx, w)
 }

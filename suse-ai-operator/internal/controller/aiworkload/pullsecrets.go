@@ -6,6 +6,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -279,4 +281,84 @@ func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecret
 			return nil, nil
 		}
 	}
+}
+
+// cleanupPullSecretBundles deletes every Fleet Bundle the operator created
+// on behalf of this AIWorkload, identified by the owner-name / owner-namespace
+// labels bundleClient applies on every Bundle it emits. Fleet removes the
+// projected Secrets on downstream clusters when the Bundle goes away. List
+// is cluster-scoped (no namespace selector) so the cleanup catches bundles
+// regardless of which Fleet workspace they ended up in.
+func (r *AIWorkloadReconciler) cleanupPullSecretBundles(
+	ctx context.Context,
+	w *aiplatformv1alpha1.AIWorkload,
+) error {
+	l := log.FromContext(ctx)
+
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"})
+	selector := client.MatchingLabels{
+		"ai-platform.suse.com/owner-name":      w.Name,
+		"ai-platform.suse.com/owner-namespace": w.Namespace,
+	}
+	if err := r.List(ctx, &bundles, selector); err != nil {
+		return fmt.Errorf("list pull-secret bundles for %s/%s: %w", w.Namespace, w.Name, err)
+	}
+	for i := range bundles.Items {
+		b := &bundles.Items[i]
+		if err := r.Delete(ctx, b); err != nil && client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete bundle %s/%s: %w", b.GetNamespace(), b.GetName(), err)
+		}
+		l.Info("deleted pull-secret bundle", "namespace", b.GetNamespace(), "name", b.GetName())
+	}
+	return nil
+}
+
+// pruneLocalSAImagePullSecrets removes the workload's pull-secret entries
+// from every ServiceAccount in the target namespace on the operator's own
+// cluster. Non-workload entries (e.g. a pre-existing "regcred") are
+// preserved. Used by the finalizer when the AIWorkload is deleted; pairs
+// with cleanupPullSecretBundles which handles downstream pruning via Fleet.
+//
+// Returns nil (no-op) when Status.PullSecretNames is empty: nothing was
+// ever injected, so there's nothing to prune. A pre-status-write crash
+// before any successful reconcile is the only way to reach this branch
+// with stale SA entries — and in that case there are no SA entries either,
+// because injection persists status and SA-merge in the same reconcile.
+func (r *AIWorkloadReconciler) pruneLocalSAImagePullSecrets(
+	ctx context.Context,
+	w *aiplatformv1alpha1.AIWorkload,
+) error {
+	if w.Spec.TargetNamespace == "" || len(w.Status.PullSecretNames) == 0 {
+		return nil
+	}
+	ours := make(map[string]struct{}, len(w.Status.PullSecretNames))
+	for _, n := range w.Status.PullSecretNames {
+		ours[n] = struct{}{}
+	}
+
+	var sas corev1.ServiceAccountList
+	if err := r.List(ctx, &sas, client.InNamespace(w.Spec.TargetNamespace)); err != nil {
+		return fmt.Errorf("list SAs in %s: %w", w.Spec.TargetNamespace, err)
+	}
+	for i := range sas.Items {
+		sa := &sas.Items[i]
+		kept := sa.ImagePullSecrets[:0]
+		mutated := false
+		for _, ref := range sa.ImagePullSecrets {
+			if _, isOurs := ours[ref.Name]; isOurs {
+				mutated = true
+				continue
+			}
+			kept = append(kept, ref)
+		}
+		if !mutated {
+			continue
+		}
+		sa.ImagePullSecrets = kept
+		if err := r.Update(ctx, sa); err != nil {
+			return fmt.Errorf("update SA %s/%s: %w", sa.Namespace, sa.Name, err)
+		}
+	}
+	return nil
 }
