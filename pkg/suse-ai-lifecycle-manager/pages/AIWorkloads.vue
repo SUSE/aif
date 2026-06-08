@@ -243,7 +243,7 @@ async function executeUpgrade() {
               class="input-sm"
             />
           </div>
-          <select v-model="sortBy" class="sort-select form-control-sm">
+          <select v-model="sortBy" class="sort-select form-control-sm" aria-label="Sort workloads">
             <option value="name-asc">Name (A → Z)</option>
             <option value="name-desc">Name (Z → A)</option>
             <option value="status">Status (healthy first)</option>
