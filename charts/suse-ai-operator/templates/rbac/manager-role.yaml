@@ -194,6 +194,18 @@ rules:
   - apiGroups:
       - fleet.cattle.io
     resources:
+      - bundles
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
       - gitrepos
     verbs:
       - create

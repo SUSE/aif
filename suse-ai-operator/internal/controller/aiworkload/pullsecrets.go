@@ -5,10 +5,13 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	"github.com/SUSE/suse-ai-operator/internal/cluster"
 )
 
 // reconcilePullSecrets ensures every named pull-secret is merged into every
@@ -154,4 +157,126 @@ func mergePullSecretNames(existing, add []string) []string {
 		have[n] = struct{}{}
 	}
 	return out
+}
+
+// PullSecretFactory builds a Secret object (without writing it) for a given
+// target namespace and secret name. The injector/caller supplies this so
+// deliverPullSecrets stays agnostic to credential plumbing. Returning
+// (nil, nil) signals "credentials not configured — skip this secret"; the
+// caller treats this as a no-op rather than an error.
+type PullSecretFactory func(targetNamespace, secretName string) (*corev1.Secret, error)
+
+// deliverPullSecrets ensures the secret names listed in
+// w.Status.PullSecretNames are delivered to:
+//   - the operator's own cluster (always, in w.Spec.TargetNamespace),
+//   - each downstream cluster in w.Spec.TargetClusters (via Fleet Bundle).
+//
+// The "local" string in TargetClusters is skipped on the downstream loop
+// because it's already covered by the unconditional local-write — emitting
+// a Fleet Bundle for "local" would duplicate delivery.
+func (r *AIWorkloadReconciler) deliverPullSecrets(
+	ctx context.Context,
+	w *aiplatformv1alpha1.AIWorkload,
+	factory PullSecretFactory,
+) error {
+	if w.Spec.TargetNamespace == "" || len(w.Status.PullSecretNames) == 0 || factory == nil {
+		return nil
+	}
+
+	// Stop on first error; the next reconcile retries from a clean state.
+	apply := func(cc cluster.Client, name, where string) error {
+		sec, err := factory(w.Spec.TargetNamespace, name)
+		if err != nil {
+			return fmt.Errorf("build pull secret %s for %s: %w", name, where, err)
+		}
+		if sec == nil {
+			return nil // creds not configured — skip
+		}
+		if err := cc.ApplySecret(ctx, sec); err != nil {
+			return fmt.Errorf("apply pull secret %s to %s: %w", name, where, err)
+		}
+		return nil
+	}
+
+	// Local cluster — always.
+	local := r.localCC()
+	for _, name := range w.Status.PullSecretNames {
+		if err := apply(local, name, "local cluster"); err != nil {
+			return err
+		}
+	}
+
+	// Downstream — one Bundle per cluster ID × per secret name. Skip "local"
+	// (already covered above) and empty entries.
+	for _, clusterID := range w.Spec.TargetClusters {
+		if clusterID == "" || clusterID == "local" {
+			continue
+		}
+		bc := cluster.NewBundleClient(r.Client, r.Scheme, cluster.BundleClientOptions{
+			ClusterID:      clusterID,
+			FleetWorkspace: "fleet-default",
+			OwnerName:      w.Name,
+			OwnerNamespace: w.Namespace,
+		})
+		for _, name := range w.Status.PullSecretNames {
+			if err := apply(bc, name, "cluster "+clusterID); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// pullSecretFactory returns a PullSecretFactory that produces the
+// dockerconfigjson and API-key Secrets the operator delivers. Returning
+// (nil, nil) means "credentials not configured — skip"; deliverPullSecrets
+// treats this as a no-op.
+//
+// Today only the NVIDIA-owned secret names (ngc-secret, ngc-api) are
+// recognized — these are the names nvidiaInjector creates and persists onto
+// Status.PullSecretNames. The suse-vendor combined pull secret stays
+// local-only (its content is per-cluster Settings-derived); names that
+// don't match anything below are skipped via (nil, nil).
+func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecretFactory {
+	return func(targetNamespace, secretName string) (*corev1.Secret, error) {
+		switch secretName {
+		case nvidiaImagePullSecretName:
+			cfg, err := r.buildNGCDockerConfig(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if cfg == nil {
+				return nil, nil
+			}
+			return &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNamespace},
+				Type:       corev1.SecretTypeDockerConfigJson,
+				Data:       map[string][]byte{corev1.DockerConfigJsonKey: cfg},
+			}, nil
+		case nvidiaAPISecretName:
+			// Re-read the token via the same Settings path so we don't have
+			// to plumb it back from buildNGCDockerConfig.
+			var s aiplatformv1alpha1.Settings
+			if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
+				return nil, nil
+			}
+			if s.Spec.Nvidia.TokenSecretRef == nil {
+				return nil, nil
+			}
+			token, err := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
+			if err != nil || token == "" {
+				return nil, nil
+			}
+			return &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNamespace},
+				Type:       corev1.SecretTypeOpaque,
+				Data:       map[string][]byte{nvidiaAPISecretKey: []byte(token)},
+			}, nil
+		default:
+			// Unknown secret name (e.g. the suse combined secret); skip.
+			// The existing local-only injector path already handled it.
+			return nil, nil
+		}
+	}
 }

@@ -2,11 +2,15 @@ package aiworkload
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -331,5 +335,347 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 	}
 	if !settled {
 		t.Errorf("round 2: expected settled=true")
+	}
+}
+
+func TestDeliverPullSecrets_EmitsBundlePerDownstreamCluster(t *testing.T) {
+	scheme := newTestScheme(t)
+	// Register Bundle/BundleList GVK so the fake client accepts unstructured
+	// bundle objects.
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "target-ns",
+			TargetClusters:  []string{"c-aaa", "c-bbb"},
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretNames: []string{"ngc-secret"},
+		},
+	}
+
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+		t.Fatalf("deliverPullSecrets: %v", err)
+	}
+
+	// Local cluster always: ngc-secret should exist in target-ns on the operator's cluster.
+	var localSecret corev1.Secret
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: "target-ns", Name: "ngc-secret"}, &localSecret); err != nil {
+		t.Fatalf("local ngc-secret missing: %v", err)
+	}
+	if localSecret.Type != corev1.SecretTypeDockerConfigJson {
+		t.Errorf("local secret type: got %v want %v", localSecret.Type, corev1.SecretTypeDockerConfigJson)
+	}
+
+	// Downstream: exactly 2 bundles in fleet-default (one per cluster).
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles, client.InNamespace("fleet-default")); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	if len(bundles.Items) != 2 {
+		names := make([]string, 0, len(bundles.Items))
+		for _, b := range bundles.Items {
+			names = append(names, b.GetName())
+		}
+		t.Errorf("expected 2 bundles in fleet-default (one per cluster), got %d: %v", len(bundles.Items), names)
+	}
+	gotNames := map[string]bool{}
+	for _, b := range bundles.Items {
+		gotNames[b.GetName()] = true
+	}
+	for _, want := range []string{"ai-pullsecrets-wl-c-aaa-ngc-secret", "ai-pullsecrets-wl-c-bbb-ngc-secret"} {
+		if !gotNames[want] {
+			t.Errorf("missing bundle %q; got %+v", want, gotNames)
+		}
+	}
+}
+
+func TestDeliverPullSecrets_LocalOnlyWhenNoTargetClusters(t *testing.T) {
+	scheme := newTestScheme(t)
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "target-ns",
+			TargetClusters:  nil, // local-only
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretNames: []string{"ngc-secret"},
+		},
+	}
+
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+		t.Fatalf("deliverPullSecrets: %v", err)
+	}
+
+	var localSecret corev1.Secret
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: "target-ns", Name: "ngc-secret"}, &localSecret); err != nil {
+		t.Fatalf("local ngc-secret missing: %v", err)
+	}
+
+	// No bundles should exist when there are no downstream clusters.
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	if len(bundles.Items) != 0 {
+		t.Errorf("expected 0 bundles for local-only workload, got %d", len(bundles.Items))
+	}
+}
+
+func TestDeliverPullSecrets_SkipsLocalEntryInTargetClusters(t *testing.T) {
+	// If TargetClusters contains "local", that means the local cluster IS the
+	// target — we already handle the local case unconditionally, so "local"
+	// in TargetClusters should NOT produce a Bundle (which would be redundant
+	// AND wrong — Fleet's fleet-local workspace targets the local cluster
+	// differently; we'd be duplicating delivery and confusing the model).
+	scheme := newTestScheme(t)
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "target-ns",
+			TargetClusters:  []string{"local", "c-bbb"},
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretNames: []string{"ngc-secret"},
+		},
+	}
+
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+		t.Fatalf("deliverPullSecrets: %v", err)
+	}
+
+	var localSecret corev1.Secret
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: "target-ns", Name: "ngc-secret"}, &localSecret); err != nil {
+		t.Fatalf("local ngc-secret missing: %v", err)
+	}
+
+	// Expect exactly 1 bundle (for c-bbb), NOT 2.
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	if len(bundles.Items) != 1 {
+		names := make([]string, 0, len(bundles.Items))
+		for _, b := range bundles.Items {
+			names = append(names, b.GetName())
+		}
+		t.Errorf("expected 1 bundle (c-bbb only), got %d: %v", len(bundles.Items), names)
+	}
+}
+
+func TestDeliverPullSecrets_FactoryReturningNilSkipsThatSecret(t *testing.T) {
+	// When the factory returns (nil, nil) for a secret name (meaning "not
+	// configured"), deliverPullSecrets should skip it without erroring and
+	// not write anything for that name.
+	scheme := newTestScheme(t)
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "target-ns",
+			TargetClusters:  []string{"c-aaa"},
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretNames: []string{"ngc-secret"},
+		},
+	}
+
+	nilFactory := func(ns, name string) (*corev1.Secret, error) { return nil, nil }
+	if err := r.deliverPullSecrets(context.Background(), w, nilFactory); err != nil {
+		t.Fatalf("deliverPullSecrets: %v", err)
+	}
+
+	// No local secret.
+	var localSecret corev1.Secret
+	err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: "target-ns", Name: "ngc-secret"}, &localSecret)
+	if err == nil {
+		t.Errorf("expected local ngc-secret to be absent, got: %+v", localSecret)
+	}
+	// No bundles.
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	if len(bundles.Items) != 0 {
+		t.Errorf("expected 0 bundles, got %d", len(bundles.Items))
+	}
+}
+
+func TestDeliverPullSecrets_FactoryErrorPropagates(t *testing.T) {
+	scheme := newTestScheme(t)
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "target-ns",
+			TargetClusters:  []string{"c-aaa"},
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretNames: []string{"ngc-secret"},
+		},
+	}
+
+	boom := errors.New("creds-read failed")
+	errFactory := func(ns, name string) (*corev1.Secret, error) { return nil, boom }
+
+	err := r.deliverPullSecrets(context.Background(), w, errFactory)
+	if err == nil {
+		t.Fatal("expected error from factory to propagate; got nil")
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("expected wrapped boom error; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ngc-secret") {
+		t.Errorf("expected error to mention secret name; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "local cluster") {
+		t.Errorf("expected error to mention 'local cluster' (first failure point); got %v", err)
+	}
+
+	// Nothing should have been written (factory failed on the local pass before the bundle pass).
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	if len(bundles.Items) != 0 {
+		t.Errorf("expected 0 bundles after factory error, got %d", len(bundles.Items))
+	}
+}
+
+// dummyPullSecretFactory builds a stub dockerconfigjson Secret for tests.
+func dummyPullSecretFactory(targetNamespace, secretName string) (*corev1.Secret, error) {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNamespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`)},
+	}, nil
+}
+
+func TestPullSecretFactory_NvidiaImagePullSecret(t *testing.T) {
+	scheme := newTestScheme(t)
+	opNS := "suse-ai-operator"
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: opNS},
+			Data:       map[string][]byte{"username": []byte("$oauthtoken")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: opNS},
+			Data:       map[string][]byte{"token": []byte("nvapi-test")},
+		},
+		&aiplatformv1alpha1.Settings{
+			ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: opNS},
+			Spec: aiplatformv1alpha1.SettingsSpec{
+				Nvidia: aiplatformv1alpha1.NvidiaSettings{
+					UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+					TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+				},
+			},
+		},
+	).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+
+	factory := r.pullSecretFactory(context.Background())
+
+	// ngc-secret: dockerconfigjson with non-empty data
+	sec, err := factory("target-ns", nvidiaImagePullSecretName)
+	if err != nil {
+		t.Fatalf("factory(ngc-secret): %v", err)
+	}
+	if sec == nil {
+		t.Fatal("expected non-nil dockerconfigjson secret; got nil")
+	}
+	if sec.Type != corev1.SecretTypeDockerConfigJson {
+		t.Errorf("type: got %v want %v", sec.Type, corev1.SecretTypeDockerConfigJson)
+	}
+	if len(sec.Data[corev1.DockerConfigJsonKey]) == 0 {
+		t.Errorf("dockerconfigjson data is empty")
+	}
+
+	// ngc-api: Opaque with NGC_API_KEY
+	api, err := factory("target-ns", nvidiaAPISecretName)
+	if err != nil {
+		t.Fatalf("factory(ngc-api): %v", err)
+	}
+	if api == nil {
+		t.Fatal("expected non-nil ngc-api secret; got nil")
+	}
+	if api.Type != corev1.SecretTypeOpaque {
+		t.Errorf("type: got %v want Opaque", api.Type)
+	}
+	if string(api.Data[nvidiaAPISecretKey]) != "nvapi-test" {
+		t.Errorf("token: got %q want nvapi-test", api.Data[nvidiaAPISecretKey])
+	}
+
+	// Unknown name: returns (nil, nil)
+	unk, err := factory("target-ns", "unknown")
+	if err != nil {
+		t.Fatalf("factory(unknown): %v", err)
+	}
+	if unk != nil {
+		t.Errorf("expected nil for unknown name; got %+v", unk)
+	}
+}
+
+func TestPullSecretFactory_NoCredsReturnsNil(t *testing.T) {
+	scheme := newTestScheme(t)
+	opNS := "suse-ai-operator"
+	// No Settings, no secrets — factory should return (nil, nil) for ngc-secret.
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+
+	factory := r.pullSecretFactory(context.Background())
+	sec, err := factory("target-ns", nvidiaImagePullSecretName)
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	if sec != nil {
+		t.Errorf("expected nil when creds not configured; got %+v", sec)
 	}
 }

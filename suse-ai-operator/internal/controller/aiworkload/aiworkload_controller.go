@@ -49,6 +49,7 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=blueprints,verbs=get;list;watch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;patch;update
@@ -88,6 +89,9 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if len(w.Status.PullSecretNames) > 0 && w.Spec.TargetNamespace != "" {
+		if err := r.deliverPullSecrets(ctx, &w, r.pullSecretFactory(ctx)); err != nil {
+			return ctrl.Result{}, err
+		}
 		settled, err := r.reconcilePullSecrets(ctx, &w, w.Status.PullSecretNames)
 		if err != nil {
 			return ctrl.Result{}, err

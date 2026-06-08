@@ -133,6 +133,7 @@ rules:
 - apiGroups:
   - fleet.cattle.io
   resources:
+  - bundles
   - gitrepos
   verbs:
   - create

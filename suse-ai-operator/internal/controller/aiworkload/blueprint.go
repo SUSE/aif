@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	"github.com/SUSE/suse-ai-operator/internal/cluster"
 	igit "github.com/SUSE/suse-ai-operator/internal/git"
 )
 
@@ -115,7 +116,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	if c.Values != nil {
 		_ = json.Unmarshal(c.Values.Raw, &vals)
 	}
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals)
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -194,11 +195,11 @@ const (
 // it writes. A no-op Apply (e.g., missing credentials) is acceptable; Helm will
 // surface the resulting ImagePullBackOff downstream.
 type secretInjector interface {
-	// Apply writes any dockerconfigjson Secret(s) it needs to the target
-	// namespace and sets value-path references in vals. Returns the names
-	// of dockerconfigjson Secrets it wrote (used by reconcilePullSecrets
-	// downstream to attach them to ServiceAccounts).
-	Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) (createdSecretNames []string, err error)
+	// Apply writes any dockerconfigjson Secret(s) it needs through cc, sets
+	// value-path references in vals, and returns the names of Secrets it
+	// wrote (used by reconcilePullSecrets downstream to attach them to
+	// ServiceAccounts).
+	Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) (createdSecretNames []string, err error)
 }
 
 // suseInjector preserves the historical combined-secret behavior: one
@@ -206,8 +207,8 @@ type secretInjector interface {
 // imagePullSecrets and global.imagePullSecrets.
 type suseInjector struct{ r *AIWorkloadReconciler }
 
-func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
-	name, err := s.r.ensureCombinedPullSecret(ctx, targetNamespace, repoInfo)
+func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
+	name, err := s.r.ensureCombinedPullSecret(ctx, cc, targetNamespace, repoInfo)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", targetNamespace)
 		return nil, nil
@@ -228,65 +229,91 @@ func (s *suseInjector) Apply(ctx context.Context, targetNamespace string, repoIn
 // covers the surveyed NIM chart families.
 type nvidiaInjector struct{ r *AIWorkloadReconciler }
 
-func (n *nvidiaInjector) Apply(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
+func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
 	l := log.FromContext(ctx)
 
-	var s aiplatformv1alpha1.Settings
-	if err := n.r.Get(ctx, types.NamespacedName{Namespace: n.r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
-		l.Info("nvidia injector: settings not found, skipping", "namespace", targetNamespace, "err", err.Error())
-		return nil, nil
+	dockerCfg, err := n.r.buildNGCDockerConfig(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if s.Spec.Nvidia.UserSecretRef == nil || s.Spec.Nvidia.TokenSecretRef == nil {
+	if dockerCfg == nil {
 		l.Info("nvidia injector: credentials not configured, skipping", "namespace", targetNamespace)
 		return nil, nil
 	}
-	user, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
-	if err != nil || user == "" {
-		l.Info("nvidia injector: user secret unreadable, skipping", "namespace", targetNamespace, "err", fmt.Sprint(err))
+
+	// Re-read the token via the same Settings path so the apiSecret can use
+	// it; buildNGCDockerConfig doesn't expose the credential it baked in.
+	var s aiplatformv1alpha1.Settings
+	if err := n.r.Get(ctx, types.NamespacedName{Namespace: n.r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
 		return nil, nil
 	}
 	token, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
 	if err != nil || token == "" {
-		l.Info("nvidia injector: token secret unreadable, skipping", "namespace", targetNamespace, "err", fmt.Sprint(err))
 		return nil, nil
 	}
 
+	pullSecret := &corev1.Secret{}
+	pullSecret.Name = nvidiaImagePullSecretName
+	pullSecret.Namespace = targetNamespace
+	pullSecret.Type = corev1.SecretTypeDockerConfigJson
+	pullSecret.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
+	if err := cc.ApplySecret(ctx, pullSecret); err != nil {
+		return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
+	}
+
+	apiSecret := &corev1.Secret{}
+	apiSecret.Name = nvidiaAPISecretName
+	apiSecret.Namespace = targetNamespace
+	apiSecret.Type = corev1.SecretTypeOpaque
+	apiSecret.Data = map[string][]byte{nvidiaAPISecretKey: []byte(token)}
+	if err := cc.ApplySecret(ctx, apiSecret); err != nil {
+		return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
+	}
+
+	injectNvidiaPullSecretRefs(vals)
+	return []string{nvidiaImagePullSecretName, nvidiaAPISecretName}, nil
+}
+
+// buildNGCDockerConfig reads NVIDIA Settings + credentials from the operator
+// namespace and returns the marshaled dockerconfigjson bytes. Returns
+// (nil, nil) when credentials are not configured or unreadable — callers
+// should treat this as "no NGC secret to deliver this round" and skip.
+// Returns (nil, err) only on a hard error like JSON marshaling failure.
+func (r *AIWorkloadReconciler) buildNGCDockerConfig(ctx context.Context) ([]byte, error) {
+	var s aiplatformv1alpha1.Settings
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
+		return nil, nil
+	}
+	if s.Spec.Nvidia.UserSecretRef == nil || s.Spec.Nvidia.TokenSecretRef == nil {
+		return nil, nil
+	}
+	user, err := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
+	if err != nil || user == "" {
+		return nil, nil
+	}
+	token, err := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
+	if err != nil || token == "" {
+		return nil, nil
+	}
 	host := defaultNvidiaHost
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
 		host = s.Spec.RegistryEndpoints.Nvidia
 	}
-
-	dockerCfg, err := json.Marshal(map[string]any{
+	cfg, err := json.Marshal(map[string]any{
 		"auths": map[string]any{host: dockerAuthEntry(user, token)},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal ngc dockerconfigjson: %w", err)
 	}
+	return cfg, nil
+}
 
-	pullSecret := &corev1.Secret{}
-	pullSecret.APIVersion = "v1"
-	pullSecret.Kind = "Secret"
-	pullSecret.Name = nvidiaImagePullSecretName
-	pullSecret.Namespace = targetNamespace
-	pullSecret.Type = corev1.SecretTypeDockerConfigJson
-	pullSecret.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
-	if err := n.r.Patch(ctx, pullSecret, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
-		return nil, fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
-	}
-
-	apiSecret := &corev1.Secret{}
-	apiSecret.APIVersion = "v1"
-	apiSecret.Kind = "Secret"
-	apiSecret.Name = nvidiaAPISecretName
-	apiSecret.Namespace = targetNamespace
-	apiSecret.Type = corev1.SecretTypeOpaque
-	apiSecret.Data = map[string][]byte{nvidiaAPISecretKey: []byte(token)}
-	if err := n.r.Patch(ctx, apiSecret, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
-		return nil, fmt.Errorf("patch %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
-	}
-
-	injectNvidiaPullSecretRefs(vals)
-	return []string{nvidiaImagePullSecretName, nvidiaAPISecretName}, nil
+// localCC returns a cluster.Client bound to the operator's own cluster.
+// Use this at call sites that write Secrets that should live on the
+// operator's cluster (i.e., the local-only path). Task 2.x will introduce
+// per-target-cluster client selection for the cross-cluster delivery path.
+func (r *AIWorkloadReconciler) localCC() cluster.Client {
+	return cluster.NewLocalClient(r.Client, r.Scheme)
 }
 
 // injectorFor returns the secretInjector for a component vendor. Unknown or
@@ -306,7 +333,7 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 // chartRepo, ApplicationCollection, and SUSERegistry from Settings. This ensures subchart
 // images pulled from a different registry than the parent chart are also authenticated.
 // Returns the secret name, or "" if no credentials are available.
-func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, targetNamespace string, repoInfo clusterRepoInfo) (string, error) {
+func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo) (string, error) {
 	auths := map[string]any{}
 
 	// Component's own chartRepo credentials.
@@ -369,13 +396,11 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 	}
 
 	dst := &corev1.Secret{}
-	dst.APIVersion = "v1"
-	dst.Kind = "Secret"
 	dst.Name = combinedPullSecretName
 	dst.Namespace = targetNamespace
 	dst.Type = corev1.SecretTypeDockerConfigJson
 	dst.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
-	if err := r.Patch(ctx, dst, client.Apply, client.ForceOwnership, client.FieldOwner("suse-ai-operator")); err != nil {
+	if err := cc.ApplySecret(ctx, dst); err != nil {
 		return "", err
 	}
 	return combinedPullSecretName, nil
@@ -466,7 +491,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	vals := map[string]any{}
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, w.Spec.TargetNamespace, repoInfo, vals)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals)
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}

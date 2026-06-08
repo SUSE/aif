@@ -49,9 +49,9 @@ func TestEnsureCombinedPullSecret_IncludesNvidia(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(userSecret, tokenSecret, settings).Build()
 
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 
-	name, err := r.ensureCombinedPullSecret(context.Background(), targetNS, clusterRepoInfo{})
+	name, err := r.ensureCombinedPullSecret(context.Background(), r.localCC(), targetNS, clusterRepoInfo{})
 	if err != nil {
 		t.Fatalf("ensureCombinedPullSecret: %v", err)
 	}
@@ -119,9 +119,9 @@ func TestEnsureCombinedPullSecret_NvidiaHostOverride(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(userSecret, tokenSecret, settings).Build()
 
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 
-	name, err := r.ensureCombinedPullSecret(context.Background(), targetNS, clusterRepoInfo{})
+	name, err := r.ensureCombinedPullSecret(context.Background(), r.localCC(), targetNS, clusterRepoInfo{})
 	if err != nil {
 		t.Fatalf("ensureCombinedPullSecret: %v", err)
 	}
@@ -178,11 +178,11 @@ func TestNvidiaInjector_CreatesBothSecrets(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(userSecret, tokenSecret, settings).Build()
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), targetNS, clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -259,10 +259,10 @@ func TestNvidiaInjector_HostOverride(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(userSecret, tokenSecret, settings).Build()
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
-	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -302,11 +302,11 @@ func TestNvidiaInjector_NoCreds_NoOp(t *testing.T) {
 		Spec:       aiplatformv1alpha1.SettingsSpec{}, // no Nvidia creds
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings).Build()
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), targetNS, clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if len(vals) != 0 {
@@ -339,10 +339,10 @@ func TestNvidiaInjector_MissingTokenSecret(t *testing.T) {
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings).Build()
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
-	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), targetNS, clusterRepoInfo{}, map[string]any{}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	pull := &corev1.Secret{}
@@ -380,11 +380,11 @@ func TestNvidiaInjector_WritesBothPathShapes(t *testing.T) {
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(userSecret, tokenSecret, settings).Build()
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 	inj := &nvidiaInjector{r: r}
 
 	vals := map[string]any{}
-	if _, err := inj.Apply(context.Background(), targetNS, clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), targetNS, clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -422,7 +422,7 @@ func TestNvidiaInjector_PreservesAuthorPullSecrets(t *testing.T) {
 		"imagePullSecrets": []any{map[string]any{"name": "author-secret"}},
 		"image":            map[string]any{"pullSecrets": []any{"author-string"}},
 	}
-	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
@@ -442,11 +442,12 @@ func TestNvidiaInjector_IdempotentSelfEntry(t *testing.T) {
 	_, r := buildNvidiaInjectorFixture(t)
 	inj := &nvidiaInjector{r: r}
 
+	cc := r.localCC()
 	vals := map[string]any{}
-	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), cc, "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("first Apply: %v", err)
 	}
-	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), cc, "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("second Apply: %v", err)
 	}
 
@@ -466,7 +467,7 @@ func TestNvidiaInjector_LeavesUnexpectedShapesAlone(t *testing.T) {
 
 	// Author wrote an integer where we expect a slice — refuse to mutate.
 	vals := map[string]any{"imagePullSecrets": 42}
-	if _, err := inj.Apply(context.Background(), "rag", clusterRepoInfo{}, vals); err != nil {
+	if _, err := inj.Apply(context.Background(), r.localCC(), "rag", clusterRepoInfo{}, vals); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if vals["imagePullSecrets"] != 42 {
@@ -505,7 +506,7 @@ func buildNvidiaInjectorFixture(t *testing.T) (client.Client, *AIWorkloadReconci
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(userSecret, tokenSecret, settings).Build()
-	r := &AIWorkloadReconciler{Client: c, OperatorNamespace: opNS}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 	return c, r
 }
 
