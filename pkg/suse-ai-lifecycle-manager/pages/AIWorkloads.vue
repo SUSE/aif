@@ -18,6 +18,7 @@ const cluster = (route?.params?.cluster as string) || '_';
 const loading    = ref(true);
 const error      = ref<string | null>(null);
 const search     = ref('');
+const sortBy     = ref('name-asc');
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
 
@@ -54,15 +55,33 @@ const upgradeVersionSelectOptions = computed(() =>
 );
 
 // ── Filtering ──────────────────────────────────────────────────────────────────
+const PHASE_ORDER: Record<string, number> = { Running: 0, Degraded: 1, Failed: 2, Pending: 3 };
+
 const filteredWorkloads = computed(() => {
   const q = search.value.toLowerCase();
-  if (!q) return workloads.value;
-  return workloads.value.filter(w =>
-    w.metadata.name.toLowerCase().includes(q) ||
-    w.spec.displayName?.toLowerCase().includes(q) ||
-    w.metadata.namespace.toLowerCase().includes(q) ||
-    w.spec.source.sourceType.toLowerCase().includes(q),
-  );
+  const list = q
+    ? workloads.value.filter(w =>
+        w.metadata.name.toLowerCase().includes(q) ||
+        w.spec.displayName?.toLowerCase().includes(q) ||
+        w.metadata.namespace.toLowerCase().includes(q) ||
+        w.spec.source.sourceType.toLowerCase().includes(q),
+      )
+    : [...workloads.value];
+  const key = sortBy.value;
+  return list.sort((a, b) => {
+    switch (key) {
+      case 'name-desc':
+        return b.metadata.name.localeCompare(a.metadata.name);
+      case 'status':
+        return (PHASE_ORDER[a.status?.phase || 'Pending'] ?? 4) - (PHASE_ORDER[b.status?.phase || 'Pending'] ?? 4)
+          || a.metadata.name.localeCompare(b.metadata.name);
+      case 'source':
+        return a.spec.source.sourceType.localeCompare(b.spec.source.sourceType)
+          || a.metadata.name.localeCompare(b.metadata.name);
+      default:
+        return a.metadata.name.localeCompare(b.metadata.name);
+    }
+  });
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -224,6 +243,12 @@ async function executeUpgrade() {
               class="input-sm"
             />
           </div>
+          <select v-model="sortBy" class="sort-select form-control-sm">
+            <option value="name-asc">Name (A → Z)</option>
+            <option value="name-desc">Name (Z → A)</option>
+            <option value="status">Status (healthy first)</option>
+            <option value="source">Source (App, Blueprint)</option>
+          </select>
           <button class="btn role-secondary ml-auto" @click="refresh" :disabled="loading" type="button">
             <i v-if="loading" class="icon icon-spinner icon-spin" />
             <i v-else class="icon icon-refresh" />
@@ -437,6 +462,16 @@ async function executeUpgrade() {
       font-size: 14px;
     }
 
+    .sort-select {
+      height: 30px;
+      padding: 0 6px 0 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--border-radius);
+      background: var(--input-bg);
+      color: var(--body-text);
+      font-size: 13px;
+      width: auto;
+    }
     .ml-auto { margin-left: auto; }
   }
 }
