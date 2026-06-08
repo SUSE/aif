@@ -43,7 +43,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	var bp aiplatformv1alpha1.Blueprint
 	if err := r.Get(ctx, types.NamespacedName{Name: crName}, &bp); err != nil {
 		if errors.IsNotFound(err) {
-			w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseFailed
+			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -477,7 +477,7 @@ func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aip
 		})
 	}
 	w.Status.ClusterStatuses = statuses
-	w.Status.Phase = derivePhase(statuses)
+	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
 	return nil
 }
 

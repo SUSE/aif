@@ -3,6 +3,7 @@ package aiworkload
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"helm.sh/helm/v3/pkg/action"
 	corev1 "k8s.io/api/core/v1"
@@ -216,7 +217,7 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 	}
 
 	w.Status.ClusterStatuses = statuses
-	w.Status.Phase = derivePhase(statuses)
+	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
 	return nil
 }
 
@@ -296,6 +297,26 @@ func derivePhase(statuses []aiplatformv1alpha1.AIWorkloadClusterStatus) aiplatfo
 		// inspects per-cluster status.
 		return aiplatformv1alpha1.AIWorkloadPhaseDegraded
 	}
+}
+
+const initialDeployGracePeriod = 5 * time.Minute
+
+// guardPhaseTransition prevents a workload from jumping directly to Failed
+// when it has never reached Running. Transient Fleet errors during initial
+// deployment would otherwise flash a "Failed" badge for a few seconds.
+// After initialDeployGracePeriod the suppression expires so genuine failures
+// are not hidden indefinitely.
+func guardPhaseTransition(derived, current aiplatformv1alpha1.AIWorkloadPhase, createdAt time.Time) aiplatformv1alpha1.AIWorkloadPhase {
+	if derived == aiplatformv1alpha1.AIWorkloadPhaseFailed {
+		switch current {
+		case aiplatformv1alpha1.AIWorkloadPhaseRunning, aiplatformv1alpha1.AIWorkloadPhaseDegraded, aiplatformv1alpha1.AIWorkloadPhaseFailed:
+		default:
+			if time.Since(createdAt) < initialDeployGracePeriod {
+				return aiplatformv1alpha1.AIWorkloadPhasePending
+			}
+		}
+	}
+	return derived
 }
 
 // ── Watch mappers ─────────────────────────────────────────────────────────────

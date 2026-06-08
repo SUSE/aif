@@ -2,6 +2,7 @@ package aiworkload
 
 import (
 	"testing"
+	"time"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
 )
@@ -46,6 +47,50 @@ func TestDerivePhase(t *testing.T) {
 			got := derivePhase(tt.input)
 			if got != tt.want {
 				t.Errorf("derivePhase() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGuardPhaseTransition(t *testing.T) {
+	recent := time.Now()
+	stale := time.Now().Add(-10 * time.Minute)
+
+	tests := []struct {
+		name      string
+		derived   aiplatformv1alpha1.AIWorkloadPhase
+		current   aiplatformv1alpha1.AIWorkloadPhase
+		createdAt time.Time
+		want      aiplatformv1alpha1.AIWorkloadPhase
+	}{
+		// Failed suppressed during grace period when workload has never been Running.
+		{"Failed from empty (recent) → Pending", aiplatformv1alpha1.AIWorkloadPhaseFailed, "", recent, aiplatformv1alpha1.AIWorkloadPhasePending},
+		{"Failed from Unknown (recent) → Pending", aiplatformv1alpha1.AIWorkloadPhaseFailed, aiplatformv1alpha1.AIWorkloadPhaseUnknown, recent, aiplatformv1alpha1.AIWorkloadPhasePending},
+		{"Failed from Pending (recent) → Pending", aiplatformv1alpha1.AIWorkloadPhaseFailed, aiplatformv1alpha1.AIWorkloadPhasePending, recent, aiplatformv1alpha1.AIWorkloadPhasePending},
+
+		// Grace period expired — stop suppressing, let Failed through.
+		{"Failed from empty (stale) → Failed", aiplatformv1alpha1.AIWorkloadPhaseFailed, "", stale, aiplatformv1alpha1.AIWorkloadPhaseFailed},
+		{"Failed from Pending (stale) → Failed", aiplatformv1alpha1.AIWorkloadPhaseFailed, aiplatformv1alpha1.AIWorkloadPhasePending, stale, aiplatformv1alpha1.AIWorkloadPhaseFailed},
+
+		// Failed allowed when workload was previously healthy (regardless of age).
+		{"Failed from Running → Failed", aiplatformv1alpha1.AIWorkloadPhaseFailed, aiplatformv1alpha1.AIWorkloadPhaseRunning, recent, aiplatformv1alpha1.AIWorkloadPhaseFailed},
+		{"Failed from Degraded → Failed", aiplatformv1alpha1.AIWorkloadPhaseFailed, aiplatformv1alpha1.AIWorkloadPhaseDegraded, recent, aiplatformv1alpha1.AIWorkloadPhaseFailed},
+
+		// Failed→Failed stays Failed (no oscillation).
+		{"Failed from Failed → Failed", aiplatformv1alpha1.AIWorkloadPhaseFailed, aiplatformv1alpha1.AIWorkloadPhaseFailed, recent, aiplatformv1alpha1.AIWorkloadPhaseFailed},
+
+		// Non-Failed phases are never suppressed.
+		{"Running passthrough", aiplatformv1alpha1.AIWorkloadPhaseRunning, aiplatformv1alpha1.AIWorkloadPhasePending, recent, aiplatformv1alpha1.AIWorkloadPhaseRunning},
+		{"Pending passthrough", aiplatformv1alpha1.AIWorkloadPhasePending, aiplatformv1alpha1.AIWorkloadPhaseUnknown, recent, aiplatformv1alpha1.AIWorkloadPhasePending},
+		{"Degraded passthrough", aiplatformv1alpha1.AIWorkloadPhaseDegraded, aiplatformv1alpha1.AIWorkloadPhasePending, recent, aiplatformv1alpha1.AIWorkloadPhaseDegraded},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := guardPhaseTransition(tt.derived, tt.current, tt.createdAt)
+			if got != tt.want {
+				t.Errorf("guardPhaseTransition(%q, %q, age=%v) = %q, want %q",
+					tt.derived, tt.current, time.Since(tt.createdAt).Round(time.Second), got, tt.want)
 			}
 		})
 	}
