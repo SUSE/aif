@@ -143,7 +143,11 @@ export function buildFleetBundleYAML(params: {
 
   const isOCI = params.chartRepoUrl.startsWith('oci://');
   const spec: Record<string, any> = {
-    namespace: params.targetNamespace,
+    // defaultNamespace (not namespace): targets the release namespace without
+    // forcing every resource into it. Fleet's strict `namespace` field rejects
+    // any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+    // operator/CRD-bearing charts.
+    defaultNamespace: params.targetNamespace,
     helm: {
       ...(isOCI ? {} : { chart: params.chartName }),
       version:     params.chartVersion,
@@ -229,7 +233,11 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     disablePreProcess: true,
   };
 
-  const baseSpec: Record<string, any> = { namespace: params.targetNamespace, helm: helmSpec };
+  // defaultNamespace (not namespace): targets the release namespace without
+  // forcing every resource into it. Fleet's strict `namespace` field rejects
+  // any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+  // operator/CRD-bearing charts.
+  const baseSpec: Record<string, any> = { defaultNamespace: params.targetNamespace, helm: helmSpec };
   if (pullCreds && secretRef) {
     baseSpec.helmSecretName = secretRef.name;
   }
