@@ -216,6 +216,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 
 	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.Client, namespace, releaseName, logger)
 	if err != nil {
+		setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
+			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err), ext.Generation)
 		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 	}
 	if !deployStatus.Ready {
