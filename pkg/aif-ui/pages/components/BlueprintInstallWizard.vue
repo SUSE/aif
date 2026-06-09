@@ -36,12 +36,6 @@ const deployType   = ref<AIWorkloadDeployStrategy>('FleetBundle');
 const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
-// Blueprint install only supports FleetBundle and GitOps; clamp any Helm selection.
-const filteredDeployType = computed({
-  get: () => (deployType.value === 'Helm' ? 'FleetBundle' : deployType.value) as AIWorkloadDeployStrategy,
-  set: (v: AIWorkloadDeployStrategy) => { deployType.value = v; },
-});
-
 const wizardSteps = computed(() => [
   { label: 'Basic Info', ready: true },
   { label: 'Target',     ready: workloadName.value.trim() !== '' && namespace.value !== '' },
@@ -123,7 +117,7 @@ async function onInstall() {
         },
         targetNamespace: namespace.value,
         targetClusters:  clusters.value,
-        deployStrategy:  filteredDeployType.value,
+        deployStrategy:  deployType.value,
       },
       { phase: 'Pending', clusterStatuses: [] },
     );
@@ -200,11 +194,12 @@ function onProgressCancel() { showProgressModal.value = false; }
             v-else-if="currentStep === 1"
             mode="install"
             :clusters="clusters"
-            :deploy-type="filteredDeployType"
+            :deploy-type="deployType"
+            :helm-unsupported="true"
             :app-slug="props.blueprintName"
             :app-name="blueprint?.spec.displayName || ''"
             @update:clusters="clusters = $event"
-            @update:deploy-type="filteredDeployType = $event"
+            @update:deploy-type="deployType = $event"
           />
           <BlueprintInstallReviewStep
             v-else-if="currentStep === 2"
@@ -213,7 +208,7 @@ function onProgressCancel() { showProgressModal.value = false; }
             :display-name="blueprint?.spec.displayName || ''"
             :version="props.blueprintVersion"
             :component-count="blueprint?.spec.components.length || 0"
-            :deploy-type="filteredDeployType"
+            :deploy-type="deployType"
             :clusters="clusters"
             :components="blueprint?.spec.components || []"
           />
