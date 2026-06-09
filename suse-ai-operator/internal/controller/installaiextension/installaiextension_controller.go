@@ -169,9 +169,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 
 	if ext.Status.HelmReleaseName != "" && ext.Status.HelmReleaseName != releaseName {
 		logger.Info("chart URL changed, uninstalling old release", "old", ext.Status.HelmReleaseName, "new", releaseName)
-		settings := cli.New()
-		settings.SetNamespace(namespace)
-		helm, err := helmClient.New(settings)
+		helm, err := newHelmClientForNamespace(namespace)
 		if err == nil {
 			_ = helm.DeleteRelease(ctx, ext.Status.HelmReleaseName)
 		}
@@ -193,9 +191,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, nil
 	}
 
-	settings := cli.New()
-	settings.SetNamespace(namespace)
-	helm, err := helmClient.New(settings)
+	helm, err := newHelmClientForNamespace(namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -341,10 +337,7 @@ func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
 	repoURL string,
 	namespace string,
 ) error {
-	settings := cli.New()
-	settings.SetNamespace(namespace)
-
-	helm, err := helmClient.New(settings)
+	helm, err := newHelmClientForNamespace(namespace)
 	if err != nil {
 		return err
 	}
@@ -390,9 +383,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 		}
 
 		if oldSource == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
-			settings := cli.New()
-			settings.SetNamespace(namespace)
-			helm, err := helmClient.New(settings)
+			helm, err := newHelmClientForNamespace(namespace)
 			if err == nil {
 				if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
 					errs = append(errs, err)
@@ -402,9 +393,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 			ext.Status.HelmReleaseRevision = 0
 		}
 		if oldSource == v1alpha1.ExtensionSourceKindGit {
-			settings := cli.New()
-			settings.SetNamespace(namespace)
-			helm, err := helmClient.New(settings)
+			helm, err := newHelmClientForNamespace(namespace)
 			if err == nil {
 				_ = helm.DeleteRelease(ctx, oldName)
 			}
@@ -427,9 +416,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 		}
 
 		if oldSource == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
-			settings := cli.New()
-			settings.SetNamespace(namespace)
-			helm, err := helmClient.New(settings)
+			helm, err := newHelmClientForNamespace(namespace)
 			if err == nil {
 				if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
 					errs = append(errs, err)
@@ -444,9 +431,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 		}
 
 		if oldSource == v1alpha1.ExtensionSourceKindGit {
-			settings := cli.New()
-			settings.SetNamespace(namespace)
-			helm, err := helmClient.New(settings)
+			helm, err := newHelmClientForNamespace(namespace)
 			if err == nil {
 				_ = helm.DeleteRelease(ctx, name)
 			}
@@ -473,6 +458,12 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 		Message:            message,
 		ObservedGeneration: generation,
 	})
+}
+
+func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) {
+	settings := cli.New()
+	settings.SetNamespace(namespace)
+	return helmClient.New(settings)
 }
 
 const annotationWaitingSince = "ai-platform.suse.com/waiting-since"

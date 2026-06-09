@@ -4,14 +4,12 @@ import (
 	"context"
 	stderrors "errors"
 
-	"helm.sh/helm/v3/pkg/cli"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
-	helmClient "github.com/SUSE/suse-ai-operator/internal/infra/helm"
 	"github.com/SUSE/suse-ai-operator/internal/infra/rancher"
 )
 
@@ -83,9 +81,7 @@ func (r *InstallAIExtensionReconciler) cleanup(
 
 	if ext.Status.HelmReleaseName != "" {
 		logger.Info("uninstalling Helm release", "release", ext.Status.HelmReleaseName)
-		settings := cli.New()
-		settings.SetNamespace(namespace)
-		helm, err := helmClient.New(settings)
+		helm, err := newHelmClientForNamespace(namespace)
 		if err == nil {
 			if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
 				errs = append(errs, err)
@@ -102,9 +98,7 @@ func (r *InstallAIExtensionReconciler) cleanup(
 				continue
 			}
 			logger.Info("uninstalling UIPlugin Helm release", "release", name)
-			settings := cli.New()
-			settings.SetNamespace(namespace)
-			helm, err := helmClient.New(settings)
+			helm, err := newHelmClientForNamespace(namespace)
 			if err == nil {
 				if err := helm.DeleteRelease(ctx, name); err != nil {
 					errs = append(errs, err)
