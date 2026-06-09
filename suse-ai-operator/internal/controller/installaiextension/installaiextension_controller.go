@@ -85,7 +85,7 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	result, reconcileErr := r.reconcile(ctx, &ext)
 
-	if reconcileErr == nil {
+	if reconcileErr == nil && ext.Status.Phase == v1alpha1.InstallAIExtensionPhaseInstalled {
 		ext.Status.ObservedGeneration = ext.Generation
 	}
 	if err := r.Status().Update(ctx, &ext); err != nil {
