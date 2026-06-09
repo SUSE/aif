@@ -1,0 +1,13 @@
+apiVersion: ai-platform.suse.com/v1alpha1
+kind: InstallAIExtension
+metadata:
+  name: aif-ui
+spec:
+  source:
+    kind: Helm
+    helm:
+      chartURL: "oci://ghcr.io/suse/chart/aif-ui"
+      version: "0.1.0"
+  extension:
+    name: aif-ui
+    version: "0.1.0"
