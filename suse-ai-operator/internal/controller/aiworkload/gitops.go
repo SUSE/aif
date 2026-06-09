@@ -66,12 +66,25 @@ func (r *AIWorkloadReconciler) reconcileGitOpsStatus(ctx context.Context, w *aip
 	return r.mirrorFleetStatus(ctx, w)
 }
 
+// helmOpNamespace returns the effective namespace stored on a HelmOp's spec.
+// Phase 5+ writes spec.defaultNamespace (Fleet DEFAULTER, allows cluster-scoped);
+// older operator versions wrote spec.namespace (Fleet FORCER). Prefer the new
+// field; fall back to the old one so sync-back works during the transition for
+// HelmOps last written by an older operator.
+func helmOpNamespace(obj *unstructured.Unstructured) string {
+	if v, _, _ := unstructured.NestedString(obj.Object, "spec", "defaultNamespace"); v != "" {
+		return v
+	}
+	v, _, _ := unstructured.NestedString(obj.Object, "spec", "namespace")
+	return v
+}
+
 // syncSpecFromHelmOp reads chartVersion, namespace, and values from the HelmOp and
 // writes them into the AIWorkload spec. Writes the last-git-sync annotation to
 // prevent write-back loops in the Epic 3 UI edit path. No-ops if nothing changed.
 func (r *AIWorkloadReconciler) syncSpecFromHelmOp(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, ho *unstructured.Unstructured) error {
 	version, _, _ := unstructured.NestedString(ho.Object, "spec", "helm", "version")
-	namespace, _, _ := unstructured.NestedString(ho.Object, "spec", "namespace")
+	namespace := helmOpNamespace(ho)
 	values, _, _ := unstructured.NestedMap(ho.Object, "spec", "helm", "values")
 
 	newHash := helmOpHash(version, namespace, values)
