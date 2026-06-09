@@ -2,103 +2,110 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 
-	"github.com/SUSE/suse-ai-operator/internal/infra/rancher"
-	"github.com/SUSE/suse-ai-operator/internal/logging"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
-	helmClient "github.com/SUSE/suse-ai-operator/internal/infra/helm"
+	v1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	"github.com/SUSE/suse-ai-operator/internal/infra/rancher"
 )
 
 const finalizerName = "ai-platform.suse.com/finalizer"
 
 func (r *InstallAIExtensionReconciler) ensureFinalizer(
 	ctx context.Context,
-	ext *aiplatformv1alpha1.InstallAIExtension,
+	ext *v1alpha1.InstallAIExtension,
 ) (bool, error) {
-
-	log := logging.FromContext(ctx, "finalizer")
-
-	if ContainsString(ext.Finalizers, finalizerName) {
+	if controllerutil.ContainsFinalizer(ext, finalizerName) {
 		return false, nil
 	}
 
-	log.Info("Adding finalizer")
-	ext.Finalizers = append(ext.Finalizers, finalizerName)
-
+	controllerutil.AddFinalizer(ext, finalizerName)
 	if err := r.Update(ctx, ext); err != nil {
 		return false, err
 	}
-
 	return true, nil
 }
 
 func (r *InstallAIExtensionReconciler) handleDeletion(
 	ctx context.Context,
-	ext *aiplatformv1alpha1.InstallAIExtension,
-	helm helmClient.HelmClient,
-	rancherMgr *rancher.Manager,
-	releaseName string,
-	namespace string,
-) error {
+	ext *v1alpha1.InstallAIExtension,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 
-	log := logging.FromContext(ctx, "finalizer")
-
-	if !ContainsString(ext.Finalizers, finalizerName) {
-		return nil
+	if !controllerutil.ContainsFinalizer(ext, finalizerName) {
+		return ctrl.Result{}, nil
 	}
 
-	log.Info("Handling resource deletion")
-
-	if err := helm.DeleteRelease(ctx, releaseName); err != nil {
-		log.Error(err, "Failed to delete Helm release")
-		return err
+	if err := r.cleanup(ctx, ext); err != nil {
+		logger.Error(err, "cleanup failed")
+		return ctrl.Result{}, err
 	}
 
-	if err := rancherMgr.Cleanup(ctx, ext, namespace); err != nil {
-		log.Error(err, "Failed to cleanup Rancher resources")
-		return err
-	}
-
-	return r.removeFinalizer(ctx, ext)
-}
-
-func (r *InstallAIExtensionReconciler) removeFinalizer(
-	ctx context.Context,
-	ext *aiplatformv1alpha1.InstallAIExtension,
-) error {
-
-	log := logging.FromContext(ctx, "finalizer")
-
-	log.Info("Removing finalizer")
-	ext.Finalizers = RemoveString(ext.Finalizers, finalizerName)
-
+	controllerutil.RemoveFinalizer(ext, finalizerName)
 	if err := r.Update(ctx, ext); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			return nil
-		}
-		return err
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	return nil
+	logger.Info("deleted successfully")
+	return ctrl.Result{}, nil
 }
 
-func ContainsString(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
+func (r *InstallAIExtensionReconciler) cleanup(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+) error {
+	logger := log.FromContext(ctx)
+	namespace := r.ExtensionNamespace
+	var errs []error
 
-func RemoveString(slice []string, s string) []string {
-	result := []string{}
-	for _, item := range slice {
-		if item != s {
-			result = append(result, item)
+	names := []string{ext.Spec.Extension.Name}
+	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
+		names = append(names, ext.Status.ActiveExtensionName)
+	}
+
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(name)); err != nil {
+			errs = append(errs, err)
+		}
+		if err := r.rancherMgr.DeleteUIPlugin(ctx, name, namespace); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return result
+
+	if ext.Status.HelmReleaseName != "" {
+		logger.Info("uninstalling Helm release", "release", ext.Status.HelmReleaseName)
+		helm, err := newHelmClientForNamespace(namespace)
+		if err == nil {
+			if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
+				errs = append(errs, err)
+			}
+		} else {
+			errs = append(errs, err)
+		}
+	}
+
+	if ext.Status.ActiveSourceKind == v1alpha1.ExtensionSourceKindGit ||
+		ext.Spec.Source.Kind == v1alpha1.ExtensionSourceKindGit {
+		for _, name := range names {
+			if name == ext.Status.HelmReleaseName {
+				continue
+			}
+			logger.Info("uninstalling UIPlugin Helm release", "release", name)
+			helm, err := newHelmClientForNamespace(namespace)
+			if err == nil {
+				if err := helm.DeleteRelease(ctx, name); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+	}
+
+	return stderrors.Join(errs...)
 }

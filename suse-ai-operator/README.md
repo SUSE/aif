@@ -40,22 +40,43 @@ helm install suse-ai-operator \
 
 This will deploy the SUSE AI Operator into the `suse-ai-operator-system` namespace.
 
-2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the required extension. Below is an example of the `extension.yaml`:
+2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the extension. The operator supports two source types:
+
+**Helm source** — installs a container serving extension assets:
 ```yaml
 apiVersion: ai-platform.suse.com/v1alpha1
 kind: InstallAIExtension
 metadata:
-  name: suseai
+  name: aif-ui
 spec:
-  helm:
-    name: suse-ai-lifecycle-manager
-    url: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
-    version: "1.0.0"
+  source:
+    kind: Helm
+    helm:
+      chartURL: "oci://ghcr.io/suse/chart/aif-ui"
+      version: "0.1.0"
   extension:
-    name: suse-ai-lifecycle-manager
-    version: "1.0.0"
+    name: aif-ui
+    version: "0.1.0"
 ```
-Apply this file
+
+**Git source** — serves extension assets from a GitHub branch:
+```yaml
+apiVersion: ai-platform.suse.com/v1alpha1
+kind: InstallAIExtension
+metadata:
+  name: aif-ui
+spec:
+  source:
+    kind: Git
+    git:
+      repo: https://github.com/SUSE/aif
+      branch: gh-pages
+  extension:
+    name: aif-ui
+    version: "0.1.0"
+```
+
+Apply the CR:
 ```sh
 kubectl apply -f extension.yaml
 ```

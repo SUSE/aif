@@ -1,0 +1,23 @@
+{{- if .Values.aiExtension.enabled }}
+apiVersion: ai-platform.suse.com/v1alpha1
+kind: InstallAIExtension
+metadata:
+  name: {{ .Values.aiExtension.extension.name }}
+  labels:
+    {{- include "suse-ai-operator.labels" . | nindent 4 }}
+spec:
+  source:
+    kind: {{ .Values.aiExtension.source.kind }}
+    {{- if eq .Values.aiExtension.source.kind "Helm" }}
+    helm:
+      chartURL: {{ .Values.aiExtension.source.helm.chartURL | quote }}
+      version: {{ .Values.aiExtension.source.helm.version | quote }}
+    {{- else if eq .Values.aiExtension.source.kind "Git" }}
+    git:
+      repo: {{ .Values.aiExtension.source.git.repo | quote }}
+      branch: {{ .Values.aiExtension.source.git.branch | quote }}
+    {{- end }}
+  extension:
+    name: {{ .Values.aiExtension.extension.name | quote }}
+    version: {{ .Values.aiExtension.extension.version | quote }}
+{{- end }}

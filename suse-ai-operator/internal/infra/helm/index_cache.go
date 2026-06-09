@@ -25,12 +25,21 @@ func NewIndexCache() *IndexCache {
 	}
 }
 
+const indexCacheTTL = 5 * time.Minute
+
 func (c *IndexCache) Get(key IndexCacheKey) (*IndexCacheEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	entry, ok := c.items[key]
-	return entry, ok
+	if !ok {
+		return nil, false
+	}
+	if time.Since(entry.FetchedAt) > indexCacheTTL {
+		delete(c.items, key)
+		return nil, false
+	}
+	return entry, true
 }
 
 func (c *IndexCache) Set(key IndexCacheKey, entry *IndexCacheEntry) {

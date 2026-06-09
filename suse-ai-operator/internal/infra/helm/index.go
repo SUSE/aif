@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,8 +18,10 @@ type ChartVersion struct {
 	Annotations map[string]string `yaml:"annotations"`
 }
 
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 func FetchIndex(url string) (*IndexFile, error) {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}

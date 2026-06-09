@@ -157,7 +157,31 @@ For example:
 
 > When enabled, a metrics Service and RBAC rules are created to support authenticated scraping.
 
-### RBAC helper roles 
+### AI Extension bundling
+
+When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR that the operator reconciles to install the UI extension automatically.
+
+| Name                                           | Description                                | Default                                  |
+| ---------------------------------------------- | ------------------------------------------ | ---------------------------------------- |
+| `aiExtension.enabled`                          | Create InstallAIExtension CR on install    | `false`                                  |
+| `aiExtension.source.kind`                      | Source type: `Helm` or `Git`               | `Helm`                                   |
+| `aiExtension.source.helm.chartURL`             | Helm chart URL (OCI or HTTPS)              | `oci://ghcr.io/suse/chart/aif-ui`       |
+| `aiExtension.source.helm.version`              | Helm chart version                         | `0.1.0`                                  |
+| `aiExtension.source.git.repo`                  | Git repository URL                         | `https://github.com/SUSE/aif`           |
+| `aiExtension.source.git.branch`                | Git branch                                 | `gh-pages`                               |
+| `aiExtension.extension.name`                   | Extension name (UIPlugin name)             | `aif-ui`                                 |
+| `aiExtension.extension.version`                | Extension version                          | `0.1.0`                                  |
+| `aiExtension.cleanup.image.registry`           | kubectl image registry for cleanup job     | `registry.suse.com`                      |
+| `aiExtension.cleanup.image.repository`         | kubectl image repository                   | `suse/kubectl`                           |
+| `aiExtension.cleanup.image.tag`                | kubectl image tag                          | `1.35`                                   |
+
+#### Source types
+
+**Helm** (`aiExtension.source.kind=Helm`): The operator installs a Helm chart that deploys a container serving extension assets. It then creates a ClusterRepo pointing to the in-cluster Service and a UIPlugin CR for Rancher to load the extension.
+
+**Git** (`aiExtension.source.kind=Git`): The operator creates a ClusterRepo pointing to the git repository branch and installs the UIPlugin chart from the git-hosted Helm repository. No container is deployed.
+
+### RBAC helper roles
 
 | Name                 | Description                                      | Default |
 | -------------------- | ------------------------------------------------ | ------- |

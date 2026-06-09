@@ -28,6 +28,9 @@ func (c *helmClient) install(
 	install.Namespace = spec.Namespace
 	install.Version = spec.Version
 	install.SetRegistryClient(c.registry)
+	if spec.RepoURL != "" {
+		install.RepoURL = spec.RepoURL
+	}
 
 	ch, _, err := resolveChart(&install.ChartPathOptions, c.settings, spec.ChartRef)
 	if err != nil {
@@ -62,6 +65,9 @@ func (c *helmClient) upgrade(
 	up.Namespace = spec.Namespace
 	up.Version = spec.Version
 	up.SetRegistryClient(c.registry)
+	if spec.RepoURL != "" {
+		up.RepoURL = spec.RepoURL
+	}
 
 	up.Wait = true
 	up.Atomic = false
@@ -95,6 +101,9 @@ func (c *helmClient) renderUpgrade(
 	up.Atomic = false
 	up.Timeout = 2 * time.Minute
 	up.SetRegistryClient(c.registry)
+	if spec.RepoURL != "" {
+		up.RepoURL = spec.RepoURL
+	}
 
 	ch, _, err := resolveChart(&up.ChartPathOptions, c.settings, spec.ChartRef)
 	if err != nil {
@@ -169,7 +178,13 @@ func (c *helmClient) GetRelease(ctx context.Context, name string) (*ReleaseInfo,
 	hist.Max = 1
 
 	rels, err := hist.Run(name)
-	if err != nil || len(rels) == 0 {
+	if err != nil {
+		if strings.Contains(err.Error(), "release: not found") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(rels) == 0 {
 		return nil, nil
 	}
 
@@ -198,7 +213,10 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 		return err
 	}
 
-	info, _ := c.GetRelease(ctx, spec.Name)
+	info, err := c.GetRelease(ctx, spec.Name)
+	if err != nil {
+		return err
+	}
 	if info == nil {
 		log.Info("Helm release not found, installing")
 		return c.install(ctx, cfg, spec)

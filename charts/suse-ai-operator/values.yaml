@@ -72,3 +72,43 @@ metrics:
 
 api:
   port: 8080
+
+# UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
+# Set aiExtension.enabled=false to skip extension installation.
+aiExtension:
+  enabled: false
+  source:
+    kind: Helm          # "Helm" (container-based) or "Git"
+    helm:
+      chartURL: "oci://ghcr.io/suse/chart/aif-ui"
+      version: "0.1.0"
+    git:
+      repo: "https://github.com/SUSE/aif"
+      branch: "gh-pages"
+  extension:
+    name: "aif-ui"
+    version: "0.1.0"
+  cleanup:
+    image:
+      registry: registry.suse.com
+      repository: suse/kubectl
+      tag: "1.35"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
