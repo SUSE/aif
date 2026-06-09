@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	"github.com/SUSE/suse-ai-operator/internal/infra/rancher"
 )
 
 var _ = Describe("InstallAIExtension Controller", func() {
@@ -69,8 +70,9 @@ var _ = Describe("InstallAIExtension Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &InstallAIExtensionReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				rancherMgr: rancher.NewManager(k8sClient),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
