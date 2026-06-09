@@ -1,0 +1,11 @@
+{{ .Chart.Name }} has been deployed.
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Chart repository URL (for ClusterRepo / Rancher Extensions page):
+  http://{{ include "aif-ui.fullname" . }}-svc.{{ .Release.Namespace }}:{{ .Values.service.port }}
+
+Verify the deployment:
+  kubectl get deploy {{ include "aif-ui.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get svc {{ include "aif-ui.fullname" . }}-svc -n {{ .Release.Namespace }}

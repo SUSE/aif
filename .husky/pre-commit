@@ -1,1 +1,1 @@
-cd pkg/suse-ai-lifecycle-manager && yarn lint
+cd pkg/aif-ui && yarn lint

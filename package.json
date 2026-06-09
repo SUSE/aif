@@ -1,9 +1,8 @@
 {
-  "name": "suse-ai-lifecycle-manager",
-  "version": "1.1.0",
-  "description": "Rancher UI Extension for SUSE AI",
+  "name": "aif-ui",
+  "version": "0.1.0",
+  "description": "AIF UI",
   "private": false,
-  "license": "Apache-2.0",
   "engines": {
     "node": ">=20"
   },

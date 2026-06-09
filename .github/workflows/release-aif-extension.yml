@@ -1,0 +1,165 @@
+name: Build AIF UI Extension [Container and Helm Chart - Multi-Arch]
+
+on:
+  push:
+    tags:
+      - aif-ui-*
+
+env:
+  CHART_PATH: charts/aif-ui
+  CHART_REGISTRY: oci://ghcr.io/suse/chart
+  IMAGE_NAME: ghcr.io/suse/aif-ui
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.tags.outputs.VERSION }}
+      PUBLISH: ${{ steps.tags.outputs.PUBLISH }}
+      METADATA_TAGS: ${{ steps.tags.outputs.METADATA_TAGS }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Calculate tags
+        id: tags
+        shell: bash
+        run: |
+          ref="${{ github.ref }}"
+          case "$ref" in
+            refs/tags/aif-ui-*)
+              VERSION="${ref#refs/tags/aif-ui-}"
+              PUBLISH=true
+              if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                {
+                  echo "METADATA_TAGS<<EOF"
+                  echo "$VERSION"
+                  echo "latest"
+                  echo "EOF"
+                } >> "$GITHUB_OUTPUT"
+              else
+                {
+                  echo "METADATA_TAGS<<EOF"
+                  echo "$VERSION"
+                  echo "EOF"
+                } >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              VERSION="${{ github.sha }}"
+              PUBLISH=false
+              {
+                echo "METADATA_TAGS<<EOF"
+                echo "$VERSION"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "PUBLISH=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+  build-container:
+    strategy:
+      matrix:
+        arch:
+          - amd64
+          - arm64
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    needs: prepare
+    if: needs.prepare.outputs.PUBLISH == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+          cache: yarn
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --ignore-engines
+
+      - name: Parse extension name
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="aif-ui-${{ needs.prepare.outputs.VERSION }}"
+          yarn parse-tag-name "$TAG" ${{ github.run_id }} "catalog"
+
+      - name: Build extension image
+        run: |
+          TAG="aif-ui-${{ needs.prepare.outputs.VERSION }}"
+          yarn publish-pkgs -c -i '' -r ghcr.io -o 'suse' -t "$TAG"
+
+      - name: Tag and push image
+        run: |
+          VERSION="${{ needs.prepare.outputs.VERSION }}"
+          docker tag $IMAGE_NAME:$VERSION $IMAGE_NAME:$VERSION-${{ matrix.arch }}
+          docker push $IMAGE_NAME:$VERSION-${{ matrix.arch }}
+
+  manifest-and-chart:
+    needs: [prepare, build-container]
+    if: needs.prepare.outputs.PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        env:
+          VERSION: ${{ needs.prepare.outputs.VERSION }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.METADATA_TAGS }}
+        run: |
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            docker buildx imagetools create \
+              -t $IMAGE_NAME:$tag \
+              $IMAGE_NAME:$VERSION-amd64 \
+              $IMAGE_NAME:$VERSION-arm64
+          done <<< "${RELEASE_TAG}"
+
+      - name: Update Chart.yaml versions
+        run: |
+          yq -i '.version = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
+          yq -i '.appVersion = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
+          yq -i '
+            .annotations."helm.sh/images" =
+            "- image: ghcr.io/suse/aif-ui:${{ needs.prepare.outputs.VERSION }}\n  name: aif-ui"
+          ' $CHART_PATH/Chart.yaml
+          yq -i '.image.tag = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/values.yaml
+
+      - name: Package and push Helm chart
+        run: |
+          chart_package=$(helm package $CHART_PATH --destination . | awk '{print $NF}')
+          helm push "$chart_package" $CHART_REGISTRY

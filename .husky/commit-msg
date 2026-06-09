@@ -1,1 +1,1 @@
-cd pkg/suse-ai-lifecycle-manager && npx --no -- commitlint --edit $1
+cd pkg/aif-ui && npx --no -- commitlint --edit $1

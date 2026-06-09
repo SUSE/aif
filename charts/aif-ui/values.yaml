@@ -6,8 +6,8 @@ global:
 
 image:
   registry: ghcr.io
-  repository: suse/suse-ai-lifecycle-manager
-  tag: "1.1.0"
+  repository: suse/aif-ui
+  tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -21,20 +21,42 @@ service:
 podAnnotations: {}
 podLabels: {}
 
-resources: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
 
 probes:
   liveness:
     enabled: true
     httpGet:
       path: /
-      port: 8080
+      port: http
+    initialDelaySeconds: 10
     periodSeconds: 10
   readiness:
     enabled: true
     httpGet:
       path: /
-      port: 8080
+      port: http
+    initialDelaySeconds: 5
     periodSeconds: 10
 
 nodeSelector: {}

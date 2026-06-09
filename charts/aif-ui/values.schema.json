@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 0
+    },
+    "global": {
+      "type": "object",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "default": ""
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" }
+                },
+                "required": ["name"]
+              }
+            ]
+          },
+          "default": []
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "registry": {
+          "type": "string",
+          "default": "ghcr.io"
+        },
+        "repository": {
+          "type": "string",
+          "default": "suse/aif-ui"
+        },
+        "tag": {
+          "type": "string",
+          "default": ""
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "default": "IfNotPresent"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" }
+            },
+            "required": ["name"]
+          }
+        ]
+      },
+      "default": []
+    },
+    "nameOverride": {
+      "type": "string",
+      "default": ""
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "default": ""
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "default": "ClusterIP"
+        },
+        "port": {
+          "type": "integer",
+          "default": 8080
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "default": {}
+    },
+    "podLabels": {
+      "type": "object",
+      "default": {}
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "containerSecurityContext": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        },
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "properties": {
+        "liveness": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "rollingUpdate": {
+      "type": "object",
+      "properties": {
+        "maxSurge": {
+          "type": ["string", "integer"],
+          "default": "25%"
+        },
+        "maxUnavailable": {
+          "type": ["string", "integer"],
+          "default": "25%"
+        }
+      }
+    }
+  }
+}

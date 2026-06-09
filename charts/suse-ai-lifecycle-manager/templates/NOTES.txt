@@ -1,6 +1,0 @@
-Thank you for installing {{ .Chart.Name }}.
-
-Your release is named {{ .Release.Name }}.
-
-To use the deployed extension, add the url below to the repository in rancher:
-  http://{{ include "suse-ai-lifecycle-manager.fullname" . }}-svc.{{ .Release.Namespace }}:{{ .Values.service.port }}

@@ -13,7 +13,7 @@ Add a working Settings page to the SUSE AI Lifecycle Manager. This page lets pla
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Rancher UI (Vue 3 extension)                            │
-│  pkg/suse-ai-lifecycle-manager/                          │
+│  pkg/aif-ui/                          │
 │  ├── pages/Settings.vue          ← ported from AIF      │
 │  ├── utils/operator-api.ts       ← new: HTTP client     │
 │  ├── config/types.ts             ← add operator coords  │
@@ -180,7 +180,7 @@ go func() {
 go srv.ListenAndServe()
 ```
 
-## UI Extension (`pkg/suse-ai-lifecycle-manager/`)
+## UI Extension (`pkg/aif-ui/`)
 
 ### New files
 
