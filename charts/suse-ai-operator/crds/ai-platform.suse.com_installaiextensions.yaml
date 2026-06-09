@@ -107,7 +107,7 @@ spec:
                           ChartURL is the Helm chart repository URL (oci:// or https://).
                           The Helm release name is derived from the last path segment of this URL.
                         minLength: 1
-                        pattern: ^(oci://|https?://).+
+                        pattern: ^(oci://|https://).+
                         type: string
                       values:
                         additionalProperties:

@@ -161,7 +161,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, nil
 	}
 
-	releaseName := DeriveReleaseName(helmSource.ChartURL)
+	releaseName := deriveReleaseName(helmSource.ChartURL)
 
 	if ext.Status.HelmReleaseName != "" && ext.Status.HelmReleaseName != releaseName {
 		logger.Info("chart URL changed, uninstalling old release", "old", ext.Status.HelmReleaseName, "new", releaseName)
@@ -442,7 +442,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 	return stderrors.Join(errs...)
 }
 
-func DeriveReleaseName(chartURL string) string {
+func deriveReleaseName(chartURL string) string {
 	u, err := urlpkg.Parse(chartURL)
 	if err != nil {
 		return strings.TrimSuffix(path.Base(chartURL), "-server") + "-server"
@@ -501,7 +501,7 @@ func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	if r.ReadinessTimeout == 0 {
 		r.ReadinessTimeout = defaultReadinessTimeout
 	}
-	r.rancherMgr = rancher.NewManager(r.Client, r.Scheme)
+	r.rancherMgr = rancher.NewManager(r.Client)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.InstallAIExtension{}).
 		Named("InstallAIExtension").

@@ -47,7 +47,7 @@ type HelmSource struct {
 	// ChartURL is the Helm chart repository URL (oci:// or https://).
 	// The Helm release name is derived from the last path segment of this URL.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern=`^(oci://|https?://).+`
+	// +kubebuilder:validation:Pattern=`^(oci://|https://).+`
 	ChartURL string `json:"chartURL"`
 
 	// Version is the chart version to install.
@@ -93,9 +93,9 @@ type ExtensionSource struct {
 	Git *GitSource `json:"git,omitempty"`
 }
 
-// ExtensionConfig identifies the UI extension for post-install verification.
-// After the Helm chart install, the controller verifies a UIPlugin with this
-// name exists in the cattle-ui-plugin-system namespace.
+// ExtensionConfig identifies the UI extension managed by the controller.
+// For Helm sources, a UIPlugin CR with this name is created by the operator.
+// For Git sources, the UIPlugin is installed via Helm from the git-hosted chart repo.
 type ExtensionConfig struct {
 	// Name is the UIPlugin resource name to verify after chart installation.
 	// This must match the UIPlugin name created by the Helm chart.

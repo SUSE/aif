@@ -167,7 +167,7 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 | `aiExtension.source.kind`                      | Source type: `Helm` or `Git`               | `Helm`                                   |
 | `aiExtension.source.helm.chartURL`             | Helm chart URL (OCI or HTTPS)              | `oci://ghcr.io/suse/chart/aif-ui`       |
 | `aiExtension.source.helm.version`              | Helm chart version                         | `0.1.0`                                  |
-| `aiExtension.source.git.repo`                  | Git repository URL                         | `""`                                     |
+| `aiExtension.source.git.repo`                  | Git repository URL                         | `https://github.com/SUSE/aif`           |
 | `aiExtension.source.git.branch`                | Git branch                                 | `gh-pages`                               |
 | `aiExtension.extension.name`                   | Extension name (UIPlugin name)             | `aif-ui`                                 |
 | `aiExtension.extension.version`                | Extension version                          | `0.1.0`                                  |
