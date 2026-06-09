@@ -9,6 +9,7 @@
           :disabled="props.releaseDisabled"
           required
         />
+        <p v-if="releaseError" class="release-error">{{ releaseError }}</p>
       </div>
       <div class="col span-6">
         <LabeledSelect
@@ -52,6 +53,7 @@
 import { computed } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
+import { instanceNameError } from '../../../validators/appInstallation';
 
 export interface BasicInfoForm {
   release: string;
@@ -83,7 +85,16 @@ const t = (key: string, fallback: string) => fallback;
 // Individual field computeds for better reactivity
 const release = computed({
   get: () => props.form.release,
-  set: (value: string) => emit('update:form', { ...props.form, release: value })
+  // Trim on write: the validator trims before checking, so a padded value would pass
+  // validation but reach the Kubernetes API as an invalid (space-containing) name.
+  set: (value: string) => emit('update:form', { ...props.form, release: value.trim() })
+});
+
+// Surface the instance-name validation error inline. Empty is left to the field's
+// own `required` handling so we don't nag before the user has typed.
+const releaseError = computed(() => {
+  if (!release.value || !release.value.trim()) return '';
+  return instanceNameError(release.value);
 });
 
 const namespace = computed({
@@ -114,6 +125,12 @@ const chartVersion = computed({
 
 .mt-20 {
   margin-top: 20px;
+}
+
+.release-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--error, #f64747);
 }
 
 /* Ensure form fields don't overflow */

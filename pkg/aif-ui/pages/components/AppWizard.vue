@@ -26,6 +26,7 @@ import {
   listNamespaces,
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
+import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
 import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { createFleetBundle, buildBundleName }        from '../../services/fleet-bundle';
@@ -96,6 +97,11 @@ const form = ref<WizardForm>({
 const isInstallMode = computed(() => props.mode === 'install');
 const isManageMode = computed(() => props.mode === 'manage');
 
+// The instance name becomes a Helm release / Kubernetes resource name, so it must be a
+// valid DNS-1123 label of at most 53 chars (the Helm release-name limit). In manage mode
+// the name is fixed and read-only, so we never block on it there.
+const releaseNameValid = computed(() => !isInstallMode.value || validateReleaseName(form.value.release).valid);
+
 const versionOptions = computed(() =>
   (versions.value || []).map(v => ({ label: v, value: v }))
 );
@@ -151,7 +157,7 @@ const wizardSteps = computed(() => [
   {
     name: 'basic-info',
     label: 'Basic Information',
-    ready: true,
+    ready: releaseNameValid.value,
     weight: 1
   },
   {
@@ -656,6 +662,14 @@ async function submit() {
 
     if (!form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) {
       error.value = 'Please set repository, chart and version.'; submitting.value = false; return;
+    }
+
+    if (isInstallMode.value) {
+      const instanceErr = instanceNameError(form.value.release);
+      if (instanceErr) {
+        error.value = instanceErr;
+        submitting.value = false; return;
+      }
     }
 
     if (form.value.clusters.length === 0) {
@@ -1425,8 +1439,11 @@ async function upgradeToCluster(
 
 // Custom wizard navigation methods
 function goToStep(stepIndex: number) {
-  // Only allow navigation if step is ready or going backwards
-  if (stepIndex <= currentStep.value || wizardSteps.value[stepIndex].ready) {
+  // Backwards navigation is always allowed. Going forward requires both the current
+  // step and the target step to be ready, so clicking a step tab can't bypass the
+  // same gate that disables the Next button (e.g. an invalid instance name on step 0).
+  const goingForward = stepIndex > currentStep.value;
+  if (!goingForward || (wizardSteps.value[currentStep.value].ready && wizardSteps.value[stepIndex].ready)) {
     currentStep.value = stepIndex;
   }
 }

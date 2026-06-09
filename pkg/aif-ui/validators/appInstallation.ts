@@ -59,6 +59,20 @@ export function validateReleaseName(name: string): ValidationResult {
   };
 }
 
+/**
+ * UI-facing convenience for the wizard's "Instance name" field. Returns a single
+ * user-friendly validation message (empty string when valid). It prefers the most
+ * specific error — a leading/trailing-hyphen message reads more clearly than the
+ * generic DNS-1123 one (both fire for e.g. "foo-") — and relabels the underlying
+ * "Release name" wording to match the field the user actually sees.
+ */
+export function instanceNameError(name: string): string {
+  const result = validateReleaseName(name);
+  if (result.valid) return '';
+  const preferred = result.errors.find(e => /hyphen/i.test(e.message)) || result.errors[0];
+  return (preferred?.message || 'Invalid instance name.').replace(/^Release name/i, 'Instance name');
+}
+
 export function validateNamespace(namespace: string): ValidationResult {
   const errors: ValidationError[] = [];
 
