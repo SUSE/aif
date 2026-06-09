@@ -10,11 +10,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var requiredCRDs = []string{
-	"uiplugins.catalog.cattle.io",
-	"clusterrepos.catalog.cattle.io",
-}
-
 type Manager struct {
 	client     client.Client
 	scheme     *runtime.Scheme
@@ -23,55 +18,6 @@ type Manager struct {
 
 func NewManager(c client.Client, s *runtime.Scheme) *Manager {
 	return &Manager{client: c, scheme: s, indexCache: helm.NewIndexCache()}
-}
-
-func (m *Manager) EnsureHelmResources(
-	ctx context.Context,
-	ext *v1alpha1.InstallAIExtension,
-	svcURL string,
-	namespace string,
-) error {
-	log := logging.FromContext(ctx, "rancher").
-		WithValues(logging.KeyExtension, ext.Name)
-
-	log.Info("Ensuring Rancher resources (Helm)")
-
-	if err := m.CheckCRDs(ctx, requiredCRDs); err != nil {
-		return err
-	}
-
-	if err := m.EnsureClusterRepo(ctx, ext, svcURL); err != nil {
-		return err
-	}
-
-	if err := m.EnsureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		return err
-	}
-
-	log.Info("Rancher resources ensured")
-	return nil
-}
-
-func (m *Manager) EnsureGitResources(
-	ctx context.Context,
-	ext *v1alpha1.InstallAIExtension,
-	namespace string,
-) error {
-	log := logging.FromContext(ctx, "rancher").
-		WithValues(logging.KeyExtension, ext.Name)
-
-	log.Info("Ensuring Rancher resources (Git)")
-
-	if err := m.CheckCRDs(ctx, requiredCRDs); err != nil {
-		return err
-	}
-
-	if err := m.EnsureClusterRepo(ctx, ext, ""); err != nil {
-		return err
-	}
-
-	log.Info("Rancher resources ensured (Git)")
-	return nil
 }
 
 func (m *Manager) ResolveLatestVersion(

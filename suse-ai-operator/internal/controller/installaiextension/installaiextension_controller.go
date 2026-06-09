@@ -89,7 +89,9 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	result, reconcileErr := r.reconcile(ctx, &ext)
 
-	ext.Status.ObservedGeneration = ext.Generation
+	if reconcileErr == nil {
+		ext.Status.ObservedGeneration = ext.Generation
+	}
 	if err := r.Status().Update(ctx, &ext); err != nil {
 		logger.Error(err, "failed to update status")
 		return ctrl.Result{}, err
@@ -219,10 +221,22 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 	}
 	if !deployStatus.Ready {
+		waitingSince := r.getWaitingSince(ext)
+		if waitingSince.IsZero() {
+			r.setWaitingSince(ext)
+		} else if time.Since(waitingSince) > r.ReadinessTimeout {
+			msg := fmt.Sprintf("Deployment not ready after %s: %s", r.ReadinessTimeout, deployStatus.Message)
+			setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
+				"TimedOut", msg, ext.Generation)
+			ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+			return ctrl.Result{}, nil
+		}
 		setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
 			"NotReady", deployStatus.Message, ext.Generation)
 		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 	}
+
+	r.clearWaitingSince(ext)
 
 	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
 		"Available", deployStatus.Message, ext.Generation)
@@ -324,7 +338,7 @@ func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
 	if err != nil {
 		return fmt.Errorf("failed to check UIPlugin release %q: %w", ext.Spec.Extension.Name, err)
 	}
-	if info != nil {
+	if info != nil && info.Version == ext.Spec.Extension.Version {
 		return nil
 	}
 
@@ -444,6 +458,36 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 		Message:            message,
 		ObservedGeneration: generation,
 	})
+}
+
+const annotationWaitingSince = "ai-platform.suse.com/waiting-since"
+
+func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIExtension) time.Time {
+	if ext.Annotations == nil {
+		return time.Time{}
+	}
+	ts, ok := ext.Annotations[annotationWaitingSince]
+	if !ok {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func (r *InstallAIExtensionReconciler) setWaitingSince(ext *v1alpha1.InstallAIExtension) {
+	if ext.Annotations == nil {
+		ext.Annotations = make(map[string]string)
+	}
+	ext.Annotations[annotationWaitingSince] = time.Now().Format(time.RFC3339)
+}
+
+func (r *InstallAIExtensionReconciler) clearWaitingSince(ext *v1alpha1.InstallAIExtension) {
+	if ext.Annotations != nil {
+		delete(ext.Annotations, annotationWaitingSince)
+	}
 }
 
 func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error {
