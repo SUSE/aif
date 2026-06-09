@@ -76,15 +76,12 @@ api:
 # UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
 # Set aiExtension.enabled=false to skip extension installation.
 aiExtension:
-  enabled: false
+  enabled: true
   source:
-    kind: Helm          # "Helm" (container-based) or "Git"
+    kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
       version: "0.1.0"
-    git:
-      repo: "https://github.com/SUSE/aif"
-      branch: "gh-pages"
   extension:
     name: "aif-ui"
     version: "0.1.0"

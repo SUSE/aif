@@ -63,21 +63,13 @@
         "source": {
           "type": "object",
           "properties": {
-            "kind": { "type": "string", "enum": ["Helm", "Git"], "default": "Helm" },
+            "kind": { "type": "string", "enum": ["Helm"], "default": "Helm" },
             "helm": {
               "type": "object",
               "required": ["chartURL", "version"],
               "properties": {
                 "chartURL": { "type": "string" },
                 "version": { "type": "string" }
-              }
-            },
-            "git": {
-              "type": "object",
-              "required": ["repo"],
-              "properties": {
-                "repo": { "type": "string" },
-                "branch": { "type": "string", "default": "gh-pages" }
               }
             }
           }

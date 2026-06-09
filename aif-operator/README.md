@@ -33,16 +33,15 @@ The operator is distributed as a Helm chart and installs:
 
 ```sh
 helm install aif-operator \
-  -n aif-operator-system \
+  -n aif-operator \
   --create-namespace \
   oci://ghcr.io/suse/chart/aif-operator
 ```
 
-This will deploy the SUSE AI Operator into the `aif-operator-system` namespace.
+This will deploy the SUSE AI Operator into the `aif-operator` namespace.
 
-2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the extension. The operator supports two source types:
+2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the extension:
 
-**Helm source** — installs a container serving extension assets:
 ```yaml
 apiVersion: ai-platform.suse.com/v1alpha1
 kind: InstallAIExtension
@@ -54,23 +53,6 @@ spec:
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
       version: "0.1.0"
-  extension:
-    name: aif-ui
-    version: "0.1.0"
-```
-
-**Git source** — serves extension assets from a GitHub branch:
-```yaml
-apiVersion: ai-platform.suse.com/v1alpha1
-kind: InstallAIExtension
-metadata:
-  name: aif-ui
-spec:
-  source:
-    kind: Git
-    git:
-      repo: https://github.com/SUSE/aif
-      branch: gh-pages
   extension:
     name: aif-ui
     version: "0.1.0"
@@ -90,7 +72,7 @@ kubectl delete -f extension.yaml
 
 2. **Uninstall the SUSE AI Operator.** To uninstall the operator, run the following command:
 ```sh
-helm uninstall aif-operator -n aif-operator-system
+helm uninstall aif-operator -n aif-operator
 ```
 
 3. **Delete the CRDs.** After uninstalling the operator, you remove the associated Custom Resource Definitions (CRDs). To delete the InstallAIExtension CRD, use:
@@ -114,7 +96,7 @@ Make sure you have the proper permission to the registry if the above commands d
 **Install the CRDs and Deploy the Operator into the cluster:**
 
 ```sh
-helm install aif-operator ./charts/aif-operator/ -n aif-operator-system \
+helm install aif-operator ./charts/aif-operator/ -n aif-operator \
     --create-namespace \
     --set manager.image.registry=<some-registry> \ 
     --set manager.image.repository=<repository-owner>/aif-operator \
@@ -143,7 +125,7 @@ kubectl delete -k samples/
 **UnDeploy the controller from the cluster:**
 
 ```sh
-helm uninstall aif-operator -n aif-operator-system
+helm uninstall aif-operator -n aif-operator
 ```
 
 **Delete the APIs(CRDs) from the cluster:**
@@ -159,7 +141,7 @@ kubectl delete crd installaiextensions.ai-platform.suse.com
 2. **Install the operator:**
 
 ```bash
-helm install aif-operator ./charts/aif-operator -n aif-operator-system
+helm install aif-operator ./charts/aif-operator -n aif-operator
 ```
 
 3. **Apply an extension:**
@@ -169,7 +151,7 @@ kubectl apply -f config/samples/installaiextension.yaml
 
 4. **Observe reconciliation:**
 ```bash
-kubectl logs -l app.kubernetes.io/name=aif-operator -f -n aif-operator-system
+kubectl logs -l app.kubernetes.io/name=aif-operator -f -n aif-operator
 ```
 
 5. **Verify resources:**
