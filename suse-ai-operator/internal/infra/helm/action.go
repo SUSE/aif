@@ -213,7 +213,10 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 		return err
 	}
 
-	info, _ := c.GetRelease(ctx, spec.Name)
+	info, err := c.GetRelease(ctx, spec.Name)
+	if err != nil {
+		return err
+	}
 	if info == nil {
 		log.Info("Helm release not found, installing")
 		return c.install(ctx, cfg, spec)
