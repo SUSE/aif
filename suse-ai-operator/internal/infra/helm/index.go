@@ -41,6 +41,17 @@ func FetchIndex(url string) (*IndexFile, error) {
 	return &index, nil
 }
 
+func FindLatestVersion(index *IndexFile, chartName string) (string, error) {
+	versions, ok := index.Entries[chartName]
+	if !ok {
+		return "", fmt.Errorf("chart %q not found in index", chartName)
+	}
+	if len(versions) == 0 {
+		return "", fmt.Errorf("no versions found for chart %q", chartName)
+	}
+	return versions[0].Version, nil
+}
+
 func FindAnnotations(
 	index *IndexFile,
 	chartName string,

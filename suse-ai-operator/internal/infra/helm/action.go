@@ -28,6 +28,9 @@ func (c *helmClient) install(
 	install.Namespace = spec.Namespace
 	install.Version = spec.Version
 	install.SetRegistryClient(c.registry)
+	if spec.RepoURL != "" {
+		install.RepoURL = spec.RepoURL
+	}
 
 	ch, _, err := resolveChart(&install.ChartPathOptions, c.settings, spec.ChartRef)
 	if err != nil {
@@ -62,6 +65,9 @@ func (c *helmClient) upgrade(
 	up.Namespace = spec.Namespace
 	up.Version = spec.Version
 	up.SetRegistryClient(c.registry)
+	if spec.RepoURL != "" {
+		up.RepoURL = spec.RepoURL
+	}
 
 	up.Wait = true
 	up.Atomic = false
@@ -95,6 +101,9 @@ func (c *helmClient) renderUpgrade(
 	up.Atomic = false
 	up.Timeout = 2 * time.Minute
 	up.SetRegistryClient(c.registry)
+	if spec.RepoURL != "" {
+		up.RepoURL = spec.RepoURL
+	}
 
 	ch, _, err := resolveChart(&up.ChartPathOptions, c.settings, spec.ChartRef)
 	if err != nil {

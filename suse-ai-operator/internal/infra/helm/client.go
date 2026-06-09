@@ -23,6 +23,7 @@ type ReleaseSpec struct {
 	Name      string
 	Namespace string
 	ChartRef  string
+	RepoURL   string
 	Version   string
 	Values    map[string]interface{}
 }

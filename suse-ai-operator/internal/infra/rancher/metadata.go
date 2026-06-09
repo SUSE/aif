@@ -92,6 +92,35 @@ func getOrFetchIndex(
 	return index, nil
 }
 
+func getOrFetchIndexMulti(
+	ctx context.Context,
+	cache *helm.IndexCache,
+	indexURLs []string,
+) (*helm.IndexFile, error) {
+	for _, url := range indexURLs {
+		key := helm.IndexCacheKey{RepoURL: url}
+		if entry, ok := cache.Get(key); ok {
+			return entry.Index, nil
+		}
+	}
+
+	var lastErr error
+	for _, url := range indexURLs {
+		index, err := helm.FetchIndex(url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		key := helm.IndexCacheKey{RepoURL: url}
+		cache.Set(key, &helm.IndexCacheEntry{
+			Index:     index,
+			FetchedAt: time.Now(),
+		})
+		return index, nil
+	}
+	return nil, fmt.Errorf("failed to fetch index from any URL: %w", lastErr)
+}
+
 func filterSupportedMetadata(
 	annotations map[string]string,
 ) map[string]string {
