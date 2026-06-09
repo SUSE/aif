@@ -210,7 +210,10 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	ext.Status.HelmReleaseName = releaseName
 
 	releaseInfo, err := helm.GetRelease(ctx, releaseName)
-	if err == nil && releaseInfo != nil {
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if releaseInfo != nil {
 		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
 	}
 
