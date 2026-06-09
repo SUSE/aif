@@ -220,8 +220,12 @@ func TestNvidiaInjector_CreatesBothSecrets(t *testing.T) {
 	if api.Type != corev1.SecretTypeOpaque {
 		t.Errorf("ngc-api type = %v, want %v", api.Type, corev1.SecretTypeOpaque)
 	}
-	if got := string(api.Data[nvidiaAPISecretKey]); got != "nvapi-xyz" {
-		t.Errorf("NGC_API_KEY = %q, want %q", got, "nvapi-xyz")
+	// All three NVIDIA env-var conventions must carry the same token so
+	// charts that read any one of them work without per-chart tuning.
+	for _, k := range nvidiaAPISecretKeys {
+		if got := string(api.Data[k]); got != "nvapi-xyz" {
+			t.Errorf("%s = %q, want %q", k, got, "nvapi-xyz")
+		}
 	}
 }
 

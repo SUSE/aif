@@ -273,7 +273,7 @@ func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecret
 			return &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNamespace},
 				Type:       corev1.SecretTypeOpaque,
-				Data:       map[string][]byte{nvidiaAPISecretKey: []byte(token)},
+				Data:       ngcAPISecretData(token),
 			}, nil
 		default:
 			// Unknown secret name (e.g. the suse combined secret); skip.

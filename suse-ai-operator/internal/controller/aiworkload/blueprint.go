@@ -186,8 +186,25 @@ const (
 
 	nvidiaImagePullSecretName = "ngc-secret"
 	nvidiaAPISecretName       = "ngc-api"
-	nvidiaAPISecretKey        = "NGC_API_KEY"
 )
+
+// nvidiaAPISecretKeys are the env-var names different NVIDIA chart families
+// expect for the same NGC API token. We populate all of them so charts that
+// read any one of them work without per-chart tuning:
+//   - NGC_API_KEY: original SUSE-AI / NIM convention
+//   - NGC_CLI_API_KEY: ngc-cli auth (used by some NIM containers)
+//   - NVIDIA_API_KEY: nvidia-blueprints (e.g. nvidia-blueprint-rag)
+var nvidiaAPISecretKeys = []string{"NGC_API_KEY", "NGC_CLI_API_KEY", "NVIDIA_API_KEY"}
+
+// ngcAPISecretData builds the ngc-api Opaque secret payload with all
+// nvidiaAPISecretKeys mapped to the same token value.
+func ngcAPISecretData(token string) map[string][]byte {
+	out := make(map[string][]byte, len(nvidiaAPISecretKeys))
+	for _, k := range nvidiaAPISecretKeys {
+		out[k] = []byte(token)
+	}
+	return out
+}
 
 // secretInjector configures Helm values for a blueprint component so its
 // rendered workloads can pull images and access vendor APIs. Each implementation
@@ -265,7 +282,7 @@ func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNam
 	apiSecret.Name = nvidiaAPISecretName
 	apiSecret.Namespace = targetNamespace
 	apiSecret.Type = corev1.SecretTypeOpaque
-	apiSecret.Data = map[string][]byte{nvidiaAPISecretKey: []byte(token)}
+	apiSecret.Data = ngcAPISecretData(token)
 	if err := cc.ApplySecret(ctx, apiSecret); err != nil {
 		return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
 	}

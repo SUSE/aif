@@ -649,8 +649,12 @@ func TestPullSecretFactory_NvidiaImagePullSecret(t *testing.T) {
 	if api.Type != corev1.SecretTypeOpaque {
 		t.Errorf("type: got %v want Opaque", api.Type)
 	}
-	if string(api.Data[nvidiaAPISecretKey]) != "nvapi-test" {
-		t.Errorf("token: got %q want nvapi-test", api.Data[nvidiaAPISecretKey])
+	// All three NVIDIA env-var conventions must carry the same token so
+	// charts that read any one of them work without per-chart tuning.
+	for _, k := range nvidiaAPISecretKeys {
+		if string(api.Data[k]) != "nvapi-test" {
+			t.Errorf("token at key %s: got %q want nvapi-test", k, api.Data[k])
+		}
 	}
 
 	// Unknown name: returns (nil, nil)
