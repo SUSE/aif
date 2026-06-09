@@ -85,6 +85,9 @@ func (m *Manager) DeleteClusterRepo(ctx context.Context, name string) error {
 }
 
 func GitRawBaseURL(repo string, branch string) (string, error) {
+	if branch == "" {
+		return "", fmt.Errorf("git branch must not be empty")
+	}
 	u, err := urlpkg.Parse(repo)
 	if err != nil {
 		return "", fmt.Errorf("invalid git repo URL: %w", err)
