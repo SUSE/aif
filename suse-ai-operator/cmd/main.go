@@ -89,6 +89,9 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	var deploymentReadinessTimeout time.Duration
+	flag.DurationVar(&deploymentReadinessTimeout, "deployment-readiness-timeout", 5*time.Minute,
+		"Maximum time to wait for Helm-deployed extension pods to become ready.")
 	var apiBindAddr string
 	flag.StringVar(&apiBindAddr, "api-bind-address", ":8080", "The address the operator API binds to.")
 	opts := zap.Options{
@@ -206,6 +209,7 @@ func main() {
 		Recorder:           mgr.GetEventRecorderFor("install-ai-extension-controller"),
 		Config:             mgr.GetConfig(),
 		ExtensionNamespace: config.GetExtensionNamespace(),
+		ReadinessTimeout:   deploymentReadinessTimeout,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
