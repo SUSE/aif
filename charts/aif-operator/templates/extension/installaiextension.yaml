@@ -16,3 +16,4 @@ spec:
     name: {{ .Values.aiExtension.extension.name | quote }}
     version: {{ .Values.aiExtension.extension.version | quote }}
 {{- end }}
+{{- end }}

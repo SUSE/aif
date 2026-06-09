@@ -59,7 +59,7 @@
     "aiExtension": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean", "default": false },
+        "enabled": { "type": "boolean", "default": true },
         "source": {
           "type": "object",
           "properties": {
