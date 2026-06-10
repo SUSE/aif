@@ -46,7 +46,7 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=blueprints,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
