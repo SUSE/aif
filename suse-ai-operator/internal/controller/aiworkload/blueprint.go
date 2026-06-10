@@ -290,15 +290,6 @@ func (r *AIWorkloadReconciler) readSettingsSecretKey(ctx context.Context, ref *a
 	return string(val), nil
 }
 
-// repoURLToHost derives the registry hostname from an OCI repo URL.
-func repoURLToHost(url string) string {
-	host := strings.TrimPrefix(url, "oci://")
-	if idx := strings.IndexByte(host, '/'); idx >= 0 {
-		host = host[:idx]
-	}
-	return host
-}
-
 const (
 	// 53 = 63 (K8s DNS-1123 label max) − 10 bytes Helm reserves for generated
 	// suffixes. Fleet validates spec.helm.releaseName against this.
