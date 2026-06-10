@@ -154,6 +154,10 @@ rules:
       - get
       - list
       - watch
+      - patch
+      - create
+      - delete
+      - update
   - apiGroups:
       - ai-platform.suse.com
     resources:

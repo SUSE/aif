@@ -50,6 +50,7 @@ rules:
   - aiworkloads
   - installaiextensions
   - settings
+  - blueprints
   verbs:
   - create
   - delete
@@ -75,14 +76,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - ai-platform.suse.com
-  resources:
-  - blueprints
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - apiextensions.k8s.io
   resources:
