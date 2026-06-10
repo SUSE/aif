@@ -1,0 +1,4 @@
+SUSE AI Operator has been installed.
+
+Check operator logs:
+kubectl logs deploy/{{ include "aif-operator.fullname" . }} -n {{ .Release.Namespace }} -f

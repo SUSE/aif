@@ -1,0 +1,62 @@
+{{- if .Values.aiExtension.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 360
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: {{ include "aif-operator.fullname" . }}-cleanup
+      restartPolicy: Never
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.aiExtension.cleanup.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+      containers:
+        - name: cleanup
+          image: "{{ with (coalesce .Values.global.imageRegistry .Values.aiExtension.cleanup.image.registry) }}{{ . }}/{{ end }}{{ .Values.aiExtension.cleanup.image.repository }}:{{ .Values.aiExtension.cleanup.image.tag }}"
+          imagePullPolicy: {{ .Values.aiExtension.cleanup.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.aiExtension.cleanup.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.aiExtension.cleanup.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /tmp
+              name: tmp-dir
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              CR_NAME="{{ .Values.aiExtension.extension.name }}"
+              echo "Checking if InstallAIExtension CR exists..."
+              if ! kubectl get installaiextension "$CR_NAME" > /dev/null 2>&1; then
+                echo "CR not found, nothing to clean up"
+                exit 0
+              fi
+              echo "Deleting InstallAIExtension CR..."
+              if ! kubectl delete installaiextension "$CR_NAME" --timeout=300s; then
+                echo "ERROR: Delete timed out. The operator finalizer did not complete cleanup."
+                echo "Remaining CR state:"
+                kubectl get installaiextension "$CR_NAME" -o yaml 2>/dev/null || true
+                echo ""
+                echo "The operator is still running and may complete cleanup. Retry 'helm uninstall' later."
+                echo "To force removal (requires cluster-admin), after verifying no resources are leaked:"
+                echo "  kubectl patch installaiextension $CR_NAME --type=merge -p '{\"metadata\":{\"finalizers\":[]}}'"
+                echo "(This command must be run with cluster-admin credentials, not the cleanup job's service account.)"
+                exit 1
+              fi
+              echo "Cleanup complete"
+{{- end }}

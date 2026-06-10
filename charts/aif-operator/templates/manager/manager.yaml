@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.manager.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aif-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.manager.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "aif-operator.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: manager
+          image: "{{ with (coalesce .Values.global.imageRegistry .Values.manager.image.registry) }}{{ . }}/{{ end }}{{ .Values.manager.image.repository }}:{{ .Values.manager.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.manager.image.pullPolicy }}
+          command:
+            - /manager
+          args:
+          {{- if .Values.metrics.enable }}
+            - --metrics-bind-address=:{{ .Values.metrics.port }}
+          {{- else }}
+            - --metrics-bind-address=0
+          {{- end }}
+            - --health-probe-bind-address=:8081
+          {{- range .Values.manager.args }}
+            - {{ . }}
+          {{- end }}
+            - --api-bind-address=:{{ .Values.api.port }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+              protocol: TCP
+          {{- if .Values.manager.probes.liveness.enabled }}
+          livenessProbe:
+            {{- omit .Values.manager.probes.liveness "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- if .Values.manager.probes.readiness.enabled }}
+          readinessProbe:
+            {{- omit .Values.manager.probes.readiness "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.manager.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.manager.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: OPERATOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: EXTENSION_NAMESPACE
+              value: {{ include "aif-operator.extensionsNamespace" . | quote }}
+          {{- range .Values.manager.env }}
+            - {{ toYaml . | nindent 14 | trim }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /home/nonroot/.cache
+              name: helm-cache
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "aif-operator.fullname" . }}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - emptyDir: {}
+          name: helm-cache
+      {{- with .Values.manager.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.manager.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.manager.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.manager.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

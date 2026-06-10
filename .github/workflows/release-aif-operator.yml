@@ -1,0 +1,134 @@
+name: Build AIF Operator [Container and Helm Chart]
+
+on:
+  push:
+    tags:
+      - aif-operator-*
+
+env:
+  IMAGE_NAME: ghcr.io/suse/aif-operator
+  CHART_PATH: charts/aif-operator
+  CHART_REGISTRY: oci://ghcr.io/suse/chart
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.tags.outputs.VERSION }}
+      PUBLISH: ${{ steps.tags.outputs.PUBLISH }}
+      METADATA_TAGS: ${{ steps.tags.outputs.METADATA_TAGS }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Calculate tags
+        id: tags
+        shell: bash
+        run: |
+          ref="${{ github.ref }}"
+          case "$ref" in
+            refs/tags/aif-operator-*)
+              VERSION="${ref#refs/tags/aif-operator-}"
+              PUBLISH=true
+              if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                {
+                  echo "METADATA_TAGS<<EOF"
+                  echo "$VERSION"
+                  echo "latest"
+                  echo "EOF"
+                } >> "$GITHUB_OUTPUT"
+              else
+                {
+                  echo "METADATA_TAGS<<EOF"
+                  echo "$VERSION"
+                  echo "EOF"
+                } >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              VERSION="${{ github.sha }}"
+              PUBLISH=false
+              {
+                echo "METADATA_TAGS<<EOF"
+                echo "$VERSION"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "PUBLISH=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+  build-container:
+    needs: prepare
+    if: needs.prepare.outputs.PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            ${{ needs.prepare.outputs.METADATA_TAGS }}
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: aif-operator
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+
+  build-chart:
+    needs: [prepare, build-container]
+    if: needs.prepare.outputs.PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Chart.yaml versions
+        run: |
+          yq -i '.version = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
+          yq -i '.appVersion = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
+          yq -i '
+            .annotations."helm.sh/images" =
+            "- image: ghcr.io/suse/aif-operator:${{ needs.prepare.outputs.VERSION }}\n  name: aif-operator"
+          ' $CHART_PATH/Chart.yaml
+
+      - name: Package and push Helm chart
+        run: |
+          chart_package=$(helm package $CHART_PATH --destination . | awk '{print $NF}')
+          helm push "$chart_package" $CHART_REGISTRY

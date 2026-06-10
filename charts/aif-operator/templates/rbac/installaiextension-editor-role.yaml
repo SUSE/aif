@@ -1,0 +1,27 @@
+{{- if .Values.rbacHelpers.enable }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.serviceName" (dict "context" . "suffix" "installaiextension-editor") }}
+rules:
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - installaiextensions
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - installaiextensions/status
+    verbs:
+      - get
+{{- end }}

@@ -1,9 +1,0 @@
-apiVersion: ai-platform.suse.com/v1alpha1
-kind: Settings
-metadata:
-  name: settings
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "suse-ai-operator.labels" . | nindent 4 }}
-  annotations:
-    helm.sh/resource-policy: keep

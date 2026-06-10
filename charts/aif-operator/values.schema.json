@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "imageRegistry": { "type": "string", "default": "" },
+        "imagePullSecrets": { "type": "array", "default": [] }
+      }
+    },
+    "nameOverride": { "type": "string", "default": "" },
+    "fullnameOverride": { "type": "string", "default": "" },
+    "manager": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "default": 1, "minimum": 0 },
+        "image": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string", "default": "ghcr.io" },
+            "repository": { "type": "string", "default": "suse/aif-operator" },
+            "tag": { "type": "string", "default": "" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "default": "IfNotPresent" }
+          }
+        },
+        "imagePullSecrets": { "type": "array", "default": [] },
+        "args": { "type": "array", "default": ["--leader-elect"] },
+        "env": { "type": "array", "default": [] },
+        "podAnnotations": { "type": "object", "default": {} },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "resources": { "type": "object" },
+        "probes": { "type": "object" },
+        "nodeSelector": { "type": "object", "default": {} },
+        "tolerations": { "type": "array", "items": { "type": "object" }, "default": [] },
+        "affinity": { "type": "object", "default": {} }
+      }
+    },
+    "rbacHelpers": {
+      "type": "object",
+      "properties": {
+        "enable": { "type": "boolean", "default": false }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enable": { "type": "boolean", "default": true },
+        "port": { "type": "integer", "default": 8443 }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "default": 8080 }
+      }
+    },
+    "aiExtension": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "enum": ["Helm"], "default": "Helm" },
+            "helm": {
+              "type": "object",
+              "required": ["chartURL", "version"],
+              "properties": {
+                "chartURL": { "type": "string" },
+                "version": { "type": "string" }
+              }
+            }
+          }
+        },
+        "extension": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "registry": { "type": "string", "default": "registry.suse.com" },
+                "repository": { "type": "string", "default": "suse/kubectl" },
+                "tag": { "type": "string", "default": "1.35" },
+                "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "default": "IfNotPresent" }
+              }
+            },
+            "resources": { "type": "object" },
+            "podSecurityContext": { "type": "object" },
+            "securityContext": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}
