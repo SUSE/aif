@@ -21,6 +21,9 @@ spec:
       {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
       securityContext:
         {{- toYaml .Values.aiExtension.cleanup.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
       containers:
         - name: cleanup
           image: "{{ with (coalesce .Values.global.imageRegistry .Values.aiExtension.cleanup.image.registry) }}{{ . }}/{{ end }}{{ .Values.aiExtension.cleanup.image.repository }}:{{ .Values.aiExtension.cleanup.image.tag }}"
@@ -29,6 +32,9 @@ spec:
             {{- toYaml .Values.aiExtension.cleanup.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.aiExtension.cleanup.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /tmp
+              name: tmp-dir
           command:
             - /bin/sh
             - -c
