@@ -61,7 +61,8 @@
               'row-compatible': cluster.status === 'compatible',
               'row-limited': cluster.status === 'limited',
               'row-insufficient': cluster.status === 'insufficient',
-              'row-error': cluster.status === 'error'
+              'row-error': cluster.status === 'error',
+              'row-disabled': disabled
             }"
             @click="multiSelect ? toggleCluster(cluster.clusterId) : selectSingleCluster(cluster.clusterId)"
           >
@@ -81,6 +82,7 @@
                 :name="`cluster-select-${tableId}`"
                 :value="cluster.clusterId"
                 :checked="isClusterSelected(cluster.clusterId)"
+                :disabled="disabled"
                 @change="selectSingleCluster(cluster.clusterId)"
                 class="cluster-radio"
               />
@@ -180,6 +182,7 @@
           {{ getClusterName(clusterId) }}
           <button
             class="chip-remove"
+            :disabled="disabled"
             @click="toggleCluster(clusterId)"
             title="Remove"
           >×</button>
@@ -587,6 +590,15 @@ export default defineComponent({
 
 .cluster-row:hover {
   background: var(--sortable-table-accent-bg);
+}
+
+.cluster-row.row-disabled {
+  cursor: default;
+  pointer-events: none;
+}
+
+.cluster-row.row-disabled:hover {
+  background: inherit;
 }
 
 .cluster-row.row-selected {
