@@ -89,7 +89,7 @@
           <div v-if="filteredApps.length" class="results-text">
             Showing {{ filteredApps.length }} of {{ filteredApps.length }} applications
           </div>
-          <div v-else-if="!loading && !error" class="results-text">
+          <div v-else-if="!loading && !error && items.length > 0" class="results-text">
             No applications found
           </div>
         </div>
@@ -151,7 +151,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!filteredApps.length" class="empty-row">
+            <tr v-if="!filteredApps.length && items.length > 0" class="empty-row">
               <td colspan="3" class="text-center text-muted">{{ t('suseai.apps.noApps', 'No applications found') }}</td>
             </tr>
             <tr
@@ -195,11 +195,32 @@
         </table>
       </div>
 
-        <!-- Empty state content -->
-        <div v-if="!loading && !filteredApps.length && !error" class="empty-state-content">
+        <!-- Empty state: no Settings CR — guide user to configure registry connections -->
+        <div v-if="!loading && !items.length && settingsData === null && !error" class="empty-state-content">
+          <i class="icon icon-folder-open icon-4x text-muted" />
+          <h3>No applications available</h3>
+          <p class="text-muted">
+            To browse applications, add your registry connection details on the
+            <a class="empty-state-link" role="button" tabindex="0" @click.prevent="goToSettings" @keydown.enter.prevent="goToSettings">Settings</a> page.
+          </p>
+        </div>
+
+        <!-- Empty state: Settings CR exists but no apps found yet -->
+        <div v-else-if="!loading && !items.length && settingsData !== null && settingsData !== undefined && !error" class="empty-state-content">
+          <i class="icon icon-folder-open icon-4x text-muted" />
+          <h3>No applications available yet</h3>
+          <p class="text-muted">
+            Registry connections are configured but no applications were found. If you recently added
+            your registry, the catalog may still be loading — this can take a few minutes.
+            <a class="empty-state-link" role="button" tabindex="0" @click.prevent="!loading && refresh()" @keydown.enter.prevent="!loading && refresh()">Refresh</a> to check again.
+          </p>
+        </div>
+
+        <!-- Empty state: apps loaded but search/filter yields no results -->
+        <div v-else-if="!loading && !filteredApps.length && items.length > 0 && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noApps', 'No applications found') }}</h3>
-          <p class="text-muted">{{ t('suseai.apps.noAppsDesc', 'Try adjusting your search or filter.') }}</p>
+          <p class="text-muted">{{ search ? t('suseai.apps.noAppsDesc', 'Try adjusting your search or filter.') : 'No applications are available in the selected library.' }}</p>
         </div>
       </div>
     </div>
@@ -229,6 +250,7 @@ export default defineComponent({
     const selectedRepo = ref('suse-ai');
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
+    const settingsData = ref<any>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
 
     const repositoryOptions = computed(() => [
       { label: 'SUSE AI Library', value: 'suse-ai' },
@@ -290,6 +312,7 @@ export default defineComponent({
     const loadApps = async () => {
       try {
         const settings = await fetchSettingsOrNull();
+        settingsData.value = settings;
         const [suseApps, nvidiaApps] = await Promise.all([
           fetchSuseAiApps(store, settings),
           fetchNvidiaApps(store, settings),
@@ -299,6 +322,10 @@ export default defineComponent({
         console.error('Failed to load apps:', err);
         throw err;
       }
+    };
+
+    const goToSettings = () => {
+      $router.push({ name: 'c-cluster-suseai-settings', params: { cluster: currentClusterId } }).catch(() => {});
     };
 
     const onTileClick = async (app: AppCollectionItem) => {
@@ -339,7 +366,9 @@ export default defineComponent({
       selectedRepo,
       repositoryOptions,
       viewMode,
+      items,
       filteredApps,
+      settingsData,
 
       // Methods
       refresh,
@@ -348,6 +377,7 @@ export default defineComponent({
       formatPackagingType,
       logoFor,
       onImgError,
+      goToSettings,
       t
     };
   }
@@ -969,6 +999,12 @@ export default defineComponent({
     margin: 0;
     color: var(--muted);
     line-height: 1.5;
+  }
+
+  .empty-state-link {
+    color: var(--primary);
+    cursor: pointer;
+    text-decoration: underline;
   }
 }
 
