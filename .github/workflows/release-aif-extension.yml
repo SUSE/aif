@@ -180,3 +180,10 @@ jobs:
         run: |
           chart_package=$(helm package $CHART_PATH --destination . | awk '{print $NF}')
           helm push "$chart_package" $CHART_REGISTRY
+
+      - name: Generate and attach SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.VERSION }}
+          format: spdx-json
+          upload-artifact: true
