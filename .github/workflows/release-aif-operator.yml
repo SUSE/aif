@@ -117,6 +117,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           push: true
           platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: true
 
   build-chart:
     needs: [prepare, build-container]
