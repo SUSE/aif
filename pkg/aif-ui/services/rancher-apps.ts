@@ -747,6 +747,17 @@ export async function fetchChartDefaultValues(
   return chartValuesService.getDefaultValues(repoName, chartName, version);
 }
 
+export async function fetchChartArchiveSize(
+  $store: RancherStore,
+  _repoClusterId: string,
+  repoName: string,
+  chartName: string,
+  version: string
+): Promise<number | null> {
+  const chartValuesService = createChartValuesService($store);
+  return chartValuesService.getChartArchiveSize(repoName, chartName, version);
+}
+
 // Note: Complex tar.gz processing removed - now handled by ChartValuesService
 
 /* ================== NEW: helpers for repo discovery & helm installs ============== */
