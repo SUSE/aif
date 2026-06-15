@@ -458,7 +458,7 @@ async function fetchClusterData<T>(
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/${resourcePath}?exclude=metadata.managedFields`;
 
   try {
-    const res = await store.dispatch('rancher/request', { url: baseUrl, timeout: 20000 });
+    const res = await store.dispatch('rancher/request', { url: baseUrl, timeout: 10000 });
     const data = res?.data?.data || res?.data || [];
     console.log(`[SUSE-AI] getClusterResourceMetrics: Got ${data.length} ${label} from ${isLocalCluster ? 'global' : 'cluster-specific'} API`);
     return Array.isArray(data) ? data : [];

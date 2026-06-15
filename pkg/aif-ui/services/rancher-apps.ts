@@ -82,19 +82,32 @@ function matchesSlug(name: string, slug: string, guess?: string): boolean {
 /* ===================== cluster + Rancher App basic helpers ==================== */
 
 export async function getClusters($store: RancherStore): Promise<ClusterInfo[]> {
+  // Only include the local management cluster and downstream clusters that Rancher reports as ready.
+  // Unhealthy/unreachable clusters cause API calls to time out, making pages and dropdowns extremely slow.
+  const isReady = (c: ClusterResource): boolean => {
+    if (c.id === 'local' || c.metadata?.name === 'local') return true;
+    // Steve model exposes .ready getter backed by status.ready
+    if (typeof (c as any).ready === 'boolean') return (c as any).ready;
+    return c.status?.ready === true;
+  };
+
   try {
     const rows = await Promise.race([
       $store.dispatch('management/findAll', { type: 'cluster' }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 20000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
     ]) as ClusterResource[];
-    return (rows || []).map((c: ClusterResource) => ({ id: c.id, name: c.spec?.displayName || c.metadata?.name || c.id }));
+    return (rows || [])
+      .filter(isReady)
+      .map((c: ClusterResource) => ({ id: c.id, name: c.spec?.displayName || c.metadata?.name || c.id }));
   } catch {
-    const res = await $store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: 20000 });
+    const res = await $store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: 10000 });
     const items = res?.data?.data || res?.data || [];
-    return (items || []).map((c: ClusterResource) => ({
-      id:   c?.metadata?.name || c?.id,
-      name: c?.spec?.displayName || c?.metadata?.name || c?.id
-    })).filter((x: ClusterInfo) => !!x.id);
+    return (items || [])
+      .filter(isReady)
+      .map((c: ClusterResource) => ({
+        id:   c?.metadata?.name || c?.id,
+        name: c?.spec?.displayName || c?.metadata?.name || c?.id
+      })).filter((x: ClusterInfo) => !!x.id);
   }
 }
 
@@ -444,7 +457,7 @@ export async function deleteApp($store: RancherStore, clusterId: string, namespa
 
 export async function listCatalogApps($store: RancherStore, clusterId: string): Promise<AppCRD[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=1000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
   return res?.data?.items || res?.data || res?.items || [];
 }
 
@@ -452,7 +465,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
   const url = clusterId === 'local'
     ? '/api/v1/namespaces?limit=5000'
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
   const items = res?.data?.items || res?.data || res?.items || [];
 
   return (items || []).map((n: NamespaceResource) => n?.metadata?.name).filter((n: string) => !!n);
@@ -460,7 +473,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
 
 async function listNsHelmSecrets($store: RancherStore, clusterId: string, ns: string): Promise<HelmSecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(ns)}/secrets?labelSelector=owner%3Dhelm`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
   return res?.data?.items || res?.data || [];
 }
 
@@ -498,9 +511,9 @@ export async function discoverExistingInstall(
     ...clusters.filter(c => !preferClusterId || c.id !== preferClusterId)
   ];
 
-  let found: FoundInfo | null = null;
+  type ClusterMatch = { clusterId: string; release: string; namespace: string; chartName?: string; version?: string };
 
-  for (const c of order) {
+  const searchCluster = async (c: ClusterInfo): Promise<ClusterMatch | null> => {
     // 1) Rancher Apps
     try {
       const apps = await listCatalogApps($store, c.id);
@@ -511,64 +524,59 @@ export async function discoverExistingInstall(
         const ver   = spec?.chart?.metadata?.version || spec?.version || '';
         const rel   = meta?.name || '';
         const ns    = meta?.namespace || '';
-
         const hit = matchesSlug(chart, slug, chartNameGuess) || matchesSlug(rel, slug, chartNameGuess);
-        if (!hit) continue;
-
-        if (!found) found = { release: rel, namespace: ns, chartName: chart, version: ver, clusters: [c.id] };
-        else if (!found.clusters.includes(c.id)) found.clusters.push(c.id);
+        if (hit) return { clusterId: c.id, release: rel, namespace: ns, chartName: chart, version: ver };
       }
     } catch { /* ignore */ }
 
     // 2) Helm v3 storage - cluster-wide search (optimized)
     try {
-      // Try cluster-wide secret search first (1 API call vs N calls for N namespaces)
       const clusterWideUrl = `/k8s/clusters/${encodeURIComponent(c.id)}/api/v1/secrets?labelSelector=owner=helm&limit=500`;
-
       try {
-        const response = await $store.dispatch('rancher/request', { url: clusterWideUrl, timeout: 20000 });
+        const response = await $store.dispatch('rancher/request', { url: clusterWideUrl, timeout: 10000 });
         const allHelmSecrets = response?.data?.items || [];
-
         for (const s of allHelmSecrets) {
           const ns = s?.metadata?.namespace || '';
           const { release, chartBase, version } = extractHelmRelease(s);
           const hit = (release && matchesSlug(release, slug, chartNameGuess)) ||
                       (chartBase && matchesSlug(chartBase, slug, chartNameGuess));
-
-          if (hit) {
-            if (!found) {
-              found = { release: release || slug, namespace: ns, chartName: chartBase || slug, version: version || '', clusters: [c.id] };
-            } else if (!found.clusters.includes(c.id)) {
-              found.clusters.push(c.id);
-            }
-            break; // Found in this cluster, move to next cluster
-          }
+          if (hit) return { clusterId: c.id, release: release || slug, namespace: ns, chartName: chartBase || slug, version: version || '' };
         }
-      } catch (clusterWideError) {
+      } catch {
         // Fallback to per-namespace search if cluster-wide search fails (RBAC restrictions)
-        // This fallback may not be required so might be deleted in future
         console.log('[SUSE-AI] Cluster-wide secret search not available, using per-namespace fallback');
-
         const nss = await listNamespaces($store, c.id);
         for (const ns of nss) {
           const secs = await listNsHelmSecrets($store, c.id, ns);
-          let localFound: FoundInfo | null = found;
           for (const s of secs) {
             const { release, chartBase, version } = extractHelmRelease(s);
             const hit = (release && matchesSlug(release, slug, chartNameGuess)) ||
                         (chartBase && matchesSlug(chartBase, slug, chartNameGuess));
-            if (hit) {
-              if (!localFound) localFound = { release: release || slug, namespace: ns, chartName: chartBase || slug, version: version || '', clusters: [c.id] };
-              else if (!localFound.clusters.includes(c.id)) localFound.clusters.push(c.id);
-            }
+            if (hit) return { clusterId: c.id, release: release || slug, namespace: ns, chartName: chartBase || slug, version: version || '' };
           }
-          if (localFound) { found = localFound; break; }
         }
       }
     } catch { /* ignore */ }
+
+    return null;
+  };
+
+  const results = await Promise.allSettled(order.map(searchCluster));
+  const matches: ClusterMatch[] = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value !== null) matches.push(r.value);
   }
 
-  return found;
+  if (matches.length === 0) return null;
+
+  const canonical = matches.find(m => m.clusterId === preferClusterId) || matches[0];
+  return {
+    release:   canonical.release,
+    namespace: canonical.namespace,
+    chartName: canonical.chartName,
+    version:   canonical.version,
+    clusters:  matches.map(m => m.clusterId)
+  };
 }
 
 /* =========================== charts: index + versions =========================== */
@@ -584,7 +592,7 @@ async function getRepoIndexLink($store: RancherStore, repoName: string): Promise
     const repo = encodeURIComponent(repoName);
 
     const url = `${baseApi}/catalog.cattle.io.clusterrepos/${repo}`;
-    const res  = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+    const res  = await $store.dispatch('rancher/request', { url, timeout: 8000 });
 
     const link = res?.data?.links?.index || res?.links?.index;
     log('repo index link:', link);
@@ -599,7 +607,7 @@ async function getRepoIndex($store: RancherStore, repoName: string): Promise<Rep
   const indexLink = await getRepoIndexLink($store, repoName);
   if (!indexLink) return null;
 
-  const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: 20000 });
+  const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: 8000 });
   const payload = (res?.data ?? res);
   dbg('index payload', payload);
   if (typeof payload === 'string') return yaml.load(payload) as RepositoryIndex | null;
@@ -1053,7 +1061,7 @@ export async function getCatalogApp(
   console.log('[SUSE-AI DEBUG] getCatalogApp URL:', url);
 
   try {
-    const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+    const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
     const app = (res?.data ?? res) || {};
     console.log('[SUSE-AI DEBUG] getCatalogApp result:', {
       hasMetadata: !!app.metadata,
