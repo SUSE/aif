@@ -126,13 +126,13 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
     try {
       const clusters = await Promise.race([
         store.dispatch('management/findAll', { type: 'cluster' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 20000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ))
       ]) as ClusterResource[];
       const cluster = clusters.find((c: ClusterResource) => c.id === clusterId);
       clusterName = cluster?.metadata?.name || clusterId;
     } catch {
       // Fallback to API call if store doesn't work
-      const res = await store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: TIMEOUT_VALUES.MUTATION });
+      const res = await store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: TIMEOUT_VALUES.READ });
       const items = res?.data?.data || res?.data || [];
       const cluster = items.find((c: ClusterResource) =>
         (c?.metadata?.name === clusterId) || (c?.id === clusterId) || (c?.spec?.displayName === clusterId)

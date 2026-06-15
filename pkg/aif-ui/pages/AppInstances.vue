@@ -250,6 +250,7 @@ import type { AppInstallationSummary } from '../types/app-types';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchAppsFromRepository } from '../services/app-collection';
 import { discoverExistingInstall, getClusters, listCatalogApps, deleteApp } from '../services/rancher-apps';
+import { DEFAULT_VALUES } from '../utils/constants';
 import { PRODUCT } from '../config/suseai';
 
 interface InstanceData extends AppInstallationSummary {
@@ -668,7 +669,7 @@ export default defineComponent({
     let refreshTimer: NodeJS.Timeout | null = null;
     let clustersCache: any[] | null = null;
     let clustersCacheTime = 0;
-    const CLUSTERS_CACHE_TTL = 60000; // Cache clusters for 1 minute
+    const CLUSTERS_CACHE_TTL = DEFAULT_VALUES.CLUSTER_CACHE_TTL;
 
     const silentRefresh = async () => {
       // Skip refresh if paused, loading, or if any delete operations are in progress

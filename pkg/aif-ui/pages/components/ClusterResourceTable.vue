@@ -71,7 +71,7 @@
               <span v-if="multiSelect" @click.stop>
                 <Checkbox
                   :value="isClusterSelected(cluster.clusterId)"
-                  :disabled="disabled"
+                  :disabled="disabled || cluster.status === 'unavailable'"
                   @update:value="toggleCluster(cluster.clusterId)"
                 />
               </span>
@@ -82,6 +82,7 @@
                 :name="`cluster-select-${tableId}`"
                 :value="cluster.clusterId"
                 :checked="isClusterSelected(cluster.clusterId)"
+                :disabled="disabled || cluster.status === 'unavailable'"
                 @change="selectSingleCluster(cluster.clusterId)"
                 class="cluster-radio"
               />
@@ -198,6 +199,7 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, onMounted, watch, PropType, getCurrentInstance } from 'vue';
+import { TIMEOUT_VALUES } from '../../utils/constants';
 import { Checkbox } from '@components/Form/Checkbox';
 import ProgressBarMulti from '@shell/components/ProgressBarMulti';
 import StatusBadge from '@shell/components/StatusBadge';
@@ -318,7 +320,10 @@ export default defineComponent({
         try {
           const vm = getCurrentInstance()!.proxy as any;
           const store = vm.$store;
-          const basicClusters = await store.dispatch('management/findAll', { type: 'cluster' });
+          const basicClusters = await Promise.race([
+            store.dispatch('management/findAll', { type: 'cluster' }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.CLUSTER))
+          ]);
           clusters.value = (basicClusters || []).map((c: any) => ({
             clusterId: c.id,
             name: c.name || c.id,
@@ -399,25 +404,6 @@ export default defineComponent({
       return `chip-${cluster.status}`;
     }
 
-    function getStatusIcon(status: ClusterResourceSummary['status']): string {
-      switch (status) {
-        case 'compatible': return '✓';
-        case 'limited': return '!';
-        case 'insufficient': return '✕';
-        case 'checking': return '...';
-        case 'error': return '?';
-        default: return '?';
-      }
-    }
-
-    function getResourceBarClass(used: number, total: number): string {
-      if (total === 0) return 'resource-bar-low';
-      const percentage = (used / total) * 100;
-      if (percentage >= 90) return 'resource-bar-critical';
-      if (percentage >= 70) return 'resource-bar-high';
-      return 'resource-bar-low';
-    }
-
     function getResourceBarColor(used: number, total: number): string {
       if (total === 0) return 'bg-success';
       const pct = (used / total) * 100;
@@ -464,8 +450,6 @@ export default defineComponent({
       toggleSelectAllCompatible,
       getClusterName,
       getClusterChipClass,
-      getStatusIcon,
-      getResourceBarClass,
       getResourceBarColor,
       getStatusBadgeStatus
     };

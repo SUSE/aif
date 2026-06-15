@@ -39,8 +39,7 @@ import type {
   ListResponse,
   InstallationPayload,
   ProjectResource,
-  ServiceAccount,
-  isRancherError
+  ServiceAccount
 } from '../types/rancher-types';
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
@@ -125,7 +124,7 @@ export async function getClusters($store: RancherStore): Promise<ClusterInfo[]> 
 export async function ensureNamespace($store: RancherStore, clusterId: string, namespace: string): Promise<void> {
   const getUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}`;
   try {
-    await $store.dispatch('rancher/request', { url: getUrl, timeout: TIMEOUT_VALUES.MUTATION });
+    await $store.dispatch('rancher/request', { url: getUrl, timeout: TIMEOUT_VALUES.CLUSTER });
   } catch {
     const createUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces`;
     await $store.dispatch('rancher/request', {
@@ -784,7 +783,7 @@ export async function fetchChartArchiveSize(
 export async function listClusterRepos($store: RancherStore): Promise<ClusterResource[]> {
     const res = await $store.dispatch('rancher/request', {
     url: '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000',
-    timeout: TIMEOUT_VALUES.MUTATION
+    timeout: TIMEOUT_VALUES.READ
   });
     return res?.data?.items || res?.data || res?.items || [];
 }
@@ -1064,7 +1063,7 @@ async function listNsSecrets(
   namespace: string
 ): Promise<RegistrySecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return (res?.data?.items || res?.data || []) as RegistrySecret[];
 }
 
