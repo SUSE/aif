@@ -44,6 +44,7 @@ import type {
 } from '../types/rancher-types';
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
+import { TIMEOUT_VALUES } from '../utils/constants';
 
 export interface ChartRef {
   repoName: string;   // ClusterRepo metadata.name
@@ -81,47 +82,57 @@ function matchesSlug(name: string, slug: string, guess?: string): boolean {
 
 /* ===================== cluster + Rancher App basic helpers ==================== */
 
-export async function getClusters($store: RancherStore): Promise<ClusterInfo[]> {
-  // Only include the local management cluster and downstream clusters that Rancher reports as ready.
-  // Unhealthy/unreachable clusters cause API calls to time out, making pages and dropdowns extremely slow.
-  const isReady = (c: ClusterResource): boolean => {
-    if (c.id === 'local' || c.metadata?.name === 'local') return true;
-    // Steve model exposes .ready getter backed by status.ready
-    if (typeof (c as any).ready === 'boolean') return (c as any).ready;
-    return c.status?.ready === true;
-  };
+function isClusterReady(c: ClusterResource): boolean {
+  if (c.id === 'local' || c.metadata?.name === 'local') return true;
+  if (c.status?.ready === true) return true;
+  const conditions = (c.status?.conditions ?? []) as Array<{ type: string; status: string }>;
+  return conditions.some(cond => cond.type === 'Ready' && cond.status === 'True');
+}
 
+// getAllClusters returns every cluster Rancher knows about, including unhealthy ones.
+// Each entry carries a `ready` flag so callers can disable/grey out unreachable clusters
+// without hiding them from the user entirely.
+export async function getAllClusters($store: RancherStore): Promise<ClusterInfo[]> {
   try {
     const rows = await Promise.race([
       $store.dispatch('management/findAll', { type: 'cluster' }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ))
     ]) as ClusterResource[];
-    return (rows || [])
-      .filter(isReady)
-      .map((c: ClusterResource) => ({ id: c.id, name: c.spec?.displayName || c.metadata?.name || c.id }));
+    return (rows || []).map((c: ClusterResource) => ({
+      id:    c.id,
+      name:  c.spec?.displayName || c.metadata?.name || c.id,
+      ready: isClusterReady(c)
+    }));
   } catch {
-    const res = await $store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: 10000 });
+    const res = await $store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: TIMEOUT_VALUES.CLUSTER });
     const items = res?.data?.data || res?.data || [];
     return (items || [])
-      .filter(isReady)
       .map((c: ClusterResource) => ({
-        id:   c?.metadata?.name || c?.id,
-        name: c?.spec?.displayName || c?.metadata?.name || c?.id
+        id:    c?.metadata?.name || c?.id,
+        name:  c?.spec?.displayName || c?.metadata?.name || c?.id,
+        ready: isClusterReady(c)
       })).filter((x: ClusterInfo) => !!x.id);
   }
+}
+
+// getClusters returns only ready clusters. Used for polling loops and any code that
+// makes downstream API calls — unhealthy clusters cause those calls to time out.
+export async function getClusters($store: RancherStore): Promise<ClusterInfo[]> {
+  const all = await getAllClusters($store);
+  return all.filter(c => c.ready !== false);
 }
 
 export async function ensureNamespace($store: RancherStore, clusterId: string, namespace: string): Promise<void> {
   const getUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}`;
   try {
-    await $store.dispatch('rancher/request', { url: getUrl, timeout: 20000 });
+    await $store.dispatch('rancher/request', { url: getUrl, timeout: TIMEOUT_VALUES.MUTATION });
   } catch {
     const createUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces`;
     await $store.dispatch('rancher/request', {
       url: createUrl,
       method: 'POST',
       data: { apiVersion: 'v1', kind: 'Namespace', metadata: { name: namespace } },
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
   }
 }
@@ -215,7 +226,7 @@ export async function createOrUpgradeApp(
           method: 'post',
           url: clusterReposUrl,
           data: upgradeData,
-          timeout: 20000
+          timeout: TIMEOUT_VALUES.MUTATION
         });
         log('App upgrade successful. Result:', upgradeResult);
         log('=== Completed createOrUpgradeApp (upgrade) ===');
@@ -229,7 +240,7 @@ export async function createOrUpgradeApp(
     // For install actions, check if app exists first and use upgrade if it does
     try {
       log('Checking for existing App...', { namespace, releaseName, checkUrl: appUrl });
-      const existingAppResp = await $store.dispatch('rancher/request', { url: appUrl, timeout: 20000 });
+      const existingAppResp = await $store.dispatch('rancher/request', { url: appUrl, timeout: TIMEOUT_VALUES.MUTATION });
       const existingApp = existingAppResp?.data ?? existingAppResp;
       const existingState = (existingApp?.status?.summary?.state || existingApp?.metadata?.state?.name || '').toLowerCase();
       if (existingState === 'uninstalling') {
@@ -258,7 +269,7 @@ export async function createOrUpgradeApp(
           method: 'post',
           url: upgradeUrl,
           data: upgradeData,
-          timeout: 20000
+          timeout: TIMEOUT_VALUES.MUTATION
         });
         log('App upgrade successful');
         return { upgraded: true };
@@ -295,7 +306,7 @@ export async function createOrUpgradeApp(
             method: 'post',
             url: clusterReposUrl,
             data: installData,
-            timeout: 20000
+            timeout: TIMEOUT_VALUES.MUTATION
           });
           log('App install successful');
         } catch (installError: unknown) {
@@ -346,7 +357,7 @@ export async function waitForAppInstall(
     let is404           = false;
 
     try {
-      const r = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+      const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
       app = (r?.data ?? r) || {};
     } catch (e: unknown) {
       const standardError = errorHandler.normalizeError(e);
@@ -365,7 +376,7 @@ export async function waitForAppInstall(
         `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets` +
         `?labelSelector=owner%3Dhelm%2Cname%3D${encodeURIComponent(releaseName)}`;
       try {
-        const secretsResp = await $store.dispatch('rancher/request', { url: helmSecretUrl, timeout: 10000 });
+        const secretsResp = await $store.dispatch('rancher/request', { url: helmSecretUrl, timeout: TIMEOUT_VALUES.CLUSTER });
         const secrets = secretsResp?.data?.items ?? secretsResp?.items ?? [];
         if (secrets.length > 0) {
           // Helm release exists — install succeeded, App CR was just cleaned up by Rancher.
@@ -442,7 +453,7 @@ export async function deleteApp($store: RancherStore, clusterId: string, namespa
       url,
       method: 'POST',
       data: { timeout: '600s' },
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
     await new Promise(resolve => setTimeout(resolve, 5000));
     log('App CRD deleted');
@@ -457,7 +468,7 @@ export async function deleteApp($store: RancherStore, clusterId: string, namespa
 
 export async function listCatalogApps($store: RancherStore, clusterId: string): Promise<AppCRD[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=1000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
   return res?.data?.items || res?.data || res?.items || [];
 }
 
@@ -465,7 +476,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
   const url = clusterId === 'local'
     ? '/api/v1/namespaces?limit=5000'
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
   const items = res?.data?.items || res?.data || res?.items || [];
 
   return (items || []).map((n: NamespaceResource) => n?.metadata?.name).filter((n: string) => !!n);
@@ -473,7 +484,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
 
 async function listNsHelmSecrets($store: RancherStore, clusterId: string, ns: string): Promise<HelmSecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(ns)}/secrets?labelSelector=owner%3Dhelm`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
   return res?.data?.items || res?.data || [];
 }
 
@@ -533,7 +544,7 @@ export async function discoverExistingInstall(
     try {
       const clusterWideUrl = `/k8s/clusters/${encodeURIComponent(c.id)}/api/v1/secrets?labelSelector=owner=helm&limit=500`;
       try {
-        const response = await $store.dispatch('rancher/request', { url: clusterWideUrl, timeout: 10000 });
+        const response = await $store.dispatch('rancher/request', { url: clusterWideUrl, timeout: TIMEOUT_VALUES.CLUSTER });
         const allHelmSecrets = response?.data?.items || [];
         for (const s of allHelmSecrets) {
           const ns = s?.metadata?.namespace || '';
@@ -592,7 +603,7 @@ async function getRepoIndexLink($store: RancherStore, repoName: string): Promise
     const repo = encodeURIComponent(repoName);
 
     const url = `${baseApi}/catalog.cattle.io.clusterrepos/${repo}`;
-    const res  = await $store.dispatch('rancher/request', { url, timeout: 8000 });
+    const res  = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
 
     const link = res?.data?.links?.index || res?.links?.index;
     log('repo index link:', link);
@@ -607,7 +618,7 @@ async function getRepoIndex($store: RancherStore, repoName: string): Promise<Rep
   const indexLink = await getRepoIndexLink($store, repoName);
   if (!indexLink) return null;
 
-  const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: 8000 });
+  const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: TIMEOUT_VALUES.READ });
   const payload = (res?.data ?? res);
   dbg('index payload', payload);
   if (typeof payload === 'string') return yaml.load(payload) as RepositoryIndex | null;
@@ -692,7 +703,7 @@ export async function fetchChartYaml(
   try {
     const response = await $store.dispatch('rancher/request', {
       url: `${repoPath}?link=files&${chartParams}`,
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
     const filesData = response?.data ?? response;
 
@@ -712,7 +723,7 @@ export async function fetchChartYaml(
   try {
     const response = await $store.dispatch('rancher/request', {
       url: `${repoPath}?link=file&${chartParams}&name=${encodeURIComponent('Chart.yaml')}`,
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
     const text = textFromFileEntry(response?.data ?? response);
 
@@ -727,7 +738,7 @@ export async function fetchChartYaml(
       url: `${repoPath}?link=chart&${chartParams}`,
       responseType: 'arraybuffer',
       headers: { Accept: 'application/gzip, application/x-gzip, application/octet-stream' },
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
 
     const buffer = response?.data ?? response;
@@ -773,7 +784,7 @@ export async function fetchChartArchiveSize(
 export async function listClusterRepos($store: RancherStore): Promise<ClusterResource[]> {
     const res = await $store.dispatch('rancher/request', {
     url: '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000',
-    timeout: 20000
+    timeout: TIMEOUT_VALUES.MUTATION
   });
     return res?.data?.items || res?.data || res?.items || [];
 }
@@ -837,21 +848,21 @@ async function upsertBasicAuthSecret(
   try {
     const res = await $store.dispatch('rancher/request', {
       url:     `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
-      timeout: 10000,
+      timeout: TIMEOUT_VALUES.CLUSTER,
     });
     const existing = res?.data || res;
     await $store.dispatch('rancher/request', {
       url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
       method: 'PUT',
       data:   { ...secretBody, metadata: { ...secretBody.metadata, resourceVersion: existing?.metadata?.resourceVersion } },
-      timeout: 20000,
+      timeout: TIMEOUT_VALUES.MUTATION,
     });
   } catch {
     await $store.dispatch('rancher/request', {
       url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets`,
       method: 'POST',
       data:   secretBody,
-      timeout: 20000,
+      timeout: TIMEOUT_VALUES.MUTATION,
     });
   }
 }
@@ -877,14 +888,14 @@ export async function ensureClusterRepo(
     if (clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name) {
       const res = await $store.dispatch('rancher/request', {
         url:     `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
-        timeout: 10000,
+        timeout: TIMEOUT_VALUES.CLUSTER,
       });
       const full = res?.data || res;
       await $store.dispatch('rancher/request', {
         url:    `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
         method: 'PUT',
         data:   { ...full, spec: { ...full.spec, clientSecret } },
-        timeout: 20000,
+        timeout: TIMEOUT_VALUES.MUTATION,
       });
     }
     return name;
@@ -897,7 +908,7 @@ export async function ensureClusterRepo(
     url:    '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos',
     method: 'POST',
     data:   { apiVersion: 'catalog.cattle.io/v1', kind: 'ClusterRepo', metadata: { name }, spec },
-    timeout: 20000,
+    timeout: TIMEOUT_VALUES.MUTATION,
   });
 
   // Poll until indexed (up to 60 s)
@@ -930,7 +941,7 @@ async function findHelmReleaseObjects(
     // List all secrets to find the highest version number
     try {
       const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets`;
-      const response = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+      const response = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
       const secrets = response?.data || response?.items || response || [];
 
       // Find all Helm release secrets for this release
@@ -949,12 +960,9 @@ async function findHelmReleaseObjects(
         const latestSecret = sortedSecrets[0];
         const secretName = latestSecret.metadata.name;
 
-        console.log('[SUSE-AI DEBUG] Found Helm release versions:', helmSecrets.map((s: HelmSecret) => s.metadata.name));
-        console.log('[SUSE-AI DEBUG] Using latest version:', secretName);
-
         // Now fetch the latest secret with includeHelmData=true
         const detailUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(secretName)}?exclude=metadata.managedFields&includeHelmData=true`;
-        const secret = await $store.dispatch('rancher/request', { url: detailUrl, timeout: 20000 });
+        const secret = await $store.dispatch('rancher/request', { url: detailUrl, timeout: TIMEOUT_VALUES.MUTATION });
 
         if (secret?.data?.release) {
           console.log('[SUSE-AI] Found Helm secret with includeHelmData=true:', secretName);
@@ -1047,40 +1055,6 @@ export async function getInstalledHelmDetails(
   };
 }
 
-/* ================== read installed App details for Manage ================== */
-
-const CLUSTER_REPO_NAME_LABEL = 'catalog.cattle.io/cluster-repo-name';
-
-export async function getCatalogApp(
-  $store: RancherStore,
-  clusterId: string,
-  namespace: string,
-  releaseName: string
-): Promise<AppCRD> {
-  const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/namespaces/${encodeURIComponent(namespace)}/apps/${encodeURIComponent(releaseName)}`;
-  console.log('[SUSE-AI DEBUG] getCatalogApp URL:', url);
-
-  try {
-    const res = await $store.dispatch('rancher/request', { url, timeout: 8000 });
-    const app = (res?.data ?? res) || {};
-    console.log('[SUSE-AI DEBUG] getCatalogApp result:', {
-      hasMetadata: !!app.metadata,
-      hasSpec: !!app.spec,
-      specKeys: Object.keys(app.spec || {}),
-      hasValues: !!app.spec?.values,
-      hasValuesYaml: !!app.spec?.valuesYaml,
-      valuesKeys: Object.keys(app.spec?.values || {}),
-      valuesYamlLength: (app.spec?.valuesYaml || '').length,
-      chartMetadata: app.spec?.chart?.metadata,
-      specSample: app.spec ? JSON.stringify(app.spec, null, 2).substring(0, 500) : null
-    });
-    return app;
-  } catch (error) {
-    console.log('[SUSE-AI DEBUG] getCatalogApp failed:', error);
-    throw error;
-  }
-}
-
 /* ======================== image pull secret helpers ======================== */
 
 // helper: list secrets in a namespace (used to find already-created -dockercfg)
@@ -1090,7 +1064,7 @@ async function listNsSecrets(
   namespace: string
 ): Promise<RegistrySecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
   return (res?.data?.items || res?.data || []) as RegistrySecret[];
 }
 
@@ -1145,7 +1119,7 @@ export async function ensureRegistrySecret(
 
   // 1) Try the canonical base name first (create if missing; do NOT delete anything anymore)
   try {
-    const cur = await $store.dispatch('rancher/request', { url: getUrl(base), timeout: 20000 })
+    const cur = await $store.dispatch('rancher/request', { url: getUrl(base), timeout: TIMEOUT_VALUES.MUTATION })
       .catch((e: unknown) => {
         const standardError = errorHandler.normalizeError(e);
         return standardError.status === 404 ? null : Promise.reject(e);
@@ -1172,7 +1146,7 @@ export async function ensureRegistrySecret(
           type: 'kubernetes.io/dockerconfigjson',
           data: { '.dockerconfigjson': dockerCfgB64 }
         },
-        timeout: 20000
+        timeout: TIMEOUT_VALUES.MUTATION
       });
       // Non-blocking readiness probe (best-effort)
       try { await waitForSecretReady($store, clusterId, namespace, base, 10_000, true); } catch {}
@@ -1195,7 +1169,7 @@ export async function ensureRegistrySecret(
       type: 'kubernetes.io/dockerconfigjson',
       data: { '.dockerconfigjson': dockerCfgB64 }
     },
-    timeout: 20000
+    timeout: TIMEOUT_VALUES.MUTATION
   });
 
   try { await waitForSecretReady($store, clusterId, namespace, unique, 10_000, true); } catch (e: unknown) {
@@ -1212,7 +1186,7 @@ export async function listServiceAccounts(
   namespace: string
 ): Promise<string[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
   const items = (res?.data?.items || res?.data || []) as ServiceAccount[];
   return items.map(sa => sa?.metadata?.name).filter(Boolean);
 }
@@ -1228,7 +1202,7 @@ export async function ensureServiceAccountPullSecret(
   const url  = `${base}/${encodeURIComponent(saName)}`;
 
   try {
-    const cur = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+    const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
     const sa  = (cur?.data ?? cur) || {};
     const rv  = sa?.metadata?.resourceVersion;
 
@@ -1246,7 +1220,7 @@ export async function ensureServiceAccountPullSecret(
         automountServiceAccountToken: sa.automountServiceAccountToken,
         imagePullSecrets: next
       },
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
   } catch (e) {
     try { console.warn('[SUSE-AI] could not update ServiceAccount imagePullSecrets', { namespace, saName, e }); } catch {}
@@ -1315,7 +1289,7 @@ export async function ensureRegistrySecretSimple(
 
   try {
     // 3. Try to get the existing secret to see if we need to update or create
-    const existing = await $store.dispatch('rancher/request', { url: secretUrl, timeout: 20000 });
+    const existing = await $store.dispatch('rancher/request', { url: secretUrl, timeout: TIMEOUT_VALUES.MUTATION });
     const resourceVersion = existing?.data?.metadata?.resourceVersion;
 
     // 4. If it exists, update it (PUT)
@@ -1332,7 +1306,7 @@ export async function ensureRegistrySecretSimple(
       url: secretUrl,
       method: 'PUT',
       data: secretPayload,
-      timeout: 20000
+      timeout: TIMEOUT_VALUES.MUTATION
     });
 
     logger.info('Secret updated successfully', {
@@ -1354,7 +1328,7 @@ export async function ensureRegistrySecretSimple(
         url: baseUrl,
         method: 'POST',
         data: secretPayload,
-        timeout: 20000
+        timeout: TIMEOUT_VALUES.MUTATION
       });
 
       logger.info('Secret created successfully', {
@@ -1395,7 +1369,7 @@ export async function waitForSecretReady(
 
   for (;;) {
     try {
-      const r = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+      const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
       const s = (r?.data ?? r) || {};
       const ok = s?.type === 'kubernetes.io/dockerconfigjson' &&
                  typeof s?.data?.['.dockerconfigjson'] === 'string' &&
