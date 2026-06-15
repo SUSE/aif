@@ -61,7 +61,8 @@
               'row-compatible': cluster.status === 'compatible',
               'row-limited': cluster.status === 'limited',
               'row-insufficient': cluster.status === 'insufficient',
-              'row-error': cluster.status === 'error'
+              'row-error': cluster.status === 'error',
+              'row-unavailable': cluster.status === 'unavailable'
             }"
             @click="multiSelect ? toggleCluster(cluster.clusterId) : selectSingleCluster(cluster.clusterId)"
           >
@@ -161,6 +162,9 @@
         <div v-else-if="selectedClusterInfo.status === 'error'" class="status-message">
           {{ selectedClusterInfo.statusMessage || 'Unable to check resources' }}
           <div class="status-hint">You can still install, but resource requirements cannot be verified.</div>
+        </div>
+        <div v-else-if="selectedClusterInfo.status === 'unavailable'" class="status-message">
+          This cluster is not ready and cannot be selected for deployment.
         </div>
       </div>
     </div>
@@ -270,7 +274,7 @@ export default defineComponent({
     const hasIncompatibleSelections = computed(() => {
       return props.selectedClusters.some(id => {
         const cluster = clusters.value.find(c => c.clusterId === id);
-        return cluster && (cluster.status === 'insufficient' || cluster.status === 'error');
+        return cluster && (cluster.status === 'insufficient' || cluster.status === 'error' || cluster.status === 'unavailable');
       });
     });
 
@@ -298,10 +302,13 @@ export default defineComponent({
         clusters.value = clustersWithCompatibility;
         console.log('[SUSE-AI] ClusterResourceTable: Loaded', clusters.value.length, 'clusters');
 
-        // Auto-select first cluster if none selected
+        // Auto-select first ready cluster if none selected
         if (props.selectedClusters.length === 0 && clustersWithCompatibility.length > 0) {
-          emitSelection([clustersWithCompatibility[0].clusterId]);
-          console.log('[SUSE-AI] ClusterResourceTable: Auto-selected first cluster:', clustersWithCompatibility[0].clusterId);
+          const firstSelectable = clustersWithCompatibility.find(c => c.status !== 'unavailable');
+          if (firstSelectable) {
+            emitSelection([firstSelectable.clusterId]);
+            console.log('[SUSE-AI] ClusterResourceTable: Auto-selected first cluster:', firstSelectable.clusterId);
+          }
         }
       } catch (e: any) {
         console.error('[SUSE-AI] ClusterResourceTable: Failed to load cluster resources:', e);
@@ -339,12 +346,16 @@ export default defineComponent({
     // Single-select mode: replace selection with single cluster
     function selectSingleCluster(clusterId: string) {
       if (props.disabled) return;
+      const cluster = clusters.value.find(c => c.clusterId === clusterId);
+      if (cluster?.status === 'unavailable') return;
       emitSelection([clusterId]);
     }
 
     // Multi-select mode: toggle cluster in selection
     function toggleCluster(clusterId: string) {
       if (props.disabled) return;
+      const cluster = clusters.value.find(c => c.clusterId === clusterId);
+      if (cluster?.status === 'unavailable') return;
 
       const current = [...props.selectedClusters];
       const index = current.indexOf(clusterId);
@@ -421,6 +432,7 @@ export default defineComponent({
         case 'limited':      return 'warning';
         case 'insufficient': return 'error';
         case 'error':        return 'error';
+        case 'unavailable':  return 'error';
         default:             return 'info';
       }
     }
@@ -682,10 +694,20 @@ export default defineComponent({
 }
 
 .cluster-chip.chip-insufficient,
-.cluster-chip.chip-error {
+.cluster-chip.chip-error,
+.cluster-chip.chip-unavailable {
   background: var(--error-banner-bg, rgba(220, 38, 38, 0.15));
   color: var(--error, #dc2626);
   border-color: var(--error, #dc2626);
+}
+
+.cluster-row.row-unavailable {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.cluster-row.row-unavailable:hover {
+  background: transparent;
 }
 
 .chip-remove {
