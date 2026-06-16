@@ -163,10 +163,11 @@ export async function raceWithTimeout<T>(
   timeoutMs: number,
   timeoutMessage?: string
 ): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     ...promises,
-    timeout(timeoutMs, timeoutMessage)
-  ]);
+    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(timeoutMessage || `Timeout after ${timeoutMs}ms`)), timeoutMs); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /**

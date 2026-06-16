@@ -1,4 +1,5 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
+import { TIMEOUT_VALUES } from '../utils/constants';
 
 export interface FleetBundleParams {
   bundleName:              string;
@@ -80,7 +81,7 @@ async function readAuthSecret(store: any, ref: ClientSecretRef): Promise<{ usern
   try {
     const res = await store.dispatch('rancher/request', {
       url:     `/k8s/clusters/local/api/v1/namespaces/${ref.namespace}/secrets/${ref.name}`,
-      timeout: 10000,
+      timeout: TIMEOUT_VALUES.CLUSTER,
     });
     const secretObj = res?.kind === 'Secret' ? res : (res?.data?.kind === 'Secret' ? res.data : res);
     const dataMap   = secretObj?.data || {};
@@ -130,7 +131,7 @@ async function upsertFleetHelmOp(store: any, fleetNamespace: string, name: strin
   try {
     const res = await store.dispatch('rancher/request', {
       url:     `${baseUrl}/${name}`,
-      timeout: 10000,
+      timeout: TIMEOUT_VALUES.CLUSTER,
     });
     const existing = res?.data || res;
 
@@ -138,14 +139,14 @@ async function upsertFleetHelmOp(store: any, fleetNamespace: string, name: strin
       url:    `${baseUrl}/${name}`,
       method: 'PUT',
       data:   { ...body, metadata: { ...body.metadata, resourceVersion: existing?.metadata?.resourceVersion } },
-      timeout: 20000,
+      timeout: TIMEOUT_VALUES.MUTATION,
     });
   } catch {
     await store.dispatch('rancher/request', {
       url:    baseUrl,
       method: 'POST',
       data:   body,
-      timeout: 20000,
+      timeout: TIMEOUT_VALUES.MUTATION,
     });
   }
 }

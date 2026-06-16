@@ -250,6 +250,7 @@ import type { AppInstallationSummary } from '../types/app-types';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchAppsFromRepository } from '../services/app-collection';
 import { discoverExistingInstall, getClusters, listCatalogApps, deleteApp } from '../services/rancher-apps';
+import { DEFAULT_VALUES } from '../utils/constants';
 import { PRODUCT } from '../config/suseai';
 
 interface InstanceData extends AppInstallationSummary {
@@ -537,99 +538,105 @@ export default defineComponent({
         const allClusters = await getClustersWithCache();
         const foundInstances: InstanceData[] = [];
 
-        // Search for installations across all clusters
-        for (const cluster of allClusters) {
-          try {
+        // Search for installations across all clusters in parallel
+        const clusterResults = await Promise.allSettled(
+          allClusters.map(async (cluster) => {
             console.log(`[SUSE-AI] Searching for ${props.slug} instances in cluster ${cluster.name}...`);
-
-            // Get all catalog apps in this cluster
             const catalogApps = await listCatalogApps(store, cluster.id);
+            return { cluster, catalogApps };
+          })
+        );
 
-            // Filter apps that match our slug
-            for (const catalogApp of catalogApps) {
-              const meta = catalogApp?.metadata || {};
-              const spec = catalogApp?.spec || {};
-              const chart = spec?.chart?.metadata?.name || spec?.chartName || '';
-              const release = meta?.name || '';
+        for (const [i, result] of clusterResults.entries()) {
+          if (result.status === 'rejected') {
+            const c = allClusters[i];
+            console.warn(`[SUSE-AI] Failed to search cluster ${ c?.name } (${ c?.id }):`, result.reason);
+            continue;
+          }
+          const { cluster, catalogApps } = result.value;
 
-              // Check if this app matches our slug (by chart name)
-              const matchesChart = chart.toLowerCase() === props.slug.toLowerCase();
+          // Filter apps that match our slug
+          for (const catalogApp of catalogApps) {
+            const meta = catalogApp?.metadata || {};
+            const spec = catalogApp?.spec || {};
+            const chart = spec?.chart?.metadata?.name || spec?.chartName || '';
+            const release = meta?.name || '';
 
-              if (matchesChart) {
-                console.log(`[SUSE-AI] Found instance: ${release} in ${cluster.name}/${meta.namespace}`);
+            // Check if this app matches our slug (by chart name)
+            const matchesChart = chart.toLowerCase() === props.slug.toLowerCase();
 
-                // Extract status information from the catalog app
-                // The API returns status in metadata.state.name and status.summary.state
-                const metadataState = (catalogApp as any)?.metadata?.state?.name;
-                const statusState = catalogApp?.status?.summary?.state;
-                const actualStatus = statusState || metadataState || 'unknown';
+            if (matchesChart) {
+              console.log(`[SUSE-AI] Found instance: ${release} in ${cluster.name}/${meta.namespace}`);
 
-                console.log(`[SUSE-AI] Instance ${release} status: metadata.state.name="${metadataState}", status.summary.state="${statusState}"`);
+              // Extract status information from the catalog app
+              // The API returns status in metadata.state.name and status.summary.state
+              const metadataState = (catalogApp as any)?.metadata?.state?.name;
+              const statusState = catalogApp?.status?.summary?.state;
+              const actualStatus = statusState || metadataState || 'unknown';
 
-                // Determine instance status
-                let instanceStatus: 'pending' | 'installing' | 'deployed' | 'upgrading' | 'uninstalling' | 'failed' | 'superseded' | 'unknown' = 'unknown';
-                let ready = false;
-                let errorMessage: string | undefined;
+              console.log(`[SUSE-AI] Instance ${release} status: metadata.state.name="${metadataState}", status.summary.state="${statusState}"`);
 
-                // Map the actual status from Rancher to our expected values
-                switch (actualStatus?.toLowerCase()) {
-                  case 'deployed':
-                    instanceStatus = 'deployed';
-                    ready = !(catalogApp as any)?.metadata?.state?.error && !(catalogApp as any)?.metadata?.state?.transitioning;
-                    break;
-                  case 'failed':
-                  case 'error':
-                    instanceStatus = 'failed';
-                    errorMessage = (catalogApp as any)?.metadata?.state?.message || 'Deployment failed';
-                    break;
-                  case 'installing':
-                  case 'pending':
-                  case 'pending-install':
-                    instanceStatus = 'installing';
-                    break;
-                  case 'active':
-                  case 'upgrading':
-                  case 'pending-upgrade':
-                  case 'pending-rollback':
-                    instanceStatus = 'upgrading';
-                    break;
-                  case 'uninstalling':
-                    instanceStatus = 'uninstalling';
-                    break;
-                  case 'superseded':
-                    instanceStatus = 'superseded';
-                    break;
-                  default:
-                    instanceStatus = 'unknown';
-                    break;
-                }
+              // Determine instance status
+              let instanceStatus: 'pending' | 'installing' | 'deployed' | 'upgrading' | 'uninstalling' | 'failed' | 'superseded' | 'unknown' = 'unknown';
+              let ready = false;
+              let errorMessage: string | undefined;
 
-                // If state indicates error, override status
-                if ((catalogApp as any)?.metadata?.state?.error) {
+              // Map the actual status from Rancher to our expected values
+              switch (actualStatus?.toLowerCase()) {
+                case 'deployed':
+                  instanceStatus = 'deployed';
+                  ready = !(catalogApp as any)?.metadata?.state?.error && !(catalogApp as any)?.metadata?.state?.transitioning;
+                  break;
+                case 'failed':
+                case 'error':
                   instanceStatus = 'failed';
-                  errorMessage = (catalogApp as any)?.metadata?.state?.message || 'Application error';
-                }
-
-                const instance: InstanceData = {
-                  clusterId: cluster.id,
-                  clusterName: cluster.name,
-                  namespace: meta.namespace || 'default',
-                  releaseName: release,
-                  instanceName: release, // Use release name as instance name for now
-                  status: instanceStatus,
-                  version: spec?.chart?.metadata?.version || spec?.version || '',
-                  chartVersion: spec?.chart?.metadata?.version || spec?.version || '',
-                  appVersion: spec?.chart?.metadata?.version || '', // AppVersion is usually same as chart version
-                  lastDeployed: meta?.annotations?.['cattle.io/timestamp'] || '',
-                  ready,
-                  error: errorMessage
-                };
-
-                foundInstances.push(instance);
+                  errorMessage = (catalogApp as any)?.metadata?.state?.message || 'Deployment failed';
+                  break;
+                case 'installing':
+                case 'pending':
+                case 'pending-install':
+                  instanceStatus = 'installing';
+                  break;
+                case 'active':
+                case 'upgrading':
+                case 'pending-upgrade':
+                case 'pending-rollback':
+                  instanceStatus = 'upgrading';
+                  break;
+                case 'uninstalling':
+                  instanceStatus = 'uninstalling';
+                  break;
+                case 'superseded':
+                  instanceStatus = 'superseded';
+                  break;
+                default:
+                  instanceStatus = 'unknown';
+                  break;
               }
+
+              // If state indicates error, override status
+              if ((catalogApp as any)?.metadata?.state?.error) {
+                instanceStatus = 'failed';
+                errorMessage = (catalogApp as any)?.metadata?.state?.message || 'Application error';
+              }
+
+              const instance: InstanceData = {
+                clusterId: cluster.id,
+                clusterName: cluster.name,
+                namespace: meta.namespace || 'default',
+                releaseName: release,
+                instanceName: release,
+                status: instanceStatus,
+                version: spec?.chart?.metadata?.version || spec?.version || '',
+                chartVersion: spec?.chart?.metadata?.version || spec?.version || '',
+                appVersion: spec?.chart?.metadata?.version || '',
+                lastDeployed: meta?.annotations?.['cattle.io/timestamp'] || '',
+                ready,
+                error: errorMessage
+              };
+
+              foundInstances.push(instance);
             }
-          } catch (clusterErr) {
-            console.warn(`Failed to search cluster ${cluster.name}:`, clusterErr);
           }
         }
 
@@ -663,7 +670,7 @@ export default defineComponent({
     let refreshTimer: NodeJS.Timeout | null = null;
     let clustersCache: any[] | null = null;
     let clustersCacheTime = 0;
-    const CLUSTERS_CACHE_TTL = 60000; // Cache clusters for 1 minute
+    const CLUSTERS_CACHE_TTL = DEFAULT_VALUES.CLUSTER_CACHE_TTL;
 
     const silentRefresh = async () => {
       // Skip refresh if paused, loading, or if any delete operations are in progress
@@ -693,7 +700,7 @@ export default defineComponent({
         if (!loading.value) {
           silentRefresh();
         }
-      }, 30000);
+      }, DEFAULT_VALUES.INSTANCES_POLL_MS);
     });
 
     // Cleanup timer and cache on unmount

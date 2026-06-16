@@ -1,6 +1,7 @@
 // Cluster resource metrics and compatibility checking service
 import type { RancherStore, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
 import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
+import { TIMEOUT_VALUES } from '../utils/constants';
 
 export interface ResourceRequirements {
   cpu: number;        // CPU cores
@@ -26,7 +27,7 @@ export interface ClusterResourceSummary {
     memory: { used: number; total: number };  // in GB
     gpu?: { used: number; total: number; type?: string };  // GPU memory in GB
   };
-  status: 'compatible' | 'limited' | 'insufficient' | 'checking' | 'error';
+  status: 'compatible' | 'limited' | 'insufficient' | 'checking' | 'error' | 'unavailable';
   statusMessage?: string;
   storageClasses: string[];
   lastUpdated: Date;
@@ -123,15 +124,16 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
     // Get cluster basic info first using the same approach as getClusters
     let clusterName = clusterId;
     try {
+      let timer: ReturnType<typeof setTimeout>;
       const clusters = await Promise.race([
         store.dispatch('management/findAll', { type: 'cluster' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 20000))
-      ]) as ClusterResource[];
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ); }),
+      ]).finally(() => clearTimeout(timer)) as ClusterResource[];
       const cluster = clusters.find((c: ClusterResource) => c.id === clusterId);
       clusterName = cluster?.metadata?.name || clusterId;
     } catch {
       // Fallback to API call if store doesn't work
-      const res = await store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: 20000 });
+      const res = await store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: TIMEOUT_VALUES.READ });
       const items = res?.data?.data || res?.data || [];
       const cluster = items.find((c: ClusterResource) =>
         (c?.metadata?.name === clusterId) || (c?.id === clusterId) || (c?.spec?.displayName === clusterId)
@@ -300,19 +302,38 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
 
 export async function getAllClusterResourceMetrics(store: RancherStore): Promise<ClusterResourceSummary[]> {
   console.log('[SUSE-AI] getAllClusterResourceMetrics: Starting...');
-  
+
   try {
-    // Import and use the existing getClusters function
-    const { getClusters } = await import('./rancher-apps');
-    const clusters = await getClusters(store);
+    const { getAllClusters } = await import('./rancher-apps');
+    const clusters = await getAllClusters(store);
     console.log(`[SUSE-AI] getAllClusterResourceMetrics: Found ${clusters.length} clusters`);
-    
-    // Get metrics for all clusters in parallel
-    const results = await Promise.all(
-      clusters.map((cluster: ClusterInfo) => getClusterResourceMetrics(store, cluster.id))
+
+    const settled = await Promise.allSettled(
+      clusters.map((cluster: ClusterInfo) => {
+        // Skip API calls to unhealthy clusters — return a placeholder immediately so they
+        // still appear in the UI but cannot be selected.
+        if (cluster.ready === false) {
+          return Promise.resolve<ClusterResourceSummary>({
+            clusterId:     cluster.id,
+            name:          cluster.name,
+            nodeCount:     0,
+            resources:     { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
+            status:        'unavailable',
+            statusMessage: 'Cluster is not ready',
+            storageClasses: [],
+            lastUpdated:   new Date(),
+            nodes:         []
+          });
+        }
+        return getClusterResourceMetrics(store, cluster.id);
+      })
     );
-    
-    console.log(`[SUSE-AI] getAllClusterResourceMetrics: Completed for ${results.length} clusters`);
+
+    const results = settled
+      .filter((r): r is PromiseFulfilledResult<ClusterResourceSummary> => r.status === 'fulfilled')
+      .map(r => r.value);
+
+    console.log(`[SUSE-AI] getAllClusterResourceMetrics: Completed for ${results.length}/${clusters.length} clusters`);
     return results;
   } catch (error) {
     console.error('[SUSE-AI] getAllClusterResourceMetrics: Failed:', error);
@@ -335,8 +356,8 @@ export function checkAppCompatibility(
     console.log(`[SUSE-AI] checkAppCompatibility: Using default requirements for unknown app ${appSlug}:`, appProfile.requirements);
   }
 
-  // If cluster already has an error status (like can't access node info), preserve it
-  if (clusterSummary.status === 'error') {
+  // Preserve terminal statuses without further checks
+  if (clusterSummary.status === 'unavailable' || clusterSummary.status === 'error') {
     return {
       ...clusterSummary,
       statusMessage: clusterSummary.statusMessage || 'Unable to determine compatibility - cluster information unavailable'
@@ -458,7 +479,7 @@ async function fetchClusterData<T>(
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/${resourcePath}?exclude=metadata.managedFields`;
 
   try {
-    const res = await store.dispatch('rancher/request', { url: baseUrl, timeout: 20000 });
+    const res = await store.dispatch('rancher/request', { url: baseUrl, timeout: TIMEOUT_VALUES.CLUSTER });
     const data = res?.data?.data || res?.data || [];
     console.log(`[SUSE-AI] getClusterResourceMetrics: Got ${data.length} ${label} from ${isLocalCluster ? 'global' : 'cluster-specific'} API`);
     return Array.isArray(data) ? data : [];

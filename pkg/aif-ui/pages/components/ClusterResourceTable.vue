@@ -61,7 +61,8 @@
               'row-compatible': cluster.status === 'compatible',
               'row-limited': cluster.status === 'limited',
               'row-insufficient': cluster.status === 'insufficient',
-              'row-error': cluster.status === 'error'
+              'row-error': cluster.status === 'error',
+              'row-unavailable': cluster.status === 'unavailable'
             }"
             @click="multiSelect ? toggleCluster(cluster.clusterId) : selectSingleCluster(cluster.clusterId)"
           >
@@ -70,7 +71,7 @@
               <span v-if="multiSelect" @click.stop>
                 <Checkbox
                   :value="isClusterSelected(cluster.clusterId)"
-                  :disabled="disabled"
+                  :disabled="disabled || cluster.status === 'unavailable'"
                   @update:value="toggleCluster(cluster.clusterId)"
                 />
               </span>
@@ -81,6 +82,7 @@
                 :name="`cluster-select-${tableId}`"
                 :value="cluster.clusterId"
                 :checked="isClusterSelected(cluster.clusterId)"
+                :disabled="disabled || cluster.status === 'unavailable'"
                 @change="selectSingleCluster(cluster.clusterId)"
                 class="cluster-radio"
               />
@@ -162,6 +164,9 @@
           {{ selectedClusterInfo.statusMessage || 'Unable to check resources' }}
           <div class="status-hint">You can still install, but resource requirements cannot be verified.</div>
         </div>
+        <div v-else-if="selectedClusterInfo.status === 'unavailable'" class="status-message">
+          This cluster is not ready and cannot be selected for deployment.
+        </div>
       </div>
     </div>
 
@@ -194,6 +199,7 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, onMounted, watch, PropType, getCurrentInstance } from 'vue';
+import { getAllClusters } from '../../services/rancher-apps';
 import { Checkbox } from '@components/Form/Checkbox';
 import ProgressBarMulti from '@shell/components/ProgressBarMulti';
 import StatusBadge from '@shell/components/StatusBadge';
@@ -270,7 +276,7 @@ export default defineComponent({
     const hasIncompatibleSelections = computed(() => {
       return props.selectedClusters.some(id => {
         const cluster = clusters.value.find(c => c.clusterId === id);
-        return cluster && (cluster.status === 'insufficient' || cluster.status === 'error');
+        return cluster && (cluster.status === 'insufficient' || cluster.status === 'error' || cluster.status === 'unavailable');
       });
     });
 
@@ -298,30 +304,34 @@ export default defineComponent({
         clusters.value = clustersWithCompatibility;
         console.log('[SUSE-AI] ClusterResourceTable: Loaded', clusters.value.length, 'clusters');
 
-        // Auto-select first cluster if none selected
+        // Auto-select first ready cluster if none selected
         if (props.selectedClusters.length === 0 && clustersWithCompatibility.length > 0) {
-          emitSelection([clustersWithCompatibility[0].clusterId]);
-          console.log('[SUSE-AI] ClusterResourceTable: Auto-selected first cluster:', clustersWithCompatibility[0].clusterId);
+          const firstSelectable = clustersWithCompatibility.find(c => c.status !== 'unavailable');
+          if (firstSelectable) {
+            emitSelection([firstSelectable.clusterId]);
+            console.log('[SUSE-AI] ClusterResourceTable: Auto-selected first cluster:', firstSelectable.clusterId);
+          }
         }
       } catch (e: any) {
         console.error('[SUSE-AI] ClusterResourceTable: Failed to load cluster resources:', e);
         error.value = e.message || 'Failed to load cluster information';
 
-        // Try to load basic cluster list as fallback
+        // Try to load basic cluster list as fallback — use getAllClusters so readiness
+        // is applied and unhealthy clusters stay non-selectable even in the error path.
         try {
           const vm = getCurrentInstance()!.proxy as any;
           const store = vm.$store;
-          const basicClusters = await store.dispatch('management/findAll', { type: 'cluster' });
-          clusters.value = (basicClusters || []).map((c: any) => ({
-            clusterId: c.id,
-            name: c.name || c.id,
-            nodeCount: 0,
-            resources: { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
-            status: 'error' as const,
-            statusMessage: 'Resource information unavailable',
+          const basicClusters = await getAllClusters(store);
+          clusters.value = (basicClusters || []).map((c) => ({
+            clusterId:     c.id,
+            name:          c.name,
+            nodeCount:     0,
+            resources:     { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
+            status:        (c.ready ? 'error' : 'unavailable') as ClusterResourceSummary['status'],
+            statusMessage: c.ready ? 'Resource information unavailable' : 'Cluster is not ready',
             storageClasses: [],
-            lastUpdated: new Date(),
-            nodes: []
+            lastUpdated:   new Date(),
+            nodes:         []
           }));
         } catch (fallbackError) {
           console.error('[SUSE-AI] ClusterResourceTable: Fallback also failed:', fallbackError);
@@ -339,12 +349,16 @@ export default defineComponent({
     // Single-select mode: replace selection with single cluster
     function selectSingleCluster(clusterId: string) {
       if (props.disabled) return;
+      const cluster = clusters.value.find(c => c.clusterId === clusterId);
+      if (cluster?.status === 'unavailable') return;
       emitSelection([clusterId]);
     }
 
     // Multi-select mode: toggle cluster in selection
     function toggleCluster(clusterId: string) {
       if (props.disabled) return;
+      const cluster = clusters.value.find(c => c.clusterId === clusterId);
+      if (cluster?.status === 'unavailable') return;
 
       const current = [...props.selectedClusters];
       const index = current.indexOf(clusterId);
@@ -388,25 +402,6 @@ export default defineComponent({
       return `chip-${cluster.status}`;
     }
 
-    function getStatusIcon(status: ClusterResourceSummary['status']): string {
-      switch (status) {
-        case 'compatible': return '✓';
-        case 'limited': return '!';
-        case 'insufficient': return '✕';
-        case 'checking': return '...';
-        case 'error': return '?';
-        default: return '?';
-      }
-    }
-
-    function getResourceBarClass(used: number, total: number): string {
-      if (total === 0) return 'resource-bar-low';
-      const percentage = (used / total) * 100;
-      if (percentage >= 90) return 'resource-bar-critical';
-      if (percentage >= 70) return 'resource-bar-high';
-      return 'resource-bar-low';
-    }
-
     function getResourceBarColor(used: number, total: number): string {
       if (total === 0) return 'bg-success';
       const pct = (used / total) * 100;
@@ -421,6 +416,7 @@ export default defineComponent({
         case 'limited':      return 'warning';
         case 'insufficient': return 'error';
         case 'error':        return 'error';
+        case 'unavailable':  return 'error';
         default:             return 'info';
       }
     }
@@ -452,8 +448,6 @@ export default defineComponent({
       toggleSelectAllCompatible,
       getClusterName,
       getClusterChipClass,
-      getStatusIcon,
-      getResourceBarClass,
       getResourceBarColor,
       getStatusBadgeStatus
     };
@@ -682,10 +676,20 @@ export default defineComponent({
 }
 
 .cluster-chip.chip-insufficient,
-.cluster-chip.chip-error {
+.cluster-chip.chip-error,
+.cluster-chip.chip-unavailable {
   background: var(--error-banner-bg, rgba(220, 38, 38, 0.15));
   color: var(--error, #dc2626);
   border-color: var(--error, #dc2626);
+}
+
+.cluster-row.row-unavailable {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.cluster-row.row-unavailable:hover {
+  background: transparent;
 }
 
 .chip-remove {

@@ -1,6 +1,6 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue';
-import { getClusters } from '../../services/rancher-apps';
+import { getAllClusters } from '../../services/rancher-apps';
 
 export default defineComponent({
   name: 'ClusterSelect',
@@ -15,7 +15,7 @@ export default defineComponent({
     return {
       loading: true as boolean,
       error:   null as string | null,
-      options: [] as { id: string; name: string }[]
+      options: [] as { id: string; name: string; ready: boolean }[]
     };
   },
   computed: {
@@ -28,15 +28,27 @@ export default defineComponent({
   async mounted() {
     const store: any = (this as any).$store;
     try {
-      const rows = await getClusters(store);
-      (this as any).options = (rows || []).map((c: any) => ({ id: c.id, name: c.name || c.id }));
-      (this as any).error = (this as any).options.length ? null : 'No clusters found';
-      
-      // Auto-select if only one cluster exists
-      if ((this as any).options.length === 1 && !this.selected) {
-        const clusterId = (this as any).options[0].id;
-        this.$emit('update:modelValue', clusterId);
-        this.$emit('input', clusterId);
+      const rows = await getAllClusters(store);
+      (this as any).options = (rows || []).map((c: any) => ({
+        id:    c.id,
+        name:  c.name || c.id,
+        ready: c.ready !== false
+      }));
+
+      const readyOptions = ((this as any).options as { id: string; name: string; ready: boolean }[]).filter(o => o.ready);
+
+      if ((this as any).options.length === 0) {
+        (this as any).error = 'No clusters found';
+      } else if (readyOptions.length === 0) {
+        (this as any).error = 'All clusters are currently unavailable';
+      } else {
+        (this as any).error = null;
+      }
+
+      // Auto-select if only one ready cluster exists
+      if (readyOptions.length === 1 && !this.selected) {
+        this.$emit('update:modelValue', readyOptions[0].id);
+        this.$emit('input', readyOptions[0].id);
       }
     } catch (e: any) {
       (this as any).error = e?.message || 'Failed to list clusters';
@@ -66,9 +78,12 @@ export default defineComponent({
             :disabled="disabled"
             @change="onSelect">
       <option value="">— Select a cluster —</option>
-      <option v-for="o in options" :key="o.id" :value="o.id">
-        {{ o.name }}
-      </option>
+      <option
+        v-for="o in options"
+        :key="o.id"
+        :value="o.id"
+        :disabled="!o.ready"
+      >{{ o.ready ? o.name : `${o.name} (Unavailable)` }}</option>
     </select>
   </div>
 </template>

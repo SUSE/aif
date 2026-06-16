@@ -14,6 +14,7 @@ export interface RancherStore {
 export interface ClusterInfo {
   id: string;
   name: string;
+  ready: boolean;
 }
 
 export interface ClusterResource {
@@ -314,7 +315,8 @@ export function validateClusterInfo(obj: unknown): ClusterInfo | null {
 
   return {
     id: cluster.id,
-    name: cluster.name
+    name: cluster.name,
+    ready: typeof cluster.ready === 'boolean' ? cluster.ready : true
   };
 }
 

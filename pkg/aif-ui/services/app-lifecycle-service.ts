@@ -12,6 +12,7 @@ import type {
   AppCRD,
   InstallationPayload
 } from '../types/rancher-types';
+import { TIMEOUT_VALUES } from '../utils/constants';
 
 /**
  * Reference to a Helm chart in a cluster repository
@@ -180,7 +181,7 @@ export class AppLifecycleService {
             method: 'post',
             url: clusterReposUrl,
             data: upgradeData,
-            timeout: 20000
+            timeout: TIMEOUT_VALUES.MUTATION
           });
 
           logger.info('App upgrade successful', {
@@ -202,7 +203,7 @@ export class AppLifecycleService {
           data: { namespace, releaseName }
         });
 
-        await $store.dispatch('rancher/request', { url: appUrl, timeout: 20000 });
+        await $store.dispatch('rancher/request', { url: appUrl, timeout: TIMEOUT_VALUES.CLUSTER });
 
         // App exists — use clusterRepo upgrade action to re-trigger Helm
         logger.info('App exists, performing upgrade via clusterRepo action', {
@@ -227,7 +228,7 @@ export class AppLifecycleService {
             method: 'post',
             url: upgradeUrl,
             data: upgradeData,
-            timeout: 20000
+            timeout: TIMEOUT_VALUES.MUTATION
           });
 
           logger.info('App upgrade successful', {
@@ -265,7 +266,7 @@ export class AppLifecycleService {
               method: 'post',
               url: clusterReposUrl,
               data: installData,
-              timeout: 20000
+              timeout: TIMEOUT_VALUES.MUTATION
             });
 
             logger.info('App install successful', {
@@ -351,7 +352,7 @@ export class AppLifecycleService {
       let app: any = null;
 
       try {
-        const r = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+        const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
         app = (r?.data ?? r) || {};
       } catch (e: unknown) {
         lastErr = e;
@@ -467,7 +468,7 @@ export class AppLifecycleService {
         url,
         method: 'POST',
         data: { timeout: '600s' },
-        timeout: 20000
+        timeout: TIMEOUT_VALUES.MUTATION
       });
 
       // Wait a bit for the deletion to process

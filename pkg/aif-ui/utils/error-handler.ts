@@ -4,6 +4,7 @@
  */
 
 import type { RancherStore, RancherError } from '../types/rancher-types';
+import { NOTIFICATION_DURATION } from './constants';
 import { logger } from './logger';
 
 export interface StandardError {
@@ -132,7 +133,7 @@ export class ErrorHandler {
     this.store.dispatch('growl/error', {
       title,
       message,
-      timeout: 10000 // 10 seconds
+      timeout: NOTIFICATION_DURATION.EXTENDED
     });
   }
 

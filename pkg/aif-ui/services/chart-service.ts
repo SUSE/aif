@@ -3,6 +3,7 @@ import { log as logger } from '../utils/logger';
 import { createChartValuesService } from './chart-values';
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
+import { TIMEOUT_VALUES } from '../utils/constants';
 import type {
   RancherStore,
   ClusterResource,
@@ -62,7 +63,7 @@ export class ChartService {
       const repo = encodeURIComponent(repoName);
 
       const url = `${baseApi}/catalog.cattle.io.clusterrepos/${repo}`;
-      const res = await $store.dispatch('rancher/request', { url, timeout: 20000 });
+      const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
 
       const link = res?.data?.links?.index || res?.links?.index;
 
@@ -88,7 +89,7 @@ export class ChartService {
     if (!indexLink) return null;
 
     try {
-      const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: 20000 });
+      const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: TIMEOUT_VALUES.READ });
       const payload = (res?.data ?? res);
 
       logger.debug('Repository index fetched', {
@@ -117,7 +118,7 @@ export class ChartService {
     try {
       const res = await $store.dispatch('rancher/request', {
         url: `${baseApi}/catalog.cattle.io/v1/clusterrepos?limit=1000`,
-        timeout: 20000
+        timeout: TIMEOUT_VALUES.READ
       });
       return res?.data?.items || res?.data || res?.items || [];
     } catch (err) {

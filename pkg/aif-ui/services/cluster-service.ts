@@ -1,5 +1,7 @@
 import { log as logger } from '../utils/logger';
 import { createErrorHandler } from '../utils/error-handler';
+import { TIMEOUT_VALUES } from '../utils/constants';
+import { getClusters as getReadyClusters } from './rancher-apps';
 import type {
   RancherStore,
   ClusterInfo,
@@ -17,26 +19,7 @@ export class ClusterService {
    * Get list of all clusters
    */
   static async getClusters($store: RancherStore): Promise<ClusterInfo[]> {
-    try {
-      const rows = await Promise.race([
-        $store.dispatch('management/findAll', { type: 'cluster' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 20000))
-      ]) as ClusterResource[];
-      return (rows || []).map((c: ClusterResource) => ({
-        id: c.id,
-        name: c.metadata?.name || c.id
-      }));
-    } catch {
-      const res = await $store.dispatch('rancher/request', {
-        url: '/v1/management.cattle.io.clusters?limit=2000',
-        timeout: 20000
-      });
-      const items = res?.data?.data || res?.data || [];
-      return (items || []).map((c: ClusterResource) => ({
-        id: c?.metadata?.name || c?.id,
-        name: c?.metadata?.name || c?.id
-      })).filter((x: ClusterInfo) => !!x.id);
-    }
+    return getReadyClusters($store);
   }
 
   /**
@@ -50,7 +33,7 @@ export class ClusterService {
     const getUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}`;
 
     try {
-      await $store.dispatch('rancher/request', { url: getUrl, timeout: 20000 });
+      await $store.dispatch('rancher/request', { url: getUrl, timeout: TIMEOUT_VALUES.CLUSTER });
       logger.debug('Namespace exists', {
         component: 'ClusterService',
         data: { clusterId, namespace }
@@ -70,7 +53,7 @@ export class ClusterService {
           kind: 'Namespace',
           metadata: { name: namespace }
         },
-        timeout: 20000
+        timeout: TIMEOUT_VALUES.MUTATION
       });
     }
   }
@@ -87,7 +70,7 @@ export class ClusterService {
     const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/namespaces/${encodeURIComponent(namespace)}/apps/${encodeURIComponent(release)}`;
 
     try {
-      await $store.dispatch('rancher/request', { url, timeout: 20000 });
+      await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
       return true;
     } catch {
       return false;
@@ -101,7 +84,7 @@ export class ClusterService {
     try {
       const res = await $store.dispatch('rancher/request', {
         url: `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=2000`,
-        timeout: 20000
+        timeout: TIMEOUT_VALUES.CLUSTER
       });
 
       const items = res?.data?.items || res?.data || res?.items || [];

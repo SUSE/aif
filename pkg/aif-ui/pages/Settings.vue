@@ -7,7 +7,7 @@ import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
-import { OPERATOR_NAMESPACE } from '../utils/constants';
+import { OPERATOR_NAMESPACE, TIMEOUT_VALUES } from '../utils/constants';
 import { ensureClusterRepo } from '../services/rancher-apps';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 
@@ -245,7 +245,7 @@ export default {
       try {
         const res = await this.$store.dispatch('rancher/request', {
           url:     `/k8s/clusters/local/api/v1/namespaces/${OPERATOR_NAMESPACE}/secrets/${name}`,
-          timeout: 10000,
+          timeout: TIMEOUT_VALUES.CLUSTER,
         });
         // rancher/request returns the raw K8s object: res.data is the base64 data map.
         // If ever wrapped (Axios-style), res.data is the K8s Secret and res.data.data is the map.
