@@ -80,7 +80,7 @@ async function fetchSecret(store: any, ns: string, name: string, baseApi: string
   }
   
   try {
-    const r3 = await store.dispatch('rancher/request', { url: `${baseApi}/secrets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`, timeout: TIMEOUT_VALUES.MUTATION });
+    const r3 = await store.dispatch('rancher/request', { url: `${baseApi}/secrets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`, timeout: TIMEOUT_VALUES.CLUSTER });
     const s3 = r3?.data || r3 || {};
 
     if (Object.keys(s3 || {}).length) return s3;
@@ -125,7 +125,7 @@ export async function getRepoAuthForClusterRepo(store: any, clusterRepoName: str
   const baseApi = found.baseApi;
 
   const url = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(clusterRepoName)}`;
-  const r   = await store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+  const r   = await store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
   const repo = r?.data ?? r;
   if (!repo?.spec) throw new Error(`ClusterRepo ${clusterRepoName} not found`);
 

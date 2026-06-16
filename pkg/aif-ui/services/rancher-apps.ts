@@ -467,7 +467,7 @@ export async function deleteApp($store: RancherStore, clusterId: string, namespa
 
 export async function listCatalogApps($store: RancherStore, clusterId: string): Promise<AppCRD[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=1000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return res?.data?.items || res?.data || res?.items || [];
 }
 
@@ -475,7 +475,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
   const url = clusterId === 'local'
     ? '/api/v1/namespaces?limit=5000'
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   const items = res?.data?.items || res?.data || res?.items || [];
 
   return (items || []).map((n: NamespaceResource) => n?.metadata?.name).filter((n: string) => !!n);
@@ -483,7 +483,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
 
 async function listNsHelmSecrets($store: RancherStore, clusterId: string, ns: string): Promise<HelmSecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(ns)}/secrets?labelSelector=owner%3Dhelm`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return res?.data?.items || res?.data || [];
 }
 
@@ -940,7 +940,7 @@ async function findHelmReleaseObjects(
     // List all secrets to find the highest version number
     try {
       const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets`;
-      const response = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+      const response = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
       const secrets = response?.data || response?.items || response || [];
 
       // Find all Helm release secrets for this release
@@ -961,7 +961,7 @@ async function findHelmReleaseObjects(
 
         // Now fetch the latest secret with includeHelmData=true
         const detailUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(secretName)}?exclude=metadata.managedFields&includeHelmData=true`;
-        const secret = await $store.dispatch('rancher/request', { url: detailUrl, timeout: TIMEOUT_VALUES.MUTATION });
+        const secret = await $store.dispatch('rancher/request', { url: detailUrl, timeout: TIMEOUT_VALUES.CLUSTER });
 
         if (secret?.data?.release) {
           console.log('[SUSE-AI] Found Helm secret with includeHelmData=true:', secretName);
