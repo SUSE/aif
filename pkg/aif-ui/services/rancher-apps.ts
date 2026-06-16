@@ -239,7 +239,7 @@ export async function createOrUpgradeApp(
     // For install actions, check if app exists first and use upgrade if it does
     try {
       log('Checking for existing App...', { namespace, releaseName, checkUrl: appUrl });
-      const existingAppResp = await $store.dispatch('rancher/request', { url: appUrl, timeout: TIMEOUT_VALUES.MUTATION });
+      const existingAppResp = await $store.dispatch('rancher/request', { url: appUrl, timeout: TIMEOUT_VALUES.CLUSTER });
       const existingApp = existingAppResp?.data ?? existingAppResp;
       const existingState = (existingApp?.status?.summary?.state || existingApp?.metadata?.state?.name || '').toLowerCase();
       if (existingState === 'uninstalling') {
@@ -356,7 +356,7 @@ export async function waitForAppInstall(
     let is404           = false;
 
     try {
-      const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+      const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
       app = (r?.data ?? r) || {};
     } catch (e: unknown) {
       const standardError = errorHandler.normalizeError(e);
@@ -702,7 +702,7 @@ export async function fetchChartYaml(
   try {
     const response = await $store.dispatch('rancher/request', {
       url: `${repoPath}?link=files&${chartParams}`,
-      timeout: TIMEOUT_VALUES.MUTATION
+      timeout: TIMEOUT_VALUES.READ
     });
     const filesData = response?.data ?? response;
 
@@ -722,7 +722,7 @@ export async function fetchChartYaml(
   try {
     const response = await $store.dispatch('rancher/request', {
       url: `${repoPath}?link=file&${chartParams}&name=${encodeURIComponent('Chart.yaml')}`,
-      timeout: TIMEOUT_VALUES.MUTATION
+      timeout: TIMEOUT_VALUES.READ
     });
     const text = textFromFileEntry(response?.data ?? response);
 
@@ -737,7 +737,7 @@ export async function fetchChartYaml(
       url: `${repoPath}?link=chart&${chartParams}`,
       responseType: 'arraybuffer',
       headers: { Accept: 'application/gzip, application/x-gzip, application/octet-stream' },
-      timeout: TIMEOUT_VALUES.MUTATION
+      timeout: TIMEOUT_VALUES.MEDIUM
     });
 
     const buffer = response?.data ?? response;
@@ -1118,7 +1118,7 @@ export async function ensureRegistrySecret(
 
   // 1) Try the canonical base name first (create if missing; do NOT delete anything anymore)
   try {
-    const cur = await $store.dispatch('rancher/request', { url: getUrl(base), timeout: TIMEOUT_VALUES.MUTATION })
+    const cur = await $store.dispatch('rancher/request', { url: getUrl(base), timeout: TIMEOUT_VALUES.CLUSTER })
       .catch((e: unknown) => {
         const standardError = errorHandler.normalizeError(e);
         return standardError.status === 404 ? null : Promise.reject(e);
@@ -1185,7 +1185,7 @@ export async function listServiceAccounts(
   namespace: string
 ): Promise<string[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000`;
-  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   const items = (res?.data?.items || res?.data || []) as ServiceAccount[];
   return items.map(sa => sa?.metadata?.name).filter(Boolean);
 }
@@ -1201,7 +1201,7 @@ export async function ensureServiceAccountPullSecret(
   const url  = `${base}/${encodeURIComponent(saName)}`;
 
   try {
-    const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+    const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
     const sa  = (cur?.data ?? cur) || {};
     const rv  = sa?.metadata?.resourceVersion;
 
@@ -1288,7 +1288,7 @@ export async function ensureRegistrySecretSimple(
 
   try {
     // 3. Try to get the existing secret to see if we need to update or create
-    const existing = await $store.dispatch('rancher/request', { url: secretUrl, timeout: TIMEOUT_VALUES.MUTATION });
+    const existing = await $store.dispatch('rancher/request', { url: secretUrl, timeout: TIMEOUT_VALUES.CLUSTER });
     const resourceVersion = existing?.data?.metadata?.resourceVersion;
 
     // 4. If it exists, update it (PUT)
@@ -1368,7 +1368,7 @@ export async function waitForSecretReady(
 
   for (;;) {
     try {
-      const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+      const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
       const s = (r?.data ?? r) || {};
       const ok = s?.type === 'kubernetes.io/dockerconfigjson' &&
                  typeof s?.data?.['.dockerconfigjson'] === 'string' &&

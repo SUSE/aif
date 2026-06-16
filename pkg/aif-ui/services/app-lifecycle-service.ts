@@ -203,7 +203,7 @@ export class AppLifecycleService {
           data: { namespace, releaseName }
         });
 
-        await $store.dispatch('rancher/request', { url: appUrl, timeout: TIMEOUT_VALUES.MUTATION });
+        await $store.dispatch('rancher/request', { url: appUrl, timeout: TIMEOUT_VALUES.CLUSTER });
 
         // App exists — use clusterRepo upgrade action to re-trigger Helm
         logger.info('App exists, performing upgrade via clusterRepo action', {
@@ -352,7 +352,7 @@ export class AppLifecycleService {
       let app: any = null;
 
       try {
-        const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.MUTATION });
+        const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
         app = (r?.data ?? r) || {};
       } catch (e: unknown) {
         lastErr = e;
