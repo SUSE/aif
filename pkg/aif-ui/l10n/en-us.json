@@ -96,6 +96,19 @@
           "advanced": {
             "title": "Advanced",
             "warning": "Advanced settings for air-gapped or custom deployments only. Modify with care.",
+            "operatorConnection": {
+              "title": "Operator Connection",
+              "found": "Configuration loaded from the aif-ui-config ConfigMap in cattle-ui-plugin-system. Changes take effect immediately on save.",
+              "notFound": "No aif-ui-config ConfigMap found in cattle-ui-plugin-system. Fields below show defaults. Saving will create the ConfigMap.",
+              "namespace": {
+                "label": "Operator Namespace",
+                "placeholder": "aif-operator"
+              },
+              "service": {
+                "label": "Operator Service",
+                "placeholder": "aif-operator"
+              }
+            },
             "registryEndpoints": {
               "title": "Registry Endpoints",
               "suseRegistry": {

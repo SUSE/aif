@@ -39,3 +39,5 @@ The chart creates a Deployment and Service that serve the built extension assets
 | `affinity` | object | `{}` | Affinity rules |
 | `rollingUpdate.maxSurge` | string | `25%` | Rolling update max surge |
 | `rollingUpdate.maxUnavailable` | string | `25%` | Rolling update max unavailable |
+| `operator.namespace` | string | `aif-operator` | Namespace where the SUSE AI operator is installed. Written to the `aif-ui-config` ConfigMap and read by the UI extension at runtime to build the operator API URL. |
+| `operator.service` | string | `aif-operator` | Service name of the SUSE AI operator. |

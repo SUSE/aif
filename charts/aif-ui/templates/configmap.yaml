@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aif-ui-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-ui.labels" . | nindent 4 }}
+data:
+  operatorNamespace: {{ .Values.operator.namespace | default "aif-operator" | quote }}
+  operatorService:   {{ .Values.operator.service   | default "aif-operator" | quote }}

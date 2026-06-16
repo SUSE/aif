@@ -33,10 +33,24 @@
         </div>
       </header>
 
+      <Banner v-if="operatorError" color="error" class="mb-20">
+        <div class="operator-error-body">
+          <div class="operator-error-text">
+            <div>{{ operatorError }}</div>
+            <div>
+              Update <strong>Operator Namespace</strong> under
+              <em>Settings → Advanced → Operator Connection</em>.
+              <RouterLink :to="settingsRoute">Go to Settings →</RouterLink>
+            </div>
+          </div>
+          <button class="btn-retry" type="button" @click="retryConnection">Retry Connection</button>
+        </div>
+      </Banner>
+
       <Banner v-if="error" color="error">{{ error }}</Banner>
 
       <div class="main-content">
-        <div v-if="!loading && !sortedFamilies.length && !error" class="empty-state-content">
+        <div v-if="!loading && !sortedFamilies.length && !error && !operatorError" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No blueprints found</h3>
           <p class="text-muted">Click Create to define your first blueprint.</p>
@@ -167,8 +181,9 @@ import {
   listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion,
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
+import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import type { Blueprint } from '../types/blueprint-types';
-import { PRODUCT } from '../config/suseai';
+import { PRODUCT, PAGE_TYPES } from '../config/suseai';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
@@ -181,11 +196,18 @@ export default defineComponent({
 
     const loading         = ref(true);
     const error           = ref<string | null>(null);
+    const operatorError   = ref<string | null>(null);
     const search          = ref('');
     const sortBy          = ref('name-asc');
     const blueprints      = ref<Blueprint[]>([]);
     const selectedVersions = ref<Record<string, string>>({});
     const showDeprecated  = ref(false);
+
+    const settingsRoute = {
+      name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.SETTINGS }`,
+      params: { cluster },
+      query:  { section: 'advanced' },
+    };
 
     // Global Administrator check — true only when the current user has globalRoleName === 'admin'.
     const isAdmin = ref(false);
@@ -280,6 +302,12 @@ export default defineComponent({
     async function refresh() {
       loading.value = true;
       error.value = null;
+      await checkOperatorConnection();
+      operatorError.value = getConnectionError();
+      if (operatorError.value) {
+        loading.value = false;
+        return;
+      }
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];
@@ -301,6 +329,12 @@ export default defineComponent({
       } finally {
         loading.value = false;
       }
+    }
+
+    async function retryConnection() {
+      await checkOperatorConnection(true);
+      operatorError.value = getConnectionError();
+      if (!operatorError.value) refresh();
     }
 
     async function silentRefresh() {
@@ -505,7 +539,8 @@ export default defineComponent({
     });
 
     return {
-      loading, error, search, sortBy, sortedFamilies, selectedVersions,
+      loading, error, operatorError, settingsRoute, retryConnection,
+      search, sortBy, sortedFamilies, selectedVersions,
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
@@ -620,7 +655,39 @@ export default defineComponent({
   .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 }
 .mb-10 { margin-bottom: 10px; }
-.mt-5 { margin-top: 5px; }
+.mb-20 { margin-bottom: 20px; }
+.ml-5  { margin-left: 5px; }
+.mt-5  { margin-top: 5px; }
+
+.operator-error-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.operator-error-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+
+  a { color: inherit; font-weight: 600; text-decoration: underline; }
+}
+
+.btn-retry {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 6px 16px;
+  white-space: nowrap;
+
+  &:hover { opacity: 1; }
+}
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 0 14px; height: 32px; border-radius: 6px;

@@ -4,6 +4,7 @@ import { Banner }    from '@components/Banner';
 import { BadgeState } from '@components/BadgeState';
 import CountBox      from '@shell/components/CountBox';
 import Loading       from '@shell/components/Loading';
+import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import { listAIWorkloads }           from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, latestVersion } from '../utils/blueprint-api';
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
@@ -18,8 +19,9 @@ const router  = vm.$router;
 const route   = vm.$route;
 const cluster = (route?.params?.cluster as string) || '_';
 
-const loading    = ref(true);
-const error      = ref<string | null>(null);
+const loading         = ref(true);
+const error           = ref<string | null>(null);
+const operatorError   = ref<string | null>(null);
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
 const clusters   = ref<ClusterInfo[]>([]);
@@ -86,9 +88,21 @@ function goTo(pageType: string) {
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────────
+const settingsRoute = {
+  name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.SETTINGS }`,
+  params: { cluster },
+  query:  { section: 'advanced' },
+};
+
 async function refresh() {
   loading.value = true;
   error.value   = null;
+  await checkOperatorConnection();
+  operatorError.value = getConnectionError();
+  if (operatorError.value) {
+    loading.value = false;
+    return;
+  }
   try {
     const [wlResult, bpResult, clResult] = await Promise.all([
       listAIWorkloads(),
@@ -103,6 +117,12 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
+}
+
+async function retryConnection() {
+  await checkOperatorConnection(true);
+  operatorError.value = getConnectionError();
+  if (!operatorError.value) refresh();
 }
 
 async function silentRefresh() {
@@ -142,11 +162,25 @@ onUnmounted(() => {
         </button>
       </header>
 
+      <Banner v-if="operatorError" color="error" class="mb-20">
+        <div class="operator-error-body">
+          <div class="operator-error-text">
+            <div>{{ operatorError }}</div>
+            <div>
+              Update <strong>Operator Namespace</strong> under
+              <em>Settings → Advanced → Operator Connection</em>.
+              <RouterLink :to="settingsRoute">Go to Settings →</RouterLink>
+            </div>
+          </div>
+          <button class="btn-retry" type="button" @click="retryConnection">Retry Connection</button>
+        </div>
+      </Banner>
+
       <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
 
       <Loading v-if="loading" />
 
-      <template v-else>
+      <template v-else-if="!operatorError">
         <!-- ── Summary cards ─────────────────────────────────────────────── -->
         <section class="summary-grid">
           <CountBox
@@ -456,6 +490,37 @@ onUnmounted(() => {
 
 // ── Shared ─────────────────────────────────────────────────────────────────────
 .mb-20 { margin-bottom: 20px; }
+.ml-10 { margin-left: 10px; }
+
+.operator-error-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.operator-error-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+
+  a { color: inherit; font-weight: 600; text-decoration: underline; }
+}
+
+.btn-retry {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 6px 16px;
+  white-space: nowrap;
+
+  &:hover { opacity: 1; }
+}
 
 .btn {
   display: inline-flex;

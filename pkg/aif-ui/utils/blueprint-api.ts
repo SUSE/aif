@@ -1,13 +1,6 @@
 import type { Blueprint, BlueprintList, BlueprintSpec } from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
-import {
-  MANAGEMENT_CLUSTER,
-  OPERATOR_NAMESPACE,
-  OPERATOR_SERVICE,
-  OPERATOR_PORT,
-} from './constants';
-
-const BASE_URL = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ OPERATOR_NAMESPACE }/services/http:${ OPERATOR_SERVICE }:${ OPERATOR_PORT }/proxy`;
+import { loadOperatorConfig, getOperatorBaseUrl } from './operator-config';
 
 interface OperatorError extends Error {
   status: number;
@@ -15,7 +8,8 @@ interface OperatorError extends Error {
 }
 
 async function blueprintFetch(path: string, options: RequestInit = {}): Promise<any> {
-  const res = await fetch(`${ BASE_URL }${ path }`, {
+  await loadOperatorConfig();
+  const res = await fetch(`${ getOperatorBaseUrl() }${ path }`, {
     ...options,
     headers: {
       Accept: 'application/json',

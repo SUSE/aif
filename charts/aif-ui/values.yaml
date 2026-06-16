@@ -66,3 +66,7 @@ affinity: {}
 rollingUpdate:
   maxSurge: 25%
   maxUnavailable: 25%
+
+operator:
+  namespace: "aif-operator"
+  service:   "aif-operator"

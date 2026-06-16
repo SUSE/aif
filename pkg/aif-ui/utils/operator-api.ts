@@ -1,14 +1,5 @@
-import {
-  MANAGEMENT_CLUSTER,
-  OPERATOR_NAMESPACE,
-  OPERATOR_SERVICE,
-  OPERATOR_PORT,
-} from './constants';
+import { loadOperatorConfig, getOperatorBaseUrl } from './operator-config';
 import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryCredentials } from '../types/aiworkload-types';
-
-// Rancher proxies service traffic:
-// /k8s/clusters/<cluster>/api/v1/namespaces/<ns>/services/http:<svc>:<port>/proxy/
-const BASE_URL = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ OPERATOR_NAMESPACE }/services/http:${ OPERATOR_SERVICE }:${ OPERATOR_PORT }/proxy`;
 
 interface OperatorError extends Error {
   status: number;
@@ -16,7 +7,8 @@ interface OperatorError extends Error {
 }
 
 async function operatorFetch(path: string, options: RequestInit = {}): Promise<any> {
-  const res = await fetch(`${ BASE_URL }${ path }`, {
+  await loadOperatorConfig();
+  const res = await fetch(`${ getOperatorBaseUrl() }${ path }`, {
     ...options,
     headers: {
       'Accept': 'application/json',

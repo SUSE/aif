@@ -7,7 +7,8 @@ import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
-import { OPERATOR_NAMESPACE, TIMEOUT_VALUES } from '../utils/constants';
+import { TIMEOUT_VALUES } from '../utils/constants';
+import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 
@@ -37,6 +38,11 @@ export default {
   },
 
   async fetch() {
+    await loadOperatorConfig();
+    const operatorCfg = getOperatorConfig();
+    this.operatorNamespace      = operatorCfg.namespace;
+    this.operatorService        = operatorCfg.service;
+    this.operatorConfigMapFound = isConfigMapFound();
     try {
       const data = await getSettings();
 
@@ -61,6 +67,9 @@ export default {
       fetchErrorMessage: null,
       errors:            [],
       mode:              'edit',
+      operatorNamespace:  '',
+      operatorService:    '',
+      operatorConfigMapFound: false,
       expanded:          {
         fleet:         false,
         appCollection: true,
@@ -73,7 +82,7 @@ export default {
 
   computed: {
     settingsNamespace() {
-      return OPERATOR_NAMESPACE;
+      return getOperatorNamespace();
     },
 
     authTypeOptions() {
@@ -102,6 +111,17 @@ export default {
           ? val.split(',').map((s) => s.trim()).filter(Boolean)
           : [];
       },
+    },
+  },
+
+  watch: {
+    loaded(val) {
+      if (!val) return;
+      const section = this.$route?.query?.section;
+
+      if (section && this.expanded[section] !== undefined) {
+        this.openSection(section);
+      }
     },
   },
 
@@ -222,6 +242,13 @@ export default {
       this.expanded[section] = !this.expanded[section];
     },
 
+    openSection(section) {
+      this.expanded[section] = true;
+      this.$nextTick(() => {
+        document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+
     toSelectorValue(ref) {
       if (!ref?.name) return undefined;
 
@@ -244,7 +271,7 @@ export default {
       if (!name) return {};
       try {
         const res = await this.$store.dispatch('rancher/request', {
-          url:     `/k8s/clusters/local/api/v1/namespaces/${OPERATOR_NAMESPACE}/secrets/${name}`,
+          url:     `/k8s/clusters/local/api/v1/namespaces/${ getOperatorNamespace() }/secrets/${ name }`,
           timeout: TIMEOUT_VALUES.CLUSTER,
         });
         // rancher/request returns the raw K8s object: res.data is the base64 data map.
@@ -330,6 +357,8 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
+        await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
+        this.operatorConfigMapFound = true;
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
@@ -642,7 +671,7 @@ export default {
       </div>
 
       <!-- Advanced -->
-      <div class="box mt-10">
+      <div id="advanced" class="box mt-10">
         <div
           class="accordion-header"
           role="button"
@@ -663,6 +692,40 @@ export default {
             :label="t('suseai.pages.settings.sections.advanced.warning')"
             class="mb-15"
           />
+
+          <h3 class="mb-10">
+            {{ t('suseai.pages.settings.sections.advanced.operatorConnection.title') }}
+          </h3>
+          <Banner
+            v-if="operatorConfigMapFound"
+            color="info"
+            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.found')"
+            class="mb-15"
+          />
+          <Banner
+            v-else
+            color="warning"
+            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.notFound')"
+            class="mb-15"
+          />
+          <div class="row mb-20">
+            <div class="col span-4">
+              <LabeledInput
+                v-model:value="operatorNamespace"
+                :label="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.label')"
+                :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.placeholder')"
+                :mode="mode"
+              />
+            </div>
+            <div class="col span-4">
+              <LabeledInput
+                v-model:value="operatorService"
+                :label="t('suseai.pages.settings.sections.advanced.operatorConnection.service.label')"
+                :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.service.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
 
           <h3 class="mb-10">
             {{ t('suseai.pages.settings.sections.advanced.registryEndpoints.title') }}

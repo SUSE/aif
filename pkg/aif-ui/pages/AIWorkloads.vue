@@ -6,9 +6,10 @@ import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, deleteAIWorkload, updateAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
+import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
-import { PRODUCT } from '../config/suseai';
+import { PRODUCT, PAGE_TYPES } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
@@ -18,8 +19,15 @@ const router  = vm.$router;
 const route   = vm.$route;
 const cluster = (route?.params?.cluster as string) || '_';
 
-const loading    = ref(true);
-const error      = ref<string | null>(null);
+const loading       = ref(true);
+const error         = ref<string | null>(null);
+const operatorError = ref<string | null>(null);
+
+const settingsRoute = {
+  name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.SETTINGS }`,
+  params: { cluster },
+  query:  { section: 'advanced' },
+};
 const search     = ref('');
 const sortBy     = ref('name-asc');
 const workloads  = ref<AIWorkload[]>([]);
@@ -123,6 +131,12 @@ function workloadSource(w: AIWorkload): string {
 async function refresh() {
   loading.value = true;
   error.value   = null;
+  await checkOperatorConnection();
+  operatorError.value = getConnectionError();
+  if (operatorError.value) {
+    loading.value = false;
+    return;
+  }
   try {
     const [wlResult, bpResult, clResult] = await Promise.all([
       listAIWorkloads(),
@@ -137,6 +151,12 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
+}
+
+async function retryConnection() {
+  await checkOperatorConnection(true);
+  operatorError.value = getConnectionError();
+  if (!operatorError.value) refresh();
 }
 
 async function silentRefresh() {
@@ -263,6 +283,20 @@ async function executeUpgrade() {
         </div>
       </header>
 
+      <Banner v-if="operatorError" color="error" class="mb-20">
+        <div class="operator-error-body">
+          <div class="operator-error-text">
+            <div>{{ operatorError }}</div>
+            <div>
+              Update <strong>Operator Namespace</strong> under
+              <em>Settings → Advanced → Operator Connection</em>.
+              <RouterLink :to="settingsRoute">Go to Settings →</RouterLink>
+            </div>
+          </div>
+          <button class="btn-retry" type="button" @click="retryConnection">Retry Connection</button>
+        </div>
+      </Banner>
+
       <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
 
       <div class="main-content">
@@ -272,7 +306,7 @@ async function executeUpgrade() {
         </div>
 
         <!-- Empty state -->
-        <div v-else-if="!filteredWorkloads.length && !error" class="empty-state-content">
+        <div v-else-if="!filteredWorkloads.length && !error && !operatorError" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No workloads found</h3>
           <p class="text-muted">Deploy an App or install a Blueprint to see workloads here.</p>
@@ -643,7 +677,38 @@ async function executeUpgrade() {
 }
 
 .mb-20 { margin-bottom: 20px; }
+.ml-5  { margin-left: 5px; }
 .text-muted { color: var(--muted); }
+
+.operator-error-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.operator-error-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+
+  a { color: inherit; font-weight: 600; text-decoration: underline; }
+}
+
+.btn-retry {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 6px 16px;
+  white-space: nowrap;
+
+  &:hover { opacity: 1; }
+}
 .text-right { text-align: right; }
 
 .btn {

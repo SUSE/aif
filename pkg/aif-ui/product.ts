@@ -10,6 +10,7 @@ import {
   PAGE_TYPES
 } from './config/suseai';
 import type { RancherStore } from './types/rancher-types';
+import { checkOperatorConnection } from './utils/operator-config';
 
 export { PRODUCT } from './config/suseai';
 
@@ -50,4 +51,8 @@ export function init($plugin: IPlugin, store: RancherStore) {
 
   // Register basic types
   basicType(BASIC_TYPES);
+
+  // Warm config cache + connection check in background.
+  // Fire-and-forget here; page fetch() hooks await the shared promise.
+  void checkOperatorConnection();
 }
