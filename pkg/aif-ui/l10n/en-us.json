@@ -56,7 +56,7 @@
           },
           "nvidia": {
             "title": "NVIDIA",
-            "description": "NGC credential used to pull gated NVIDIA images (nvcr.io), and — in air-gapped mode, when a mirrored NVIDIA chart repository is set under Registry Endpoints — to authenticate to that OCI chart repo. Username is conventionally \"$oauthtoken\".",
+            "description": "NGC credential used to pull gated NVIDIA images (nvcr.io), and — in air-gapped mode, when a mirrored NVIDIA chart repository is set under Registry Endpoints — to authenticate to that OCI chart repo. Username is conventionally “$oauthtoken”.",
             "userSecretRef": {
               "label": "Username Secret",
               "secretNameLabel": "Secret Name",
