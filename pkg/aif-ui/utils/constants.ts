@@ -186,6 +186,7 @@ export const DEFAULT_VALUES = {
   PAGE_SIZE: 20,
   REFRESH_INTERVAL: 300000,  // 5 minutes
   CLUSTER_CACHE_TTL: 60000,  // 1 minute
+  INSTANCES_POLL_MS: 30000,  // 30 seconds - AppInstances auto-refresh interval
   SEARCH_DEBOUNCE: 300,
   MAX_CONCURRENT_OPERATIONS: 3
 } as const;

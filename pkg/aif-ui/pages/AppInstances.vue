@@ -699,7 +699,7 @@ export default defineComponent({
         if (!loading.value) {
           silentRefresh();
         }
-      }, 30000);
+      }, DEFAULT_VALUES.INSTANCES_POLL_MS);
     });
 
     // Cleanup timer and cache on unmount
