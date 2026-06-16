@@ -124,10 +124,11 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
     // Get cluster basic info first using the same approach as getClusters
     let clusterName = clusterId;
     try {
+      let timer: ReturnType<typeof setTimeout>;
       const clusters = await Promise.race([
         store.dispatch('management/findAll', { type: 'cluster' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ))
-      ]) as ClusterResource[];
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ); }),
+      ]).finally(() => clearTimeout(timer)) as ClusterResource[];
       const cluster = clusters.find((c: ClusterResource) => c.id === clusterId);
       clusterName = cluster?.metadata?.name || clusterId;
     } catch {

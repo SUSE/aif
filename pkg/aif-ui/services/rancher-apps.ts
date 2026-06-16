@@ -93,10 +93,11 @@ function isClusterReady(c: ClusterResource): boolean {
 // without hiding them from the user entirely.
 export async function getAllClusters($store: RancherStore): Promise<ClusterInfo[]> {
   try {
+    let timer: ReturnType<typeof setTimeout>;
     const rows = await Promise.race([
       $store.dispatch('management/findAll', { type: 'cluster' }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ))
-    ]) as ClusterResource[];
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ); }),
+    ]).finally(() => clearTimeout(timer)) as ClusterResource[];
     return (rows || []).map((c: ClusterResource) => ({
       id:    c.id,
       name:  c.spec?.displayName || c.metadata?.name || c.id,
