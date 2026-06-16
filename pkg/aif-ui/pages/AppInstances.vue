@@ -547,9 +547,10 @@ export default defineComponent({
           })
         );
 
-        for (const result of clusterResults) {
+        for (const [i, result] of clusterResults.entries()) {
           if (result.status === 'rejected') {
-            console.warn(`[SUSE-AI] Failed to search a cluster:`, result.reason);
+            const c = allClusters[i];
+            console.warn(`[SUSE-AI] Failed to search cluster ${ c?.name } (${ c?.id }):`, result.reason);
             continue;
           }
           const { cluster, catalogApps } = result.value;

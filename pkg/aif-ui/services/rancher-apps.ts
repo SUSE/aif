@@ -556,8 +556,12 @@ export async function discoverExistingInstall(
         // Fallback to per-namespace search if cluster-wide search fails (RBAC restrictions)
         console.log('[SUSE-AI] Cluster-wide secret search not available, using per-namespace fallback');
         const nss = await listNamespaces($store, c.id);
-        for (const ns of nss) {
-          const secs = await listNsHelmSecrets($store, c.id, ns);
+        const nsResults = await Promise.allSettled(
+          nss.map(ns => listNsHelmSecrets($store, c.id, ns).then(secs => ({ ns, secs })))
+        );
+        for (const r of nsResults) {
+          if (r.status !== 'fulfilled') continue;
+          const { ns, secs } = r.value;
           for (const s of secs) {
             const { release, chartBase, version } = extractHelmRelease(s);
             const hit = (release && matchesSlug(release, slug, chartNameGuess)) ||
