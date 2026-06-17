@@ -198,21 +198,28 @@
         <!-- Empty state: no credentials configured (Settings CR absent or has no secretRef pairs) -->
         <div v-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
-          <h3>No applications available</h3>
+          <h3>{{ t('suseai.apps.noRegistryTitle', 'No applications available') }}</h3>
           <p class="text-muted">
-            To browse applications, add your registry connection details on the
-            <a class="empty-state-link" role="button" tabindex="0" @click.prevent="goToSettings" @keydown.enter.prevent="goToSettings">Settings</a> page.
+            {{ t('suseai.apps.noRegistryDescBefore', 'To browse applications, add your registry connection details on the') }}
+            <a class="empty-state-link" role="button" tabindex="0" @click.prevent="goToSettings" @keydown.enter.prevent="goToSettings">{{ t('suseai.apps.settingsLink', 'Settings') }}</a>
+            {{ t('suseai.apps.noRegistryDescAfter', 'page.') }}
           </p>
         </div>
 
         <!-- Empty state: credentials configured but no apps found yet -->
         <div v-else-if="!loading && !items.length && hasRegistryConfigured && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
-          <h3>No applications available yet</h3>
+          <h3>{{ t('suseai.apps.noAppsYetTitle', 'No applications available yet') }}</h3>
           <p class="text-muted">
-            Registry connections are configured but no applications were found. If you recently added
-            your registry, the catalog may still be loading — this can take a few minutes.
-            <a class="empty-state-link" role="button" tabindex="0" @click.prevent="!loading && refresh()" @keydown.enter.prevent="!loading && refresh()">Refresh</a> to check again.
+            {{ t('suseai.apps.noAppsYetDescBefore', 'Registry connections are configured but no applications were found. If you recently added your registry, the catalog may still be loading — this can take a few minutes.') }}
+            <a
+                class="empty-state-link"
+                role="button"
+                :tabindex="loading ? -1 : 0"
+                :aria-disabled="loading || undefined"
+                @click.prevent="!loading && refresh()"
+                @keydown.enter.prevent="!loading && refresh()"
+              >{{ t('suseai.apps.refresh', 'Refresh') }}</a> {{ t('suseai.apps.noAppsYetDescAfter', 'to check again.') }}
           </p>
         </div>
 
@@ -220,7 +227,7 @@
         <div v-else-if="!loading && !filteredApps.length && items.length > 0 && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noApps', 'No applications found') }}</h3>
-          <p class="text-muted">{{ search ? t('suseai.apps.noAppsDesc', 'Try adjusting your search or filter.') : 'No applications are available in the selected library.' }}</p>
+          <p class="text-muted">{{ search ? t('suseai.apps.noAppsDesc', 'Try adjusting your search or filter.') : t('suseai.apps.noAppsLibrary', 'No applications are available in the selected library.') }}</p>
         </div>
       </div>
     </div>
@@ -250,7 +257,7 @@ export default defineComponent({
     const selectedRepo = ref('suse-ai');
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
-    const settingsData = ref<any>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
+    const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
 
     const repositoryOptions = computed(() => [
       { label: 'SUSE AI Library', value: 'suse-ai' },
@@ -335,7 +342,10 @@ export default defineComponent({
     };
 
     const goToSettings = () => {
-      $router.push({ name: 'c-cluster-suseai-settings', params: { cluster: currentClusterId } }).catch(() => {});
+      $router.push({ name: 'c-cluster-suseai-settings', params: { cluster: currentClusterId } })
+        .catch((err: any) => {
+          if (err?.name !== 'NavigationDuplicated') console.warn('Navigation failed:', err);
+        });
     };
 
     const onTileClick = async (app: AppCollectionItem) => {
