@@ -12,5 +12,5 @@ metadata:
   labels:
     {{- include "aif-ui.labels" . | nindent 4 }}
 data:
-  operatorNamespace: {{ .Values.operator.namespace | default "aif-operator" | quote }}
-  operatorService:   {{ .Values.operator.service   | default "aif-operator" | quote }}
+  operatorNamespace: {{ .Values.operator.namespace | quote }}
+  operatorService:   {{ .Values.operator.service   | quote }}

@@ -11,10 +11,16 @@ const CONFIG_MAP_NAME  = 'aif-ui-config';
 interface OperatorCache {
   namespace: string;
   service:   string;
+  found:     boolean;
+}
+
+export interface OperatorError extends Error {
+  status: number;
+  code:   string;
 }
 
 let cache: OperatorCache | null = null;
-let configMapFound = false;
+let loadPromise: Promise<void> | null = null;
 let connectionError: string | null = null;
 let checkPromise: Promise<void> | null = null;
 
@@ -22,11 +28,45 @@ function configMapUrl(): string {
   return `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ CONFIG_NAMESPACE }/configmaps/${ CONFIG_MAP_NAME }`;
 }
 
+function configMapCollectionUrl(): string {
+  return `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ CONFIG_NAMESPACE }/configmaps`;
+}
+
+/** Shared fetch wrapper for operator API calls. Handles 204 No Content, JSON error
+ *  extraction, and attaches typed status/code fields to thrown errors. */
+export async function operatorFetch(path: string, options: RequestInit = {}): Promise<any> {
+  await loadOperatorConfig();
+  const res = await fetch(`${ getOperatorBaseUrl() }${ path }`, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  if (res.status === 204) return undefined;
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(body?.message || res.statusText) as OperatorError;
+    err.status = res.status;
+    err.code   = body?.error || 'INTERNAL_ERROR';
+    throw err;
+  }
+  return body;
+}
+
 /** Fetch the aif-ui-config ConfigMap and populate the in-memory cache.
  *  Falls back to hardcoded constants if the ConfigMap is missing or unreadable.
- *  Idempotent: subsequent calls are no-ops unless force=true. */
-export async function loadOperatorConfig(force = false): Promise<void> {
-  if (cache && !force) return;
+ *  Idempotent: subsequent calls return the shared in-flight promise to avoid
+ *  duplicate requests; pass force=true to discard both cache and in-flight promise. */
+export function loadOperatorConfig(force = false): Promise<void> {
+  if (force) { cache = null; loadPromise = null; }
+  if (cache) return Promise.resolve();
+  if (!loadPromise) loadPromise = _doLoad();
+  return loadPromise;
+}
+
+async function _doLoad(): Promise<void> {
   try {
     const res = await fetch(configMapUrl(), { headers: { Accept: 'application/json' } });
     if (res.ok) {
@@ -34,13 +74,12 @@ export async function loadOperatorConfig(force = false): Promise<void> {
       cache = {
         namespace: cm?.data?.operatorNamespace || OPERATOR_NAMESPACE,
         service:   cm?.data?.operatorService   || OPERATOR_SERVICE,
+        found:     true,
       };
-      configMapFound = true;
       return;
     }
   } catch { /* fall through to defaults */ }
-  cache = { namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE };
-  configMapFound = false;
+  cache = { namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false };
 }
 
 export function getOperatorNamespace(): string {
@@ -57,7 +96,7 @@ export function getOperatorBaseUrl(): string {
   return `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ ns }/services/http:${ svc }:${ OPERATOR_PORT }/proxy`;
 }
 
-async function _runConnectionCheck(): Promise<void> {
+async function runConnectionCheck(): Promise<void> {
   await loadOperatorConfig();
   const ns  = getOperatorNamespace();
   const url = `${ getOperatorBaseUrl() }/api/v1/settings`;
@@ -68,9 +107,12 @@ async function _runConnectionCheck(): Promise<void> {
 
     if (res.status === 404) {
       const body = await res.json().catch(() => null);
-      // Operator's own 404 (settings not yet configured) has {error, message} format.
-      // A Rancher/k8s proxy 404 (service not found) has a different shape.
-      if (body?.error) return;
+      // Distinguish operator's own 404 (settings not yet configured) from a
+      // Kubernetes/Rancher proxy 404 (service not found).  The k8s API machinery
+      // returns a Status object ({ kind: "Status", ... }); the operator returns its
+      // own error envelope without `kind`.  Checking for the k8s shape is more
+      // stable than checking for an operator-specific field.
+      if (body?.kind !== 'Status') return;
     }
 
     connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }".`;
@@ -87,7 +129,7 @@ async function _runConnectionCheck(): Promise<void> {
  *  re-run the check. */
 export function checkOperatorConnection(force = false): Promise<void> {
   if (force) { connectionError = null; checkPromise = null; }
-  if (!checkPromise) checkPromise = _runConnectionCheck();
+  if (!checkPromise) checkPromise = runConnectionCheck();
   return checkPromise;
 }
 
@@ -98,16 +140,16 @@ export function getConnectionError(): string | null {
 
 /** Return current resolved coordinates (for Settings page display). */
 export function getOperatorConfig(): OperatorCache {
-  return { namespace: getOperatorNamespace(), service: getOperatorService() };
+  return cache ?? { namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false };
 }
 
 export function isConfigMapFound(): boolean {
-  return configMapFound;
+  return cache?.found ?? false;
 }
 
 export function invalidateOperatorConfig(): void {
   cache           = null;
-  configMapFound  = false;
+  loadPromise     = null;
   connectionError = null;
   checkPromise    = null;
 }
@@ -130,7 +172,7 @@ export async function saveOperatorConfig(namespace: string, service: string): Pr
 
   if (res.status === 404) {
     // ConfigMap doesn't exist yet (git-based install, no Helm chart ran).
-    res = await fetch(url.replace(`/${ CONFIG_MAP_NAME }`, ''), { method: 'POST', headers, body });
+    res = await fetch(configMapCollectionUrl(), { method: 'POST', headers, body });
   }
 
   if (!res.ok) {

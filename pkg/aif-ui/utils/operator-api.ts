@@ -1,34 +1,5 @@
-import { loadOperatorConfig, getOperatorBaseUrl } from './operator-config';
+import { operatorFetch } from './operator-config';
 import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryCredentials } from '../types/aiworkload-types';
-
-interface OperatorError extends Error {
-  status: number;
-  code:   string;
-}
-
-async function operatorFetch(path: string, options: RequestInit = {}): Promise<any> {
-  await loadOperatorConfig();
-  const res = await fetch(`${ getOperatorBaseUrl() }${ path }`, {
-    ...options,
-    headers: {
-      'Accept': 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {}),
-    },
-  });
-
-  const body = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    const err = new Error(body?.message || res.statusText) as OperatorError;
-
-    err.status = res.status;
-    err.code   = body?.error || 'INTERNAL_ERROR';
-    throw err;
-  }
-
-  return body;
-}
 
 export function getSettings(): Promise<any> {
   return operatorFetch('/api/v1/settings');
