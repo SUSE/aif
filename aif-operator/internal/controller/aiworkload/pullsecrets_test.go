@@ -392,7 +392,8 @@ func TestDeliverPullSecrets_EmitsBundlePerDownstreamCluster(t *testing.T) {
 	for _, b := range bundles.Items {
 		gotNames[b.GetName()] = true
 	}
-	for _, want := range []string{"ai-pullsecrets-wl-c-aaa-ngc-secret", "ai-pullsecrets-wl-c-bbb-ngc-secret"} {
+	// One consolidated Bundle per (owner, cluster); no per-secret suffix.
+	for _, want := range []string{"ai-pullsecrets-wl-c-aaa", "ai-pullsecrets-wl-c-bbb"} {
 		if !gotNames[want] {
 			t.Errorf("missing bundle %q; got %+v", want, gotNames)
 		}
@@ -573,11 +574,11 @@ func TestDeliverPullSecrets_FactoryErrorPropagates(t *testing.T) {
 	if !strings.Contains(err.Error(), "ngc-secret") {
 		t.Errorf("expected error to mention secret name; got %v", err)
 	}
-	if !strings.Contains(err.Error(), "local cluster") {
-		t.Errorf("expected error to mention 'local cluster' (first failure point); got %v", err)
-	}
+	// deliverPullSecrets now collects all built secrets before writing
+	// anywhere, so a factory error happens during the build phase and the
+	// wrapping mentions "build pull secret …" rather than a specific target.
 
-	// Nothing should have been written (factory failed on the local pass before the bundle pass).
+	// Nothing should have been written (factory failed during build before any write).
 	var bundles unstructured.UnstructuredList
 	bundles.SetGroupVersionKind(bundleListGVK)
 	if err := c.List(context.Background(), &bundles); err != nil {

@@ -16,6 +16,22 @@ import (
 // bundleGVK is the Fleet Bundle CR GVK we emit.
 var bundleGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
 
+// BundleClient delivers a set of pull-secrets to a single downstream cluster
+// as one consolidated Fleet Bundle (Namespace + Secrets + an SA-merge Job).
+// One bundle per (owner, cluster) replaces the prior one-bundle-per-secret
+// design — that one tripped Helm's adoption check when peer bundles shared
+// a Namespace, and made downstream SA injection awkward (which Job goes in
+// which bundle?). With one bundle per cluster, ownership is unambiguous.
+type BundleClient interface {
+	// ApplyPullSecretBundle writes a single Fleet Bundle to the target
+	// cluster carrying the Namespace + every Secret in secrets + a Job that
+	// merges the secret names into every ServiceAccount in the namespace.
+	// Idempotent: re-applying with the same input updates the bundle in
+	// place. All secrets must share the same .Namespace; ApplyPullSecretBundle
+	// returns an error otherwise.
+	ApplyPullSecretBundle(ctx context.Context, secrets []*corev1.Secret) error
+}
+
 // BundleClientOptions configures a bundleClient instance.
 type BundleClientOptions struct {
 	// ClusterID is the Rancher cluster ID Fleet targets (e.g. "c-abc123").
@@ -31,17 +47,24 @@ type BundleClientOptions struct {
 	OwnerName string
 	// OwnerNamespace is the AIWorkload namespace owning this Bundle.
 	OwnerNamespace string
+	// SAMergeImage is the container image used by the Job that patches
+	// every ServiceAccount's imagePullSecrets in the target namespace.
+	// Must contain `kubectl` and `jq` on its PATH. Defaults to the SUSE
+	// kubectl image when empty.
+	SAMergeImage string
 }
 
-// NewBundleClient returns a Client that emits one Fleet Bundle per
-// ApplySecret call (one Bundle per Secret, per target cluster). Bundle
-// names follow "ai-pullsecrets-<OwnerName>-<ClusterID>-<SecretName>" so
-// multiple secrets for the same owner+cluster don't collide. Calls are
-// idempotent: re-applying the same Secret updates the same Bundle in
-// place. Owner labels (ai-platform.suse.com/owner-name and
-// /owner-namespace) tie all of an AIWorkload's bundles together for the
-// finalizer to clean up via label selector.
-func NewBundleClient(c client.Client, scheme *runtime.Scheme, opts BundleClientOptions) Client {
+// NewBundleClient returns a BundleClient that emits one consolidated Fleet
+// Bundle per ApplyPullSecretBundle call. Bundle name is
+// "ai-pullsecrets-<OwnerName>-<ClusterID>"; owner labels
+// (ai-platform.suse.com/owner-name and /owner-namespace) tie this Bundle
+// to its AIWorkload for finalizer cleanup via label selector.
+func NewBundleClient(c client.Client, scheme *runtime.Scheme, opts BundleClientOptions) BundleClient {
+	if opts.SAMergeImage == "" {
+		// Same image the extension-cleanup-job chart uses; available in
+		// air-gapped environments via the SUSE Registry mirror.
+		opts.SAMergeImage = "registry.suse.com/suse/kubectl:1.35"
+	}
 	return &bundleClient{c: c, scheme: scheme, opts: opts}
 }
 
@@ -52,47 +75,82 @@ type bundleClient struct {
 	opts   BundleClientOptions
 }
 
-func (b *bundleClient) ApplySecret(ctx context.Context, sec *corev1.Secret) error {
-	// Defensive copy + ensure TypeMeta so the serialized form is self-contained
-	// (Fleet just applies the YAML as-is on the target cluster).
-	out := sec.DeepCopy()
-	out.APIVersion = "v1"
-	out.Kind = "Secret"
+const (
+	// saMergeServiceAccount is the SA the SA-merge Job runs as on the
+	// downstream cluster. The corresponding Role grants get/list/patch on
+	// serviceaccounts in the target namespace only.
+	saMergeServiceAccount = "ai-pullsecret-merger"
+	// saMergeJobName template — actual name carries a hash to force a new
+	// Job pod on every Bundle reapply (Job spec is immutable after create).
+	saMergeJobNamePrefix = "ai-pullsecret-merge"
+)
 
-	secYAML, err := yaml.Marshal(out)
+func (b *bundleClient) ApplyPullSecretBundle(ctx context.Context, secrets []*corev1.Secret) error {
+	if len(secrets) == 0 {
+		return nil
+	}
+
+	// All secrets must target the same namespace — the Bundle ships ONE
+	// Namespace manifest and ONE SA-merge Job scoped to that namespace.
+	ns := secrets[0].Namespace
+	if ns == "" {
+		return fmt.Errorf("ApplyPullSecretBundle: first secret has empty namespace")
+	}
+	secretNames := make([]string, 0, len(secrets))
+	for _, sec := range secrets {
+		if sec.Namespace != ns {
+			return fmt.Errorf("ApplyPullSecretBundle: mixed namespaces (%s vs %s); a Bundle ships one namespace", ns, sec.Namespace)
+		}
+		secretNames = append(secretNames, sec.Name)
+	}
+
+	resources := make([]any, 0, 3+len(secrets))
+
+	// 1) Namespace — Fleet wraps each Bundle as its own Helm release on the
+	//    target cluster and applies manifests verbatim with no implicit
+	//    namespace creation, so the namespace must ship in the Bundle.
+	nsObj := &corev1.Namespace{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
+		ObjectMeta: metav1.ObjectMeta{Name: ns},
+	}
+	nsYAML, err := yaml.Marshal(nsObj)
 	if err != nil {
-		return fmt.Errorf("marshal secret %s/%s: %w", out.Namespace, out.Name, err)
+		return fmt.Errorf("marshal namespace %s: %w", ns, err)
+	}
+	resources = append(resources, map[string]any{
+		"name":    fmt.Sprintf("%s-namespace.yaml", ns),
+		"content": string(nsYAML),
+	})
+
+	// 2) Each Secret.
+	for _, sec := range secrets {
+		out := sec.DeepCopy()
+		out.APIVersion = "v1"
+		out.Kind = "Secret"
+		secYAML, err := yaml.Marshal(out)
+		if err != nil {
+			return fmt.Errorf("marshal secret %s/%s: %w", out.Namespace, out.Name, err)
+		}
+		resources = append(resources, map[string]any{
+			"name":    fmt.Sprintf("%s-%s.yaml", out.Namespace, out.Name),
+			"content": string(secYAML),
+		})
 	}
 
-	// Fleet wraps each Bundle as its own Helm release on the target cluster,
-	// so a Secret targeted at a not-yet-existing namespace fails with
-	// "namespaces \"X\" not found". Ship a Namespace manifest alongside the
-	// Secret so the target namespace is guaranteed to exist before the Secret
-	// applies.
-	//
-	// Because multiple bundles for the same (owner, cluster) each ship the
-	// same Namespace, the second bundle's Helm release would otherwise refuse
-	// to adopt a namespace already annotated as owned by the first release.
-	// The Bundle below sets spec.helm.takeOwnership=true so Helm overrides
-	// the adoption check, and the Namespace gets helm.sh/resource-policy=keep
-	// so deleting one bundle doesn't drop the namespace out from under any
-	// peer bundle still referencing it.
-	ns := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        out.Namespace,
-			Annotations: map[string]string{"helm.sh/resource-policy": "keep"},
-		},
-	}
-	nsYAML, err := yaml.Marshal(ns)
+	// 3) SA-merge: ServiceAccount + Role + RoleBinding + Job. The Job
+	//    enumerates every SA in the namespace and patches imagePullSecrets
+	//    to include each of secretNames, preserving any pre-existing
+	//    entries. Mirrors mergeImagePullSecrets() on the local cluster.
+	saMergeYAML, err := buildSAMergeResources(ns, secretNames, b.opts.SAMergeImage)
 	if err != nil {
-		return fmt.Errorf("marshal namespace %s: %w", out.Namespace, err)
+		return fmt.Errorf("build SA-merge resources for ns %s: %w", ns, err)
 	}
+	resources = append(resources, map[string]any{
+		"name":    fmt.Sprintf("%s-sa-merge.yaml", ns),
+		"content": saMergeYAML,
+	})
 
-	bundleName := fmt.Sprintf("ai-pullsecrets-%s-%s-%s", b.opts.OwnerName, b.opts.ClusterID, sec.Name)
-	nsResourceName := fmt.Sprintf("%s-namespace.yaml", out.Namespace)
-	resourceName := fmt.Sprintf("%s-%s.yaml", out.Namespace, out.Name)
-
+	bundleName := fmt.Sprintf("ai-pullsecrets-%s-%s", b.opts.OwnerName, b.opts.ClusterID)
 	bundle := &unstructured.Unstructured{}
 	bundle.SetGroupVersionKind(bundleGVK)
 	bundle.SetName(bundleName)
@@ -103,24 +161,20 @@ func (b *bundleClient) ApplySecret(ctx context.Context, sec *corev1.Secret) erro
 	})
 
 	spec := map[string]any{
-		"resources": []any{
-			map[string]any{
-				"name":    nsResourceName,
-				"content": string(nsYAML),
-			},
-			map[string]any{
-				"name":    resourceName,
-				"content": string(secYAML),
-			},
-		},
+		"resources": resources,
 		"targets": []any{
 			map[string]any{
 				"clusterName": b.opts.ClusterID,
 			},
 		},
-		// takeOwnership: peer pull-secret bundles for the same (owner, cluster)
-		// all carry the same Namespace manifest; without this, the second Helm
-		// release refuses to adopt the namespace the first release annotated.
+		// takeOwnership lets this Bundle's Helm release adopt a Namespace
+		// (or any other resource) that already exists with foreign Helm
+		// ownership annotations. The new one-bundle-per-(owner, cluster)
+		// design doesn't create cross-bundle namespace conflicts on its
+		// own, but takeOwnership smooths upgrades from the prior
+		// one-bundle-per-secret design: the old bundles annotated the
+		// namespace as theirs, and without this flag the consolidated
+		// bundle would refuse to install on existing clusters.
 		"helm": map[string]any{
 			"takeOwnership": true,
 		},

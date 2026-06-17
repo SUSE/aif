@@ -19,7 +19,10 @@ import (
 var bundleGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
 var bundleListGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
 
-func TestBundleClient_EmitsBundleCarryingSecret(t *testing.T) {
+// TestBundleClient_EmitsConsolidatedBundle covers the happy path for a
+// multi-secret bundle: name, owner labels, target, and the full resource
+// list (namespace + every secret + SA-merge manifests).
+func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 	scheme := newBundleTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	bc := cluster.NewBundleClient(c, scheme, cluster.BundleClientOptions{
@@ -29,16 +32,22 @@ func TestBundleClient_EmitsBundleCarryingSecret(t *testing.T) {
 		OwnerNamespace: "default",
 	})
 
-	sec := &corev1.Secret{
+	pull := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "ngc-secret", Namespace: "target-ns"},
 		Type:       corev1.SecretTypeDockerConfigJson,
 		Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`)},
 	}
-	if err := bc.ApplySecret(context.Background(), sec); err != nil {
-		t.Fatalf("ApplySecret: %v", err)
+	api := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-api", Namespace: "target-ns"},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{"NGC_API_KEY": []byte("nvapi-test")},
+	}
+	if err := bc.ApplyPullSecretBundle(context.Background(), []*corev1.Secret{pull, api}); err != nil {
+		t.Fatalf("ApplyPullSecretBundle: %v", err)
 	}
 
-	bundleName := "ai-pullsecrets-wl-x-c-abc123-ngc-secret"
+	// Bundle name: one per (owner, cluster), no secret-name suffix.
+	bundleName := "ai-pullsecrets-wl-x-c-abc123"
 	var bundle unstructured.Unstructured
 	bundle.SetGroupVersionKind(bundleGVK)
 	if err := c.Get(context.Background(),
@@ -46,7 +55,6 @@ func TestBundleClient_EmitsBundleCarryingSecret(t *testing.T) {
 		t.Fatalf("get bundle %s/%s: %v", "fleet-default", bundleName, err)
 	}
 
-	// Owner labels are set
 	labels := bundle.GetLabels()
 	if labels["ai-platform.suse.com/owner-name"] != "wl-x" {
 		t.Errorf("owner-name label: got %q want wl-x", labels["ai-platform.suse.com/owner-name"])
@@ -55,7 +63,6 @@ func TestBundleClient_EmitsBundleCarryingSecret(t *testing.T) {
 		t.Errorf("owner-namespace label: got %q want default", labels["ai-platform.suse.com/owner-namespace"])
 	}
 
-	// targets[0].clusterName is the cluster ID
 	targets, found, err := unstructured.NestedSlice(bundle.Object, "spec", "targets")
 	if err != nil || !found || len(targets) == 0 {
 		t.Fatalf("spec.targets missing: found=%v err=%v", found, err)
@@ -65,67 +72,72 @@ func TestBundleClient_EmitsBundleCarryingSecret(t *testing.T) {
 		t.Errorf("target clusterName: got %v want c-abc123", name)
 	}
 
-	// resources holds [0] the target Namespace, [1] the Secret. The Namespace
-	// is shipped because Fleet applies bundle resources verbatim with no
-	// namespace creation; without it a Secret targeted at a not-yet-existing
-	// namespace fails with "namespaces \"X\" not found".
+	// Resources layout: [Namespace, pull Secret, api Secret, SA-merge bundle].
 	resources, found, err := unstructured.NestedSlice(bundle.Object, "spec", "resources")
-	if err != nil || !found || len(resources) != 2 {
-		t.Fatalf("spec.resources missing or wrong count: found=%v err=%v len=%d (want 2: namespace + secret)", found, err, len(resources))
+	if err != nil || !found || len(resources) != 4 {
+		t.Fatalf("spec.resources count: found=%v err=%v len=%d (want 4: namespace + 2 secrets + sa-merge)", found, err, len(resources))
 	}
 
-	// resources[0] is the Namespace manifest, annotated with
-	// helm.sh/resource-policy=keep so peer bundles sharing this namespace
-	// don't delete it when one is removed.
-	r0, _ := resources[0].(map[string]any)
-	nsContent, _ := r0["content"].(string)
-	if !strings.Contains(nsContent, "kind: Namespace") || !strings.Contains(nsContent, "name: target-ns") {
-		t.Errorf("resources[0] should be a Namespace for target-ns, got:\n%s", nsContent)
-	}
-	if !strings.Contains(nsContent, "helm.sh/resource-policy: keep") {
-		t.Errorf("namespace manifest missing helm.sh/resource-policy=keep annotation, got:\n%s", nsContent)
-	}
-	if name, _ := r0["name"].(string); name == "" {
-		t.Errorf("resources[0].name is empty")
+	contents := make([]string, len(resources))
+	for i, r := range resources {
+		rm, _ := r.(map[string]any)
+		contents[i], _ = rm["content"].(string)
+		if name, _ := rm["name"].(string); name == "" {
+			t.Errorf("resources[%d].name is empty", i)
+		}
 	}
 
-	// spec.helm.takeOwnership must be true so peer pull-secret bundles can
-	// share the namespace without Helm's adoption check rejecting the second.
+	// resources[0] = Namespace
+	if !strings.Contains(contents[0], "kind: Namespace") || !strings.Contains(contents[0], "name: target-ns") {
+		t.Errorf("resources[0] should be Namespace target-ns, got:\n%s", contents[0])
+	}
+
+	// takeOwnership: lets the consolidated Bundle adopt resources
+	// pre-annotated by an older per-secret bundle (upgrade compatibility).
 	takeOwnership, found, err := unstructured.NestedBool(bundle.Object, "spec", "helm", "takeOwnership")
 	if err != nil || !found || !takeOwnership {
 		t.Errorf("spec.helm.takeOwnership: found=%v err=%v value=%v (want true)", found, err, takeOwnership)
 	}
-
-	// resources[1] is the serialized Secret
-	r1, _ := resources[1].(map[string]any)
-	content, _ := r1["content"].(string)
-	if content == "" {
-		t.Errorf("resources[1].content is empty")
+	// resources[1] = pull secret
+	if !strings.Contains(contents[1], "ngc-secret") || !strings.Contains(contents[1], "kubernetes.io/dockerconfigjson") {
+		t.Errorf("resources[1] should be ngc-secret of dockerconfigjson type, got:\n%s", contents[1])
 	}
-	if !strings.Contains(content, "ngc-secret") || !strings.Contains(content, "kubernetes.io/dockerconfigjson") {
-		t.Errorf("serialized resource content missing expected fields:\n%s", content)
+	// resources[2] = api secret
+	if !strings.Contains(contents[2], "ngc-api") || !strings.Contains(contents[2], "NGC_API_KEY") {
+		t.Errorf("resources[2] should be ngc-api Opaque with NGC_API_KEY, got:\n%s", contents[2])
 	}
-	// resource name should namespace-disambiguate so multiple secrets in different
-	// target namespaces don't collide as bundle resource names
-	if name, _ := r1["name"].(string); name == "" {
-		t.Errorf("resources[1].name is empty")
+	// resources[3] = SA-merge: must include the merger ServiceAccount, Role,
+	// RoleBinding, and Job. The Job's args must reference both secret names
+	// in jq's "wanted" array.
+	saMerge := contents[3]
+	for _, needle := range []string{
+		"kind: ServiceAccount", "name: ai-pullsecret-merger",
+		"kind: Role", "kind: RoleBinding",
+		"kind: Job", "ai-pullsecret-merge-",
+		`"ngc-api"`, `"ngc-secret"`,
+	} {
+		if !strings.Contains(saMerge, needle) {
+			t.Errorf("SA-merge manifest missing %q, got:\n%s", needle, saMerge)
+		}
 	}
 }
 
-func TestBundleClient_ApplySecretIdempotent(t *testing.T) {
+// TestBundleClient_Idempotent confirms re-applying the same input does not
+// proliferate bundles — one (owner, cluster) → exactly one Bundle.
+func TestBundleClient_Idempotent(t *testing.T) {
 	scheme := newBundleTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	bc := cluster.NewBundleClient(c, scheme, cluster.BundleClientOptions{
 		ClusterID: "c-abc", FleetWorkspace: "fleet-default", OwnerName: "wl", OwnerNamespace: "default",
 	})
-	sec := &corev1.Secret{
+	secrets := []*corev1.Secret{{
 		ObjectMeta: metav1.ObjectMeta{Name: "ngc-secret", Namespace: "target-ns"},
 		Type:       corev1.SecretTypeDockerConfigJson,
 		Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`)},
-	}
+	}}
 	for i := 0; i < 3; i++ {
-		if err := bc.ApplySecret(context.Background(), sec); err != nil {
-			t.Fatalf("ApplySecret #%d: %v", i, err)
+		if err := bc.ApplyPullSecretBundle(context.Background(), secrets); err != nil {
+			t.Fatalf("ApplyPullSecretBundle #%d: %v", i, err)
 		}
 	}
 
@@ -139,62 +151,47 @@ func TestBundleClient_ApplySecretIdempotent(t *testing.T) {
 	}
 }
 
-func TestBundleClient_TwoDifferentSecrets_BothRetained(t *testing.T) {
+// TestBundleClient_EmptySecrets_NoOp covers the early-return path when the
+// caller has nothing to deliver.
+func TestBundleClient_EmptySecrets_NoOp(t *testing.T) {
 	scheme := newBundleTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	bc := cluster.NewBundleClient(c, scheme, cluster.BundleClientOptions{
 		ClusterID: "c-abc", FleetWorkspace: "fleet-default", OwnerName: "wl", OwnerNamespace: "default",
 	})
-
-	pull := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ngc-secret", Namespace: "target-ns"},
-		Type:       corev1.SecretTypeDockerConfigJson,
-		Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`)},
+	if err := bc.ApplyPullSecretBundle(context.Background(), nil); err != nil {
+		t.Fatalf("ApplyPullSecretBundle(nil): %v", err)
 	}
-	api := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ngc-api", Namespace: "target-ns"},
-		Type:       corev1.SecretTypeOpaque,
-		Data:       map[string][]byte{"NGC_API_KEY": []byte("nvapi-test")},
-	}
-
-	if err := bc.ApplySecret(context.Background(), pull); err != nil {
-		t.Fatalf("apply pull: %v", err)
-	}
-	if err := bc.ApplySecret(context.Background(), api); err != nil {
-		t.Fatalf("apply api: %v", err)
-	}
-
 	var bundles unstructured.UnstructuredList
 	bundles.SetGroupVersionKind(bundleListGVK)
 	if err := c.List(context.Background(), &bundles, client.InNamespace("fleet-default")); err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	// Expect 2 bundles, one per secret.
-	if len(bundles.Items) != 2 {
-		names := make([]string, 0, len(bundles.Items))
-		for _, b := range bundles.Items {
-			names = append(names, b.GetName())
-		}
-		t.Errorf("expected 2 bundles (one per secret), got %d: %v", len(bundles.Items), names)
+	if len(bundles.Items) != 0 {
+		t.Errorf("expected 0 bundles for empty input, got %d", len(bundles.Items))
 	}
-	// Both bundles must reference the expected secrets — assert names map.
-	seen := map[string]bool{}
-	for _, b := range bundles.Items {
-		seen[b.GetName()] = true
+}
+
+// TestBundleClient_MixedNamespaces_Errors guards the invariant that one
+// Bundle ships one Namespace; the operator's call sites always pass secrets
+// from the same target namespace, but a future refactor that violates this
+// should fail loudly rather than silently dropping work.
+func TestBundleClient_MixedNamespaces_Errors(t *testing.T) {
+	scheme := newBundleTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	bc := cluster.NewBundleClient(c, scheme, cluster.BundleClientOptions{
+		ClusterID: "c-abc", FleetWorkspace: "fleet-default", OwnerName: "wl", OwnerNamespace: "default",
+	})
+	secrets := []*corev1.Secret{
+		{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "ns-a"}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{"k": []byte("v")}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "ns-b"}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{"k": []byte("v")}},
 	}
-	want := []string{"ai-pullsecrets-wl-c-abc-ngc-secret", "ai-pullsecrets-wl-c-abc-ngc-api"}
-	for _, n := range want {
-		if !seen[n] {
-			t.Errorf("missing bundle %q; have %+v", n, seen)
-		}
+	err := bc.ApplyPullSecretBundle(context.Background(), secrets)
+	if err == nil {
+		t.Fatalf("expected error for mixed namespaces, got nil")
 	}
-	// Each bundle's spec.resources should hold exactly two resources: the
-	// target Namespace manifest followed by the corresponding Secret.
-	for _, b := range bundles.Items {
-		resources, _, _ := unstructured.NestedSlice(b.Object, "spec", "resources")
-		if len(resources) != 2 {
-			t.Errorf("bundle %s: expected 2 resources (namespace + secret), got %d", b.GetName(), len(resources))
-		}
+	if !strings.Contains(err.Error(), "mixed namespaces") {
+		t.Errorf("expected error to mention mixed namespaces, got: %v", err)
 	}
 }
 

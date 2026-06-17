@@ -170,8 +170,12 @@ type PullSecretFactory func(targetNamespace, secretName string) (*corev1.Secret,
 
 // deliverPullSecrets ensures the secret names listed in
 // w.Status.PullSecretNames are delivered to:
-//   - the operator's own cluster (always, in w.Spec.TargetNamespace),
-//   - each downstream cluster in w.Spec.TargetClusters (via Fleet Bundle).
+//   - the operator's own cluster (always, in w.Spec.TargetNamespace), one
+//     SSA per secret via the local client,
+//   - each downstream cluster in w.Spec.TargetClusters, as a single
+//     consolidated Fleet Bundle carrying the Namespace + every Secret +
+//     an SA-merge Job. One bundle per (owner, cluster) — see
+//     cluster.BundleClient for why this is one and not N.
 //
 // The "local" string in TargetClusters is skipped on the downstream loop
 // because it's already covered by the unconditional local-write — emitting
@@ -185,31 +189,34 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 		return nil
 	}
 
-	// Stop on first error; the next reconcile retries from a clean state.
-	apply := func(cc cluster.Client, name, where string) error {
+	// Build every secret once; a nil result from the factory means "creds
+	// not configured — skip this one". Re-used by both local and downstream
+	// paths so a single round of factory calls produces both views.
+	secrets := make([]*corev1.Secret, 0, len(w.Status.PullSecretNames))
+	for _, name := range w.Status.PullSecretNames {
 		sec, err := factory(w.Spec.TargetNamespace, name)
 		if err != nil {
-			return fmt.Errorf("build pull secret %s for %s: %w", name, where, err)
+			return fmt.Errorf("build pull secret %s: %w", name, err)
 		}
 		if sec == nil {
-			return nil // creds not configured — skip
+			continue
 		}
-		if err := cc.ApplySecret(ctx, sec); err != nil {
-			return fmt.Errorf("apply pull secret %s to %s: %w", name, where, err)
-		}
+		secrets = append(secrets, sec)
+	}
+	if len(secrets) == 0 {
 		return nil
 	}
 
-	// Local cluster — always.
+	// Local cluster — always, one SSA per secret.
 	local := r.localCC()
-	for _, name := range w.Status.PullSecretNames {
-		if err := apply(local, name, "local cluster"); err != nil {
-			return err
+	for _, sec := range secrets {
+		if err := local.ApplySecret(ctx, sec); err != nil {
+			return fmt.Errorf("apply pull secret %s to local cluster: %w", sec.Name, err)
 		}
 	}
 
-	// Downstream — one Bundle per cluster ID × per secret name. Skip "local"
-	// (already covered above) and empty entries.
+	// Downstream — one consolidated Bundle per cluster. Skip "local" and
+	// empty entries.
 	for _, clusterID := range w.Spec.TargetClusters {
 		if clusterID == "" || clusterID == "local" {
 			continue
@@ -220,10 +227,8 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 			OwnerName:      w.Name,
 			OwnerNamespace: w.Namespace,
 		})
-		for _, name := range w.Status.PullSecretNames {
-			if err := apply(bc, name, "cluster "+clusterID); err != nil {
-				return err
-			}
+		if err := bc.ApplyPullSecretBundle(ctx, secrets); err != nil {
+			return fmt.Errorf("apply pull-secret bundle to cluster %s: %w", clusterID, err)
 		}
 	}
 
