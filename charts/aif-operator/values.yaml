@@ -109,3 +109,10 @@ aiExtension:
         drop:
           - ALL
       readOnlyRootFilesystem: true
+
+# Default blueprints bundled with the chart. When enabled, the curated Blueprint
+# CRs under files/blueprints/ are created on install and reconciled on upgrade.
+# Disable to manage blueprints exclusively through other means (e.g. a future
+# git source) without the chart re-creating its defaults.
+defaultBlueprints:
+  enabled: true

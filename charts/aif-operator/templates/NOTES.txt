@@ -2,3 +2,8 @@ SUSE AI Operator has been installed.
 
 Check operator logs:
 kubectl logs deploy/{{ include "aif-operator.fullname" . }} -n {{ .Release.Namespace }} -f
+
+{{- if .Values.defaultBlueprints.enabled }}
+Default blueprints were installed and are visible on the Blueprints page.
+To manage blueprints yourself instead, set defaultBlueprints.enabled=false.
+{{- end }}

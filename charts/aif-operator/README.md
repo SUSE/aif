@@ -183,6 +183,75 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 | -------------------- | ------------------------------------------------ | ------- |
 | `rbacHelpers.enable` | Create helper ClusterRoles (admin/editor/viewer) | `false` |
 
+### Default blueprints
+
+When `defaultBlueprints.enabled=true`, the chart renders the curated `Blueprint` CRs bundled under `files/blueprints/` so they appear on the Blueprints page immediately after install — no git connectivity required.
+
+| Name                         | Description                                         | Default |
+| ---------------------------- | --------------------------------------------------- | ------- |
+| `defaultBlueprints.enabled`  | Create the bundled default `Blueprint` CRs on install | `true`  |
+
+The defaults are Helm-managed: `helm upgrade` reconciles them to the chart's current set and `helm uninstall` removes them. Each rendered Blueprint carries the marker label `ai-platform.suse.com/source: bundled`. Set `defaultBlueprints.enabled=false` to manage blueprints exclusively by other means.
+
+## Bundled blueprints
+
+The chart ships a curated set of `Blueprint` CRs as plain YAML data files. A single template (`templates/default-blueprints.yaml`) discovers every file via `.Files.Glob`, injects the `ai-platform.suse.com/source: bundled` marker label, and renders each one — all gated by `defaultBlueprints.enabled`.
+
+### Adding a blueprint
+
+1. Create one YAML file per blueprint **version** under `charts/aif-operator/files/blueprints/`. Adding a file is the only step — no template edits are needed.
+
+2. Each file must be a complete, single-document `Blueprint` CR. Set `metadata.name` and the two grouping labels following the operator's naming convention:
+
+   - **slug** = `spec.displayName` lowercased, with each run of non-`[a-z0-9]` characters replaced by a single `-`, trimmed of leading/trailing `-`.
+   - `metadata.name` = `<slug>-<version>` with any `+build` metadata stripped and dots replaced by hyphens (e.g. *RAG Chatbot* `1.2.0` → `rag-chatbot-1-2-0`).
+   - label `ai-platform.suse.com/blueprint-name` = `<slug>`
+   - label `ai-platform.suse.com/blueprint-version` = the full `spec.version` (keeps dots).
+
+   The UI groups versions that share the `blueprint-name` label into one card with a version selector. Do **not** set the `ai-platform.suse.com/source` label — the chart injects it.
+
+   Example (`files/blueprints/rag-chatbot-1.1.0.yaml`):
+
+   ```yaml
+   apiVersion: ai-platform.suse.com/v1alpha1
+   kind: Blueprint
+   metadata:
+     name: rag-chatbot-1-1-0
+     labels:
+       ai-platform.suse.com/blueprint-name: rag-chatbot
+       ai-platform.suse.com/blueprint-version: 1.1.0
+   spec:
+     displayName: RAG Chatbot
+     version: 1.1.0
+     description: Retrieval-augmented chatbot stack.
+     components:
+       - chartRepo: my-repo
+         chartName: my-chart
+         chartVersion: 1.0.0
+   ```
+
+### Validating
+
+Run both checks from the repository root before committing. They are offline (`helm` + `yq` only — no cluster needed):
+
+```bash
+# Naming convention (metadata.name + grouping labels) and name uniqueness
+bash charts/aif-operator/tests/default-blueprints-convention.sh
+
+# Renders one CR per file, toggle on/off works, source=bundled label injected
+bash charts/aif-operator/tests/default-blueprints-render.sh
+```
+
+Both print `PASS` on success. The convention check enforces the rules above; the render check confirms the files render and carry the marker label when `defaultBlueprints.enabled=true` (and nothing when `false`).
+
+For full CRD schema conformance (required fields, the semver pattern, `components` having at least one entry with non-empty `chartRepo`/`chartName`/`chartVersion`), validate against a cluster that has the Blueprint CRD installed:
+
+```bash
+helm template t charts/aif-operator --set defaultBlueprints.enabled=true \
+  | yq 'select(.kind == "Blueprint")' \
+  | kubectl apply --dry-run=server -f -
+```
+
 ## Troubleshooting
 
 ### Check pod status

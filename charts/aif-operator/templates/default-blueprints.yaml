@@ -1,0 +1,15 @@
+{{- /*
+Renders the bundled default Blueprint CRs from files/blueprints/*.yaml.
+Each file is a complete Blueprint CR (name + grouping labels authored in-file,
+per the operator's slug convention). We inject only the source=bundled marker
+label so future git-source logic can recognize Helm-managed defaults.
+Gated by defaultBlueprints.enabled.
+*/ -}}
+{{- if .Values.defaultBlueprints.enabled }}
+{{- range $path, $_ := .Files.Glob "files/blueprints/*.yaml" }}
+{{- $bp := $.Files.Get $path | fromYaml }}
+{{- $_ := set $bp "metadata" (merge (dict "labels" (dict "ai-platform.suse.com/source" "bundled")) (index $bp "metadata" | default dict)) }}
+---
+{{ toYaml $bp }}
+{{- end }}
+{{- end }}
