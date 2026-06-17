@@ -1,6 +1,9 @@
-# NOTE: The UI extension reads this ConfigMap from a hardcoded namespace
-# (cattle-ui-plugin-system). This chart must be installed into that same
-# namespace — see the Prerequisites section in README.md.
+# NOTE: The UI extension always reads this ConfigMap from cattle-ui-plugin-system
+# (hardcoded). If the chart is installed in a different namespace, any custom
+# operator.namespace / operator.service values set here will be ignored on first
+# load (the UI falls back to defaults). They take effect after the user saves the
+# Operator Connection section in Settings, which writes the ConfigMap to the
+# correct namespace automatically.
 apiVersion: v1
 kind: ConfigMap
 metadata:
