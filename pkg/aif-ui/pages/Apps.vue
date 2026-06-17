@@ -195,8 +195,8 @@
         </table>
       </div>
 
-        <!-- Empty state: no Settings CR — guide user to configure registry connections -->
-        <div v-if="!loading && !items.length && settingsData === null && !error" class="empty-state-content">
+        <!-- Empty state: no credentials configured (Settings CR absent or has no secretRef pairs) -->
+        <div v-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No applications available</h3>
           <p class="text-muted">
@@ -205,8 +205,8 @@
           </p>
         </div>
 
-        <!-- Empty state: Settings CR exists but no apps found yet -->
-        <div v-else-if="!loading && !items.length && settingsData !== null && settingsData !== undefined && !error" class="empty-state-content">
+        <!-- Empty state: credentials configured but no apps found yet -->
+        <div v-else-if="!loading && !items.length && hasRegistryConfigured && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No applications available yet</h3>
           <p class="text-muted">
@@ -256,6 +256,16 @@ export default defineComponent({
       { label: 'SUSE AI Library', value: 'suse-ai' },
       { label: 'Nvidia Library', value: 'nvidia' },
     ]);
+
+    const hasRegistryConfigured = computed(() => {
+      const spec = settingsData.value?.spec;
+      if (!spec) return false;
+      return !!(
+        (spec.applicationCollection?.userSecretRef && spec.applicationCollection?.tokenSecretRef) ||
+        (spec.suseRegistry?.userSecretRef && spec.suseRegistry?.tokenSecretRef) ||
+        (spec.nvidia?.userSecretRef && spec.nvidia?.tokenSecretRef)
+      );
+    });
 
     const filteredApps = computed(() => {
       let arr = items.value.slice();
@@ -369,6 +379,7 @@ export default defineComponent({
       items,
       filteredApps,
       settingsData,
+      hasRegistryConfigured,
 
       // Methods
       refresh,
