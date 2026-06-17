@@ -9,8 +9,12 @@ func TestBlueprintTypesCompile(t *testing.T) {
 	_ = BlueprintSpec{
 		DisplayName: "d",
 		Version:     "1.0.0",
+		Source:      BlueprintOriginCustom,
 		Components:  []BlueprintComponent{{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}},
 	}
 	_ = BlueprintNameLabel
 	_ = BlueprintVersionLabel
+	_ = BlueprintOriginSUSE
+	_ = BlueprintOriginNvidia
+	_ = BlueprintOriginCustom
 }

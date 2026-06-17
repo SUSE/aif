@@ -26,6 +26,19 @@ const (
 	BlueprintVersionLabel = "ai-platform.suse.com/blueprint-version"
 )
 
+// BlueprintOrigin identifies where a blueprint came from.
+// Named "Origin" (not "Source") to avoid collision with the existing
+// BlueprintSource struct in aiworkload_types.go, which is a reference type.
+// The user-visible field name remains "source" via the JSON tag.
+// +kubebuilder:validation:Enum=SUSE;Nvidia;Custom
+type BlueprintOrigin string
+
+const (
+	BlueprintOriginSUSE   BlueprintOrigin = "SUSE"
+	BlueprintOriginNvidia BlueprintOrigin = "Nvidia"
+	BlueprintOriginCustom BlueprintOrigin = "Custom"
+)
+
 // BlueprintComponent defines one Helm chart in a Blueprint.
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name.
@@ -53,6 +66,9 @@ type BlueprintSpec struct {
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
+	// Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+	// +optional
+	Source BlueprintOrigin `json:"source,omitempty"`
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
