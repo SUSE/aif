@@ -1,3 +1,6 @@
+# NOTE: The UI extension reads this ConfigMap from a hardcoded namespace
+# (cattle-ui-plugin-system). This chart must be installed into that same
+# namespace — see the Prerequisites section in README.md.
 apiVersion: v1
 kind: ConfigMap
 metadata:
