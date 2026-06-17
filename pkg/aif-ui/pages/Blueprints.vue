@@ -163,6 +163,7 @@ import { Banner } from '@components/Banner';
 import { Checkbox } from '@components/Form/Checkbox';
 import ActionMenuShell from '@shell/components/ActionMenuShell';
 import AppModal from '@shell/components/AppModal';
+import { isAdminUser } from '@shell/store/type-map';
 import {
   listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion,
 } from '../utils/blueprint-api';
@@ -457,12 +458,13 @@ export default defineComponent({
       return str.replace(/\b\w/g, c => c.toUpperCase());
     }
 
-    async function checkAdminRole() {
+    function checkAdminRole() {
       try {
-        const grbs  = await vm.$store.dispatch('management/findAll', { type: 'management.cattle.io.globalrolebinding' });
-        const user  = vm.$store.getters['auth/user'];
-        const userId = user?.id;
-        isAdmin.value = !!(userId && grbs.some((grb: any) => grb.userName === userId && grb.globalRoleName === 'admin'));
+        // Use Rancher's canonical admin detection (RBAC capability check) instead of
+        // matching user.id against a GlobalRoleBinding's userName. The latter breaks in
+        // production where user.id is a principal ID (e.g. "u-xxxxx") rather than the
+        // login username, so the global admin was only ever seen as a non-admin.
+        isAdmin.value = isAdminUser(vm.$store.getters);
       } catch (e) {
         console.warn('[SUSE-AI] checkAdminRole failed — admin actions will be hidden:', e);
         isAdmin.value = false;
