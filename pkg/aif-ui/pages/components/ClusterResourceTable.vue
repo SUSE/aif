@@ -62,6 +62,7 @@
               'row-limited': cluster.status === 'limited',
               'row-insufficient': cluster.status === 'insufficient',
               'row-error': cluster.status === 'error',
+              'row-disabled': disabled,
               'row-unavailable': cluster.status === 'unavailable'
             }"
             @click="multiSelect ? toggleCluster(cluster.clusterId) : selectSingleCluster(cluster.clusterId)"
@@ -185,6 +186,7 @@
           {{ getClusterName(clusterId) }}
           <button
             class="chip-remove"
+            :disabled="disabled"
             @click="toggleCluster(clusterId)"
             title="Remove"
           >×</button>
@@ -583,6 +585,15 @@ export default defineComponent({
   background: var(--sortable-table-accent-bg);
 }
 
+.cluster-row.row-disabled {
+  cursor: default;
+  pointer-events: none;
+}
+
+.cluster-row.row-disabled:hover {
+  background: inherit;
+}
+
 .cluster-row.row-selected {
   background: var(--primary-banner-bg, rgba(59, 130, 246, 0.15));
 }
@@ -714,6 +725,18 @@ export default defineComponent({
 .chip-remove:hover {
   opacity: 1;
   background: rgba(0, 0, 0, 0.1);
+}
+
+.chip-remove:disabled,
+.chip-remove[disabled] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.chip-remove:disabled:hover,
+.chip-remove[disabled]:hover {
+  opacity: 0.4;
+  background: transparent;
 }
 
 .selected-warning {
