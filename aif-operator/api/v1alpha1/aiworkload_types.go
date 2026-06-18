@@ -76,6 +76,14 @@ type AppSource struct {
 	// Release is the Helm release name.
 	// +kubebuilder:validation:MinLength=1
 	Release string `json:"release"`
+	// Vendor selects the secret-injection profile. Defaults to "suse" so
+	// existing App-sourced workloads behave identically after CRD upgrade.
+	// The UI is expected to populate this from the chart's repo URL (e.g.
+	// "nvidia" for charts pulled from helm.ngc.nvidia.com), mirroring how
+	// BlueprintComponent.Vendor is filled at Blueprint-build time.
+	// +kubebuilder:default=suse
+	// +optional
+	Vendor ComponentVendor `json:"vendor,omitempty"`
 }
 
 // BlueprintSource references a Blueprint CR (Epic 2).

@@ -939,6 +939,16 @@ async function recordAIWorkload(
     }
 
     const crName = form.value.release;
+
+    // Resolve the chart's repo URL to derive `vendor` for the operator's
+    // pull-secret injector — mirrors BlueprintAppSelectorStep.vue's pattern.
+    // Without this, the operator's reconcileAppPullSecrets falls back to the
+    // CRD default "suse" and NVIDIA charts never get ngc-secret/ngc-api.
+    const repos = await listClusterRepos(store);
+    const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+    const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+    const vendor = getLibraryFromRepoUrl(chartRepoUrl) === 'nvidia' ? 'nvidia' : 'suse';
+
     const spec = {
       displayName:     (route.query.n as string) || props.slug,
       source: {
@@ -948,6 +958,7 @@ async function recordAIWorkload(
           chartName:    form.value.chartName,
           chartVersion: form.value.chartVersion,
           release:      form.value.release,
+          vendor,
         },
       },
       targetNamespace:  form.value.namespace,

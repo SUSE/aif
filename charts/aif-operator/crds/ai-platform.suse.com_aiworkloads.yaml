@@ -114,6 +114,18 @@ spec:
                         description: Release is the Helm release name.
                         minLength: 1
                         type: string
+                      vendor:
+                        default: suse
+                        description: |-
+                          Vendor selects the secret-injection profile. Defaults to "suse" so
+                          existing App-sourced workloads behave identically after CRD upgrade.
+                          The UI is expected to populate this from the chart's repo URL (e.g.
+                          "nvidia" for charts pulled from helm.ngc.nvidia.com), mirroring how
+                          BlueprintComponent.Vendor is filled at Blueprint-build time.
+                        enum:
+                        - suse
+                        - nvidia
+                        type: string
                     required:
                     - chartName
                     - chartRepo

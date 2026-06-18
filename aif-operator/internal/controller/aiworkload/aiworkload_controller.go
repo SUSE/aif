@@ -111,6 +111,15 @@ func (r *AIWorkloadReconciler) reconcileStatus(ctx context.Context, w *aiplatfor
 	if w.Spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceBlueprint {
 		return r.reconcileBlueprintStatus(ctx, w)
 	}
+	// For App-sourced workloads, run the secret injector before the
+	// strategy-specific status path. The injector only populates
+	// Status.PullSecretNames; the post-reconcile block (line ~92) drives
+	// the actual local-write + downstream Fleet Bundle + SA-merge Job.
+	if w.Spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceApp {
+		if err := r.reconcileAppPullSecrets(ctx, w); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	switch w.Spec.DeployStrategy {
 	case aiplatformv1alpha1.AIWorkloadDeployHelm:
 		return ctrl.Result{}, r.reconcileHelmStatus(ctx, w)
