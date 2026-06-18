@@ -25,3 +25,6 @@
 dist/chart/*.tgz
 chart/*.tgz
 chart/*/*.tgz
+
+# Dev-only validation scripts (not needed at runtime; files/ must NOT be ignored)
+tests/
