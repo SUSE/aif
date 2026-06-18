@@ -357,9 +357,13 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
-        const data = await putSettings(this.buildCrdSpec(this.spec));
+        // saveOperatorConfig must run first: it refreshes the in-memory cache so
+        // that the subsequent putSettings call reaches the correct operator URL.
+        // If the user is correcting a wrong namespace, putSettings would fail
+        // against the old URL if called before the cache is updated.
         await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
         this.operatorConfigMapFound = true;
+        const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
         buttonDone(true);
