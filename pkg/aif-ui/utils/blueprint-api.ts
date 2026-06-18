@@ -1,65 +1,31 @@
 import type { Blueprint, BlueprintList, BlueprintSpec } from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
-import {
-  MANAGEMENT_CLUSTER,
-  OPERATOR_NAMESPACE,
-  OPERATOR_SERVICE,
-  OPERATOR_PORT,
-} from './constants';
-
-const BASE_URL = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ OPERATOR_NAMESPACE }/services/http:${ OPERATOR_SERVICE }:${ OPERATOR_PORT }/proxy`;
-
-interface OperatorError extends Error {
-  status: number;
-  code:   string;
-}
-
-async function blueprintFetch(path: string, options: RequestInit = {}): Promise<any> {
-  const res = await fetch(`${ BASE_URL }${ path }`, {
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  if (res.status === 204) {
-    return undefined;
-  }
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const err = new Error(body?.message || res.statusText) as OperatorError;
-    err.status = res.status;
-    err.code   = body?.error || 'INTERNAL_ERROR';
-    throw err;
-  }
-  return body;
-}
+import { operatorFetch } from './operator-config';
 
 export function listBlueprints(): Promise<BlueprintList> {
-  return blueprintFetch('/api/v1/blueprints');
+  return operatorFetch('/api/v1/blueprints');
 }
 
 export function createBlueprint(spec: BlueprintSpec): Promise<Blueprint> {
-  return blueprintFetch('/api/v1/blueprints', {
+  return operatorFetch('/api/v1/blueprints', {
     method: 'POST',
     body:   JSON.stringify({ spec }),
   });
 }
 
 export function getBlueprint(name: string): Promise<Blueprint> {
-  return blueprintFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`);
+  return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`);
 }
 
 export function deleteBlueprint(name: string): Promise<void> {
-  return blueprintFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`, {
+  return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`, {
     method: 'DELETE',
   });
 }
 
 export async function updateBlueprintDeprecated(name: string, deprecated: boolean): Promise<Blueprint> {
   const bp = await getBlueprint(name);
-  return blueprintFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`, {
+  return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`, {
     method: 'PUT',
     body:   JSON.stringify({ spec: { ...bp.spec, deprecated } }),
   });

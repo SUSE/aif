@@ -33,10 +33,12 @@
         </div>
       </header>
 
+      <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
+
       <Banner v-if="error" color="error">{{ error }}</Banner>
 
       <div class="main-content">
-        <div v-if="!loading && !sortedFamilies.length && !error" class="empty-state-content">
+        <div v-if="!loading && !sortedFamilies.length && !error && !operatorError" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No blueprints found</h3>
           <p class="text-muted">Click Create to define your first blueprint.</p>
@@ -168,12 +170,14 @@ import {
   listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion,
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
+import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, Checkbox, ActionMenuShell, AppModal },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal, OperatorErrorBanner },
   setup() {
     const vm        = getCurrentInstance()!.proxy as any;
     const $router   = vm.$router;
@@ -182,6 +186,7 @@ export default defineComponent({
 
     const loading         = ref(true);
     const error           = ref<string | null>(null);
+    const operatorError   = ref<string | null>(null);
     const search          = ref('');
     const sortBy          = ref('name-asc');
     const blueprints      = ref<Blueprint[]>([]);
@@ -281,6 +286,12 @@ export default defineComponent({
     async function refresh() {
       loading.value = true;
       error.value = null;
+      await checkOperatorConnection();
+      operatorError.value = getConnectionError();
+      if (operatorError.value) {
+        loading.value = false;
+        return;
+      }
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];
@@ -302,6 +313,14 @@ export default defineComponent({
       } finally {
         loading.value = false;
       }
+    }
+
+    async function retryConnection() {
+      loading.value = true;
+      await checkOperatorConnection(true);
+      operatorError.value = getConnectionError();
+      if (!operatorError.value) await refresh();
+      else loading.value = false;
     }
 
     async function silentRefresh() {
@@ -507,7 +526,8 @@ export default defineComponent({
     });
 
     return {
-      loading, error, search, sortBy, sortedFamilies, selectedVersions,
+      loading, error, operatorError, retryConnection,
+      search, sortBy, sortedFamilies, selectedVersions,
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
@@ -622,7 +642,10 @@ export default defineComponent({
   .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 }
 .mb-10 { margin-bottom: 10px; }
-.mt-5 { margin-top: 5px; }
+.mb-20 { margin-bottom: 20px; }
+.ml-5  { margin-left: 5px; }
+.mt-5  { margin-top: 5px; }
+
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 0 14px; height: 32px; border-radius: 6px;

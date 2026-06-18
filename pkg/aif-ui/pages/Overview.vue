@@ -4,6 +4,8 @@ import { Banner }    from '@components/Banner';
 import { BadgeState } from '@components/BadgeState';
 import CountBox      from '@shell/components/CountBox';
 import Loading       from '@shell/components/Loading';
+import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import { listAIWorkloads }           from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, latestVersion } from '../utils/blueprint-api';
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
@@ -18,8 +20,9 @@ const router  = vm.$router;
 const route   = vm.$route;
 const cluster = (route?.params?.cluster as string) || '_';
 
-const loading    = ref(true);
-const error      = ref<string | null>(null);
+const loading         = ref(true);
+const error           = ref<string | null>(null);
+const operatorError   = ref<string | null>(null);
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
 const clusters   = ref<ClusterInfo[]>([]);
@@ -89,6 +92,12 @@ function goTo(pageType: string) {
 async function refresh() {
   loading.value = true;
   error.value   = null;
+  await checkOperatorConnection();
+  operatorError.value = getConnectionError();
+  if (operatorError.value) {
+    loading.value = false;
+    return;
+  }
   try {
     const [wlResult, bpResult, clResult] = await Promise.all([
       listAIWorkloads(),
@@ -103,6 +112,14 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
+}
+
+async function retryConnection() {
+  loading.value = true;
+  await checkOperatorConnection(true);
+  operatorError.value = getConnectionError();
+  if (!operatorError.value) await refresh();
+  else loading.value = false;
 }
 
 async function silentRefresh() {
@@ -142,11 +159,13 @@ onUnmounted(() => {
         </button>
       </header>
 
+      <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
+
       <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
 
       <Loading v-if="loading" />
 
-      <template v-else>
+      <template v-else-if="!operatorError">
         <!-- ── Summary cards ─────────────────────────────────────────────── -->
         <section class="summary-grid">
           <CountBox
@@ -456,6 +475,7 @@ onUnmounted(() => {
 
 // ── Shared ─────────────────────────────────────────────────────────────────────
 .mb-20 { margin-bottom: 20px; }
+.ml-10 { margin-left: 10px; }
 
 .btn {
   display: inline-flex;
