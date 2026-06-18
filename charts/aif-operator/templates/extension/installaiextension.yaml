@@ -12,6 +12,10 @@ spec:
     helm:
       chartURL: {{ .Values.aiExtension.source.helm.chartURL | quote }}
       version: {{ .Values.aiExtension.source.helm.version | quote }}
+      {{- with .Values.aiExtension.source.helm.values }}
+      values:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- end }}
   extension:
     name: {{ .Values.aiExtension.extension.name | quote }}

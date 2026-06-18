@@ -69,7 +69,8 @@
               "required": ["chartURL", "version"],
               "properties": {
                 "chartURL": { "type": "string" },
-                "version": { "type": "string" }
+                "version": { "type": "string" },
+                "values": { "type": "object", "additionalProperties": true, "default": {} }
               }
             }
           }
