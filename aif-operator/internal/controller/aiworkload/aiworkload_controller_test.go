@@ -233,6 +233,65 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 	})
+
+	Context("FleetBundle deletion", func() {
+		It("deletes the companion Fleet Bundle from both fleet workspace namespaces", func() {
+			bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+
+			// A workload may live in either fleet workspace (fleet-local for the
+			// management cluster, fleet-default for downstream). The operator deletes
+			// the Bundle from both, so exercise both branches of that loop.
+			for _, ns := range []string{"fleet-local", "fleet-default"} {
+				fleetNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
+				_ = k8sClient.Create(ctx, fleetNS) // ignore error if already exists
+
+				// Fleet generates this Bundle from the HelmOp and links it only by a
+				// label (no ownerReference), so deleting the HelmOp does not reliably
+				// garbage-collect it. The operator must delete it explicitly.
+				bundle := &unstructured.Unstructured{}
+				bundle.SetGroupVersionKind(bundleGVK)
+				bundle.SetName("fleet-del-bundle")
+				bundle.SetNamespace(ns)
+				Expect(k8sClient.Create(ctx, bundle)).To(Succeed())
+			}
+
+			wl := &aiplatformv1alpha1.AIWorkload{
+				ObjectMeta: metav1.ObjectMeta{Name: "fleet-del", Namespace: "default"},
+				Spec: aiplatformv1alpha1.AIWorkloadSpec{
+					DisplayName:      "Test",
+					DeployStrategy:   aiplatformv1alpha1.AIWorkloadDeployFleetBundle,
+					FleetBundleNames: []string{"fleet-del-bundle"},
+					TargetNamespace:  "ns",
+					Source: aiplatformv1alpha1.AIWorkloadSource{
+						SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
+						App: &aiplatformv1alpha1.AppSource{
+							ChartRepo: "suse-ai", ChartName: "qdrant",
+							ChartVersion: "1.0.0", Release: "qdrant",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
+
+			r := reconciler()
+			// First reconcile adds the finalizer.
+			_, err := r.Reconcile(ctx, req("fleet-del", "default"))
+			Expect(err).NotTo(HaveOccurred())
+
+			// Delete the workload — the finalizer keeps it until handleDeletion runs.
+			Expect(k8sClient.Delete(ctx, wl)).To(Succeed())
+			_, err = r.Reconcile(ctx, req("fleet-del", "default"))
+			Expect(err).NotTo(HaveOccurred())
+
+			// The companion Bundle must be gone from both namespaces.
+			for _, ns := range []string{"fleet-local", "fleet-default"} {
+				got := &unstructured.Unstructured{}
+				got.SetGroupVersionKind(bundleGVK)
+				err = k8sClient.Get(ctx, types.NamespacedName{Name: "fleet-del-bundle", Namespace: ns}, got)
+				Expect(errors.IsNotFound(err)).To(BeTrue(), "Bundle should be deleted from %s", ns)
+			}
+		})
+	})
 })
 
 var _ = Describe("Blueprint AIWorkload", func() {

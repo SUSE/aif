@@ -48,9 +48,9 @@ rules:
   - ai-platform.suse.com
   resources:
   - aiworkloads
+  - blueprints
   - installaiextensions
   - settings
-  - blueprints
   verbs:
   - create
   - delete
@@ -130,6 +130,14 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - fleet.cattle.io
+  resources:
+  - bundles
+  verbs:
+  - delete
+  - get
+  - list
 - apiGroups:
   - fleet.cattle.io
   resources:
