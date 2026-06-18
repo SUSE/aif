@@ -318,7 +318,7 @@ export default defineComponent({
       loading.value = true;
       await checkOperatorConnection(true);
       operatorError.value = getConnectionError();
-      if (!operatorError.value) refresh();
+      if (!operatorError.value) await refresh();
       else loading.value = false;
     }
 

@@ -82,7 +82,7 @@ export default {
 
   computed: {
     settingsNamespace() {
-      return getOperatorNamespace();
+      return this.operatorNamespace || getOperatorNamespace();
     },
 
     authTypeOptions() {
@@ -357,9 +357,9 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
+        const data = await putSettings(this.buildCrdSpec(this.spec));
         await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
         this.operatorConfigMapFound = true;
-        const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
         buttonDone(true);

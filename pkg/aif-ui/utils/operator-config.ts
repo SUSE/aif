@@ -112,7 +112,7 @@ async function runConnectionCheck(): Promise<void> {
       // returns a Status object ({ kind: "Status", ... }); the operator returns its
       // own error envelope without `kind`.  Checking for the k8s shape is more
       // stable than checking for an operator-specific field.
-      if (body?.kind !== 'Status') return;
+      if (body !== null && body?.kind !== 'Status') return;
     }
 
     connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }".`;
@@ -155,24 +155,37 @@ export function invalidateOperatorConfig(): void {
 }
 
 /** Write operator coordinates to the ConfigMap and refresh the in-memory cache.
- *  Tries PUT (update) first; falls back to POST (create) on 404 so it works
- *  for both container-based installs (ConfigMap pre-exists from Helm) and
- *  git-based installs (no chart deployed, ConfigMap created on first save). */
+ *  GETs the existing ConfigMap first to obtain its resourceVersion for optimistic
+ *  concurrency control, then PUTs. Falls back to POST (create) when the ConfigMap
+ *  doesn't exist yet (git-based install, no Helm chart ran). */
 export async function saveOperatorConfig(namespace: string, service: string): Promise<void> {
-  const url  = configMapUrl();
-  const body = JSON.stringify({
+  const url     = configMapUrl();
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  const payload = {
     apiVersion: 'v1',
     kind:       'ConfigMap',
     metadata:   { name: CONFIG_MAP_NAME, namespace: CONFIG_NAMESPACE },
     data:       { operatorNamespace: namespace, operatorService: service },
-  });
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  };
 
-  let res = await fetch(url, { method: 'PUT', headers, body });
+  const getRes = await fetch(url, { headers: { Accept: 'application/json' } });
+  let res: Response;
 
-  if (res.status === 404) {
-    // ConfigMap doesn't exist yet (git-based install, no Helm chart ran).
-    res = await fetch(configMapCollectionUrl(), { method: 'POST', headers, body });
+  if (getRes.ok) {
+    const existing       = await getRes.json().catch(() => null);
+    const resourceVersion = existing?.metadata?.resourceVersion;
+    res = await fetch(url, {
+      method:  'PUT',
+      headers,
+      body:    JSON.stringify({
+        ...payload,
+        metadata: { ...payload.metadata, ...(resourceVersion ? { resourceVersion } : {}) },
+      }),
+    });
+  } else if (getRes.status === 404) {
+    res = await fetch(configMapCollectionUrl(), { method: 'POST', headers, body: JSON.stringify(payload) });
+  } else {
+    res = getRes;
   }
 
   if (!res.ok) {
