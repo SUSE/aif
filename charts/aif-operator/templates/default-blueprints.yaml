@@ -1,0 +1,19 @@
+{{- /*
+Renders the bundled default Blueprint CRs from files/blueprints/*.yaml.
+Each file is a complete Blueprint CR (name + grouping labels authored in-file,
+per the operator's slug convention). We inject the chart's common labels (so the
+CRs are consistent with the chart's other resources and selectable via
+app.kubernetes.io/managed-by=Helm) plus the source=bundled marker label so
+future git-source logic can recognize Helm-managed defaults. The marker and the
+author's labels win over the common set on any key conflict.
+Gated by defaultBlueprints.enabled.
+*/ -}}
+{{- if .Values.defaultBlueprints.enabled }}
+{{- range $path, $_ := .Files.Glob "files/blueprints/*.yaml" }}
+{{- $bp := $.Files.Get $path | fromYaml }}
+{{- $common := include "aif-operator.labels" $ | fromYaml }}
+{{- $_ := set $bp "metadata" (merge (dict "labels" (merge (dict "ai-platform.suse.com/source" "bundled") $common)) (index $bp "metadata" | default dict)) }}
+---
+{{ toYaml $bp }}
+{{- end }}
+{{- end }}

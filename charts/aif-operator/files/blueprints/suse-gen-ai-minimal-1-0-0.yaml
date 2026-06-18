@@ -1,0 +1,967 @@
+apiVersion: ai-platform.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  labels:
+    ai-platform.suse.com/blueprint-name: suse-gen-ai-minimal
+    ai-platform.suse.com/blueprint-version: 1.0.0
+  name: suse-gen-ai-minimal-1-0-0
+spec:
+  components:
+  - chartName: ollama
+    chartRepo: application-collection
+    chartVersion: 1.55.0
+    values:
+      affinity: {}
+      autoscaling:
+        enabled: false
+        maxReplicas: 100
+        minReplicas: 1
+        targetCPUUtilizationPercentage: 80
+      deployment:
+        labels: {}
+      extraArgs: []
+      extraEnv: []
+      extraEnvFrom: []
+      extraObjects: []
+      fullnameOverride: ""
+      global:
+        imagePullSecrets: []
+        imageRegistry: ""
+      hostIPC: false
+      hostNetwork: false
+      hostPID: false
+      image:
+        pullPolicy: IfNotPresent
+        registry: dp.apps.rancher.io
+        repository: containers/ollama
+        tag: 0.21.2-11.48
+      imagePullSecrets: []
+      ingress:
+        annotations: {}
+        className: ""
+        enabled: false
+        hosts:
+        - host: ollama.local
+          paths:
+          - path: /
+            pathType: Prefix
+        tls: []
+      initContainers: []
+      knative:
+        annotations: {}
+        containerConcurrency: 0
+        enabled: false
+        idleTimeoutSeconds: 300
+        modelBootstrap:
+          ttlSecondsAfterFinished: 300
+        responseStartTimeoutSeconds: 300
+        timeoutSeconds: 300
+      lifecycle: {}
+      livenessProbe:
+        enabled: true
+        failureThreshold: 6
+        initialDelaySeconds: 60
+        path: /
+        periodSeconds: 10
+        successThreshold: 1
+        timeoutSeconds: 5
+      nameOverride: ""
+      namespaceOverride: ""
+      nodeSelector: {}
+      ollama:
+        gpu:
+          draDriverClass: gpu.nvidia.com
+          draEnabled: false
+          draExistingClaimTemplate: ""
+          enabled: false
+          mig:
+            devices: {}
+            enabled: false
+          number: 1
+          nvidiaResource: nvidia.com/gpu
+          type: nvidia
+        insecure: false
+        models:
+          clean: false
+          create: []
+          pull:
+          - gemma:2b
+          run:
+          - gemma:2b
+        mountPath: ""
+        port: 11434
+      persistentVolume:
+        accessModes:
+        - ReadWriteOnce
+        annotations: {}
+        enabled: false
+        existingClaim: ""
+        size: 30Gi
+        storageClass: ""
+        subPath: ""
+        volumeMode: ""
+        volumeName: ""
+      podAnnotations: {}
+      podLabels: {}
+      podSchedulerName: ""
+      podSecurityContext: {}
+      priorityClassName: ""
+      readinessProbe:
+        enabled: true
+        failureThreshold: 6
+        initialDelaySeconds: 30
+        path: /
+        periodSeconds: 5
+        successThreshold: 1
+        timeoutSeconds: 3
+      replicaCount: 1
+      resources:
+        limits: {}
+        requests: {}
+      runtimeClassName: ""
+      securityContext: {}
+      service:
+        annotations: {}
+        ipFamilies: []
+        ipFamilyPolicy: ""
+        labels: {}
+        loadBalancerIP: null
+        nodePort: 31434
+        port: 11434
+        type: ClusterIP
+      serviceAccount:
+        annotations: {}
+        automount: true
+        create: true
+        name: ""
+      terminationGracePeriodSeconds: 120
+      tests:
+        annotations: {}
+        enabled: true
+        labels: {}
+      tolerations: []
+      topologySpreadConstraints: {}
+      updateStrategy:
+        type: Recreate
+      volumeMounts: []
+      volumes: []
+  - chartName: open-webui
+    chartRepo: application-collection
+    chartVersion: 8.19.1
+    values:
+      affinity: {}
+      annotations: {}
+      args: []
+      clusterDomain: cluster.local
+      command: []
+      commonEnvVars: []
+      containerSecurityContext: {}
+      copyAppData:
+        args: []
+        command: []
+        resources: {}
+      databaseUrl: ""
+      enableOpenaiApi: true
+      extraEnvFrom: []
+      extraEnvVars:
+      - name: DEFAULT_MODELS
+        value: gemma:2b
+      - name: DEFAULT_USER_ROLE
+        value: user
+      - name: ENABLE_SIGNUP
+        value: "true"
+      - name: GLOBAL_LOG_LEVEL
+        value: INFO
+      - name: RAG_EMBEDDING_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - name: VECTOR_DB
+        value: milvus
+      - name: MILVUS_URI
+        value: http://suse-gen-ai-minimal-milvus.suse-gen-ai-minimal-system.svc.cluster.local:19530
+      - name: INSTALL_NLTK_DATASETS
+        value: "true"
+      extraInitContainers: []
+      extraLabels: {}
+      extraResources: []
+      global:
+        imagePullSecrets: []
+        imageRegistry: ""
+        tls:
+          additionalTrustedCAs: false
+          issuerName: suse-private-ai
+          letsEncrypt:
+            email: none@example.com
+            environment: staging
+            ingress:
+              class: ""
+          source: suse-private-ai
+      hostAliases: []
+      image:
+        pullPolicy: IfNotPresent
+        registry: dp.apps.rancher.io
+        repository: containers/open-webui
+        tag: 0.6.41-14.20
+        useSlim: false
+      imagePullSecrets: []
+      ingress:
+        additionalHosts: []
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        class: ""
+        enabled: true
+        existingSecret: ""
+        extraLabels: {}
+        host: suse-ollama-webui
+        tls: true
+      livenessProbe: {}
+      logging:
+        components:
+          audio: ""
+          comfyui: ""
+          config: ""
+          db: ""
+          images: ""
+          main: ""
+          models: ""
+          ollama: ""
+          openai: ""
+          rag: ""
+          webhook: ""
+        level: ""
+      managedCertificate:
+        domains:
+        - chat.example.com
+        enabled: false
+        name: mydomain-chat-cert
+      nameOverride: ""
+      namespaceOverride: ""
+      nodeSelector: {}
+      ollama:
+        enabled: false
+        fullnameOverride: open-webui-ollama
+      ollamaUrls:
+      - http://suse-gen-ai-minimal-ollama.suse-gen-ai-minimal-system.svc.cluster.local:11434
+      ollamaUrlsFromExtraEnv: false
+      # openaiApiKey: 0p3n-w3bu!
+      openaiApiKeys: []
+      # openaiBaseApiUrl: https://api.openai.com/v1
+      openaiBaseApiUrls: []
+      persistence:
+        accessModes:
+        - ReadWriteOnce
+        annotations: {}
+        azure:
+          container: ""
+          endpointUrl: ""
+          key: ""
+          keyExistingSecret: ""
+          keyExistingSecretKey: ""
+        enabled: true
+        existingClaim: ""
+        gcs:
+          appCredentialsJson: ""
+          appCredentialsJsonExistingSecret: ""
+          appCredentialsJsonExistingSecretKey: ""
+          bucket: ""
+        provider: local
+        s3:
+          accessKey: ""
+          accessKeyExistingAccessKey: ""
+          accessKeyExistingSecret: ""
+          bucket: ""
+          endpointUrl: ""
+          keyPrefix: ""
+          region: ""
+          secretKey: ""
+          secretKeyExistingSecret: ""
+          secretKeyExistingSecretKey: ""
+        selector: {}
+        size: 20Gi
+        storageClass: ""
+        subPath: ""
+      pipelines:
+        enabled: false
+        extraEnvVars: []
+      podAnnotations: {}
+      podLabels: {}
+      podSecurityContext: {}
+      priorityClassName: ""
+      readinessProbe: {}
+      replicaCount: 1
+      resources: {}
+      revisionHistoryLimit: 10
+      runtimeClassName: ""
+      service:
+        annotations: {}
+        containerPort: 8080
+        labels: {}
+        loadBalancerClass: ""
+        nodePort: ""
+        port: 80
+        type: ClusterIP
+      serviceAccount:
+        annotations: {}
+        automountServiceAccountToken: false
+        create: true
+        enable: true
+        name: existing-sa
+      sso:
+        enableGroupManagement: false
+        enableRoleManagement: false
+        enableSignup: false
+        enabled: false
+        github:
+          clientExistingSecret: ""
+          clientExistingSecretKey: ""
+          clientId: ""
+          clientSecret: ""
+          enabled: false
+        google:
+          clientExistingSecret: ""
+          clientExistingSecretKey: ""
+          clientId: ""
+          clientSecret: ""
+          enabled: false
+        groupManagement:
+          groupsClaim: groups
+        mergeAccountsByEmail: false
+        microsoft:
+          clientExistingSecret: ""
+          clientExistingSecretKey: ""
+          clientId: ""
+          clientSecret: ""
+          enabled: false
+          tenantId: ""
+        oidc:
+          clientExistingSecret: ""
+          clientExistingSecretKey: ""
+          clientId: ""
+          clientSecret: ""
+          enabled: false
+          providerName: SSO
+          providerUrl: ""
+          scopes: openid email profile
+        roleManagement:
+          adminRoles: ""
+          allowedRoles: ""
+          rolesClaim: roles
+        trustedHeader:
+          emailHeader: ""
+          enabled: false
+          nameHeader: ""
+      startupProbe: {}
+      strategy: {}
+      tika:
+        enabled: false
+      tolerations: []
+      topologySpreadConstraints: []
+      volumeMounts:
+        container: []
+        initContainer: []
+      volumes: []
+      websocket:
+        enabled: true
+        manager: redis
+        nodeSelector: {}
+        redis:
+          affinity: {}
+          annotations: {}
+          args: []
+          command: []
+          containerSecurityContext: {}
+          enabled: true
+          image:
+            pullPolicy: IfNotPresent
+            registry: dp.apps.rancher.io
+            repository: containers/redis
+            tag: 8.4.0-2.1
+          labels: {}
+          name: open-webui-redis
+          podSecurityContext: {}
+          pods:
+            annotations: {}
+            labels: {}
+          resources: {}
+          service:
+            annotations: {}
+            containerPort: 6379
+            labels: {}
+            nodePort: ""
+            port: 6379
+            portName: http
+            type: ClusterIP
+          tolerations: []
+        url: redis://open-webui-redis:6379/0
+  - chartName: milvus
+    chartRepo: application-collection
+    chartVersion: 5.0.22
+    values:
+      affinity: {}
+      annotations: {}
+      cdc:
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      cluster:
+        enabled: false
+      containerSecurityContext: {}
+      customConfigMap: ""
+      dataCoordinator:
+        activeStandby:
+          enabled: false
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        service:
+          annotations: {}
+          clusterIP: ""
+          labels: {}
+          port: 13333
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      dataNode:
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: true
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        hpa:
+          cpuUtilization: 40
+          enabled: false
+          maxReplicas: 5
+          minReplicas: 1
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      etcd:
+        auth:
+          rbac:
+            enabled: false
+        containerPorts:
+          client: 2379
+          peer: 2380
+        enabled: true
+        name: etcd
+        persistence:
+          accessModes:
+          - ReadWriteOnce
+          enabled: true
+          storageClassName: null
+        replicaCount: 1
+        service:
+          annotations: {}
+          enabled: true
+          nodePorts:
+            client: "2379"
+            peer: "2380"
+          ports:
+            client: "2379"
+            peer: "2380"
+          type: ClusterIP
+      externalEtcd:
+        enabled: false
+        endpoints:
+        - localhost:2379
+      externalGcs:
+        bucketName: ""
+      externalKafka:
+        brokerList: localhost:9092
+        enabled: false
+        sasl:
+          mechanisms: PLAIN
+          password: ""
+          username: ""
+        securityProtocol: SASL_SSL
+      externalPulsar:
+        authParams: ""
+        authPlugin: ""
+        enabled: false
+        host: localhost
+        maxMessageSize: "5242880"
+        namespace: default
+        port: 6650
+        tenant: public
+      externalS3:
+        accessKey: ""
+        bucketName: ""
+        cloudProvider: aws
+        enabled: false
+        host: ""
+        iamEndpoint: ""
+        port: ""
+        region: ""
+        rootPath: ""
+        secretKey: ""
+        useIAM: false
+        useSSL: false
+        useVirtualHost: false
+      extraConfigFiles:
+        user.yaml: |+
+          #    For example enable rest http for milvus proxy
+          #    proxy:
+          #      http:
+          #        enabled: true
+          #      maxUserNum: 100
+          #      maxRoleNum: 10
+          ##  Enable tlsMode and set the tls cert and key
+          #  tls:
+          #    serverPemPath: /etc/milvus/certs/tls.crt
+          #    serverKeyPath: /etc/milvus/certs/tls.key
+          #   common:
+          #     security:
+          #       tlsMode: 1
+
+      fullnameOverride: ""
+      global:
+        imagePullSecrets: []
+        imageRegistry: ""
+      heaptrack:
+        image:
+          pullPolicy: IfNotPresent
+          registry: dp.apps.rancher.io
+          repository: containers/heaptrack
+          tag: 1.3.0-7.1
+      image:
+        all:
+          pullPolicy: IfNotPresent
+          registry: dp.apps.rancher.io
+          repository: containers/milvus
+          tag: 2.6.18-8.4
+      indexCoordinator:
+        activeStandby:
+          enabled: false
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        service:
+          annotations: {}
+          clusterIP: ""
+          labels: {}
+          port: 31000
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      indexNode:
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        disk:
+          enabled: true
+          size:
+            enabled: false
+        enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        hpa:
+          cpuUtilization: 40
+          enabled: false
+          maxReplicas: 5
+          minReplicas: 1
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        runtimeClassName: ""
+        securityContext: {}
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      ingress:
+        annotations:
+          nginx.ingress.kubernetes.io/backend-protocol: GRPC
+          nginx.ingress.kubernetes.io/listen-ports-ssl: '[19530]'
+          nginx.ingress.kubernetes.io/proxy-body-size: 4m
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+        enabled: false
+        ingressClassName: ""
+        labels: {}
+        rules:
+        - host: milvus-example.local
+          path: /
+          pathType: Prefix
+        tls: []
+      kafka:
+        broker:
+          enabled: true
+        cluster:
+          listeners:
+            client:
+              protocol: PLAINTEXT
+            controller:
+              protocol: PLAINTEXT
+          nodeCount:
+            broker: 3
+            controller: 3
+        enabled: false
+        name: kafka
+      labels: {}
+      livenessProbe:
+        enabled: true
+        failureThreshold: 5
+        initialDelaySeconds: 90
+        periodSeconds: 30
+        successThreshold: 1
+        timeoutSeconds: 5
+      log:
+        file:
+          maxAge: 10
+          maxBackups: 20
+          maxSize: 300
+        format: text
+        level: info
+        persistence:
+          annotations:
+            helm.sh/resource-policy: keep
+          enabled: false
+          mountPath: /milvus/logs
+          persistentVolumeClaim:
+            accessModes: ReadWriteMany
+            existingClaim: ""
+            size: 10Gi
+            storageClass: null
+            subPath: ""
+      metrics:
+        enabled: true
+        serviceMonitor:
+          additionalLabels: {}
+          enabled: false
+          interval: 30s
+          scrapeTimeout: 10s
+      minio:
+        buckets:
+        - name: milvus-bucket
+          objectlocking: false
+          policy: none
+          purge: false
+          versioning: false
+        enabled: true
+        iamEndpoint: ""
+        mode: standalone
+        name: minio
+        region: ""
+        replicas: 4
+        resources:
+          requests:
+            memory: 2Gi
+        rootPath: file
+        service:
+          port: "9000"
+        tls:
+          enabled: false
+        useIAM: false
+        useVirtualHost: false
+        users:
+        - accessKey: minioadmin
+          existingSecret: ""
+          policy: consoleAdmin
+          secretKey: minioadmin
+      mixCoordinator:
+        activeStandby:
+          enabled: false
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: true
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        service:
+          annotations: {}
+          clusterIP: ""
+          labels: {}
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      nameOverride: ""
+      nodeSelector: {}
+      proxy:
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: true
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        hpa:
+          cpuUtilization: 40
+          enabled: false
+          maxReplicas: 5
+          minReplicas: 1
+        http:
+          debugMode:
+            enabled: false
+          enabled: true
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        strategy: {}
+        tls:
+          enabled: false
+        tolerations: []
+        topologySpreadConstraints: []
+      queryCoordinator:
+        activeStandby:
+          enabled: false
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        service:
+          annotations: {}
+          clusterIP: ""
+          labels: {}
+          port: 19531
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      queryNode:
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        disk:
+          enabled: true
+          size:
+            enabled: false
+        enabled: true
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        hpa:
+          cpuUtilization: 40
+          enabled: false
+          maxReplicas: 5
+          memoryUtilization: 60
+          minReplicas: 1
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        runtimeClassName: ""
+        securityContext: {}
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      readinessProbe:
+        enabled: true
+        failureThreshold: 5
+        initialDelaySeconds: 90
+        periodSeconds: 10
+        successThreshold: 1
+        timeoutSeconds: 5
+      replicaResourceGroups: []
+      rootCoordinator:
+        activeStandby:
+          enabled: false
+        affinity: {}
+        annotations: {}
+        containerSecurityContext: {}
+        enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        service:
+          annotations: {}
+          clusterIP: ""
+          labels: {}
+          port: 53100
+        strategy: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      securityContext: {}
+      service:
+        annotations: {}
+        externalIPs: []
+        labels: {}
+        loadBalancerSourceRanges:
+        - 0.0.0.0/0
+        nodePort: ""
+        port: 19530
+        portName: milvus
+        type: ClusterIP
+      serviceAccount:
+        annotations: null
+        create: false
+        labels: null
+        name: null
+      standalone:
+        affinity: {}
+        containerSecurityContext: {}
+        disk:
+          enabled: true
+          size:
+            enabled: false
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        messageQueue: woodpecker
+        nodeSelector: {}
+        persistence:
+          annotations:
+            helm.sh/resource-policy: keep
+          enabled: true
+          mountPath: /var/lib/milvus
+          persistentVolumeClaim:
+            accessModes: ReadWriteOnce
+            existingClaim: ""
+            size: 50Gi
+            storageClass: null
+            subPath: ""
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        tolerations: []
+        topologySpreadConstraints: []
+      streaming:
+        enabled: true
+        woodpecker:
+          embedded: true
+          storage:
+            type: minio
+      streamingNode:
+        affinity: {}
+        containerSecurityContext: {}
+        extraEnv: []
+        heaptrack:
+          enabled: false
+        nodeSelector: {}
+        profiling:
+          enabled: false
+        replicas: 1
+        resources: {}
+        securityContext: {}
+        strategy: {}
+        tolerations: []
+      tolerations: []
+      topologySpreadConstraints: []
+      volumeMounts: []
+      volumes: []
+  - chartName: open-webui-mcpo
+    chartRepo: application-collection
+    chartVersion: 1.0.2
+    values:
+      affinity: {}
+      autoscaling:
+        enabled: false
+        maxReplicas: 100
+        minReplicas: 1
+        targetCPUUtilizationPercentage: 80
+      config:
+        mcpServers:
+          memory:
+            args:
+            - -y
+            - '@modelcontextprotocol/server-memory'
+            command: npx
+      env: {}
+      envSecrets: {}
+      fullnameOverride: ""
+      global:
+        imagePullSecrets: []
+        imageRegistry: ""
+      image:
+        pullPolicy: IfNotPresent
+        registry: dp.apps.rancher.io
+        repository: containers/open-webui-mcpo
+        tag: 0.0.17-2.18
+      imagePullSecrets: []
+      ingress:
+        annotations: {}
+        className: ""
+        enabled: false
+        hosts:
+        - open-webui-mcpo.local
+        path: /
+        pathType: Prefix
+        tls: []
+      nameOverride: ""
+      nodeSelector: {}
+      podAnnotations: {}
+      podSecurityContext: {}
+      replicaCount: 1
+      resources: {}
+      secretEnv:
+        data: {}
+      securityContext: {}
+      service:
+        port: 8000
+        targetPort: 8000
+        type: ClusterIP
+      serviceAccount:
+        annotations: {}
+        create: true
+        name: ""
+      tolerations: []
+  description: suse-gen-ai-minimal with ollama, open-webui, open-webui-mcpo and milvus
+  displayName: suse-gen-ai-minimal
+  version: 1.0.0
