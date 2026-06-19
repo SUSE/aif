@@ -42,7 +42,11 @@ type BlueprintComponent struct {
 	Values *apixv1.JSON `json:"values,omitempty"`
 	// TargetNamespace optionally pins this component to a fixed namespace.
 	// When empty, the AIWorkload's targetNamespace (from the install wizard) is used.
+	// Must be a valid DNS-1123 label (lowercase alphanumerics and '-', starting
+	// and ending with an alphanumeric, max 63 chars).
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	TargetNamespace string `json:"targetNamespace,omitempty"`
 }
 

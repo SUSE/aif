@@ -81,7 +81,7 @@ async function onCreate() {
   submitting.value = true;
   error.value = null;
   if (!namespacesValid.value) {
-    error.value = 'One or more components have an invalid target namespace.';
+    error.value = t('suseai.wizard.form.componentNamespacesInvalid', 'One or more components have an invalid target namespace.');
     submitting.value = false;
     return;
   }

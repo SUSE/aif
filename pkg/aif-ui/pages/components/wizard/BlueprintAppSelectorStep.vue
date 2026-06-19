@@ -46,7 +46,7 @@
             <LabeledSelect
               :value="comp.chartVersion"
               :label="t('suseai.wizard.form.version', 'Version')"
-              :options="versionsFor(comp.chartName)"
+              :options="versionOptionsFor(comp.chartName)"
               @update:value="onVersionChange(idx, $event)"
             />
           </div>
@@ -225,6 +225,10 @@ function versionsFor(chartName: string): string[] {
   if (v?.length) return v;
   const current = props.components.find(c => c.chartName === chartName)?.chartVersion;
   return current ? [current] : ['1.0.0'];
+}
+
+function versionOptionsFor(chartName: string): { label: string; value: string }[] {
+  return versionsFor(chartName).map(v => ({ label: v, value: v }));
 }
 
 function logoFor(chartName: string): string {
