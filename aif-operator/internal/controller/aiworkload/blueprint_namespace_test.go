@@ -107,6 +107,17 @@ func TestEnsureBlueprintHelmOp_UsesDefaultNamespace(t *testing.T) {
 	if found && forceNS != "" {
 		t.Errorf("spec.namespace must NOT be set (FORCER rejects cluster-scoped); got %q", forceNS)
 	}
+
+	// takeOwnership=true: required so the chart's helm install can adopt
+	// operator-delivered ngc-secret/ngc-api/suse-ai-pull-combined that the
+	// pull-secret bundle already stamped with a different release name.
+	// Without this, NVIDIA NIM-family charts (whose templates default to
+	// `imagePullSecret.create: true`) abort at install with
+	// "Secret … cannot be imported into the current release".
+	takeOwnership, found, err := unstructured.NestedBool(ho.Object, "spec", "helm", "takeOwnership")
+	if err != nil || !found || !takeOwnership {
+		t.Errorf("spec.helm.takeOwnership: found=%v err=%v value=%v (want true)", found, err, takeOwnership)
+	}
 }
 
 // TestHelmOpNamespace_PrefersDefaultNamespace verifies the GitOps sync-back

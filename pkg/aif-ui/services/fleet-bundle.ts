@@ -206,6 +206,9 @@ export function buildFleetBundleYAML(params: {
       // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
       // which Fleet would otherwise mis-parse as a template function.
       disablePreProcess: true,
+      // See createFleetBundle for the takeOwnership rationale — same
+      // "adopt operator-delivered pull secrets" need on the GitOps path.
+      takeOwnership: true,
     },
     targets,
   };
@@ -279,6 +282,16 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
     // which Fleet would otherwise mis-parse as a template function.
     disablePreProcess: true,
+    // takeOwnership lets this chart's Helm install adopt resources the operator
+    // pre-delivered (ngc-secret, ngc-api, suse-ai-pull-combined via the
+    // pull-secret bundle). Many NVIDIA NIM-family charts template their own
+    // ngc-secret with `imagePullSecret.create: true` by default — without
+    // takeOwnership the install aborts with "Secret … cannot be imported into
+    // the current release: invalid ownership metadata" because the pull-secret
+    // bundle's Helm wrapper already stamped a different release-name. The
+    // alternative — setting `imagePullSecret.create: false` per-chart in
+    // values — pushes that concern onto every user, every install.
+    takeOwnership: true,
   };
 
   // defaultNamespace (not namespace): targets the release namespace without

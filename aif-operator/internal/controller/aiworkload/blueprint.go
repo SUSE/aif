@@ -112,6 +112,18 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
 		"disablePreProcess": true,
+		// takeOwnership lets the chart's Helm install adopt resources we
+		// pre-delivered (ngc-secret, ngc-api, suse-ai-pull-combined via the
+		// pull-secret bundle). Many NVIDIA NIM-family charts template their
+		// own ngc-secret resource by default — without takeOwnership, the
+		// install aborts with "Secret ... cannot be imported into the
+		// current release: invalid ownership metadata; key meta.helm.sh/
+		// release-name must equal ...". The pull-secret bundle's Helm
+		// wrapper stamps a different release-name on those secrets, so the
+		// workload chart can't claim them. takeOwnership says "claim them
+		// anyway", which is the right call here: the secrets logically
+		// belong to whichever workload uses them.
+		"takeOwnership": true,
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
@@ -583,6 +595,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
 		"disablePreProcess": true,
+		// See ensureBlueprintHelmOp for the takeOwnership rationale — same
+		// "adopt operator-delivered pull secrets" need on the GitOps path.
+		"takeOwnership": true,
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
