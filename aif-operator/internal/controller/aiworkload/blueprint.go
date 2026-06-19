@@ -286,21 +286,17 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 	return combinedPullSecretName, nil
 }
 
-// ensureNamespace creates the namespace if it does not already exist. It is
-// idempotent: an AlreadyExists race is treated as success.
+// ensureNamespace makes sure the namespace exists. It uses Server-Side Apply
+// (a write that bypasses the client cache) rather than a cached Get: the
+// operator is not granted list/watch on namespaces, so a cached read would
+// force controller-runtime to start a Namespace informer that fails to sync.
+// This mirrors how the API layer ensures the workload namespace.
 func (r *AIWorkloadReconciler) ensureNamespace(ctx context.Context, name string) error {
 	ns := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name}, ns); err == nil {
-		return nil
-	} else if !errors.IsNotFound(err) {
-		return err
-	}
-	ns = &corev1.Namespace{}
+	ns.APIVersion = "v1"
+	ns.Kind = "Namespace"
 	ns.Name = name
-	if err := r.Create(ctx, ns); err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
+	return r.Patch(ctx, ns, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator"))
 }
 
 // readSettingsSecretKey reads a single key from a Settings secret ref in the operator namespace.
