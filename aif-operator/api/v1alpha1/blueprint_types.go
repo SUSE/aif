@@ -40,6 +40,10 @@ type BlueprintComponent struct {
 	// Values are the Helm values for this component.
 	// +optional
 	Values *apixv1.JSON `json:"values,omitempty"`
+	// TargetNamespace optionally pins this component to a fixed namespace.
+	// When empty, the AIWorkload's targetNamespace (from the install wizard) is used.
+	// +optional
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.

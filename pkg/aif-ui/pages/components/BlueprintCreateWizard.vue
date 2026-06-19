@@ -8,7 +8,7 @@ import BlueprintAppSelectorStep from './wizard/BlueprintAppSelectorStep.vue';
 const BlueprintConfigStep       = defineAsyncComponent(() => import('./wizard/BlueprintConfigStep.vue'));
 const BlueprintReviewCreateStep = defineAsyncComponent(() => import('./wizard/BlueprintReviewCreateStep.vue'));
 import type { BlueprintSpec } from '../../types/blueprint-types';
-import { SEMVER_PATTERN } from '../../types/blueprint-types';
+import { SEMVER_PATTERN, DNS_LABEL_PATTERN } from '../../types/blueprint-types';
 import { createBlueprint } from '../../utils/blueprint-api';
 import { PRODUCT } from '../../config/suseai';
 
@@ -46,14 +46,19 @@ const components = ref(
   props.prefill?.components?.map(c => ({ ...c })) || []
 );
 
+const namespacesValid = computed(() => components.value.every((c) => {
+  const ns = c.targetNamespace?.trim();
+  return !ns || (ns.length <= 63 && DNS_LABEL_PATTERN.test(ns));
+}));
+
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),      ready: true },
   {
     label: t('suseai.wizard.steps.selectApps', 'Select Applications'),
     ready: basicInfo.value.displayName.trim() !== '' && SEMVER_PATTERN.test(basicInfo.value.version),
   },
-  { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: components.value.length > 0 },
-  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: components.value.length > 0 },
+  { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: components.value.length > 0 && namespacesValid.value },
+  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: components.value.length > 0 && namespacesValid.value },
 ]);
 
 function nextStep() {
@@ -75,6 +80,11 @@ function onCancel() {
 async function onCreate() {
   submitting.value = true;
   error.value = null;
+  if (!namespacesValid.value) {
+    error.value = 'One or more components have an invalid target namespace.';
+    submitting.value = false;
+    return;
+  }
   try {
     const spec: BlueprintSpec = {
       displayName: basicInfo.value.displayName,

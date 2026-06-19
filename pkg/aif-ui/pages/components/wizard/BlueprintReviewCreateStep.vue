@@ -23,6 +23,9 @@
         <span class="comp-name">{{ comp.chartName }}</span>
         <span class="comp-version text-muted">{{ comp.chartVersion }}</span>
         <span class="comp-repo text-muted">{{ comp.chartRepo }}</span>
+        <span v-if="comp.targetNamespace" class="comp-ns text-muted">
+          {{ t('suseai.wizard.labels.namespace', 'Namespace') }}: {{ comp.targetNamespace }}
+        </span>
       </div>
     </div>
   </div>
@@ -57,6 +60,7 @@ const t = useT();
   .comp-name    { font-weight: 500; min-width: 140px; }
   .comp-version { min-width: 80px; }
   .comp-repo    { font-size: 12px; }
+  .comp-ns      { font-size: 12px; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

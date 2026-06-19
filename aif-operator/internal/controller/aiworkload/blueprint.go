@@ -28,9 +28,9 @@ var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version
 var nonAlphanumBPRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 type clusterRepoInfo struct {
-	URL                string
-	ClientSecret       string // name of the basic-auth secret; empty if unauthenticated
-	ClientSecretNS     string // namespace of the basic-auth secret (typically cattle-system)
+	URL            string
+	ClientSecret   string // name of the basic-auth secret; empty if unauthenticated
+	ClientSecretNS string // namespace of the basic-auth secret (typically cattle-system)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -122,9 +122,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	if c.Values != nil {
 		_ = json.Unmarshal(c.Values.Raw, &vals)
 	}
-	pullSecretName, err := r.ensureCombinedPullSecret(ctx, w.Spec.TargetNamespace, repoInfo)
+	ns := componentNamespace(w, c)
+	pullSecretName, err := r.ensureCombinedPullSecret(ctx, ns, repoInfo)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", w.Spec.TargetNamespace)
+		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", ns)
 	}
 	if pullSecretName != "" {
 		pullSecrets := []any{map[string]any{"name": pullSecretName}}
@@ -175,7 +176,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// forcing every resource into it. Fleet's strict `namespace` field rejects
 		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
 		// operator/CRD-bearing charts.
-		_ = unstructured.SetNestedField(ho.Object, w.Spec.TargetNamespace, "spec", "defaultNamespace")
+		_ = unstructured.SetNestedField(ho.Object, ns, "spec", "defaultNamespace")
 		_ = unstructured.SetNestedField(ho.Object, helmSpec, "spec", "helm")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
 		if repoInfo.ClientSecret != "" {
@@ -392,9 +393,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	vals := map[string]any{}
-	pullSecretName, err := r.ensureCombinedPullSecret(ctx, w.Spec.TargetNamespace, repoInfo)
+	ns := componentNamespace(w, c)
+	pullSecretName, err := r.ensureCombinedPullSecret(ctx, ns, repoInfo)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", w.Spec.TargetNamespace)
+		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", ns)
 	}
 	if pullSecretName != "" {
 		pullSecrets := []any{map[string]any{"name": pullSecretName}}
@@ -433,9 +435,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// forcing every resource into it. Fleet's strict `namespace` field rejects
 		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
 		// operator/CRD-bearing charts.
-		"defaultNamespace": w.Spec.TargetNamespace,
-		"helm":      helmSpec,
-		"targets":   targets,
+		"defaultNamespace": ns,
+		"helm":             helmSpec,
+		"targets":          targets,
 	}
 	if repoInfo.ClientSecret != "" {
 		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
@@ -561,7 +563,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	}
 	// spec.clientSecret is an object {name, namespace}, not a plain string.
 	clientSecretName, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "name")
-	clientSecretNS, _, _   := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
+	clientSecretNS, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
 	if clientSecretNS == "" {
 		clientSecretNS = "cattle-system"
 	}
@@ -588,4 +590,13 @@ func truncateName(s string, max int) string {
 		return s
 	}
 	return s[:max]
+}
+
+// componentNamespace returns the namespace a blueprint component deploys into:
+// the component's own TargetNamespace when set, else the workload's TargetNamespace.
+func componentNamespace(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) string {
+	if c.TargetNamespace != "" {
+		return c.TargetNamespace
+	}
+	return w.Spec.TargetNamespace
 }

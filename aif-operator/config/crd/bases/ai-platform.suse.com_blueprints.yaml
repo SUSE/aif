@@ -68,6 +68,11 @@ spec:
                       description: ChartVersion is the semver chart version.
                       minLength: 1
                       type: string
+                    targetNamespace:
+                      description: |-
+                        TargetNamespace optionally pins this component to a fixed namespace.
+                        When empty, the AIWorkload's targetNamespace (from the install wizard) is used.
+                      type: string
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
