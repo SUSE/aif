@@ -25,8 +25,13 @@ interface Props {
 
 const props  = defineProps<Props>();
 const vm     = getCurrentInstance()!.proxy as any;
+const store  = vm.$store;
 const router = vm.$router;
 const route  = vm.$route;
+
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 const cluster = (route?.params?.cluster as string) || '_';
 
 const error      = ref<string | null>(null);
@@ -44,13 +49,13 @@ const components = ref(
 );
 
 const wizardSteps = computed(() => [
-  { label: 'Basic Info',      ready: true },
+  { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),      ready: true },
   {
-    label: 'Select Apps',
+    label: t('suseai.wizard.steps.selectApps', 'Select Applications'),
     ready: basicInfo.value.displayName.trim() !== '' && SEMVER_PATTERN.test(basicInfo.value.version),
   },
-  { label: 'Configuration',   ready: components.value.length > 0 },
-  { label: 'Review & Create', ready: components.value.length > 0 },
+  { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: components.value.length > 0 },
+  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: components.value.length > 0 },
 ]);
 
 function nextStep() {

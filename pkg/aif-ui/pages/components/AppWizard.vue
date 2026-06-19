@@ -64,6 +64,10 @@ const store = vm.$store;
 const router = vm.$router;
 const route = vm.$route;
 
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
+
 const loading = ref(true);
 const loadingNamespaces = ref(false);
 const submitting = ref(false);
@@ -122,25 +126,25 @@ async function fetchAllNamespaces() {
 const wizardSteps = computed(() => [
   {
     name: 'basic-info',
-    label: 'Basic Information',
+    label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),
     ready: releaseNameValid.value,
     weight: 1
   },
   {
     name: 'target',
-    label: 'Target Cluster',
+    label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),
     ready: !!form.value.chartRepo && !!form.value.chartVersion && !loadingVersions.value,
     weight: 2
   },
   {
     name: 'values',
-    label: 'Configuration',
+    label: t('suseai.wizard.steps.configuration', 'Configuration'),
     ready: form.value.clusters.length > 0 && !loadingValues.value,
     weight: 3
   },
   {
     name: 'review',
-    label: 'Review',
+    label: t('suseai.wizard.steps.review', 'Review'),
     ready: form.value.clusters.length > 0,
     weight: 4
   }

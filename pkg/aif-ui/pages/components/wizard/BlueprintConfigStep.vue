@@ -1,7 +1,7 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Configure Applications</h2>
-    <p class="text-muted mb-20">Set default Helm values for each application in this blueprint.</p>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.configureApps', 'Configure Applications') }}</h2>
+    <p class="text-muted mb-20">{{ t('suseai.wizard.sections.configureAppsDesc', 'Set default Helm values for each application in this blueprint.') }}</p>
 
     <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel">
       <div
@@ -53,6 +53,10 @@ const emit  = defineEmits<Emits>();
 
 const vm    = getCurrentInstance()!.proxy as any;
 const store = vm.$store;
+
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 
 const expandedPanels    = ref(new Set<number>([0]));
 const loadingMap        = ref<Record<string, boolean>>({});

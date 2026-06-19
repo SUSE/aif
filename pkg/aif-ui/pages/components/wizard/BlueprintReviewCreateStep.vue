@@ -1,24 +1,24 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Review & {{ isEdit ? 'Save as New Version' : 'Create' }}</h2>
+    <h2 class="step-title">{{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', 'Review & Save as New Version') : t('suseai.wizard.sections.reviewCreate', 'Review & Create') }}</h2>
 
     <div class="review-section">
       <div class="review-row">
-        <span class="review-label">Name</span>
+        <span class="review-label">{{ t('suseai.wizard.form.blueprintName', 'Name') }}</span>
         <span class="review-value">{{ form.displayName }}</span>
       </div>
       <div class="review-row">
-        <span class="review-label">Version</span>
+        <span class="review-label">{{ t('suseai.wizard.form.version', 'Version') }}</span>
         <span class="review-value">{{ form.version }}</span>
       </div>
       <div v-if="form.description" class="review-row">
-        <span class="review-label">Description</span>
+        <span class="review-label">{{ t('suseai.wizard.form.description', 'Description') }}</span>
         <span class="review-value">{{ form.description }}</span>
       </div>
     </div>
 
     <div class="review-section">
-      <h3 class="section-title">Applications ({{ form.components.length }})</h3>
+      <h3 class="section-title">{{ t('suseai.wizard.labels.applications', 'Applications') }} ({{ form.components.length }})</h3>
       <div v-for="comp in form.components" :key="comp.chartName" class="component-row">
         <span class="comp-name">{{ comp.chartName }}</span>
         <span class="comp-version text-muted">{{ comp.chartVersion }}</span>
@@ -29,10 +29,16 @@
 </template>
 
 <script lang="ts" setup>
+import { getCurrentInstance } from 'vue';
 import type { BlueprintSpec } from '../../../types/blueprint-types';
 
 interface Props { form: BlueprintSpec; isEdit?: boolean }
 defineProps<Props>();
+
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const store = (getCurrentInstance()!.proxy as any)?.$store;
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 </script>
 
 <style lang="scss" scoped>

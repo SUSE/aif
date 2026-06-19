@@ -1,31 +1,31 @@
 <template>
   <div class="review-step">
     <!-- Application Details -->
-    <h3>Application Details</h3>
+    <h3>{{ t('suseai.wizard.sections.applicationDetails', 'Application Details') }}</h3>
     <div class="details-grid">
       <div class="detail-item">
-        <label>Release Name:</label>
+        <label>{{ t('suseai.wizard.form.release', 'Instance Name') }}</label>
         <span>{{ release }}</span>
       </div>
       <div class="detail-item">
-        <label>Namespace:</label>
+        <label>{{ t('suseai.wizard.form.namespace', 'Namespace') }}</label>
         <span>{{ namespace }}</span>
       </div>
       <div class="detail-item">
-        <label>Repository:</label>
+        <label>{{ t('suseai.wizard.labels.repository', 'Repository') }}</label>
         <span>{{ chartRepo }}</span>
       </div>
       <div class="detail-item">
-        <label>Chart:</label>
+        <label>{{ t('suseai.wizard.labels.chart', 'Chart') }}</label>
         <span>{{ chartName }}</span>
       </div>
       <div class="detail-item">
-        <label>Version:</label>
+        <label>{{ t('suseai.wizard.form.version', 'Version') }}</label>
         <span>{{ chartVersion }}</span>
       </div>
       <div class="detail-item full-width clusters-row">
         <label>
-          Target Cluster{{ clusters.length > 1 ? 's' : '' }}:
+          {{ t('suseai.wizard.labels.targetCluster', 'Target Cluster') }}{{ clusters.length > 1 ? 's' : '' }}
           <span v-if="clusters.length > 1" class="cluster-count">({{ clusters.length }})</span>
         </label>
         <div v-if="clusters.length === 0" class="no-clusters">— none —</div>
@@ -41,7 +41,7 @@
     </div>
 
     <!-- Configuration -->
-    <h3 class="mt-30">Configuration</h3>
+    <h3 class="mt-30">{{ t('suseai.wizard.sections.configuration', 'Configuration') }}</h3>
     <YamlEditor
       v-model:value="localValues"
       :as-object="true"
@@ -52,7 +52,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed } from 'vue';
+import { computed, getCurrentInstance } from 'vue';
 import YamlEditor from '@shell/components/YamlEditor';
 
 interface Props {
@@ -73,6 +73,11 @@ interface Emits {
 
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
+
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const store = (getCurrentInstance()!.proxy as any)?.$store;
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 
 const localValues = computed({
   get: () => props.values,

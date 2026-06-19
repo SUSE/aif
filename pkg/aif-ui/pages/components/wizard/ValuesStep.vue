@@ -81,7 +81,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, getCurrentInstance } from 'vue';
 import YamlEditor from '@shell/components/YamlEditor';
 import Questions from '@shell/components/Questions';
 import Loading from '@shell/components/Loading';
@@ -113,8 +113,10 @@ interface Emits {
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
-// Simple fallback function for translations
-const t = (key: string, fallback: string) => fallback;
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const store = (getCurrentInstance()!.proxy as any)?.$store;
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 
 const viewMode = ref<'form' | 'yaml'>(props.hasQuestions ? 'form' : 'yaml');
 const normalizedMode = computed(() => props.mode === 'install' ? 'create' : 'edit');

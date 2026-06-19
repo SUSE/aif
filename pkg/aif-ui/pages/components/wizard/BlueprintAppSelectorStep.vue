@@ -1,13 +1,13 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Select Applications</h2>
+    <h2 class="step-title">{{ t('suseai.wizard.steps.selectApps', 'Select Applications') }}</h2>
 
     <div class="search-row">
       <input
         v-model="searchQuery"
         type="search"
         class="form-control search-input"
-        placeholder="Search applications..."
+        :placeholder="t('suseai.wizard.form.searchApps', 'Search applications...')"
         @input="onSearch"
       />
       <div v-if="searchResults.length" class="search-dropdown">
@@ -75,6 +75,10 @@ const props  = defineProps<Props>();
 const emit   = defineEmits<Emits>();
 const vm     = getCurrentInstance()!.proxy as any;
 const store  = vm.$store;
+
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 
 const searchQuery   = ref('');
 const searchResults = ref<AppCollectionItem[]>([]);

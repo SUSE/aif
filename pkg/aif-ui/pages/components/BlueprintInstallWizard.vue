@@ -18,8 +18,13 @@ interface Props {
 }
 const props   = defineProps<Props>();
 const vm      = getCurrentInstance()!.proxy as any;
+const store   = vm.$store;
 const router  = vm.$router;
 const route   = vm.$route;
+
+// Translation helper — reads from the Rancher i18n store (l10n/en-us.json),
+// falling back to the literal string when a key is missing.
+const t = (key: string, fallback: string) => store?.getters['i18n/t']?.(key) || fallback;
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading     = ref(true);
@@ -37,9 +42,9 @@ const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
 const wizardSteps = computed(() => [
-  { label: 'Basic Info', ready: true },
-  { label: 'Target',     ready: workloadName.value.trim() !== '' && namespace.value !== '' },
-  { label: 'Review',     ready: clusters.value.length > 0 },
+  { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),     ready: true },
+  { label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),    ready: workloadName.value.trim() !== '' && namespace.value !== '' },
+  { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 },
 ]);
 
 onMounted(async () => {
