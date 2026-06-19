@@ -11,7 +11,24 @@ env:
   CHART_REGISTRY: oci://ghcr.io/suse/chart
 
 jobs:
+  verify-ancestry:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is reachable from ai-factory
+        run: |
+          git fetch origin ai-factory
+          git merge-base --is-ancestor "${{ github.sha }}" origin/ai-factory || \
+            { echo "::error::Tag must point to a commit reachable from origin/ai-factory"; exit 1; }
+
   prepare:
+    needs: verify-ancestry
     runs-on: ubuntu-latest
     outputs:
       VERSION: ${{ steps.tags.outputs.VERSION }}
