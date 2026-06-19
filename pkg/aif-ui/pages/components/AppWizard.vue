@@ -31,7 +31,7 @@ import { persistLoad, persistSave, persistClear } from '../../services/ui-persis
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
 import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
-import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials, getSettings } from '../../utils/operator-api';
 import { createFleetBundle, buildBundleName }        from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
@@ -228,6 +228,14 @@ watch(helmOversized, (oversized) => {
   }
 });
 
+const fleetGitConfigured = ref(false);
+
+watch(fleetGitConfigured, (configured) => {
+  if (!configured && form.value.deployType === 'GitOps') {
+    form.value.deployType = 'FleetBundle';
+  }
+});
+
 // Measure the archive once the user has committed to a chart and moved past Basic
 // Info (Target step onward). Covers non-linear navigation: changing the chart on
 // Basic Info and jumping straight to Configuration/Review still re-measures, so the
@@ -295,6 +303,13 @@ async function initializeWizard() {
   }
 
   await refreshVersions();
+
+  try {
+    const settings = await getSettings() as { spec?: { fleet?: { repoURL?: string } } };
+    fleetGitConfigured.value = !!settings?.spec?.fleet?.repoURL;
+  } catch {
+    fleetGitConfigured.value = false;
+  }
 }
 
 function populateFromUrlParams() {
@@ -1563,6 +1578,7 @@ function previousStep() {
             v-model:clusters="form.clusters"
             v-model:deployType="form.deployType"
             :helm-oversized="helmOversized"
+            :git-ops-unconfigured="!fleetGitConfigured"
           />
 
           <!-- Step: Configuration -->

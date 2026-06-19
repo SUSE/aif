@@ -8,7 +8,7 @@ import TargetStep                    from './wizard/TargetStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, listAIWorkloads } from '../../utils/operator-api';
+import { createAIWorkload, listAIWorkloads, getSettings } from '../../utils/operator-api';
 import type { Blueprint } from '../../types/blueprint-types';
 import type { AIWorkloadDeployStrategy } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
@@ -35,6 +35,7 @@ const workloadName = ref('');
 const namespace    = ref('');
 const clusters     = ref<string[]>([]);
 const deployType   = ref<AIWorkloadDeployStrategy>('FleetBundle');
+const fleetGitConfigured = ref(false);
 
 const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
@@ -56,6 +57,13 @@ onMounted(async () => {
     error.value = e?.message || 'Failed to load blueprint';
   } finally {
     loading.value = false;
+  }
+
+  try {
+    const settings = await getSettings() as { spec?: { fleet?: { repoURL?: string } } };
+    fleetGitConfigured.value = !!settings?.spec?.fleet?.repoURL;
+  } catch {
+    fleetGitConfigured.value = false;
   }
 });
 
@@ -199,6 +207,7 @@ function onProgressCancel() { showProgressModal.value = false; }
             :clusters="clusters"
             :deploy-type="deployType"
             :helm-unsupported="true"
+            :git-ops-unconfigured="!fleetGitConfigured"
             @update:clusters="clusters = $event"
             @update:deploy-type="deployType = $event"
           />

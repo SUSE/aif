@@ -6,11 +6,12 @@ import ClusterResourceTable from '../ClusterResourceTable.vue';
 import type { AIWorkloadDeployStrategy } from '../../../types/aiworkload-types';
 
 interface Props {
-  mode:            'install' | 'manage';
-  clusters:        string[];
-  deployType:      AIWorkloadDeployStrategy;
-  helmOversized?:  boolean;
-  helmUnsupported?: boolean;
+  mode:               'install' | 'manage';
+  clusters:           string[];
+  deployType:         AIWorkloadDeployStrategy;
+  helmOversized?:     boolean;
+  helmUnsupported?:   boolean;
+  gitOpsUnconfigured?: boolean;
 }
 
 interface Emits {
@@ -32,6 +33,8 @@ const hasNonLocalClusters = computed(() => props.clusters.some(c => c !== 'local
 const helmCardDisabled = computed(() =>
   hasNonLocalClusters.value || !!props.helmOversized || !!props.helmUnsupported
 );
+
+const gitOpsCardDisabled = computed(() => !!props.gitOpsUnconfigured);
 
 const deployTypeCards = [
   {
@@ -57,6 +60,7 @@ const deployTypeCards = [
 function onCardClick(id: AIWorkloadDeployStrategy) {
   if (isManageMode.value) return;
   if (id === 'Helm' && helmCardDisabled.value) return;
+  if (id === 'GitOps' && gitOpsCardDisabled.value) return;
   emit('update:deployType', id);
 }
 </script>
@@ -73,9 +77,9 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
         :image="card.image"
         :content="card.content"
         :selected="deployType === card.id"
-        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled)"
+        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled) && !(card.id === 'GitOps' && gitOpsCardDisabled)"
         variant="small"
-        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) }"
+        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) || (card.id === 'GitOps' && gitOpsCardDisabled) }"
         @card-click="onCardClick(card.id)"
       />
     </div>
@@ -87,6 +91,12 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
     </p>
     <p v-else-if="!isManageMode && helmOversized" class="hint">
       This chart is too large for the Helm deployment method (it exceeds Kubernetes' 1 MiB Secret limit). Use Fleet Bundle or Fleet Git.
+    </p>
+    <p
+      v-if="!isManageMode && gitOpsUnconfigured"
+      class="hint"
+    >
+      Publish to Fleet Git requires a git repository configured in Settings.
     </p>
 
     <label class="lbl mt-16">{{ isManageMode ? t('suseai.wizard.labels.targetCluster', 'Target Cluster') : t('suseai.wizard.target.selectClusters', 'Select Target Cluster(s)') }}</label>
