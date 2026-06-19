@@ -1,7 +1,7 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Configure Applications</h2>
-    <p class="text-muted mb-20">Set default Helm values for each application in this blueprint.</p>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.configureApps', 'Configure Applications') }}</h2>
+    <p class="text-muted mb-20">{{ t('suseai.wizard.sections.configureAppsDesc', 'Set default Helm values for each application in this blueprint.') }}</p>
 
     <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel">
       <div
@@ -40,6 +40,7 @@
 
 <script lang="ts" setup>
 import { ref, getCurrentInstance } from 'vue';
+import { useT } from '../../../composables/useT';
 import yaml from 'js-yaml';
 import ValuesStep from './ValuesStep.vue';
 import { fetchChartDefaultValues } from '../../../services/rancher-apps';
@@ -53,6 +54,8 @@ const emit  = defineEmits<Emits>();
 
 const vm    = getCurrentInstance()!.proxy as any;
 const store = vm.$store;
+
+const t = useT();
 
 const expandedPanels    = ref(new Set<number>([0]));
 const loadingMap        = ref<Record<string, boolean>>({});

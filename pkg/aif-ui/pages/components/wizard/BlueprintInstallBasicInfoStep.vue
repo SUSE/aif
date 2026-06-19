@@ -5,21 +5,21 @@
     </div>
 
     <div class="form-group">
-      <label class="lbl required">Workload Name</label>
+      <label class="lbl required">{{ t('suseai.wizard.form.workloadName', 'Instance Name') }}</label>
       <input
         v-model="localName"
         type="text"
         class="form-control"
-        placeholder="e.g. my-ai-deployment"
+        :placeholder="t('suseai.wizard.form.workloadNamePlaceholder', 'e.g. my-ai-deployment')"
         @input="emit('update:workloadName', localName)"
       />
-      <small class="text-muted">Used as prefix for Fleet Bundle names</small>
+      <small class="text-muted">{{ t('suseai.wizard.form.workloadNameHelp', 'Used as prefix for Fleet Bundle names') }}</small>
     </div>
 
     <div class="form-group">
       <NamespaceAutocomplete
         :value="localNs"
-        label="Target Namespace"
+        :label="t('suseai.wizard.form.namespace', 'Namespace')"
         :options="namespaceOptions"
         :required="true"
         :loading="loadingNamespaces"
@@ -31,6 +31,7 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, getCurrentInstance } from 'vue';
+import { useT } from '../../../composables/useT';
 import NamespaceAutocomplete from './NamespaceAutocomplete.vue';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
 
@@ -50,6 +51,8 @@ const props = defineProps<Props>();
 const emit  = defineEmits<Emits>();
 const vm    = getCurrentInstance()!.proxy as any;
 const store = vm.$store;
+
+const t = useT();
 
 const localName         = ref(props.workloadName);
 const localNs           = ref(props.namespace);

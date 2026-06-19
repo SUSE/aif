@@ -1,11 +1,11 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Blueprint Details</h2>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.blueprintDetails', 'Blueprint Details') }}</h2>
 
     <LabeledInput
       v-model:value="localForm.displayName"
-      label="Name"
-      placeholder="e.g. My AI Stack"
+      :label="t('suseai.wizard.form.blueprintName', 'Name')"
+      :placeholder="t('suseai.wizard.form.blueprintNamePlaceholder', 'e.g. My AI Stack')"
       :disabled="props.nameDisabled"
       required
       class="mb-20"
@@ -14,8 +14,8 @@
 
     <LabeledInput
       v-model:value="localForm.version"
-      label="Version"
-      placeholder="e.g. 1.0.0"
+      :label="t('suseai.wizard.form.version', 'Version')"
+      :placeholder="t('suseai.wizard.form.versionPlaceholder', 'e.g. 1.0.0')"
       :status="versionError ? 'error' : undefined"
       :sub-label="versionError || 'Semantic version (major.minor.patch)'"
       required
@@ -26,8 +26,8 @@
 
     <LabeledInput
       v-model:value="localForm.description"
-      label="Description"
-      placeholder="Optional description"
+      :label="t('suseai.wizard.form.description', 'Description')"
+      :placeholder="t('suseai.wizard.form.descriptionPlaceholder', 'Optional description')"
       type="multiline"
       @update:value="emitForm"
     />
@@ -37,6 +37,7 @@
 <script lang="ts" setup>
 import { ref, watch } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
+import { useT } from '../../../composables/useT';
 import { SEMVER_PATTERN } from '../../../types/blueprint-types';
 
 interface BasicInfo {
@@ -50,6 +51,8 @@ interface Emits { (e: 'update:form', form: BasicInfo): void }
 
 const props = defineProps<Props>();
 const emit  = defineEmits<Emits>();
+
+const t = useT();
 
 const localForm    = ref<BasicInfo>({ ...props.form });
 const versionError = ref('');

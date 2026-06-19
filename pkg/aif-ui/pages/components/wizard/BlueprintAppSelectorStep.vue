@@ -1,13 +1,13 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Select Applications</h2>
+    <h2 class="step-title">{{ t('suseai.wizard.steps.selectApps', 'Select Applications') }}</h2>
 
     <div class="search-row">
       <input
         v-model="searchQuery"
         type="search"
         class="form-control search-input"
-        placeholder="Search applications..."
+        :placeholder="t('suseai.wizard.form.searchApps', 'Search applications...')"
         @input="onSearch"
       />
       <div v-if="searchResults.length" class="search-dropdown">
@@ -61,6 +61,7 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, getCurrentInstance } from 'vue';
+import { useT } from '../../../composables/useT';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../../../services/app-collection';
@@ -75,6 +76,8 @@ const props  = defineProps<Props>();
 const emit   = defineEmits<Emits>();
 const vm     = getCurrentInstance()!.proxy as any;
 const store  = vm.$store;
+
+const t = useT();
 
 const searchQuery   = ref('');
 const searchResults = ref<AppCollectionItem[]>([]);
