@@ -265,6 +265,14 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 		return "", err
 	}
 
+	// The target namespace may not exist yet — a component pinned to a fixed
+	// namespace is often new, and Fleet only creates it later when the HelmOp
+	// reconciles. The secret Patch below would fail (NotFound) against a missing
+	// namespace, leaving the chart without imagePullSecrets, so ensure it first.
+	if err := r.ensureNamespace(ctx, targetNamespace); err != nil {
+		return "", err
+	}
+
 	dst := &corev1.Secret{}
 	dst.APIVersion = "v1"
 	dst.Kind = "Secret"
@@ -276,6 +284,23 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, tar
 		return "", err
 	}
 	return combinedPullSecretName, nil
+}
+
+// ensureNamespace creates the namespace if it does not already exist. It is
+// idempotent: an AlreadyExists race is treated as success.
+func (r *AIWorkloadReconciler) ensureNamespace(ctx context.Context, name string) error {
+	ns := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, ns); err == nil {
+		return nil
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+	ns = &corev1.Namespace{}
+	ns.Name = name
+	if err := r.Create(ctx, ns); err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 // readSettingsSecretKey reads a single key from a Settings secret ref in the operator namespace.

@@ -32,6 +32,34 @@ func TestComponentNamespace(t *testing.T) {
 	})
 }
 
+func TestEnsureNamespace(t *testing.T) {
+	scheme := kruntime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+
+	t.Run("creates namespace when missing", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := &AIWorkloadReconciler{Client: c}
+		if err := r.ensureNamespace(context.Background(), "fixed-ns"); err != nil {
+			t.Fatalf("ensureNamespace: %v", err)
+		}
+		ns := &corev1.Namespace{}
+		if err := r.Get(context.Background(), types.NamespacedName{Name: "fixed-ns"}, ns); err != nil {
+			t.Fatalf("expected namespace to be created, got: %v", err)
+		}
+	})
+
+	t.Run("idempotent when namespace already exists", func(t *testing.T) {
+		existing := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "install-ns"}}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+		r := &AIWorkloadReconciler{Client: c}
+		if err := r.ensureNamespace(context.Background(), "install-ns"); err != nil {
+			t.Fatalf("ensureNamespace on existing ns should not error: %v", err)
+		}
+	})
+}
+
 func newRepoFakeClient(t *testing.T) *AIWorkloadReconciler {
 	t.Helper()
 	scheme := kruntime.NewScheme()
