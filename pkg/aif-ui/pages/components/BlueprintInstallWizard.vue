@@ -8,6 +8,7 @@ import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.v
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
 import { createAIWorkload, listAIWorkloads } from '../../utils/operator-api';
+import { crNameForCluster } from '../../utils/workload-name';
 import type { Blueprint } from '../../types/blueprint-types';
 import type { AIWorkloadDeployStrategy } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
@@ -79,13 +80,25 @@ async function onInstall() {
   submitting.value = true;
   error.value      = null;
 
+  // One AIWorkload CR per selected cluster. CR name = `<release>-<clusterId>`
+  // so two installs of the same blueprint to different clusters never collide
+  // on (namespace, name); the user-visible release name stays the same.
+  const targets = clusters.value.map((clusterId) => ({
+    clusterId,
+    crName: crNameForCluster(workloadName.value, clusterId),
+  }));
+
   try {
     const { items } = await listAIWorkloads();
-    const exists = items.some(
-      w => w.metadata?.namespace === namespace.value && w.metadata?.name === workloadName.value,
+    const existingNames = new Set(
+      (items || [])
+        .filter((w: any) => w?.metadata?.namespace === namespace.value)
+        .map((w: any) => w.metadata.name),
     );
-    if (exists) {
-      error.value = `A deployment named "${workloadName.value}" already exists in namespace "${namespace.value}". Choose a different deployment name.`;
+    const collisions = targets.filter((t) => existingNames.has(t.crName));
+    if (collisions.length > 0) {
+      const list = collisions.map((c) => `${workloadName.value} on ${c.clusterId}`).join(', ');
+      error.value = `Already deployed: ${list}. Pick different clusters or manage the existing deployments.`;
       submitting.value = false;
       return;
     }
@@ -93,21 +106,24 @@ async function onInstall() {
     console.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', e);
   }
 
-  installProgress.value = clusters.value.map(c => ({
-    clusterId:   c,
-    clusterName: c,
+  installProgress.value = targets.map((t) => ({
+    clusterId:   t.clusterId,
+    clusterName: t.clusterId,
     status:      'installing' as const,
     progress:    10,
     message:     'Creating AIWorkload CR...',
   }));
   showProgressModal.value = true;
 
-  try {
-    await createAIWorkload(
+  // Create each per-cluster CR independently. One failure doesn't roll back
+  // the successful ones — the user can see exactly which cluster(s) failed
+  // and retry the wizard for just those.
+  const results = await Promise.allSettled(targets.map((t) =>
+    createAIWorkload(
       namespace.value,
-      workloadName.value,
+      t.crName,
       {
-        displayName:     blueprint.value.spec.displayName,
+        displayName:     blueprint.value!.spec.displayName,
         source: {
           sourceType: 'Blueprint',
           blueprint: {
@@ -116,32 +132,32 @@ async function onInstall() {
           },
         },
         targetNamespace: namespace.value,
-        targetClusters:  clusters.value,
+        targetClusters:  [t.clusterId],
         deployStrategy:  deployType.value,
       },
       { phase: 'Pending', clusterStatuses: [] },
-    );
+    ),
+  ));
 
-    installProgress.value = installProgress.value.map(p => ({
-      ...p,
-      status:   'success' as const,
-      progress: 100,
-      message:  'AIWorkload created — controller will deploy bundles',
-    }));
-  } catch (e: any) {
+  installProgress.value = installProgress.value.map((p, i) => {
+    const r = results[i];
+    if (r.status === 'fulfilled') {
+      return { ...p, status: 'success', progress: 100, message: 'AIWorkload created — controller will deploy bundles' };
+    }
+    const e: any = r.reason;
     const errMsg = e?.status === 409
-      ? `A deployment named "${workloadName.value}" already exists in namespace "${namespace.value}". Choose a different deployment name.`
+      ? `A deployment for "${workloadName.value}" already exists on ${p.clusterId}.`
       : (e?.message || 'Unknown error');
-    installProgress.value = installProgress.value.map(p => ({
-      ...p,
-      status:  'failed' as const,
-      message: errMsg,
-      error:   errMsg,
-    }));
-    error.value = errMsg;
-  } finally {
-    submitting.value = false;
+    return { ...p, status: 'failed', message: errMsg, error: errMsg };
+  });
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length === targets.length) {
+    error.value = (failed[0] as PromiseRejectedResult).reason?.message || 'All cluster installs failed';
+  } else if (failed.length > 0) {
+    error.value = `${failed.length} of ${targets.length} cluster installs failed — see progress for details`;
   }
+  submitting.value = false;
 }
 
 function onProgressDone() {

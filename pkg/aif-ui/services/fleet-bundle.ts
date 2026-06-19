@@ -19,6 +19,15 @@ export function buildBundleName(release: string, namespace: string): string {
   return `suse-ai-${ release }-${ namespace }`.replace(/[^a-z0-9-]/g, '-').slice(0, 63);
 }
 
+// buildBundleNameForCluster returns a per-cluster HelmOp name so two AIWorkloads
+// installing the same chart to different downstream clusters don't clobber each
+// other in fleet-default (which uses (namespace, name) for bundle identity, the
+// same as any K8s object). The cluster suffix is the Rancher cluster ID
+// (`local`, `c-zh74k`, …), sanitized defensively into a DNS-1123 label.
+export function buildBundleNameForCluster(release: string, namespace: string, clusterId: string): string {
+  return `suse-ai-${ release }-${ namespace }-${ clusterId }`.replace(/[^a-z0-9-]/g, '-').slice(0, 63);
+}
+
 // 53 = 63 (K8s DNS-1123 label max) − 10 bytes Helm reserves for generated
 // suffixes. Fleet validates spec.helm.releaseName against this.
 const HELM_RELEASE_NAME_MAX = 53; // Helm/Fleet reject release names longer than this.
