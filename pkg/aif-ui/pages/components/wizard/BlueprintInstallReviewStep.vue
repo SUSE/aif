@@ -18,6 +18,10 @@
       <div v-for="comp in components" :key="comp.chartName" class="component-row">
         <span>{{ comp.chartName }}</span>
         <span class="text-muted">{{ comp.chartVersion }}</span>
+        <span class="comp-target text-muted">
+          → {{ comp.targetNamespace || namespace }}
+          <template v-if="comp.targetNamespace">({{ t('suseai.wizard.labels.fixedNamespace', 'fixed') }})</template>
+        </span>
       </div>
     </div>
   </div>
@@ -55,6 +59,7 @@ const t = useT();
 .component-row {
   display: flex; gap: 16px; padding: 6px 0; border-bottom: 1px solid var(--border);
   &:last-child { border-bottom: none; }
+  .comp-target { margin-left: auto; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

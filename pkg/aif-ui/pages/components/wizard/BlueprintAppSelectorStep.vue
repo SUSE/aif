@@ -36,24 +36,33 @@
         :key="comp.chartName"
         class="selected-tile"
       >
-        <img :src="logoFor(comp.chartName)" alt="" class="tile-logo" @error="onImgError" />
-        <div class="tile-body">
+        <div class="tile-header">
+          <img :src="logoFor(comp.chartName)" alt="" class="tile-logo" @error="onImgError" />
           <div class="tile-name">{{ comp.chartName }}</div>
-          <select
-            :value="comp.chartVersion"
-            class="version-select"
-            @change="onVersionChange(idx, ($event.target as HTMLSelectElement).value)"
-          >
-            <option
-              v-for="v in versionsFor(comp.chartName)"
-              :key="v"
-              :value="v"
-            >
-              {{ v }}
-            </option>
-          </select>
+          <button class="btn-remove" type="button" :aria-label="t('suseai.wizard.form.removeApp', 'Remove application')" @click="removeApp(idx)">✕</button>
         </div>
-        <button class="btn-remove" @click="removeApp(idx)" type="button">✕</button>
+        <div class="row tile-fields">
+          <div class="col span-6">
+            <LabeledSelect
+              :value="comp.chartVersion"
+              :label="t('suseai.wizard.form.version', 'Version')"
+              :options="versionOptionsFor(comp.chartName)"
+              @update:value="onVersionChange(idx, $event)"
+            />
+          </div>
+          <div class="col span-6">
+            <LabeledInput
+              :value="comp.targetNamespace || ''"
+              :label="t('suseai.wizard.form.componentNamespace', 'Target namespace (optional)')"
+              :placeholder="t('suseai.wizard.form.componentNamespacePlaceholder', 'defaults to install namespace')"
+              :status="nsInvalid(comp) ? 'error' : undefined"
+              :sub-label="nsInvalid(comp)
+                ? t('suseai.wizard.form.componentNamespaceInvalid', 'Must be a valid namespace: lowercase letters, digits and \'-\', starting and ending with a letter or digit (max 63 chars).')
+                : undefined"
+              @update:value="onNamespaceChange(idx, $event)"
+            />
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -62,7 +71,10 @@
 <script lang="ts" setup>
 import { ref, onMounted, getCurrentInstance } from 'vue';
 import { useT } from '../../../composables/useT';
+import { LabeledInput } from '@components/Form/LabeledInput';
+import LabeledSelect from '@shell/components/form/LabeledSelect';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
+import { DNS_LABEL_PATTERN } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
@@ -195,11 +207,28 @@ function onVersionChange(idx: number, newVersion: string) {
   emit('update:components', updated);
 }
 
+function onNamespaceChange(idx: number, raw: string) {
+  const ns = raw.trim();
+  const updated = props.components.map((c, i) =>
+    i === idx ? { ...c, targetNamespace: ns || undefined } : c
+  );
+  emit('update:components', updated);
+}
+
+function nsInvalid(comp: BlueprintComponent): boolean {
+  const ns = comp.targetNamespace?.trim();
+  return !!ns && (ns.length > 63 || !DNS_LABEL_PATTERN.test(ns));
+}
+
 function versionsFor(chartName: string): string[] {
   const v = versionMap.value[chartName];
   if (v?.length) return v;
   const current = props.components.find(c => c.chartName === chartName)?.chartVersion;
   return current ? [current] : ['1.0.0'];
+}
+
+function versionOptionsFor(chartName: string): { label: string; value: string }[] {
+  return versionsFor(chartName).map(v => ({ label: v, value: v }));
 }
 
 function logoFor(chartName: string): string {
@@ -233,21 +262,18 @@ function onImgError(e: Event) {
 .mt-20 { margin-top: 20px; }
 .selected-apps { display: flex; flex-direction: column; gap: 12px; }
 .selected-tile {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px;
-  .tile-logo { width: 36px; height: 36px; object-fit: contain; }
-  .tile-body { flex: 1; display: flex; align-items: center; gap: 12px; }
-  .tile-name { font-weight: 500; font-size: 14px; min-width: 120px; }
-  .version-select {
-    font-size: 13px; height: 30px; padding: 0 8px;
-    border: 1px solid var(--border); border-radius: var(--border-radius);
-    background: var(--input-bg); color: var(--body-text);
+  padding: 16px; border: 1px solid var(--border); border-radius: 8px;
+  .tile-header {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+    .tile-logo { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
+    .tile-name { font-weight: 500; font-size: 14px; flex: 1; }
+    .btn-remove {
+      background: none; border: none; cursor: pointer; padding: 4px;
+      color: var(--muted); font-size: 16px; line-height: 1;
+      &:hover { color: var(--error); }
+    }
   }
-  .btn-remove {
-    background: none; border: none; cursor: pointer;
-    color: var(--muted); font-size: 16px;
-    &:hover { color: var(--error); }
-  }
+  .tile-fields { margin: 0; }
 }
 .form-control {
   width: 100%; padding: 8px 12px;

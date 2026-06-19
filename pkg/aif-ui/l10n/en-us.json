@@ -213,7 +213,12 @@
         "description": "Description",
         "descriptionPlaceholder": "Optional description",
         "deploymentType": "Deployment Type",
-        "searchApps": "Search applications..."
+        "searchApps": "Search applications...",
+        "componentNamespace": "Target namespace (optional)",
+        "componentNamespacePlaceholder": "defaults to install namespace",
+        "componentNamespaceInvalid": "Must be a valid namespace: lowercase letters, digits and '-', starting and ending with a letter or digit (max 63 chars).",
+        "componentNamespacesInvalid": "One or more components have an invalid target namespace.",
+        "removeApp": "Remove application"
       },
       "target": {
         "selectClusters": "Select Target Cluster(s)",
@@ -236,7 +241,9 @@
         "blueprint": "Blueprint",
         "clusters": "Clusters",
         "components": "Components",
-        "applications": "Applications"
+        "applications": "Applications",
+        "namespace": "Namespace",
+        "fixedNamespace": "fixed"
       }
     },
     "repositories": {
