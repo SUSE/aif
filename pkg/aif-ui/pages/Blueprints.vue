@@ -53,7 +53,7 @@
             <div class="tile-header">
               <div class="tile-info">
                 <div class="tile-title-row">
-                  <h3 class="tile-title">{{ toTitleCase(latestFor(versions).spec.displayName) }}</h3>
+                  <h3 class="tile-title">{{ latestFor(versions).spec.displayName }}</h3>
                   <select
                     v-model="selectedVersions[family]"
                     class="version-select form-control-sm"
@@ -480,10 +480,6 @@ export default defineComponent({
       return sourceFor(latestFor(versions));
     }
 
-    function toTitleCase(str: string): string {
-      return str.replace(/\b\w/g, c => c.toUpperCase());
-    }
-
     function checkAdminRole() {
       try {
         // Use Rancher's canonical admin detection (RBAC capability check) instead of
@@ -539,7 +535,7 @@ export default defineComponent({
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
       sourceLabel,
-      toTitleCase, tileActions, onTileAction,
+      tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
     };
