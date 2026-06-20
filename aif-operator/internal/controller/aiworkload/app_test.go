@@ -95,14 +95,20 @@ func TestReconcileAppPullSecrets_NvidiaVendorCreatesBothSecrets(t *testing.T) {
 		t.Fatalf("reconcileAppPullSecrets: %v", err)
 	}
 
-	// Status must list both NVIDIA secret names.
+	// Status must list both NVIDIA secret names, scoped to targetNS.
 	have := map[string]bool{}
-	for _, n := range w.Status.PullSecretNames {
-		have[n] = true
+	for _, d := range w.Status.PullSecretDeliveries {
+		if d.Namespace != targetNS {
+			t.Errorf("Status.PullSecretDeliveries unexpected namespace %q", d.Namespace)
+			continue
+		}
+		for _, n := range d.Names {
+			have[n] = true
+		}
 	}
 	for _, want := range []string{nvidiaImagePullSecretName, nvidiaAPISecretName} {
 		if !have[want] {
-			t.Errorf("Status.PullSecretNames missing %q; got %v", want, w.Status.PullSecretNames)
+			t.Errorf("PullSecretDeliveries missing %q in %s; got %+v", want, targetNS, w.Status.PullSecretDeliveries)
 		}
 	}
 
@@ -173,9 +179,13 @@ func TestReconcileAppPullSecrets_DefaultVendorRoutesToSuseInjector(t *testing.T)
 		t.Fatalf("reconcileAppPullSecrets: %v", err)
 	}
 
-	// Status must list the combined secret name (suseInjector's product).
-	if len(w.Status.PullSecretNames) != 1 || w.Status.PullSecretNames[0] != combinedPullSecretName {
-		t.Errorf("Status.PullSecretNames = %v, want exactly [%q]", w.Status.PullSecretNames, combinedPullSecretName)
+	// Status must list the combined secret name (suseInjector's product), scoped to targetNS.
+	if len(w.Status.PullSecretDeliveries) != 1 ||
+		w.Status.PullSecretDeliveries[0].Namespace != targetNS ||
+		len(w.Status.PullSecretDeliveries[0].Names) != 1 ||
+		w.Status.PullSecretDeliveries[0].Names[0] != combinedPullSecretName {
+		t.Errorf("PullSecretDeliveries = %+v, want exactly [{%q, [%q]}]",
+			w.Status.PullSecretDeliveries, targetNS, combinedPullSecretName)
 	}
 	// Suse-injector must NOT have created NVIDIA-named secrets.
 	nvSec := &corev1.Secret{}
@@ -213,8 +223,8 @@ func TestReconcileAppPullSecrets_NoCredsConfigured_NoOp(t *testing.T) {
 	if err := r.reconcileAppPullSecrets(context.Background(), w); err != nil {
 		t.Errorf("expected nil error when no creds are configured, got %v", err)
 	}
-	if len(w.Status.PullSecretNames) != 0 {
-		t.Errorf("expected empty PullSecretNames, got %v", w.Status.PullSecretNames)
+	if len(w.Status.PullSecretDeliveries) != 0 {
+		t.Errorf("expected no deliveries when no creds configured, got %v", w.Status.PullSecretDeliveries)
 	}
 }
 
@@ -268,7 +278,7 @@ func TestReconcileAppPullSecrets_MissingClusterRepo_NoOp(t *testing.T) {
 	if err := r.reconcileAppPullSecrets(context.Background(), w); err != nil {
 		t.Fatalf("expected nil (fail-soft) for missing ClusterRepo, got: %v", err)
 	}
-	if len(w.Status.PullSecretNames) != 0 {
-		t.Errorf("expected no secrets injected, got %v", w.Status.PullSecretNames)
+	if len(w.Status.PullSecretDeliveries) != 0 {
+		t.Errorf("expected no deliveries, got %v", w.Status.PullSecretDeliveries)
 	}
 }

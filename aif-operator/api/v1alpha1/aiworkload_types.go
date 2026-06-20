@@ -159,6 +159,23 @@ type AIWorkloadClusterStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// PullSecretDelivery groups operator-delivered pull-secret names by the
+// target namespace they were written into. Blueprint workloads where each
+// component opts in to its own BlueprintComponent.TargetNamespace produce
+// one entry per distinct namespace; single-namespace blueprints and
+// App-sourced workloads produce exactly one entry.
+type PullSecretDelivery struct {
+	// Namespace is the target namespace the listed secrets were written
+	// into on the operator's local cluster (and where Fleet Bundles ship
+	// matching copies on each downstream cluster).
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace"`
+	// Names is the set of dockerconfigjson / Opaque Secret names the
+	// injectors created in that namespace.
+	// +listType=set
+	Names []string `json:"names"`
+}
+
 // AIWorkloadStatus defines the observed state of AIWorkload.
 type AIWorkloadStatus struct {
 	// Phase is the overall workload phase derived from clusterStatuses.
@@ -167,12 +184,15 @@ type AIWorkloadStatus struct {
 	// ClusterStatuses tracks per-cluster deployment outcome.
 	// +optional
 	ClusterStatuses []AIWorkloadClusterStatus `json:"clusterStatuses,omitempty"`
-	// PullSecretNames is the set of dockerconfigjson Secret names that
-	// injectors created in the target namespace for this workload. Used by
-	// reconcilePullSecrets to merge into SAs and by the finalizer to prune
-	// SA references on delete.
+	// PullSecretDeliveries groups operator-delivered pull-secret names by
+	// the namespace they were written into. Replaces the prior flat
+	// PullSecretNames field so blueprints with components in different
+	// namespaces (BlueprintComponent.TargetNamespace) deliver correctly to
+	// each. Used by reconcilePullSecrets to merge into SAs per namespace,
+	// by deliverPullSecrets to emit one Fleet Bundle per (cluster, namespace),
+	// and by the finalizer to prune SA references on delete.
 	// +optional
-	PullSecretNames []string `json:"pullSecretNames,omitempty"`
+	PullSecretDeliveries []PullSecretDelivery `json:"pullSecretDeliveries,omitempty"`
 	// Conditions represent the latest observations of the AIWorkload state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

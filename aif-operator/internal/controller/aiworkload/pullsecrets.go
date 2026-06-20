@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -16,24 +17,52 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 )
 
-// reconcilePullSecrets ensures every named pull-secret is merged into every
-// ServiceAccount in the workload's target namespace on the operator's own
-// cluster. Returns settled=true when no SA needed patching this round.
-// The caller decides whether to RequeueAfter.
+// reconcilePullSecrets ensures every operator-delivered pull-secret is
+// merged into every ServiceAccount in the namespace(s) the workload installs
+// into on the operator's own cluster. Walks Status.PullSecretDeliveries so
+// blueprints that fan components out across multiple namespaces patch each
+// namespace's SAs independently. Returns settled=true when no SA needed
+// patching this round; the caller decides whether to RequeueAfter.
 func (r *AIWorkloadReconciler) reconcilePullSecrets(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
-	secretNames []string,
 ) (settled bool, err error) {
 	l := log.FromContext(ctx)
 
-	if w.Spec.TargetNamespace == "" || len(secretNames) == 0 {
+	if len(w.Status.PullSecretDeliveries) == 0 {
 		return true, nil
 	}
 
+	settled = true
+	for _, d := range w.Status.PullSecretDeliveries {
+		if d.Namespace == "" || len(d.Names) == 0 {
+			continue
+		}
+		nsSettled, err := r.reconcilePullSecretsForNamespace(ctx, d.Namespace, d.Names, l)
+		if err != nil {
+			return false, err
+		}
+		if !nsSettled {
+			settled = false
+		}
+	}
+
+	return settled, nil
+}
+
+// reconcilePullSecretsForNamespace handles a single (namespace, names) pair:
+// list every SA in the namespace, merge the missing pull-secret references,
+// then bounce any pod still stuck in ImagePullBackOff so the kubelet re-reads
+// the SA's imagePullSecrets at admission time.
+func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
+	ctx context.Context,
+	namespace string,
+	secretNames []string,
+	l logr.Logger,
+) (settled bool, err error) {
 	var sas corev1.ServiceAccountList
-	if err := r.List(ctx, &sas, client.InNamespace(w.Spec.TargetNamespace)); err != nil {
-		return false, fmt.Errorf("list ServiceAccounts in %s: %w", w.Spec.TargetNamespace, err)
+	if err := r.List(ctx, &sas, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("list ServiceAccounts in %s: %w", namespace, err)
 	}
 
 	settled = true
@@ -49,16 +78,13 @@ func (r *AIWorkloadReconciler) reconcilePullSecrets(
 		}
 	}
 
-	// After SA mutations, bounce any pod stuck in ImagePullBackOff so the
-	// kubelet re-reads the SA's imagePullSecrets at admission time.
-	bounced, err := r.restartImagePullBackOffPods(ctx, w.Spec.TargetNamespace)
+	bounced, err := r.restartImagePullBackOffPods(ctx, namespace)
 	if err != nil {
 		return false, err
 	}
 	if bounced > 0 {
 		settled = false
 	}
-
 	return settled, nil
 }
 
@@ -139,18 +165,36 @@ func waitingIsImagePullFailure(w *corev1.ContainerStateWaiting) bool {
 	return false
 }
 
-// mergePullSecretNames adds each name from add to existing if not already
-// present. Used to accumulate secret names from per-component injector runs
-// onto AIWorkload.Status.PullSecretNames.
-func mergePullSecretNames(existing, add []string) []string {
-	if len(add) == 0 {
+// mergePullSecretDelivery merges (namespace, names) into existing — appending
+// names into the matching namespace bucket if one already exists, or appending
+// a new bucket otherwise. Names within a bucket are deduped (first-seen wins);
+// the input order is preserved. Used to accumulate per-component injector
+// outputs onto AIWorkload.Status.PullSecretDeliveries when a blueprint fans
+// components out across multiple namespaces.
+func mergePullSecretDelivery(existing []aiplatformv1alpha1.PullSecretDelivery, namespace string, names []string) []aiplatformv1alpha1.PullSecretDelivery {
+	if namespace == "" || len(names) == 0 {
 		return existing
 	}
-	have := make(map[string]struct{}, len(existing))
+	for i := range existing {
+		if existing[i].Namespace == namespace {
+			existing[i].Names = mergeStringSet(existing[i].Names, names)
+			return existing
+		}
+	}
+	return append(existing, aiplatformv1alpha1.PullSecretDelivery{
+		Namespace: namespace,
+		Names:     mergeStringSet(nil, names),
+	})
+}
+
+// mergeStringSet returns the union of existing + add, preserving order and
+// deduping by membership in existing first then add.
+func mergeStringSet(existing, add []string) []string {
+	have := make(map[string]struct{}, len(existing)+len(add))
 	for _, n := range existing {
 		have[n] = struct{}{}
 	}
-	out := existing
+	out := append([]string(nil), existing...)
 	for _, n := range add {
 		if _, ok := have[n]; ok {
 			continue
@@ -168,67 +212,87 @@ func mergePullSecretNames(existing, add []string) []string {
 // caller treats this as a no-op rather than an error.
 type PullSecretFactory func(targetNamespace, secretName string) (*corev1.Secret, error)
 
-// deliverPullSecrets ensures the secret names listed in
-// w.Status.PullSecretNames are delivered to:
-//   - the operator's own cluster (always, in w.Spec.TargetNamespace), one
-//     SSA per secret via the local client,
-//   - each downstream cluster in w.Spec.TargetClusters, as a single
-//     consolidated Fleet Bundle carrying the Namespace + every Secret +
-//     an SA-merge Job. One bundle per (owner, cluster) — see
-//     cluster.BundleClient for why this is one and not N.
+// deliverPullSecrets ensures every (namespace, names) bucket in
+// w.Status.PullSecretDeliveries is delivered to:
+//   - the operator's own cluster (always), one SSA per secret via the local
+//     client into the bucket's namespace,
+//   - each downstream cluster in w.Spec.TargetClusters, as one consolidated
+//     Fleet Bundle per (cluster, namespace) — see cluster.BundleClient for
+//     why we package the namespace + secrets + SA-merge Job together.
+//
+// Blueprint workloads with components in multiple namespaces produce one
+// bucket per distinct namespace and therefore multiple Bundles per downstream
+// cluster (each Bundle's identity is `ai-pullsecrets-<owner>-<cluster>-<ns>`).
 //
 // The "local" string in TargetClusters is skipped on the downstream loop
-// because it's already covered by the unconditional local-write — emitting
-// a Fleet Bundle for "local" would duplicate delivery.
+// because it's already covered by the unconditional local-write.
 func (r *AIWorkloadReconciler) deliverPullSecrets(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
 	factory PullSecretFactory,
 ) error {
-	if w.Spec.TargetNamespace == "" || len(w.Status.PullSecretNames) == 0 || factory == nil {
+	if len(w.Status.PullSecretDeliveries) == 0 || factory == nil {
 		return nil
 	}
 
-	// Build every secret once; a nil result from the factory means "creds
-	// not configured — skip this one". Re-used by both local and downstream
-	// paths so a single round of factory calls produces both views.
-	secrets := make([]*corev1.Secret, 0, len(w.Status.PullSecretNames))
-	for _, name := range w.Status.PullSecretNames {
-		sec, err := factory(w.Spec.TargetNamespace, name)
-		if err != nil {
-			return fmt.Errorf("build pull secret %s: %w", name, err)
-		}
-		if sec == nil {
+	// Pre-build every secret per (namespace, names) so each round of factory
+	// calls produces both the local view and the downstream view; a nil
+	// result from the factory means "creds not configured — skip".
+	type nsBundle struct {
+		namespace string
+		secrets   []*corev1.Secret
+	}
+	bundles := make([]nsBundle, 0, len(w.Status.PullSecretDeliveries))
+	for _, d := range w.Status.PullSecretDeliveries {
+		if d.Namespace == "" {
 			continue
 		}
-		secrets = append(secrets, sec)
+		secrets := make([]*corev1.Secret, 0, len(d.Names))
+		for _, name := range d.Names {
+			sec, err := factory(d.Namespace, name)
+			if err != nil {
+				return fmt.Errorf("build pull secret %s for %s: %w", name, d.Namespace, err)
+			}
+			if sec == nil {
+				continue
+			}
+			secrets = append(secrets, sec)
+		}
+		if len(secrets) > 0 {
+			bundles = append(bundles, nsBundle{namespace: d.Namespace, secrets: secrets})
+		}
 	}
-	if len(secrets) == 0 {
+	if len(bundles) == 0 {
 		return nil
 	}
 
-	// Local cluster — always, one SSA per secret.
+	// Local cluster — always, one SSA per secret per namespace.
 	local := r.localCC()
-	for _, sec := range secrets {
-		if err := local.ApplySecret(ctx, sec); err != nil {
-			return fmt.Errorf("apply pull secret %s to local cluster: %w", sec.Name, err)
+	for _, b := range bundles {
+		for _, sec := range b.secrets {
+			if err := local.ApplySecret(ctx, sec); err != nil {
+				return fmt.Errorf("apply pull secret %s/%s to local cluster: %w", b.namespace, sec.Name, err)
+			}
 		}
 	}
 
-	// Downstream — one consolidated Bundle per cluster. Skip "local" and
-	// empty entries.
+	// Downstream — one consolidated Bundle per (cluster, namespace). Skip
+	// "local" and empty entries.
 	for _, clusterID := range w.Spec.TargetClusters {
 		if clusterID == "" || clusterID == "local" {
 			continue
 		}
-		bc := cluster.NewBundleClient(r.Client, r.Scheme, cluster.BundleClientOptions{
-			ClusterID:      clusterID,
-			FleetWorkspace: "fleet-default",
-			OwnerName:      w.Name,
-			OwnerNamespace: w.Namespace,
-		})
-		if err := bc.ApplyPullSecretBundle(ctx, secrets); err != nil {
-			return fmt.Errorf("apply pull-secret bundle to cluster %s: %w", clusterID, err)
+		for _, b := range bundles {
+			bc := cluster.NewBundleClient(r.Client, r.Scheme, cluster.BundleClientOptions{
+				ClusterID:      clusterID,
+				FleetWorkspace: "fleet-default",
+				OwnerName:      w.Name,
+				OwnerNamespace: w.Namespace,
+				Namespace:      b.namespace,
+			})
+			if err := bc.ApplyPullSecretBundle(ctx, b.secrets); err != nil {
+				return fmt.Errorf("apply pull-secret bundle to cluster %s ns %s: %w", clusterID, b.namespace, err)
+			}
 		}
 	}
 
@@ -341,49 +405,49 @@ func (r *AIWorkloadReconciler) cleanupPullSecretBundles(
 }
 
 // pruneLocalSAImagePullSecrets removes the workload's pull-secret entries
-// from every ServiceAccount in the target namespace on the operator's own
-// cluster. Non-workload entries (e.g. a pre-existing "regcred") are
-// preserved. Used by the finalizer when the AIWorkload is deleted; pairs
-// with cleanupPullSecretBundles which handles downstream pruning via Fleet.
+// from every ServiceAccount in every namespace the workload installed into,
+// on the operator's own cluster. Non-workload entries (e.g. a pre-existing
+// "regcred") are preserved. Used by the finalizer when the AIWorkload is
+// deleted; pairs with cleanupPullSecretBundles which handles downstream
+// pruning via Fleet.
 //
-// Returns nil (no-op) when Status.PullSecretNames is empty: nothing was
-// ever injected, so there's nothing to prune. A pre-status-write crash
-// before any successful reconcile is the only way to reach this branch
-// with stale SA entries — and in that case there are no SA entries either,
-// because injection persists status and SA-merge in the same reconcile.
+// Returns nil (no-op) when Status.PullSecretDeliveries is empty: nothing
+// was ever injected, so there's nothing to prune.
 func (r *AIWorkloadReconciler) pruneLocalSAImagePullSecrets(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
 ) error {
-	if w.Spec.TargetNamespace == "" || len(w.Status.PullSecretNames) == 0 {
-		return nil
-	}
-	ours := make(map[string]struct{}, len(w.Status.PullSecretNames))
-	for _, n := range w.Status.PullSecretNames {
-		ours[n] = struct{}{}
-	}
-
-	var sas corev1.ServiceAccountList
-	if err := r.List(ctx, &sas, client.InNamespace(w.Spec.TargetNamespace)); err != nil {
-		return fmt.Errorf("list SAs in %s: %w", w.Spec.TargetNamespace, err)
-	}
-	for i := range sas.Items {
-		sa := &sas.Items[i]
-		kept := sa.ImagePullSecrets[:0]
-		mutated := false
-		for _, ref := range sa.ImagePullSecrets {
-			if _, isOurs := ours[ref.Name]; isOurs {
-				mutated = true
-				continue
-			}
-			kept = append(kept, ref)
-		}
-		if !mutated {
+	for _, d := range w.Status.PullSecretDeliveries {
+		if d.Namespace == "" || len(d.Names) == 0 {
 			continue
 		}
-		sa.ImagePullSecrets = kept
-		if err := r.Update(ctx, sa); err != nil {
-			return fmt.Errorf("update SA %s/%s: %w", sa.Namespace, sa.Name, err)
+		ours := make(map[string]struct{}, len(d.Names))
+		for _, n := range d.Names {
+			ours[n] = struct{}{}
+		}
+
+		var sas corev1.ServiceAccountList
+		if err := r.List(ctx, &sas, client.InNamespace(d.Namespace)); err != nil {
+			return fmt.Errorf("list SAs in %s: %w", d.Namespace, err)
+		}
+		for i := range sas.Items {
+			sa := &sas.Items[i]
+			kept := sa.ImagePullSecrets[:0]
+			mutated := false
+			for _, ref := range sa.ImagePullSecrets {
+				if _, isOurs := ours[ref.Name]; isOurs {
+					mutated = true
+					continue
+				}
+				kept = append(kept, ref)
+			}
+			if !mutated {
+				continue
+			}
+			sa.ImagePullSecrets = kept
+			if err := r.Update(ctx, sa); err != nil {
+				return fmt.Errorf("update SA %s/%s: %w", sa.Namespace, sa.Name, err)
+			}
 		}
 	}
 	return nil

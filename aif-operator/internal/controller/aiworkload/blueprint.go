@@ -143,7 +143,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
-	w.Status.PullSecretNames = mergePullSecretNames(w.Status.PullSecretNames, created)
+	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}
@@ -637,7 +637,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
-	w.Status.PullSecretNames = mergePullSecretNames(w.Status.PullSecretNames, created)
+	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}

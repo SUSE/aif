@@ -71,6 +71,6 @@ func (r *AIWorkloadReconciler) reconcileAppPullSecrets(
 		return fmt.Errorf("inject pull secrets for App workload %s/%s (vendor=%q): %w",
 			w.Namespace, w.Name, src.Vendor, err)
 	}
-	w.Status.PullSecretNames = mergePullSecretNames(w.Status.PullSecretNames, created)
+	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, w.Spec.TargetNamespace, created)
 	return nil
 }

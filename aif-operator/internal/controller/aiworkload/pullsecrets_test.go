@@ -42,9 +42,14 @@ func TestReconcilePullSecrets_PatchesDefaultSA(t *testing.T) {
 	w := &aiplatformv1alpha1.AIWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
 		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ns},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: ns, Names: []string{secretName}},
+			},
+		},
 	}
 
-	settled, err := r.reconcilePullSecrets(context.Background(), w, []string{secretName})
+	settled, err := r.reconcilePullSecrets(context.Background(), w)
 	if err != nil {
 		t.Fatalf("reconcilePullSecrets: %v", err)
 	}
@@ -250,29 +255,60 @@ func TestRestartImagePullBackOffPods(t *testing.T) {
 	}
 }
 
-func TestMergePullSecretNames(t *testing.T) {
-	cases := []struct {
-		name     string
-		existing []string
-		add      []string
-		want     []string
-	}{
-		{"both empty", nil, nil, nil},
-		{"existing empty, add one", nil, []string{"a"}, []string{"a"}},
-		{"add empty, existing preserved", []string{"a"}, nil, []string{"a"}},
-		{"dedup against existing", []string{"a"}, []string{"a"}, []string{"a"}},
-		{"append new", []string{"a"}, []string{"b"}, []string{"a", "b"}},
-		{"dedup within add list", nil, []string{"a", "b", "a"}, []string{"a", "b"}},
-		{"mixed", []string{"a"}, []string{"b", "a", "c"}, []string{"a", "b", "c"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := mergePullSecretNames(tc.existing, tc.add)
-			if !equalStrings(got, tc.want) {
-				t.Errorf("got %+v want %+v", got, tc.want)
-			}
-		})
-	}
+func TestMergePullSecretDelivery(t *testing.T) {
+	t.Run("empty inputs are no-op", func(t *testing.T) {
+		got := mergePullSecretDelivery(nil, "", nil)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+		got = mergePullSecretDelivery(nil, "ns", nil)
+		if got != nil {
+			t.Errorf("empty names: expected nil, got %v", got)
+		}
+		got = mergePullSecretDelivery(nil, "", []string{"a"})
+		if got != nil {
+			t.Errorf("empty namespace: expected nil, got %v", got)
+		}
+	})
+
+	t.Run("appends a new namespace bucket", func(t *testing.T) {
+		got := mergePullSecretDelivery(nil, "ns-a", []string{"x", "y"})
+		if len(got) != 1 || got[0].Namespace != "ns-a" || !equalStrings(got[0].Names, []string{"x", "y"}) {
+			t.Errorf("got %+v", got)
+		}
+	})
+
+	t.Run("merges names into existing bucket; dedupes", func(t *testing.T) {
+		existing := []aiplatformv1alpha1.PullSecretDelivery{
+			{Namespace: "ns-a", Names: []string{"x"}},
+		}
+		got := mergePullSecretDelivery(existing, "ns-a", []string{"x", "y"})
+		if len(got) != 1 || got[0].Namespace != "ns-a" || !equalStrings(got[0].Names, []string{"x", "y"}) {
+			t.Errorf("got %+v", got)
+		}
+	})
+
+	t.Run("multi-namespace blueprint produces multiple buckets in input order", func(t *testing.T) {
+		got := mergePullSecretDelivery(nil, "ns-a", []string{"x"})
+		got = mergePullSecretDelivery(got, "ns-b", []string{"y", "z"})
+		got = mergePullSecretDelivery(got, "ns-a", []string{"x2"}) // existing bucket appends
+		if len(got) != 2 {
+			t.Fatalf("expected 2 buckets, got %d (%+v)", len(got), got)
+		}
+		if got[0].Namespace != "ns-a" || !equalStrings(got[0].Names, []string{"x", "x2"}) {
+			t.Errorf("bucket[0]: got %+v", got[0])
+		}
+		if got[1].Namespace != "ns-b" || !equalStrings(got[1].Names, []string{"y", "z"}) {
+			t.Errorf("bucket[1]: got %+v", got[1])
+		}
+	})
+
+	t.Run("input dedupe within Names", func(t *testing.T) {
+		got := mergePullSecretDelivery(nil, "ns", []string{"x", "x", "y"})
+		if len(got) != 1 || !equalStrings(got[0].Names, []string{"x", "y"}) {
+			t.Errorf("got %+v", got)
+		}
+	})
 }
 
 func equalStrings(a, b []string) bool {
@@ -310,10 +346,15 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 	w := &aiplatformv1alpha1.AIWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
 		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ns},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: ns, Names: []string{secretName}},
+			},
+		},
 	}
 
 	// Round 1: SA gets patched AND stuck pod bounced — settled=false on both counts.
-	settled, err := r.reconcilePullSecrets(context.Background(), w, []string{secretName})
+	settled, err := r.reconcilePullSecrets(context.Background(), w)
 	if err != nil {
 		t.Fatalf("round 1: %v", err)
 	}
@@ -330,7 +371,7 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 	}
 
 	// Round 2: SA already patched, pod is gone — settled=true.
-	settled, err = r.reconcilePullSecrets(context.Background(), w, []string{secretName})
+	settled, err = r.reconcilePullSecrets(context.Background(), w)
 	if err != nil {
 		t.Fatalf("round 2: %v", err)
 	}
@@ -358,7 +399,9 @@ func TestDeliverPullSecrets_EmitsBundlePerDownstreamCluster(t *testing.T) {
 			TargetClusters:  []string{"c-aaa", "c-bbb"},
 		},
 		Status: aiplatformv1alpha1.AIWorkloadStatus{
-			PullSecretNames: []string{"ngc-secret"},
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "target-ns", Names: []string{"ngc-secret"}},
+			},
 		},
 	}
 
@@ -393,8 +436,11 @@ func TestDeliverPullSecrets_EmitsBundlePerDownstreamCluster(t *testing.T) {
 	for _, b := range bundles.Items {
 		gotNames[b.GetName()] = true
 	}
-	// One consolidated Bundle per (owner, cluster); no per-secret suffix.
-	for _, want := range []string{"ai-pullsecrets-wl-c-aaa", "ai-pullsecrets-wl-c-bbb"} {
+	// One consolidated Bundle per (owner, cluster, target namespace). The
+	// namespace suffix lets blueprints whose components fan across multiple
+	// namespaces produce one Bundle per namespace per cluster without
+	// overwriting each other in fleet-default.
+	for _, want := range []string{"ai-pullsecrets-wl-c-aaa-target-ns", "ai-pullsecrets-wl-c-bbb-target-ns"} {
 		if !gotNames[want] {
 			t.Errorf("missing bundle %q; got %+v", want, gotNames)
 		}
@@ -418,7 +464,9 @@ func TestDeliverPullSecrets_LocalOnlyWhenNoTargetClusters(t *testing.T) {
 			TargetClusters:  nil, // local-only
 		},
 		Status: aiplatformv1alpha1.AIWorkloadStatus{
-			PullSecretNames: []string{"ngc-secret"},
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "target-ns", Names: []string{"ngc-secret"}},
+			},
 		},
 	}
 
@@ -465,7 +513,9 @@ func TestDeliverPullSecrets_SkipsLocalEntryInTargetClusters(t *testing.T) {
 			TargetClusters:  []string{"local", "c-bbb"},
 		},
 		Status: aiplatformv1alpha1.AIWorkloadStatus{
-			PullSecretNames: []string{"ngc-secret"},
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "target-ns", Names: []string{"ngc-secret"}},
+			},
 		},
 	}
 
@@ -514,7 +564,9 @@ func TestDeliverPullSecrets_FactoryReturningNilSkipsThatSecret(t *testing.T) {
 			TargetClusters:  []string{"c-aaa"},
 		},
 		Status: aiplatformv1alpha1.AIWorkloadStatus{
-			PullSecretNames: []string{"ngc-secret"},
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "target-ns", Names: []string{"ngc-secret"}},
+			},
 		},
 	}
 
@@ -558,7 +610,9 @@ func TestDeliverPullSecrets_FactoryErrorPropagates(t *testing.T) {
 			TargetClusters:  []string{"c-aaa"},
 		},
 		Status: aiplatformv1alpha1.AIWorkloadStatus{
-			PullSecretNames: []string{"ngc-secret"},
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "target-ns", Names: []string{"ngc-secret"}},
+			},
 		},
 	}
 
@@ -790,7 +844,11 @@ func TestPruneLocalSAImagePullSecrets(t *testing.T) {
 	w := &aiplatformv1alpha1.AIWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
 		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ns},
-		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretNames: []string{"ngc-secret", "ngc-api"}},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: ns, Names: []string{"ngc-secret", "ngc-api"}},
+			},
+		},
 	}
 	if err := r.pruneLocalSAImagePullSecrets(context.Background(), w); err != nil {
 		t.Fatalf("pruneLocalSAImagePullSecrets: %v", err)
@@ -820,17 +878,25 @@ func TestPruneLocalSAImagePullSecrets(t *testing.T) {
 	}
 }
 
-func TestPruneLocalSAImagePullSecrets_NoTargetNamespaceIsNoOp(t *testing.T) {
+// TestPruneLocalSAImagePullSecrets_EmptyDeliveryNamespaceIsSkipped verifies
+// that PullSecretDelivery entries with an empty Namespace (which shouldn't
+// occur from production code paths, but is worth pinning as a guard) are
+// silently skipped — not an error, just a no-op for that entry.
+func TestPruneLocalSAImagePullSecrets_EmptyDeliveryNamespaceIsSkipped(t *testing.T) {
 	scheme := newTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 	w := &aiplatformv1alpha1.AIWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
 		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ""},
-		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretNames: []string{"ngc-secret"}},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "", Names: []string{"ngc-secret"}},
+			},
+		},
 	}
 	if err := r.pruneLocalSAImagePullSecrets(context.Background(), w); err != nil {
-		t.Errorf("pruneLocalSAImagePullSecrets with empty TargetNamespace: got err %v, want nil", err)
+		t.Errorf("pruneLocalSAImagePullSecrets with empty delivery namespace: got err %v, want nil", err)
 	}
 }
 
@@ -845,7 +911,7 @@ func TestPruneLocalSAImagePullSecrets_EmptyStatusIsNoOp(t *testing.T) {
 	w := &aiplatformv1alpha1.AIWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
 		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: "target-ns"},
-		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretNames: nil},
+		Status:     aiplatformv1alpha1.AIWorkloadStatus{PullSecretDeliveries: nil},
 	}
 	if err := r.pruneLocalSAImagePullSecrets(context.Background(), w); err != nil {
 		t.Fatalf("pruneLocalSAImagePullSecrets: %v", err)
@@ -1027,6 +1093,95 @@ func TestBuildSUSECombinedDockerConfig_HonorsRegistryEndpointsOverride(t *testin
 }
 
 func mapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestDeliverPullSecrets_MultiNamespaceBlueprint covers the case that
+// motivated PullSecretDeliveries: a Blueprint whose components opt in to
+// different BlueprintComponent.TargetNamespace values produces multiple
+// per-namespace buckets in Status. deliverPullSecrets must:
+//   - write the local copy of each secret into its bucket's namespace, and
+//   - emit one consolidated Fleet Bundle per (cluster, namespace), not one
+//     per cluster only (which would clobber the second namespace's bundle
+//     in fleet-default).
+func TestDeliverPullSecrets_MultiNamespaceBlueprint(t *testing.T) {
+	scheme := newTestScheme(t)
+	bundleGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
+	bundleListGVK := schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"}
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(bundleListGVK, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "install-ns", // unused — every secret is in a component namespace
+			TargetClusters:  []string{"c-down"},
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: "comp-a-ns", Names: []string{"ngc-secret"}},
+				{Namespace: "comp-b-ns", Names: []string{"ngc-secret", "ngc-api"}},
+			},
+		},
+	}
+
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+		t.Fatalf("deliverPullSecrets: %v", err)
+	}
+
+	// Local cluster: each component's secrets must land in its OWN namespace.
+	for _, want := range []struct {
+		ns, name string
+	}{
+		{"comp-a-ns", "ngc-secret"},
+		{"comp-b-ns", "ngc-secret"},
+		{"comp-b-ns", "ngc-api"},
+	} {
+		var s corev1.Secret
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: want.ns, Name: want.name}, &s); err != nil {
+			t.Errorf("expected local secret %s/%s: %v", want.ns, want.name, err)
+		}
+	}
+	// And the cross-namespace negative: comp-a-ns must NOT have ngc-api
+	// (only comp-b-ns does), nor should the workload's install-ns have any.
+	var stray corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "comp-a-ns", Name: "ngc-api"}, &stray); err == nil {
+		t.Errorf("unexpected secret comp-a-ns/ngc-api leaked across namespaces")
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "install-ns", Name: "ngc-secret"}, &stray); err == nil {
+		t.Errorf("unexpected secret install-ns/ngc-secret — workload's install-ns shouldn't receive component-scoped deliveries")
+	}
+
+	// Downstream: one Bundle per (cluster, namespace). For one downstream
+	// cluster with two namespaces, that's 2 bundles named
+	// `ai-pullsecrets-wl-c-down-<ns>`.
+	var bundles unstructured.UnstructuredList
+	bundles.SetGroupVersionKind(bundleListGVK)
+	if err := c.List(context.Background(), &bundles, client.InNamespace("fleet-default")); err != nil {
+		t.Fatalf("list bundles: %v", err)
+	}
+	got := map[string]bool{}
+	for _, b := range bundles.Items {
+		got[b.GetName()] = true
+	}
+	for _, want := range []string{
+		"ai-pullsecrets-wl-c-down-comp-a-ns",
+		"ai-pullsecrets-wl-c-down-comp-b-ns",
+	} {
+		if !got[want] {
+			t.Errorf("missing bundle %q; have %+v", want, mapKeysBool(got))
+		}
+	}
+}
+
+func mapKeysBool(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

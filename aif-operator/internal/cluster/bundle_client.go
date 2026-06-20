@@ -3,6 +3,9 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,6 +50,16 @@ type BundleClientOptions struct {
 	OwnerName string
 	// OwnerNamespace is the AIWorkload namespace owning this Bundle.
 	OwnerNamespace string
+	// Namespace is the target namespace this Bundle's secrets are written
+	// into on the downstream cluster. Threaded through to the Bundle's
+	// metadata.name so two ApplyPullSecretBundle calls for the same
+	// (owner, cluster) but different namespaces emit two distinct Bundles
+	// — blueprints whose components fan across multiple namespaces need
+	// one Bundle per namespace, otherwise the second call clobbers the
+	// first in fleet-default. When empty, the bundle name omits the
+	// namespace segment (back-compat: matches the pre-multi-namespace
+	// naming convention for App workloads and single-namespace blueprints).
+	Namespace string
 	// SAMergeImage is the container image used by the Job that patches
 	// every ServiceAccount's imagePullSecrets in the target namespace.
 	// Must contain `kubectl` and `jq` on its PATH. Defaults to the SUSE
@@ -150,7 +163,7 @@ func (b *bundleClient) ApplyPullSecretBundle(ctx context.Context, secrets []*cor
 		"content": saMergeYAML,
 	})
 
-	bundleName := fmt.Sprintf("ai-pullsecrets-%s-%s", b.opts.OwnerName, b.opts.ClusterID)
+	bundleName := pullSecretBundleName(b.opts.OwnerName, b.opts.ClusterID, b.opts.Namespace)
 	bundle := &unstructured.Unstructured{}
 	bundle.SetGroupVersionKind(bundleGVK)
 	bundle.SetName(bundleName)
@@ -187,4 +200,34 @@ func (b *bundleClient) ApplyPullSecretBundle(ctx context.Context, secrets []*cor
 		return fmt.Errorf("apply bundle %s/%s: %w", bundle.GetNamespace(), bundle.GetName(), err)
 	}
 	return nil
+}
+
+// pullSecretBundleName builds the Bundle's metadata.name as
+// `ai-pullsecrets-<owner>-<cluster>` (back-compat, when namespace is empty)
+// or `ai-pullsecrets-<owner>-<cluster>-<namespace>` (multi-namespace case).
+// The result is always a valid DNS-1123 label of ≤63 chars; long inputs are
+// truncated with a deterministic FNV-1a/base36 suffix so distinct namespaces
+// that share a long prefix don't collide on the same truncated name.
+func pullSecretBundleName(owner, clusterID, namespace string) string {
+	base := fmt.Sprintf("ai-pullsecrets-%s-%s", owner, clusterID)
+	if namespace != "" {
+		base = base + "-" + namespace
+	}
+	if len(base) <= 63 {
+		return base
+	}
+	// 63 - 1 (separator) - 6 (hash) = 56 chars of head text.
+	const max = 63
+	const hashLen = 6
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(base))
+	suffix := strconv.FormatUint(uint64(h.Sum32()), 36)
+	if len(suffix) > hashLen {
+		suffix = suffix[:hashLen]
+	}
+	head := strings.TrimRight(base[:max-len(suffix)-1], "-")
+	if head == "" {
+		return suffix
+	}
+	return head + "-" + suffix
 }

@@ -91,11 +91,11 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if len(w.Status.PullSecretNames) > 0 && w.Spec.TargetNamespace != "" {
+	if len(w.Status.PullSecretDeliveries) > 0 {
 		if err := r.deliverPullSecrets(ctx, &w, r.pullSecretFactory(ctx)); err != nil {
 			return ctrl.Result{}, err
 		}
-		settled, err := r.reconcilePullSecrets(ctx, &w, w.Status.PullSecretNames)
+		settled, err := r.reconcilePullSecrets(ctx, &w)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
