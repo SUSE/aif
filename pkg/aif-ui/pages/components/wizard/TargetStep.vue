@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { computed } from 'vue';
+import { useT } from '../../../composables/useT';
 import { RcItemCard } from '@components/RcItemCard';
 import ClusterResourceTable from '../ClusterResourceTable.vue';
 import type { AIWorkloadDeployStrategy } from '../../../types/aiworkload-types';
@@ -21,6 +22,8 @@ interface Emits {
 
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
+
+const t = useT();
 
 const isManageMode = computed(() => props.mode === 'manage');
 const hasNonLocalClusters = computed(() => props.clusters.some(c => c !== 'local'));
@@ -62,7 +65,7 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
 
 <template>
   <div class="target-step">
-    <label class="lbl">Deployment Type</label>
+    <label class="lbl">{{ t('suseai.wizard.form.deploymentType', 'Deployment Type') }}</label>
     <div class="deploy-type-grid">
       <RcItemCard
         v-for="card in deployTypeCards"
@@ -88,7 +91,7 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
       This chart is too large for the Helm deployment method (it exceeds Kubernetes' 1 MiB Secret limit). Use Fleet Bundle or Fleet Git.
     </p>
 
-    <label class="lbl mt-16">{{ isManageMode ? 'Target Cluster' : 'Select Target Cluster(s)' }}</label>
+    <label class="lbl mt-16">{{ isManageMode ? t('suseai.wizard.labels.targetCluster', 'Target Cluster') : t('suseai.wizard.target.selectClusters', 'Select Target Cluster(s)') }}</label>
     <ClusterResourceTable
       :multi-select="!isManageMode"
       :selected-clusters="clusters"
@@ -98,7 +101,7 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
       @update:selected-clusters="isManageMode ? undefined : $emit('update:clusters', $event)"
     />
     <p v-if="isManageMode" class="hint">
-      Target cluster and deployment type are read-only in Manage mode.
+      {{ t('suseai.wizard.target.readOnly', 'Target cluster and deployment type are read-only in Manage mode.') }}
     </p>
   </div>
 </template>

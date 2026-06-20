@@ -135,7 +135,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	if c.Values != nil {
 		_ = json.Unmarshal(c.Values.Raw, &vals)
 	}
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals)
+	// Per-component namespace (ai-factory's componentNamespace helper) lets a
+	// blueprint component override the workload-level TargetNamespace. The
+	// injector and the HelmOp's defaultNamespace below both consume this.
+	ns := componentNamespace(w, c)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals)
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -184,7 +188,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// forcing every resource into it. Fleet's strict `namespace` field rejects
 		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
 		// operator/CRD-bearing charts.
-		_ = unstructured.SetNestedField(ho.Object, w.Spec.TargetNamespace, "spec", "defaultNamespace")
+		_ = unstructured.SetNestedField(ho.Object, ns, "spec", "defaultNamespace")
 		_ = unstructured.SetNestedField(ho.Object, helmSpec, "spec", "helm")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
 		if repoInfo.ClientSecret != "" {
@@ -399,6 +403,14 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc 
 		return "", err
 	}
 
+	// The target namespace may not exist yet — a component pinned to a fixed
+	// namespace is often new, and Fleet only creates it later when the HelmOp
+	// reconciles. The secret Patch below would fail (NotFound) against a missing
+	// namespace, leaving the chart without imagePullSecrets, so ensure it first.
+	if err := r.ensureNamespace(ctx, targetNamespace); err != nil {
+		return "", err
+	}
+
 	dst := &corev1.Secret{}
 	dst.Name = combinedPullSecretName
 	dst.Namespace = targetNamespace
@@ -487,6 +499,19 @@ func (r *AIWorkloadReconciler) buildSUSECombinedDockerConfig(ctx context.Context
 		return nil, fmt.Errorf("marshal suse combined dockerconfigjson: %w", err)
 	}
 	return cfg, nil
+}
+
+// ensureNamespace makes sure the namespace exists. It uses Server-Side Apply
+// (a write that bypasses the client cache) rather than a cached Get: the
+// operator is not granted list/watch on namespaces, so a cached read would
+// force controller-runtime to start a Namespace informer that fails to sync.
+// This mirrors how the API layer ensures the workload namespace.
+func (r *AIWorkloadReconciler) ensureNamespace(ctx context.Context, name string) error {
+	ns := &corev1.Namespace{}
+	ns.APIVersion = "v1"
+	ns.Kind = "Namespace"
+	ns.Name = name
+	return r.Patch(ctx, ns, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator"))
 }
 
 // readSettingsSecretKey reads a single key from a Settings secret ref in the operator namespace.
@@ -607,7 +632,8 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	vals := map[string]any{}
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals)
+	ns := componentNamespace(w, c)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals)
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -644,7 +670,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// forcing every resource into it. Fleet's strict `namespace` field rejects
 		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
 		// operator/CRD-bearing charts.
-		"defaultNamespace": w.Spec.TargetNamespace,
+		"defaultNamespace": ns,
 		"helm":             helmSpec,
 		"targets":          targets,
 	}
@@ -905,4 +931,13 @@ func containsString(list []any, s string) bool {
 		}
 	}
 	return false
+}
+
+// componentNamespace returns the namespace a blueprint component deploys into:
+// the component's own TargetNamespace when set, else the workload's TargetNamespace.
+func componentNamespace(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) string {
+	if c.TargetNamespace != "" {
+		return c.TargetNamespace
+	}
+	return w.Spec.TargetNamespace
 }

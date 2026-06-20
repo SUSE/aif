@@ -237,6 +237,7 @@
 <script lang="ts">
 import { defineComponent, computed, getCurrentInstance, onMounted, ref } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
+import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
 
@@ -373,10 +374,7 @@ export default defineComponent({
       refresh();
     });
 
-    // Translation helper
-    const t = (key: string, fallback: string) => {
-      return store?.getters['i18n/t'](key) || fallback;
-    };
+    const t = useT();
 
     return {
       // State
