@@ -3,6 +3,10 @@ import { buildFleetBundleYAML }                   from './fleet-bundle';
 
 export interface GitPublishParams {
   bundleName:       string;
+  // release is the user-facing Helm release name — threaded through to
+  // buildFleetBundleYAML's spec.helm.releaseName. See FleetBundleParams.release
+  // in services/fleet-bundle.ts for why this is decoupled from bundleName.
+  release:          string;
   chartName:        string;
   chartVersion:     string;
   chartRepoUrl:     string;
@@ -19,6 +23,7 @@ export interface GitPublishParams {
 export async function publishToFleetGit(params: GitPublishParams): Promise<string> {
   const yaml = buildFleetBundleYAML({
     bundleName:       params.bundleName,
+    release:          params.release,
     chartName:        params.chartName,
     chartVersion:     params.chartVersion,
     chartRepoUrl:     params.chartRepoUrl,

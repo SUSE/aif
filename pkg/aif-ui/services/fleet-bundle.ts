@@ -3,6 +3,12 @@ import { TIMEOUT_VALUES } from '../utils/constants';
 
 export interface FleetBundleParams {
   bundleName:              string;
+  // release is the user-facing Helm release name (the value the user picks
+  // in the wizard, defaulted to the chart name). Threaded separately from
+  // bundleName so chart sub-resources templated as `{{ .Release.Name }}-foo`
+  // don't blow past the K8s 63-char DNS-label limit when the bundle name is
+  // long. See decoupling note in createFleetBundle / buildFleetBundleYAML.
+  release:                 string;
   chartRepo:               string; // ClusterRepo name (used to look up repo URL)
   chartRepoUrl:            string; // actual OCI/Helm URL for the bundle spec
   chartName:               string;
@@ -163,6 +169,8 @@ async function upsertFleetHelmOp(store: any, fleetNamespace: string, name: strin
 // buildFleetBundleYAML produces the Fleet HelmOp manifest as a YAML string (used by GitOps path).
 export function buildFleetBundleYAML(params: {
   bundleName:       string;
+  // See FleetBundleParams.release — same rationale on the GitOps path.
+  release:          string;
   chartName:        string;
   chartVersion:     string;
   chartRepoUrl:     string;
@@ -200,7 +208,13 @@ export function buildFleetBundleYAML(params: {
       ...(isOCI ? {} : { chart: params.chartName }),
       version:     params.chartVersion,
       repo:        isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl,
-      releaseName: capReleaseName(params.bundleName),
+      // releaseName uses the user's `release` (not the Fleet bundleName) so
+      // chart sub-resources templated as `{{ .Release.Name }}-foo` fit under
+      // the 63-char DNS-label limit even when bundleName approaches its own
+      // 63-char cap. Pre-decoupling, the longest sub-name in the
+      // nvidia-blueprint-rag chart (`-etcd-headless`, 14 chars) tipped the
+      // overall name over 63. See createFleetBundle for the rationale.
+      releaseName: capReleaseName(params.release),
       values,
       // Disable Fleet's ${ } value templating: we resolve all values ourselves,
       // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
@@ -276,7 +290,14 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     ...(isOCI ? {} : { chart: params.chartName }),
     version:     params.chartVersion,
     repo:        ociRepo,
-    releaseName: capReleaseName(params.bundleName),
+    // releaseName uses the user's `release` (not the Fleet bundleName) so
+    // chart sub-resources templated as `{{ .Release.Name }}-foo` fit under
+    // the 63-char DNS-label limit even when bundleName approaches its own
+    // 63-char cap. Pre-decoupling, the longest sub-name in the
+    // nvidia-blueprint-rag chart (`-etcd-headless`, 14 chars) tipped the
+    // overall name over 63 (release would be ~52 chars + 14 = 66, rejected).
+    // bundleName stays Fleet-unique; releaseName drives chart .Release.Name.
+    releaseName: capReleaseName(params.release),
     values:      addPullSecretsToValues(params.values, pullSecretNames, params.library),
     // Disable Fleet's ${ } value templating: we resolve all values ourselves,
     // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),

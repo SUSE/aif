@@ -106,8 +106,18 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
-		"version":     c.ChartVersion,
-		"releaseName": capReleaseName(bundleName),
+		"version": c.ChartVersion,
+		// releaseName uses the chart name (not the full bundleName) so chart
+		// sub-resources templated as `{{ .Release.Name }}-foo` fit under the
+		// 63-char DNS-label limit. bundleName already includes the workload
+		// name and component slug for uniqueness in fleet-default, so on long
+		// blueprints the bundleName-derived release name burned all the chart's
+		// remaining headroom — e.g. nvidia-blueprint-rag's `-etcd-headless`
+		// (14 chars) tipped a 52-char release past 63 and Kubernetes rejected
+		// the Service. Helm release names are unique per (cluster, namespace),
+		// and Blueprint components are addressed by chart name, so the chart
+		// name alone is the right level of granularity here.
+		"releaseName": capReleaseName(c.ChartName),
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
@@ -614,8 +624,18 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
-		"version":     c.ChartVersion,
-		"releaseName": capReleaseName(bundleName),
+		"version": c.ChartVersion,
+		// releaseName uses the chart name (not the full bundleName) so chart
+		// sub-resources templated as `{{ .Release.Name }}-foo` fit under the
+		// 63-char DNS-label limit. bundleName already includes the workload
+		// name and component slug for uniqueness in fleet-default, so on long
+		// blueprints the bundleName-derived release name burned all the chart's
+		// remaining headroom — e.g. nvidia-blueprint-rag's `-etcd-headless`
+		// (14 chars) tipped a 52-char release past 63 and Kubernetes rejected
+		// the Service. Helm release names are unique per (cluster, namespace),
+		// and Blueprint components are addressed by chart name, so the chart
+		// name alone is the right level of granularity here.
+		"releaseName": capReleaseName(c.ChartName),
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.

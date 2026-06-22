@@ -868,6 +868,7 @@ async function performFleetBundleInstall() {
     await Promise.all(form.value.clusters.map(clusterId =>
       createFleetBundle(store, {
         bundleName:                bundleNamesByCluster[clusterId],
+        release:                   form.value.release,
         chartRepo:                 form.value.chartRepo,
         chartRepoUrl,
         chartName:                 form.value.chartName,
@@ -948,6 +949,7 @@ async function performGitOpsInstall() {
     for (const clusterId of form.value.clusters) {
       await publishToFleetGit({
         bundleName:       bundleNamesByCluster[clusterId],
+        release:          form.value.release,
         chartName:        form.value.chartName,
         chartVersion:     form.value.chartVersion,
         chartRepoUrl,
@@ -1386,6 +1388,7 @@ async function performFleetBundleUpgrade() {
     updateAllProgress(60, 'Updating Fleet Bundle...');
     await createFleetBundle(store, {
       bundleName,
+      release:                  form.value.release,
       chartRepo:                form.value.chartRepo,
       chartRepoUrl,
       chartName:                form.value.chartName,
@@ -1454,6 +1457,7 @@ async function performGitOpsUpgrade() {
 
     await publishToFleetGit({
       bundleName,
+      release:          form.value.release,
       chartName:        form.value.chartName,
       chartVersion:     form.value.chartVersion,
       chartRepoUrl,
