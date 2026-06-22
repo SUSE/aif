@@ -1,17 +1,17 @@
 annotations:
   helm.sh/images: |
-    - image: ghcr.io/suse/aif-operator:0.1.0
+    - image: ghcr.io/suse/aif-operator:0.1.0-dev.3
       name: aif-operator
 apiVersion: v2
 name: aif-operator
-version: 0.1.0
+version: 0.1.0-dev.3
 description: SUSE AI Operator
 type: application
 home: https://github.com/SUSE/suse-ai-lifecycle-manager
 icon: https://raw.githubusercontent.com/SUSE/suse-ai-lifecycle-manager/main/pkg/aif-ui/assets/logo.svg
 sources:
   - https://github.com/SUSE/suse-ai-lifecycle-manager
-appVersion: 0.1.0
+appVersion: 0.1.0-dev.3
 maintainers:
   - url: https://www.suse.com/
     name: SUSE LLC

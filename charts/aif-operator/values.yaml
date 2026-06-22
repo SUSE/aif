@@ -81,10 +81,10 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "0.1.0-dev.2"
+      version: "0.1.0-dev.3"
   extension:
     name: "aif-ui"
-    version: "0.1.0-dev.2"
+    version: "0.1.0-dev.3"
   cleanup:
     image:
       registry: registry.suse.com
