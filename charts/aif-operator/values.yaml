@@ -81,16 +81,16 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "0.1.0-dev.2"
+      version: "0.1.0-dev.3"
       # values are merged onto the aif-ui chart's default values. Useful for
       # overriding the UI image during development:
       #   aiExtension.source.helm.values.image.registry=ghcr.io
       #   aiExtension.source.helm.values.image.repository=thbertoldi/aif-ui
-      #   aiExtension.source.helm.values.image.tag=0.1.0-dev.2
+      #   aiExtension.source.helm.values.image.tag=0.1.0-dev.3
       values: {}
   extension:
     name: "aif-ui"
-    version: "0.1.0-dev.2"
+    version: "0.1.0-dev.3"
   cleanup:
     image:
       registry: registry.suse.com
