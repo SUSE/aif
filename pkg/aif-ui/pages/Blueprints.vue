@@ -71,7 +71,7 @@
                 <div class="tile-meta">
                   <span class="tile-meta-item">{{ componentCount(versions, family) }} apps</span>
                   <span class="tile-meta-sep">·</span>
-                  <Tag :aria-label="`Source: ${ sourceFor(latestFor(versions)) }`">{{ sourceFor(latestFor(versions)) }}</Tag>
+                  <Tag :aria-label="`Source: ${ sourceLabel(versions) }`">{{ sourceLabel(versions) }}</Tag>
                 </div>
               </div>
             </div>
@@ -476,6 +476,10 @@ export default defineComponent({
       return latestVersion(versions);
     }
 
+    function sourceLabel(versions: Blueprint[]): string {
+      return sourceFor(latestFor(versions));
+    }
+
     function toTitleCase(str: string): string {
       return str.replace(/\b\w/g, c => c.toUpperCase());
     }
@@ -534,7 +538,7 @@ export default defineComponent({
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
-      sourceFor,
+      sourceLabel,
       toTitleCase, tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
