@@ -196,6 +196,7 @@ export function buildFleetBundleYAML(params: {
     values.global = { ...(values.global || {}), imagePullSecrets: secrets };
     values.imagePullSecrets = secrets;
   }
+  disableNvidiaChartSecrets(values, params.library);
 
   const isOCI = params.chartRepoUrl.startsWith('oci://');
   const spec: Record<string, any> = {
@@ -298,7 +299,14 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     // overall name over 63 (release would be ~52 chars + 14 = 66, rejected).
     // bundleName stays Fleet-unique; releaseName drives chart .Release.Name.
     releaseName: capReleaseName(params.release),
-    values:      addPullSecretsToValues(params.values, pullSecretNames, params.library),
+    values:      (() => {
+      const v = addPullSecretsToValues(params.values, pullSecretNames, params.library);
+      // addPullSecretsToValues may return params.values unmodified (NVIDIA case);
+      // clone before mutating to keep this function pure w.r.t. caller's input.
+      const cloned = v === params.values ? JSON.parse(JSON.stringify(v)) : v;
+      disableNvidiaChartSecrets(cloned, params.library);
+      return cloned;
+    })(),
     // Disable Fleet's ${ } value templating: we resolve all values ourselves,
     // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
     // which Fleet would otherwise mis-parse as a template function.
@@ -351,4 +359,29 @@ function addPullSecretsToValues(values: Record<string, any>, names: string[], li
     global:           { ...(values.global || {}), imagePullSecrets: secrets },
     imagePullSecrets: secrets,
   };
+}
+
+// disableNvidiaChartSecrets flips the `create` flag on the conventional NVIDIA
+// chart secret blocks so the chart skips templating its own ngc-secret /
+// ngc-api. Otherwise, charts whose `imagePullSecret.password` /
+// `ngcApiSecret.password` default to "" combined with takeOwnership:true on
+// the workload HelmOp end up overwriting the operator-delivered Secret with
+// an empty-password template, breaking image pulls with 403 from nvcr.io.
+//
+// Mutates `values` in place. Safe to call on any vendor; pass library to
+// gate it to NVIDIA charts only.
+function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
+  if (library !== 'nvidia') return;
+  for (const [key, fallbackName] of [
+    ['imagePullSecret', 'ngc-secret'],
+    ['ngcApiSecret',    'ngc-api'],
+  ] as const) {
+    const existing = values[key];
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+      existing.create = false;
+      if (!existing.name) existing.name = fallbackName;
+    } else {
+      values[key] = { create: false, name: fallbackName };
+    }
+  }
 }
