@@ -90,8 +90,10 @@ spec:
                 minLength: 1
                 type: string
               source:
-                description: Source identifies where this blueprint came from (SUSE,
-                  Nvidia, or Custom).
+                description: |-
+                  Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+                  To leave the source unset, omit the field entirely; the enum does not
+                  include the empty string, so setting `source: ""` will fail admission.
                 enum:
                 - SUSE
                 - Nvidia

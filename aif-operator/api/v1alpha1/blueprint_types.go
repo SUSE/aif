@@ -67,6 +67,8 @@ type BlueprintSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 	// Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+	// To leave the source unset, omit the field entirely; the enum does not
+	// include the empty string, so setting `source: ""` will fail admission.
 	// +optional
 	Source BlueprintOrigin `json:"source,omitempty"`
 	// Deprecated marks this blueprint version as deprecated.
