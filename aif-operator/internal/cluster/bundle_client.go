@@ -62,8 +62,10 @@ type BundleClientOptions struct {
 	Namespace string
 	// SAMergeImage is the container image used by the Job that patches
 	// every ServiceAccount's imagePullSecrets in the target namespace.
-	// Must contain `kubectl` and `jq` on its PATH. Defaults to the SUSE
-	// kubectl image when empty.
+	// Must contain `kubectl` on its PATH; the Job script uses only POSIX
+	// shell builtins, `sort`, `tr`, and `kubectl` (no `jq`, `awk`, `sed`
+	// or `grep`) so a minimal kubectl image is sufficient. Defaults to
+	// the SUSE kubectl image when empty.
 	SAMergeImage string
 }
 

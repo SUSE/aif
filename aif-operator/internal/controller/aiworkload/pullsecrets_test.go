@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,7 +30,12 @@ func TestReconcilePullSecrets_PatchesDefaultSA(t *testing.T) {
 
 	objs := []client.Object{
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
-		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: ns}},
+		// SA must carry the Helm management label — operator now scopes
+		// reconcile to chart-managed SAs (review #2).
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Name: "default", Namespace: ns,
+			Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+		}},
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: ns},
 			Type:       corev1.SecretTypeDockerConfigJson,
@@ -66,12 +72,57 @@ func TestReconcilePullSecrets_PatchesDefaultSA(t *testing.T) {
 	}
 }
 
+// TestReconcilePullSecrets_SkipsUnlabeledSA verifies the new label-scope
+// contract: SAs without app.kubernetes.io/managed-by=Helm are NOT patched,
+// even if they share the namespace with the workload.
+func TestReconcilePullSecrets_SkipsUnlabeledSA(t *testing.T) {
+	scheme := newTestScheme(t)
+	ns := "test-ns"
+	secretName := "ngc-secret"
+
+	objs := []client.Object{
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "admin-sa", Namespace: ns}}, // no label
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec:       aiplatformv1alpha1.AIWorkloadSpec{TargetNamespace: ns},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: ns, Names: []string{secretName}},
+			},
+		},
+	}
+	settled, err := r.reconcilePullSecrets(context.Background(), w)
+	if err != nil {
+		t.Fatalf("reconcilePullSecrets: %v", err)
+	}
+	if !settled {
+		t.Errorf("expected settled=true (no SAs matched the Helm label), got false")
+	}
+	var sa corev1.ServiceAccount
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "admin-sa"}, &sa); err != nil {
+		t.Fatalf("get SA: %v", err)
+	}
+	if len(sa.ImagePullSecrets) != 0 {
+		t.Errorf("expected admin-sa.imagePullSecrets to remain empty (unlabeled SAs are out of scope), got %+v", sa.ImagePullSecrets)
+	}
+}
+
 // newTestScheme builds a runtime.Scheme with the types tests in this package need.
 func newTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("add corev1: %v", err)
+	}
+	if err := appsv1.AddToScheme(s); err != nil {
+		// apps/v1 is needed for the ReplicaSet controllerRef the
+		// pod-bounce path resolves and patches with the retry counter.
+		t.Fatalf("add appsv1: %v", err)
 	}
 	if err := aiplatformv1alpha1.AddToScheme(s); err != nil {
 		t.Fatalf("add aiplatform: %v", err)
@@ -142,20 +193,47 @@ func equalRefs(a, b []corev1.LocalObjectReference) bool {
 	return true
 }
 
-// podWithContainerWaiting builds a pod whose main container (or init container
-// if init=true) is in the Waiting state with the given reason.
+// podWithContainerWaiting builds a Helm-labeled pod whose main container
+// (or init container if init=true) is in the Waiting state with the given
+// reason. The pod carries an owner reference to a ReplicaSet named "<name>-rs"
+// so the bounce-cap path has a controller annotation target. Callers that
+// exercise the bounce path must also include the matching ReplicaSet in their
+// fake-client object list (see helmReplicaSet).
 func podWithContainerWaiting(name string, init bool, reason string) *corev1.Pod {
 	cs := corev1.ContainerStatus{
 		Name:  "c",
 		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}},
 	}
-	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns"}}
+	tru := true
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Namespace: "test-ns",
+		Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: "apps/v1", Kind: "ReplicaSet",
+			Name: name + "-rs", UID: types.UID("rs-uid-" + name),
+			Controller: &tru,
+		}},
+	}}
 	if init {
 		p.Status.InitContainerStatuses = []corev1.ContainerStatus{cs}
 	} else {
 		p.Status.ContainerStatuses = []corev1.ContainerStatus{cs}
 	}
 	return p
+}
+
+// helmReplicaSet returns the ReplicaSet a podWithContainerWaiting pod would
+// reference, labeled Helm-managed. Tests must include the corresponding RS
+// in the fake-client objects when they expect the pod-bounce path to run.
+func helmReplicaSet(podName string, annotations map[string]string) *appsv1.ReplicaSet {
+	return &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: podName + "-rs", Namespace: "test-ns",
+			UID:         types.UID("rs-uid-" + podName),
+			Labels:      map[string]string{chartManagedByLabel: chartManagedByHelm},
+			Annotations: annotations,
+		},
+	}
 }
 
 func TestRestartImagePullBackOffPods(t *testing.T) {
@@ -187,8 +265,9 @@ func TestRestartImagePullBackOffPods(t *testing.T) {
 		{
 			name: "Running pod is preserved",
 			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: "test-ns"},
-				Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+				ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: "test-ns",
+					Labels: map[string]string{chartManagedByLabel: chartManagedByHelm}},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
 			},
 			shouldDel: false,
 		},
@@ -201,11 +280,16 @@ func TestRestartImagePullBackOffPods(t *testing.T) {
 
 	scheme := newTestScheme(t)
 	ns := "test-ns"
-	objs := make([]client.Object, 0, len(cases))
+	objs := make([]client.Object, 0, len(cases)*2)
 	wantDel := 0
 	wantRemain := map[string]struct{}{}
 	for _, tc := range cases {
 		objs = append(objs, tc.pod)
+		// Bounce-cap path needs the ReplicaSet to read/patch the counter;
+		// add it for every Helm-owned pod with an OwnerReference.
+		if len(tc.pod.OwnerReferences) > 0 {
+			objs = append(objs, helmReplicaSet(tc.pod.Name, nil))
+		}
 		if tc.shouldDel {
 			wantDel++
 		} else {
@@ -311,6 +395,124 @@ func TestMergePullSecretDelivery(t *testing.T) {
 	})
 }
 
+// TestRestartImagePullBackOffPods_BounceCap verifies the per-controller
+// retry cap (review #2): once chartPodMaxBounces bounces are recorded on
+// the controller's annotation, further pods owned by that controller are
+// left alone so the ImagePullBackOff is visible rather than masked by
+// infinite churn.
+func TestRestartImagePullBackOffPods_BounceCap(t *testing.T) {
+	scheme := newTestScheme(t)
+	ns := "test-ns"
+
+	cases := []struct {
+		name          string
+		preCount      string // annotation value already on the RS
+		expectBounced bool
+		expectNew     string // annotation value after the call
+	}{
+		{name: "no prior bounces", preCount: "", expectBounced: true, expectNew: "1"},
+		{name: "below cap", preCount: "1", expectBounced: true, expectNew: "2"},
+		{name: "at cap-1", preCount: "2", expectBounced: true, expectNew: "3"},
+		{name: "at cap", preCount: "3", expectBounced: false, expectNew: "3"},
+		{name: "above cap", preCount: "5", expectBounced: false, expectNew: "5"},
+		{name: "garbage annotation treated as 0", preCount: "not-a-number", expectBounced: true, expectNew: "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := podWithContainerWaiting("stuck", false, "ImagePullBackOff")
+			var anns map[string]string
+			if tc.preCount != "" {
+				anns = map[string]string{chartPodBounceAnnotation: tc.preCount}
+			}
+			rs := helmReplicaSet("stuck", anns)
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, rs).Build()
+			r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+			bounced, err := r.restartImagePullBackOffPods(context.Background(), ns)
+			if err != nil {
+				t.Fatalf("restartImagePullBackOffPods: %v", err)
+			}
+			gotBounced := bounced > 0
+			if gotBounced != tc.expectBounced {
+				t.Errorf("bounced: got %d (=%v), want %v", bounced, gotBounced, tc.expectBounced)
+			}
+
+			// Check the pod was deleted iff we bounced.
+			var podGot corev1.Pod
+			err = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "stuck"}, &podGot)
+			podGone := errors.Is(err, nil) == false
+			if podGone != tc.expectBounced {
+				t.Errorf("pod deletion: gone=%v, expected bounced=%v", podGone, tc.expectBounced)
+			}
+
+			// Check the annotation reflects the new count.
+			var rsGot appsv1.ReplicaSet
+			if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "stuck-rs"}, &rsGot); err != nil {
+				t.Fatalf("get RS: %v", err)
+			}
+			gotNew := rsGot.Annotations[chartPodBounceAnnotation]
+			if gotNew != tc.expectNew {
+				t.Errorf("annotation: got %q, want %q", gotNew, tc.expectNew)
+			}
+		})
+	}
+}
+
+// TestRestartImagePullBackOffPods_SkipsUnlabeled verifies pods without the
+// Helm management label are NOT touched (review #2).
+func TestRestartImagePullBackOffPods_SkipsUnlabeled(t *testing.T) {
+	scheme := newTestScheme(t)
+	ns := "test-ns"
+	// Pod is in ImagePullBackOff but lacks the Helm label.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "external", Namespace: ns},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "c", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	bounced, err := r.restartImagePullBackOffPods(context.Background(), ns)
+	if err != nil {
+		t.Fatalf("restartImagePullBackOffPods: %v", err)
+	}
+	if bounced != 0 {
+		t.Errorf("expected 0 bounces (pod lacks Helm label), got %d", bounced)
+	}
+	var got corev1.Pod
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "external"}, &got); err != nil {
+		t.Fatalf("pod should still exist, got: %v", err)
+	}
+}
+
+// TestRestartImagePullBackOffPods_SkipsNoControllerRef verifies that
+// chart-labeled pods without a controllerRef are skipped (no counter to
+// track retries on).
+func TestRestartImagePullBackOffPods_SkipsNoControllerRef(t *testing.T) {
+	scheme := newTestScheme(t)
+	ns := "test-ns"
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphan", Namespace: ns,
+			Labels: map[string]string{chartManagedByLabel: chartManagedByHelm}},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "c", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	bounced, err := r.restartImagePullBackOffPods(context.Background(), ns)
+	if err != nil {
+		t.Fatalf("restartImagePullBackOffPods: %v", err)
+	}
+	if bounced != 0 {
+		t.Errorf("expected 0 bounces (no controllerRef to anchor retry counter), got %d", bounced)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -328,18 +530,35 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 	ns := "test-ns"
 	secretName := "ngc-secret"
 
+	tru := true
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
-		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: ns}},
+		// Helm-labeled SA — qualifies for the operator's label-scoped patch path.
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Name: "default", Namespace: ns,
+			Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+		}},
 		// Pod stuck in ImagePullBackOff — should be deleted, settled should be false.
 		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "stuck", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: "stuck", Namespace: ns,
+				Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "apps/v1", Kind: "ReplicaSet",
+					Name: "stuck-rs", UID: "stuck-rs-uid",
+					Controller: &tru,
+				}},
+			},
 			Status: corev1.PodStatus{
 				ContainerStatuses: []corev1.ContainerStatus{
 					{Name: "c", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}},
 				},
 			},
 		},
+		// ReplicaSet target for the bounce-cap annotation.
+		&appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
+			Name: "stuck-rs", Namespace: ns, UID: "stuck-rs-uid",
+			Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+		}},
 	).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 

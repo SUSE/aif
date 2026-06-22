@@ -3,6 +3,7 @@ package aiworkload
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -51,9 +52,18 @@ func (r *AIWorkloadReconciler) reconcilePullSecrets(
 }
 
 // reconcilePullSecretsForNamespace handles a single (namespace, names) pair:
-// list every SA in the namespace, merge the missing pull-secret references,
-// then bounce any pod still stuck in ImagePullBackOff so the kubelet re-reads
-// the SA's imagePullSecrets at admission time.
+// list chart-managed SAs in the namespace, merge the missing pull-secret
+// references, then bounce any chart-managed pod still stuck in
+// ImagePullBackOff so the kubelet re-reads the SA's imagePullSecrets at
+// admission time.
+//
+// Owner scope: SAs and pods are filtered by label
+// app.kubernetes.io/managed-by=Helm so the operator does NOT touch
+// cluster-admin-created resources that happen to share the namespace.
+//
+// Retry bound: the pod-bounce step caps restarts per pod-owner at
+// chartPodMaxBounces — see restartImagePullBackOffPods. Genuinely unpullable
+// images surface as a permanent ImagePullBackOff rather than churning.
 func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 	ctx context.Context,
 	namespace string,
@@ -61,7 +71,10 @@ func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 	l logr.Logger,
 ) (settled bool, err error) {
 	var sas corev1.ServiceAccountList
-	if err := r.List(ctx, &sas, client.InNamespace(namespace)); err != nil {
+	if err := r.List(ctx, &sas,
+		client.InNamespace(namespace),
+		client.MatchingLabels{chartManagedByLabel: chartManagedByHelm},
+	); err != nil {
 		return false, fmt.Errorf("list ServiceAccounts in %s: %w", namespace, err)
 	}
 
@@ -88,6 +101,26 @@ func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 	return settled, nil
 }
 
+// chartManagedByLabel + chartManagedByHelm define the label-selector used to
+// scope SA and pod operations to chart-managed resources (the standard Helm
+// label). Cluster-admin-created SAs and pods are intentionally left alone.
+const (
+	chartManagedByLabel = "app.kubernetes.io/managed-by"
+	chartManagedByHelm  = "Helm"
+
+	// chartPodBounceAnnotation is incremented on a pod's owning controller
+	// (ReplicaSet, StatefulSet, DaemonSet, Job, …) every time the operator
+	// bounces a pod owned by that controller. It is read to decide whether
+	// to keep bouncing or give up.
+	chartPodBounceAnnotation = "ai-platform.suse.com/pull-secret-bounce-count"
+	// chartPodMaxBounces is the hard cap per controller. Once reached, the
+	// operator stops bouncing pods of that controller — the failure
+	// (ImagePullBackOff) stays visible so the user can investigate.
+	// New ReplicaSets (created by a Deployment spec.template change) start
+	// at 0 again, so a chart upgrade naturally resets the counter.
+	chartPodMaxBounces = 3
+)
+
 // mergeImagePullSecrets adds each name to sa.ImagePullSecrets if not already
 // present. Returns true if the SA was mutated. Order: existing entries first
 // (preserved verbatim), then any new names in input order; duplicates in the
@@ -109,16 +142,33 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 	return mutated
 }
 
-// restartImagePullBackOffPods deletes pods in `namespace` whose container
-// statuses report ImagePullBackOff or ErrImagePull. The pod's controller
-// (Deployment, StatefulSet, ReplicaSet, DaemonSet, Job) recreates it; the
-// recreated pod picks up its ServiceAccount's current .imagePullSecrets at
-// admission time. Returns the count of pods deleted.
+// restartImagePullBackOffPods deletes chart-managed pods in `namespace`
+// whose container statuses report ImagePullBackOff or ErrImagePull. The
+// pod's controller (Deployment-owned ReplicaSet, StatefulSet, DaemonSet,
+// Job) recreates it; the recreated pod picks up its ServiceAccount's
+// current .imagePullSecrets at admission time.
+//
+// Owner scope: only pods labeled app.kubernetes.io/managed-by=Helm are
+// considered — pods unrelated to a chart install aren't churned.
+//
+// Retry bound: each bounce increments an annotation
+// (chartPodBounceAnnotation) on the pod's controllerRef. Once the count
+// reaches chartPodMaxBounces, this function stops bouncing pods of that
+// controller — leaving the failure visible as a persistent
+// ImagePullBackOff rather than masking it with churn. A chart upgrade
+// (Deployment spec.template change → new ReplicaSet) naturally resets the
+// counter because the new RS object has no annotation yet. Pods without a
+// controllerRef are skipped (no place to persist the counter).
+//
+// Returns the count of pods deleted this pass.
 func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string) (int, error) {
 	l := log.FromContext(ctx)
 
 	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(namespace)); err != nil {
+	if err := r.List(ctx, &pods,
+		client.InNamespace(namespace),
+		client.MatchingLabels{chartManagedByLabel: chartManagedByHelm},
+	); err != nil {
 		return 0, fmt.Errorf("list pods in %s: %w", namespace, err)
 	}
 
@@ -128,16 +178,84 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		if !isPodImagePullBackOff(p) {
 			continue
 		}
+		cr := metav1.GetControllerOf(p)
+		if cr == nil {
+			l.Info("skipping ImagePullBackOff pod with no controllerRef (cannot track retries)",
+				"namespace", p.Namespace, "name", p.Name)
+			continue
+		}
+		count, owner, err := r.readBounceCount(ctx, p.Namespace, cr)
+		if err != nil {
+			l.Info("could not read bounce counter for controller; will not bounce this round",
+				"namespace", p.Namespace, "pod", p.Name,
+				"controllerKind", cr.Kind, "controllerName", cr.Name, "err", err.Error())
+			continue
+		}
+		if count >= chartPodMaxBounces {
+			l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
+				"namespace", p.Namespace, "pod", p.Name,
+				"controllerKind", cr.Kind, "controllerName", cr.Name,
+				"cap", chartPodMaxBounces)
+			continue
+		}
+		// Increment the controller's counter BEFORE deleting the pod, so
+		// a transient delete failure doesn't double-count, and the cap is
+		// enforced even if this pass partially fails.
+		if err := r.incrementBounceCount(ctx, owner, count+1); err != nil {
+			return bounced, fmt.Errorf("increment bounce counter on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
+		}
 		if err := r.Delete(ctx, p); err != nil {
 			if client.IgnoreNotFound(err) == nil {
 				continue
 			}
 			return bounced, fmt.Errorf("delete pod %s/%s: %w", p.Namespace, p.Name, err)
 		}
-		l.Info("bounced ImagePullBackOff pod", "namespace", p.Namespace, "name", p.Name)
+		l.Info("bounced ImagePullBackOff pod",
+			"namespace", p.Namespace, "name", p.Name,
+			"controllerKind", cr.Kind, "controllerName", cr.Name,
+			"bounce", count+1, "cap", chartPodMaxBounces)
 		bounced++
 	}
 	return bounced, nil
+}
+
+// readBounceCount fetches the pod's owning controller (any Kind) via an
+// unstructured Get and returns the integer value of
+// chartPodBounceAnnotation, plus the owner object itself so the caller can
+// pass it back to incrementBounceCount without a second fetch.
+// Returns (0, owner, nil) when the annotation is absent or unparsable.
+func (r *AIWorkloadReconciler) readBounceCount(ctx context.Context, namespace string, cr *metav1.OwnerReference) (int, *unstructured.Unstructured, error) {
+	gv, err := schema.ParseGroupVersion(cr.APIVersion)
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse controller apiVersion %q: %w", cr.APIVersion, err)
+	}
+	owner := &unstructured.Unstructured{}
+	owner.SetGroupVersionKind(gv.WithKind(cr.Kind))
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: cr.Name}, owner); err != nil {
+		return 0, nil, err
+	}
+	val := owner.GetAnnotations()[chartPodBounceAnnotation]
+	if val == "" {
+		return 0, owner, nil
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		// Bad value — treat as 0 and let the next write overwrite it.
+		return 0, owner, nil
+	}
+	return n, owner, nil
+}
+
+// incrementBounceCount writes newCount onto the owner's
+// chartPodBounceAnnotation. Uses a strategic-merge patch on the annotation
+// only — avoids the spec-level conflict potential of a full Update on an
+// unstructured object the operator doesn't own.
+func (r *AIWorkloadReconciler) incrementBounceCount(ctx context.Context, owner *unstructured.Unstructured, newCount int) error {
+	patch := []byte(fmt.Sprintf(
+		`{"metadata":{"annotations":{%q:%q}}}`,
+		chartPodBounceAnnotation, strconv.Itoa(newCount),
+	))
+	return r.Patch(ctx, owner, client.RawPatch(types.MergePatchType, patch))
 }
 
 func isPodImagePullBackOff(p *corev1.Pod) bool {
@@ -305,7 +423,7 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 // treats this as a no-op.
 //
 // The factory recognizes the three secret names the operator's injectors
-// persist onto Status.PullSecretNames:
+// persist onto Status.PullSecretDeliveries[].Names:
 //   - ngc-secret              (nvidiaInjector dockerconfigjson)
 //   - ngc-api                 (nvidiaInjector Opaque, NGC API keys)
 //   - suse-ai-pull-combined   (suseInjector combined dockerconfigjson)

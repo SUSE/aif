@@ -13,7 +13,8 @@ import (
 
 // reconcileAppPullSecrets runs the vendor-specific secret injector for an
 // App-sourced AIWorkload so the resulting secret names end up on
-// w.Status.PullSecretNames. Unlike the Blueprint path, this does NOT
+// w.Status.PullSecretDeliveries (per-namespace bucket). Unlike the
+// Blueprint path, this does NOT
 // create or patch any HelmOp — App-sourced workloads have their HelmOp
 // (or direct Helm release) written by the UI, not the operator.
 //

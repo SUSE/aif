@@ -108,13 +108,17 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 	}
 	// resources[3] = SA-merge: must include the merger ServiceAccount, Role,
 	// RoleBinding, and Job. The Job's args must reference both secret names
-	// in jq's "wanted" array.
+	// in the DESIRED list the shell script unions with each SA's existing
+	// imagePullSecrets (rendered as newline-separated lines, not as a JSON
+	// array — the JSON is built per-SA from the union, see sa_merge.go).
 	saMerge := contents[3]
 	for _, needle := range []string{
 		"kind: ServiceAccount", "name: ai-pullsecret-merger",
 		"kind: Role", "kind: RoleBinding",
 		"kind: Job", "ai-pullsecret-merge-",
-		`"ngc-api"`, `"ngc-secret"`,
+		"ngc-api", "ngc-secret",
+		// Owner-scope label selector — only chart-managed SAs are patched.
+		"app.kubernetes.io/managed-by=Helm",
 	} {
 		if !strings.Contains(saMerge, needle) {
 			t.Errorf("SA-merge manifest missing %q, got:\n%s", needle, saMerge)

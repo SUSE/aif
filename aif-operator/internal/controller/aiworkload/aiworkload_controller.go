@@ -115,8 +115,9 @@ func (r *AIWorkloadReconciler) reconcileStatus(ctx context.Context, w *aiplatfor
 	}
 	// For App-sourced workloads, run the secret injector before the
 	// strategy-specific status path. The injector only populates
-	// Status.PullSecretNames; the post-reconcile block (line ~92) drives
-	// the actual local-write + downstream Fleet Bundle + SA-merge Job.
+	// Status.PullSecretDeliveries (per-namespace bucket); the
+	// post-reconcile block (line ~92) drives the actual local-write +
+	// downstream Fleet Bundle + SA-merge Job.
 	if w.Spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceApp {
 		if err := r.reconcileAppPullSecrets(ctx, w); err != nil {
 			return ctrl.Result{}, err

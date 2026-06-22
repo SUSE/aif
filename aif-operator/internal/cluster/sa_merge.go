@@ -12,23 +12,39 @@ import (
 
 // buildSAMergeResources returns a multi-document YAML containing the
 // ServiceAccount, Role, RoleBinding, and Job that merge secretNames into
-// every ServiceAccount's imagePullSecrets in the target namespace on the
-// downstream cluster.
+// every chart-managed ServiceAccount's imagePullSecrets in the target
+// namespace on the downstream cluster.
 //
 // Why a Job and not declarative SA manifests: the operator cannot list SAs
 // on a downstream cluster (no remote client today), and a Bundle shipping
 // fully-formed SA manifests would clobber any pre-existing imagePullSecrets
-// the cluster operator added. The Job preserves existing entries and only
-// appends — strategic-merge patch on a ServiceAccount's .imagePullSecrets
-// dedupes by patchMergeKey=name, so re-applying the same desired list is
-// idempotent and pre-existing entries are kept.
+// the cluster operator added.
 //
-// The script uses ONLY kubectl (no jq) so we can pin to a minimal kubectl
-// image. The deliberate compromise: this Job is one-shot — Service
-// Accounts created AFTER the Job runs are NOT patched until the Bundle
-// re-applies. For typical chart-managed workloads where SAs ship with the
-// chart, this is acceptable; a future enhancement could deploy a small
-// controller for continuous reconciliation.
+// IMPORTANT — atomic-list caveat: ServiceAccount.ImagePullSecrets is
+// declared `+listType=atomic` in core/v1 (unlike PodSpec.ImagePullSecrets,
+// which carries patchStrategy:"merge"/patchMergeKey:"name"). A
+// strategic-merge patch on an atomic list performs a wholesale REPLACE, so
+// the Job CANNOT just send its desired list — that would silently wipe any
+// pre-existing entries (e.g. a private-registry pull secret added by the
+// cluster admin). The script therefore does a read-modify-write per SA:
+// read the current names, compute the union with the desired set, and only
+// patch when the union differs (so unchanged SAs don't generate spurious
+// update events).
+//
+// Owner scope: the Job filters SAs by label
+// `app.kubernetes.io/managed-by=Helm` so it only touches chart-created
+// ServiceAccounts. SAs the cluster admin pre-created for other purposes are
+// left alone even if they share the namespace.
+//
+// The script uses ONLY POSIX shell builtins, `sort`, `tr`, and `kubectl`
+// — no `jq`, `awk`, `sed`, or `grep` — so a minimal kubectl image (e.g.
+// `registry.suse.com/suse/kubectl`) is sufficient.
+//
+// The deliberate compromise: this Job is one-shot — ServiceAccounts created
+// AFTER the Job runs are NOT patched until the Bundle re-applies. For
+// typical chart-managed workloads where SAs ship with the chart, this is
+// acceptable; a future enhancement could deploy a small controller for
+// continuous reconciliation.
 //
 // The Job name carries a deterministic hash of (namespace + sorted secret
 // names + image) so any change to the desired state produces a new Job
@@ -60,28 +76,24 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	hashHex := hex.EncodeToString(h.Sum(nil))[:10]
 	jobName := fmt.Sprintf("%s-%s", saMergeJobNamePrefix, hashHex)
 
-	// Build the strategic-merge-patch payload. Strategic merge on a
-	// PodSpec-style list with patchMergeKey=name (which imagePullSecrets is)
-	// dedupes by name: existing entries with the same name are kept, new
-	// names are appended.
-	entries := make([]string, len(sortedNames))
-	for i, n := range sortedNames {
-		entries[i] = fmt.Sprintf(`{"name":%q}`, n)
-	}
-	patchPayload := fmt.Sprintf(`{"imagePullSecrets":[%s]}`, strings.Join(entries, ","))
+	// The Job's shell script reads each SA's current imagePullSecrets and
+	// unions them with this list (one name per line, sorted) before
+	// patching. We render the desired names as a newline-joined literal so
+	// the script can `sort -u` them with the existing set in one pipeline.
+	desiredLines := strings.Join(sortedNames, "\n")
 
 	data := struct {
 		Namespace      string
 		JobName        string
 		ServiceAccount string
 		Image          string
-		PatchPayload   string
+		DesiredNames   string // newline-separated, sorted, unique
 	}{
 		Namespace:      namespace,
 		JobName:        jobName,
 		ServiceAccount: saMergeServiceAccount,
 		Image:          image,
-		PatchPayload:   patchPayload,
+		DesiredNames:   desiredLines,
 	}
 
 	var buf bytes.Buffer
@@ -103,10 +115,18 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 //     means completed Jobs (and their pods) are GC'd after 10 minutes,
 //     keeping the namespace tidy without losing logs immediately.
 //
-// The Job script is intentionally short: list SAs, for each one compute the
-// merged imagePullSecrets via jq (preserve existing, append missing), and
-// strategic-merge-patch the SA only if the list changed. Job-level retries
-// are bounded by backoffLimit=4.
+// The Job script lists chart-managed SAs (label-scoped to
+// app.kubernetes.io/managed-by=Helm) and, for each one:
+//  1. reads the SA's current imagePullSecrets names,
+//  2. computes the sorted union with the desired names (one per line),
+//  3. patches the SA strategic-merge with that FULL union — necessary
+//     because SA.ImagePullSecrets is +listType=atomic and strategic-merge
+//     replaces the whole list (see buildSAMergeResources for the design
+//     rationale and the atomic-list caveat),
+//  4. skips the patch when the union equals the existing set, so unchanged
+//     SAs don't generate spurious update events on re-apply.
+//
+// Job-level retries are bounded by backoffLimit=4.
 var saMergeTemplate = template.Must(template.New("sa-merge").Parse(`apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -175,9 +195,33 @@ spec:
           args:
             - |
               set -eu
-              PATCH='{{ .PatchPayload }}'
-              for sa in $(kubectl -n {{ .Namespace }} get sa -o jsonpath='{.items[*].metadata.name}'); do
-                echo "patching $sa with $PATCH"
+              # Desired names, one per line, sorted unique (rendered by the operator).
+              DESIRED='{{ .DesiredNames }}'
+              # Only patch chart-managed SAs; cluster-admin-created SAs in the
+              # namespace are left alone. See buildSAMergeResources comments.
+              for sa in $(kubectl -n {{ .Namespace }} get sa -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{.items[*].metadata.name}'); do
+                # Read SA's current imagePullSecrets names, one per line.
+                EXISTING=$(kubectl -n {{ .Namespace }} get sa "$sa" -o jsonpath='{range .imagePullSecrets[*]}{.name}{"\n"}{end}')
+                # Union: existing + desired, deduped + sorted. tr+sort handles
+                # empty EXISTING (no .imagePullSecrets field) cleanly.
+                UNION=$(printf '%s\n%s\n' "$EXISTING" "$DESIRED" | tr ' ' '\n' | sort -u | tr -s '\n' ' ')
+                EXISTING_SORTED=$(printf '%s\n' "$EXISTING" | tr ' ' '\n' | sort -u | tr -s '\n' ' ')
+                if [ "$UNION" = "$EXISTING_SORTED" ]; then
+                  echo "$sa: already has desired imagePullSecrets, skipping"
+                  continue
+                fi
+                # Build JSON array from the unioned names (POSIX sh, no jq).
+                JSON=''
+                SEP=''
+                for n in $UNION; do
+                  JSON="${JSON}${SEP}{\"name\":\"$n\"}"
+                  SEP=','
+                done
+                PATCH="{\"imagePullSecrets\":[$JSON]}"
+                echo "$sa: patching with $PATCH"
+                # Strategic-merge here is REPLACE-semantics on this atomic
+                # list, but we send the full union so the end state is
+                # correct. See buildSAMergeResources doc.
                 kubectl -n {{ .Namespace }} patch sa "$sa" --type=strategic -p "$PATCH"
               done
       volumes:
