@@ -14,7 +14,7 @@ export const i18nMixin = defineComponent({
      * @param params Parameters for string interpolation
      * @param locale Locale to use (defaults to current locale)
      */
-    t(key: string, params?: Record<string, any>, locale?: string): string {
+    t(key: string, params?: Record<string, unknown>, locale?: string): string {
       return t(key, params, locale);
     },
 

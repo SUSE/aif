@@ -191,7 +191,7 @@ export interface AppNotification {
 export interface NotificationAction {
   label: string;
   action: string; // action name to dispatch
-  payload?: any;
+  payload?: unknown;
   primary?: boolean;
 }
 
@@ -246,7 +246,7 @@ export interface InstallAppPayload {
   clusterId: string;
   namespace: string;
   releaseName: string;
-  values?: Record<string, any>;
+  values?: Record<string, unknown>;
   chartVersion?: string;
 }
 
@@ -255,7 +255,7 @@ export interface UpgradeAppPayload {
   clusterId: string;
   namespace: string;
   releaseName: string;
-  values?: Record<string, any>;
+  values?: Record<string, unknown>;
   chartVersion?: string;
   resetValues?: boolean;
 }

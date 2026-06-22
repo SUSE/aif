@@ -1,7 +1,11 @@
 <template>
   <div class="cluster-resource-table">
     <!-- Requirements display -->
-    <div v-if="appRequirements" class="requirements-info" :class="{ 'requirements-estimated': isUsingDefaultRequirements }">
+    <div
+      v-if="appRequirements"
+      class="requirements-info"
+      :class="{ 'requirements-estimated': isUsingDefaultRequirements }"
+    >
       <span class="requirements-label">
         {{ isUsingDefaultRequirements ? 'Estimated Requirements:' : 'Requirements:' }}
       </span>
@@ -11,24 +15,42 @@
         <template v-if="appRequirements.gpu"> • {{ appRequirements.gpu }}GB GPU Memory</template>
         • {{ appRequirements.storage }}GB Storage
       </span>
-      <div v-if="isUsingDefaultRequirements" class="requirements-note">
+      <div
+        v-if="isUsingDefaultRequirements"
+        class="requirements-note"
+      >
         Using conservative estimates - actual requirements may vary
       </div>
     </div>
 
     <!-- Loading state -->
-    <div v-if="loading" class="table-loading">
-      <div class="loading-text">Checking cluster resources...</div>
+    <div
+      v-if="loading"
+      class="table-loading"
+    >
+      <div class="loading-text">
+        Checking cluster resources...
+      </div>
     </div>
 
     <!-- Error state -->
-    <div v-else-if="error" class="table-error">
-      <div class="error-text">{{ error }}</div>
-      <div class="error-hint">Showing basic cluster information only</div>
+    <div
+      v-else-if="error"
+      class="table-error"
+    >
+      <div class="error-text">
+        {{ error }}
+      </div>
+      <div class="error-hint">
+        Showing basic cluster information only
+      </div>
     </div>
 
     <!-- Cluster selection table -->
-    <div v-else-if="clusters.length > 0" class="table-container">
+    <div
+      v-else-if="clusters.length > 0"
+      class="table-container"
+    >
       <table class="cluster-table table">
         <thead>
           <tr>
@@ -43,12 +65,24 @@
                 @update:value="toggleSelectAllCompatible"
               />
             </th>
-            <th class="col-cluster">Cluster</th>
-            <th class="col-nodes">Nodes</th>
-            <th class="col-cpu">CPU</th>
-            <th class="col-memory">Memory</th>
-            <th class="col-gpu">GPU</th>
-            <th class="col-status">Status</th>
+            <th class="col-cluster">
+              Cluster
+            </th>
+            <th class="col-nodes">
+              Nodes
+            </th>
+            <th class="col-cpu">
+              CPU
+            </th>
+            <th class="col-memory">
+              Memory
+            </th>
+            <th class="col-gpu">
+              GPU
+            </th>
+            <th class="col-status">
+              Status
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -69,7 +103,10 @@
           >
             <td class="col-select">
               <!-- Checkbox for multi-select mode -->
-              <span v-if="multiSelect" @click.stop>
+              <span
+                v-if="multiSelect"
+                @click.stop
+              >
                 <Checkbox
                   :value="isClusterSelected(cluster.clusterId)"
                   :disabled="disabled || cluster.status === 'unavailable'"
@@ -84,19 +121,27 @@
                 :value="cluster.clusterId"
                 :checked="isClusterSelected(cluster.clusterId)"
                 :disabled="disabled || cluster.status === 'unavailable'"
-                @change="selectSingleCluster(cluster.clusterId)"
                 class="cluster-radio"
+                @change="selectSingleCluster(cluster.clusterId)"
               />
             </td>
             <td class="col-cluster">
-              <div class="cluster-name">{{ cluster.name }}</div>
+              <div class="cluster-name">
+                {{ cluster.name }}
+              </div>
             </td>
             <td class="col-nodes">
               <span v-if="cluster.nodeCount > 0">{{ cluster.nodeCount }}</span>
-              <span v-else class="no-resource">—</span>
+              <span
+                v-else
+                class="no-resource"
+              >—</span>
             </td>
             <td class="col-cpu">
-              <div v-if="cluster.resources.cpu.total > 0" class="resource-bar-container">
+              <div
+                v-if="cluster.resources.cpu.total > 0"
+                class="resource-bar-container"
+              >
                 <ProgressBarMulti
                   :values="[{ color: getResourceBarColor(cluster.resources.cpu.used, cluster.resources.cpu.total), value: cluster.resources.cpu.used }]"
                   :max="cluster.resources.cpu.total"
@@ -106,10 +151,16 @@
                   {{ Math.ceil((cluster.resources.cpu.used / cluster.resources.cpu.total) * 100) }}%
                 </div>
               </div>
-              <span v-else class="no-resource">Unknown</span>
+              <span
+                v-else
+                class="no-resource"
+              >Unknown</span>
             </td>
             <td class="col-memory">
-              <div v-if="cluster.resources.memory.total > 0" class="resource-bar-container">
+              <div
+                v-if="cluster.resources.memory.total > 0"
+                class="resource-bar-container"
+              >
                 <ProgressBarMulti
                   :values="[{ color: getResourceBarColor(cluster.resources.memory.used, cluster.resources.memory.total), value: cluster.resources.memory.used }]"
                   :max="cluster.resources.memory.total"
@@ -119,10 +170,16 @@
                   {{ Math.ceil((cluster.resources.memory.used / cluster.resources.memory.total) * 100) }}%
                 </div>
               </div>
-              <span v-else class="no-resource">Unknown</span>
+              <span
+                v-else
+                class="no-resource"
+              >Unknown</span>
             </td>
             <td class="col-gpu">
-              <div v-if="cluster.resources.gpu && cluster.resources.gpu.total > 0" class="resource-bar-container">
+              <div
+                v-if="cluster.resources.gpu && cluster.resources.gpu.total > 0"
+                class="resource-bar-container"
+              >
                 <ProgressBarMulti
                   :values="[{ color: getResourceBarColor(cluster.resources.gpu.used, cluster.resources.gpu.total), value: cluster.resources.gpu.used }]"
                   :max="cluster.resources.gpu.total"
@@ -132,10 +189,16 @@
                   {{ Math.ceil((cluster.resources.gpu.used / cluster.resources.gpu.total) * 100) }}%
                 </div>
               </div>
-              <span v-else class="no-resource">—</span>
+              <span
+                v-else
+                class="no-resource"
+              >—</span>
             </td>
             <td class="col-status">
-              <StatusBadge :status="getStatusBadgeStatus(cluster.status)" :title="cluster.statusMessage" />
+              <StatusBadge
+                :status="getStatusBadgeStatus(cluster.status)"
+                :title="cluster.statusMessage"
+              />
             </td>
           </tr>
         </tbody>
@@ -143,36 +206,71 @@
     </div>
 
     <!-- No clusters state -->
-    <div v-else class="no-clusters">
-      <div class="no-clusters-text">No clusters available</div>
-      <div class="no-clusters-hint">Check your cluster connections and permissions</div>
+    <div
+      v-else
+      class="no-clusters"
+    >
+      <div class="no-clusters-text">
+        No clusters available
+      </div>
+      <div class="no-clusters-hint">
+        Check your cluster connections and permissions
+      </div>
     </div>
 
     <!-- Selected cluster details (single-select mode) -->
-    <div v-if="!multiSelect && selectedClusters.length === 1 && selectedClusterInfo" class="selected-info">
-      <div class="selected-header">Selected: {{ selectedClusterInfo.name }}</div>
-      <div class="selected-details" :class="`details-${selectedClusterInfo.status}`">
-        <div v-if="selectedClusterInfo.status === 'compatible'" class="status-message">
+    <div
+      v-if="!multiSelect && selectedClusters.length === 1 && selectedClusterInfo"
+      class="selected-info"
+    >
+      <div class="selected-header">
+        Selected: {{ selectedClusterInfo.name }}
+      </div>
+      <div
+        class="selected-details"
+        :class="`details-${selectedClusterInfo.status}`"
+      >
+        <div
+          v-if="selectedClusterInfo.status === 'compatible'"
+          class="status-message"
+        >
           This cluster meets all requirements
         </div>
-        <div v-else-if="selectedClusterInfo.status === 'limited'" class="status-message">
+        <div
+          v-else-if="selectedClusterInfo.status === 'limited'"
+          class="status-message"
+        >
           {{ selectedClusterInfo.statusMessage || 'Limited compatibility' }}
         </div>
-        <div v-else-if="selectedClusterInfo.status === 'insufficient'" class="status-message">
+        <div
+          v-else-if="selectedClusterInfo.status === 'insufficient'"
+          class="status-message"
+        >
           {{ selectedClusterInfo.statusMessage || 'Insufficient resources' }}
         </div>
-        <div v-else-if="selectedClusterInfo.status === 'error'" class="status-message">
+        <div
+          v-else-if="selectedClusterInfo.status === 'error'"
+          class="status-message"
+        >
           {{ selectedClusterInfo.statusMessage || 'Unable to check resources' }}
-          <div class="status-hint">You can still install, but resource requirements cannot be verified.</div>
+          <div class="status-hint">
+            You can still install, but resource requirements cannot be verified.
+          </div>
         </div>
-        <div v-else-if="selectedClusterInfo.status === 'unavailable'" class="status-message">
+        <div
+          v-else-if="selectedClusterInfo.status === 'unavailable'"
+          class="status-message"
+        >
           This cluster is not ready and cannot be selected for deployment.
         </div>
       </div>
     </div>
 
     <!-- Selected clusters display (multi-select mode) -->
-    <div v-if="multiSelect && selectedClusters.length > 0" class="selected-info">
+    <div
+      v-if="multiSelect && selectedClusters.length > 0"
+      class="selected-info"
+    >
       <div class="selected-header">
         Selected: {{ selectedClusters.length }} cluster{{ selectedClusters.length !== 1 ? 's' : '' }}
       </div>
@@ -187,12 +285,15 @@
           <button
             class="chip-remove"
             :disabled="disabled"
-            @click="toggleCluster(clusterId)"
             title="Remove"
+            @click="toggleCluster(clusterId)"
           >×</button>
         </span>
       </div>
-      <div v-if="hasIncompatibleSelections" class="selected-warning">
+      <div
+        v-if="hasIncompatibleSelections"
+        class="selected-warning"
+      >
         Some selected clusters may have insufficient resources
       </div>
     </div>
@@ -212,6 +313,7 @@ import {
   getDefaultAppResourceRequirements,
   type ClusterResourceSummary
 } from '../../services/cluster-resources';
+import logger from '../../utils/logger';
 
 let tableIdCounter = 0;
 
@@ -292,10 +394,11 @@ export default defineComponent({
         loading.value = true;
         error.value = null;
 
-        const vm = getCurrentInstance()!.proxy as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const vm = getCurrentInstance()?.proxy as any;
         const store = vm.$store;
 
-        console.log('[SUSE-AI] ClusterResourceTable: Loading cluster resources...');
+        logger.debug('[SUSE-AI] ClusterResourceTable: Loading cluster resources...');
         const clusterSummaries = await getAllClusterResourceMetrics(store);
 
         // Check compatibility for each cluster
@@ -304,24 +407,25 @@ export default defineComponent({
         );
 
         clusters.value = clustersWithCompatibility;
-        console.log('[SUSE-AI] ClusterResourceTable: Loaded', clusters.value.length, 'clusters');
+        logger.debug(`[SUSE-AI] ClusterResourceTable: Loaded ${clusters.value.length} clusters`);
 
         // Auto-select first ready cluster if none selected
         if (props.selectedClusters.length === 0 && clustersWithCompatibility.length > 0) {
           const firstSelectable = clustersWithCompatibility.find(c => c.status !== 'unavailable');
           if (firstSelectable) {
             emitSelection([firstSelectable.clusterId]);
-            console.log('[SUSE-AI] ClusterResourceTable: Auto-selected first cluster:', firstSelectable.clusterId);
+            logger.debug(`[SUSE-AI] ClusterResourceTable: Auto-selected first cluster: ${firstSelectable.clusterId}`);
           }
         }
-      } catch (e: any) {
-        console.error('[SUSE-AI] ClusterResourceTable: Failed to load cluster resources:', e);
-        error.value = e.message || 'Failed to load cluster information';
+      } catch (e: unknown) {
+        logger.error('[SUSE-AI] ClusterResourceTable: Failed to load cluster resources', e);
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to load cluster information';
 
         // Try to load basic cluster list as fallback — use getAllClusters so readiness
         // is applied and unhealthy clusters stay non-selectable even in the error path.
         try {
-          const vm = getCurrentInstance()!.proxy as any;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const vm = getCurrentInstance()?.proxy as any;
           const store = vm.$store;
           const basicClusters = await getAllClusters(store);
           clusters.value = (basicClusters || []).map((c) => ({
@@ -336,7 +440,7 @@ export default defineComponent({
             nodes:         []
           }));
         } catch (fallbackError) {
-          console.error('[SUSE-AI] ClusterResourceTable: Fallback also failed:', fallbackError);
+          logger.error('[SUSE-AI] ClusterResourceTable: Fallback also failed', fallbackError);
         }
       } finally {
         loading.value = false;

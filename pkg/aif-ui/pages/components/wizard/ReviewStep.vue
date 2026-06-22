@@ -26,11 +26,27 @@
       <div class="detail-item full-width clusters-row">
         <label>
           {{ t('suseai.wizard.labels.targetCluster', 'Target Cluster') }}{{ clusters.length > 1 ? 's' : '' }}
-          <span v-if="clusters.length > 1" class="cluster-count">({{ clusters.length }})</span>
+          <span
+            v-if="clusters.length > 1"
+            class="cluster-count"
+          >({{ clusters.length }})</span>
         </label>
-        <div v-if="clusters.length === 0" class="no-clusters">— none —</div>
-        <div v-else-if="clusters.length === 1" class="single-cluster">{{ clusters[0] }}</div>
-        <div v-else class="cluster-chips">
+        <div
+          v-if="clusters.length === 0"
+          class="no-clusters"
+        >
+          — none —
+        </div>
+        <div
+          v-else-if="clusters.length === 1"
+          class="single-cluster"
+        >
+          {{ clusters[0] }}
+        </div>
+        <div
+          v-else
+          class="cluster-chips"
+        >
           <span
             v-for="clusterId in clusters"
             :key="clusterId"
@@ -41,7 +57,9 @@
     </div>
 
     <!-- Configuration -->
-    <h3 class="mt-30">{{ t('suseai.wizard.sections.configuration', 'Configuration') }}</h3>
+    <h3 class="mt-30">
+      {{ t('suseai.wizard.sections.configuration', 'Configuration') }}
+    </h3>
     <YamlEditor
       v-model:value="localValues"
       :as-object="true"
@@ -64,11 +82,11 @@ interface Props {
   chartName: string;
   chartVersion: string;
   clusters: string[]; // Array-based selection for both modes
-  values: Record<string, any>;
+  values: Record<string, unknown>;
 }
 
 interface Emits {
-  (e: 'update:values', values: Record<string, any>): void;
+  (e: 'update:values', values: Record<string, unknown>): void;
   (e: 'values-edited'): void;
 }
 
@@ -79,7 +97,7 @@ const t = useT();
 
 const localValues = computed({
   get: () => props.values,
-  set: (value: Record<string, any>) => emit('update:values', value)
+  set: (value: Record<string, unknown>) => emit('update:values', value)
 });
 </script>
 

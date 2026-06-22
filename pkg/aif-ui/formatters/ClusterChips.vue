@@ -1,6 +1,12 @@
 <template>
-  <div class="cluster-chips" v-if="clusters.length">
-    <small v-if="showLabel" class="status-label">{{ label }}:</small>
+  <div
+    v-if="clusters.length"
+    class="cluster-chips"
+  >
+    <small
+      v-if="showLabel"
+      class="status-label"
+    >{{ label }}:</small>
     <span 
       v-for="cluster in clusters" 
       :key="cluster"
@@ -21,6 +27,7 @@
 import { defineComponent, getCurrentInstance } from 'vue';
 import type { PropType } from 'vue';
 import type { ClusterInfo } from '../types/rancher-types';
+import logger from '../utils/logger';
 
 export default defineComponent({
   name: 'ClusterChips',
@@ -68,6 +75,7 @@ export default defineComponent({
   
   setup(props, { emit }) {
     const vm = getCurrentInstance();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const $router = (vm as any)?.proxy?.$router;
     
     const getClusterDisplayName = (clusterId: string): string => {
@@ -96,10 +104,10 @@ export default defineComponent({
       if ($router && props.navigationPath) {
         try {
           const targetUrl = props.navigationPath.replace('{clusterId}', clusterId);
-          console.log('[SUSE-AI] Navigating to cluster:', { clusterId, targetUrl });
+          logger.debug('[SUSE-AI] Navigating to cluster', { data: { clusterId, targetUrl } });
           $router.push(targetUrl);
         } catch (err) {
-          console.error('[SUSE-AI] Failed to navigate to cluster:', err);
+          logger.error('[SUSE-AI] Failed to navigate to cluster', err);
         }
       }
     };

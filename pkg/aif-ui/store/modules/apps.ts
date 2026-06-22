@@ -6,8 +6,8 @@
 
 import { AppState } from '../types/state-types';
 import { AppSummary, AppInstallationInfo } from '../../types/app-types';
-import AppResource from '../../models/app/app-resource';
 import { fetchSuseAiApps } from '../../services/app-collection';
+import logger from '../../utils/logger';
 
 // === Initial State ===
 function createInitialState(): AppState {
@@ -78,11 +78,11 @@ const getters = {
     return result;
   },
   
-  installedApps: (state: AppState, getters: any, rootState: any): AppSummary[] => {
+  installedApps: (state: AppState, _getters: unknown, _rootState: unknown): AppSummary[] => {
     return Object.values(state.apps).filter(app => app.flags.isInstalled);
   },
-  
-  availableApps: (state: AppState, getters: any, rootState: any): AppSummary[] => {
+
+  availableApps: (state: AppState, _getters: unknown, _rootState: unknown): AppSummary[] => {
     return Object.values(state.apps).filter(app => !app.flags.isInstalled);
   },
   
@@ -364,7 +364,8 @@ const mutations = {
 
 // === Actions ===
 const actions = {
-  async fetchAllApps({ commit, dispatch, rootState }: any, payload: { force?: boolean, clusterId?: string } = {}) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async fetchAllApps({ commit }: any, payload: { force?: boolean, clusterId?: string } = {}) {
     commit('SET_LOADING', { loading: true, type: 'all' });
 
     try {
@@ -373,6 +374,7 @@ const actions = {
       const apps = await fetchSuseAiApps(clusterId);
 
       // Convert raw app data to AppSummary format
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const appSummaries: AppSummary[] = apps.map((app: any) => ({
         id: app.slug_name || app.name,
         name: app.name,
@@ -421,20 +423,23 @@ const actions = {
       commit('SET_APPS', appSummaries);
       commit('SET_LOADING', { loading: false, type: 'all' });
       
-    } catch (error: any) {
-      console.error('Failed to fetch apps:', error);
-      commit('SET_ERROR', { appId: 'global', error: error.message || 'Failed to fetch apps' });
+    } catch (error) {
+      const err = error as Error;
+      logger.error('Failed to fetch apps', error);
+      commit('SET_ERROR', { appId: 'global', error: err.message || 'Failed to fetch apps' });
       commit('SET_LOADING', { loading: false, type: 'all' });
       throw error;
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async fetchApp({ commit }: any, appId: string): Promise<AppSummary> {
     commit('SET_LOADING', { appId, loading: true });
     
     try {
       // Fetch specific app details
       // For now, return placeholder data until integrated with existing services
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const app: any = null; // Placeholder - will be replaced with actual service calls
       
       if (!app) {
@@ -480,30 +485,35 @@ const actions = {
       
       return appSummary;
       
-    } catch (error: any) {
-      console.error(`Failed to fetch app ${appId}:`, error);
-      commit('SET_ERROR', { appId, error: error.message || 'Failed to fetch app' });
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Failed to fetch app ${appId}`, error);
+      commit('SET_ERROR', { appId, error: err.message || 'Failed to fetch app' });
       commit('SET_LOADING', { appId, loading: false });
       throw error;
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async searchApps({ commit, getters }: any, query: string): Promise<AppSummary[]> {
     // Update search filter
     commit('SET_FILTERS', { searchText: query });
-    
+
     // Return search results
     return getters.searchResults;
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateFilters({ commit }: any, filters: Partial<AppState['filters']>) {
     commit('SET_FILTERS', filters);
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async refreshApps({ dispatch }: any) {
     await dispatch('fetchAllApps', { force: true });
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   clearCache({ commit }: any) {
     commit('CLEAR_CACHE');
   }

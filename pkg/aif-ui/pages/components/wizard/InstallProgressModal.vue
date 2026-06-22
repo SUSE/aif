@@ -1,9 +1,14 @@
 <template>
-  <div v-if="show" class="install-progress-overlay">
+  <div
+    v-if="show"
+    class="install-progress-overlay"
+  >
     <div class="install-progress-modal">
       <div class="modal-header">
         <h2>{{ title }}</h2>
-        <p class="modal-subtitle">{{ subtitle }}</p>
+        <p class="modal-subtitle">
+          {{ subtitle }}
+        </p>
       </div>
 
       <!-- Overall Progress -->
@@ -30,17 +35,41 @@
           :class="`status-${item.status}`"
         >
           <div class="cluster-status-icon">
-            <i v-if="item.status === 'pending'" class="icon icon-clock" />
-            <i v-else-if="item.status === 'installing'" class="icon icon-spinner icon-spin" />
-            <i v-else-if="item.status === 'success'" class="icon icon-checkmark" />
-            <i v-else-if="item.status === 'failed'" class="icon icon-close" />
+            <i
+              v-if="item.status === 'pending'"
+              class="icon icon-clock"
+            />
+            <i
+              v-else-if="item.status === 'installing'"
+              class="icon icon-spinner icon-spin"
+            />
+            <i
+              v-else-if="item.status === 'success'"
+              class="icon icon-checkmark"
+            />
+            <i
+              v-else-if="item.status === 'failed'"
+              class="icon icon-close"
+            />
           </div>
           <div class="cluster-info">
-            <div class="cluster-name">{{ item.clusterName }}</div>
-            <div class="cluster-message">{{ item.message }}</div>
-            <div v-if="item.error" class="cluster-error">{{ item.error }}</div>
+            <div class="cluster-name">
+              {{ item.clusterName }}
+            </div>
+            <div class="cluster-message">
+              {{ item.message }}
+            </div>
+            <div
+              v-if="item.error"
+              class="cluster-error"
+            >
+              {{ item.error }}
+            </div>
           </div>
-          <div class="cluster-progress-bar" v-if="item.status === 'installing'">
+          <div
+            v-if="item.status === 'installing'"
+            class="cluster-progress-bar"
+          >
             <div class="mini-progress-track">
               <div
                 class="mini-progress-fill"
@@ -55,34 +84,52 @@
       <div class="modal-actions">
         <!-- All succeeded -->
         <template v-if="allSucceeded">
-          <button class="btn role-primary" @click="$emit('done')">
+          <button
+            class="btn role-primary"
+            @click="$emit('done')"
+          >
             Done
           </button>
         </template>
 
         <!-- All failed -->
         <template v-else-if="allFailed">
-          <button class="btn role-secondary" @click="$emit('cancel')">
+          <button
+            class="btn role-secondary"
+            @click="$emit('cancel')"
+          >
             Cancel
           </button>
-          <button class="btn role-primary" @click="$emit('retry-all')">
+          <button
+            class="btn role-primary"
+            @click="$emit('retry-all')"
+          >
             Retry All
           </button>
         </template>
 
         <!-- Partial failure -->
         <template v-else-if="hasFailures && hasSuccesses">
-          <button class="btn role-secondary" @click="$emit('retry-failed')">
+          <button
+            class="btn role-secondary"
+            @click="$emit('retry-failed')"
+          >
             Retry Failed
           </button>
-          <button class="btn role-primary" @click="$emit('continue-anyway')">
+          <button
+            class="btn role-primary"
+            @click="$emit('continue-anyway')"
+          >
             Continue Anyway
           </button>
         </template>
 
         <!-- Still in progress -->
         <template v-else-if="isInProgress">
-          <button class="btn role-secondary" :disabled="true">
+          <button
+            class="btn role-secondary"
+            :disabled="true"
+          >
             Installing...
           </button>
         </template>

@@ -10,7 +10,8 @@ export default function(plugin: IPlugin): void {
   plugin.metadata = require('./package.json');
 
   // Pass the MODULE so Rancher finds `init`
-  plugin.addProduct(productModule as any);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  plugin.addProduct(productModule as any); // Rancher plugin.addProduct expects a specific shape; module satisfies it at runtime
 
   // Add routes explicitly
   plugin.addRoutes(routes);

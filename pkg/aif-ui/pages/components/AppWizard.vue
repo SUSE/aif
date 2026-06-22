@@ -1,10 +1,10 @@
 <script lang="ts" setup>
 import { defineProps, withDefaults, ref, computed, onMounted, getCurrentInstance, watch } from 'vue';
+import logger from '../../utils/logger';
 import { useT } from '../../composables/useT';
 import yaml from 'js-yaml';
 import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
-import AsyncButton from '@shell/components/AsyncButton';
 import BasicInfoStep from './wizard/BasicInfoStep.vue';
 import TargetStep from './wizard/TargetStep.vue';
 import ValuesStep from './wizard/ValuesStep.vue';
@@ -47,7 +47,7 @@ type WizardForm = {
   chartRepo:    string;
   chartName:    string;
   chartVersion: string;
-  values:       Record<string, any>;
+  values:       Record<string, unknown>;
   deployType:   'Helm' | 'FleetBundle' | 'GitOps';
 };
 
@@ -60,7 +60,8 @@ const props = withDefaults(defineProps<Props>(), {
   mode: 'install'
 });
 
-const vm = getCurrentInstance()!.proxy as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vm = getCurrentInstance()?.proxy as any;
 const store = vm.$store;
 const router = vm.$router;
 const route = vm.$route;
@@ -74,10 +75,10 @@ const error = ref<string | null>(null);
 const versions = ref<string[]>([]);
 const loadingVersions = ref(false);
 const loadingValues = ref(false);
-const versionInfo = ref<any | null>(null);
+const versionInfo = ref<unknown>(null);
 const questionsLoading = ref(false);
 const versionInfoKey = ref('');
-const defaultValuesSnapshot = ref<Record<string, any>>({});
+const defaultValuesSnapshot = ref<Record<string, unknown>>({});
 const namespaceOptions = ref<{label: string, value: string}[]>([]);
 
 // Multi-cluster install progress state
@@ -170,7 +171,7 @@ const ignoreVariables = computed(() => {
 
   return key ? [key] : [];
 });
-const hasQuestions = computed(() => !!versionInfo.value?.questions);
+const hasQuestions = computed(() => !!(versionInfo.value as Record<string, unknown> | null)?.questions);
 
 watch(() => [form.value.chartRepo, form.value.chartName, form.value.chartVersion], () => {
   versionInfo.value = null;
@@ -276,8 +277,8 @@ onMounted(async () => {
     await initializeWizard();
     loadingNamespaces.value = true;
     await fetchAllNamespaces();
-  } catch (e) {
-    error.value = `Failed to initialize: ${e.message || 'Unknown error'}`;
+  } catch (e: unknown) {
+    error.value = `Failed to initialize: ${e instanceof Error ? e.message : 'Unknown error'}`;
   } finally {
     loadingNamespaces.value = false;
     loading.value = false;
@@ -360,7 +361,7 @@ async function findRepoForApp(slug: string): Promise<string | null> {
 
     return await inferClusterRepoForChart(store, slug);
   } catch (e) {
-    console.warn('Failed to find repo for app:', e);
+    logger.warn('Failed to find repo for app:', e);
     return null;
   }
 }
@@ -413,7 +414,7 @@ async function loadAIWorkloadDetails() {
       }
     }
   } catch (e) {
-    console.warn('[SUSE-AI] Could not load AIWorkload details (non-fatal):', e);
+    logger.warn('[SUSE-AI] Could not load AIWorkload details (non-fatal):', e);
   }
 }
 
@@ -439,7 +440,7 @@ async function loadInstalledAppDetails(clusterId: string) {
       foundValues = true;
     }
   } catch (helmError) {
-    console.warn('Failed to load app details from Helm:', helmError);
+    logger.warn('Failed to load app details from Helm:', helmError);
     throw helmError; // Re-throw to fail fast if app doesn't exist
   }
 
@@ -449,13 +450,13 @@ async function loadInstalledAppDetails(clusterId: string) {
       const repo = await inferClusterRepoForChart(store, form.value.chartName);
       if (repo) form.value.chartRepo = repo;
     } catch (e) {
-      console.warn('Failed to infer repository:', e);
+      logger.warn('Failed to infer repository:', e);
     }
   }
 
   // Log final results for debugging
   if (!foundValues) {
-    console.warn('No values found for installed app:', {
+    logger.warn('No values found for installed app:', {
       cluster: clusterId,
       namespace: form.value.namespace,
       release: form.value.release
@@ -503,12 +504,12 @@ async function loadDefaultValues(options: { skipVersionInfoFetch?: boolean } = {
       await ensureVersionInfoLoaded();
     }
 
-    let baseValues: Record<string, any> | null = defaultValuesSnapshot.value && Object.keys(defaultValuesSnapshot.value).length
+    let baseValues: Record<string, unknown> | null = defaultValuesSnapshot.value && Object.keys(defaultValuesSnapshot.value).length
       ? defaultValuesSnapshot.value
       : null;
 
-    if (!baseValues && versionInfo.value?.values) {
-      baseValues = JSON.parse(JSON.stringify(versionInfo.value.values || {}));
+    if (!baseValues && (versionInfo.value as Record<string, unknown> | null)?.values) {
+      baseValues = JSON.parse(JSON.stringify((versionInfo.value as Record<string, unknown>).values || {}));
       defaultValuesSnapshot.value = baseValues;
     }
 
@@ -524,15 +525,15 @@ async function loadDefaultValues(options: { skipVersionInfoFetch?: boolean } = {
       );
 
       if (valuesText?.trim()) {
-        const parsed = (yaml.load(valuesText) as any) || {};
+        const parsed = (yaml.load(valuesText) as Record<string, unknown>) || {};
         defaultValuesSnapshot.value = JSON.parse(JSON.stringify(parsed));
         form.value.values = parsed;
       } else {
         error.value = 'No default values found for the selected version.';
       }
     }
-  } catch (e: any) {
-    error.value = e?.message || 'Failed to fetch default values.';
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : null) || 'Failed to fetch default values.';
   } finally {
     loadingValues.value = false;
   }
@@ -560,6 +561,7 @@ async function resolvePullSecretNames() {
   try {
     // Determine library type from repository URL
     const repos = await listClusterRepos(store);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
     const library = getLibraryFromRepoUrl(chartRepoUrl);
@@ -574,15 +576,15 @@ async function resolvePullSecretNames() {
     const secrets = [creds.applicationCollection, creds.suseRegistry, creds.nvidia]
       .filter(Boolean)
       .map(cred => ({
-        name: `suse-ai-pull-secret-${ cred!.registryHost.replace(/[^a-z0-9]/g, '-') }`,
+        name: `suse-ai-pull-secret-${ cred?.registryHost.replace(/[^a-z0-9]/g, '-') }`,
       }));
     if (secrets.length > 0) {
       form.value.values.global = form.value.values.global || {};
       form.value.values.global.imagePullSecrets = secrets;
       form.value.values.imagePullSecrets = secrets;
     }
-  } catch (e: any) {
-    console.warn('[SUSE-AI] Failed to resolve pull secret names:', e?.message || e);
+  } catch (e: unknown) {
+    logger.warn('[SUSE-AI] Failed to resolve pull secret names:', e instanceof Error ? e.message : e);
   }
 }
 
@@ -621,11 +623,11 @@ async function ensureVersionInfoLoaded() {
 
     versionInfo.value = info;
     versionInfoKey.value = key;
-    defaultValuesSnapshot.value = JSON.parse(JSON.stringify(info?.values || {}));
+    defaultValuesSnapshot.value = JSON.parse(JSON.stringify((info as Record<string, unknown> | null)?.values || {}));
 
     return info;
   } catch (e) {
-    console.warn('[SUSE-AI] Failed to load chart version info', e);
+    logger.warn('[SUSE-AI] Failed to load chart version info', e);
     versionInfo.value = null;
     versionInfoKey.value = '';
     defaultValuesSnapshot.value = {};
@@ -662,11 +664,6 @@ function onValuesEdited() {
 }
 
 // Wizard event handlers
-function onWizardNext({ step }) {
-  currentStep.value = step;
-  persistSave(PKEY, { step: currentStep.value, form: form.value });
-}
-
 async function onWizardFinish() {
   await submit();
 }
@@ -705,7 +702,7 @@ async function submit() {
     const actionLabel = isInstallMode.value ? 'INSTALL' : 'UPGRADE';
     const targetClusters = form.value.clusters;
 
-    console.log(`[SUSE-AI] ${actionLabel} start `, {
+    logger.info(`[SUSE-AI] ${actionLabel} start `, {
       clusters: targetClusters,
       ns: form.value.namespace,
       release: form.value.release
@@ -723,7 +720,7 @@ async function submit() {
           return;
         }
       } catch (e) {
-        console.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', e);
+        logger.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', e);
       }
 
       if (form.value.deployType === 'Helm') {
@@ -742,8 +739,8 @@ async function submit() {
         await performGitOpsUpgrade();
       }
     }
-  } catch (e: any) {
-    error.value = e?.message || 'Operation failed';
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : null) || 'Operation failed';
     submitting.value = false;
   }
 }
@@ -760,7 +757,7 @@ function navigateAfterSuccess() {
 async function getClusterDisplayName(clusterId: string): Promise<string> {
   try {
     const clusters = await getClusters(store);
-    const cluster = clusters.find((c: any) => c.id === clusterId);
+    const cluster = clusters.find(c => c.id === clusterId);
     return cluster?.name || clusterId;
   } catch {
     return clusterId;
@@ -793,10 +790,10 @@ async function performMultiClusterInstall() {
   // Check final status
   const allSucceeded = installProgress.value.every(p => p.status === 'success');
   if (allSucceeded) {
-    console.log('[SUSE-AI] Multi-cluster install completed successfully');
+    logger.info('[SUSE-AI] Multi-cluster install completed successfully');
   } else {
     const failed = installProgress.value.filter(p => p.status === 'failed');
-    console.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
+    logger.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
   }
 
   await recordAIWorkload('', 'Helm');
@@ -818,27 +815,30 @@ async function performFleetBundleInstall() {
   try {
     // Pre-create pull secrets for ALL configured registries so subchart images from a
     // different registry than the parent chart are also covered.
-    let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
+    let creds: { applicationCollection?: unknown; suseRegistry?: unknown; nvidia?: unknown } = {};
     try { creds = await getRegistryCredentials(5000); } catch (e) {
-      console.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', e);
+      logger.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', e);
     }
     const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
     const secretResults = await Promise.all(
       form.value.clusters.flatMap(clusterId =>
         activeCreds.map(async cred => {
           try {
-            const hostSlug = cred!.registryHost.replace(/[^a-z0-9]/g, '-');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const c = cred as any;
+            const hostSlug = c?.registryHost.replace(/[^a-z0-9]/g, '-');
             return await ensureRegistrySecretSimple(
               store, clusterId, form.value.namespace,
-              cred!.registryHost, hostSlug, cred!.username, cred!.password,
+              c?.registryHost, hostSlug, c?.username, c?.password,
             );
-          } catch (e) { console.warn('[SUSE-AI] FleetBundle: pull-secret skipped:', e); return null; }
+          } catch (e) { logger.warn('[SUSE-AI] FleetBundle: pull-secret skipped:', e); return null; }
         })
       )
     );
     const extraPullSecretNames = [...new Set(secretResults.filter((n): n is string => !!n))];
 
     const repos = await listClusterRepos(store);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
 
@@ -860,9 +860,10 @@ async function performFleetBundleInstall() {
     installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
 
     await recordAIWorkload(bundleName, 'FleetBundle', { phase: 'Pending', clusterStatuses: [] });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
     installProgress.value = installProgress.value.map(p => ({
-      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+      ...p, status: 'failed' as const, error: msg,
     }));
     throw e;
   } finally {
@@ -896,7 +897,7 @@ async function performGitOpsInstall() {
           );
           if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
         } catch (e) {
-          console.warn('[SUSE-AI] pull-secret skipped for GitOps:', e);
+          logger.warn('[SUSE-AI] pull-secret skipped for GitOps:', e);
         }
       }
     }
@@ -904,6 +905,7 @@ async function performGitOpsInstall() {
     updateAllProgress(60, 'Publishing Fleet Bundle YAML to git...');
 
     const repos = await listClusterRepos(store);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
 
@@ -924,9 +926,10 @@ async function performGitOpsInstall() {
     installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
 
     await recordAIWorkload(bundleName, 'GitOps', { phase: 'Pending', clusterStatuses: [] });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
     installProgress.value = installProgress.value.map(p => ({
-      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+      ...p, status: 'failed' as const, error: msg,
     }));
     throw e;
   } finally {
@@ -990,7 +993,7 @@ async function recordAIWorkload(
       await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
     }
   } catch (e) {
-    console.warn('[SUSE-AI] Failed to record AIWorkload CR (non-fatal):', e);
+    logger.warn('[SUSE-AI] Failed to record AIWorkload CR (non-fatal):', e);
   }
 }
 
@@ -1002,7 +1005,7 @@ async function installWithConcurrencyLimit(clusterIds: string[], concurrency: nu
   while (queue.length > 0 || executing.length > 0) {
     // Start new installations up to concurrency limit
     while (queue.length > 0 && executing.length < concurrency) {
-      const clusterId = queue.shift()!;
+      const clusterId = queue.shift() as string;
       const promise = installSingleCluster(clusterId).then(() => {
         // Remove from executing when done
         const index = executing.indexOf(promise);
@@ -1052,12 +1055,12 @@ async function installSingleCluster(clusterId: string): Promise<void> {
       progress: 100,
       message: 'Installation completed successfully'
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     updateClusterProgress(clusterId, {
       status: 'failed',
       progress: 0,
       message: 'Installation failed',
-      error: humanizeInstallError(e?.message)
+      error: humanizeInstallError(e instanceof Error ? e.message : undefined)
     });
   }
 }
@@ -1150,27 +1153,29 @@ async function installToCluster(
 
   onProgress(25, 'Setting up registry credentials...');
 
-  let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
+  let creds: { applicationCollection?: unknown; suseRegistry?: unknown; nvidia?: unknown } = {};
   try {
     creds = await getRegistryCredentials(5000);
-  } catch (e: any) {
-    console.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', e?.message || e);
+  } catch (e: unknown) {
+    logger.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', e instanceof Error ? e.message : e);
   }
 
   for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
     if (!cred) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = cred as any;
     try {
-      const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
+      const hostSlug = c.registryHost.replace(/[^a-z0-9]/g, '-');
       const secretName = await ensureRegistrySecretSimple(
         store, clusterId, form.value.namespace,
-        cred.registryHost,
+        c.registryHost,
         hostSlug,
-        cred.username,
-        cred.password,
+        c.username,
+        c.password,
       );
       if (secretName) allPullSecrets.add(secretName);
-    } catch (e: any) {
-      console.error('[SUSE-AI] pull-secret creation skipped:', e?.message || e);
+    } catch (e: unknown) {
+      logger.error('[SUSE-AI] pull-secret creation skipped:', e instanceof Error ? e.message : e);
     }
   }
 
@@ -1181,6 +1186,7 @@ async function installToCluster(
 
   // Determine library type from repository URL
   const repos = await listClusterRepos(store);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
   const library = getLibraryFromRepoUrl(chartRepoUrl);
@@ -1194,20 +1200,21 @@ async function installToCluster(
 
   if (pullSecrets.length > 0) {
     const saCandidates = new Set<string>(['default']);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const vs = (v as any).serviceAccount || {};
     if (typeof vs?.name === 'string' && vs.name.trim()) saCandidates.add(vs.name.trim());
     else if (vs.create === undefined || !!vs.create) saCandidates.add(form.value.release);
     for (const sa of saCandidates) {
       for (const secretName of pullSecrets) {
         try { await ensureServiceAccountPullSecret(store, clusterId, form.value.namespace, sa, secretName); }
-        catch (e) { console.warn('[SUSE-AI] SA pull-secret attach (pre) failed', { sa, ns: form.value.namespace, e }); }
+        catch (e) { logger.warn('[SUSE-AI] SA pull-secret attach (pre) failed', { sa, ns: form.value.namespace, e }); }
       }
     }
   }
 
   onProgress(55, 'Installing Helm chart...');
 
-  console.log('[SUSE-AI] calling install ', {
+  logger.debug('[SUSE-AI] calling install ', {
     cluster: clusterId,
     repo: form.value.chartRepo,
     chart: form.value.chartName,
@@ -1228,8 +1235,8 @@ async function installToCluster(
 
   try {
     await waitForAppInstall(store, clusterId, form.value.namespace, form.value.release, 180_000, upgraded);
-  } catch (e: any) {
-    console.error('[SUSE-AI] post-install app status (peek): ', { error: e?.message || e });
+  } catch (e: unknown) {
+    logger.error('[SUSE-AI] post-install app status (peek): ', { error: e instanceof Error ? e.message : e });
     throw e; // propagate the specific message from waitForAppInstall
   }
 
@@ -1290,27 +1297,30 @@ async function performFleetBundleUpgrade() {
   showProgressModal.value = true;
 
   try {
-    let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
+    let creds: { applicationCollection?: unknown; suseRegistry?: unknown; nvidia?: unknown } = {};
     try { creds = await getRegistryCredentials(5000); } catch (e) {
-      console.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', e);
+      logger.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', e);
     }
     const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
     const secretResults = await Promise.all(
       form.value.clusters.flatMap(clusterId =>
         activeCreds.map(async cred => {
           try {
-            const hostSlug = cred!.registryHost.replace(/[^a-z0-9]/g, '-');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const c = cred as any;
+            const hostSlug = c?.registryHost.replace(/[^a-z0-9]/g, '-');
             return await ensureRegistrySecretSimple(
               store, clusterId, form.value.namespace,
-              cred!.registryHost, hostSlug, cred!.username, cred!.password,
+              c?.registryHost, hostSlug, c?.username, c?.password,
             );
-          } catch (e) { console.warn('[SUSE-AI] FleetBundle upgrade: pull-secret skipped:', e); return null; }
+          } catch (e) { logger.warn('[SUSE-AI] FleetBundle upgrade: pull-secret skipped:', e); return null; }
         })
       )
     );
     const extraPullSecretNames = [...new Set(secretResults.filter((n): n is string => !!n))];
 
     const repos = await listClusterRepos(store);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
 
@@ -1333,9 +1343,10 @@ async function performFleetBundleUpgrade() {
     managedFleetBundleNames.value = [bundleName];
 
     await recordAIWorkload(bundleName, 'FleetBundle', { phase: 'Pending', clusterStatuses: [] });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
     installProgress.value = installProgress.value.map(p => ({
-      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+      ...p, status: 'failed' as const, error: msg,
     }));
     throw e;
   } finally {
@@ -1369,7 +1380,7 @@ async function performGitOpsUpgrade() {
           );
           if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
         } catch (e) {
-          console.warn('[SUSE-AI] pull-secret skipped for GitOps upgrade:', e);
+          logger.warn('[SUSE-AI] pull-secret skipped for GitOps upgrade:', e);
         }
       }
     }
@@ -1377,6 +1388,7 @@ async function performGitOpsUpgrade() {
     updateAllProgress(60, 'Publishing updated Fleet Bundle YAML to git...');
 
     const repos = await listClusterRepos(store);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
 
@@ -1398,9 +1410,10 @@ async function performGitOpsUpgrade() {
     managedFleetBundleNames.value = [bundleName];
 
     await recordAIWorkload(bundleName, 'GitOps', { phase: 'Pending', clusterStatuses: [] });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
     installProgress.value = installProgress.value.map(p => ({
-      ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
+      ...p, status: 'failed' as const, error: msg,
     }));
     throw e;
   } finally {
@@ -1426,12 +1439,12 @@ async function upgradeSingleCluster(clusterId: string): Promise<void> {
       progress: 100,
       message: 'Upgrade completed successfully'
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     updateClusterProgress(clusterId, {
       status: 'failed',
       progress: 0,
       message: 'Upgrade failed',
-      error: e?.message || 'Unknown error'
+      error: (e instanceof Error ? e.message : null) || 'Unknown error'
     });
   }
 }
@@ -1448,7 +1461,7 @@ async function upgradeToCluster(
 
   const v = JSON.parse(JSON.stringify(form.value.values || {}));
 
-  console.log('[SUSE-AI] calling upgrade ', {
+  logger.debug('[SUSE-AI] calling upgrade ', {
     cluster: clusterId,
     repo: form.value.chartRepo,
     chart: form.value.chartName,
@@ -1469,9 +1482,10 @@ async function upgradeToCluster(
 
   try {
     await waitForAppInstall(store, clusterId, form.value.namespace, form.value.release, 180_000, true);
-  } catch (e: any) {
-    console.error('[SUSE-AI] post-upgrade app status (peek): ', { error: e?.message || e });
-    throw new Error(e?.message || `App upgrade failed in namespace ${form.value.namespace}`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : undefined;
+    logger.error('[SUSE-AI] post-upgrade app status (peek): ', { error: msg || e });
+    throw new Error(msg || `App upgrade failed in namespace ${form.value.namespace}`);
   }
 
   onProgress(100, 'Upgrade complete');
@@ -1505,11 +1519,16 @@ function previousStep() {
   <div class="install-steps pt-20 outlet">
     <Loading v-if="loading" />
     
-    <div v-else class="custom-wizard">
+    <div
+      v-else
+      class="custom-wizard"
+    >
       <!-- Fixed Header -->
       <div class="wizard-header">
         <h1>{{ (route.query.n as string) || props.slug }}</h1>
-        <p class="text-muted">{{ wizardTitle }}</p>
+        <p class="text-muted">
+          {{ wizardTitle }}
+        </p>
       </div>
 
       <!-- Fixed Step Navigation -->
@@ -1527,10 +1546,15 @@ function previousStep() {
             @click="goToStep(index)"
           >
             <div class="step-number">
-              <i v-if="index < currentStep" class="icon icon-checkmark" />
+              <i
+                v-if="index < currentStep"
+                class="icon icon-checkmark"
+              />
               <span v-else>{{ index + 1 }}</span>
             </div>
-            <div class="step-label">{{ step.label }}</div>
+            <div class="step-label">
+              {{ step.label }}
+            </div>
           </div>
         </div>
       </div>
@@ -1538,7 +1562,11 @@ function previousStep() {
       <!-- Scrollable Content Area -->
       <div class="wizard-content-wrapper">
         <!-- Error Banner -->
-        <Banner v-if="error" color="error" class="mb-20">
+        <Banner
+          v-if="error"
+          color="error"
+          class="mb-20"
+        >
           {{ error }}
         </Banner>
 
@@ -1559,9 +1587,9 @@ function previousStep() {
           <!-- Step: Target Cluster -->
           <TargetStep
             v-else-if="currentStep === 1"
-            :mode="props.mode"
             v-model:clusters="form.clusters"
-            v-model:deployType="form.deployType"
+            v-model:deploy-type="form.deployType"
+            :mode="props.mode"
             :app-slug="props.slug"
             :app-name="(route.query.n as string) || props.slug"
             :helm-oversized="helmOversized"
@@ -1590,6 +1618,7 @@ function previousStep() {
           <!-- Step: Review -->
           <ReviewStep
             v-else-if="currentStep === 3"
+            v-model:values="form.values"
             :mode="props.mode"
             :release="form.release"
             :namespace="form.namespace"
@@ -1597,7 +1626,6 @@ function previousStep() {
             :chart-name="form.chartName"
             :chart-version="form.chartVersion"
             :clusters="form.clusters"
-            v-model:values="form.values"
             @values-edited="onValuesEdited"
           />
         </div>
@@ -1637,7 +1665,10 @@ function previousStep() {
           :disabled="!wizardSteps[currentStep].ready || submitting"
           @click="onWizardFinish"
         >
-          <i v-if="submitting" class="icon icon-spinner icon-spin mr-5" />
+          <i
+            v-if="submitting"
+            class="icon icon-spinner icon-spin mr-5"
+          />
           <span v-if="submitting">
             {{ props.mode === 'install' ? 'Installing...' : 'Saving...' }}
           </span>

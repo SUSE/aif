@@ -13,7 +13,7 @@
   "icon": "https://raw.githubusercontent.com/SUSE/suse-ai-lifecycle-manager/refs/heads/main/pkg/aif-ui/assets/logo.svg",
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
-    "lint": "npx eslint --max-warnings 2000 --ext .js,.ts,.vue .",
+    "lint": "../../node_modules/.bin/eslint --max-warnings 0 --ext .js,.ts,.vue .",
     "commitlint": "commitlint --edit",
     "prepare": "husky"
   },

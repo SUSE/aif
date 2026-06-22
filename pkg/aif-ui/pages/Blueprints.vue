@@ -3,7 +3,10 @@
     <div class="outlet">
       <header class="fixed-header">
         <h1>Blueprints</h1>
-        <div class="actions-container" role="toolbar">
+        <div
+          class="actions-container"
+          role="toolbar"
+        >
           <div class="search-box">
             <input
               v-model="search"
@@ -13,38 +16,84 @@
             />
           </div>
 
-          <select v-model="sortBy" class="sort-select form-control-sm">
-            <option value="name-asc">Name (A → Z)</option>
-            <option value="name-desc">Name (Z → A)</option>
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
+          <select
+            v-model="sortBy"
+            class="sort-select form-control-sm"
+          >
+            <option value="name-asc">
+              Name (A → Z)
+            </option>
+            <option value="name-desc">
+              Name (Z → A)
+            </option>
+            <option value="newest">
+              Newest first
+            </option>
+            <option value="oldest">
+              Oldest first
+            </option>
           </select>
 
-          <Checkbox v-model:value="showDeprecated" label="Show deprecated" />
+          <Checkbox
+            v-model:value="showDeprecated"
+            label="Show deprecated"
+          />
 
-          <button class="btn role-primary ml-auto" @click="navigateCreate" type="button">
+          <button
+            class="btn role-primary ml-auto"
+            type="button"
+            @click="navigateCreate"
+          >
             Create
           </button>
-          <button class="btn role-secondary" @click="refresh" :disabled="loading" type="button">
-            <i v-if="loading" class="icon icon-spinner icon-spin" />
-            <i v-else class="icon icon-refresh" />
+          <button
+            class="btn role-secondary"
+            :disabled="loading"
+            type="button"
+            @click="refresh"
+          >
+            <i
+              v-if="loading"
+              class="icon icon-spinner icon-spin"
+            />
+            <i
+              v-else
+              class="icon icon-refresh"
+            />
             Refresh
           </button>
         </div>
       </header>
 
-      <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
+      <OperatorErrorBanner
+        v-if="operatorError"
+        :operator-error="operatorError"
+        @retry="retryConnection"
+      />
 
-      <Banner v-if="error" color="error">{{ error }}</Banner>
+      <Banner
+        v-if="error"
+        color="error"
+      >
+        {{ error }}
+      </Banner>
 
       <div class="main-content">
-        <div v-if="!loading && !sortedFamilies.length && !error && !operatorError" class="empty-state-content">
+        <div
+          v-if="!loading && !sortedFamilies.length && !error && !operatorError"
+          class="empty-state-content"
+        >
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No blueprints found</h3>
-          <p class="text-muted">Click Create to define your first blueprint.</p>
+          <p class="text-muted">
+            Click Create to define your first blueprint.
+          </p>
         </div>
 
-        <div class="tiles-grid" role="grid">
+        <div
+          class="tiles-grid"
+          role="grid"
+        >
           <div
             v-for="[family, versions] in sortedFamilies"
             :key="family"
@@ -53,7 +102,9 @@
             <div class="tile-header">
               <div class="tile-info">
                 <div class="tile-title-row">
-                  <h3 class="tile-title">{{ toTitleCase(latestFor(versions).spec.displayName) }}</h3>
+                  <h3 class="tile-title">
+                    {{ toTitleCase(latestFor(versions).spec.displayName) }}
+                  </h3>
                   <select
                     v-model="selectedVersions[family]"
                     class="version-select form-control-sm"
@@ -71,17 +122,25 @@
                 <div class="tile-meta">
                   <span class="tile-meta-item">{{ componentCount(versions, family) }} apps</span>
                   <span class="tile-meta-sep">·</span>
-                  <Tag :aria-label="`Source: ${ sourceLabel(versions) }`">{{ sourceLabel(versions) }}</Tag>
+                  <Tag :aria-label="`Source: ${ sourceLabel(versions) }`">
+                    {{ sourceLabel(versions) }}
+                  </Tag>
                 </div>
               </div>
             </div>
 
             <div class="tile-content">
-              <p class="tile-description">{{ descriptionFor(versions, family) || '—' }}</p>
+              <p class="tile-description">
+                {{ descriptionFor(versions, family) || '—' }}
+              </p>
             </div>
 
             <div class="tile-footer">
-              <button class="btn role-primary btn-sm" @click="navigateInstall(family, versions)" type="button">
+              <button
+                class="btn role-primary btn-sm"
+                type="button"
+                @click="navigateInstall(family, versions)"
+              >
                 Install
               </button>
               <div style="margin-left: auto">
@@ -94,30 +153,58 @@
               </div>
             </div>
           </div>
-          <div v-for="n in 5" :key="`filler-${ n }`" class="app-tile app-tile-filler" />
+          <div
+            v-for="n in 5"
+            :key="`filler-${ n }`"
+            class="app-tile app-tile-filler"
+          />
         </div>
       </div>
 
       <!-- Delete confirmation modal -->
-      <AppModal v-if="deleteModal.show" :click-to-close="true" :width="480" @close="deleteModal.show = false">
+      <AppModal
+        v-if="deleteModal.show"
+        :click-to-close="true"
+        :width="480"
+        @close="deleteModal.show = false"
+      >
         <div class="modal-body">
           <h3>Delete Blueprint</h3>
           <p>
             Delete <strong>{{ deleteModal.displayName }}</strong>
             v{{ deleteModal.version }}?
           </p>
-          <Banner v-if="deleteModal.activeWorkloads.length" color="warning" class="mb-10">
+          <Banner
+            v-if="deleteModal.activeWorkloads.length"
+            color="warning"
+            class="mb-10"
+          >
             <strong>Warning:</strong> The following AIWorkloads use this blueprint version and will lose their source reference:
             <ul class="mt-5">
-              <li v-for="wl in deleteModal.activeWorkloads" :key="wl.metadata.name">
+              <li
+                v-for="wl in deleteModal.activeWorkloads"
+                :key="wl.metadata.name"
+              >
                 {{ wl.metadata.namespace }}/{{ wl.metadata.name }}
               </li>
             </ul>
           </Banner>
           <div class="modal-buttons">
-            <button class="btn role-secondary" @click="deleteModal.show = false">Cancel</button>
-            <button class="btn role-primary" @click="executeDelete" :disabled="deleteModal.deleting">
-              <i v-if="deleteModal.deleting" class="icon icon-spinner icon-spin" />
+            <button
+              class="btn role-secondary"
+              @click="deleteModal.show = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn role-primary"
+              :disabled="deleteModal.deleting"
+              @click="executeDelete"
+            >
+              <i
+                v-if="deleteModal.deleting"
+                class="icon icon-spinner icon-spin"
+              />
               Delete
             </button>
           </div>
@@ -125,14 +212,22 @@
       </AppModal>
 
       <!-- Deprecate / Undeprecate confirmation modal -->
-      <AppModal v-if="deprecateModal.show" :click-to-close="true" :width="480" @close="deprecateModal.show = false">
+      <AppModal
+        v-if="deprecateModal.show"
+        :click-to-close="true"
+        :width="480"
+        @close="deprecateModal.show = false"
+      >
         <div class="modal-body">
           <h3>{{ deprecateModal.currentlyDeprecated ? 'Undeprecate' : 'Deprecate' }} Blueprint</h3>
           <p>
             {{ deprecateModal.currentlyDeprecated ? 'Undeprecate' : 'Deprecate' }}
             <strong>{{ deprecateModal.displayName }}</strong> v{{ deprecateModal.version }}?
           </p>
-          <p v-if="!deprecateModal.currentlyDeprecated" class="text-muted modal-hint">
+          <p
+            v-if="!deprecateModal.currentlyDeprecated"
+            class="text-muted modal-hint"
+          >
             Deprecated blueprints are hidden from the Blueprints page by default.
             Users with existing deployments are not affected.
           </p>
@@ -143,15 +238,30 @@
           >
             <strong>Warning:</strong> The following deployments are currently using this blueprint version:
             <ul class="mt-5">
-              <li v-for="wl in deprecateModal.activeWorkloads" :key="wl.metadata.name">
+              <li
+                v-for="wl in deprecateModal.activeWorkloads"
+                :key="wl.metadata.name"
+              >
                 {{ wl.metadata.namespace }}/{{ wl.metadata.name }}
               </li>
             </ul>
           </Banner>
           <div class="modal-buttons">
-            <button class="btn role-secondary" @click="deprecateModal.show = false">Cancel</button>
-            <button class="btn role-primary" @click="executeDeprecate" :disabled="deprecateModal.saving">
-              <i v-if="deprecateModal.saving" class="icon icon-spinner icon-spin" />
+            <button
+              class="btn role-secondary"
+              @click="deprecateModal.show = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn role-primary"
+              :disabled="deprecateModal.saving"
+              @click="executeDeprecate"
+            >
+              <i
+                v-if="deprecateModal.saving"
+                class="icon icon-spinner icon-spin"
+              />
               {{ deprecateModal.currentlyDeprecated ? 'Undeprecate' : 'Deprecate' }}
             </button>
           </div>
@@ -177,12 +287,14 @@ import { checkOperatorConnection, getConnectionError } from '../utils/operator-c
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
+import logger from '../utils/logger';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
   components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner },
   setup() {
-    const vm        = getCurrentInstance()!.proxy as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vm        = getCurrentInstance()?.proxy as any;
     const $router   = vm.$router;
     const $route    = vm.$route;
     const cluster   = ($route?.params?.cluster as string) || '_';
@@ -311,8 +423,8 @@ export default defineComponent({
         if (Object.keys(updates).length) {
           selectedVersions.value = { ...selectedVersions.value, ...updates };
         }
-      } catch (e: any) {
-        error.value = e?.message || 'Failed to load blueprints';
+      } catch (e: unknown) {
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to load blueprints';
       } finally {
         loading.value = false;
       }
@@ -401,7 +513,7 @@ export default defineComponent({
       displayName:     '',
       version:         '',
       crName:          '',
-      activeWorkloads: [] as any[],
+      activeWorkloads: [] as unknown[],
       deleting:        false,
     });
 
@@ -421,8 +533,8 @@ export default defineComponent({
         await deleteBlueprint(deleteModal.crName);
         deleteModal.show = false;
         await refresh();
-      } catch (e: any) {
-        error.value = e?.message || 'Failed to delete blueprint';
+      } catch (e: unknown) {
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to delete blueprint';
         deleteModal.show = false;
       } finally {
         deleteModal.deleting = false;
@@ -437,7 +549,7 @@ export default defineComponent({
       version:         '',
       crName:          '',
       currentlyDeprecated: false,
-      activeWorkloads: [] as any[],
+      activeWorkloads: [] as unknown[],
       saving:          false,
     });
 
@@ -460,8 +572,8 @@ export default defineComponent({
         await updateBlueprintDeprecated(deprecateModal.crName, !deprecateModal.currentlyDeprecated);
         deprecateModal.show = false;
         await refresh();
-      } catch (e: any) {
-        error.value = e?.message || 'Failed to update blueprint';
+      } catch (e: unknown) {
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to update blueprint';
         deprecateModal.show = false;
       } finally {
         deprecateModal.saving = false;
@@ -492,14 +604,14 @@ export default defineComponent({
         // login username, so the global admin was only ever seen as a non-admin.
         isAdmin.value = isAdminUser(vm.$store.getters);
       } catch (e) {
-        console.warn('[SUSE-AI] checkAdminRole failed — admin actions will be hidden:', e);
+        logger.warn('[SUSE-AI] checkAdminRole failed — admin actions will be hidden', { data: e });
         isAdmin.value = false;
       }
     }
 
     // ── Three-dot tile menu ────────────────────────────────────────────────────
-    function tileActions(family: string, versions: Blueprint[]): any[] {
-      const actions: any[] = [
+    function tileActions(family: string, versions: Blueprint[]): unknown[] {
+      const actions: unknown[] = [
         { action: 'copy', label: 'Copy', enabled: true },
       ];
       if (isAdmin.value) {

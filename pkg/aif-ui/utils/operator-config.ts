@@ -34,7 +34,7 @@ function configMapCollectionUrl(): string {
 
 /** Shared fetch wrapper for operator API calls. Handles 204 No Content, JSON error
  *  extraction, and attaches typed status/code fields to thrown errors. */
-export async function operatorFetch(path: string, options: RequestInit = {}): Promise<any> {
+export async function operatorFetch(path: string, options: RequestInit = {}): Promise<unknown> {
   await loadOperatorConfig();
   const res = await fetch(`${ getOperatorBaseUrl() }${ path }`, {
     ...options,
@@ -116,8 +116,8 @@ async function runConnectionCheck(): Promise<void> {
     }
 
     connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }".`;
-  } catch (e: any) {
-    connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }": ${ e?.message || 'network error' }`;
+  } catch (e) {
+    connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }": ${ e instanceof Error ? e.message : 'network error' }`;
   }
 }
 
