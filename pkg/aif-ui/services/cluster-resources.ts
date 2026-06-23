@@ -1,6 +1,6 @@
 // Cluster resource metrics service
 import type { RancherStore, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
-import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
+import { handleSimpleError } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
 
 export interface NodeResourceInfo {
@@ -26,7 +26,6 @@ export interface ClusterResourceSummary {
   lastUpdated: Date;
   nodes: NodeResourceInfo[];
 }
-
 
 export async function getClusterResourceMetrics(store: RancherStore, clusterId: string): Promise<ClusterResourceSummary> {
   console.log(`[SUSE-AI] getClusterResourceMetrics: Starting for cluster ${clusterId}`);
