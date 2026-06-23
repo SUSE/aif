@@ -199,8 +199,6 @@ function onProgressCancel() { showProgressModal.value = false; }
             :clusters="clusters"
             :deploy-type="deployType"
             :helm-unsupported="true"
-            :app-slug="props.blueprintName"
-            :app-name="blueprint?.spec.displayName || ''"
             @update:clusters="clusters = $event"
             @update:deploy-type="deployType = $event"
           />
