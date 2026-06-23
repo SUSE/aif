@@ -9,8 +9,6 @@ interface Props {
   mode:            'install' | 'manage';
   clusters:        string[];
   deployType:      AIWorkloadDeployStrategy;
-  appSlug:         string;
-  appName:         string;
   helmOversized?:  boolean;
   helmUnsupported?: boolean;
 }
@@ -95,8 +93,6 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
     <ClusterResourceTable
       :multi-select="!isManageMode"
       :selected-clusters="clusters"
-      :app-slug="appSlug"
-      :app-name="appName"
       :disabled="isManageMode"
       @update:selected-clusters="isManageMode ? undefined : $emit('update:clusters', $event)"
     />
