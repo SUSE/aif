@@ -1,21 +1,5 @@
 <template>
   <div class="cluster-resource-table">
-    <!-- Requirements display -->
-    <div v-if="appRequirements" class="requirements-info" :class="{ 'requirements-estimated': isUsingDefaultRequirements }">
-      <span class="requirements-label">
-        {{ isUsingDefaultRequirements ? 'Estimated Requirements:' : 'Requirements:' }}
-      </span>
-      <span class="requirements-text">
-        {{ appRequirements.cpu }} CPU cores •
-        {{ appRequirements.memory }}GB Memory
-        <template v-if="appRequirements.gpu"> • {{ appRequirements.gpu }}GB GPU Memory</template>
-        • {{ appRequirements.storage }}GB Storage
-      </span>
-      <div v-if="isUsingDefaultRequirements" class="requirements-note">
-        Using conservative estimates - actual requirements may vary
-      </div>
-    </div>
-
     <!-- Loading state -->
     <div v-if="loading" class="table-loading">
       <div class="loading-text">Checking cluster resources...</div>
@@ -36,10 +20,10 @@
               <!-- Select All checkbox for multi-select mode -->
               <Checkbox
                 v-if="multiSelect"
-                :value="allCompatibleSelected"
+                :value="allSelectableSelected"
                 :indeterminate="someButNotAllSelected"
                 :disabled="disabled"
-                title="Select all compatible clusters"
+                title="Select all ready clusters"
                 @update:value="toggleSelectAllCompatible"
               />
             </th>
@@ -57,12 +41,8 @@
             :key="cluster.clusterId"
             class="cluster-row"
             :class="{
-              'row-selected': isClusterSelected(cluster.clusterId),
-              'row-compatible': cluster.status === 'compatible',
-              'row-limited': cluster.status === 'limited',
-              'row-insufficient': cluster.status === 'insufficient',
-              'row-error': cluster.status === 'error',
-              'row-disabled': disabled,
+              'row-selected':    isClusterSelected(cluster.clusterId),
+              'row-disabled':    disabled,
               'row-unavailable': cluster.status === 'unavailable'
             }"
             @click="multiSelect ? toggleCluster(cluster.clusterId) : selectSingleCluster(cluster.clusterId)"
@@ -135,7 +115,10 @@
               <span v-else class="no-resource">—</span>
             </td>
             <td class="col-status">
-              <StatusBadge :status="getStatusBadgeStatus(cluster.status)" :title="cluster.statusMessage" />
+              <StatusBadge
+                :status="getStatusBadgeStatus(cluster.status)"
+                :title="cluster.status === 'unavailable' ? 'Not ready' : 'Ready'"
+              />
             </td>
           </tr>
         </tbody>
@@ -151,24 +134,6 @@
     <!-- Selected cluster details (single-select mode) -->
     <div v-if="!multiSelect && selectedClusters.length === 1 && selectedClusterInfo" class="selected-info">
       <div class="selected-header">Selected: {{ selectedClusterInfo.name }}</div>
-      <div class="selected-details" :class="`details-${selectedClusterInfo.status}`">
-        <div v-if="selectedClusterInfo.status === 'compatible'" class="status-message">
-          This cluster meets all requirements
-        </div>
-        <div v-else-if="selectedClusterInfo.status === 'limited'" class="status-message">
-          {{ selectedClusterInfo.statusMessage || 'Limited compatibility' }}
-        </div>
-        <div v-else-if="selectedClusterInfo.status === 'insufficient'" class="status-message">
-          {{ selectedClusterInfo.statusMessage || 'Insufficient resources' }}
-        </div>
-        <div v-else-if="selectedClusterInfo.status === 'error'" class="status-message">
-          {{ selectedClusterInfo.statusMessage || 'Unable to check resources' }}
-          <div class="status-hint">You can still install, but resource requirements cannot be verified.</div>
-        </div>
-        <div v-else-if="selectedClusterInfo.status === 'unavailable'" class="status-message">
-          This cluster is not ready and cannot be selected for deployment.
-        </div>
-      </div>
     </div>
 
     <!-- Selected clusters display (multi-select mode) -->
@@ -191,9 +156,6 @@
             title="Remove"
           >×</button>
         </span>
-      </div>
-      <div v-if="hasIncompatibleSelections" class="selected-warning">
-        Some selected clusters may have insufficient resources
       </div>
     </div>
   </div>
@@ -414,35 +376,6 @@ export default defineComponent({
   gap: 16px;
 }
 
-.requirements-info {
-  padding: 12px 16px;
-  background: var(--box-bg, var(--body-bg));
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  font-size: 14px;
-}
-
-.requirements-label {
-  font-weight: 600;
-  color: var(--body-text, #111827);
-}
-
-.requirements-text {
-  color: var(--muted, #64748b);
-}
-
-.requirements-estimated {
-  background: var(--warning-banner-bg, rgba(245, 158, 11, 0.15));
-  border-color: var(--warning-border, #f59e0b);
-}
-
-.requirements-note {
-  font-size: 12px;
-  color: var(--warning, #d97706);
-  margin-top: 6px;
-  font-style: italic;
-}
-
 .table-loading,
 .table-error,
 .no-clusters {
@@ -624,20 +557,6 @@ export default defineComponent({
   border: 1px solid var(--primary, #2563eb);
 }
 
-.cluster-chip.chip-compatible {
-  background: var(--success-banner-bg, rgba(16, 185, 129, 0.15));
-  color: var(--success, #059669);
-  border-color: var(--success, #059669);
-}
-
-.cluster-chip.chip-limited {
-  background: var(--warning-banner-bg, rgba(245, 158, 11, 0.15));
-  color: var(--warning, #d97706);
-  border-color: var(--warning, #d97706);
-}
-
-.cluster-chip.chip-insufficient,
-.cluster-chip.chip-error,
 .cluster-chip.chip-unavailable {
   background: var(--error-banner-bg, rgba(220, 38, 38, 0.15));
   color: var(--error, #dc2626);
@@ -689,12 +608,6 @@ export default defineComponent({
   background: transparent;
 }
 
-.selected-warning {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--warning, #d97706);
-}
-
 .selected-info {
   padding: 12px 16px;
   border: 1px solid var(--border, #e2e8f0);
@@ -706,32 +619,6 @@ export default defineComponent({
   font-weight: 600;
   color: var(--body-text, #111827);
   margin-bottom: 8px;
-}
-
-.selected-details {
-  font-size: 14px;
-}
-
-.details-compatible .status-message {
-  color: var(--success, #059669);
-}
-
-.details-limited .status-message {
-  color: var(--warning, #d97706);
-}
-
-.details-insufficient .status-message {
-  color: var(--error, #dc2626);
-}
-
-.details-error .status-message {
-  color: var(--muted, #6b7280);
-}
-
-.status-hint {
-  font-size: 12px;
-  color: var(--muted, #9ca3af);
-  margin-top: 4px;
 }
 
 /* Responsive design */
