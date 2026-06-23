@@ -299,14 +299,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     // overall name over 63 (release would be ~52 chars + 14 = 66, rejected).
     // bundleName stays Fleet-unique; releaseName drives chart .Release.Name.
     releaseName: capReleaseName(params.release),
-    values:      (() => {
-      const v = addPullSecretsToValues(params.values, pullSecretNames, params.library);
-      // addPullSecretsToValues may return params.values unmodified (NVIDIA case);
-      // clone before mutating to keep this function pure w.r.t. caller's input.
-      const cloned = v === params.values ? JSON.parse(JSON.stringify(v)) : v;
-      disableNvidiaChartSecrets(cloned, params.library);
-      return cloned;
-    })(),
+    values:      addPullSecretsToValues(params.values, pullSecretNames, params.library),
     // Disable Fleet's ${ } value templating: we resolve all values ourselves,
     // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
     // which Fleet would otherwise mis-parse as a template function.
@@ -330,6 +323,18 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   const baseSpec: Record<string, any> = { defaultNamespace: params.targetNamespace, helm: helmSpec };
   if (pullCreds && secretRef) {
     baseSpec.helmSecretName = secretRef.name;
+  }
+
+  // Defensive final override: regardless of how values were assembled above,
+  // ensure NVIDIA charts NEVER receive `imagePullSecret.create: true` or
+  // `ngcApiSecret.create: true`. This is what protects the operator's
+  // pre-delivered ngc-secret / ngc-api from being overwritten by the
+  // chart's template (the `password: ""` defaults) under takeOwnership.
+  // Done late so it covers every code path that might have repopulated the
+  // values map. Mutates helmSpec.values in place.
+  if (params.library === 'nvidia' && helmSpec.values && typeof helmSpec.values === 'object') {
+    helmSpec.values = JSON.parse(JSON.stringify(helmSpec.values));
+    disableNvidiaChartSecrets(helmSpec.values, 'nvidia');
   }
 
   if (localClusters.length > 0) {
