@@ -24,7 +24,7 @@
                 :indeterminate="someButNotAllSelected"
                 :disabled="disabled"
                 title="Select all ready clusters"
-                @update:value="toggleSelectAllCompatible"
+                @update:value="toggleSelectAllSelectable"
               />
             </th>
             <th class="col-cluster">Cluster</th>
@@ -258,7 +258,7 @@ export default defineComponent({
             name:          c.name,
             nodeCount:     0,
             resources:     { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
-            status:        (c.ready ? 'error' : 'unavailable') as ClusterResourceSummary['status'],
+            status:        c.ready ? 'ready' : 'unavailable',
             statusMessage: c.ready ? 'Resource information unavailable' : 'Cluster is not ready',
             storageClasses: [],
             lastUpdated:   new Date(),
@@ -304,7 +304,7 @@ export default defineComponent({
     }
 
     // Multi-select mode: toggle select all selectable clusters
-    function toggleSelectAllCompatible() {
+    function toggleSelectAllSelectable() {
       if (props.disabled) return;
 
       if (allSelectableSelected.value) {
@@ -359,7 +359,7 @@ export default defineComponent({
       isClusterSelected,
       selectSingleCluster,
       toggleCluster,
-      toggleSelectAllCompatible,
+      toggleSelectAllSelectable,
       getClusterName,
       getClusterChipClass,
       getResourceBarColor,
