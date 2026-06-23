@@ -6,6 +6,7 @@ metadata:
     ai-platform.suse.com/blueprint-version: 1.0.0
   name: suse-gen-ai-minimal-1-0-0
 spec:
+  source: SUSE
   components:
   - chartName: ollama
     chartRepo: application-collection

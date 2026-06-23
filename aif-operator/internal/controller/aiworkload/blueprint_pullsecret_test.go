@@ -665,11 +665,11 @@ func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecretsLeavesUnexpected(t *
 
 func TestDisableChartSecretCreation(t *testing.T) {
 	tests := []struct {
-		name     string
-		initial  map[string]any
-		key      string
-		secret   string
-		wantKey  map[string]any
+		name    string
+		initial map[string]any
+		key     string
+		secret  string
+		wantKey map[string]any
 	}{
 		{
 			name:    "absent → create:false + name",

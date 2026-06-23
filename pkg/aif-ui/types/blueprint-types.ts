@@ -9,10 +9,17 @@ export interface BlueprintComponent {
   targetNamespace?: string;
 }
 
+// BlueprintOrigin (not BlueprintSource) to avoid collision with the existing
+// reference interface BlueprintSource in aiworkload-types.ts. JSON field
+// stays `source`; only the type identifier differs. Mirrors the Go-side
+// rename in aif-operator/api/v1alpha1/blueprint_types.go.
+export type BlueprintOrigin = 'SUSE' | 'Nvidia' | 'Custom';
+
 export interface BlueprintSpec {
   displayName:  string;
   version:      string;
   description?: string;
+  source?:      BlueprintOrigin;
   deprecated?:  boolean;
   components:   BlueprintComponent[];
 }

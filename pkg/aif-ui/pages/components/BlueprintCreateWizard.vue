@@ -90,6 +90,7 @@ async function onCreate() {
       displayName: basicInfo.value.displayName,
       version:     basicInfo.value.version,
       description: basicInfo.value.description || undefined,
+      source:      props.prefill?.source ?? 'Custom',
       components:  components.value,
     };
     await createBlueprint(spec);
@@ -105,6 +106,7 @@ const reviewForm = computed<BlueprintSpec>(() => ({
   displayName: basicInfo.value.displayName,
   version:     basicInfo.value.version,
   description: basicInfo.value.description || undefined,
+  source:      props.prefill?.source ?? 'Custom',
   components:  components.value,
 }));
 </script>

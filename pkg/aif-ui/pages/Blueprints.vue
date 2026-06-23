@@ -70,6 +70,8 @@
                 </div>
                 <div class="tile-meta">
                   <span class="tile-meta-item">{{ componentCount(versions, family) }} apps</span>
+                  <span class="tile-meta-sep">·</span>
+                  <Tag :aria-label="`Source: ${ sourceLabel(versions) }`">{{ sourceLabel(versions) }}</Tag>
                 </div>
               </div>
             </div>
@@ -165,9 +167,10 @@ import { Banner } from '@components/Banner';
 import { Checkbox } from '@components/Form/Checkbox';
 import ActionMenuShell from '@shell/components/ActionMenuShell';
 import AppModal from '@shell/components/AppModal';
+import Tag from '@shell/components/Tag.vue';
 import { isAdminUser } from '@shell/store/type-map';
 import {
-  listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion,
+  listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion, sourceFor,
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
@@ -177,7 +180,7 @@ import { PRODUCT } from '../config/suseai';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, Checkbox, ActionMenuShell, AppModal, OperatorErrorBanner },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner },
   setup() {
     const vm        = getCurrentInstance()!.proxy as any;
     const $router   = vm.$router;
@@ -473,6 +476,10 @@ export default defineComponent({
       return latestVersion(versions);
     }
 
+    function sourceLabel(versions: Blueprint[]): string {
+      return sourceFor(latestFor(versions));
+    }
+
     function toTitleCase(str: string): string {
       return str.replace(/\b\w/g, c => c.toUpperCase());
     }
@@ -531,6 +538,7 @@ export default defineComponent({
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
+      sourceLabel,
       toTitleCase, tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
@@ -596,7 +604,15 @@ export default defineComponent({
     gap: 12px;
   }
   .tile-title { margin: 0; font-size: 14px; font-weight: 600; }
-  .tile-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .tile-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .tile-meta-sep { opacity: 0.5; }
   .tile-content { flex: 1; }
   .tile-description {
     margin: 0;

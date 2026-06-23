@@ -1,3 +1,4 @@
+{{- $credentials := index .Values "credentials" -}}
 apiVersion: ai-platform.suse.com/v1alpha1
 kind: Settings
 metadata:
@@ -7,3 +8,35 @@ metadata:
     {{- include "aif-operator.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
+{{- if or (and $credentials.applicationCollection.username $credentials.applicationCollection.password)
+          (and $credentials.nvidia.username $credentials.nvidia.password)
+          (and $credentials.suseRegistry.username $credentials.suseRegistry.password) }}
+spec:
+{{- if and $credentials.applicationCollection.username $credentials.applicationCollection.password }}
+  applicationCollection:
+    tokenSecretRef:
+      key: token
+      name: application-collection
+    userSecretRef:
+      key: user
+      name: application-collection
+{{- end }}
+{{- if and $credentials.nvidia.username $credentials.nvidia.password }}
+  nvidia:
+    tokenSecretRef:
+      key: token
+      name: nvidia-registry
+    userSecretRef:
+      key: user
+      name: nvidia-registry
+{{- end }}
+{{- if and $credentials.suseRegistry.username $credentials.suseRegistry.password }}
+  suseRegistry:
+    tokenSecretRef:
+      key: token
+      name: suse-registry
+    userSecretRef:
+      key: user
+      name: suse-registry
+{{- end }}
+{{- end }}

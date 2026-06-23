@@ -107,6 +107,16 @@ spec:
                   all versions.
                 minLength: 1
                 type: string
+              source:
+                description: |-
+                  Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+                  To leave the source unset, omit the field entirely; the enum does not
+                  include the empty string, so setting `source: ""` will fail admission.
+                enum:
+                - SUSE
+                - Nvidia
+                - Custom
+                type: string
               version:
                 description: Version is the semver version string of this blueprint.
                 pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$
