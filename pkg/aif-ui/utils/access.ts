@@ -29,6 +29,13 @@ export async function canAccessExtension(store: any): Promise<boolean> {
   const principalId: string = getters['auth/principalId'] || '';
   const allCrtbs: any[]     = getters['management/all'](CRTB_TYPE) || [];
 
+  // Known limitation: only direct user bindings are checked. If cluster-owner
+  // access was granted through a group principal (LDAP group, GitHub org, etc.),
+  // the CRTB will have groupPrincipalName set and userPrincipalName empty, so
+  // this check produces a false negative for that user.
+  // A proper fix requires verifying which principals /v3/principals returns for
+  // non-admin users and whether group memberships are included — needs testing
+  // against a real Rancher instance with external auth configured.
   return allCrtbs.some(
     (b: any) =>
       b.metadata?.namespace === LOCAL_CLUSTER &&

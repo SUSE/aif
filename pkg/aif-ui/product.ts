@@ -45,9 +45,16 @@ export function init($plugin: IPlugin, store: RancherStore) {
     router.beforeEach(async (to: any, _from: any, next: any) => {
       if (!to.name?.toString().startsWith(`c-cluster-${PRODUCT}-`)) return next();
 
-      const canAccess = await canAccessExtension(store);
+      try {
+        const canAccess = await canAccessExtension(store);
 
-      canAccess ? next() : next({ name: 'home' });
+        canAccess ? next() : next({ name: 'home' });
+      } catch {
+        // canAccessExtension can throw if the management store is reset at
+        // runtime (logout, session expiry, network failure). Fail closed to
+        // avoid leaving the router in a hung state with next() never called.
+        next({ name: 'home' });
+      }
     });
 
     VIRTUAL_TYPES.forEach(vType => {
@@ -69,6 +76,12 @@ export function init($plugin: IPlugin, store: RancherStore) {
 
   // Full 3-layer async check runs once schemas are ready. This correctly
   // excludes downstream cluster owners (pass layer 2 but fail layer 3).
+  //
+  // Known limitation: once doRegister() fires, Rancher provides no public API
+  // to unregister a product at runtime. If the user's permissions are revoked
+  // mid-session the sidebar icon remains visible until the next browser reload.
+  // The navigation guard re-runs canAccessExtension on every route change, so
+  // the user cannot navigate into the extension regardless of the icon.
   function onSchemasReady() {
     void canAccessExtension(store).then(allowed => {
       if (allowed) doRegister();
