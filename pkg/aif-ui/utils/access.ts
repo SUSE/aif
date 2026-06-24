@@ -1,4 +1,5 @@
 import { isAdminUser } from '@shell/store/type-map';
+import type { RancherStore } from '../types/rancher-types';
 
 const LOCAL_CLUSTER      = 'local';
 const CLUSTER_OWNER_ROLE = 'cluster-owner';
@@ -13,7 +14,7 @@ const CRTB_TYPE          = 'management.cattle.io.clusterroletemplatebinding';
  *  3. Local binding — confirms ownership of the management cluster,
  *                    filtering out users who own only downstream clusters.
  */
-export async function canAccessExtension(store: any): Promise<boolean> {
+export async function canAccessExtension(store: RancherStore): Promise<boolean> {
   const getters = store.getters;
 
   if (isAdminUser(getters)) return true;
@@ -24,9 +25,15 @@ export async function canAccessExtension(store: any): Promise<boolean> {
 
   if (!crtbMethods.includes('POST')) return false;
 
-  await store.dispatch('management/findAll', { type: CRTB_TYPE });
+  try {
+    await store.dispatch('management/findAll', { type: CRTB_TYPE });
+  } catch {
+    return false;
+  }
 
-  const principalId: string = getters['auth/principalId'] || '';
+  const principalId: string = getters['auth/principalId'];
+  if (!principalId) return false;
+
   const allCrtbs: any[]     = getters['management/all'](CRTB_TYPE) || [];
 
   // Known limitation: only direct user bindings are checked. If cluster-owner
@@ -36,6 +43,12 @@ export async function canAccessExtension(store: any): Promise<boolean> {
   // A proper fix requires verifying which principals /v3/principals returns for
   // non-admin users and whether group memberships are included — needs testing
   // against a real Rancher instance with external auth configured.
+  //
+  // Known limitation: custom cluster role templates that inherit from
+  // 'cluster-owner' are not recognised. Only the built-in role is checked.
+  // This is intentional — inherited roles may grant equivalent permissions
+  // but expanding the check requires enumerating the role hierarchy, which
+  // is not supported by the current access model.
   return allCrtbs.some(
     (b: any) =>
       b.metadata?.namespace === LOCAL_CLUSTER &&

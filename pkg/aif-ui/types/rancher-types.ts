@@ -3,11 +3,25 @@
  * Replaces `any` types with proper interfaces
  */
 
+import type { Router } from 'vue-router';
+
 // === Store Types ===
-export interface RancherStore {
+
+// Minimal store interface required by service-layer functions that only call dispatch.
+// RancherStore satisfies this type, as does any { dispatch } adapter used in Vuex actions.
+export interface Dispatchable {
   dispatch: (action: string, payload?: any) => Promise<any>;
-  getters?: Record<string, any>;
+}
+
+export interface RancherStore extends Dispatchable {
+  dispatch:        (action: string, payload?: any) => Promise<any>;
+  getters:         Record<string, any>;
   registerModule?: (name: string, module: any) => void;
+  watch:           (getter: (state: any, getters: any) => any, cb: (value: any, oldValue: any) => void) => () => void;
+  state: {
+    $router?: Router;
+    [key: string]: any;
+  };
 }
 
 // === Cluster Types ===

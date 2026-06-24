@@ -15,33 +15,40 @@ import { canAccessExtension } from './utils/access';
 
 export { PRODUCT } from './config/suseai';
 
+const CRTB_TYPE         = 'management.cattle.io.clusterroletemplatebinding';
+const AIFACTORY_API_GROUP = 'ai-platform.suse.com';
+
 export function init($plugin: IPlugin, store: RancherStore) {
   store.registerModule?.(PRODUCT, suseaiStore);
 
-  let registered = false;
+  const { product, virtualType, basicType, weightType } = $plugin.DSL(store, PRODUCT);
 
-  function doRegister() {
-    if (registered) return;
-    registered = true;
+  product({
+    icon:              'suseai',
+    iconHeader:        require('./assets/SUSE-AI-Factory-Logo_pos-green-horizontal.svg'),
+    inStore:           SUSEAI_PRODUCT.inStore,
+    isMultiClusterApp: true,
+    showClusterSwitcher: false,
+    weight:            SUSEAI_PRODUCT.weight,
+    // Both conditions are AND-checked by Rancher's activeProducts getter.
+    // ifHaveType: users without CRTB schema access (standard users, cluster members)
+    // never see the icon.
+    // ifHaveGroup: the ai-platform.suse.com CRDs are management-cluster-scoped;
+    // downstream cluster owners do not have access to them in the management store,
+    // so they are excluded despite having CRTB access.
+    // Navigation is further restricted by the nav guard below.
+    ifHaveType:  CRTB_TYPE,
+    ifHaveGroup: AIFACTORY_API_GROUP,
+    to: {
+      name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`,
+      params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
+      meta: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
+    }
+  } as any);
 
-    const { product, virtualType, basicType, weightType } = $plugin.DSL(store, PRODUCT);
+  const router = store.state.$router;
 
-    product({
-      icon:        'suseai',
-      iconHeader:  require('./assets/SUSE-AI-Factory-Logo_pos-green-horizontal.svg'),
-      inStore:     SUSEAI_PRODUCT.inStore,
-      isMultiClusterApp: true,
-      showClusterSwitcher: false,
-      weight: SUSEAI_PRODUCT.weight,
-      to: {
-        name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`,
-        params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
-        meta: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
-      }
-    } as any);
-
-    const router = (store as any).state.$router;
-
+  if (router && typeof router.beforeEach === 'function') {
     router.beforeEach(async (to: any, _from: any, next: any) => {
       if (!to.name?.toString().startsWith(`c-cluster-${PRODUCT}-`)) return next();
 
@@ -56,66 +63,17 @@ export function init($plugin: IPlugin, store: RancherStore) {
         next({ name: 'home' });
       }
     });
-
-    VIRTUAL_TYPES.forEach(vType => {
-      virtualType({
-        name:  vType.name,
-        label: vType.label,
-        route: vType.route
-      });
-    });
-
-    Object.entries(NAV_WEIGHTS).forEach(([type, weight]) => {
-      weightType(type, weight, true);
-    });
-
-    basicType(BASIC_TYPES);
-
-    void checkOperatorConnection();
   }
 
-  // Full 3-layer async check runs once schemas are ready. This correctly
-  // excludes downstream cluster owners (pass layer 2 but fail layer 3).
-  //
-  // Known limitation: once doRegister() fires, Rancher provides no public API
-  // to unregister a product at runtime. If the user's permissions are revoked
-  // mid-session the sidebar icon remains visible until the next browser reload.
-  // The navigation guard re-runs canAccessExtension on every route change, so
-  // the user cannot navigate into the extension regardless of the icon.
-  function onSchemasReady() {
-    void canAccessExtension(store).then(allowed => {
-      if (allowed) doRegister();
-    });
-  }
+  VIRTUAL_TYPES.forEach(vType => {
+    virtualType({ name: vType.name, label: vType.label, route: vType.route });
+  });
 
-  // Check synchronously whether schemas are already loaded (warm/cached session).
-  let schemasReady = false;
+  Object.entries(NAV_WEIGHTS).forEach(([type, weight]) => {
+    weightType(type, weight, true);
+  });
 
-  try {
-    (store as any).getters['management/schemaFor']('management.cattle.io.cluster');
-    schemasReady = true;
-  } catch { /* not ready yet */ }
+  basicType(BASIC_TYPES);
 
-  if (schemasReady) {
-    onSchemasReady();
-  } else {
-    // Watch for the cluster schema to appear — it's present for every
-    // authenticated user once the management store initialises.
-    const unwatch = (store as any).watch(
-      () => {
-        try {
-          return !!(store as any).getters['management/schemaFor'](
-            'management.cattle.io.cluster'
-          );
-        } catch {
-          return false;
-        }
-      },
-      (ready: boolean) => {
-        if (!ready) return;
-        unwatch();
-        onSchemasReady();
-      }
-    );
-  }
+  void checkOperatorConnection();
 }

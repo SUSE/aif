@@ -3,7 +3,7 @@
  * Replaces complex fallback chains with simple, reliable endpoints
  */
 
-import type { RancherStore } from '../types/rancher-types';
+import type { Dispatchable } from '../types/rancher-types';
 import { logger } from '../utils/logger';
 import { getClusterContext } from '../utils/cluster-operations';
 import { TIMEOUT_VALUES } from '../utils/constants';
@@ -86,9 +86,9 @@ export async function extractFileFromTarGz(buffer: ArrayBuffer, filenameSuffix: 
 }
 
 export class ChartValuesService {
-  private store: RancherStore;
+  private store: Dispatchable;
 
-  constructor(store: RancherStore) {
+  constructor(store: Dispatchable) {
     this.store = store;
   }
 
@@ -492,6 +492,6 @@ export class ChartValuesService {
 /**
  * Factory function to create ChartValuesService instance
  */
-export function createChartValuesService(store: RancherStore): ChartValuesService {
+export function createChartValuesService(store: Dispatchable): ChartValuesService {
   return new ChartValuesService(store);
 }

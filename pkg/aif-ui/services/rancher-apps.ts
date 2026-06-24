@@ -24,7 +24,7 @@ import { log as logger } from '../utils/logger';
 import { createChartValuesService, extractFileFromTarGz } from './chart-values';
 import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
 import type {
-  RancherStore,
+  Dispatchable,
   ClusterInfo,
   ClusterResource,
   NamespaceResource,
@@ -91,7 +91,7 @@ function isClusterReady(c: ClusterResource): boolean {
 // getAllClusters returns every cluster Rancher knows about, including unhealthy ones.
 // Each entry carries a `ready` flag so callers can disable/grey out unreachable clusters
 // without hiding them from the user entirely.
-export async function getAllClusters($store: RancherStore): Promise<ClusterInfo[]> {
+export async function getAllClusters($store: Dispatchable): Promise<ClusterInfo[]> {
   try {
     let timer: ReturnType<typeof setTimeout>;
     const rows = await Promise.race([
@@ -117,12 +117,12 @@ export async function getAllClusters($store: RancherStore): Promise<ClusterInfo[
 
 // getClusters returns only ready clusters. Used for polling loops and any code that
 // makes downstream API calls — unhealthy clusters cause those calls to time out.
-export async function getClusters($store: RancherStore): Promise<ClusterInfo[]> {
+export async function getClusters($store: Dispatchable): Promise<ClusterInfo[]> {
   const all = await getAllClusters($store);
   return all.filter(c => c.ready !== false);
 }
 
-export async function ensureNamespace($store: RancherStore, clusterId: string, namespace: string): Promise<void> {
+export async function ensureNamespace($store: Dispatchable, clusterId: string, namespace: string): Promise<void> {
   const getUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}`;
   try {
     await $store.dispatch('rancher/request', { url: getUrl, timeout: TIMEOUT_VALUES.CLUSTER });
@@ -140,7 +140,7 @@ export async function ensureNamespace($store: RancherStore, clusterId: string, n
 
 
 export async function createOrUpgradeApp(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string,
@@ -336,7 +336,7 @@ export async function createOrUpgradeApp(
 /* ====================== verify app appears and becomes ready ===================== */
 
 export async function waitForAppInstall(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string,
@@ -443,7 +443,7 @@ export async function waitForAppInstall(
   }
 }
 
-export async function deleteApp($store: RancherStore, clusterId: string, namespace: string, releaseName: string, repoName?: string): Promise<void> {
+export async function deleteApp($store: Dispatchable, clusterId: string, namespace: string, releaseName: string, repoName?: string): Promise<void> {
   try {
     const url =
       `/k8s/clusters/${encodeURIComponent(clusterId)}` +
@@ -466,7 +466,7 @@ export async function deleteApp($store: RancherStore, clusterId: string, namespa
 
 /* ============================ discovery (manage) ============================ */
 
-export async function listCatalogApps($store: RancherStore, clusterId: string): Promise<AppCRD[]> {
+export async function listCatalogApps($store: Dispatchable, clusterId: string): Promise<AppCRD[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=1000`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return res?.data?.items || res?.data || res?.items || [];
@@ -478,7 +478,7 @@ export const SYSTEM_NAMESPACE_PREFIXES = [
   'neuvector', 'ingress-', 'cert-manager',
 ];
 
-export async function listNamespaces($store: RancherStore, clusterId: string): Promise<string[]> {
+export async function listNamespaces($store: Dispatchable, clusterId: string): Promise<string[]> {
   const url = clusterId === 'local'
     ? '/api/v1/namespaces?limit=5000'
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces?limit=5000`;
@@ -489,7 +489,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
 }
 
 export async function fetchUserNamespaces(
-  $store: RancherStore,
+  $store: Dispatchable,
   suggestedDefault: string
 ): Promise<Array<{ label: string; value: string }>> {
   try {
@@ -511,7 +511,7 @@ export async function fetchUserNamespaces(
   }
 }
 
-async function listNsHelmSecrets($store: RancherStore, clusterId: string, ns: string): Promise<HelmSecret[]> {
+async function listNsHelmSecrets($store: Dispatchable, clusterId: string, ns: string): Promise<HelmSecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(ns)}/secrets?labelSelector=owner%3Dhelm`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return res?.data?.items || res?.data || [];
@@ -540,7 +540,7 @@ function extractHelmRelease(obj: HelmSecret): HelmReleaseInfo {
 type FoundInfo = { release: string; namespace: string; chartName?: string; version?: string; clusters: string[] };
 
 export async function discoverExistingInstall(
-  $store: RancherStore,
+  $store: Dispatchable,
   slug: string,
   chartNameGuess?: string,
   preferClusterId?: string
@@ -625,7 +625,7 @@ export async function discoverExistingInstall(
 
 /* =========================== charts: index + versions =========================== */
 
-async function getRepoIndexLink($store: RancherStore, repoName: string): Promise<string | null> {
+async function getRepoIndexLink($store: Dispatchable, repoName: string): Promise<string | null> {
   const found = await getClusterContext($store, { repoName: repoName});
   if (!found) {
     logger.warn(`ClusterRepo "${repoName}" not found in any cluster`);
@@ -646,7 +646,7 @@ async function getRepoIndexLink($store: RancherStore, repoName: string): Promise
   }
 }
 
-async function getRepoIndex($store: RancherStore, repoName: string): Promise<RepositoryIndex | null> {
+async function getRepoIndex($store: Dispatchable, repoName: string): Promise<RepositoryIndex | null> {
 
   const indexLink = await getRepoIndexLink($store, repoName);
   if (!indexLink) return null;
@@ -661,7 +661,7 @@ async function getRepoIndex($store: RancherStore, repoName: string): Promise<Rep
 }
 
 export async function findChartInRepo(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   slug: string
@@ -677,7 +677,7 @@ export async function findChartInRepo(
 }
 
 export async function listChartVersions(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   chartName: string
@@ -716,7 +716,7 @@ function textFromFileEntry(v: FileEntry): string {
 
 
 export async function fetchChartYaml(
-  $store: RancherStore,
+  $store: Dispatchable,
   repoName: string,
   chartName: string,
   version: string
@@ -788,7 +788,7 @@ export async function fetchChartYaml(
 }
 
 export async function fetchChartDefaultValues(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   chartName: string,
@@ -800,7 +800,7 @@ export async function fetchChartDefaultValues(
 }
 
 export async function fetchChartArchiveSize(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   chartName: string,
@@ -814,7 +814,7 @@ export async function fetchChartArchiveSize(
 
 /* ================== NEW: helpers for repo discovery & helm installs ============== */
 
-export async function listClusterRepos($store: RancherStore): Promise<ClusterResource[]> {
+export async function listClusterRepos($store: Dispatchable): Promise<ClusterResource[]> {
     const res = await $store.dispatch('rancher/request', {
     url: '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000',
     timeout: TIMEOUT_VALUES.READ
@@ -823,7 +823,7 @@ export async function listClusterRepos($store: RancherStore): Promise<ClusterRes
 }
 
 export async function inferClusterRepoForChart(
-  $store: RancherStore,
+  $store: Dispatchable,
   chartName: string,
   preferVersion?: string
 ): Promise<string | null> {
@@ -865,7 +865,7 @@ function clusterRepoNameFromUrl(repoUrl: string): string {
 }
 
 async function upsertBasicAuthSecret(
-  $store: RancherStore,
+  $store: Dispatchable,
   namespace: string,
   name: string,
   username: string,
@@ -901,7 +901,7 @@ async function upsertBasicAuthSecret(
 }
 
 export async function ensureClusterRepo(
-  $store: RancherStore,
+  $store: Dispatchable,
   ociUrl: string,
   credentials?: { username: string; password: string },
 ): Promise<string> {
@@ -962,7 +962,7 @@ export async function ensureClusterRepo(
 
 
 async function findHelmReleaseObjects(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string
@@ -1015,7 +1015,7 @@ async function findHelmReleaseObjects(
 }
 
 export async function getInstalledHelmDetails(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string
@@ -1092,7 +1092,7 @@ export async function getInstalledHelmDetails(
 
 // helper: list secrets in a namespace (used to find already-created -dockercfg)
 async function listNsSecrets(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string
 ): Promise<RegistrySecret[]> {
@@ -1102,7 +1102,7 @@ async function listNsSecrets(
 }
 
 export async function ensureRegistrySecret(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   registryHost: string,
@@ -1214,7 +1214,7 @@ export async function ensureRegistrySecret(
 }
 
 export async function listServiceAccounts(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string
 ): Promise<string[]> {
@@ -1225,7 +1225,7 @@ export async function listServiceAccounts(
 }
 
 export async function ensureServiceAccountPullSecret(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   saName: string,
@@ -1261,7 +1261,7 @@ export async function ensureServiceAccountPullSecret(
 }
 
 export async function ensurePullSecretOnAllSAs(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   secretName: string
@@ -1277,7 +1277,7 @@ export async function ensurePullSecretOnAllSAs(
 }
 
 export async function ensureRegistrySecretSimple(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   registryHost: string,
@@ -1389,7 +1389,7 @@ export async function ensureRegistrySecretSimple(
 }
 
 export async function waitForSecretReady(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   name: string,

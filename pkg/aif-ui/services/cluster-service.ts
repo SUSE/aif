@@ -3,7 +3,7 @@ import { createErrorHandler } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { getClusters as getReadyClusters } from './rancher-apps';
 import type {
-  RancherStore,
+  Dispatchable,
   ClusterInfo,
   ClusterResource,
   AppCRD,
@@ -18,7 +18,7 @@ export class ClusterService {
   /**
    * Get list of all clusters
    */
-  static async getClusters($store: RancherStore): Promise<ClusterInfo[]> {
+  static async getClusters($store: Dispatchable): Promise<ClusterInfo[]> {
     return getReadyClusters($store);
   }
 
@@ -26,7 +26,7 @@ export class ClusterService {
    * Ensure namespace exists in cluster, create if missing
    */
   static async ensureNamespace(
-    $store: RancherStore,
+    $store: Dispatchable,
     clusterId: string,
     namespace: string
   ): Promise<void> {
@@ -62,7 +62,7 @@ export class ClusterService {
    * Check if app exists in cluster namespace
    */
   static async appExists(
-    $store: RancherStore,
+    $store: Dispatchable,
     clusterId: string,
     namespace: string,
     release: string
@@ -80,7 +80,7 @@ export class ClusterService {
   /**
    * List all catalog apps in a cluster
    */
-  static async listCatalogApps($store: RancherStore, clusterId: string): Promise<AppCRD[]> {
+  static async listCatalogApps($store: Dispatchable, clusterId: string): Promise<AppCRD[]> {
     try {
       const res = await $store.dispatch('rancher/request', {
         url: `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=2000`,

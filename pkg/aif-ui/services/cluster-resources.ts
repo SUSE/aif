@@ -1,5 +1,5 @@
 // Cluster resource metrics and compatibility checking service
-import type { RancherStore, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
+import type { Dispatchable, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
 import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
 
@@ -117,7 +117,7 @@ export function getDefaultAppResourceRequirements(slug: string, appName?: string
   };
 }
 
-export async function getClusterResourceMetrics(store: RancherStore, clusterId: string): Promise<ClusterResourceSummary> {
+export async function getClusterResourceMetrics(store: Dispatchable, clusterId: string): Promise<ClusterResourceSummary> {
   console.log(`[SUSE-AI] getClusterResourceMetrics: Starting for cluster ${clusterId}`);
   
   try {
@@ -300,7 +300,7 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
   }
 }
 
-export async function getAllClusterResourceMetrics(store: RancherStore): Promise<ClusterResourceSummary[]> {
+export async function getAllClusterResourceMetrics(store: Dispatchable): Promise<ClusterResourceSummary[]> {
   console.log('[SUSE-AI] getAllClusterResourceMetrics: Starting...');
 
   try {
@@ -459,16 +459,16 @@ function parseK8sMemory(memoryStr: string): number {
   }
 }
 
-async function fetchNodes(store: RancherStore, clusterId: string): Promise<NodeResource[]> {
+async function fetchNodes(store: Dispatchable, clusterId: string): Promise<NodeResource[]> {
   return fetchClusterData<NodeResource>(store, clusterId, 'nodes', 'nodes');
 }
 
-async function fetchNodeMetrics(store: RancherStore, clusterId: string): Promise<NodeMetric[]> {
+async function fetchNodeMetrics(store: Dispatchable, clusterId: string): Promise<NodeMetric[]> {
   return fetchClusterData<NodeMetric>(store, clusterId, 'metrics.k8s.io.nodes', 'node metrics');
 }
 
 async function fetchClusterData<T>(
-  store: RancherStore,
+  store: Dispatchable,
   clusterId: string,
   resourcePath: string,
   label: string
@@ -489,7 +489,7 @@ async function fetchClusterData<T>(
   }
 }
 
-async function fetchStorageClasses(store: RancherStore, clusterId: string): Promise<string[]> {
+async function fetchStorageClasses(store: Dispatchable, clusterId: string): Promise<string[]> {
   const storageClasses = await fetchClusterData<any>(
     store,
     clusterId,

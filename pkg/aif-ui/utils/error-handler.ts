@@ -3,7 +3,7 @@
  * Replaces complex error handling chains with simple, consistent patterns
  */
 
-import type { RancherStore, RancherError } from '../types/rancher-types';
+import type { Dispatchable, RancherError } from '../types/rancher-types';
 import { NOTIFICATION_DURATION } from './constants';
 import { logger } from './logger';
 
@@ -16,10 +16,10 @@ export interface StandardError {
 }
 
 export class ErrorHandler {
-  private store: RancherStore;
+  private store: Dispatchable;
   private component: string;
 
-  constructor(store: RancherStore, component: string) {
+  constructor(store: Dispatchable, component: string) {
     this.store = store;
     this.component = component;
   }
@@ -218,7 +218,7 @@ export class ErrorHandler {
 /**
  * Factory function to create ErrorHandler instance
  */
-export function createErrorHandler(store: RancherStore, component: string): ErrorHandler {
+export function createErrorHandler(store: Dispatchable, component: string): ErrorHandler {
   return new ErrorHandler(store, component);
 }
 
