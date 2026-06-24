@@ -5,16 +5,21 @@ const LOCAL_CLUSTER      = 'local';
 const CLUSTER_OWNER_ROLE = 'cluster-owner';
 const CRTB_TYPE          = 'management.cattle.io.clusterroletemplatebinding';
 
-/**
- * Full async access check (all three layers). Used both at product registration
- * (sidebar visibility) and in the navigation guard.
- *
- *  1. isAdminUser  — schema-based fast path for global admins.
- *  2. CRTB POST    — eliminates cluster members and standard users.
- *  3. Local binding — confirms ownership of the management cluster,
- *                    filtering out users who own only downstream clusters.
- */
-export async function canAccessExtension(store: RancherStore): Promise<boolean> {
+interface CrtbBinding {
+  metadata?:          { namespace?: string };
+  roleTemplateName?:  string;
+  userPrincipalName?: string;
+}
+
+// Cached so the CRTB scan runs at most once per session. Invalidated on CRTB
+// store changes so mid-session role revocations are caught on next navigation.
+let cachedDecision: boolean | null = null;
+
+export function invalidateAccessCache(): void {
+  cachedDecision = null;
+}
+
+async function resolveAccess(store: RancherStore): Promise<boolean> {
   const getters = store.getters;
 
   if (isAdminUser(getters)) return true;
@@ -25,8 +30,10 @@ export async function canAccessExtension(store: RancherStore): Promise<boolean> 
 
   if (!crtbMethods.includes('POST')) return false;
 
+  // The binding we need is always in the 'local' namespace. A full findAll can
+  // be thousands of records in large installations; scoping to local keeps it small.
   try {
-    await store.dispatch('management/findAll', { type: CRTB_TYPE });
+    await store.dispatch('management/findAll', { type: CRTB_TYPE, opt: { namespaced: LOCAL_CLUSTER } });
   } catch {
     return false;
   }
@@ -34,7 +41,7 @@ export async function canAccessExtension(store: RancherStore): Promise<boolean> 
   const principalId: string = getters['auth/principalId'];
   if (!principalId) return false;
 
-  const allCrtbs: any[]     = getters['management/all'](CRTB_TYPE) || [];
+  const allCrtbs: CrtbBinding[] = getters['management/all'](CRTB_TYPE) || [];
 
   // Known limitation: only direct user bindings are checked. If cluster-owner
   // access was granted through a group principal (LDAP group, GitHub org, etc.),
@@ -50,9 +57,24 @@ export async function canAccessExtension(store: RancherStore): Promise<boolean> 
   // but expanding the check requires enumerating the role hierarchy, which
   // is not supported by the current access model.
   return allCrtbs.some(
-    (b: any) =>
+    (b) =>
       b.metadata?.namespace === LOCAL_CLUSTER &&
       b.roleTemplateName    === CLUSTER_OWNER_ROLE &&
       b.userPrincipalName   === principalId
   );
+}
+
+/**
+ * Returns true if the current user is allowed to access the extension.
+ * Result is cached for the session; invalidated when CRTBs change in the store.
+ *
+ *  1. isAdminUser  — schema-based fast path for global admins.
+ *  2. CRTB POST    — eliminates cluster members and standard users.
+ *  3. Local binding — confirms ownership of the management cluster,
+ *                    filtering out users who own only downstream clusters.
+ */
+export async function canAccessExtension(store: RancherStore): Promise<boolean> {
+  if (cachedDecision !== null) return cachedDecision;
+  cachedDecision = await resolveAccess(store);
+  return cachedDecision;
 }

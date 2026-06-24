@@ -14,7 +14,6 @@ export interface Dispatchable {
 }
 
 export interface RancherStore extends Dispatchable {
-  dispatch:        (action: string, payload?: any) => Promise<any>;
   getters:         Record<string, any>;
   registerModule?: (name: string, module: any) => void;
   watch:           (getter: (state: any, getters: any) => any, cb: (value: any, oldValue: any) => void) => () => void;

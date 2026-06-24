@@ -11,12 +11,16 @@ import {
 } from './config/suseai';
 import type { RancherStore } from './types/rancher-types';
 import { checkOperatorConnection } from './utils/operator-config';
-import { canAccessExtension } from './utils/access';
+import { canAccessExtension, invalidateAccessCache } from './utils/access';
+import { logger } from './utils/logger';
 
 export { PRODUCT } from './config/suseai';
 
-const CRTB_TYPE         = 'management.cattle.io.clusterroletemplatebinding';
+const CRTB_TYPE           = 'management.cattle.io.clusterroletemplatebinding';
 const AIFACTORY_API_GROUP = 'ai-platform.suse.com';
+
+let removeNavGuard:   (() => void) | null = null;
+let removeCrtbWatch:  (() => void) | null = null;
 
 export function init($plugin: IPlugin, store: RancherStore) {
   store.registerModule?.(PRODUCT, suseaiStore);
@@ -49,20 +53,35 @@ export function init($plugin: IPlugin, store: RancherStore) {
   const router = store.state.$router;
 
   if (router && typeof router.beforeEach === 'function') {
-    router.beforeEach(async (to: any, _from: any, next: any) => {
+    removeNavGuard?.();
+    removeNavGuard = router.beforeEach(async (to, _from, next) => {
       if (!to.name?.toString().startsWith(`c-cluster-${PRODUCT}-`)) return next();
 
       try {
         const canAccess = await canAccessExtension(store);
 
         canAccess ? next() : next({ name: 'home' });
-      } catch {
+      } catch (err) {
         // canAccessExtension can throw if the management store is reset at
         // runtime (logout, session expiry, network failure). Fail closed to
         // avoid leaving the router in a hung state with next() never called.
+        logger.warn('canAccessExtension threw unexpectedly; failing closed', { action: 'nav-guard', data: err });
+        store.dispatch('growl/error', {
+          title:   'Access check failed',
+          message: 'Unable to verify extension access. Please reload the page.',
+          timeout: 8000,
+        });
         next({ name: 'home' });
       }
     });
+
+    // Invalidate the cached access decision when CRTBs change so a mid-session
+    // role revocation is caught on the next navigation into the extension.
+    removeCrtbWatch?.();
+    removeCrtbWatch = store.watch(
+      (_, getters) => getters['management/all'](CRTB_TYPE),
+      () => invalidateAccessCache()
+    );
   }
 
   VIRTUAL_TYPES.forEach(vType => {
@@ -74,6 +93,14 @@ export function init($plugin: IPlugin, store: RancherStore) {
   });
 
   basicType(BASIC_TYPES);
+
+  // Prefetch local-namespace CRTBs for users who have CRTB schema access, so
+  // the first navigation hits the Vuex cache rather than blocking on a network
+  // request inside the nav guard. Skipped for users without schema access to
+  // avoid a guaranteed 403 on every login.
+  if (store.getters['management/schemaFor']?.(CRTB_TYPE)) {
+    void store.dispatch('management/findAll', { type: CRTB_TYPE, opt: { namespaced: 'local' } });
+  }
 
   void checkOperatorConnection();
 }
