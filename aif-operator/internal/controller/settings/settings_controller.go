@@ -19,6 +19,7 @@ package settings
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -44,6 +45,7 @@ type SettingsReconciler struct {
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=gitrepos,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -56,6 +58,11 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	if err := r.reconcileFleetGitRepo(ctx, &s); err != nil {
 		l.Error(err, "failed to reconcile Fleet GitRepo")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileClusterRepos(ctx, &s); err != nil {
+		l.Error(err, "failed to reconcile ClusterRepos")
 		return ctrl.Result{}, err
 	}
 
@@ -226,4 +233,149 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 		client.ForceOwnership,
 		client.FieldOwner("aif-operator-settings"),
 	)
+}
+
+func (r *SettingsReconciler) readSettingsSecretKey(ctx context.Context, ns string, ref *aiplatformv1alpha1.SecretKeyRef) (string, error) {
+	if ref == nil {
+		return "", nil
+	}
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, &secret); err != nil {
+		return "", err
+	}
+	val, ok := secret.Data[ref.Key]
+	if !ok {
+		return "", fmt.Errorf("key %q not found in secret %q", ref.Key, ref.Name)
+	}
+	return string(val), nil
+}
+
+func (r *SettingsReconciler) applyRegistryAuthSecret(ctx context.Context, ns string, secretName string, userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef) (string, error) {
+	if userRef == nil || tokenRef == nil {
+		return "", nil
+	}
+
+	u, err := r.readSettingsSecretKey(ctx, ns, userRef)
+	if err != nil {
+		return "", fmt.Errorf("read user secret: %w", err)
+	}
+	p, err := r.readSettingsSecretKey(ctx, ns, tokenRef)
+	if err != nil {
+		return "", fmt.Errorf("read token secret: %w", err)
+	}
+
+	if u == "" || p == "" {
+		return "", nil
+	}
+
+	mirror := &corev1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: "cattle-system",
+		},
+		Type: corev1.SecretTypeBasicAuth,
+		Data: map[string][]byte{
+			"username": []byte(u),
+			"password": []byte(p),
+		},
+	}
+
+	if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
+		return "", fmt.Errorf("apply auth secret %s: %w", secretName, err)
+	}
+
+	return secretName, nil
+}
+
+func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, clientSecretName string) error {
+	repo := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "catalog.cattle.io/v1",
+			"kind":       "ClusterRepo",
+			"metadata": map[string]any{
+				"name": name,
+			},
+			"spec": map[string]any{},
+		},
+	}
+
+	if strings.HasPrefix(url, "oci://") {
+		_ = unstructured.SetNestedField(repo.Object, url, "spec", "url")
+	} else {
+		_ = unstructured.SetNestedField(repo.Object, url, "spec", "url")
+	}
+
+	if clientSecretName != "" {
+		_ = unstructured.SetNestedField(repo.Object, clientSecretName, "spec", "clientSecret", "name")
+		_ = unstructured.SetNestedField(repo.Object, "cattle-system", "spec", "clientSecret", "namespace")
+	}
+
+	return r.Patch(ctx, repo, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings"))
+}
+
+func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
+	// 1. Application Collection
+	acUrl := "oci://dp.apps.rancher.io/charts"
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
+		acUrl = s.Spec.RegistryEndpoints.ApplicationCollection
+	}
+	if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
+		secretName, err := r.applyRegistryAuthSecret(ctx, s.Namespace, "application-collection-auth", s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef)
+		if err != nil {
+			return err
+		}
+		if secretName != "" {
+			if err := r.applyClusterRepo(ctx, "application-collection", acUrl, secretName); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 2. SUSE Registry
+	srUrl := "oci://registry.suse.com/ai/charts"
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
+		srUrl = s.Spec.RegistryEndpoints.SUSERegistry
+	}
+	if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
+		secretName, err := r.applyRegistryAuthSecret(ctx, s.Namespace, "suse-ai-registry-auth", s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef)
+		if err != nil {
+			return err
+		}
+		if secretName != "" {
+			if err := r.applyClusterRepo(ctx, "suse-ai-registry", srUrl, secretName); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 3. NVIDIA
+	nvHasRefs := s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil
+	var nvUrl string
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
+		nvUrl = s.Spec.RegistryEndpoints.Nvidia
+	}
+
+	if nvUrl != "" {
+		var secretName string
+		var err error
+		if nvHasRefs {
+			secretName, err = r.applyRegistryAuthSecret(ctx, s.Namespace, "nvidia-registry-auth", s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef)
+			if err != nil {
+				return err
+			}
+		}
+		if err := r.applyClusterRepo(ctx, "nvidia", nvUrl, secretName); err != nil {
+			return err
+		}
+	} else if nvHasRefs {
+		if err := r.applyClusterRepo(ctx, "nvidia", "https://helm.ngc.nvidia.com/nvidia", ""); err != nil {
+			return err
+		}
+		if err := r.applyClusterRepo(ctx, "nvidia-blueprints", "https://helm.ngc.nvidia.com/nvidia/blueprint", ""); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
