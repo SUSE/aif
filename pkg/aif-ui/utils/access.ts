@@ -1,9 +1,10 @@
 import { isAdminUser } from '@shell/store/type-map';
 import type { RancherStore } from '../types/rancher-types';
 
-const LOCAL_CLUSTER      = 'local';
+export const LOCAL_CLUSTER = 'local';
+export const CRTB_TYPE    = 'management.cattle.io.clusterroletemplatebinding';
+
 const CLUSTER_OWNER_ROLE = 'cluster-owner';
-const CRTB_TYPE          = 'management.cattle.io.clusterroletemplatebinding';
 
 interface CrtbBinding {
   metadata?:          { namespace?: string };
@@ -41,7 +42,11 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
   const principalId: string = getters['auth/principalId'];
   if (!principalId) return false;
 
-  const allCrtbs: CrtbBinding[] = getters['management/all'](CRTB_TYPE) || [];
+  // management/all returns the full Vuex store contents, not just what the
+  // namespace-scoped findAll fetched. Pre-filter to local so the scan below
+  // cannot be confused by bindings from downstream namespaces.
+  const localCrtbs: CrtbBinding[] = (getters['management/all'](CRTB_TYPE) || [])
+    .filter((b: CrtbBinding) => b.metadata?.namespace === LOCAL_CLUSTER);
 
   // Known limitation: only direct user bindings are checked. If cluster-owner
   // access was granted through a group principal (LDAP group, GitHub org, etc.),
@@ -56,11 +61,10 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
   // This is intentional — inherited roles may grant equivalent permissions
   // but expanding the check requires enumerating the role hierarchy, which
   // is not supported by the current access model.
-  return allCrtbs.some(
+  return localCrtbs.some(
     (b) =>
-      b.metadata?.namespace === LOCAL_CLUSTER &&
-      b.roleTemplateName    === CLUSTER_OWNER_ROLE &&
-      b.userPrincipalName   === principalId
+      b.roleTemplateName  === CLUSTER_OWNER_ROLE &&
+      b.userPrincipalName === principalId
   );
 }
 

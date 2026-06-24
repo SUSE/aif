@@ -11,12 +11,11 @@ import {
 } from './config/suseai';
 import type { RancherStore } from './types/rancher-types';
 import { checkOperatorConnection } from './utils/operator-config';
-import { canAccessExtension, invalidateAccessCache } from './utils/access';
+import { canAccessExtension, invalidateAccessCache, CRTB_TYPE, LOCAL_CLUSTER } from './utils/access';
 import { logger } from './utils/logger';
 
 export { PRODUCT } from './config/suseai';
 
-const CRTB_TYPE           = 'management.cattle.io.clusterroletemplatebinding';
 const AIFACTORY_API_GROUP = 'ai-platform.suse.com';
 
 let removeNavGuard:   (() => void) | null = null;
@@ -48,7 +47,9 @@ export function init($plugin: IPlugin, store: RancherStore) {
       params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
       meta: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
     }
-  } as any);
+    // ifHaveType and ifHaveGroup are valid at runtime but absent from the
+    // published @rancher/shell DSL TypeScript types.
+  } as Record<string, unknown>);
 
   const router = store.state.$router;
 
@@ -99,7 +100,7 @@ export function init($plugin: IPlugin, store: RancherStore) {
   // request inside the nav guard. Skipped for users without schema access to
   // avoid a guaranteed 403 on every login.
   if (store.getters['management/schemaFor']?.(CRTB_TYPE)) {
-    void store.dispatch('management/findAll', { type: CRTB_TYPE, opt: { namespaced: 'local' } });
+    void store.dispatch('management/findAll', { type: CRTB_TYPE, opt: { namespaced: LOCAL_CLUSTER } });
   }
 
   void checkOperatorConnection();
