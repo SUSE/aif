@@ -21,6 +21,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/cluster"
+	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 )
@@ -295,14 +296,15 @@ func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNam
 		return nil, nil
 	}
 
-	// Re-read the token via the same Settings path so the apiSecret can use
-	// it; buildNGCDockerConfig doesn't expose the credential it baked in.
 	var s aiplatformv1alpha1.Settings
 	if err := n.r.Get(ctx, types.NamespacedName{Namespace: n.r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
 		return nil, nil
 	}
-	token, err := n.r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
-	if err != nil || token == "" {
+	_, token, ok, err := n.r.readRegistryCredentials(ctx, credentials.RegistryNvidia, s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, nil
 	}
 
@@ -347,15 +349,11 @@ func (r *AIWorkloadReconciler) buildNGCDockerConfig(ctx context.Context) ([]byte
 	if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
 		return nil, nil
 	}
-	if s.Spec.Nvidia.UserSecretRef == nil || s.Spec.Nvidia.TokenSecretRef == nil {
-		return nil, nil
+	user, token, ok, err := r.readRegistryCredentials(ctx, credentials.RegistryNvidia, s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef)
+	if err != nil {
+		return nil, err
 	}
-	user, err := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
-	if err != nil || user == "" {
-		return nil, nil
-	}
-	token, err := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
-	if err != nil || token == "" {
+	if !ok {
 		return nil, nil
 	}
 	host := defaultNvidiaHost
@@ -463,35 +461,34 @@ func (r *AIWorkloadReconciler) addSUSESettingsAuths(ctx context.Context, auths m
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
 		appHost = registryurl.Host(s.Spec.RegistryEndpoints.ApplicationCollection)
 	}
-	if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
-		u, err1 := r.readSettingsSecretKey(ctx, s.Spec.ApplicationCollection.UserSecretRef)
-		p, err2 := r.readSettingsSecretKey(ctx, s.Spec.ApplicationCollection.TokenSecretRef)
-		if err1 == nil && err2 == nil && u != "" && p != "" {
-			auths[appHost] = dockerAuthEntry(u, p)
-		}
+	if u, p, ok, err := r.readRegistryCredentials(ctx, credentials.RegistryApplicationCollection, s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef); err == nil && ok {
+		auths[appHost] = dockerAuthEntry(u, p)
 	}
 
 	suseHost := defaultSUSERegistryHost
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
 		suseHost = registryurl.Host(s.Spec.RegistryEndpoints.SUSERegistry)
 	}
-	if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
-		u, err1 := r.readSettingsSecretKey(ctx, s.Spec.SUSERegistry.UserSecretRef)
-		p, err2 := r.readSettingsSecretKey(ctx, s.Spec.SUSERegistry.TokenSecretRef)
-		if err1 == nil && err2 == nil && u != "" && p != "" {
-			auths[suseHost] = dockerAuthEntry(u, p)
-		}
+	if u, p, ok, err := r.readRegistryCredentials(ctx, credentials.RegistrySUSERegistry, s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef); err == nil && ok {
+		auths[suseHost] = dockerAuthEntry(u, p)
 	}
 
 	// NVIDIA images come from nvcr.io (connected); registryEndpoints.nvidia is the chart-repo
 	// OCI URL, not an image host, and air-gap redirection is a node-level concern.
-	if s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil {
-		u, err1 := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.UserSecretRef)
-		p, err2 := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
-		if err1 == nil && err2 == nil && u != "" && p != "" {
-			auths[defaultNvidiaHost] = dockerAuthEntry(u, p)
-		}
+	if u, p, ok, err := r.readRegistryCredentials(ctx, credentials.RegistryNvidia, s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef); err == nil && ok {
+		auths[defaultNvidiaHost] = dockerAuthEntry(u, p)
 	}
+}
+
+// readRegistryCredentials resolves explicit Settings refs or well-known operator
+// secrets and returns decoded username/token values.
+func (r *AIWorkloadReconciler) readRegistryCredentials(
+	ctx context.Context,
+	registry credentials.Registry,
+	explicitUser, explicitToken *aiplatformv1alpha1.SecretKeyRef,
+) (user, token string, ok bool, err error) {
+	userRef, tokenRef := credentials.EffectiveRefs(ctx, r.Client, r.OperatorNamespace, explicitUser, explicitToken, registry)
+	return credentials.ReadPair(ctx, r.Client, r.OperatorNamespace, userRef, tokenRef)
 }
 
 // buildSUSECombinedDockerConfig returns the marshaled dockerconfigjson bytes

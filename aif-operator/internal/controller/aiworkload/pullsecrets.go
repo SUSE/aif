@@ -16,6 +16,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/cluster"
+	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
 // reconcilePullSecrets ensures every operator-delivered pull-secret is
@@ -448,17 +449,15 @@ func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecret
 				Data:       map[string][]byte{corev1.DockerConfigJsonKey: cfg},
 			}, nil
 		case nvidiaAPISecretName:
-			// Re-read the token via the same Settings path so we don't have
-			// to plumb it back from buildNGCDockerConfig.
 			var s aiplatformv1alpha1.Settings
 			if err := r.Get(ctx, types.NamespacedName{Namespace: r.OperatorNamespace, Name: operatorSettingsName}, &s); err != nil {
 				return nil, nil
 			}
-			if s.Spec.Nvidia.TokenSecretRef == nil {
-				return nil, nil
+			_, token, ok, err := r.readRegistryCredentials(ctx, credentials.RegistryNvidia, s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef)
+			if err != nil {
+				return nil, err
 			}
-			token, err := r.readSettingsSecretKey(ctx, s.Spec.Nvidia.TokenSecretRef)
-			if err != nil || token == "" {
+			if !ok {
 				return nil, nil
 			}
 			return &corev1.Secret{

@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/SUSE/aif-operator/internal/controller/settings"
+	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
 func newScheme(t *testing.T) *runtime.Scheme {
@@ -44,7 +45,7 @@ func TestSettingsController_CreatesFleetGitRepo(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 
-	r := &settings.SettingsReconciler{Client: c, Scheme: s}
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
 	})
@@ -85,7 +86,7 @@ func TestSettingsController_DeletesFleetGitRepoWhenURLCleared(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, existing).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 
-	r := &settings.SettingsReconciler{Client: c, Scheme: s}
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
 	})
@@ -128,7 +129,7 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, srcSecret).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 
-	r := &settings.SettingsReconciler{Client: c, Scheme: s}
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
 	})
@@ -182,7 +183,7 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, srcSecret, staleSecret).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 
-	r := &settings.SettingsReconciler{Client: c, Scheme: s}
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
 	})
@@ -201,5 +202,134 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 	}
 	if string(mirror.Data["password"]) != "newtoken" {
 		t.Errorf("expected password=newtoken, got %q", string(mirror.Data["password"]))
+	}
+}
+
+func TestSettingsController_PrunesClusterRepoWhenCredsRemoved(t *testing.T) {
+	s := newScheme(t)
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	}, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList",
+	}, &unstructured.UnstructuredList{})
+
+	const ns = "aif-operator"
+	// Settings with no refs, and no well-known secrets present — creds gone.
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec:       aiplatformv1alpha1.SettingsSpec{},
+	}
+	// Leftover ClusterRepo + cattle-system mirror from when creds existed.
+	leftoverRepo := &unstructured.Unstructured{}
+	leftoverRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	leftoverRepo.SetName(credentials.ClusterRepoApplicationCollection)
+	leftoverMirror := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system"},
+		Type:       corev1.SecretTypeBasicAuth,
+		Data:       map[string][]byte{"username": []byte("u"), "password": []byte("p")},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, leftoverRepo, leftoverMirror).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoApplicationCollection}, repo); err == nil {
+		t.Fatal("expected application-collection ClusterRepo to be pruned, but it still exists")
+	}
+	var mirror corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system",
+	}, &mirror); err == nil {
+		t.Fatal("expected application-collection-auth mirror to be pruned, but it still exists")
+	}
+}
+
+func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testing.T) {
+	s := newScheme(t)
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	}, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList",
+	}, &unstructured.UnstructuredList{})
+
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec:       aiplatformv1alpha1.SettingsSpec{},
+	}
+	appco := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: ns},
+		Data: map[string][]byte{
+			"user":  []byte("user@suse.com"),
+			"token": []byte("appco-token"),
+		},
+	}
+	nvidia := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "nvidia", Namespace: ns},
+		Data: map[string][]byte{
+			"user":  []byte("$oauthtoken"),
+			"token": []byte("nvapi-test"),
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, appco, nvidia).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var updated aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &updated); err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+	if updated.Spec.ApplicationCollection.UserSecretRef == nil || updated.Spec.ApplicationCollection.UserSecretRef.Name != "appco" {
+		t.Fatalf("expected appco wired into settings, got %+v", updated.Spec.ApplicationCollection)
+	}
+	if updated.Spec.Nvidia.UserSecretRef == nil || updated.Spec.Nvidia.UserSecretRef.Name != "nvidia" {
+		t.Fatalf("expected nvidia wired into settings, got %+v", updated.Spec.Nvidia)
+	}
+
+	var acAuth corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system",
+	}, &acAuth); err != nil {
+		t.Fatalf("expected application-collection-auth in cattle-system: %v", err)
+	}
+
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoApplicationCollection}, repo); err != nil {
+		t.Fatalf("expected application-collection ClusterRepo: %v", err)
+	}
+	secretName, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+	if secretName != credentials.AuthSecretApplicationCollection {
+		t.Errorf("ClusterRepo clientSecret = %q, want %q", secretName, credentials.AuthSecretApplicationCollection)
+	}
+
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoNvidiaBlueprint}, repo); err != nil {
+		t.Fatalf("expected nvidia-blueprint ClusterRepo: %v", err)
+	}
+	nvSecret, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+	if nvSecret != credentials.AuthSecretNvidia {
+		t.Errorf("nvidia-blueprint clientSecret = %q, want %q", nvSecret, credentials.AuthSecretNvidia)
 	}
 }

@@ -19,9 +19,9 @@ package settings
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/credentials"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +39,8 @@ import (
 // SettingsReconciler reconciles a Settings object.
 type SettingsReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme            *runtime.Scheme
+	OperatorNamespace string
 }
 
 // +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch;create;update;patch;delete
@@ -54,6 +55,11 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	var s aiplatformv1alpha1.Settings
 	if err := r.Get(ctx, req.NamespacedName, &s); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if err := r.ensureWellKnownSecretRefs(ctx, &s); err != nil {
+		l.Error(err, "failed to wire well-known registry secret refs")
+		return ctrl.Result{}, err
 	}
 
 	if err := r.reconcileFleetGitRepo(ctx, &s); err != nil {
@@ -91,19 +97,39 @@ func (r *SettingsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			if obj.GetName() != fleetGitRepoName || obj.GetNamespace() != fleetGitRepoNamespace {
 				return nil
 			}
-			var list aiplatformv1alpha1.SettingsList
-			if err := r.List(ctx, &list); err != nil {
-				return nil
-			}
-			reqs := make([]reconcile.Request, 0, len(list.Items))
-			for _, s := range list.Items {
-				reqs = append(reqs, reconcile.Request{
-					NamespacedName: types.NamespacedName{Name: s.Name, Namespace: s.Namespace},
-				})
-			}
-			return reqs
+			return r.allSettingsRequests(ctx)
 		})).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.enqueueSettingsForRegistrySecret)).
 		Complete(r)
+}
+
+func (r *SettingsReconciler) allSettingsRequests(ctx context.Context) []reconcile.Request {
+	var list aiplatformv1alpha1.SettingsList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for _, s := range list.Items {
+		reqs = append(reqs, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: s.Name, Namespace: s.Namespace},
+		})
+	}
+	return reqs
+}
+
+func (r *SettingsReconciler) enqueueSettingsForRegistrySecret(_ context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetNamespace() != r.OperatorNamespace {
+		return nil
+	}
+	if !credentials.IsWellKnownSecret(obj.GetName()) {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{
+			Name:      credentials.SettingsName,
+			Namespace: r.OperatorNamespace,
+		},
+	}}
 }
 
 const (
@@ -113,6 +139,24 @@ const (
 
 var fleetGitRepoGVK = schema.GroupVersionKind{
 	Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepo",
+}
+
+// ensureWellKnownSecretRefs discovers operator-namespace registry secrets and
+// writes their SecretKeyRefs into Settings when missing.
+func (r *SettingsReconciler) ensureWellKnownSecretRefs(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
+	orig := s.DeepCopy()
+	changed, err := credentials.WireSpec(ctx, r.Client, &s.Spec, s.Namespace)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+
+	if err := r.Patch(ctx, s, client.MergeFrom(orig)); err != nil {
+		return fmt.Errorf("patch settings secret refs: %w", err)
+	}
+	return nil
 }
 
 func (r *SettingsReconciler) reconcileFleetGitRepo(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
@@ -235,57 +279,38 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 	)
 }
 
-func (r *SettingsReconciler) readSettingsSecretKey(ctx context.Context, ns string, ref *aiplatformv1alpha1.SecretKeyRef) (string, error) {
-	if ref == nil {
-		return "", nil
+func (r *SettingsReconciler) applyRegistryAuthSecret(
+	ctx context.Context,
+	ns string,
+	cattleSecretName string,
+	userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef,
+) (string, error) {
+	user, token, ok, err := credentials.ReadPair(ctx, r.Client, ns, userRef, tokenRef)
+	if err != nil {
+		return "", fmt.Errorf("read registry credentials: %w", err)
 	}
-	var secret corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, &secret); err != nil {
-		return "", err
-	}
-	val, ok := secret.Data[ref.Key]
 	if !ok {
-		return "", fmt.Errorf("key %q not found in secret %q", ref.Key, ref.Name)
-	}
-	return string(val), nil
-}
-
-func (r *SettingsReconciler) applyRegistryAuthSecret(ctx context.Context, ns string, secretName string, userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef) (string, error) {
-	if userRef == nil || tokenRef == nil {
-		return "", nil
-	}
-
-	u, err := r.readSettingsSecretKey(ctx, ns, userRef)
-	if err != nil {
-		return "", fmt.Errorf("read user secret: %w", err)
-	}
-	p, err := r.readSettingsSecretKey(ctx, ns, tokenRef)
-	if err != nil {
-		return "", fmt.Errorf("read token secret: %w", err)
-	}
-
-	if u == "" || p == "" {
 		return "", nil
 	}
 
 	mirror := &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
+			Name:      cattleSecretName,
 			Namespace: "cattle-system",
 		},
 		Type: corev1.SecretTypeBasicAuth,
 		Data: map[string][]byte{
-			"username": []byte(u),
-			"password": []byte(p),
+			"username": []byte(user),
+			"password": []byte(token),
 		},
 	}
 
 	if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
-		return "", fmt.Errorf("apply auth secret %s: %w", secretName, err)
+		return "", fmt.Errorf("apply auth secret %s: %w", cattleSecretName, err)
 	}
 
-	return secretName, nil
+	return cattleSecretName, nil
 }
 
 func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, clientSecretName string) error {
@@ -296,14 +321,10 @@ func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, cl
 			"metadata": map[string]any{
 				"name": name,
 			},
-			"spec": map[string]any{},
+			"spec": map[string]any{
+				"url": url,
+			},
 		},
-	}
-
-	if strings.HasPrefix(url, "oci://") {
-		_ = unstructured.SetNestedField(repo.Object, url, "spec", "url")
-	} else {
-		_ = unstructured.SetNestedField(repo.Object, url, "spec", "url")
 	}
 
 	if clientSecretName != "" {
@@ -314,68 +335,147 @@ func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, cl
 	return r.Patch(ctx, repo, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings"))
 }
 
+// deleteClusterRepo removes a ClusterRepo by name, ignoring NotFound. Used to
+// prune repos the operator created once a registry's credentials are gone.
+func (r *SettingsReconciler) deleteClusterRepo(ctx context.Context, name string) error {
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	repo.SetName(name)
+	return client.IgnoreNotFound(r.Delete(ctx, repo))
+}
+
+// deleteAuthSecret removes a cattle-system basic-auth mirror by name, ignoring
+// NotFound. Pairs with deleteClusterRepo when pruning a registry.
+func (r *SettingsReconciler) deleteAuthSecret(ctx context.Context, name string) error {
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "cattle-system"}}
+	return client.IgnoreNotFound(r.Delete(ctx, sec))
+}
+
 func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
-	// 1. Application Collection
-	acUrl := "oci://dp.apps.rancher.io/charts"
+	acURL := credentials.DefaultApplicationCollectionURL
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-		acUrl = s.Spec.RegistryEndpoints.ApplicationCollection
+		acURL = s.Spec.RegistryEndpoints.ApplicationCollection
 	}
-	if s.Spec.ApplicationCollection.UserSecretRef != nil && s.Spec.ApplicationCollection.TokenSecretRef != nil {
-		secretName, err := r.applyRegistryAuthSecret(ctx, s.Namespace, "application-collection-auth", s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef)
-		if err != nil {
-			return err
-		}
-		if secretName != "" {
-			if err := r.applyClusterRepo(ctx, "application-collection", acUrl, secretName); err != nil {
-				return err
-			}
-		}
+	acUser, acToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
+		s.Spec.ApplicationCollection.UserSecretRef,
+		s.Spec.ApplicationCollection.TokenSecretRef,
+		credentials.RegistryApplicationCollection,
+	)
+	if err := r.reconcileRegistryRepo(ctx, s.Namespace,
+		acUser, acToken,
+		credentials.AuthSecretApplicationCollection,
+		acURL,
+		[]string{credentials.ClusterRepoApplicationCollection},
+	); err != nil {
+		return err
 	}
 
-	// 2. SUSE Registry
-	srUrl := "oci://registry.suse.com/ai/charts"
+	srURL := credentials.DefaultSUSERegistryURL
 	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-		srUrl = s.Spec.RegistryEndpoints.SUSERegistry
+		srURL = s.Spec.RegistryEndpoints.SUSERegistry
 	}
-	if s.Spec.SUSERegistry.UserSecretRef != nil && s.Spec.SUSERegistry.TokenSecretRef != nil {
-		secretName, err := r.applyRegistryAuthSecret(ctx, s.Namespace, "suse-ai-registry-auth", s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef)
+	srUser, srToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
+		s.Spec.SUSERegistry.UserSecretRef,
+		s.Spec.SUSERegistry.TokenSecretRef,
+		credentials.RegistrySUSERegistry,
+	)
+	if err := r.reconcileRegistryRepo(ctx, s.Namespace,
+		srUser, srToken,
+		credentials.AuthSecretSUSERegistry,
+		srURL,
+		[]string{credentials.ClusterRepoSUSERegistry},
+	); err != nil {
+		return err
+	}
+
+	return r.reconcileNvidiaRepos(ctx, s)
+}
+
+// reconcileRegistryRepo applies (or prunes) a single-repo registry. When the
+// credentials resolve, it writes the cattle-system basic-auth mirror and the
+// ClusterRepo(s); otherwise it prunes both so removing credentials tears the
+// generated objects back down. repoNames may list more than one repo sharing
+// the same URL+mirror (none do today, but nvidia uses the sibling helper).
+func (r *SettingsReconciler) reconcileRegistryRepo(
+	ctx context.Context,
+	namespace string,
+	userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef,
+	authSecretName, url string,
+	repoNames []string,
+) error {
+	secretName := ""
+	if userRef != nil && tokenRef != nil {
+		var err error
+		secretName, err = r.applyRegistryAuthSecret(ctx, namespace, authSecretName, userRef, tokenRef)
 		if err != nil {
 			return err
 		}
-		if secretName != "" {
-			if err := r.applyClusterRepo(ctx, "suse-ai-registry", srUrl, secretName); err != nil {
-				return err
-			}
-		}
 	}
 
-	// 3. NVIDIA
-	nvHasRefs := s.Spec.Nvidia.UserSecretRef != nil && s.Spec.Nvidia.TokenSecretRef != nil
-	var nvUrl string
-	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
-		nvUrl = s.Spec.RegistryEndpoints.Nvidia
+	if secretName == "" {
+		return r.pruneRegistryRepos(ctx, authSecretName, repoNames)
 	}
 
-	if nvUrl != "" {
-		var secretName string
-		var err error
-		if nvHasRefs {
-			secretName, err = r.applyRegistryAuthSecret(ctx, s.Namespace, "nvidia-registry-auth", s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef)
-			if err != nil {
-				return err
-			}
-		}
-		if err := r.applyClusterRepo(ctx, "nvidia", nvUrl, secretName); err != nil {
-			return err
-		}
-	} else if nvHasRefs {
-		if err := r.applyClusterRepo(ctx, "nvidia", "https://helm.ngc.nvidia.com/nvidia", ""); err != nil {
-			return err
-		}
-		if err := r.applyClusterRepo(ctx, "nvidia-blueprints", "https://helm.ngc.nvidia.com/nvidia/blueprint", ""); err != nil {
+	for _, name := range repoNames {
+		if err := r.applyClusterRepo(ctx, name, url, secretName); err != nil {
 			return err
 		}
 	}
-
 	return nil
+}
+
+// reconcileNvidiaRepos handles NVIDIA's two-mode topology: a single gated OCI
+// repo when registryEndpoints.nvidia is set (air-gap), or the public NGC charts
+// + blueprint pair otherwise. Either way it prunes every NVIDIA repo + mirror
+// when credentials are gone.
+func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
+	nvUser, nvToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
+		s.Spec.Nvidia.UserSecretRef,
+		s.Spec.Nvidia.TokenSecretRef,
+		credentials.RegistryNvidia,
+	)
+	nvURL := ""
+	if s.Spec.RegistryEndpoints != nil {
+		nvURL = s.Spec.RegistryEndpoints.Nvidia
+	}
+
+	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
+
+	secretName := ""
+	if nvUser != nil && nvToken != nil {
+		var err error
+		secretName, err = r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
+		if err != nil {
+			return err
+		}
+	}
+
+	if secretName == "" {
+		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+	}
+
+	if nvURL != "" {
+		// Air-gap: a single gated OCI repo. Prune the public blueprint repo
+		// in case we are switching modes.
+		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
+			return err
+		}
+		return r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName)
+	}
+
+	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, secretName); err != nil {
+		return err
+	}
+	return r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, secretName)
+}
+
+// pruneRegistryRepos deletes the given ClusterRepos and the registry's
+// cattle-system basic-auth mirror, all NotFound-tolerant.
+func (r *SettingsReconciler) pruneRegistryRepos(ctx context.Context, authSecretName string, repoNames []string) error {
+	for _, name := range repoNames {
+		if err := r.deleteClusterRepo(ctx, name); err != nil {
+			return err
+		}
+	}
+	return r.deleteAuthSecret(ctx, authSecretName)
 }
