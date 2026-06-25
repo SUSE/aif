@@ -1,14 +1,7 @@
-// Cluster resource metrics and compatibility checking service
+// Cluster resource metrics service
 import type { RancherStore, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
-import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
+import { handleSimpleError } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
-
-export interface ResourceRequirements {
-  cpu: number;        // CPU cores
-  memory: number;     // Memory in GB
-  gpu?: number;       // GPU memory in GB
-  storage: number;    // Storage in GB
-}
 
 export interface NodeResourceInfo {
   nodeId: string;
@@ -27,94 +20,11 @@ export interface ClusterResourceSummary {
     memory: { used: number; total: number };  // in GB
     gpu?: { used: number; total: number; type?: string };  // GPU memory in GB
   };
-  status: 'compatible' | 'limited' | 'insufficient' | 'checking' | 'error' | 'unavailable';
+  status: 'ready' | 'unavailable';
   statusMessage?: string;
   storageClasses: string[];
   lastUpdated: Date;
   nodes: NodeResourceInfo[];
-}
-
-export interface AppResourceProfile {
-  slug: string;
-  name: string;
-  requirements: ResourceRequirements;
-}
-
-// Static app resource requirements - will be expanded as we add more apps
-const APP_RESOURCE_PROFILES: Record<string, AppResourceProfile> = {
-  'ollama': {
-    slug: 'ollama',
-    name: 'Ollama',
-    requirements: { cpu: 4, memory: 16, gpu: 8, storage: 100 }
-  },
-  'pytorch': {
-    slug: 'pytorch',
-    name: 'PyTorch',
-    requirements: { cpu: 4, memory: 16, gpu: 8, storage: 100 }
-  },
-  'open-webui': {
-    slug: 'open-webui',
-    name: 'Open WebUI',
-    requirements: { cpu: 2, memory: 4, storage: 10 }
-  },
-  'open-webui-mcpo': {
-    slug: 'open-webui-mcpo',
-    name: 'Open WebUI mcpo',
-    requirements: { cpu: 2, memory: 4, storage: 2 }
-  },
-  'open-webui-pipelines': {
-    slug: 'open-webui-pipelines',
-    name: 'Open WebUI Pipelines',
-    requirements: { cpu: 2, memory: 4, storage: 2 }
-  },
-  'milvus': {
-    slug: 'milvus',
-    name: 'Milvus',
-    requirements: { cpu: 4, memory: 8, storage: 100 }
-  },
-  'suse-ai-deployer': {
-    slug: 'suse-ai-deployer',
-    name: 'SUSE AI Deployer',
-    requirements: { cpu: 4, memory: 16, gpu: 12, storage: 100 }
-  },
-  'suse-ai-observability-extension': {
-    slug: 'suse-ai-observability-extension',
-    name: 'SUSE AI Observability Extension',
-    requirements: { cpu: 1, memory: 2, storage: 2 }
-  },
-  'vllm': {
-    slug: 'vllm',
-    name: 'vLLM',
-    requirements: { cpu: 4, memory: 16, gpu: 12, storage: 100 }
-  },
-  'qdrant': {
-    slug: 'qdrant',
-    name: 'Qdrant',
-    requirements: { cpu: 2, memory: 4, storage: 10 }
-  },
-  'litellm': {
-    slug: 'litellm',
-    name: 'LiteLLM',
-    requirements: { cpu: 4, memory: 8, storage: 10 }
-  }
-};
-
-export function getAppResourceRequirements(slug: string): AppResourceProfile | null {
-  return APP_RESOURCE_PROFILES[slug] || null;
-}
-
-// Fallback resource requirements for unknown apps
-export function getDefaultAppResourceRequirements(slug: string, appName?: string): AppResourceProfile {
-  return {
-    slug,
-    name: appName || slug,
-    requirements: {
-      cpu: 1,      // Conservative default: 1 CPU core
-      memory: 2,   // Conservative default: 2GB RAM
-      storage: 10  // Conservative default: 10GB storage
-      // No GPU requirement by default
-    }
-  };
 }
 
 export async function getClusterResourceMetrics(store: RancherStore, clusterId: string): Promise<ClusterResourceSummary> {
@@ -178,8 +88,8 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
           cpu: { used: 0, total: 0 },
           memory: { used: 0, total: 0 }
         },
-        status: 'error',
-        statusMessage: 'Unable to access cluster node information',
+        status: 'ready',
+        statusMessage: 'Node data unavailable',
         storageClasses,
         lastUpdated: new Date(),
         nodes: []
@@ -247,7 +157,7 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
         memory: { used: Math.round(usedMemory), total: Math.round(totalMemory) },
         gpu: totalGpu > 0 ? { used: usedGpu, total: totalGpu, type: gpuType } : undefined
       },
-      status: 'compatible', // Will be updated by checkCompatibility
+      status: 'ready',
       storageClasses,
       lastUpdated: new Date(),
       nodes: nodeInfos
@@ -278,7 +188,7 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
         name: clusterName,
         nodeCount: 0,
         resources: { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
-        status: 'error',
+        status: 'unavailable',
         statusMessage: err.message || 'Failed to retrieve cluster metrics',
         storageClasses: [],
         lastUpdated: new Date(),
@@ -290,7 +200,7 @@ export async function getClusterResourceMetrics(store: RancherStore, clusterId: 
         name: clusterId,
         nodeCount: 0,
         resources: { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
-        status: 'error',
+        status: 'unavailable',
         statusMessage: 'Failed to retrieve cluster information',
         storageClasses: [],
         lastUpdated: new Date(),
@@ -339,100 +249,6 @@ export async function getAllClusterResourceMetrics(store: RancherStore): Promise
     console.error('[SUSE-AI] getAllClusterResourceMetrics: Failed:', error);
     return [];
   }
-}
-
-export function checkAppCompatibility(
-  appSlug: string, 
-  clusterSummary: ClusterResourceSummary,
-  appName?: string
-): ClusterResourceSummary {
-  let appProfile = getAppResourceRequirements(appSlug);
-  let usingDefaults = false;
-  
-  if (!appProfile) {
-    // Use conservative defaults for unknown apps
-    appProfile = getDefaultAppResourceRequirements(appSlug, appName);
-    usingDefaults = true;
-    console.log(`[SUSE-AI] checkAppCompatibility: Using default requirements for unknown app ${appSlug}:`, appProfile.requirements);
-  }
-
-  // Preserve terminal statuses without further checks
-  if (clusterSummary.status === 'unavailable' || clusterSummary.status === 'error') {
-    return {
-      ...clusterSummary,
-      statusMessage: clusterSummary.statusMessage || 'Unable to determine compatibility - cluster information unavailable'
-    };
-  }
-
-  const req = appProfile.requirements;
-  const available = clusterSummary.resources;
-  
-  // If we don't have resource information (all zeros), we can't determine compatibility
-  if (available.cpu.total === 0 && available.memory.total === 0) {
-    return {
-      ...clusterSummary,
-      status: 'error',
-      statusMessage: 'Resource information unavailable - cannot determine compatibility'
-    };
-  }
-  
-  // Check each resource requirement
-  const cpuOk = (available.cpu.total - available.cpu.used) >= req.cpu;
-  const memoryOk = (available.memory.total - available.memory.used) >= req.memory;
-  const storageOk = req.storage <= 0 || clusterSummary.storageClasses.length > 0;
-  
-  let gpuOk = true;
-  if (req.gpu && req.gpu > 0) {
-    if (!available.gpu) {
-      gpuOk = false;
-    } else {
-      gpuOk = (available.gpu.total - available.gpu.used) >= req.gpu;
-    }
-  }
-  
-  // Determine status and message
-  let status: ClusterResourceSummary['status'] = 'compatible';
-  let statusMessage = '';
-  
-  const issues: string[] = [];
-  if (!cpuOk) issues.push(`need ${req.cpu} CPU (${available.cpu.total - available.cpu.used} available)`);
-  if (!memoryOk) issues.push(`need ${req.memory}GB RAM (${available.memory.total - available.memory.used}GB available)`);
-  if (!gpuOk && req.gpu) issues.push(`need ${req.gpu}GB GPU (${available.gpu?.total || 0}GB available)`);
-  if (!storageOk) issues.push('no storage classes available');
-  
-  if (issues.length > 0) {
-    status = 'insufficient';
-    statusMessage = issues.join(', ');
-    if (usingDefaults) {
-      statusMessage += ' (using estimated requirements)';
-    }
-  } else {
-    // Check for tight resources (warn if less than 20% headroom)
-    const warnings: string[] = [];
-    if (available.cpu.total > 0) {
-      const cpuHeadroom = ((available.cpu.total - available.cpu.used - req.cpu) / available.cpu.total) * 100;
-      if (cpuHeadroom < 20) warnings.push('low CPU headroom');
-    }
-    if (available.memory.total > 0) {
-      const memoryHeadroom = ((available.memory.total - available.memory.used - req.memory) / available.memory.total) * 100;
-      if (memoryHeadroom < 20) warnings.push('low memory headroom');
-    }
-    
-    if (usingDefaults) {
-      warnings.push('using estimated requirements');
-    }
-    
-    if (warnings.length > 0) {
-      status = usingDefaults && warnings.length === 1 ? 'compatible' : 'limited';
-      statusMessage = warnings.join(', ');
-    }
-  }
-  
-  return {
-    ...clusterSummary,
-    status,
-    statusMessage
-  };
 }
 
 // Helper functions

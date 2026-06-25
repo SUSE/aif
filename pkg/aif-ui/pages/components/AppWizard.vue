@@ -1562,8 +1562,6 @@ function previousStep() {
             :mode="props.mode"
             v-model:clusters="form.clusters"
             v-model:deployType="form.deployType"
-            :app-slug="props.slug"
-            :app-name="(route.query.n as string) || props.slug"
             :helm-oversized="helmOversized"
           />
 
