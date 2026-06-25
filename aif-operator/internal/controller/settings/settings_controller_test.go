@@ -385,4 +385,19 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 	if nvSecret != credentials.AuthSecretNvidia {
 		t.Errorf("nvidia-blueprint clientSecret = %q, want %q", nvSecret, credentials.AuthSecretNvidia)
 	}
+
+	// The public NGC charts catalog must be ANONYMOUS (no clientSecret).
+	// Presenting a key not entitled to the full /nvidia path makes NGC return
+	// 403 (surfaced by Rancher as "no API version specified"); anonymous access
+	// serves the public index. Regression guard for that fix.
+	pubRepo := &unstructured.Unstructured{}
+	pubRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoNvidia}, pubRepo); err != nil {
+		t.Fatalf("expected nvidia ClusterRepo: %v", err)
+	}
+	if pubSecret, found, _ := unstructured.NestedString(pubRepo.Object, "spec", "clientSecret", "name"); found && pubSecret != "" {
+		t.Errorf("public nvidia ClusterRepo must be anonymous, got clientSecret = %q", pubSecret)
+	}
 }

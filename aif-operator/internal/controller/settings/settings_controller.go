@@ -479,7 +479,17 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		return r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName)
 	}
 
-	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, secretName); err != nil {
+	// Public NGC charts catalog: created WITHOUT a clientSecret (anonymous).
+	// NGC serves https://helm.ngc.nvidia.com/nvidia/index.yaml anonymously
+	// (HTTP 302 -> valid index), but returns 403 when presented a valid NGC key
+	// that is NOT entitled to the full /nvidia catalog (e.g. a key scoped to
+	// /nvidia/blueprint). Rancher then surfaces that 403 body as the misleading
+	// "no API version specified". Sending no credential restores public access.
+	// (This matches the pre-SettingsReconciler Helm chart, which left this repo
+	// anonymous.) The nvidia presence of credentials still gates creation above;
+	// blueprint and the air-gap OCI repo keep their auth because those paths are
+	// what NGC keys are typically entitled to / require.
+	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, ""); err != nil {
 		return err
 	}
 	return r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, secretName)
