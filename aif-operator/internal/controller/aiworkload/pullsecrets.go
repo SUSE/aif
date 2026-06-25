@@ -25,6 +25,23 @@ import (
 // blueprints that fan components out across multiple namespaces patch each
 // namespace's SAs independently. Returns settled=true when no SA needed
 // patching this round; the caller decides whether to RequeueAfter.
+// targetsLocalCluster reports whether the workload should act on the operator's
+// own (local) cluster. An empty TargetClusters list means the local-default
+// install; an explicit "local" or "" entry also counts. A purely downstream
+// list does not, so the local-cluster paths (secret write + SA-merge) are
+// skipped for those workloads.
+func targetsLocalCluster(w *aiplatformv1alpha1.AIWorkload) bool {
+	if len(w.Spec.TargetClusters) == 0 {
+		return true
+	}
+	for _, c := range w.Spec.TargetClusters {
+		if c == "" || c == "local" {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *AIWorkloadReconciler) reconcilePullSecrets(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
@@ -32,6 +49,15 @@ func (r *AIWorkloadReconciler) reconcilePullSecrets(
 	l := log.FromContext(ctx)
 
 	if len(w.Status.PullSecretDeliveries) == 0 {
+		return true, nil
+	}
+
+	// SA-merge runs on the operator's own (local) cluster. Skip it entirely
+	// when the workload targets only downstream clusters — otherwise we'd
+	// patch local ServiceAccounts in a same-named namespace the workload never
+	// installs into here (review #4). Downstream SA-merge is handled by the
+	// per-cluster Fleet bundle's own merge Job.
+	if !targetsLocalCluster(w) {
 		return true, nil
 	}
 
@@ -385,12 +411,22 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 		return nil
 	}
 
-	// Local cluster — always, one SSA per secret per namespace.
-	local := r.localCC()
-	for _, b := range bundles {
-		for _, sec := range b.secrets {
-			if err := local.ApplySecret(ctx, sec); err != nil {
-				return fmt.Errorf("apply pull secret %s/%s to local cluster: %w", b.namespace, sec.Name, err)
+	// Local cluster — only when the workload actually targets it. A
+	// downstream-only workload must not write secrets into a same-named local
+	// namespace it never installs into here (review #4).
+	//
+	// Note (review #5): for a local-targeted workload the per-component
+	// injectors already wrote these secrets during reconcile; re-applying them
+	// here is deliberate, idempotent SSA. The injector's combined secret also
+	// carries the component's chart-repo auth, which this delivery copy omits —
+	// harmless, since the chart-repo host is not an image registry.
+	if targetsLocalCluster(w) {
+		local := r.localCC()
+		for _, b := range bundles {
+			for _, sec := range b.secrets {
+				if err := local.ApplySecret(ctx, sec); err != nil {
+					return fmt.Errorf("apply pull secret %s/%s to local cluster: %w", b.namespace, sec.Name, err)
+				}
 			}
 		}
 	}

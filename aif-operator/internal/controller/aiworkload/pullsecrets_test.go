@@ -72,6 +72,85 @@ func TestReconcilePullSecrets_PatchesDefaultSA(t *testing.T) {
 	}
 }
 
+// TestTargetsLocalCluster verifies the local-cluster predicate: empty targets
+// mean local-default; an explicit "local"/"" entry counts; a purely downstream
+// target list does not.
+func TestTargetsLocalCluster(t *testing.T) {
+	cases := []struct {
+		name    string
+		targets []string
+		want    bool
+	}{
+		{"empty is local-default", nil, true},
+		{"explicit local", []string{"local"}, true},
+		{"empty-string entry", []string{""}, true},
+		{"downstream only", []string{"c-abc"}, false},
+		{"mixed includes local", []string{"c-abc", "local"}, true},
+	}
+	for _, tc := range cases {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{TargetClusters: tc.targets},
+		}
+		if got := targetsLocalCluster(w); got != tc.want {
+			t.Errorf("%s: targetsLocalCluster = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestReconcilePullSecrets_SkipsLocalWhenDownstreamOnly verifies that a
+// downstream-only workload does not merge pull-secret refs into local
+// ServiceAccounts (review #4): the local namespace just happens to share a
+// name and must not be touched.
+func TestReconcilePullSecrets_SkipsLocalWhenDownstreamOnly(t *testing.T) {
+	scheme := newTestScheme(t)
+	ns := "test-ns"
+	secretName := "ngc-secret"
+
+	objs := []client.Object{
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Name: "default", Namespace: ns,
+			Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+		}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: ns},
+			Type:       corev1.SecretTypeDockerConfigJson,
+			Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`)},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: ns,
+			TargetClusters:  []string{"downstream-a"},
+		},
+		Status: aiplatformv1alpha1.AIWorkloadStatus{
+			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
+				{Namespace: ns, Names: []string{secretName}},
+			},
+		},
+	}
+
+	settled, err := r.reconcilePullSecrets(context.Background(), w)
+	if err != nil {
+		t.Fatalf("reconcilePullSecrets: %v", err)
+	}
+	if !settled {
+		t.Errorf("expected settled=true (no local SA work for downstream-only), got false")
+	}
+
+	var sa corev1.ServiceAccount
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "default"}, &sa); err != nil {
+		t.Fatalf("get SA: %v", err)
+	}
+	if len(sa.ImagePullSecrets) != 0 {
+		t.Errorf("expected local SA untouched for downstream-only workload, got %+v", sa.ImagePullSecrets)
+	}
+}
+
 // TestReconcilePullSecrets_SkipsUnlabeledSA verifies the new label-scope
 // contract: SAs without app.kubernetes.io/managed-by=Helm are NOT patched,
 // even if they share the namespace with the workload.
@@ -628,14 +707,13 @@ func TestDeliverPullSecrets_EmitsBundlePerDownstreamCluster(t *testing.T) {
 		t.Fatalf("deliverPullSecrets: %v", err)
 	}
 
-	// Local cluster always: ngc-secret should exist in target-ns on the operator's cluster.
+	// Downstream-only targets: the operator's own cluster must NOT receive the
+	// secret (review #4 — no writing into a same-named local namespace the
+	// workload never installs into here).
 	var localSecret corev1.Secret
 	if err := c.Get(context.Background(),
-		types.NamespacedName{Namespace: "target-ns", Name: "ngc-secret"}, &localSecret); err != nil {
-		t.Fatalf("local ngc-secret missing: %v", err)
-	}
-	if localSecret.Type != corev1.SecretTypeDockerConfigJson {
-		t.Errorf("local secret type: got %v want %v", localSecret.Type, corev1.SecretTypeDockerConfigJson)
+		types.NamespacedName{Namespace: "target-ns", Name: "ngc-secret"}, &localSecret); err == nil {
+		t.Errorf("local ngc-secret should not be written for downstream-only targets")
 	}
 
 	// Downstream: exactly 2 bundles in fleet-default (one per cluster).
@@ -1341,7 +1419,9 @@ func TestDeliverPullSecrets_MultiNamespaceBlueprint(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
 		Spec: aiplatformv1alpha1.AIWorkloadSpec{
 			TargetNamespace: "install-ns", // unused — every secret is in a component namespace
-			TargetClusters:  []string{"c-down"},
+			// Includes "local" so the local per-namespace placement below is
+			// exercised; "c-down" drives the downstream bundle assertions.
+			TargetClusters: []string{"local", "c-down"},
 		},
 		Status: aiplatformv1alpha1.AIWorkloadStatus{
 			PullSecretDeliveries: []aiplatformv1alpha1.PullSecretDelivery{
