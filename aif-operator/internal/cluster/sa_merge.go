@@ -45,10 +45,12 @@ import (
 //   - Job (one-shot): runs immediately when the Bundle is applied, so the
 //     common case (SAs that ship with the chart) is patched within seconds of
 //     install. Its name carries a deterministic hash of (namespace + sorted
-//     secret names + image) so any change to the desired state produces a new
-//     Job (Job .spec is immutable after create). With unchanged inputs the
-//     name is stable, so Fleet's re-apply is a no-op and a completed Job stays
-//     completed (a TTL would create permanent Fleet drift).
+//     secret names + image + rendered script) so any change to the desired
+//     state — including a new script from an operator upgrade — produces a new
+//     Job (Job .spec is immutable after create, so reusing the name with a
+//     changed pod template would fail with "field is immutable"). With
+//     unchanged inputs the name is stable, so Fleet's re-apply is a no-op and a
+//     completed Job stays completed (a TTL would create permanent Fleet drift).
 //
 //   - CronJob (recurring): closes the one-shot's gap — ServiceAccounts created
 //     AFTER the Job runs (e.g. by the workload chart itself) would otherwise
@@ -74,19 +76,6 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	sortedNames := append([]string(nil), secretNames...)
 	sort.Strings(sortedNames)
 
-	h := sha1.New()
-	h.Write([]byte(namespace))
-	h.Write([]byte{0})
-	h.Write([]byte(strings.Join(sortedNames, ",")))
-	h.Write([]byte{0})
-	h.Write([]byte(image))
-	hashHex := hex.EncodeToString(h.Sum(nil))[:10]
-	jobName := fmt.Sprintf("%s-%s", saMergeJobNamePrefix, hashHex)
-	// The CronJob name is stable (no hash): CronJob .spec is mutable, so Fleet
-	// updates it in place when the secret set changes instead of orphaning a
-	// hash-named predecessor that would keep running alongside the new one.
-	cronJobName := fmt.Sprintf("%s-cron", saMergeJobNamePrefix)
-
 	// The script reads each SA's current imagePullSecrets and unions them with
 	// this list before patching. We render the desired names as a
 	// SPACE-separated single-line literal so the entire DESIRED='…' assignment
@@ -107,6 +96,31 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	}{Namespace: namespace, DesiredNames: desiredLine}); err != nil {
 		return "", fmt.Errorf("render SA-merge script: %w", err)
 	}
+	script := scriptBuf.String()
+
+	// The Job name carries a hash of every input that affects the Job's pod
+	// template — namespace, secret names, image, AND the rendered script. A
+	// Job's spec.template is immutable, so if the operator ships a new script
+	// (e.g. after an operator upgrade) under an unchanged name, Fleet's re-apply
+	// fails with "field is immutable". Folding the script into the hash means a
+	// script change yields a NEW Job name: Fleet prunes the old completed Job
+	// and creates the new one cleanly. With unchanged inputs the name is stable,
+	// so steady-state re-applies stay no-ops.
+	h := sha1.New()
+	h.Write([]byte(namespace))
+	h.Write([]byte{0})
+	h.Write([]byte(strings.Join(sortedNames, ",")))
+	h.Write([]byte{0})
+	h.Write([]byte(image))
+	h.Write([]byte{0})
+	h.Write([]byte(script))
+	hashHex := hex.EncodeToString(h.Sum(nil))[:10]
+	jobName := fmt.Sprintf("%s-%s", saMergeJobNamePrefix, hashHex)
+	// The CronJob name is stable (no hash): CronJob .spec is mutable, so Fleet
+	// updates it in place when the script or secret set changes instead of
+	// orphaning a hash-named predecessor that would keep running alongside the
+	// new one.
+	cronJobName := fmt.Sprintf("%s-cron", saMergeJobNamePrefix)
 
 	data := struct {
 		Namespace      string
@@ -123,7 +137,7 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 		Schedule:       saMergeCronSchedule,
 		ServiceAccount: saMergeServiceAccount,
 		Image:          image,
-		Script:         scriptBuf.String(),
+		Script:         script,
 	}
 
 	var buf bytes.Buffer
