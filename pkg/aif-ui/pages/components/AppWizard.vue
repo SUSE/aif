@@ -814,6 +814,31 @@ async function performMultiClusterInstall() {
   submitting.value = false;
 }
 
+// Map per-cluster settled results onto installProgress and aggregate the
+// top-level error, mirroring BlueprintInstallWizard's per-cluster-independent
+// reporting: one cluster's failure marks only that cluster failed and leaves
+// the successful ones intact.
+function applyPerClusterResults(results: PromiseSettledResult<unknown>[], successMessage: string) {
+  installProgress.value = installProgress.value.map((p, i) => {
+    const r = results[i];
+    if (r && r.status === 'fulfilled') {
+      return { ...p, progress: 100, status: 'success' as const, message: successMessage };
+    }
+    const e: any = (r as PromiseRejectedResult | undefined)?.reason;
+    const errMsg = e?.status === 409
+      ? `A deployment for "${ form.value.release }" already exists on ${ p.clusterId }.`
+      : (e?.message || 'Unknown error');
+    return { ...p, status: 'failed' as const, message: errMsg, error: errMsg };
+  });
+
+  const failed = results.filter(r => r.status === 'rejected');
+  if (failed.length === results.length) {
+    error.value = (failed[0] as PromiseRejectedResult | undefined)?.reason?.message || 'All cluster installs failed';
+  } else if (failed.length > 0) {
+    error.value = `${ failed.length } of ${ results.length } cluster installs failed — see progress for details`;
+  }
+}
+
 async function performFleetBundleInstall() {
   installProgress.value = form.value.clusters.map(clusterId => ({
     clusterId,
@@ -865,8 +890,11 @@ async function performFleetBundleInstall() {
     updateAllProgress(50, 'Creating Fleet Bundles (one per cluster)...');
     // One bundle per cluster — Fleet's per-workspace name uniqueness means
     // sharing a name across clusters in fleet-default would silently overwrite.
-    await Promise.all(form.value.clusters.map(clusterId =>
-      createFleetBundle(store, {
+    // Per-cluster independence: a failure on one cluster must not roll back or
+    // mark failed the clusters that already succeeded (mirrors
+    // BlueprintInstallWizard.onInstall).
+    const results = await Promise.allSettled(form.value.clusters.map(async clusterId => {
+      await createFleetBundle(store, {
         bundleName:                bundleNamesByCluster[clusterId],
         release:                   form.value.release,
         chartRepo:                 form.value.chartRepo,
@@ -878,15 +906,11 @@ async function performFleetBundleInstall() {
         targetClusterIds:          [clusterId],
         additionalPullSecretNames: extraPullSecretNames,
         library:                   getLibraryFromRepoUrl(chartRepoUrl),
-      })
-    ));
+      });
+      await recordAIWorkload(bundleNamesByCluster, 'FleetBundle', clusterId, { phase: 'Pending', clusterStatuses: [] });
+    }));
 
-    updateAllProgress(100, 'Fleet Bundles created — Fleet will deploy to selected clusters');
-    installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
-
-    await Promise.all(form.value.clusters.map(clusterId =>
-      recordAIWorkload(bundleNamesByCluster, 'FleetBundle', clusterId, { phase: 'Pending', clusterStatuses: [] }),
-    ));
+    applyPerClusterResults(results, 'Fleet Bundle created — Fleet will deploy to selected cluster');
   } catch (e: any) {
     installProgress.value = installProgress.value.map(p => ({
       ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
@@ -943,31 +967,35 @@ async function performGitOpsInstall() {
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
     const helmSecretName = (() => { const cs = repoObj?.spec?.clientSecret; return typeof cs === 'object' ? (cs?.name || null) : (cs || null); })();
 
-    // One bundle YAML per cluster — committed sequentially so they share a
-    // single git push if the backend supports batching, otherwise serialize
-    // cleanly to avoid racing on the same branch.
+    // One bundle YAML per cluster — committed sequentially to avoid racing on
+    // the same git branch. Each cluster is independent: a failure records that
+    // cluster as failed and continues with the rest, rather than aborting the
+    // remaining clusters (per-cluster independence as in
+    // BlueprintInstallWizard.onInstall, kept sequential for the shared branch).
+    const results: PromiseSettledResult<void>[] = [];
     for (const clusterId of form.value.clusters) {
-      await publishToFleetGit({
-        bundleName:       bundleNamesByCluster[clusterId],
-        release:          form.value.release,
-        chartName:        form.value.chartName,
-        chartVersion:     form.value.chartVersion,
-        chartRepoUrl,
-        helmSecretName,
-        values:           form.value.values,
-        pullSecretNames,
-        targetClusterIds: [clusterId],
-        targetNamespace:  form.value.namespace,
-        library:          getLibraryFromRepoUrl(chartRepoUrl),
-      });
+      try {
+        await publishToFleetGit({
+          bundleName:       bundleNamesByCluster[clusterId],
+          release:          form.value.release,
+          chartName:        form.value.chartName,
+          chartVersion:     form.value.chartVersion,
+          chartRepoUrl,
+          helmSecretName,
+          values:           form.value.values,
+          pullSecretNames,
+          targetClusterIds: [clusterId],
+          targetNamespace:  form.value.namespace,
+          library:          getLibraryFromRepoUrl(chartRepoUrl),
+        });
+        await recordAIWorkload(bundleNamesByCluster, 'GitOps', clusterId, { phase: 'Pending', clusterStatuses: [] });
+        results.push({ status: 'fulfilled', value: undefined });
+      } catch (e) {
+        results.push({ status: 'rejected', reason: e });
+      }
     }
 
-    updateAllProgress(100, 'Fleet Bundle YAML(s) committed — Fleet will deploy to selected clusters');
-    installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
-
-    await Promise.all(form.value.clusters.map(clusterId =>
-      recordAIWorkload(bundleNamesByCluster, 'GitOps', clusterId, { phase: 'Pending', clusterStatuses: [] }),
-    ));
+    applyPerClusterResults(results, 'Fleet Bundle YAML committed — Fleet will deploy to selected cluster');
   } catch (e: any) {
     installProgress.value = installProgress.value.map(p => ({
       ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
