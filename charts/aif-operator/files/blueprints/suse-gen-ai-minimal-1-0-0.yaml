@@ -24,7 +24,11 @@ spec:
       extraEnv: []
       extraEnvFrom: []
       extraObjects: []
-      fullnameOverride: ""
+      # Pin the service name so cross-component URLs don't depend on the Helm
+      # release name (the operator derives it from the chart name). open-webui
+      # reaches this as http://ollama:11434 (namespace-relative short name), so
+      # the blueprint installs cleanly under any release name or namespace.
+      fullnameOverride: ollama
       global:
         imagePullSecrets: []
         imageRegistry: ""
@@ -178,7 +182,10 @@ spec:
       - name: VECTOR_DB
         value: milvus
       - name: MILVUS_URI
-        value: http://suse-gen-ai-minimal-milvus.suse-gen-ai-minimal-system.svc.cluster.local:19530
+        # Namespace-relative short name: resolves in open-webui's own namespace,
+        # so this works under any install namespace. Service name is pinned via
+        # the milvus component's fullnameOverride.
+        value: http://milvus:19530
       - name: INSTALL_NLTK_DATASETS
         value: "true"
       extraInitContainers: []
@@ -241,7 +248,10 @@ spec:
         enabled: false
         fullnameOverride: open-webui-ollama
       ollamaUrls:
-      - http://suse-gen-ai-minimal-ollama.suse-gen-ai-minimal-system.svc.cluster.local:11434
+      # Namespace-relative short name: resolves in open-webui's own namespace,
+      # so this works under any install namespace. Service name is pinned via
+      # the ollama component's fullnameOverride.
+      - http://ollama:11434
       ollamaUrlsFromExtraEnv: false
       # openaiApiKey: 0p3n-w3bu!
       openaiApiKeys: []
@@ -544,7 +554,11 @@ spec:
           #     security:
           #       tlsMode: 1
 
-      fullnameOverride: ""
+      # Pin the service name so cross-component URLs don't depend on the Helm
+      # release name (the operator derives it from the chart name). open-webui
+      # reaches this as http://milvus:19530 (namespace-relative short name), so
+      # the blueprint installs cleanly under any release name or namespace.
+      fullnameOverride: milvus
       global:
         imagePullSecrets: []
         imageRegistry: ""
@@ -963,6 +977,12 @@ spec:
         create: true
         name: ""
       tolerations: []
-  description: suse-gen-ai-minimal with ollama, open-webui, open-webui-mcpo and milvus
+  description: |
+    suse-gen-ai-minimal with ollama, open-webui, open-webui-mcpo and milvus.
+    Requires a default StorageClass defined in the cluster for persistent volumes.
+    Requires a cert-manager instance running in the cluster.
+    The open-webui chat UI is exposed via Ingress at https://suse-ollama-webui;
+    point a DNS record (or /etc/hosts entry) for the host "suse-ollama-webui"
+    at the cluster's ingress controller to reach it. The hostname can also be patched after deployment.
   displayName: suse-gen-ai-minimal
   version: 1.0.0
