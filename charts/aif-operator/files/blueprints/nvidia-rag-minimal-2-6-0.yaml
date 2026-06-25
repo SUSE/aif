@@ -3,50 +3,28 @@ kind: Blueprint
 metadata:
   labels:
     ai-platform.suse.com/blueprint-name: nvidia-rag-minimal
-    ai-platform.suse.com/blueprint-version: 2.5.0
-  name: nvidia-rag-minimal-2-5-0
+    ai-platform.suse.com/blueprint-version: 2.6.0
+  name: nvidia-rag-minimal-2-6-0
 spec:
-  components:
-  # NOTE: This blueprint requires NVIDIA nim-operator. Please make sure it
-  # is installed on the cluster. Please refer to
+  # NOTE: This blueprint requires NVIDIA k8s-nim-operator and
+  # Elasticsearch (ECK) Operator. Please make sure they are
+  # installed on the cluster. Please refer to
   # https://docs.nvidia.com/nim-operator/latest/install.html on how to
-  # install nim-operator.
+  # install k8s-nim-operator. For Elasticsearch Operator, please
+  # refer to https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/install-using-helm-chart.
   #
+  source: Nvidia
+  components:
   - chartName: nvidia-blueprint-rag
     chartRepo: nvidia-blueprints
-    chartVersion: v2.5.0
+    chartVersion: v2.6.0
     values:
-      # Reference pre-existing secrets instead of letting the chart create them
-      # from inline passwords. Create both in the release namespace BEFORE
-      # applying this Blueprint:
-      #
-      #   NS=<release-namespace>
-      #   NGC_API_KEY=<your-nvapi-key>
-      #
-      #   # 1. dockerconfigjson for pulling nvcr.io images
-      #   kubectl create secret docker-registry ngc-secret \
-      #     --docker-server=nvcr.io \
-      #     --docker-username='$oauthtoken' \
-      #     --docker-password="$NGC_API_KEY" \
-      #     -n "$NS"
-      #
-      #   # 2. Opaque secret with the three key names the chart/NIMs expect
-      #   kubectl create secret generic ngc-api \
-      #     --from-literal=NGC_CLI_API_KEY="$NGC_API_KEY" \
-      #     --from-literal=NGC_API_KEY="$NGC_API_KEY" \
-      #     --from-literal=NVIDIA_API_KEY="$NGC_API_KEY" \
-      #     -n "$NS"
       imagePullSecret:
         create: false
         name: ngc-secret
       ngcApiSecret:
         create: false
         name: ngc-api
-      image:
-        # DECISION: Pinned to 2.5.0 because 2.5.1 image is not present.
-        # Tracking via https://github.com/NVIDIA-AI-Blueprints/rag/issues/618 ;
-        # bump to 2.5.1 once resolved.
-        tag: "2.5.0"
       envVars:
         # DECISION: Downscaled the orchestrator routing targets from the default
         # massive 49B Nemotron model to the hyper-efficient Llama 3.2 3B model.
@@ -57,6 +35,8 @@ spec:
         APP_FILTEREXPRESSIONGENERATOR_MODELNAME: meta/llama-3.2-3b-instruct
         APP_EMBEDDINGS_MODELNAME: nvidia/llama-nemotron-embed-1b-v2
         APP_RANKING_MODELNAME: nvidia/llama-nemotron-rerank-1b-v2
+
+        APP_EMBEDDINGS_SERVERURL: "nemotron-embedding-ms:8000/v1"
 
         # DECISION: Switched vector search execution entirely to the CPU.
         # For text knowledge bases under a few million chunks, CPU dense
@@ -100,6 +80,7 @@ spec:
           # Slashed from default 9000 to 4000 to keep inputs lean.
           SUMMARY_LLM_MAX_CHUNK_LENGTH: "4000"
           APP_EMBEDDINGS_MODELNAME: nvidia/llama-nemotron-embed-1b-v2
+          APP_EMBEDDINGS_SERVERURL: "nemotron-embedding-ms:8000/v1"
 
           # DECISION: Forced document token indexing to run strictly on host
           # CPU threads.
@@ -152,6 +133,9 @@ spec:
           # save VRAM, resetting this string stops the ingestion pod from
           # hanging in an infinite loop waiting for dead services.
           COMPONENTS_TO_READY_CHECK: ""
+
+          APP_EMBEDDINGS_SERVERURL: "nemotron-embedding-ms:8000/v1"
+          EMBEDDING_NIM_ENDPOINT: "http://nemotron-embedding-ms:8000/v1"
         milvus:
           image:
             all:
@@ -205,10 +189,21 @@ spec:
           # 18,640 MiB (18.6 GB) of VRAM just to initialize. Evicting this
           # monster cleared out 80%+ of our GPU card, giving the embedding,
           # ranking, and LLM services a clean slate.
-          nemoretriever_ocr_v1:
+          ocr:
             enabled: false
       # NIM Operator Deployments (3B LLM Engine)
       nimOperator:
+        # DECISION: nim-vlm is another memory eating monster so disable it
+        # for now.
+        nim-vlm:
+          enabled: false
+        # DECISION: disable nvidia-nim-llama-nemotron-embed-vl-1b-v2 as its
+        # caching job keep failing to download model profiles. Use the non-vlm
+        # one instead.
+        nvidia-nim-llama-nemotron-embed-vl-1b-v2:
+          enabled: false
+        nvidia-nim-llama-nemotron-embed-1b-v2:
+          enabled: true
         nim-llm:
           enabled: true
           image:
@@ -251,8 +246,29 @@ spec:
           # user queries.
           - name: NIM_KVCACHE_PERCENT
             value: "0.15"
+          # DECISION: Expose an ingress to make it easier to access the
+          # NIM frontend UI. This is a hack, intended for demo purposes as the
+          # endpoint is not protected by TLS or required any authentication.
+          # To access the frontend UI, user will need to manually create the
+          # DNS record for "rag-frontend.suse.demo" with the IP address
+          # of the NIM frontend node in either /etc/hosts or DNS server.
+          expose:
+            ingress:
+              enabled: true
+              spec:
+                rules:
+                  - host: rag-frontend.suse.demo
+                    http:
+                      paths:
+                      - path: /
+                        pathType: Prefix
+                        backend:
+                          service:
+                            name: rag-frontend
+                            port:
+                              number: 3000
   description: |
-    Minimal NVIDIA RAG (v2.5.0) for low-GPU footprints (single ~24 GB GPU,
+    Minimal NVIDIA RAG (v2.6.0) for low-GPU footprints (single ~24 GB GPU,
     e.g. A10 / L4). Swaps the default 49B Nemotron for Llama 3.2 3B,
     disables structural OCR / table / chart extraction to reclaim ~18 GB
     VRAM, forces CPU vector search/index, drops chart resource bounds to
@@ -260,6 +276,15 @@ spec:
     for production: tracing/observability stack is disabled, and the
     token budget is tuned for the small LLM, not throughput.
 
-    NOTE: this blueprint requires nim-operator.
+    This blueprint exposes an ingress endpoint for the RAG Frontend UI
+    with the name "rag-frontend.suse.demo".
+    To access the RAG Frontend UI:
+
+      1. get the external IP of the node
+      2. create a DNS entry in either your /etc/hosts file or DNS server
+         for "rag-frontend.suse.com" with the node IP
+      3. point your browser to http://rag-frontend.suse.demo
+
+    NOTE: this blueprint requires k8s-nim-operator and Elasticsearch eck-operator.
   displayName: NVIDIA RAG (minimal, low-GPU)
-  version: 2.5.0
+  version: 2.6.0
