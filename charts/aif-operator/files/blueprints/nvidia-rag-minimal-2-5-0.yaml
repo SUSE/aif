@@ -1,0 +1,265 @@
+apiVersion: ai-platform.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  labels:
+    ai-platform.suse.com/blueprint-name: nvidia-rag-minimal
+    ai-platform.suse.com/blueprint-version: 2.5.0
+  name: nvidia-rag-minimal-2-5-0
+spec:
+  components:
+  # NOTE: This blueprint requires NVIDIA nim-operator. Please make sure it
+  # is installed on the cluster. Please refer to
+  # https://docs.nvidia.com/nim-operator/latest/install.html on how to
+  # install nim-operator.
+  #
+  - chartName: nvidia-blueprint-rag
+    chartRepo: nvidia-blueprints
+    chartVersion: v2.5.0
+    values:
+      # Reference pre-existing secrets instead of letting the chart create them
+      # from inline passwords. Create both in the release namespace BEFORE
+      # applying this Blueprint:
+      #
+      #   NS=<release-namespace>
+      #   NGC_API_KEY=<your-nvapi-key>
+      #
+      #   # 1. dockerconfigjson for pulling nvcr.io images
+      #   kubectl create secret docker-registry ngc-secret \
+      #     --docker-server=nvcr.io \
+      #     --docker-username='$oauthtoken' \
+      #     --docker-password="$NGC_API_KEY" \
+      #     -n "$NS"
+      #
+      #   # 2. Opaque secret with the three key names the chart/NIMs expect
+      #   kubectl create secret generic ngc-api \
+      #     --from-literal=NGC_CLI_API_KEY="$NGC_API_KEY" \
+      #     --from-literal=NGC_API_KEY="$NGC_API_KEY" \
+      #     --from-literal=NVIDIA_API_KEY="$NGC_API_KEY" \
+      #     -n "$NS"
+      imagePullSecret:
+        create: false
+        name: ngc-secret
+      ngcApiSecret:
+        create: false
+        name: ngc-api
+      image:
+        # DECISION: Pinned to 2.5.0 because 2.5.1 image is not present.
+        # Tracking via https://github.com/NVIDIA-AI-Blueprints/rag/issues/618 ;
+        # bump to 2.5.1 once resolved.
+        tag: "2.5.0"
+      envVars:
+        # DECISION: Downscaled the orchestrator routing targets from the default
+        # massive 49B Nemotron model to the hyper-efficient Llama 3.2 3B model.
+        # This alignment ensures the orchestrator sends API traffic to the
+        # correct, locally-hosted Triton inference endpoints.
+        APP_LLM_MODELNAME: meta/llama-3.2-3b-instruct
+        APP_QUERYREWRITER_MODELNAME: meta/llama-3.2-3b-instruct
+        APP_FILTEREXPRESSIONGENERATOR_MODELNAME: meta/llama-3.2-3b-instruct
+        APP_EMBEDDINGS_MODELNAME: nvidia/llama-nemotron-embed-1b-v2
+        APP_RANKING_MODELNAME: nvidia/llama-nemotron-rerank-1b-v2
+
+        # DECISION: Switched vector search execution entirely to the CPU.
+        # For text knowledge bases under a few million chunks, CPU dense
+        # retrieval runs in single-digit milliseconds, saving critical VRAM
+        # for the models.
+        APP_VECTORSTORE_ENABLEGPUSEARCH: "False"
+
+        # CRITICAL FIX/DECISION: Rebalanced the token allocation budget to
+        # prevent 400 BadRequestErrors. Because NIM_MAX_MODEL_LEN is capped at
+        # 4096 tokens for hardware optimization on the A10, leaving
+        # LLM_MAX_TOKENS at 4096 (which dictates max output completion size)
+        # leaves exactly 0 tokens for the input prompt and vector context.
+        # Slashing this to 1024 limits the model's generation size, ensuring a
+        # guaranteed pool of 3072 tokens remains entirely open for user
+        # messages and retrieved document chunks.
+        LLM_MAX_TOKENS: "1024"
+      resources:
+        # DECISION: Set only requests (for scheduling); leave limits unset so
+        # pods can burst. The default charts assume an 8x H100 footprint.
+        # NOTE: `null` does NOT clear a default — the Blueprint controller
+        # strips null values during the value merge. Omitting limits here means
+        # the chart's default limits ride (Helm deep-merges over them); we just
+        # avoid pinning our own tight limits. Set explicit requests to override
+        # the (huge) default requests.
+        requests:
+          cpu: "500m"
+          memory: 1Gi
+      ingestor-server:
+        resources:
+          # DECISION: requests only (text-only ingestion needs little); leave
+          # limits unset so the pod can burst. `null` can't clear a default
+          # (controller strips it), so we just omit limits and override requests.
+          requests:
+            cpu: "500m"
+            memory: 1Gi
+        envVars:
+          # DECISION: Ensured the internal automated document summarization
+          # pipeline uses the same lightweight local 3B model instead of trying
+          # to spin up or look for a separate dedicated summarizer instance.
+          SUMMARY_LLM: meta/llama-3.2-3b-instruct
+          # Slashed from default 9000 to 4000 to keep inputs lean.
+          SUMMARY_LLM_MAX_CHUNK_LENGTH: "4000"
+          APP_EMBEDDINGS_MODELNAME: nvidia/llama-nemotron-embed-1b-v2
+
+          # DECISION: Forced document token indexing to run strictly on host
+          # CPU threads.
+          APP_VECTORSTORE_ENABLEGPUINDEX: "False"
+          APP_VECTORSTORE_ENABLEGPUSEARCH: "False"
+
+          # DECISION: Turned off advanced structural chart and table
+          # extraction. This transforms our pipeline into a dedicated,
+          # high-speed text-only ingestion system and eliminates the need for
+          # multi-modal GPU overhead.
+          APP_NVINGEST_EXTRACTTABLES: "False"
+          APP_NVINGEST_EXTRACTCHARTS: "False"
+      nv-ingest:
+        # Pin subchart names to match the chart's release-name="rag" defaults
+        # (rag-minio, rag-redis-master, rag-nv-ingest). The Blueprint controller
+        # picks a different release name; without these overrides every
+        # *_HOST / *_ENDPOINT default in the chart breaks. Matching defaults
+        # also lets us drop the host/endpoint envVar overrides above entirely.
+        fullnameOverride: rag-nv-ingest
+        redis:
+          fullnameOverride: rag-redis
+          # DECISION: standalone (master only). Chart default is replication
+          # (master + replica StatefulSets); the replica adds a 6Gi memory
+          # request and a second PVC that a single low-RAM node can't fit,
+          # leaving rag-redis-replicas-0 Pending. Minimal RAG needs only the
+          # master.
+          architecture: standalone
+        # FIXES Fleet duplicate-env error: chart template emits
+        # OTEL_EXPORTER_OTLP_ENDPOINT twice in the nv-ingest Deployment - once
+        # from the envVars loop (parent chart sets it under nv-ingest.envVars)
+        # and once from a fallback block guarded only by `otelEnvVars`.
+        # Disabling otel here skips the fallback. Consistent with parent
+        # default opentelemetry-collector.enabled=false anyway.
+        otelEnabled: false
+        resources:
+          # DECISION: Cap nv-ingest requests so it fits a single low-RAM node.
+          # Chart default requests 24Gi mem / 24 CPU leaves the pod Pending:
+          # "Insufficient memory". Set explicit small requests; leave limits
+          # unset so the pod can burst (the chart default limit is 200Gi/48cpu,
+          # effectively unlimited). NOTE: `null` does NOT clear a default — the
+          # Blueprint controller strips nulls during the value merge.
+          requests:
+            cpu: "2"
+            memory: 4Gi
+        envVars:
+          # CRITICAL DECISION: Cleared out the COMPONENTS_TO_READY_CHECK array.
+          # By default, nv-ingest runs strict network loop checks to ensure
+          # every single multi-modal sub-component (like the OCR engine or
+          # table parser) is live. Since we explicitly turned those off to
+          # save VRAM, resetting this string stops the ingestion pod from
+          # hanging in an infinite loop waiting for dead services.
+          COMPONENTS_TO_READY_CHECK: ""
+        milvus:
+          image:
+            all:
+              # DECISION: Explicitly pinned docker.io Milvus v2.6.5 database
+              # registry targets. This prevents the chart from drifting to
+              # enterprise distributed versions that expect independent index,
+              # query, and data proxy nodes.
+              repository: docker.io/milvusdb/milvus
+              tag: v2.6.5
+          minio:
+            fullnameOverride: rag-minio
+          # Milvus builds its S3 endpoint as "<release>-<minio.name>" in the
+          # milvus subchart config.tpl ({{ .Release.Name }}-{{ .Values.minio.name }}),
+          # IGNORING minio.fullnameOverride. The chart assumes release name "rag"
+          # so that resolves to "rag-minio"; under the Blueprint controller's
+          # long release name it becomes "nvidia-rag-minimal-...-minio", which
+          # doesn't exist (we renamed minio to rag-minio) -> milvus panics with
+          # "no such host". The externalS3 branch is the only one that bypasses
+          # the release-name computation, so point milvus at rag-minio directly.
+          # Bucket/creds mirror the parent chart defaults (bucketName nv-ingest,
+          # minioadmin/minioadmin); rootPath "file" matches the milvus default.
+          externalS3:
+            enabled: true
+            host: rag-minio
+            port: 9000
+            accessKey: minioadmin
+            secretKey: minioadmin
+            bucketName: nv-ingest
+            rootPath: file
+            useSSL: false
+          standalone:
+            resources:
+              # DECISION: Modest requests for standalone Milvus on a dev dataset;
+              # leave limits unset so it can burst. `null` can't clear a default
+              # (controller strips it), so we omit limits and override requests.
+              requests:
+                cpu: "1"
+                memory: 2Gi
+        # Nested nimOperator inside nv-ingest (Layout/OCR Extraction Engines).
+        # DECISION: Disabled all structural vision microservices to reclaim
+        # host RAM.
+        nimOperator:
+          graphic_elements:
+            enabled: false
+          page_elements:
+            enabled: false
+          table_structure:
+            enabled: false
+          # CRITICAL DECISION: Explicitly disabled the nemoretriever-ocr-v1
+          # engine. In our initial run, this service greedily grabbed
+          # 18,640 MiB (18.6 GB) of VRAM just to initialize. Evicting this
+          # monster cleared out 80%+ of our GPU card, giving the embedding,
+          # ranking, and LLM services a clean slate.
+          nemoretriever_ocr_v1:
+            enabled: false
+      # NIM Operator Deployments (3B LLM Engine)
+      nimOperator:
+        nim-llm:
+          enabled: true
+          image:
+            # DECISION: Replaced the un-runnable 49B foundation model with
+            # Meta's compact 3-Billion parameter instruction-tuned model.
+            repository: nvcr.io/nim/meta/llama-3.2-3b-instruct
+            # CRITICAL DECISION: Pinning tag version "1.8.5". Avoided generic
+            # tags like "latest" which fail NIM operator hardware-profile
+            # lookup validation. Avoided "1.1.0" which was an invalid registry
+            # tag. Pinned 1.8.5 to trigger successful JIT TensorRT-LLM engine
+            # building.
+            tag: "1.8.5"
+          storage:
+            pvc:
+              create: true
+              # DECISION: Slashed the persistent cache directory request from
+              # 120Gi to 35Gi. The 3B model weights only consume ~6 GB of
+              # space. Downsizing ensures the Rancher local-path storage
+              # provisioner easily satisfies the capacity request on local
+              # disk, resolving the "WaitForFirstConsumer" scheduling deadlock.
+              size: 35Gi
+              volumeAccessMode: ReadWriteOnce
+          # NB: chart renders this `env` as a list via toYaml — providing a
+          # list here FULLY REPLACES the chart default list (no merge). Chart
+          # default `NIM_TRITON_LOG_VERBOSE: "1"` is intentionally dropped.
+          env:
+          - name: NIM_SERVED_MODEL_NAME
+            value: meta/llama-3.2-3b-instruct
+          # DECISION: Limited max token sequence length to 8192. Bounds the
+          # baseline allocation size calculated by the TensorRT-LLM engine
+          # builder profile, working alongside the embedding/ranking services.
+          # (Was 4096 originally; bumped to 8192 to fit a workable context.)
+          - name: NIM_MAX_MODEL_LEN
+            value: "8192"
+          # DECISION: Capped the generative dynamic Key-Value Cache allocation
+          # to 15%. Since our 1B Embedding and 1B Reranking models lock down a
+          # fixed 49% (11.4 GB) of the card, capping the LLM's dynamic cache
+          # pool ensures the remaining ~6.5 GB of base weights fit cleanly,
+          # preserving a ~2.3 GB unallocated safety cushion for concurrent
+          # user queries.
+          - name: NIM_KVCACHE_PERCENT
+            value: "0.15"
+  description: |
+    Minimal NVIDIA RAG (v2.5.0) for low-GPU footprints (single ~24 GB GPU,
+    e.g. A10 / L4). Swaps the default 49B Nemotron for Llama 3.2 3B,
+    disables structural OCR / table / chart extraction to reclaim ~18 GB
+    VRAM, forces CPU vector search/index, drops chart resource bounds to
+    fit a single node, and pins Milvus standalone (text-only RAG). Not
+    for production: tracing/observability stack is disabled, and the
+    token budget is tuned for the small LLM, not throughput.
+
+    NOTE: this blueprint requires nim-operator.
+  displayName: NVIDIA RAG (minimal, low-GPU)
+  version: 2.5.0
