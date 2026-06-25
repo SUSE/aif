@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -72,17 +73,32 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	now := metav1.Now()
-	s.Status.LastApplied = &now
-	s.Status.ObservedGeneration = s.Generation
-
-	if err := r.Status().Update(ctx, &s); err != nil {
+	if err := r.updateStatus(ctx, req.NamespacedName); err != nil {
 		l.Error(err, "failed to update settings status")
 		return ctrl.Result{}, err
 	}
 
 	l.Info("reconciled settings", "name", s.Name)
 	return ctrl.Result{}, nil
+}
+
+// updateStatus stamps LastApplied/ObservedGeneration, re-fetching the latest
+// object on each attempt and retrying on conflict. Earlier reconcile steps
+// patch the Settings spec and write registry secrets (which re-enqueue this
+// controller via the secret watch), so the in-memory object can be stale by
+// the time we write status — a plain Status().Update would intermittently
+// conflict.
+func (r *SettingsReconciler) updateStatus(ctx context.Context, key types.NamespacedName) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var s aiplatformv1alpha1.Settings
+		if err := r.Get(ctx, key, &s); err != nil {
+			return err
+		}
+		now := metav1.Now()
+		s.Status.LastApplied = &now
+		s.Status.ObservedGeneration = s.Generation
+		return r.Status().Update(ctx, &s)
+	})
 }
 
 // SetupWithManager registers the controller with the Manager.

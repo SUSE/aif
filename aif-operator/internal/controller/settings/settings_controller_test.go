@@ -7,12 +7,15 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/SUSE/aif-operator/internal/controller/settings"
@@ -202,6 +205,56 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 	}
 	if string(mirror.Data["password"]) != "newtoken" {
 		t.Errorf("expected password=newtoken, got %q", string(mirror.Data["password"]))
+	}
+}
+
+func TestSettingsController_StatusUpdateSurvivesTransientConflict(t *testing.T) {
+	s := newScheme(t)
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec:       aiplatformv1alpha1.SettingsSpec{},
+	}
+
+	// Inject one transient conflict on the first status write, mimicking the
+	// optimistic-concurrency race we observed live (the object is modified
+	// between the spec patch / secret re-enqueue and the status write).
+	conflicts := 0
+	conflict := func() error {
+		conflicts++
+		if conflicts == 1 {
+			return apierrors.NewConflict(
+				schema.GroupResource{Group: "ai-platform.suse.com", Resource: "settings"},
+				credentials.SettingsName,
+				context.DeadlineExceeded, // any wrapped error; only the Conflict status matters
+			)
+		}
+		return nil
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, cl client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+				if err := conflict(); err != nil {
+					return err
+				}
+				return cl.Status().Update(ctx, obj, opts...)
+			},
+		}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile should survive a transient status conflict, got: %v", err)
+	}
+
+	var updated aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.LastApplied == nil {
+		t.Fatal("expected status.lastApplied to be set after retry")
 	}
 }
 
