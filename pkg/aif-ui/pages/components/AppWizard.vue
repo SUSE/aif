@@ -894,6 +894,16 @@ async function performFleetBundleInstall() {
     // mark failed the clusters that already succeeded (mirrors
     // BlueprintInstallWizard.onInstall).
     const results = await Promise.allSettled(form.value.clusters.map(async clusterId => {
+      // Create the AIWorkload CR BEFORE the workload HelmOp. The operator's
+      // pull-secret delivery (downstream secret bundle + SA-merge) is driven
+      // off the AIWorkload CR, while createFleetBundle's HelmOp starts the
+      // chart install immediately. Recording the CR first lets the operator
+      // begin delivering imagePullSecrets ahead of (or concurrent with) the
+      // chart install, instead of racing behind it — otherwise the chart's
+      // pods/ServiceAccounts can come up before the SUSE-AI pull secret lands,
+      // which surfaces as ImagePullBackOff on FleetBundle installs (the GitOps
+      // path masks this race because its git→Fleet sync is inherently slower).
+      await recordAIWorkload(bundleNamesByCluster, 'FleetBundle', clusterId, { phase: 'Pending', clusterStatuses: [] });
       await createFleetBundle(store, {
         bundleName:                bundleNamesByCluster[clusterId],
         release:                   form.value.release,
@@ -907,7 +917,6 @@ async function performFleetBundleInstall() {
         additionalPullSecretNames: extraPullSecretNames,
         library:                   getLibraryFromRepoUrl(chartRepoUrl),
       });
-      await recordAIWorkload(bundleNamesByCluster, 'FleetBundle', clusterId, { phase: 'Pending', clusterStatuses: [] });
     }));
 
     applyPerClusterResults(results, 'Fleet Bundle created — Fleet will deploy to selected cluster');

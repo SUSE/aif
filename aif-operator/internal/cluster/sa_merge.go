@@ -11,12 +11,12 @@ import (
 )
 
 // buildSAMergeResources returns a multi-document YAML containing the
-// ServiceAccount, Role, RoleBinding, and Job that merge secretNames into
-// every chart-managed ServiceAccount's imagePullSecrets in the target
+// ServiceAccount, Role, RoleBinding, Job, and CronJob that merge secretNames
+// into every chart-managed ServiceAccount's imagePullSecrets in the target
 // namespace on the downstream cluster.
 //
-// Why a Job and not declarative SA manifests: the operator cannot list SAs
-// on a downstream cluster (no remote client today), and a Bundle shipping
+// Why a Job/CronJob and not declarative SA manifests: the operator cannot list
+// SAs on a downstream cluster (no remote client today), and a Bundle shipping
 // fully-formed SA manifests would clobber any pre-existing imagePullSecrets
 // the cluster operator added.
 //
@@ -24,33 +24,40 @@ import (
 // declared `+listType=atomic` in core/v1 (unlike PodSpec.ImagePullSecrets,
 // which carries patchStrategy:"merge"/patchMergeKey:"name"). A
 // strategic-merge patch on an atomic list performs a wholesale REPLACE, so
-// the Job CANNOT just send its desired list — that would silently wipe any
+// the script CANNOT just send its desired list — that would silently wipe any
 // pre-existing entries (e.g. a private-registry pull secret added by the
 // cluster admin). The script therefore does a read-modify-write per SA:
 // read the current names, compute the union with the desired set, and only
 // patch when the union differs (so unchanged SAs don't generate spurious
 // update events).
 //
-// Owner scope: the Job filters SAs by label
+// Owner scope: the script filters SAs (and the Pods it bounces) by label
 // `app.kubernetes.io/managed-by=Helm` so it only touches chart-created
-// ServiceAccounts. SAs the cluster admin pre-created for other purposes are
+// resources. Resources the cluster admin pre-created for other purposes are
 // left alone even if they share the namespace.
 //
 // The script uses ONLY POSIX shell builtins, `sort`, `tr`, and `kubectl`
 // — no `jq`, `awk`, `sed`, or `grep` — so a minimal kubectl image (e.g.
 // `registry.suse.com/suse/kubectl`) is sufficient.
 //
-// The deliberate compromise: this Job is one-shot — ServiceAccounts created
-// AFTER the Job runs are NOT patched until the Bundle re-applies. For
-// typical chart-managed workloads where SAs ship with the chart, this is
-// acceptable; a future enhancement could deploy a small controller for
-// continuous reconciliation.
+// Two runners ship together:
 //
-// The Job name carries a deterministic hash of (namespace + sorted secret
-// names + image) so any change to the desired state produces a new Job
-// (Job .spec is immutable after create — same name + different spec would
-// fail). With unchanged inputs the Job name is stable, so Fleet's re-apply
-// is a no-op and a completed Job stays completed.
+//   - Job (one-shot): runs immediately when the Bundle is applied, so the
+//     common case (SAs that ship with the chart) is patched within seconds of
+//     install. Its name carries a deterministic hash of (namespace + sorted
+//     secret names + image) so any change to the desired state produces a new
+//     Job (Job .spec is immutable after create). With unchanged inputs the
+//     name is stable, so Fleet's re-apply is a no-op and a completed Job stays
+//     completed (a TTL would create permanent Fleet drift).
+//
+//   - CronJob (recurring): closes the one-shot's gap — ServiceAccounts created
+//     AFTER the Job runs (e.g. by the workload chart itself) would otherwise
+//     never be patched, because re-applying the immutable Job is a no-op. The
+//     CronJob re-runs the same merge on a schedule, so late-created SAs (and
+//     Pods that came up before their SA was patched) eventually converge. Its
+//     name is stable; Fleet updates it in place when the secret set changes.
+//     The Jobs the CronJob spawns are owned by the CronJob, not the Bundle, so
+//     they don't register as Fleet drift.
 func buildSAMergeResources(namespace string, secretNames []string, image string) (string, error) {
 	if namespace == "" {
 		return "", fmt.Errorf("namespace required")
@@ -75,29 +82,48 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	h.Write([]byte(image))
 	hashHex := hex.EncodeToString(h.Sum(nil))[:10]
 	jobName := fmt.Sprintf("%s-%s", saMergeJobNamePrefix, hashHex)
+	// The CronJob name is stable (no hash): CronJob .spec is mutable, so Fleet
+	// updates it in place when the secret set changes instead of orphaning a
+	// hash-named predecessor that would keep running alongside the new one.
+	cronJobName := fmt.Sprintf("%s-cron", saMergeJobNamePrefix)
 
-	// The Job's shell script reads each SA's current imagePullSecrets and
-	// unions them with this list before patching. We render the desired
-	// names as a SPACE-separated single-line literal so the entire DESIRED='…'
-	// assignment fits on one YAML line — embedding newlines breaks out of the
-	// YAML block-scalar's indent and causes Fleet's post-render to fail with
-	// "could not find expected ':'". The script's pipeline below normalises
-	// the format to one-per-line via `tr ' ' '\n'` before sort -u, so a
+	// The script reads each SA's current imagePullSecrets and unions them with
+	// this list before patching. We render the desired names as a
+	// SPACE-separated single-line literal so the entire DESIRED='…' assignment
+	// fits on one YAML line — embedding newlines breaks out of the YAML
+	// block-scalar's indent and causes Fleet's post-render to fail with
+	// "could not find expected ':'". The script's pipeline normalises the
+	// format to one-per-line via `tr ' ' '\n'` before sort -u, so a
 	// space-separated source is fine.
 	desiredLine := strings.Join(sortedNames, " ")
+
+	// Build the shell script once (the long, indentation-sensitive part) and
+	// inject it into both the Job and the CronJob pod specs via the `indent`
+	// template func, so the two runners share a single source of truth.
+	var scriptBuf bytes.Buffer
+	if err := saMergeScriptTemplate.Execute(&scriptBuf, struct {
+		Namespace    string
+		DesiredNames string
+	}{Namespace: namespace, DesiredNames: desiredLine}); err != nil {
+		return "", fmt.Errorf("render SA-merge script: %w", err)
+	}
 
 	data := struct {
 		Namespace      string
 		JobName        string
+		CronJobName    string
+		Schedule       string
 		ServiceAccount string
 		Image          string
-		DesiredNames   string // space-separated, sorted, unique — kept single-line for YAML safety
+		Script         string
 	}{
 		Namespace:      namespace,
 		JobName:        jobName,
+		CronJobName:    cronJobName,
+		Schedule:       saMergeCronSchedule,
 		ServiceAccount: saMergeServiceAccount,
 		Image:          image,
-		DesiredNames:   desiredLine,
+		Script:         scriptBuf.String(),
 	}
 
 	var buf bytes.Buffer
@@ -107,32 +133,107 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	return buf.String(), nil
 }
 
-// saMergeTemplate renders the four manifests Fleet/Helm applies on the
-// downstream cluster:
+// saMergeCronSchedule is how often the recurring reconciliation runs. Five
+// minutes balances "late-created SAs converge promptly" against the cost of a
+// short-lived kubectl Pod per tick. The one-shot Job covers the install-time
+// common case, so this is a safety net, not the primary path.
+const saMergeCronSchedule = "*/5 * * * *"
+
+// saMergeIndentFuncs lets the shared script be spliced into block scalars at
+// different YAML depths (the Job and the CronJob's jobTemplate nest the pod
+// spec at different indentation levels).
+var saMergeIndentFuncs = template.FuncMap{
+	"indent": func(spaces int, s string) string {
+		pad := strings.Repeat(" ", spaces)
+		lines := strings.Split(s, "\n")
+		for i, l := range lines {
+			if l != "" {
+				lines[i] = pad + l
+			}
+		}
+		return strings.Join(lines, "\n")
+	},
+}
+
+// saMergeScriptTemplate is the POSIX-sh merge script, rendered standalone so it
+// can be indented into both runners. It:
+//  1. lists chart-managed SAs (label app.kubernetes.io/managed-by=Helm),
+//  2. for each, reads its current imagePullSecrets names,
+//  3. computes the sorted union with the desired names,
+//  4. patches the SA strategic-merge with that FULL union — necessary because
+//     SA.ImagePullSecrets is +listType=atomic and strategic-merge replaces the
+//     whole list (see buildSAMergeResources for the rationale),
+//  5. skips the patch when the union equals the existing set, so unchanged SAs
+//     don't generate spurious update events on re-apply, then
+//  6. bounces chart-managed Pods stuck in ImagePullBackOff/ErrImagePull: a
+//     Pod's imagePullSecrets are merged from its SA only at admission, so a Pod
+//     that started before its SA was patched stays broken until recreated.
+//     Deleting it lets its controller recreate it with the patched SA.
+//     Genuinely unpullable images keep failing (visible) and are retried on the
+//     next CronJob tick — a deliberately simpler bound than the operator's
+//     per-controller bounce cap on the local cluster.
+var saMergeScriptTemplate = template.Must(template.New("sa-merge-script").Parse(`set -eu
+# Desired names, space-separated (rendered by the operator). Kept single-line
+# so the YAML block-scalar embedding this script doesn't break.
+DESIRED='{{ .DesiredNames }}'
+NS='{{ .Namespace }}'
+# Only patch chart-managed SAs; cluster-admin-created SAs in the namespace are
+# left alone. See buildSAMergeResources comments.
+for sa in $(kubectl -n "$NS" get sa -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{.items[*].metadata.name}'); do
+  # Read SA's current imagePullSecrets names, one per line.
+  EXISTING=$(kubectl -n "$NS" get sa "$sa" -o jsonpath='{range .imagePullSecrets[*]}{.name}{"\n"}{end}')
+  # Union: existing + desired, deduped + sorted. tr+sort handles empty EXISTING
+  # (no .imagePullSecrets field) cleanly.
+  UNION=$(printf '%s\n%s\n' "$EXISTING" "$DESIRED" | tr ' ' '\n' | sort -u | tr -s '\n' ' ')
+  EXISTING_SORTED=$(printf '%s\n' "$EXISTING" | tr ' ' '\n' | sort -u | tr -s '\n' ' ')
+  if [ "$UNION" = "$EXISTING_SORTED" ]; then
+    echo "$sa: already has desired imagePullSecrets, skipping"
+    continue
+  fi
+  # Build JSON array from the unioned names (POSIX sh, no jq).
+  JSON=''
+  SEP=''
+  for n in $UNION; do
+    JSON="${JSON}${SEP}{\"name\":\"$n\"}"
+    SEP=','
+  done
+  PATCH="{\"imagePullSecrets\":[$JSON]}"
+  echo "$sa: patching with $PATCH"
+  # Strategic-merge here is REPLACE-semantics on this atomic list, but we send
+  # the full union so the end state is correct. See buildSAMergeResources doc.
+  kubectl -n "$NS" patch sa "$sa" --type=strategic -p "$PATCH"
+done
+# Bounce chart-managed Pods stuck pulling images so they re-read their SA's
+# imagePullSecrets at admission. A Pod created before its SA was patched keeps
+# its (possibly empty) imagePullSecrets baked in until recreated.
+kubectl -n "$NS" get pods -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{range .items[*]}{.metadata.name}={range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='=' read -r pod reasons; do
+  [ -n "$pod" ] || continue
+  case ",$reasons" in
+    *,ImagePullBackOff,*|*,ErrImagePull,*)
+      echo "$pod: image pull failing, deleting so it re-reads SA imagePullSecrets"
+      kubectl -n "$NS" delete pod "$pod" --ignore-not-found
+      ;;
+  esac
+done
+`))
+
+// saMergeTemplate renders the manifests Fleet/Helm applies on the downstream
+// cluster:
 //
-//   - ServiceAccount: the Job runs under a dedicated SA, NOT default, so
-//     RBAC stays minimal.
-//   - Role:           get/list/patch on serviceaccounts (and nothing else)
-//     scoped to the workload's target namespace.
+//   - ServiceAccount: the runners execute under a dedicated SA, NOT default,
+//     so RBAC stays minimal.
+//   - Role:           get/list/patch on serviceaccounts and get/list/delete on
+//     pods (for the bounce step), scoped to the workload's target namespace.
 //   - RoleBinding:    binds the SA to the Role.
-//   - Job:            the actual SA-merge work. The completed Job is retained
-//     because Fleet continuously compares live resources with Bundle desired
-//     state; a TTL would deliberately create permanent drift ten minutes after
-//     every successful install.
+//   - Job:            the one-shot install-time merge. Retained (no TTL) so
+//     Fleet doesn't see drift ten minutes after a successful install.
+//   - CronJob:        the recurring merge, so SAs/Pods created after the Job ran
+//     still converge. Its spawned Jobs are CronJob-owned, not Bundle-owned, so
+//     they don't register as Fleet drift; history limits keep them bounded.
 //
-// The Job script lists chart-managed SAs (label-scoped to
-// app.kubernetes.io/managed-by=Helm) and, for each one:
-//  1. reads the SA's current imagePullSecrets names,
-//  2. computes the sorted union with the desired names (one per line),
-//  3. patches the SA strategic-merge with that FULL union — necessary
-//     because SA.ImagePullSecrets is +listType=atomic and strategic-merge
-//     replaces the whole list (see buildSAMergeResources for the design
-//     rationale and the atomic-list caveat),
-//  4. skips the patch when the union equals the existing set, so unchanged
-//     SAs don't generate spurious update events on re-apply.
-//
-// Job-level retries are bounded by backoffLimit=4.
-var saMergeTemplate = template.Must(template.New("sa-merge").Parse(`apiVersion: v1
+// Both runners execute the same script (saMergeScriptTemplate), spliced in at
+// the correct YAML depth via the `indent` func.
+var saMergeTemplate = template.Must(template.New("sa-merge").Funcs(saMergeIndentFuncs).Parse(`apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .ServiceAccount }}
@@ -147,6 +248,9 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -198,38 +302,56 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              set -eu
-              # Desired names, space-separated (rendered by the operator).
-              # Kept single-line so the YAML block-scalar above doesn't break.
-              DESIRED='{{ .DesiredNames }}'
-              # Only patch chart-managed SAs; cluster-admin-created SAs in the
-              # namespace are left alone. See buildSAMergeResources comments.
-              for sa in $(kubectl -n {{ .Namespace }} get sa -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{.items[*].metadata.name}'); do
-                # Read SA's current imagePullSecrets names, one per line.
-                EXISTING=$(kubectl -n {{ .Namespace }} get sa "$sa" -o jsonpath='{range .imagePullSecrets[*]}{.name}{"\n"}{end}')
-                # Union: existing + desired, deduped + sorted. tr+sort handles
-                # empty EXISTING (no .imagePullSecrets field) cleanly.
-                UNION=$(printf '%s\n%s\n' "$EXISTING" "$DESIRED" | tr ' ' '\n' | sort -u | tr -s '\n' ' ')
-                EXISTING_SORTED=$(printf '%s\n' "$EXISTING" | tr ' ' '\n' | sort -u | tr -s '\n' ' ')
-                if [ "$UNION" = "$EXISTING_SORTED" ]; then
-                  echo "$sa: already has desired imagePullSecrets, skipping"
-                  continue
-                fi
-                # Build JSON array from the unioned names (POSIX sh, no jq).
-                JSON=''
-                SEP=''
-                for n in $UNION; do
-                  JSON="${JSON}${SEP}{\"name\":\"$n\"}"
-                  SEP=','
-                done
-                PATCH="{\"imagePullSecrets\":[$JSON]}"
-                echo "$sa: patching with $PATCH"
-                # Strategic-merge here is REPLACE-semantics on this atomic
-                # list, but we send the full union so the end state is
-                # correct. See buildSAMergeResources doc.
-                kubectl -n {{ .Namespace }} patch sa "$sa" --type=strategic -p "$PATCH"
-              done
+{{ indent 14 .Script }}
       volumes:
         - name: tmp
           emptyDir: {}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .CronJobName }}
+  namespace: {{ .Namespace }}
+  labels:
+    ai-platform.suse.com/role: pullsecret-sa-merge
+spec:
+  schedule: "{{ .Schedule }}"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 200
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 4
+      template:
+        metadata:
+          labels:
+            ai-platform.suse.com/role: pullsecret-sa-merge
+        spec:
+          serviceAccountName: {{ .ServiceAccount }}
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: merge
+              image: {{ .Image }}
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+{{ indent 18 .Script }}
+          volumes:
+            - name: tmp
+              emptyDir: {}
 `))

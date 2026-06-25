@@ -118,17 +118,24 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 		t.Errorf("resources[2] should be ngc-api Opaque with NGC_API_KEY, got:\n%s", contents[2])
 	}
 	// resources[3] = SA-merge: must include the merger ServiceAccount, Role,
-	// RoleBinding, and Job. The Job's args must reference both secret names
-	// in the DESIRED list the shell script unions with each SA's existing
-	// imagePullSecrets — the JSON is built per-SA from the union, see sa_merge.go.
+	// RoleBinding, the one-shot Job, and the recurring CronJob. The args must
+	// reference both secret names in the DESIRED list the shell script unions
+	// with each SA's existing imagePullSecrets — the JSON is built per-SA from
+	// the union, see sa_merge.go.
 	saMerge := contents[3]
 	for _, needle := range []string{
 		"kind: ServiceAccount", "name: ai-pullsecret-merger",
 		"kind: Role", "kind: RoleBinding",
 		"kind: Job", "ai-pullsecret-merge-",
+		// Recurring reconciliation so SAs/Pods created after the one-shot Job
+		// ran still converge.
+		"kind: CronJob", "name: ai-pullsecret-merge-cron", "schedule:",
 		"ngc-api", "ngc-secret",
-		// Owner-scope label selector — only chart-managed SAs are patched.
+		// Owner-scope label selector — only chart-managed SAs/Pods are touched.
 		"app.kubernetes.io/managed-by=Helm",
+		// The bounce step needs pods RBAC; the SA patch needs serviceaccounts RBAC.
+		`resources: ["serviceaccounts"]`,
+		`resources: ["pods"]`,
 		// The DESIRED literal must be on a single line; a multi-line
 		// rendering inside the YAML `|` block-scalar would break Fleet's
 		// post-render with "could not find expected ':'".
@@ -160,6 +167,61 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 		var out map[string]any
 		if err := yaml.Unmarshal([]byte(doc), &out); err != nil {
 			t.Errorf("SA-merge YAML document %d failed to parse: %v\n--- doc ---\n%s", i, err, doc)
+		}
+	}
+
+	// The merge script is rendered once and spliced into both the Job and the
+	// CronJob pod specs at different YAML depths via the `indent` template func.
+	// Pull the script back out of each runner's parsed block scalar and assert
+	// it is intact — this guards the indent splice (a wrong indent would make
+	// the block scalar drop/mangle lines or fail to parse).
+	for _, tc := range []struct {
+		name string
+		path func(map[string]any) []any
+	}{
+		{"Job", func(m map[string]any) []any {
+			return digContainers(m, "spec", "template", "spec")
+		}},
+		{"CronJob", func(m map[string]any) []any {
+			return digContainers(m, "spec", "jobTemplate", "spec", "template", "spec")
+		}},
+	} {
+		var runner map[string]any
+		for _, doc := range strings.Split(saMerge, "\n---\n") {
+			var out map[string]any
+			if err := yaml.Unmarshal([]byte(doc), &out); err != nil {
+				continue
+			}
+			if out["kind"] == tc.name {
+				runner = out
+			}
+		}
+		if runner == nil {
+			t.Errorf("SA-merge: no %s document found", tc.name)
+			continue
+		}
+		containers := tc.path(runner)
+		if len(containers) != 1 {
+			t.Errorf("%s: want 1 container, got %d", tc.name, len(containers))
+			continue
+		}
+		args, _ := containers[0].(map[string]any)["args"].([]any)
+		if len(args) != 1 {
+			t.Errorf("%s: want 1 arg, got %v", tc.name, args)
+			continue
+		}
+		script, _ := args[0].(string)
+		for _, frag := range []string{
+			"set -eu",
+			"DESIRED='ngc-api ngc-secret'",
+			"kubectl -n \"$NS\" patch sa",
+			// the Pod-bounce step must survive the splice intact
+			"delete pod",
+			"ImagePullBackOff",
+		} {
+			if !strings.Contains(script, frag) {
+				t.Errorf("%s script missing %q after block-scalar round-trip, got:\n%s", tc.name, frag, script)
+			}
 		}
 	}
 }
@@ -337,6 +399,21 @@ func TestBundleClient_MixedNamespaces_Errors(t *testing.T) {
 	if !strings.Contains(err.Error(), "mixed namespaces") {
 		t.Errorf("expected error to mention mixed namespaces, got: %v", err)
 	}
+}
+
+// digContainers walks a nested map path (e.g. spec.template.spec) and returns
+// the containers slice at the end of it. Returns nil if any segment is missing.
+func digContainers(m map[string]any, path ...string) []any {
+	cur := m
+	for _, p := range path {
+		next, ok := cur[p].(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	containers, _ := cur["containers"].([]any)
+	return containers
 }
 
 // newBundleTestScheme builds a runtime.Scheme that knows about corev1 (for
