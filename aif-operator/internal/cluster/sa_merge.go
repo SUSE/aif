@@ -165,18 +165,26 @@ var saMergeIndentFuncs = template.FuncMap{
 //     whole list (see buildSAMergeResources for the rationale),
 //  5. skips the patch when the union equals the existing set, so unchanged SAs
 //     don't generate spurious update events on re-apply, then
-//  6. bounces chart-managed Pods stuck in ImagePullBackOff/ErrImagePull: a
-//     Pod's imagePullSecrets are merged from its SA only at admission, so a Pod
-//     that started before its SA was patched stays broken until recreated.
-//     Deleting it lets its controller recreate it with the patched SA.
-//     Genuinely unpullable images keep failing (visible) and are retried on the
-//     next CronJob tick — a deliberately simpler bound than the operator's
-//     per-controller bounce cap on the local cluster.
+//  6. ONLY IF at least one SA was actually patched this run, bounces
+//     chart-managed Pods stuck in ImagePullBackOff/ErrImagePull: a Pod's
+//     imagePullSecrets are merged from its SA only at admission, so a Pod that
+//     started before its SA was patched stays broken until recreated, and
+//     deleting it lets its controller recreate it with the patched SA.
+//
+//     The "only if an SA changed" guard is critical: it bounds the bounce to
+//     the tick that actually fixed something. Once SAs are stable (the patch is
+//     idempotent and skips), the bounce never fires, so a genuinely unpullable
+//     or slow-pulling Pod sits stably in ImagePullBackOff instead of being
+//     deleted-and-recreated on every CronJob tick — the unconditional bounce
+//     caused exactly that perpetual Pending<->Running redeploy churn.
 var saMergeScriptTemplate = template.Must(template.New("sa-merge-script").Parse(`set -eu
 # Desired names, space-separated (rendered by the operator). Kept single-line
 # so the YAML block-scalar embedding this script doesn't break.
 DESIRED='{{ .DesiredNames }}'
 NS='{{ .Namespace }}'
+# Tracks whether we patched any SA this run. The Pod-bounce below only fires
+# when this is 1, so a stable namespace (nothing to patch) never churns Pods.
+PATCHED=0
 # Only patch chart-managed SAs; cluster-admin-created SAs in the namespace are
 # left alone. See buildSAMergeResources comments.
 for sa in $(kubectl -n "$NS" get sa -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{.items[*].metadata.name}'); do
@@ -202,19 +210,25 @@ for sa in $(kubectl -n "$NS" get sa -l 'app.kubernetes.io/managed-by=Helm' -o js
   # Strategic-merge here is REPLACE-semantics on this atomic list, but we send
   # the full union so the end state is correct. See buildSAMergeResources doc.
   kubectl -n "$NS" patch sa "$sa" --type=strategic -p "$PATCH"
+  PATCHED=1
 done
 # Bounce chart-managed Pods stuck pulling images so they re-read their SA's
-# imagePullSecrets at admission. A Pod created before its SA was patched keeps
-# its (possibly empty) imagePullSecrets baked in until recreated.
-kubectl -n "$NS" get pods -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{range .items[*]}{.metadata.name}={range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='=' read -r pod reasons; do
-  [ -n "$pod" ] || continue
-  case ",$reasons" in
-    *,ImagePullBackOff,*|*,ErrImagePull,*)
-      echo "$pod: image pull failing, deleting so it re-reads SA imagePullSecrets"
-      kubectl -n "$NS" delete pod "$pod" --ignore-not-found
-      ;;
-  esac
-done
+# imagePullSecrets at admission (a Pod created before its SA was patched keeps
+# its possibly-empty imagePullSecrets baked in until recreated) — but ONLY when
+# we actually changed an SA this run. Without this guard a genuinely unpullable
+# or slow-pulling Pod would be deleted and recreated on every tick, which reads
+# as the workload perpetually toggling Pending<->Running.
+if [ "$PATCHED" = 1 ]; then
+  kubectl -n "$NS" get pods -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{range .items[*]}{.metadata.name}={range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='=' read -r pod reasons; do
+    [ -n "$pod" ] || continue
+    case ",$reasons" in
+      *,ImagePullBackOff,*|*,ErrImagePull,*)
+        echo "$pod: image pull failing after SA patch, deleting so it re-reads SA imagePullSecrets"
+        kubectl -n "$NS" delete pod "$pod" --ignore-not-found
+        ;;
+    esac
+  done
+fi
 `))
 
 // saMergeTemplate renders the manifests Fleet/Helm applies on the downstream

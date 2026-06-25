@@ -218,6 +218,10 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 			// the Pod-bounce step must survive the splice intact
 			"delete pod",
 			"ImagePullBackOff",
+			// the bounce must be gated on an SA actually being patched this
+			// run, so a stable namespace never churns Pods (Pending<->Running).
+			"PATCHED=0",
+			`if [ "$PATCHED" = 1 ]; then`,
 		} {
 			if !strings.Contains(script, frag) {
 				t.Errorf("%s script missing %q after block-scalar round-trip, got:\n%s", tc.name, frag, script)
