@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM registry.suse.com/bci/golang:1.25 as builder
+FROM --platform=$BUILDPLATFORM registry.suse.com/bci/golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 

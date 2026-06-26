@@ -147,7 +147,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 	ext.Status.ActiveExtensionName = ext.Spec.Extension.Name
 	ext.Status.ActiveSourceKind = ext.Spec.Source.Kind
 
-	if err := r.syncUIConfigMap(ctx, namespace); err != nil {
+	if err := r.syncUIConfigMap(ctx); err != nil {
 		logger.Error(err, "failed to sync operator coordinates to UI ConfigMap")
 	}
 
@@ -159,11 +159,11 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // aif-ui-config ConfigMap so the UI extension can reach the operator without
 // manual configuration. It runs on every successful reconcile loop, giving
 // self-healing behaviour if the ConfigMap is deleted or corrupted.
-func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context, extensionNamespace string) error {
+func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) error {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      uiConfigMapName,
-			Namespace: extensionNamespace,
+			Namespace: r.ExtensionNamespace,
 		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {

@@ -184,6 +184,13 @@ func main() {
 				// operatorNamespace secrets; aiworkload controller needs Helm
 				// release secrets (owner=helm) from any target namespace.
 				&corev1.Secret{}: {},
+				// Restrict ConfigMap watch to the extension namespace — the namespaced
+				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
+				&corev1.ConfigMap{}: {
+					Namespaces: map[string]cache.Config{
+						config.GetExtensionNamespace(): {},
+					},
+				},
 			},
 		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
