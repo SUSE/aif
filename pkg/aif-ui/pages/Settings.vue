@@ -9,7 +9,7 @@ import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
-import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound } from '../utils/operator-config';
+import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 
@@ -39,7 +39,11 @@ export default {
   },
 
   async fetch() {
-    await loadOperatorConfig();
+    [this.operatorManaged] = await Promise.all([
+      hasInstallAIExtension(),
+      loadOperatorConfig(),
+    ]);
+    this.operatorForbidden      = isExtensionCheckForbidden();
     const operatorCfg = getOperatorConfig();
     this.operatorNamespace      = operatorCfg.namespace;
     this.operatorService        = operatorCfg.service;
@@ -68,9 +72,11 @@ export default {
       fetchErrorMessage: null,
       errors:            [],
       mode:              'edit',
-      operatorNamespace:  '',
-      operatorService:    '',
+      operatorNamespace:      '',
+      operatorService:        '',
       operatorConfigMapFound: false,
+      operatorManaged:        false,
+      operatorForbidden:      false,
       expanded:          {
         fleet:         false,
         appCollection: true,
@@ -362,8 +368,11 @@ export default {
         // that the subsequent putSettings call reaches the correct operator URL.
         // If the user is correcting a wrong namespace, putSettings would fail
         // against the old URL if called before the cache is updated.
-        await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
-        this.operatorConfigMapFound = true;
+        // Skip when managed by InstallAIExtension — the reconciler owns the ConfigMap.
+        if (!this.operatorManaged) {
+          await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
+          this.operatorConfigMapFound = true;
+        }
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
@@ -705,7 +714,19 @@ export default {
             {{ t('suseai.pages.settings.sections.advanced.operatorConnection.title') }}
           </h3>
           <Banner
-            v-if="operatorConfigMapFound"
+            v-if="operatorManaged"
+            color="info"
+            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.managed')"
+            class="mb-15"
+          />
+          <Banner
+            v-else-if="operatorForbidden"
+            color="warning"
+            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.forbidden')"
+            class="mb-15"
+          />
+          <Banner
+            v-else-if="operatorConfigMapFound"
             color="info"
             :label="t('suseai.pages.settings.sections.advanced.operatorConnection.found')"
             class="mb-15"
@@ -722,7 +743,7 @@ export default {
                 v-model:value="operatorNamespace"
                 :label="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.label')"
                 :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.placeholder')"
-                :mode="mode"
+                :mode="operatorManaged ? 'view' : mode"
               />
             </div>
             <div class="col span-4">
@@ -730,7 +751,7 @@ export default {
                 v-model:value="operatorService"
                 :label="t('suseai.pages.settings.sections.advanced.operatorConnection.service.label')"
                 :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.service.placeholder')"
-                :mode="mode"
+                :mode="operatorManaged ? 'view' : mode"
               />
             </div>
           </div>
