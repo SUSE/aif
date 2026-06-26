@@ -98,6 +98,7 @@
             "warning": "Advanced settings for air-gapped or custom deployments only. Modify with care.",
             "operatorConnection": {
               "title": "Operator Connection",
+              "managed": "Operator namespace and service are managed by an InstallAIExtension resource. The operator updates these values automatically — editing is disabled.",
               "found": "Configuration loaded from the aif-ui-config ConfigMap in cattle-ui-plugin-system. Changes take effect immediately on save.",
               "notFound": "No aif-ui-config ConfigMap found in cattle-ui-plugin-system. Fields below show defaults. Saving will create the ConfigMap.",
               "namespace": {

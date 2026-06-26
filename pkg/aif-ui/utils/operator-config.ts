@@ -147,6 +147,21 @@ export function isConfigMapFound(): boolean {
   return cache?.found ?? false;
 }
 
+/** Returns true when at least one InstallAIExtension CR exists in the cluster,
+ *  meaning the operator owns the ConfigMap and the Settings fields should be read-only.
+ *  Returns false on any error (404 = CRD not installed, 403 = no RBAC, network error). */
+export async function hasInstallAIExtension(): Promise<boolean> {
+  try {
+    const url = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/apis/ai-platform.suse.com/v1alpha1/installaiextensions`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return false;
+    const body = await res.json().catch(() => null);
+    return Array.isArray(body?.items) && body.items.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function invalidateOperatorConfig(): void {
   cache           = null;
   loadPromise     = null;
