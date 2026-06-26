@@ -143,8 +143,7 @@ const getters = {
     const installedAppIds = new Set<string>();
     Object.values(state.installations.installations).forEach(installation => {
       if (installation.status === 'deployed') {
-        const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-        const appId = installationWithAppId.appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         installedAppIds.add(appId);
       }
     });
@@ -170,8 +169,7 @@ const getters = {
     installationKeys.forEach(key => {
       const installation = state.installations.installations[key];
       if (installation && installation.status === 'deployed') {
-        const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-        const appId = installationWithAppId.appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         installedAppIds.add(appId);
       }
     });
@@ -206,8 +204,7 @@ const getters = {
       const installation = state.installations.installations[key];
       if (installation && installation.status === 'deployed') {
         // Extract appId from installation (you'll need to add this field)
-        const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-        const appId = installationWithAppId.appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         appIds.add(appId);
       }
     });
@@ -234,8 +231,7 @@ const getters = {
     const uniqueAppIds = new Set<string>();
     Object.values(state.installations.installations).forEach(installation => {
       if (installation.status === 'deployed') {
-        const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-        const appId = installationWithAppId.appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         uniqueAppIds.add(appId);
       }
     });
@@ -246,8 +242,7 @@ const getters = {
     const installedAppIds = new Set<string>();
     Object.values(state.installations.installations).forEach(installation => {
       if (installation.status === 'deployed') {
-        const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-        const appId = installationWithAppId.appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         installedAppIds.add(appId);
       }
     });
@@ -295,7 +290,7 @@ const getters = {
 // === Mutations ===
 const mutations = {
   // Installation Info mutations (specific from task list)
-  setInstallationInfo(state: SuseAIState, payload: { appId: string; clusterId: string; installation: AppInstallationInfo & { appId?: string } }) {
+  setInstallationInfo(state: SuseAIState, payload: { appId: string; clusterId: string; installation: AppInstallationInfo }) {
     const key = `${payload.clusterId}/${payload.installation.namespace}/${payload.installation.releaseName}`;
     
     // Set installation in main installations object

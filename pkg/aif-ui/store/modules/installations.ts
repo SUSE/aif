@@ -69,8 +69,7 @@ const getters = {
     Object.values(state.installations).forEach(installation => {
       if (['deployed', 'installing', 'upgrading'].includes(installation.status)) {
         // We need to track appId in installations - for now use releaseName
-        const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-        const appId = installationWithAppId.appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         appIds.add(appId);
       }
     });
@@ -117,8 +116,7 @@ const mutations = {
     state.installations[key] = installation;
 
     // Update app index
-    const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-    const appId = installationWithAppId.appId || installation.releaseName;
+    const appId = installation.appId || installation.releaseName;
     if (!state.installationsByApp[appId]) {
       state.installationsByApp[appId] = [];
     }
@@ -143,8 +141,7 @@ const mutations = {
     delete state.installations[key];
     
     // Remove from app index
-    const installationWithAppId = installation as AppInstallationInfo & { appId?: string };
-    const appId = installationWithAppId.appId || installation.releaseName;
+    const appId = installation.appId || installation.releaseName;
     const appKeys = state.installationsByApp[appId] || [];
     const appIndex = appKeys.indexOf(key);
     if (appIndex > -1) {
@@ -280,7 +277,7 @@ const actions = {
             } as AppInstallationInfo;
             
             // Add appId if we can determine it
-            (installation as AppInstallationInfo & { appId?: string }).appId = releaseInfo.chart?.metadata?.name || release.metadata.name;
+            installation.appId = releaseInfo.chart?.metadata?.name || release.metadata.name;
             
             installations.push(installation);
           }
@@ -383,7 +380,7 @@ const actions = {
         lastHealthCheck: new Date().toISOString()
       } as AppInstallationInfo;
       
-      (installation as AppInstallationInfo & { appId?: string }).appId = payload.appId;
+      installation.appId = payload.appId;
 
       commit('SET_INSTALLATION', installation);
       commit('COMPLETE_OPERATION', key);

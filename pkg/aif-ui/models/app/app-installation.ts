@@ -6,6 +6,8 @@
 import { InstallationInfo } from '../base/resource-mixin';
 import logger from '../../utils/logger';
 
+type StoreDispatch = { dispatch: (action: string, payload: unknown) => Promise<unknown> };
+
 export type InstallationPhase = 
   | 'pending' 
   | 'installing' 
@@ -349,7 +351,6 @@ export class AppInstallation {
   async refresh(): Promise<void> {
     if (!this.store) return;
 
-    type StoreDispatch = { dispatch: (action: string, payload: unknown) => Promise<unknown> };
     try {
       const updated = await (this.store as StoreDispatch).dispatch('suseai/refreshInstallation', {
         clusterId: this.clusterId,
@@ -361,7 +362,7 @@ export class AppInstallation {
         Object.assign(this.details, updated);
       }
     } catch (error) {
-      logger.warn('Failed to refresh installation:', error);
+      logger.error('Failed to refresh installation', error);
     }
   }
   
@@ -370,7 +371,6 @@ export class AppInstallation {
       throw new Error('Store not available for upgrade operation');
     }
 
-    type StoreDispatch = { dispatch: (action: string, payload: unknown) => Promise<unknown> };
     await (this.store as StoreDispatch).dispatch('suseai/upgradeInstallation', {
       clusterId: this.clusterId,
       namespace: this.namespace,
@@ -385,7 +385,6 @@ export class AppInstallation {
       throw new Error('Store not available for uninstall operation');
     }
 
-    type StoreDispatch = { dispatch: (action: string, payload: unknown) => Promise<unknown> };
     await (this.store as StoreDispatch).dispatch('suseai/uninstallApp', {
       clusterId: this.clusterId,
       namespace: this.namespace,
@@ -398,7 +397,6 @@ export class AppInstallation {
       throw new Error('Store not available for rollback operation');
     }
 
-    type StoreDispatch = { dispatch: (action: string, payload: unknown) => Promise<unknown> };
     await (this.store as StoreDispatch).dispatch('suseai/rollbackInstallation', {
       clusterId: this.clusterId,
       namespace: this.namespace,
