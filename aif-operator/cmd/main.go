@@ -51,8 +51,10 @@ import (
 )
 
 // version and commit are set at build time via -ldflags.
-var version = "unknown"
-var commit  = "unknown"
+var (
+	version = "unknown"
+	commit  = "unknown"
+)
 
 var (
 	scheme   = runtime.NewScheme()

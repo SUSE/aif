@@ -42,3 +42,5 @@ func (h *VersionHandler) getVersion(w http.ResponseWriter, _ *http.Request) {
 		"chartVersion": h.chartVersion,
 	})
 }
+
+var _ Handler = (*VersionHandler)(nil)

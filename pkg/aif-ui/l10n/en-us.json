@@ -24,7 +24,7 @@
             "extension": "UI Extension",
             "operator": "Operator",
             "chart": "Helm Chart",
-"unavailable": "Unavailable"
+            "unavailable": "Unavailable"
           },
           "resources": {
             "title": "Resources",

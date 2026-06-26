@@ -65,7 +65,7 @@ export function publishToFleetGit(bundleName: string, bundleYAML: string): Promi
   });
 }
 
-export function getVersion(timeoutMs = 5000): Promise<{ version: string }> {
+export function getVersion(timeoutMs = 5000): Promise<{ version: string; commit: string; chartVersion: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
