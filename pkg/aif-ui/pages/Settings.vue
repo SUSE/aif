@@ -38,13 +38,15 @@ export default {
   },
 
   async fetch() {
-    await loadOperatorConfig();
+    [this.operatorManaged] = await Promise.all([
+      hasInstallAIExtension(),
+      loadOperatorConfig(),
+    ]);
+    this.operatorForbidden      = isExtensionCheckForbidden();
     const operatorCfg = getOperatorConfig();
     this.operatorNamespace      = operatorCfg.namespace;
     this.operatorService        = operatorCfg.service;
     this.operatorConfigMapFound = isConfigMapFound();
-    this.operatorManaged        = await hasInstallAIExtension();
-    this.operatorForbidden      = isExtensionCheckForbidden();
     try {
       const data = await getSettings();
 

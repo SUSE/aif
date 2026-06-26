@@ -149,6 +149,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 
 	if err := r.syncUIConfigMap(ctx); err != nil {
 		logger.Error(err, "failed to sync operator coordinates to UI ConfigMap")
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	logger.Info("reconciled successfully")
@@ -162,6 +163,9 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // The ConfigMap is intentionally not deleted when the CR is removed — the UI
 // retains the last-known operator coordinates so it remains functional.
 func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	ns, svc := config.GetOperatorNamespace(), config.GetOperatorService()
+	logger.V(1).Info("syncing UI ConfigMap", "operatorNamespace", ns, "operatorService", svc)
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      uiConfigMapName,
@@ -172,8 +176,8 @@ func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) erro
 		if cm.Data == nil {
 			cm.Data = make(map[string]string)
 		}
-		cm.Data["operatorNamespace"] = config.GetOperatorNamespace()
-		cm.Data["operatorService"] = config.GetOperatorService()
+		cm.Data["operatorNamespace"] = ns
+		cm.Data["operatorService"] = svc
 		return nil
 	})
 	return err
