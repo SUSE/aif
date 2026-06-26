@@ -8,7 +8,7 @@ import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
-import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension } from '../utils/operator-config';
+import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 
@@ -44,6 +44,7 @@ export default {
     this.operatorService        = operatorCfg.service;
     this.operatorConfigMapFound = isConfigMapFound();
     this.operatorManaged        = await hasInstallAIExtension();
+    this.operatorForbidden      = isExtensionCheckForbidden();
     try {
       const data = await getSettings();
 
@@ -72,6 +73,7 @@ export default {
       operatorService:        '',
       operatorConfigMapFound: false,
       operatorManaged:        false,
+      operatorForbidden:      false,
       expanded:          {
         fleet:         false,
         appCollection: true,
@@ -709,6 +711,12 @@ export default {
             v-if="operatorManaged"
             color="info"
             :label="t('suseai.pages.settings.sections.advanced.operatorConnection.managed')"
+            class="mb-15"
+          />
+          <Banner
+            v-else-if="operatorForbidden"
+            color="warning"
+            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.forbidden')"
             class="mb-15"
           />
           <Banner
