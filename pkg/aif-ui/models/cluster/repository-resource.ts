@@ -471,7 +471,7 @@ export default class RepositoryResource extends SuseaiResource {
         query
       });
     } catch (error) {
-      logger.warn(`Failed to search charts in ${this.repoName}:`, error);
+      logger.warn(`Failed to search charts in ${this.repoName}:`, { data: error });
       return [];
     }
   }
@@ -495,7 +495,7 @@ export default class RepositoryResource extends SuseaiResource {
         chartName
       });
     } catch (error) {
-      logger.warn(`Failed to get chart ${chartName} from ${this.repoName}:`, error);
+      logger.warn(`Failed to get chart ${chartName} from ${this.repoName}:`, { data: error });
       return null;
     }
   }

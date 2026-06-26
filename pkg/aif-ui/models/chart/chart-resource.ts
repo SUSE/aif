@@ -490,7 +490,7 @@ export default class ChartResource extends SuseaiResource {
         });
       }
     } catch (error) {
-      logger.warn('Failed to copy to clipboard:', error);
+      logger.warn('Failed to copy to clipboard:', { data: error });
       // Fallback: show the command in a modal or alert
       alert(`Copy this command:\n${command}`);
     }
@@ -512,7 +512,7 @@ export default class ChartResource extends SuseaiResource {
         Object.assign(this, updated);
       }
     } catch (error) {
-      logger.warn('Failed to refresh chart:', error);
+      logger.warn('Failed to refresh chart:', { data: error });
     }
   }
 
@@ -529,7 +529,7 @@ export default class ChartResource extends SuseaiResource {
         version: version || this.currentVersion
       });
     } catch (error) {
-      logger.warn('Failed to get chart values:', error);
+      logger.warn('Failed to get chart values:', { data: error });
       return {};
     }
   }
@@ -547,7 +547,7 @@ export default class ChartResource extends SuseaiResource {
         version: version || this.currentVersion
       });
     } catch (error) {
-      logger.warn('Failed to get chart readme:', error);
+      logger.warn('Failed to get chart readme:', { data: error });
       return '';
     }
   }

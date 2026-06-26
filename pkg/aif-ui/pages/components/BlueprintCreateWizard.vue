@@ -27,8 +27,8 @@ interface Props {
 const props  = defineProps<Props>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const vm     = getCurrentInstance()?.proxy as any;
-const router = vm.$router;
-const route  = vm.$route;
+const router = vm?.$router;
+const route  = vm?.$route;
 
 const t = useT();
 const cluster = (route?.params?.cluster as string) || '_';

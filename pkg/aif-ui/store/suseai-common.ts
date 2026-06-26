@@ -673,7 +673,7 @@ const actions = {
         commit('UPDATE_SETTINGS', settings);
       }
     } catch (error) {
-      logger.warn('Failed to load settings:', error);
+      logger.warn('Failed to load settings:', { data: error });
     }
   },
 
@@ -683,7 +683,7 @@ const actions = {
     try {
       localStorage.setItem('suseai-settings', JSON.stringify(state.settings));
     } catch (error) {
-      logger.warn('Failed to save settings:', error);
+      logger.warn('Failed to save settings:', { data: error });
     }
   },
 

@@ -8,7 +8,7 @@ import logger from '../utils/logger';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const vm    = getCurrentInstance()?.proxy as any;
-const route = vm.$route;
+const route = vm?.$route;
 
 const editName    = route.query.editName    as string | undefined;
 const fromVersion = route.query.fromVersion as string | undefined;

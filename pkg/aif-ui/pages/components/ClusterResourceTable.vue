@@ -297,7 +297,7 @@ export default defineComponent({
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const vm = getCurrentInstance()?.proxy as any;
-        const store = vm.$store;
+        const store = vm?.$store;
 
         logger.debug('[SUSE-AI] ClusterResourceTable: Loading cluster resources...');
         const clusterSummaries = await getAllClusterResourceMetrics(store);

@@ -91,11 +91,15 @@ class Logger {
 
     // Show user-facing error notification
     if (this.store && !this.isDevelopment) {
-      (this.store as { dispatch: (action: string, payload: unknown) => void }).dispatch('growl/error', {
-        title: 'SUSE AI Extension Error',
-        message: message,
-        timeout: 8000
-      });
+      try {
+        (this.store as { dispatch: (action: string, payload: unknown) => void }).dispatch('growl/error', {
+          title: 'SUSE AI Extension Error',
+          message: message,
+          timeout: 8000
+        });
+      } catch {
+        // Never let a logging failure propagate into the caller's error handler
+      }
     }
   }
 
@@ -136,11 +140,15 @@ class Logger {
 
     // Show user-facing success notification
     if (this.store) {
-      (this.store as { dispatch: (action: string, payload: unknown) => void }).dispatch('growl/success', {
-        title: 'Success',
-        message,
-        timeout: 4000
-      });
+      try {
+        (this.store as { dispatch: (action: string, payload: unknown) => void }).dispatch('growl/success', {
+          title: 'Success',
+          message,
+          timeout: 4000
+        });
+      } catch {
+        // Never let a logging failure propagate
+      }
     }
   }
 

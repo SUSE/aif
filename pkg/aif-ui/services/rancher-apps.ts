@@ -981,7 +981,7 @@ async function findHelmReleaseObjects(
 
     return {};
   } catch (error) {
-    logger.warn(`[SUSE-AI] Failed to find Helm release ${releaseName}:`, error);
+    logger.warn(`[SUSE-AI] Failed to find Helm release ${releaseName}:`, { data: error });
     return {};
   }
 }

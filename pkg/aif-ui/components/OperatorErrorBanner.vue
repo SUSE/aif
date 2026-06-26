@@ -8,7 +8,7 @@ defineEmits<{ retry: [] }>();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const vm      = getCurrentInstance()?.proxy as any; // Vue component proxy has $route but no type declaration in this context
-const cluster = (vm.$route?.params?.cluster as string) || '_';
+const cluster = (vm?.$route?.params?.cluster as string) || '_';
 
 const settingsRoute = {
   name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.SETTINGS }`,

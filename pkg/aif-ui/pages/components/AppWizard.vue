@@ -62,9 +62,9 @@ const props = withDefaults(defineProps<Props>(), {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const vm = getCurrentInstance()?.proxy as any;
-const store = vm.$store;
-const router = vm.$router;
-const route = vm.$route;
+const store = vm?.$store;
+const router = vm?.$router;
+const route = vm?.$route;
 
 const t = useT();
 
@@ -361,7 +361,7 @@ async function findRepoForApp(slug: string): Promise<string | null> {
 
     return await inferClusterRepoForChart(store, slug);
   } catch (e) {
-    logger.warn('Failed to find repo for app:', e);
+    logger.warn('Failed to find repo for app:', { data: e });
     return null;
   }
 }
@@ -414,7 +414,7 @@ async function loadAIWorkloadDetails() {
       }
     }
   } catch (e) {
-    logger.warn('[SUSE-AI] Could not load AIWorkload details (non-fatal):', e);
+    logger.warn('[SUSE-AI] Could not load AIWorkload details (non-fatal):', { data: e });
   }
 }
 
@@ -440,7 +440,7 @@ async function loadInstalledAppDetails(clusterId: string) {
       foundValues = true;
     }
   } catch (helmError) {
-    logger.warn('Failed to load app details from Helm:', helmError);
+    logger.warn('Failed to load app details from Helm:', { data: helmError });
     throw helmError; // Re-throw to fail fast if app doesn't exist
   }
 
@@ -450,7 +450,7 @@ async function loadInstalledAppDetails(clusterId: string) {
       const repo = await inferClusterRepoForChart(store, form.value.chartName);
       if (repo) form.value.chartRepo = repo;
     } catch (e) {
-      logger.warn('Failed to infer repository:', e);
+      logger.warn('Failed to infer repository:', { data: e });
     }
   }
 
@@ -576,7 +576,7 @@ async function resolvePullSecretNames() {
     const secrets = [creds.applicationCollection, creds.suseRegistry, creds.nvidia]
       .filter(Boolean)
       .map(cred => ({
-        name: `suse-ai-pull-secret-${ cred?.registryHost.replace(/[^a-z0-9]/g, '-') }`,
+        name: `suse-ai-pull-secret-${ cred?.registryHost?.replace(/[^a-z0-9]/g, '-') }`,
       }));
     if (secrets.length > 0) {
       form.value.values.global = form.value.values.global || {};
@@ -584,7 +584,7 @@ async function resolvePullSecretNames() {
       form.value.values.imagePullSecrets = secrets;
     }
   } catch (e: unknown) {
-    logger.warn('[SUSE-AI] Failed to resolve pull secret names:', e instanceof Error ? e.message : e);
+    logger.warn('[SUSE-AI] Failed to resolve pull secret names:', { data: e });
   }
 }
 
@@ -627,7 +627,7 @@ async function ensureVersionInfoLoaded() {
 
     return info;
   } catch (e) {
-    logger.warn('[SUSE-AI] Failed to load chart version info', e);
+    logger.warn('[SUSE-AI] Failed to load chart version info', { data: e });
     versionInfo.value = null;
     versionInfoKey.value = '';
     defaultValuesSnapshot.value = {};
@@ -720,7 +720,7 @@ async function submit() {
           return;
         }
       } catch (e) {
-        logger.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', e);
+        logger.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', { data: e });
       }
 
       if (form.value.deployType === 'Helm') {
@@ -817,7 +817,7 @@ async function performFleetBundleInstall() {
     // different registry than the parent chart are also covered.
     let creds: { applicationCollection?: unknown; suseRegistry?: unknown; nvidia?: unknown } = {};
     try { creds = await getRegistryCredentials(5000); } catch (e) {
-      logger.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', e);
+      logger.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', { data: e });
     }
     const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
     const secretResults = await Promise.all(
@@ -826,12 +826,12 @@ async function performFleetBundleInstall() {
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const c = cred as any;
-            const hostSlug = c?.registryHost.replace(/[^a-z0-9]/g, '-');
+            const hostSlug = c?.registryHost?.replace(/[^a-z0-9]/g, '-');
             return await ensureRegistrySecretSimple(
               store, clusterId, form.value.namespace,
               c?.registryHost, hostSlug, c?.username, c?.password,
             );
-          } catch (e) { logger.warn('[SUSE-AI] FleetBundle: pull-secret skipped:', e); return null; }
+          } catch (e) { logger.warn('[SUSE-AI] FleetBundle: pull-secret skipped:', { data: e }); return null; }
         })
       )
     );
@@ -897,7 +897,7 @@ async function performGitOpsInstall() {
           );
           if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
         } catch (e) {
-          logger.warn('[SUSE-AI] pull-secret skipped for GitOps:', e);
+          logger.warn('[SUSE-AI] pull-secret skipped for GitOps:', { data: e });
         }
       }
     }
@@ -993,7 +993,7 @@ async function recordAIWorkload(
       await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
     }
   } catch (e) {
-    logger.warn('[SUSE-AI] Failed to record AIWorkload CR (non-fatal):', e);
+    logger.warn('[SUSE-AI] Failed to record AIWorkload CR (non-fatal):', { data: e });
   }
 }
 
@@ -1157,7 +1157,7 @@ async function installToCluster(
   try {
     creds = await getRegistryCredentials(5000);
   } catch (e: unknown) {
-    logger.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', e instanceof Error ? e.message : e);
+    logger.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', { data: e });
   }
 
   for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
@@ -1299,7 +1299,7 @@ async function performFleetBundleUpgrade() {
   try {
     let creds: { applicationCollection?: unknown; suseRegistry?: unknown; nvidia?: unknown } = {};
     try { creds = await getRegistryCredentials(5000); } catch (e) {
-      logger.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', e);
+      logger.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', { data: e });
     }
     const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
     const secretResults = await Promise.all(
@@ -1308,12 +1308,12 @@ async function performFleetBundleUpgrade() {
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const c = cred as any;
-            const hostSlug = c?.registryHost.replace(/[^a-z0-9]/g, '-');
+            const hostSlug = c?.registryHost?.replace(/[^a-z0-9]/g, '-');
             return await ensureRegistrySecretSimple(
               store, clusterId, form.value.namespace,
               c?.registryHost, hostSlug, c?.username, c?.password,
             );
-          } catch (e) { logger.warn('[SUSE-AI] FleetBundle upgrade: pull-secret skipped:', e); return null; }
+          } catch (e) { logger.warn('[SUSE-AI] FleetBundle upgrade: pull-secret skipped:', { data: e }); return null; }
         })
       )
     );
@@ -1380,7 +1380,7 @@ async function performGitOpsUpgrade() {
           );
           if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
         } catch (e) {
-          logger.warn('[SUSE-AI] pull-secret skipped for GitOps upgrade:', e);
+          logger.warn('[SUSE-AI] pull-secret skipped for GitOps upgrade:', { data: e });
         }
       }
     }

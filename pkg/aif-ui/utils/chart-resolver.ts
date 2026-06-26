@@ -265,7 +265,7 @@ export async function searchCharts(
   // Discover charts from all repositories
   const chartPromises = searchRepos.map(repo => 
     discoverChartsInRepository(repo).catch(error => {
-      logger.warn(`Failed to search repository ${repo.name}:`, error);
+      logger.warn(`Failed to search repository ${repo.name}:`, { data: error });
       return [] as ChartInfo[];
     })
   );
@@ -680,7 +680,7 @@ function parseYamlValues(_yaml: string): Record<string, unknown> {
     // Simplified YAML parsing - in reality would use js-yaml or similar
     return {};
   } catch (error) {
-    logger.warn('Failed to parse YAML values:', error);
+    logger.warn('Failed to parse YAML values:', { data: error });
     return {};
   }
 }

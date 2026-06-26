@@ -78,9 +78,9 @@ export const SETTINGS_DEFINITIONS: Record<string, SettingDefinition> = {
     defaultValue: DEFAULT_VALUES.NAMESPACE,
     category: SETTING_CATEGORIES.INSTALLATION,
     validation: (value: unknown) => {
-      const v = value as string;
-      if (!v.trim()) return 'Default namespace cannot be empty';
-      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(v)) {
+      if (typeof value !== 'string') return 'Default namespace must be a string';
+      if (!value.trim()) return 'Default namespace cannot be empty';
+      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value)) {
         return 'Invalid namespace name format';
       }
       return null;

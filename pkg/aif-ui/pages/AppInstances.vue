@@ -825,7 +825,7 @@ export default defineComponent({
         ]);
       } catch (err: unknown) {
         // Silently handle errors during auto-refresh to avoid spamming users
-        logger.warn('[SUSE-AI] Silent refresh failed:', err);
+        logger.warn('[SUSE-AI] Silent refresh failed:', { data: err });
       }
     };
 

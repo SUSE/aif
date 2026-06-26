@@ -346,7 +346,7 @@ export default class ClusterResource extends SuseaiResource {
         Object.assign(this, updated);
       }
     } catch (error) {
-      logger.warn('Failed to refresh cluster:', error);
+      logger.warn('Failed to refresh cluster:', { data: error });
     }
   }
 
@@ -400,7 +400,7 @@ export default class ClusterResource extends SuseaiResource {
         clusterId: this.clusterId
       });
     } catch (error) {
-      logger.warn('Failed to get resource usage:', error);
+      logger.warn('Failed to get resource usage:', { data: error });
       return null;
     }
   }

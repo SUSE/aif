@@ -17,8 +17,8 @@ import type { ClusterInfo } from '../types/rancher-types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const vm      = getCurrentInstance()?.proxy as any;
-const router  = vm.$router;
-const route   = vm.$route;
+const router  = vm?.$router;
+const route   = vm?.$route;
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading         = ref(true);
