@@ -1,23 +1,27 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">Review &amp; Install</h2>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.reviewInstall', 'Review & Install') }}</h2>
 
     <div class="review-section">
-      <div class="review-row"><span class="label">Workload Name</span><span>{{ workloadName }}</span></div>
-      <div class="review-row"><span class="label">Namespace</span><span>{{ namespace }}</span></div>
-      <div class="review-row"><span class="label">Blueprint</span><span>{{ displayName }} v{{ version }}</span></div>
-      <div class="review-row"><span class="label">Deploy Type</span><span>{{ deployType }}</span></div>
+      <div class="review-row"><span class="label">{{ t('suseai.wizard.form.workloadName', 'Instance Name') }}</span><span>{{ workloadName }}</span></div>
+      <div class="review-row"><span class="label">{{ t('suseai.wizard.form.namespace', 'Namespace') }}</span><span>{{ namespace }}</span></div>
+      <div class="review-row"><span class="label">{{ t('suseai.wizard.labels.blueprint', 'Blueprint') }}</span><span>{{ displayName }} v{{ version }}</span></div>
+      <div class="review-row"><span class="label">{{ t('suseai.wizard.form.deploymentType', 'Deployment Type') }}</span><span>{{ deployType }}</span></div>
       <div class="review-row">
-        <span class="label">Clusters</span>
+        <span class="label">{{ t('suseai.wizard.labels.clusters', 'Clusters') }}</span>
         <span>{{ clusters.join(', ') || '—' }}</span>
       </div>
     </div>
 
     <div class="review-section">
-      <h3 class="section-title">Components ({{ componentCount }})</h3>
+      <h3 class="section-title">{{ t('suseai.wizard.labels.components', 'Components') }} ({{ componentCount }})</h3>
       <div v-for="comp in components" :key="comp.chartName" class="component-row">
         <span>{{ comp.chartName }}</span>
         <span class="text-muted">{{ comp.chartVersion }}</span>
+        <span class="comp-target text-muted">
+          → {{ comp.targetNamespace || namespace }}
+          <template v-if="comp.targetNamespace">({{ t('suseai.wizard.labels.fixedNamespace', 'fixed') }})</template>
+        </span>
       </div>
     </div>
   </div>
@@ -25,6 +29,7 @@
 
 <script lang="ts" setup>
 import type { BlueprintComponent } from '../../../types/blueprint-types';
+import { useT } from '../../../composables/useT';
 
 interface Props {
   workloadName:   string;
@@ -37,6 +42,8 @@ interface Props {
   components:     BlueprintComponent[];
 }
 defineProps<Props>();
+
+const t = useT();
 </script>
 
 <style lang="scss" scoped>
@@ -52,6 +59,7 @@ defineProps<Props>();
 .component-row {
   display: flex; gap: 16px; padding: 6px 0; border-bottom: 1px solid var(--border);
   &:last-child { border-bottom: none; }
+  .comp-target { margin-left: auto; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

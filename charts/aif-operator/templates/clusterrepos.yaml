@@ -1,0 +1,49 @@
+{{- $credentials := index .Values "credentials" -}}
+{{- if and $credentials.nvidia.username $credentials.nvidia.password }}
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: nvidia
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  url: https://helm.ngc.nvidia.com/nvidia
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: nvidia-blueprints
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  url: https://helm.ngc.nvidia.com/nvidia/blueprint
+{{- end }}
+{{- if and $credentials.applicationCollection.username $credentials.applicationCollection.password }}
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: application-collection
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  clientSecret:
+    name: application-collection-auth
+    namespace: cattle-system
+  url: oci://dp.apps.rancher.io/charts
+{{- end }}
+{{- if and $credentials.suseRegistry.username $credentials.suseRegistry.password }}
+---
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: suse-ai-registry
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  clientSecret:
+    name: suse-ai-registry-auth
+    namespace: cattle-system
+  url: oci://registry.suse.com/ai/charts
+{{- end }}

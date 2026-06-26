@@ -4,7 +4,7 @@
       <div class="col span-6">
         <LabeledInput
           v-model:value="release"
-          :label="t('suseai.wizard.form.release', 'Instance name')"
+          :label="t('suseai.wizard.form.release', 'Instance Name')"
           :placeholder="t('suseai.wizard.form.releasePlaceholder', 'Enter instance name')"
           :disabled="props.releaseDisabled"
           required
@@ -29,7 +29,7 @@
       <div class="col span-6">
         <LabeledInput
           v-model:value="chartName"
-          :label="t('suseai.wizard.form.chartName', 'Chart name')"
+          :label="t('suseai.wizard.form.chartName', 'Chart Name')"
           :placeholder="t('suseai.wizard.form.chartNamePlaceholder', 'e.g. ollama')"
           :disabled="true"
         />
@@ -51,6 +51,7 @@
 <script lang="ts" setup>
 import { computed } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
+import { useT } from '../../../composables/useT';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import NamespaceAutocomplete from './NamespaceAutocomplete.vue';
 import { instanceNameError } from '../../../validators/appInstallation';
@@ -80,8 +81,7 @@ interface Emits {
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
-// Simple fallback function for translations
-const t = (key: string, fallback: string) => fallback;
+const t = useT();
 
 // Individual field computeds for better reactivity
 const release = computed({

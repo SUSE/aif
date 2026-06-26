@@ -1,4 +1,4 @@
-import type { Blueprint, BlueprintList, BlueprintSpec } from '../types/blueprint-types';
+import type { Blueprint, BlueprintList, BlueprintOrigin, BlueprintSpec } from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
 import { operatorFetch } from './operator-config';
 
@@ -29,6 +29,13 @@ export async function updateBlueprintDeprecated(name: string, deprecated: boolea
     method: 'PUT',
     body:   JSON.stringify({ spec: { ...bp.spec, deprecated } }),
   });
+}
+
+// sourceFor returns the blueprint's source for display purposes.
+// Blueprints created before this field existed have spec.source === undefined
+// and are treated as 'Custom'.
+export function sourceFor(bp: Blueprint): BlueprintOrigin {
+  return bp.spec.source ?? 'Custom';
 }
 
 // blueprintCRName derives the CR name matching the backend logic.

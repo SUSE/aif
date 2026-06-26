@@ -5,13 +5,39 @@ global:
 nameOverride: ""
 fullnameOverride: ""
 
+# Credentials for SUSE Application Collection, NVIDIA NGC, and
+# SUSE Registry artifact repositories. If not specified, those
+# credentials must be created out-of-band and via Settings
+# in the UI.
+#
+# NOTE: the credentials configured in this file are meant to be
+# used during installation/configuration of the chart. Therefore,
+# credentials must be handled in accordance with your organization's
+# security policies. Please sanitize the credentials before checking
+# this file into source control.
+#
+credentials:
+  # credential for oci://dp.apps.rancher.io/charts
+  applicationCollection:
+    username: ""
+    password: ""
+  # credential to pull NGC artifacts
+  # e.g. https://helm.ngc.nvidia.com/nvidia
+  nvidia:
+    username: ""
+    password: ""
+  # credential for oci://registry.suse.com/ai/charts
+  suseRegistry:
+    username: ""
+    password: ""
+
 manager:
   replicaCount: 1
   
   image:
     registry: ghcr.io
     repository: suse/aif-operator
-    tag: ""
+    tag: "0.1.0-dev.4"
     pullPolicy: IfNotPresent
 
   imagePullSecrets: []
@@ -81,10 +107,10 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "0.1.0-dev.2"
+      version: "0.1.0-dev.4"
   extension:
     name: "aif-ui"
-    version: "0.1.0-dev.2"
+    version: "0.1.0-dev.4"
   cleanup:
     image:
       registry: registry.suse.com

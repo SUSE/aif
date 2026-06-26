@@ -83,6 +83,7 @@
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue';
 import YamlEditor from '@shell/components/YamlEditor';
+import { useT } from '../../../composables/useT';
 import Questions from '@shell/components/Questions';
 import Loading from '@shell/components/Loading';
 import Tabbed from '@shell/components/Tabbed';
@@ -113,8 +114,7 @@ interface Emits {
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
-// Simple fallback function for translations
-const t = (key: string, fallback: string) => fallback;
+const t = useT();
 
 const viewMode = ref<'form' | 'yaml'>(props.hasQuestions ? 'form' : 'yaml');
 const normalizedMode = computed(() => props.mode === 'install' ? 'create' : 'edit');

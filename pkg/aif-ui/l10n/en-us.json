@@ -185,56 +185,65 @@
         "workflow": "Workflow"
       }
     },
-    "install": {
-      "title": "Install Application",
-      "wizard": {
-        "basic": "Basic Information",
-        "cluster": "Target Cluster",
+    "wizard": {
+      "steps": {
+        "basicInfo": "Basic Information",
+        "targetCluster": "Target Cluster",
         "configuration": "Configuration",
-        "review": "Review & Install"
-      },
-      "form": {
-        "releaseName": "Release Name",
-        "releaseNamePlaceholder": "Enter a unique release name",
-        "releaseNameHelp": "Must be a valid DNS-1123 subdomain",
-        "namespace": "Namespace",
-        "namespacePlaceholder": "default",
-        "namespaceHelp": "Kubernetes namespace for deployment",
-        "cluster": "Target Cluster",
-        "clusterPlaceholder": "Select cluster",
-        "clusterHelp": "Cluster where the application will be installed",
-        "values": "Helm Values",
-        "valuesPlaceholder": "Custom YAML configuration...",
-        "valuesHelp": "Override default chart values (optional)"
-      },
-      "actions": {
-        "install": "Install",
-        "installing": "Installing...",
-        "cancel": "Cancel",
-        "back": "Back",
-        "next": "Next",
+        "selectApps": "Select Applications",
         "review": "Review"
       },
-      "success": "Application installed successfully",
-      "error": "Failed to install application"
-    },
-    "manage": {
-      "title": "Manage Applications",
-      "instances": "Application Instances",
-      "noInstances": "No application instances found",
-      "actions": {
-        "start": "Start",
-        "stop": "Stop",
-        "restart": "Restart",
-        "upgrade": "Upgrade",
-        "uninstall": "Uninstall",
-        "configure": "Configure"
+      "form": {
+        "release": "Instance Name",
+        "releasePlaceholder": "Enter instance name",
+        "namespace": "Namespace",
+        "namespacePlaceholder": "Select or create a namespace",
+        "chartName": "Chart Name",
+        "chartNamePlaceholder": "e.g. ollama",
+        "version": "Version",
+        "versionPlaceholder": "e.g. 1.0.0",
+        "valuesYaml": "Configuration",
+        "questionsUnavailable": "Questions metadata is not available for this chart version. Use the YAML editor instead.",
+        "versionDirtyWarning": "Version changed after you edited values. Click \"Load defaults from chart\" to apply defaults for the new version, or continue with your customizations.",
+        "workloadName": "Instance Name",
+        "workloadNamePlaceholder": "e.g. my-ai-deployment",
+        "workloadNameHelp": "Used as prefix for Fleet Bundle names",
+        "blueprintName": "Name",
+        "blueprintNamePlaceholder": "e.g. My AI Stack",
+        "description": "Description",
+        "descriptionPlaceholder": "Optional description",
+        "deploymentType": "Deployment Type",
+        "searchApps": "Search applications...",
+        "componentNamespace": "Target namespace (optional)",
+        "componentNamespacePlaceholder": "defaults to install namespace",
+        "componentNamespaceInvalid": "Must be a valid namespace: lowercase letters, digits and '-', starting and ending with a letter or digit (max 63 chars).",
+        "componentNamespacesInvalid": "One or more components have an invalid target namespace.",
+        "removeApp": "Remove application"
       },
-      "status": {
-        "healthy": "Healthy",
-        "degraded": "Degraded",
-        "unhealthy": "Unhealthy",
-        "unknown": "Unknown"
+      "target": {
+        "selectClusters": "Select Target Cluster(s)",
+        "readOnly": "Target cluster and deployment type are read-only in Manage mode."
+      },
+      "sections": {
+        "applicationDetails": "Application Details",
+        "blueprintDetails": "Blueprint Details",
+        "configureApps": "Configure Applications",
+        "configureAppsDesc": "Set default Helm values for each application in this blueprint.",
+        "configuration": "Configuration",
+        "reviewInstall": "Review & Install",
+        "reviewCreate": "Review & Create",
+        "reviewSaveVersion": "Review & Save as New Version"
+      },
+      "labels": {
+        "repository": "Repository",
+        "chart": "Chart",
+        "targetCluster": "Target Cluster",
+        "blueprint": "Blueprint",
+        "clusters": "Clusters",
+        "components": "Components",
+        "applications": "Applications",
+        "namespace": "Namespace",
+        "fixedNamespace": "fixed"
       }
     },
     "repositories": {

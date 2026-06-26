@@ -855,7 +855,7 @@ function clusterRepoNameFromUrl(repoUrl: string): string {
     [APP_COLLECTION_REPO_URL]:    'application-collection',
     [SUSE_REGISTRY_REPO_URL]:     'suse-ai-registry',
     [NVIDIA_REPO_URL]:            'nvidia',
-    [NVIDIA_BLUEPRINT_REPO_URL]:  'nvidia-blueprint',
+    [NVIDIA_BLUEPRINT_REPO_URL]:  'nvidia-blueprints',
   };
   return KNOWN[repoUrl] ?? repoUrl
     .replace(/^oci:\/\//, '')

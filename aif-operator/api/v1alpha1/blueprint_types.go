@@ -26,6 +26,19 @@ const (
 	BlueprintVersionLabel = "ai-platform.suse.com/blueprint-version"
 )
 
+// BlueprintOrigin identifies where a blueprint came from.
+// Named "Origin" (not "Source") to avoid collision with the existing
+// BlueprintSource struct in aiworkload_types.go, which is a reference type.
+// The user-visible field name remains "source" via the JSON tag.
+// +kubebuilder:validation:Enum=SUSE;Nvidia;Custom
+type BlueprintOrigin string
+
+const (
+	BlueprintOriginSUSE   BlueprintOrigin = "SUSE"
+	BlueprintOriginNvidia BlueprintOrigin = "Nvidia"
+	BlueprintOriginCustom BlueprintOrigin = "Custom"
+)
+
 // BlueprintComponent defines one Helm chart in a Blueprint.
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name.
@@ -40,6 +53,14 @@ type BlueprintComponent struct {
 	// Values are the Helm values for this component.
 	// +optional
 	Values *apixv1.JSON `json:"values,omitempty"`
+	// TargetNamespace optionally pins this component to a fixed namespace.
+	// When empty, the AIWorkload's targetNamespace (from the install wizard) is used.
+	// Must be a valid DNS-1123 label (lowercase alphanumerics and '-', starting
+	// and ending with an alphanumeric, max 63 chars).
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.
@@ -53,6 +74,11 @@ type BlueprintSpec struct {
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
+	// Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+	// To leave the source unset, omit the field entirely; the enum does not
+	// include the empty string, so setting `source: ""` will fail admission.
+	// +optional
+	Source BlueprintOrigin `json:"source,omitempty"`
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`

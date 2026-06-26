@@ -11,6 +11,32 @@
     },
     "nameOverride": { "type": "string", "default": "" },
     "fullnameOverride": { "type": "string", "default": "" },
+    "credentials": {
+      "type": "object",
+      "properties": {
+        "applicationCollection": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string", "default": "" },
+            "password": { "type": "string", "default": "" }
+          }
+        },
+        "nvidia": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string", "default": "" },
+            "password": { "type": "string", "default": "" }
+          }
+        },
+        "suseRegistry": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string", "default": "" },
+            "password": { "type": "string", "default": "" }
+          }
+        }
+      }
+    },
     "manager": {
       "type": "object",
       "properties": {

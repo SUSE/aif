@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, getCurrentInstance } from 'vue';
+import { useT } from '../../composables/useT';
 import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
 import BlueprintInstallBasicInfoStep from './wizard/BlueprintInstallBasicInfoStep.vue';
@@ -20,6 +21,8 @@ const props   = defineProps<Props>();
 const vm      = getCurrentInstance()!.proxy as any;
 const router  = vm.$router;
 const route   = vm.$route;
+
+const t = useT();
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading     = ref(true);
@@ -37,9 +40,9 @@ const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
 const wizardSteps = computed(() => [
-  { label: 'Basic Info', ready: true },
-  { label: 'Target',     ready: workloadName.value.trim() !== '' && namespace.value !== '' },
-  { label: 'Review',     ready: clusters.value.length > 0 },
+  { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),     ready: true },
+  { label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),    ready: workloadName.value.trim() !== '' && namespace.value !== '' },
+  { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 },
 ]);
 
 onMounted(async () => {
@@ -196,8 +199,6 @@ function onProgressCancel() { showProgressModal.value = false; }
             :clusters="clusters"
             :deploy-type="deployType"
             :helm-unsupported="true"
-            :app-slug="props.blueprintName"
-            :app-name="blueprint?.spec.displayName || ''"
             @update:clusters="clusters = $event"
             @update:deploy-type="deployType = $event"
           />
