@@ -37,7 +37,7 @@ manager:
   image:
     registry: ghcr.io
     repository: suse/aif-operator
-    tag: "0.1.0-dev.2"
+    tag: "0.1.0-dev.4"
     pullPolicy: IfNotPresent
 
   imagePullSecrets: []
@@ -107,10 +107,10 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "0.1.0-dev.3"
+      version: "0.1.0-dev.4"
   extension:
     name: "aif-ui"
-    version: "0.1.0-dev.3"
+    version: "0.1.0-dev.4"
   cleanup:
     image:
       registry: registry.suse.com

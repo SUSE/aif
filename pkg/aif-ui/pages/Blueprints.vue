@@ -98,6 +98,11 @@
             v-for="[family, versions] in sortedFamilies"
             :key="family"
             class="app-tile"
+            role="button"
+            tabindex="0"
+            @click="openDetail(family, versions)"
+            @keypress.enter="openDetail(family, versions)"
+            @keyup.space="openDetail(family, versions)"
           >
             <div class="tile-header">
               <div class="tile-info">
@@ -139,11 +144,14 @@
               <button
                 class="btn role-primary btn-sm"
                 type="button"
-                @click="navigateInstall(family, versions)"
+                @click.stop="navigateInstall(family, versions)"
               >
                 Install
               </button>
-              <div style="margin-left: auto">
+              <div
+                style="margin-left: auto"
+                @click.stop
+              >
                 <ActionMenuShell
                   button-variant="tertiary"
                   button-aria-label="More options"
@@ -268,6 +276,39 @@
         </div>
       </AppModal>
     </div>
+
+    <div
+      v-if="detailPanel.show"
+      class="bp-detail-backdrop"
+      @click="closeDetail"
+    />
+    <transition name="bp-panel">
+      <div
+        v-if="detailPanel.show"
+        class="bp-detail-panel"
+      >
+        <div class="bp-detail-panel-header">
+          <div class="bp-detail-panel-title-row">
+            <span class="bp-detail-panel-title">{{ (families.get(detailPanel.family) ?? [])[0]?.spec.displayName ?? detailPanel.family }}</span>
+            <Tag>{{ sourceLabel(families.get(detailPanel.family) ?? []) }}</Tag>
+          </div>
+          <button
+            class="btn role-link bp-detail-panel-close"
+            aria-label="Close panel"
+            @click="closeDetail"
+          >
+            <i class="icon icon-close" />
+          </button>
+        </div>
+        <div class="bp-detail-panel-body">
+          <BlueprintDetailPanel
+            :family="detailPanel.family"
+            :versions="detailPanelVersions"
+            :expanded-version="detailPanel.selectedVersion"
+          />
+        </div>
+      </div>
+    </transition>
   </main>
 </template>
 
@@ -285,13 +326,14 @@ import {
 import { listAIWorkloads } from '../utils/operator-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
+import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 import logger from '../utils/logger';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner, BlueprintDetailPanel },
   setup() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const vm        = getCurrentInstance()?.proxy as any;
@@ -592,10 +634,6 @@ export default defineComponent({
       return sourceFor(latestFor(versions));
     }
 
-    function toTitleCase(str: string): string {
-      return str.replace(/\b\w/g, c => c.toUpperCase());
-    }
-
     function checkAdminRole() {
       try {
         // Use Rancher's canonical admin detection (RBAC capability check) instead of
@@ -634,26 +672,54 @@ export default defineComponent({
       }
     }
 
+    const detailPanel = reactive({
+      show:            false,
+      family:          '',
+      selectedVersion: '',
+    });
+
+    const detailPanelVersions = computed(() => {
+      const allVersions = families.value.get(detailPanel.family) ?? [];
+      return showDeprecated.value ? allVersions : allVersions.filter(bp => !isDeprecated(bp));
+    });
+
+    function openDetail(family: string, versions: Blueprint[]) {
+      detailPanel.family          = family;
+      detailPanel.selectedVersion = selectedVersions.value[family] || versions[0]?.spec.version || '';
+      detailPanel.show            = true;
+    }
+
+    function closeDetail() {
+      detailPanel.show = false;
+    }
+
+    function handleKeydown(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeDetail();
+    }
+
     onMounted(() => {
       refresh();
       checkAdminRole();
       pollTimer = setInterval(silentRefresh, 10_000);
+      window.addEventListener('keydown', handleKeydown);
     });
 
     onUnmounted(() => {
       if (pollTimer) clearInterval(pollTimer);
+      window.removeEventListener('keydown', handleKeydown);
     });
 
     return {
       loading, error, operatorError, retryConnection,
-      search, sortBy, sortedFamilies, selectedVersions,
+      search, sortBy, sortedFamilies, families, selectedVersions,
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
       sourceLabel,
-      toTitleCase, tileActions, onTileAction,
+      tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
+      detailPanel, detailPanelVersions, openDetail, closeDetail,
     };
   },
 });
@@ -705,6 +771,7 @@ export default defineComponent({
   gap: 12px;
   min-height: 200px;
   background: transparent;
+  cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease;
   &:hover { border-color: var(--primary); }
   .tile-header { display: flex; align-items: flex-start; }
@@ -793,4 +860,80 @@ export default defineComponent({
   margin-bottom: 12px;
 }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.bp-detail-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 899;
+  background: transparent;
+}
+
+.bp-detail-panel {
+  position: fixed;
+  top: 55px;
+  right: 0;
+  width: 580px;
+  height: calc(100vh - 55px);
+  background: var(--body-bg);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 900;
+
+  .bp-detail-panel-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+  }
+
+  .bp-detail-panel-title-row {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  .bp-detail-panel-title {
+    font-size: 16px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .bp-detail-panel-close {
+    flex-shrink: 0;
+    padding: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    color: var(--body-text);
+    &:hover { color: var(--primary); }
+  }
+
+  .bp-detail-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+}
+
+.bp-panel-enter-active,
+.bp-panel-leave-active {
+  transition: transform 0.3s ease;
+}
+.bp-panel-enter-from,
+.bp-panel-leave-to {
+  transform: translateX(100%);
+}
 </style>
