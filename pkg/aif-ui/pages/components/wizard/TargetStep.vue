@@ -34,8 +34,6 @@ const helmCardDisabled = computed(() =>
   hasNonLocalClusters.value || !!props.helmOversized || !!props.helmUnsupported
 );
 
-const gitOpsCardDisabled = computed(() => !!props.gitOpsUnconfigured);
-
 const deployTypeCards = [
   {
     id:      'FleetBundle' as AIWorkloadDeployStrategy,
@@ -60,7 +58,7 @@ const deployTypeCards = [
 function onCardClick(id: AIWorkloadDeployStrategy) {
   if (isManageMode.value) return;
   if (id === 'Helm' && helmCardDisabled.value) return;
-  if (id === 'GitOps' && gitOpsCardDisabled.value) return;
+  if (id === 'GitOps' && props.gitOpsUnconfigured) return;
   emit('update:deployType', id);
 }
 </script>
@@ -77,9 +75,9 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
         :image="card.image"
         :content="card.content"
         :selected="deployType === card.id"
-        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled) && !(card.id === 'GitOps' && gitOpsCardDisabled)"
+        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled) && !(card.id === 'GitOps' && gitOpsUnconfigured)"
         variant="small"
-        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) || (card.id === 'GitOps' && gitOpsCardDisabled) }"
+        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) || (card.id === 'GitOps' && gitOpsUnconfigured) }"
         @card-click="onCardClick(card.id)"
       />
     </div>

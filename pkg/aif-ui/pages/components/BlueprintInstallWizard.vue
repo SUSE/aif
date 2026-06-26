@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, getCurrentInstance } from 'vue';
+import { ref, computed, watch, onMounted, getCurrentInstance } from 'vue';
 import { useT } from '../../composables/useT';
 import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
@@ -8,7 +8,8 @@ import TargetStep                    from './wizard/TargetStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, listAIWorkloads, getSettings } from '../../utils/operator-api';
+import { createAIWorkload, listAIWorkloads } from '../../utils/operator-api';
+import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import type { Blueprint } from '../../types/blueprint-types';
 import type { AIWorkloadDeployStrategy } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
@@ -35,7 +36,13 @@ const workloadName = ref('');
 const namespace    = ref('');
 const clusters     = ref<string[]>([]);
 const deployType   = ref<AIWorkloadDeployStrategy>('FleetBundle');
-const fleetGitConfigured = ref(false);
+const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
+
+watch(fleetGitConfigured, (configured) => {
+  if (!configured && deployType.value === 'GitOps') {
+    deployType.value = 'FleetBundle';
+  }
+}, { immediate: true });
 
 const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
@@ -59,12 +66,7 @@ onMounted(async () => {
     loading.value = false;
   }
 
-  try {
-    const settings = await getSettings() as { spec?: { fleet?: { repoURL?: string } } };
-    fleetGitConfigured.value = !!settings?.spec?.fleet?.repoURL;
-  } catch {
-    fleetGitConfigured.value = false;
-  }
+  await fetchFleetGitConfigured();
 });
 
 function nextStep() {
