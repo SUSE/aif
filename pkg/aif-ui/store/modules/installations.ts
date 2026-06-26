@@ -6,6 +6,7 @@
 
 import { InstallationState, DiscoverInstallationsPayload, InstallAppPayload, UpgradeAppPayload, UninstallAppPayload } from '../types/state-types';
 import { AppInstallationInfo } from '../../types/app-types';
+import logger from '../../utils/logger';
 
 // === Initial State ===
 function createInitialState(): InstallationState {
@@ -21,11 +22,6 @@ function createInitialState(): InstallationState {
 // === Helper Functions ===
 function createInstallationKey(clusterId: string, namespace: string, releaseName: string): string {
   return `${clusterId}:${namespace}:${releaseName}`;
-}
-
-function parseInstallationKey(key: string): { clusterId: string; namespace: string; releaseName: string } {
-  const [clusterId, namespace, releaseName] = key.split(':');
-  return { clusterId, namespace, releaseName };
 }
 
 // === Getters ===
@@ -73,14 +69,14 @@ const getters = {
     Object.values(state.installations).forEach(installation => {
       if (['deployed', 'installing', 'upgrading'].includes(installation.status)) {
         // We need to track appId in installations - for now use releaseName
-        const appId = (installation as any).appId || installation.releaseName;
+        const appId = installation.appId || installation.releaseName;
         appIds.add(appId);
       }
     });
     return Array.from(appIds);
   },
-  
-  activeOperations: (state: InstallationState): Record<string, any> => {
+
+  activeOperations: (state: InstallationState): Record<string, unknown> => {
     return state.installing;
   },
   
@@ -116,11 +112,11 @@ const mutations = {
       installation.namespace,
       installation.releaseName
     );
-    
+
     state.installations[key] = installation;
-    
+
     // Update app index
-    const appId = (installation as any).appId || installation.releaseName;
+    const appId = installation.appId || installation.releaseName;
     if (!state.installationsByApp[appId]) {
       state.installationsByApp[appId] = [];
     }
@@ -145,7 +141,7 @@ const mutations = {
     delete state.installations[key];
     
     // Remove from app index
-    const appId = (installation as any).appId || installation.releaseName;
+    const appId = installation.appId || installation.releaseName;
     const appKeys = state.installationsByApp[appId] || [];
     const appIndex = appKeys.indexOf(key);
     if (appIndex > -1) {
@@ -169,7 +165,7 @@ const mutations = {
   UPDATE_INSTALLATION_STATUS(state: InstallationState, payload: { key: string; status: string; progress?: number }) {
     const installation = state.installations[payload.key];
     if (installation) {
-      installation.status = payload.status as any;
+      installation.status = payload.status as AppInstallationInfo['status'];
       installation.updatedAt = new Date().toISOString();
       
       if (payload.progress !== undefined && installation.progress) {
@@ -178,7 +174,7 @@ const mutations = {
     }
   },
   
-  START_OPERATION(state: InstallationState, operation: any) {
+  START_OPERATION(state: InstallationState, operation: { type: string; appId: string; clusterId: string; namespace: string; releaseName: string }) {
     const key = createInstallationKey(
       operation.clusterId,
       operation.namespace,
@@ -237,6 +233,7 @@ const mutations = {
 
 // === Actions ===
 const actions = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async discoverInstallations({ commit, rootState }: any, payload: DiscoverInstallationsPayload = {}) {
     const clusters = payload.clusters || Object.keys(rootState.suseai.clusters.clusters);
     const installations: AppInstallationInfo[] = [];
@@ -245,6 +242,7 @@ const actions = {
       try {
         // Get Helm releases for this cluster (simplified)
         // For now, return empty array until integrated with Rancher store
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const releases: any[] = [];
         
         // Convert Helm releases to installations
@@ -257,7 +255,7 @@ const actions = {
               const decodedData = atob(releaseData);
               releaseInfo = JSON.parse(decodedData);
             } catch (error) {
-              console.warn(`Failed to parse release data for ${release.metadata.name}:`, error);
+              logger.warn(`Failed to parse release data for ${release.metadata.name}`, { data: error });
               continue;
             }
             
@@ -279,14 +277,14 @@ const actions = {
             } as AppInstallationInfo;
             
             // Add appId if we can determine it
-            (installation as any).appId = releaseInfo.chart?.metadata?.name || release.metadata.name;
+            installation.appId = releaseInfo.chart?.metadata?.name || release.metadata.name;
             
             installations.push(installation);
           }
         }
         
       } catch (error) {
-        console.error(`Failed to discover installations for cluster ${clusterId}:`, error);
+        logger.error(`Failed to discover installations for cluster ${clusterId}`, error);
       }
     }
     
@@ -298,6 +296,7 @@ const actions = {
     // ... update logic will be added when integrating with main store
   },
   
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async installApp({ commit, dispatch }: any, payload: InstallAppPayload) {
     const key = createInstallationKey(payload.clusterId, payload.namespace, payload.releaseName);
     
@@ -347,7 +346,8 @@ const actions = {
       
       // Perform the installation
       await rancherAppsService.createOrUpgradeApp(
-        { dispatch: (action: string, payload: any) => dispatch ? dispatch(action, payload) : Promise.resolve() },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { dispatch: (action: string, p: any) => dispatch ? dispatch(action, p) : Promise.resolve() },
         payload.clusterId,
         payload.namespace,
         payload.releaseName,
@@ -380,26 +380,28 @@ const actions = {
         lastHealthCheck: new Date().toISOString()
       } as AppInstallationInfo;
       
-      (installation as any).appId = payload.appId;
-      
+      installation.appId = payload.appId;
+
       commit('SET_INSTALLATION', installation);
       commit('COMPLETE_OPERATION', key);
-      
+
       // Refresh installations to get final status
       setTimeout(() => {
         dispatch('refreshInstallations', payload.clusterId);
       }, 5000);
-      
-    } catch (error: any) {
-      console.error(`Failed to install app ${payload.appId}:`, error);
+
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Failed to install app ${payload.appId}`, error);
       commit('FAIL_OPERATION', {
         key,
-        error: error.message || 'Installation failed'
+        error: err.message || 'Installation failed'
       });
       throw error;
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async upgradeApp({ commit, dispatch }: any, payload: UpgradeAppPayload) {
     const key = createInstallationKey(payload.clusterId, payload.namespace, payload.releaseName);
     
@@ -427,7 +429,8 @@ const actions = {
       });
       
       await rancherAppsService.createOrUpgradeApp(
-        { dispatch: (action: string, payload: any) => dispatch ? dispatch(action, payload) : Promise.resolve() },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { dispatch: (action: string, p: any) => dispatch ? dispatch(action, p) : Promise.resolve() },
         payload.clusterId,
         payload.namespace,
         payload.releaseName,
@@ -439,35 +442,37 @@ const actions = {
         payload.values || {},
         'upgrade'
       );
-      
+
       commit('UPDATE_OPERATION', {
         key,
         progress: 90,
         stage: 'Verifying upgrade...'
       });
-      
+
       // Update installation status
       commit('UPDATE_INSTALLATION_STATUS', {
         key,
         status: 'upgrading'
       });
-      
+
       commit('COMPLETE_OPERATION', key);
-      
+
       setTimeout(() => {
         dispatch('refreshInstallations', payload.clusterId);
       }, 5000);
-      
-    } catch (error: any) {
-      console.error(`Failed to upgrade app ${payload.appId}:`, error);
+
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Failed to upgrade app ${payload.appId}`, error);
       commit('FAIL_OPERATION', {
         key,
-        error: error.message || 'Upgrade failed'
+        error: err.message || 'Upgrade failed'
       });
       throw error;
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async uninstallApp({ commit, dispatch }: any, payload: UninstallAppPayload) {
     const key = createInstallationKey(payload.clusterId, payload.namespace, payload.releaseName);
     
@@ -495,33 +500,36 @@ const actions = {
       });
       
       await rancherAppsService.deleteApp(
-        { dispatch: (action: string, payload: any) => dispatch ? dispatch(action, payload) : Promise.resolve() },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { dispatch: (action: string, p: any) => dispatch ? dispatch(action, p) : Promise.resolve() },
         payload.clusterId,
         payload.namespace,
         payload.releaseName
       );
-      
+
       commit('UPDATE_OPERATION', {
         key,
         progress: 100,
         stage: 'Uninstall completed'
       });
-      
+
       // Remove installation
       commit('REMOVE_INSTALLATION', key);
       commit('COMPLETE_OPERATION', key);
-      
-    } catch (error: any) {
-      console.error(`Failed to uninstall app ${payload.releaseName}:`, error);
+
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Failed to uninstall app ${payload.releaseName}`, error);
       commit('FAIL_OPERATION', {
         key,
-        error: error.message || 'Uninstall failed'
+        error: err.message || 'Uninstall failed'
       });
       throw error;
     }
   },
-  
-  async rollbackApp({ commit, dispatch }: any, payload: any) {
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async rollbackApp({ commit, dispatch }: any, payload: { clusterId: string; namespace: string; releaseName: string }) {
     const key = createInstallationKey(payload.clusterId, payload.namespace, payload.releaseName);
     
     commit('START_OPERATION', {
@@ -535,8 +543,6 @@ const actions = {
         progress: 30,
         stage: 'Rolling back application...'
       });
-      
-      const rancherAppsService = await import('../../services/rancher-apps');
       
       // Rollback functionality not directly available in rancher-apps service
       // This would need to be implemented or use Helm directly
@@ -554,29 +560,33 @@ const actions = {
         dispatch('refreshInstallations', payload.clusterId);
       }, 3000);
       
-    } catch (error: any) {
-      console.error(`Failed to rollback app ${payload.releaseName}:`, error);
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Failed to rollback app ${payload.releaseName}`, error);
       commit('FAIL_OPERATION', {
         key,
-        error: error.message || 'Rollback failed'
+        error: err.message || 'Rollback failed'
       });
       throw error;
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async refreshInstallations({ dispatch }: any, clusterId?: string) {
     const clusters = clusterId ? [clusterId] : undefined;
     await dispatch('discoverInstallations', { clusters, force: true });
   },
-  
-  async pollOperationStatus({ commit }: any, operationKey: string) {
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async pollOperationStatus(_context: any, operationKey: string) {
     // This would poll the actual installation status
     // For now, we'll just simulate progress updates
     // Disabled until properly integrated with state management
-    console.log(`Polling operation status for ${operationKey} - not implemented yet`);
+    logger.debug(`Polling operation status for ${operationKey} - not implemented yet`);
     return;
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async cancelOperation({ commit }: any, operationKey: string) {
     commit('FAIL_OPERATION', {
       key: operationKey,

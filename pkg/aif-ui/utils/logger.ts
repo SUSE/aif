@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * SUSE AI Extension Logging Service
  * Following Rancher patterns for proper error handling and user notifications
@@ -13,24 +14,25 @@ export enum LogLevel {
 interface LogContext {
   component?: string;
   action?: string;
-  data?: any;
+  data?: unknown;
 }
 
 class Logger {
   private isDevelopment = false;
   private logLevel: LogLevel = LogLevel.INFO;
-  private store: any = null;
+  private store: unknown = null;
 
   constructor() {
     // Detect development mode
     this.isDevelopment = process.env.NODE_ENV === 'development' ||
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         (typeof window !== 'undefined' && (window as any).__DEV__);
 
     // Set log level based on environment
     this.logLevel = this.isDevelopment ? LogLevel.DEBUG : LogLevel.INFO;
   }
 
-  setStore(store: any) {
+  setStore(store: unknown) {
     this.store = store;
   }
 
@@ -77,7 +79,7 @@ class Logger {
     }
   }
 
-  error(message: string, error?: Error | any, context?: LogContext) {
+  error(message: string, error?: Error | unknown, context?: LogContext) {
     if (this.shouldLog(LogLevel.ERROR)) {
       const formatted = this.formatMessage('ERROR', message, context);
       if (error) {
@@ -89,16 +91,20 @@ class Logger {
 
     // Show user-facing error notification
     if (this.store && !this.isDevelopment) {
-      this.store.dispatch('growl/error', {
-        title: 'SUSE AI Extension Error',
-        message: message,
-        timeout: 8000
-      });
+      try {
+        (this.store as { dispatch: (action: string, payload: unknown) => void }).dispatch('growl/error', {
+          title: 'SUSE AI Extension Error',
+          message: message,
+          timeout: 8000
+        });
+      } catch {
+        // Never let a logging failure propagate into the caller's error handler
+      }
     }
   }
 
   // Specialized logging methods
-  apiCall(method: string, url: string, context?: any) {
+  apiCall(method: string, url: string, context?: unknown) {
     this.debug(`API ${method.toUpperCase()} ${url}`, {
       component: 'API',
       action: 'request',
@@ -106,7 +112,7 @@ class Logger {
     });
   }
 
-  apiSuccess(method: string, url: string, response?: any) {
+  apiSuccess(method: string, url: string, response?: unknown) {
     this.debug(`API ${method.toUpperCase()} ${url} succeeded`, {
       component: 'API',
       action: 'success',
@@ -114,14 +120,14 @@ class Logger {
     });
   }
 
-  apiError(method: string, url: string, error: any) {
+  apiError(method: string, url: string, error: unknown) {
     this.error(`API ${method.toUpperCase()} ${url} failed`, error, {
       component: 'API',
       action: 'error'
     });
   }
 
-  userAction(action: string, data?: any) {
+  userAction(action: string, data?: unknown) {
     this.info(`User action: ${action}`, {
       component: 'UI',
       action: 'user',
@@ -134,20 +140,24 @@ class Logger {
 
     // Show user-facing success notification
     if (this.store) {
-      this.store.dispatch('growl/success', {
-        title: 'Success',
-        message,
-        timeout: 4000
-      });
+      try {
+        (this.store as { dispatch: (action: string, payload: unknown) => void }).dispatch('growl/success', {
+          title: 'Success',
+          message,
+          timeout: 4000
+        });
+      } catch {
+        // Never let a logging failure propagate
+      }
     }
   }
 
-  userError(message: string, error?: any) {
+  userError(message: string, error?: unknown) {
     this.error(message, error, { component: 'UI', action: 'error' });
   }
 
   // Development-only logging
-  devLog(message: string, data?: any) {
+  devLog(message: string, data?: unknown) {
     if (this.isDevelopment) {
       console.log(`[SUSE-AI:DEV] ${message}`, data || '');
     }
@@ -175,22 +185,22 @@ export const log = {
   debug: (msg: string, ctx?: LogContext) => logger.debug(msg, ctx),
   info: (msg: string, ctx?: LogContext) => logger.info(msg, ctx),
   warn: (msg: string, ctx?: LogContext) => logger.warn(msg, ctx),
-  error: (msg: string, err?: any, ctx?: LogContext) => logger.error(msg, err, ctx),
+  error: (msg: string, err?: Error | unknown, ctx?: LogContext) => logger.error(msg, err, ctx),
 
   // Specialized methods
   api: {
-    call: (method: string, url: string, ctx?: any) => logger.apiCall(method, url, ctx),
-    success: (method: string, url: string, res?: any) => logger.apiSuccess(method, url, res),
-    error: (method: string, url: string, err: any) => logger.apiError(method, url, err)
+    call: (method: string, url: string, ctx?: unknown) => logger.apiCall(method, url, ctx),
+    success: (method: string, url: string, res?: unknown) => logger.apiSuccess(method, url, res),
+    error: (method: string, url: string, err: unknown) => logger.apiError(method, url, err)
   },
 
   user: {
-    action: (action: string, data?: any) => logger.userAction(action, data),
+    action: (action: string, data?: unknown) => logger.userAction(action, data),
     success: (msg: string) => logger.userSuccess(msg),
-    error: (msg: string, err?: any) => logger.userError(msg, err)
+    error: (msg: string, err?: unknown) => logger.userError(msg, err)
   },
 
-  dev: (msg: string, data?: any) => logger.devLog(msg, data),
+  dev: (msg: string, data?: unknown) => logger.devLog(msg, data),
   group: (name: string) => logger.group(name),
   groupEnd: () => logger.groupEnd()
 };

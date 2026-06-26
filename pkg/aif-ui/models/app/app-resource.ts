@@ -4,7 +4,7 @@
  */
 
 import SuseaiResource, { Action, ActionOpts } from '../base/suseai-resource';
-import { InstallationMixin, StateMixin, MetadataMixin, ResourceUtils, InstallationInfo } from '../base/resource-mixin';
+import { InstallationMixin, StateMixin, MetadataMixin, InstallationInfo } from '../base/resource-mixin';
 
 export interface AppResourceData {
   name: string;
@@ -28,7 +28,7 @@ export interface InstallOptions {
   chartRepo?: string;
   chartName?: string;
   chartVersion?: string;
-  values?: Record<string, any>;
+  values?: Record<string, unknown>;
 }
 
 export interface UpgradeOptions {
@@ -36,7 +36,7 @@ export interface UpgradeOptions {
   namespace: string;
   releaseName: string;
   chartVersion?: string;
-  values?: Record<string, any>;
+  values?: Record<string, unknown>;
 }
 
 /**
@@ -63,7 +63,7 @@ export default class AppResource extends SuseaiResource {
   private stateMixin: StateMixin;
   private metadataMixin: MetadataMixin;
 
-  constructor(data: AppResourceData, store?: any, router?: any, route?: any) {
+  constructor(data: AppResourceData, store?: unknown, router?: unknown, route?: unknown) {
     super(data, store, router, route);
     Object.assign(this, data);
     this.appName = data.name;
@@ -482,7 +482,7 @@ export default class AppResource extends SuseaiResource {
   /**
    * Get app resources from specific cluster
    */
-  async getResources(clusterId: string): Promise<any[]> {
+  async getResources(clusterId: string): Promise<unknown[]> {
     const installation = this.getInstallationForCluster(clusterId);
     if (!installation) {
       throw new Error(`App ${this.appName} not installed on cluster ${clusterId}`);
@@ -502,7 +502,7 @@ export default class AppResource extends SuseaiResource {
   async testHealth(clusterId: string): Promise<{
     healthy: boolean;
     message: string;
-    details?: any;
+    details?: unknown;
   }> {
     const installation = this.getInstallationForCluster(clusterId);
     if (!installation) {
@@ -617,7 +617,7 @@ export default class AppResource extends SuseaiResource {
   /**
    * Convert to plain object for API calls
    */
-  toJSON(): any {
+  toJSON(): AppResourceData {
     return {
       name: this.appName,
       slug_name: this.slug_name,

@@ -4,6 +4,9 @@
  */
 
 import { InstallationInfo } from '../base/resource-mixin';
+import logger from '../../utils/logger';
+
+type StoreDispatch = { dispatch: (action: string, payload: unknown) => Promise<unknown> };
 
 export type InstallationPhase = 
   | 'pending' 
@@ -48,8 +51,8 @@ export interface InstallationDetails extends InstallationInfo {
   appVersion?: string;
   
   // Values and configuration
-  values: Record<string, any>;
-  userValues: Record<string, any>; // User-provided values only
+  values: Record<string, unknown>;
+  userValues: Record<string, unknown>; // User-provided values only
   
   // Installation metadata  
   installedBy?: string;
@@ -64,7 +67,7 @@ export interface InstallationDetails extends InstallationInfo {
   error?: {
     code: string;
     message: string;
-    details?: any;
+    details?: unknown;
     retryable: boolean;
   };
   
@@ -79,9 +82,9 @@ export interface InstallationDetails extends InstallationInfo {
  */
 export class AppInstallation {
   public details: InstallationDetails;
-  private store?: any;
-  
-  constructor(details: InstallationDetails, store?: any) {
+  private store?: unknown;
+
+  constructor(details: InstallationDetails, store?: unknown) {
     this.details = details;
     this.store = store;
   }
@@ -302,12 +305,12 @@ export class AppInstallation {
     return JSON.stringify(this.details.values) !== JSON.stringify(this.details.userValues);
   }
   
-  updateUserValues(newValues: Record<string, any>): void {
+  updateUserValues(newValues: Record<string, unknown>): void {
     this.details.userValues = { ...newValues };
     this.details.updatedAt = new Date().toISOString();
   }
   
-  mergeValues(defaultValues: Record<string, any>): Record<string, any> {
+  mergeValues(defaultValues: Record<string, unknown>): Record<string, unknown> {
     return {
       ...defaultValues,
       ...this.details.userValues
@@ -347,9 +350,9 @@ export class AppInstallation {
   
   async refresh(): Promise<void> {
     if (!this.store) return;
-    
+
     try {
-      const updated = await this.store.dispatch('suseai/refreshInstallation', {
+      const updated = await (this.store as StoreDispatch).dispatch('suseai/refreshInstallation', {
         clusterId: this.clusterId,
         namespace: this.namespace,
         releaseName: this.releaseName
@@ -359,16 +362,16 @@ export class AppInstallation {
         Object.assign(this.details, updated);
       }
     } catch (error) {
-      console.warn('Failed to refresh installation:', error);
+      logger.error('Failed to refresh installation', error);
     }
   }
   
-  async upgrade(chartVersion: string, values?: Record<string, any>): Promise<void> {
+  async upgrade(chartVersion: string, values?: Record<string, unknown>): Promise<void> {
     if (!this.store) {
       throw new Error('Store not available for upgrade operation');
     }
-    
-    await this.store.dispatch('suseai/upgradeInstallation', {
+
+    await (this.store as StoreDispatch).dispatch('suseai/upgradeInstallation', {
       clusterId: this.clusterId,
       namespace: this.namespace,
       releaseName: this.releaseName,
@@ -381,8 +384,8 @@ export class AppInstallation {
     if (!this.store) {
       throw new Error('Store not available for uninstall operation');
     }
-    
-    await this.store.dispatch('suseai/uninstallApp', {
+
+    await (this.store as StoreDispatch).dispatch('suseai/uninstallApp', {
       clusterId: this.clusterId,
       namespace: this.namespace,
       releaseName: this.releaseName
@@ -393,8 +396,8 @@ export class AppInstallation {
     if (!this.store) {
       throw new Error('Store not available for rollback operation');
     }
-    
-    await this.store.dispatch('suseai/rollbackInstallation', {
+
+    await (this.store as StoreDispatch).dispatch('suseai/rollbackInstallation', {
       clusterId: this.clusterId,
       namespace: this.namespace,
       releaseName: this.releaseName,
@@ -430,9 +433,9 @@ export class AppInstallation {
  */
 export class InstallationManager {
   private installations: Map<string, AppInstallation> = new Map();
-  private store?: any;
-  
-  constructor(store?: any) {
+  private store?: unknown;
+
+  constructor(store?: unknown) {
     this.store = store;
   }
   

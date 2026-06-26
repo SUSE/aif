@@ -3,7 +3,11 @@
     <div class="values-header">
       <h3>{{ t('suseai.wizard.form.valuesYaml', 'Configuration') }}</h3>
       <div class="header-actions">
-        <div class="view-toggle" role="group" aria-label="Configuration view selector">
+        <div
+          class="view-toggle"
+          role="group"
+          aria-label="Configuration view selector"
+        >
           <button
             type="button"
             class="btn btn-sm"
@@ -29,15 +33,25 @@
           :disabled="loadingValues"
           @click="emit('load-defaults')"
         >
-          <i v-if="loadingValues" class="icon icon-spinner icon-spin" aria-hidden="true" />
+          <i
+            v-if="loadingValues"
+            class="icon icon-spinner icon-spin"
+            aria-hidden="true"
+          />
           Load defaults
         </button>
       </div>
     </div>
 
     <div class="values-body">
-      <div v-if="showFormView" class="form-container">
-        <Loading v-if="questionsLoading" class="questions-loading" />
+      <div
+        v-if="showFormView"
+        class="form-container"
+      >
+        <Loading
+          v-if="questionsLoading"
+          class="questions-loading"
+        />
         <template v-else>
           <Tabbed
             v-if="questionsSource"
@@ -59,7 +73,10 @@
               @updated="handleQuestionsUpdated"
             />
           </Tabbed>
-          <Banner v-else color="warning">
+          <Banner
+            v-else
+            color="warning"
+          >
             {{ t('suseai.wizard.form.questionsUnavailable', 'Questions metadata is not available for this chart version. Use the YAML editor instead.') }}
           </Banner>
         </template>
@@ -74,7 +91,11 @@
       />
     </div>
 
-    <Banner v-if="versionDirty" color="info" class="mt-10">
+    <Banner
+      v-if="versionDirty"
+      color="info"
+      class="mt-10"
+    >
       {{ t('suseai.wizard.form.versionDirtyWarning', 'Version changed after you edited values. Click "Load defaults from chart" to apply defaults for the new version, or continue with your customizations.') }}
     </Banner>
   </div>
@@ -90,14 +111,14 @@ import Tabbed from '@shell/components/Tabbed';
 import { Banner } from '@components/Banner';
 
 interface Props {
-  values: Record<string, any>;
+  values: Record<string, unknown>;
   chartRepo: string;
   chartName: string;
   chartVersion: string;
   loadingValues: boolean;
   versionDirty: boolean;
   hasQuestions: boolean;
-  questionsSource: Record<string, any> | null;
+  questionsSource: Record<string, unknown> | null;
   questionsLoading: boolean;
   ignoreVariables: string[];
   targetNamespace: string;
@@ -106,7 +127,7 @@ interface Props {
 }
 
 interface Emits {
-  (e: 'update:values', values: Record<string, any>): void;
+  (e: 'update:values', values: Record<string, unknown>): void;
   (e: 'load-defaults'): void;
   (e: 'values-edited'): void;
 }
@@ -122,7 +143,7 @@ const inStoreValue = computed(() => props.inStore || 'cluster');
 
 const localValues = computed({
   get: () => props.values,
-  set: (value: Record<string, any>) => {
+  set: (value: Record<string, unknown>) => {
     emit('update:values', value);
   }
 });
@@ -144,7 +165,7 @@ function setViewMode(mode: 'form' | 'yaml') {
   viewMode.value = mode;
 }
 
-function handleYamlUpdate(value: Record<string, any>) {
+function handleYamlUpdate(value: Record<string, unknown>) {
   emit('update:values', value);
   emit('values-edited');
 }

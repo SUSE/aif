@@ -9,8 +9,7 @@ import { log as logger } from '../utils/logger';
 import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
 import type {
   RancherStore,
-  AppCRD,
-  InstallationPayload
+  AppCRD
 } from '../types/rancher-types';
 import { TIMEOUT_VALUES } from '../utils/constants';
 
@@ -136,28 +135,6 @@ export class AppLifecycleService {
         }
       ];
 
-      const appPayload = {
-        apiVersion: 'catalog.cattle.io/v1',
-        kind: 'App',
-        metadata: {
-          namespace,
-          name: releaseName,
-          labels: { 'catalog.cattle.io/cluster-repo-name': chart.repoName },
-          resourceVersion: undefined as string | undefined
-        },
-        spec: {
-          chart: {
-            metadata: {
-              name: chart.chartName,
-              version: chart.version,
-            }
-          },
-          name: releaseName,
-          namespace: namespace,
-          values,
-        },
-      };
-
       // For upgrade actions, use the clusterRepo action directly
       if (preferredAction === 'upgrade') {
         logger.info('Performing upgrade via clusterRepo action', {
@@ -177,7 +154,7 @@ export class AppLifecycleService {
         };
 
         try {
-          const upgradeResult = await $store.dispatch('rancher/request', {
+          await $store.dispatch('rancher/request', {
             method: 'post',
             url: clusterReposUrl,
             data: upgradeData,
@@ -346,10 +323,10 @@ export class AppLifecycleService {
     });
 
     let initialObs = -1;
-    let initialState = '';
 
     for (;;) {
-      let app: any = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let app: any = null; // Rancher store dispatch returns untyped response; narrowed below
 
       try {
         const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
@@ -374,7 +351,6 @@ export class AppLifecycleService {
 
         if (initialObs < 0) {
           initialObs = obs;
-          initialState = (state || '').toLowerCase();
         }
 
         logger.debug('App status check', {

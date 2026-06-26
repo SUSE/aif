@@ -61,9 +61,9 @@ export interface InstallationDetails {
   notes?: string;
   
   // Configuration
-  values: Record<string, any>;
-  userValues: Record<string, any>;
-  computedValues?: Record<string, any>;
+  values: Record<string, unknown>;
+  userValues: Record<string, unknown>;
+  computedValues?: Record<string, unknown>;
   
   // Operation details
   type: InstallationType;
@@ -163,8 +163,8 @@ export interface InstallationEvent {
   type: 'info' | 'warning' | 'error' | 'debug';
   source: string;
   message: string;
-  details?: Record<string, any>;
-  
+  details?: Record<string, unknown>;
+
   // Context
   step?: string;
   resource?: {
@@ -293,7 +293,7 @@ export interface InstallationError {
   step?: string;
   
   // Details
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
   stackTrace?: string;
   suggestions?: string[];
   
@@ -315,7 +315,7 @@ export interface BaseInstallationOptions {
   chartVersion?: string;
   
   // Values
-  values?: Record<string, any>;
+  values?: Record<string, unknown>;
   valuesFiles?: string[];
   
   // Behavior options
@@ -670,20 +670,20 @@ export type RevisionNumber = number;
 
 // === Type Guards ===
 
-export function isInstallationStatus(value: any): value is InstallationStatus {
+export function isInstallationStatus(value: unknown): value is InstallationStatus {
   return typeof value === 'string' && [
-    'pending', 'preparing', 'installing', 'deployed', 'upgrading', 
+    'pending', 'preparing', 'installing', 'deployed', 'upgrading',
     'uninstalling', 'rolling-back', 'failed', 'superseded', 'unknown'
   ].includes(value);
 }
 
-export function isInstallationType(value: any): value is InstallationType {
+export function isInstallationType(value: unknown): value is InstallationType {
   return typeof value === 'string' && [
     'install', 'upgrade', 'rollback', 'uninstall'
   ].includes(value);
 }
 
-export function isHookPhase(value: any): value is HookPhase {
+export function isHookPhase(value: unknown): value is HookPhase {
   return typeof value === 'string' && [
     'pre-install', 'post-install', 'pre-delete', 'post-delete',
     'pre-upgrade', 'post-upgrade', 'pre-rollback', 'post-rollback', 'test'

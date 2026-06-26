@@ -1,6 +1,10 @@
 <template>
   <div class="resource-usage">
-    <div v-for="resource in displayResources" :key="resource.name" class="resource-item">
+    <div
+      v-for="resource in displayResources"
+      :key="resource.name"
+      class="resource-item"
+    >
       <div class="resource-header">
         <span class="resource-name">{{ resource.name }}</span>
         <span class="resource-values">
@@ -19,7 +23,10 @@
           }"
         ></div>
       </div>
-      <div v-if="showPercentage" class="resource-percentage">
+      <div
+        v-if="showPercentage"
+        class="resource-percentage"
+      >
         {{ Math.round(resource.percentage) }}%
       </div>
     </div>

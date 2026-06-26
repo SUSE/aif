@@ -15,9 +15,10 @@ import ClusterChips from '../formatters/ClusterChips.vue';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
 
-const vm      = getCurrentInstance()!.proxy as any;
-const router  = vm.$router;
-const route   = vm.$route;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vm      = getCurrentInstance()?.proxy as any;
+const router  = vm?.$router;
+const route   = vm?.$route;
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading         = ref(true);
@@ -107,8 +108,8 @@ async function refresh() {
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
     clusters.value   = clResult;
-  } catch (e: any) {
-    error.value = e?.message || 'Failed to load overview data';
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : null) || 'Failed to load overview data';
   } finally {
     loading.value = false;
   }
@@ -153,15 +154,31 @@ onUnmounted(() => {
           type="button"
           @click="refresh"
         >
-          <i v-if="loading" class="icon icon-spinner icon-spin" />
-          <i v-else class="icon icon-refresh" />
+          <i
+            v-if="loading"
+            class="icon icon-spinner icon-spin"
+          />
+          <i
+            v-else
+            class="icon icon-refresh"
+          />
           Refresh
         </button>
       </header>
 
-      <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
+      <OperatorErrorBanner
+        v-if="operatorError"
+        :operator-error="operatorError"
+        @retry="retryConnection"
+      />
 
-      <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
+      <Banner
+        v-if="error"
+        color="error"
+        class="mb-20"
+      >
+        {{ error }}
+      </Banner>
 
       <Loading v-if="loading" />
 
@@ -204,17 +221,27 @@ onUnmounted(() => {
           <section class="panel">
             <div class="panel-header">
               <h3>Recent Workloads</h3>
-              <button class="btn-link" type="button" @click="goTo(PAGE_TYPES.WORKLOADS)">
+              <button
+                class="btn-link"
+                type="button"
+                @click="goTo(PAGE_TYPES.WORKLOADS)"
+              >
                 View all <i class="icon icon-chevron-right" />
               </button>
             </div>
 
-            <div v-if="!recentWorkloads.length" class="panel-empty">
+            <div
+              v-if="!recentWorkloads.length"
+              class="panel-empty"
+            >
               <i class="icon icon-folder-open" />
               No workloads deployed yet.
             </div>
 
-            <table v-else class="overview-table">
+            <table
+              v-else
+              class="overview-table"
+            >
               <thead>
                 <tr>
                   <th>State</th>
@@ -235,8 +262,12 @@ onUnmounted(() => {
                       :label="w.status?.phase || 'Pending'"
                     />
                   </td>
-                  <td class="col-name">{{ w.spec.displayName || w.metadata.name }}</td>
-                  <td class="col-source">{{ workloadSourceLabel(w) }}</td>
+                  <td class="col-name">
+                    {{ w.spec.displayName || w.metadata.name }}
+                  </td>
+                  <td class="col-source">
+                    {{ workloadSourceLabel(w) }}
+                  </td>
                   <td class="col-cluster">
                     <ClusterChips
                       :clusters="w.spec.targetClusters || []"
@@ -254,17 +285,27 @@ onUnmounted(() => {
           <section class="panel">
             <div class="panel-header">
               <h3>Active Blueprints</h3>
-              <button class="btn-link" type="button" @click="goTo(PAGE_TYPES.BLUEPRINTS)">
+              <button
+                class="btn-link"
+                type="button"
+                @click="goTo(PAGE_TYPES.BLUEPRINTS)"
+              >
                 View all <i class="icon icon-chevron-right" />
               </button>
             </div>
 
-            <div v-if="!activeBlueprintList.length" class="panel-empty">
+            <div
+              v-if="!activeBlueprintList.length"
+              class="panel-empty"
+            >
               <i class="icon icon-document" />
               No blueprints defined yet.
             </div>
 
-            <table v-else class="overview-table">
+            <table
+              v-else
+              class="overview-table"
+            >
               <thead>
                 <tr>
                   <th>Name</th>
@@ -276,7 +317,9 @@ onUnmounted(() => {
                   v-for="item in activeBlueprintList"
                   :key="item.family"
                 >
-                  <td class="col-name">{{ item.latest.spec.displayName }}</td>
+                  <td class="col-name">
+                    {{ item.latest.spec.displayName }}
+                  </td>
                   <td>
                     <span class="version-chip">v{{ item.latest.spec.version }}</span>
                   </td>

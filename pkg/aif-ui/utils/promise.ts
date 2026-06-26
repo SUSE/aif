@@ -5,6 +5,7 @@
  */
 
 import { TIMEOUT_VALUES, RETRY_CONFIG } from './constants';
+import logger from './logger';
 
 // === Retry Configuration ===
 export interface RetryOptions {
@@ -13,8 +14,8 @@ export interface RetryOptions {
   maxDelay?: number;
   backoffFactor?: number;
   timeout?: number;
-  retryCondition?: (error: any) => boolean;
-  onRetry?: (attempt: number, error: any) => void;
+  retryCondition?: (error: unknown) => boolean;
+  onRetry?: (attempt: number, error: unknown) => void;
 }
 
 export interface TimeoutOptions {
@@ -34,7 +35,7 @@ export async function retryWithBackoff<T>(
   baseDelay: number = RETRY_CONFIG.BASE_DELAY,
   backoffFactor: number = RETRY_CONFIG.BACKOFF_FACTOR
 ): Promise<T> {
-  let lastError: any;
+  let lastError: unknown;
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -52,7 +53,7 @@ export async function retryWithBackoff<T>(
         RETRY_CONFIG.MAX_DELAY
       );
       
-      console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms:`, (error as Error)?.message || error);
+      logger.warn(`Attempt ${attempt} failed, retrying in ${delay}ms:`, (error instanceof Error ? error.message : String(error)));
       await sleep(delay);
     }
   }
@@ -76,8 +77,8 @@ export async function retry<T>(
     retryCondition = () => true,
     onRetry
   } = options;
-  
-  let lastError: any;
+
+  let lastError: unknown;
   
   // Wrap with timeout
   const fnWithTimeout = timeout > 0 ? withTimeout(fn, timeout) : fn;
@@ -250,8 +251,8 @@ export async function batchPromises<T>(
 // === Queue Management ===
 
 export class PromiseQueue {
-  private queue: (() => Promise<any>)[] = [];
-  private running: Promise<any>[] = [];
+  private queue: (() => Promise<unknown>)[] = [];
+  private running: Promise<unknown>[] = [];
   private maxConcurrent: number;
   private paused = false;
 
@@ -341,7 +342,7 @@ export interface ProgressTracker {
   failed: number;
   percentage: number;
   isComplete: boolean;
-  errors: Array<{ index: number; error: any }>;
+  errors: Array<{ index: number; error: unknown }>;
 }
 
 /**
@@ -351,11 +352,11 @@ export async function executeWithProgress<T>(
   promiseFunctions: (() => Promise<T>)[],
   onProgress?: (progress: ProgressTracker) => void,
   options: { maxConcurrent?: number; continueOnError?: boolean } = {}
-): Promise<{ results: (T | null)[]; errors: Array<{ index: number; error: any }> }> {
+): Promise<{ results: (T | null)[]; errors: Array<{ index: number; error: unknown }> }> {
   const { maxConcurrent = 3, continueOnError = true } = options;
   const total = promiseFunctions.length;
   const results: (T | null)[] = new Array(total).fill(null);
-  const errors: Array<{ index: number; error: any }> = [];
+  const errors: Array<{ index: number; error: unknown }> = [];
   let completed = 0;
   let failed = 0;
 
@@ -410,12 +411,11 @@ export function sleep(ms: number): Promise<void> {
 /**
  * Debounce a promise-returning function
  */
-export function debouncePromise<T extends any[], R>(
+export function debouncePromise<T extends unknown[], R>(
   fn: (...args: T) => Promise<R>,
   delay: number
 ): (...args: T) => Promise<R> {
   let timeoutId: NodeJS.Timeout;
-  let latestPromise: Promise<R>;
 
   return (...args: T): Promise<R> => {
     return new Promise((resolve, reject) => {
@@ -436,7 +436,7 @@ export function debouncePromise<T extends any[], R>(
 /**
  * Throttle a promise-returning function
  */
-export function throttlePromise<T extends any[], R>(
+export function throttlePromise<T extends unknown[], R>(
   fn: (...args: T) => Promise<R>,
   delay: number
 ): (...args: T) => Promise<R> {
@@ -473,7 +473,7 @@ export function throttlePromise<T extends any[], R>(
 /**
  * Memoize a promise-returning function with TTL
  */
-export function memoizePromise<T extends any[], R>(
+export function memoizePromise<T extends unknown[], R>(
   fn: (...args: T) => Promise<R>,
   ttlMs: number = 5 * 60 * 1000, // 5 minutes default
   keyFn?: (...args: T) => string
@@ -546,14 +546,14 @@ export function makeCancelable<T>(promise: Promise<T>): CancelablePromise<T> {
  * Convert callback-based function to promise
  */
 export function promisify<T>(
-  fn: (callback: (error: any, result?: T) => void) => void
+  fn: (callback: (error: unknown, result?: T) => void) => void
 ): () => Promise<T> {
   return () => new Promise<T>((resolve, reject) => {
     fn((error, result) => {
       if (error) {
         reject(error);
       } else {
-        resolve(result!);
+        resolve(result as T);
       }
     });
   });
@@ -564,42 +564,50 @@ export function promisify<T>(
 /**
  * Check if error is retryable
  */
-export function isRetryableError(error: any): boolean {
+export function isRetryableError(error: unknown): boolean {
+  // Access properties of unknown error shapes via a typed cast.
+  // The error may come from Axios, Node.js, or browser fetch — no single interface covers all.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const e = error as any;
+
   // Network errors are generally retryable
-  if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+  if (e.code === 'ENOTFOUND' || e.code === 'ECONNREFUSED' || e.code === 'ETIMEDOUT') {
     return true;
   }
-  
+
   // HTTP 5xx errors are retryable
-  if (error.response?.status >= 500) {
+  if (e.response?.status >= 500) {
     return true;
   }
-  
+
   // Rate limiting (429) is retryable
-  if (error.response?.status === 429) {
+  if (e.response?.status === 429) {
     return true;
   }
-  
+
   // Temporary failures
-  if (error.message?.includes('temporary') || error.message?.includes('timeout')) {
+  if (e.message?.includes('temporary') || e.message?.includes('timeout')) {
     return true;
   }
-  
+
   return false;
 }
 
 /**
  * Create standardized error with retry information
  */
+type RetryError = Error & { isRetryError: boolean; attempts: number; maxAttempts: number; originalError: unknown };
+
 export function createRetryError(
-  originalError: any,
+  originalError: unknown,
   attempts: number,
   maxAttempts: number
-): Error & { isRetryError: boolean; attempts: number; maxAttempts: number } {
+): RetryError {
+  const message = originalError instanceof Error ? originalError.message : String(originalError);
   const error = new Error(
-    `Operation failed after ${attempts}/${maxAttempts} attempts. Last error: ${originalError.message || originalError}`
-  ) as any;
-  
+    `Operation failed after ${attempts}/${maxAttempts} attempts. Last error: ${message}`
+  ) as RetryError;
+
   error.isRetryError = true;
   error.attempts = attempts;
   error.maxAttempts = maxAttempts;

@@ -1,11 +1,10 @@
 import logger from '../utils/logger';
 import { getClusterContext } from '../utils/cluster-operations';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import type { RancherStore } from '../types/rancher-types';
 
 export interface RepoAuth { username: string; password: string; }
-type SecretRef = string | { name?: string; namespace?: string } | null | undefined;
 
-const norm = (u?: string) => (u || '').replace(/\/+$/, '');
 const b64 = (s?: string) => { try { return s ? atob(s) : ''; } catch { return ''; } };
 
 // -------------------- secret ref parsing + extraction --------------------
@@ -26,11 +25,12 @@ function parseRegistryHost(url?: string): string {
   try { return new URL(u).host || ''; } catch { return u.split('/')[0] || ''; }
 }
 
-function extractFromDockerCfg(sec: any): RepoAuth | null {
-  const blob = sec?.data?.['.dockerconfigjson'] || sec?.data?.dockerconfigjson;
+function extractFromDockerCfg(sec: Record<string, unknown>): RepoAuth | null {
+  const data = sec?.data as Record<string, unknown> | undefined;
+  const blob = data?.['.dockerconfigjson'] || data?.dockerconfigjson;
   if (!blob) return null;
   try {
-    const cfg = JSON.parse(b64(blob)); const auths = cfg?.auths || cfg;
+    const cfg = JSON.parse(b64(blob as string)); const auths = cfg?.auths || cfg;
     for (const k of Object.keys(auths || {})) {
       const e = auths[k];
       if (e?.auth) {
@@ -43,7 +43,7 @@ function extractFromDockerCfg(sec: any): RepoAuth | null {
   return null;
 }
 
-function extract(sec: any): RepoAuth | null {
+function extract(sec: Record<string, unknown>): RepoAuth | null {
   const data = sec || {};
 
   // kubernetes.io/basic-auth
@@ -73,14 +73,15 @@ function extract(sec: any): RepoAuth | null {
 }
 
 /** Try multiple Rancher paths to get a Secret that actually contains `.data` */
-async function fetchSecret(store: any, ns: string, name: string, baseApi: string | null) {
+async function fetchSecret(store: RancherStore, ns: string, name: string, baseApi: string | null) {
   if (!baseApi) {
     logger.warn(`fetchSecret: baseApi is null — skipping request for ${ns}/${name}`);
     return {};
   }
   
   try {
-    const r3 = await store.dispatch('rancher/request', { url: `${baseApi}/secrets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`, timeout: TIMEOUT_VALUES.CLUSTER });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r3: any = await store.dispatch('rancher/request', { url: `${baseApi}/secrets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`, timeout: TIMEOUT_VALUES.CLUSTER }); // Rancher store dispatch returns untyped response
     const s3 = r3?.data || r3 || {};
 
     if (Object.keys(s3 || {}).length) return s3;
@@ -109,7 +110,7 @@ export interface RepoInstallContext {
 /**
  * Resolve creds + registry host for a specific ClusterRepo (by metadata.name).
  */
-export async function getRepoAuthForClusterRepo(store: any, clusterRepoName: string): Promise<RepoInstallContext> {
+export async function getRepoAuthForClusterRepo(store: RancherStore, clusterRepoName: string): Promise<RepoInstallContext> {
   if (!clusterRepoName) throw new Error('ClusterRepo name is required');
 
   const found = await getClusterContext(store, { repoName: clusterRepoName });
@@ -125,7 +126,8 @@ export async function getRepoAuthForClusterRepo(store: any, clusterRepoName: str
   const baseApi = found.baseApi;
 
   const url = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(clusterRepoName)}`;
-  const r   = await store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r: any = await store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ }); // Rancher store dispatch returns untyped response
   const repo = r?.data ?? r;
   if (!repo?.spec) throw new Error(`ClusterRepo ${clusterRepoName} not found`);
 

@@ -144,7 +144,7 @@ export interface ChartDependency {
   tags?: string[];
   enabled?: boolean;
   alias?: string;
-  importValues?: any;
+  importValues?: unknown;
 }
 
 // === Chart Versions ===
@@ -214,14 +214,14 @@ export interface ChartValueSchema {
   description?: string;
   
   // Default and examples
-  default?: any;
-  examples?: any[];
-  
+  default?: unknown;
+  examples?: unknown[];
+
   // Validation
   required?: boolean;
   pattern?: string;
   format?: string;
-  enum?: any[];
+  enum?: unknown[];
   
   // Numeric constraints
   minimum?: number;
@@ -254,8 +254,8 @@ export interface ChartValueSchema {
   advanced?: boolean;
   
   // Conditional display
-  showIf?: Record<string, any>;
-  hideIf?: Record<string, any>;
+  showIf?: Record<string, unknown>;
+  hideIf?: Record<string, unknown>;
   dependsOn?: string[];
   
   // Options for select/multiselect
@@ -271,17 +271,17 @@ export interface ChartValueSchema {
 
 export interface ValueOption {
   label: string;
-  value: any;
+  value: unknown;
   description?: string;
   disabled?: boolean;
   group?: string;
 }
 
 export interface ChartValues {
-  raw: Record<string, any>;
-  computed: Record<string, any>;
-  user: Record<string, any>;
-  defaults: Record<string, any>;
+  raw: Record<string, unknown>;
+  computed: Record<string, unknown>;
+  user: Record<string, unknown>;
+  defaults: Record<string, unknown>;
   schema?: Record<string, ChartValueSchema>;
   
   // Validation
@@ -297,7 +297,7 @@ export interface ChartValues {
 export interface ValueValidationError {
   path: string;
   message: string;
-  value: any;
+  value: unknown;
   schema?: ChartValueSchema;
   code: string;
 }
@@ -306,13 +306,13 @@ export interface ValueValidationWarning {
   path: string;
   message: string;
   suggestion?: string;
-  value: any;
+  value: unknown;
 }
 
 export interface ValuesDiff {
   path: string;
-  oldValue: any;
-  newValue: any;
+  oldValue: unknown;
+  newValue: unknown;
   type: 'added' | 'removed' | 'modified';
   impact: 'low' | 'medium' | 'high';
   description?: string;
@@ -710,12 +710,12 @@ export interface ChartOperation {
   completedAt?: string;
   
   // Options
-  options?: Record<string, any>;
+  options?: Record<string, unknown>;
 }
 
 // === API Response Types ===
 
-export interface ChartApiResponse<T = any> {
+export interface ChartApiResponse<T = unknown> {
   data: T;
   success: boolean;
   message?: string;
@@ -739,27 +739,27 @@ export type RepositoryName = string;
 
 // === Type Guards ===
 
-export function isChartStatus(value: any): value is ChartStatus {
+export function isChartStatus(value: unknown): value is ChartStatus {
   return typeof value === 'string' && [
     'available', 'deprecated', 'unavailable', 'loading', 'error', 'unknown'
   ].includes(value);
 }
 
-export function isRepositoryType(value: any): value is RepositoryType {
+export function isRepositoryType(value: unknown): value is RepositoryType {
   return typeof value === 'string' && [
     'helm', 'oci', 'git', 'local'
   ].includes(value);
 }
 
-export function isRepositoryStatus(value: any): value is RepositoryStatus {
+export function isRepositoryStatus(value: unknown): value is RepositoryStatus {
   return typeof value === 'string' && [
     'ready', 'syncing', 'error', 'unknown'
   ].includes(value);
 }
 
-export function isValueType(value: any): value is ValueType {
+export function isValueType(value: unknown): value is ValueType {
   return typeof value === 'string' && [
-    'string', 'number', 'boolean', 'array', 'object', 
+    'string', 'number', 'boolean', 'array', 'object',
     'select', 'multiselect', 'password', 'textarea', 'json', 'yaml'
   ].includes(value);
 }
@@ -785,7 +785,7 @@ export function isWellMaintained(chart: ChartSummary): boolean {
   return monthsOld < 6 && chart.flags.isWellMaintained;
 }
 
-export function isCompatible(chart: ChartSummary, kubernetesVersion?: string): boolean {
+export function isCompatible(chart: ChartSummary, _kubernetesVersion?: string): boolean {
   // This would need actual version compatibility logic
   return chart.flags.isCompatible;
 }

@@ -53,11 +53,14 @@ export class ErrorHandler {
     if (this.isRancherError(error)) {
       // Kubernetes API errors have 'code' as HTTP status (number), 'status' as "Failure" (string)
       // Rancher errors may have 'status' or 'response.status' as HTTP status
+      // RancherError may carry an extra numeric `code` field (Kubernetes API errors)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const httpStatus = (error as any).code || error.status || error.response?.status;
 
       return {
         message: error.message || 'API request failed',
         status: typeof httpStatus === 'number' ? httpStatus : undefined,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         code: (error as any).code?.toString() || error.code?.toString(),
         details: this.extractErrorDetails(error),
         retryable: this.isRetryableStatus(httpStatus)

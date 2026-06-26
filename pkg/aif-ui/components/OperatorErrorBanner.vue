@@ -6,8 +6,9 @@ import { PRODUCT, PAGE_TYPES } from '../config/suseai';
 defineProps<{ operatorError: string }>();
 defineEmits<{ retry: [] }>();
 
-const vm      = getCurrentInstance()!.proxy as any;
-const cluster = (vm.$route?.params?.cluster as string) || '_';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vm      = getCurrentInstance()?.proxy as any; // Vue component proxy has $route but no type declaration in this context
+const cluster = (vm?.$route?.params?.cluster as string) || '_';
 
 const settingsRoute = {
   name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.SETTINGS }`,
@@ -17,17 +18,28 @@ const settingsRoute = {
 </script>
 
 <template>
-  <Banner color="error" class="mb-20">
+  <Banner
+    color="error"
+    class="mb-20"
+  >
     <div class="operator-error-body">
       <div class="operator-error-text">
         <div>{{ operatorError }}</div>
         <div>
           Update <strong>Operator Namespace</strong> under
           <em>Settings → Advanced → Operator Connection</em>.
-          <RouterLink :to="settingsRoute">Go to Settings →</RouterLink>
+          <RouterLink :to="settingsRoute">
+            Go to Settings →
+          </RouterLink>
         </div>
       </div>
-      <button class="btn-retry" type="button" @click="$emit('retry')">Retry Connection</button>
+      <button
+        class="btn-retry"
+        type="button"
+        @click="$emit('retry')"
+      >
+        Retry Connection
+      </button>
     </div>
   </Banner>
 </template>

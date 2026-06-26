@@ -1,6 +1,8 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ t('suseai.wizard.sections.blueprintDetails', 'Blueprint Details') }}</h2>
+    <h2 class="step-title">
+      {{ t('suseai.wizard.sections.blueprintDetails', 'Blueprint Details') }}
+    </h2>
 
     <LabeledInput
       v-model:value="localForm.displayName"

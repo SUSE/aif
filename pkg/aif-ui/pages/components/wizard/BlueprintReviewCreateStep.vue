@@ -1,6 +1,8 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', 'Review & Save as New Version') : t('suseai.wizard.sections.reviewCreate', 'Review & Create') }}</h2>
+    <h2 class="step-title">
+      {{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', 'Review & Save as New Version') : t('suseai.wizard.sections.reviewCreate', 'Review & Create') }}
+    </h2>
 
     <div class="review-section">
       <div class="review-row">
@@ -11,19 +13,31 @@
         <span class="review-label">{{ t('suseai.wizard.form.version', 'Version') }}</span>
         <span class="review-value">{{ form.version }}</span>
       </div>
-      <div v-if="form.description" class="review-row">
+      <div
+        v-if="form.description"
+        class="review-row"
+      >
         <span class="review-label">{{ t('suseai.wizard.form.description', 'Description') }}</span>
         <span class="review-value">{{ form.description }}</span>
       </div>
     </div>
 
     <div class="review-section">
-      <h3 class="section-title">{{ t('suseai.wizard.labels.applications', 'Applications') }} ({{ form.components.length }})</h3>
-      <div v-for="comp in form.components" :key="comp.chartName" class="component-row">
+      <h3 class="section-title">
+        {{ t('suseai.wizard.labels.applications', 'Applications') }} ({{ form.components.length }})
+      </h3>
+      <div
+        v-for="comp in form.components"
+        :key="comp.chartName"
+        class="component-row"
+      >
         <span class="comp-name">{{ comp.chartName }}</span>
         <span class="comp-version text-muted">{{ comp.chartVersion }}</span>
         <span class="comp-repo text-muted">{{ comp.chartRepo }}</span>
-        <span v-if="comp.targetNamespace" class="comp-ns text-muted">
+        <span
+          v-if="comp.targetNamespace"
+          class="comp-ns text-muted"
+        >
           {{ t('suseai.wizard.labels.namespace', 'Namespace') }}: {{ comp.targetNamespace }}
         </span>
       </div>

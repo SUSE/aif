@@ -29,15 +29,15 @@ export interface Action {
  */
 export interface ActionOpts {
   /** Vuex store instance */
-  $store: any;
+  $store: unknown;
   /** Vue router instance */
-  $router: any;
+  $router: unknown;
   /** Current route object */
-  $route: any;
+  $route: unknown;
   /** The resource the action is being performed on */
-  resource: any;
+  resource: unknown;
   /** Array of resources for bulk operations */
-  resources?: any[];
+  resources?: unknown[];
   /** Target cluster ID for cluster-specific actions */
   cluster?: string;
 }
@@ -92,11 +92,11 @@ export interface ResourceMeta {
 export default class SuseaiResource {
   public metadata?: ResourceMeta;
   public status?: ResourceState;
-  public spec?: any;
-  
-  protected $store?: any;
-  protected $router?: any;
-  protected $route?: any;
+  public spec?: unknown;
+
+  protected $store?: unknown;
+  protected $router?: unknown;
+  protected $route?: unknown;
 
   /**
    * Creates a new SuseaiResource instance
@@ -105,7 +105,7 @@ export default class SuseaiResource {
    * @param router - Vue router instance for navigation
    * @param route - Current route object
    */
-  constructor(data: any = {}, store?: any, router?: any, route?: any) {
+  constructor(data: Record<string, unknown> = {}, store?: unknown, router?: unknown, route?: unknown) {
     Object.assign(this, data);
     this.$store = store;
     this.$router = router;
@@ -245,11 +245,11 @@ export default class SuseaiResource {
    * @returns Promise resolving to the action result
    * @throws Error if store is not available
    */
-  protected async $dispatch(action: string, payload: any = {}): Promise<any> {
+  protected async $dispatch(action: string, payload: unknown = {}): Promise<unknown> {
     if (!this.$store) {
       throw new Error('Store not available in resource');
     }
-    return this.$store.dispatch(action, payload);
+    return (this.$store as { dispatch: (action: string, payload: unknown) => Promise<unknown> }).dispatch(action, payload);
   }
 
   /**
@@ -257,11 +257,11 @@ export default class SuseaiResource {
    * @param getter - Store getter name
    * @returns Value from the getter or null if store is not available
    */
-  protected $get(getter: string): any {
+  protected $get(getter: string): unknown {
     if (!this.$store) {
       return null;
     }
-    return this.$store.getters[getter];
+    return (this.$store as { getters: Record<string, unknown> }).getters[getter];
   }
 
   /**
@@ -269,18 +269,18 @@ export default class SuseaiResource {
    * @param route - Route object or string to navigate to
    * @throws Error if router is not available
    */
-  protected async $push(route: any): Promise<void> {
+  protected async $push(route: unknown): Promise<void> {
     if (!this.$router) {
       throw new Error('Router not available in resource');
     }
-    await this.$router.push(route);
+    await (this.$router as { push: (route: unknown) => Promise<void> }).push(route);
   }
 
   /**
    * Get the current route object
    * @returns Current route object
    */
-  protected get $currentRoute(): any {
+  protected get $currentRoute(): unknown {
     return this.$route;
   }
 
@@ -289,8 +289,8 @@ export default class SuseaiResource {
    * Excludes internal properties that start with '$'
    * @returns Plain object representation of the resource
    */
-  toJSON(): any {
-    const result: any = {};
+  toJSON(): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(this)) {
       if (!key.startsWith('$')) {
         result[key] = value;

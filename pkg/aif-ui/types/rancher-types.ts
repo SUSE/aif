@@ -5,8 +5,11 @@
 
 // === Store Types ===
 export interface RancherStore {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dispatch: (action: string, payload?: any) => Promise<any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getters?: Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerModule?: (name: string, module: any) => void;
 }
 
@@ -27,8 +30,8 @@ export interface ClusterResource {
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
   };
-  spec?: Record<string, any>;
-  status?: Record<string, any>;
+  spec?: Record<string, unknown>;
+  status?: Record<string, unknown>;
 }
 
 // === Namespace Types ===
@@ -36,8 +39,8 @@ export interface NamespaceResource {
   metadata: {
     name: string;
   };
-  spec?: Record<string, any>;
-  status?: Record<string, any>;
+  spec?: Record<string, unknown>;
+  status?: Record<string, unknown>;
 }
 
 // === Node Types ===
@@ -110,7 +113,7 @@ export interface HelmReleaseInfo {
 export interface HelmInstallationDetails {
   chartName: string;
   chartVersion: string;
-  values: Record<string, any>;
+  values: Record<string, unknown>;
   releaseName: string;
   namespace: string;
   clusterId: string;
@@ -223,17 +226,17 @@ export interface RancherError {
   message?: string;
   response?: {
     status?: number;
-    data?: any;
+    data?: unknown;
   };
   stack?: string;
-  data?: any;
+  data?: unknown;
 }
 
 // === Request Types ===
 export interface RancherRequestConfig {
   url: string;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-  data?: any;
+  data?: unknown;
   headers?: Record<string, string>;
   responseType?: 'json' | 'text' | 'arraybuffer';
 }
@@ -265,7 +268,7 @@ export interface InstallationPayload {
         version: string;
       };
     };
-    values?: Record<string, any>;
+    values?: Record<string, unknown>;
     targetNamespace?: string;
   };
 }
@@ -282,32 +285,36 @@ export interface ProjectResource {
 }
 
 // === Type Guards ===
-export function isRancherError(error: any): error is RancherError {
-  return error && (typeof error.status === 'number' || typeof error.code === 'number');
+export function isRancherError(error: unknown): error is RancherError {
+  return !!error && typeof error === 'object' &&
+    ('status' in error || 'code' in error) &&
+    (typeof (error as RancherError).status === 'number' || typeof (error as RancherError).code === 'number');
 }
 
-export function isClusterResource(obj: any): obj is ClusterResource {
-  return obj && obj.metadata && typeof obj.metadata.name === 'string';
+export function isClusterResource(obj: unknown): obj is ClusterResource {
+  return !!obj && typeof obj === 'object' &&
+    'metadata' in obj &&
+    typeof (obj as ClusterResource).metadata?.name === 'string';
 }
 
-export function isHelmSecret(obj: any): obj is HelmSecret {
-  return obj &&
-         obj.metadata &&
-         typeof obj.metadata.name === 'string' &&
-         obj.type === 'helm.sh/release.v1';
+export function isHelmSecret(obj: unknown): obj is HelmSecret {
+  return !!obj && typeof obj === 'object' &&
+    'metadata' in obj &&
+    typeof (obj as HelmSecret).metadata?.name === 'string' &&
+    (obj as HelmSecret).type === 'helm.sh/release.v1';
 }
 
-export function isAppCRD(obj: any): obj is AppCRD {
-  return obj &&
-         obj.metadata &&
-         typeof obj.metadata.name === 'string' &&
-         obj.spec;
+export function isAppCRD(obj: unknown): obj is AppCRD {
+  return !!obj && typeof obj === 'object' &&
+    'metadata' in obj &&
+    typeof (obj as AppCRD).metadata?.name === 'string' &&
+    'spec' in obj;
 }
 
 // === Runtime Validation Functions ===
 export function validateClusterInfo(obj: unknown): ClusterInfo | null {
   if (!obj || typeof obj !== 'object') return null;
-  const cluster = obj as any;
+  const cluster = obj as Record<string, unknown>;
 
   if (typeof cluster.id !== 'string' || typeof cluster.name !== 'string') {
     return null;
@@ -322,7 +329,7 @@ export function validateClusterInfo(obj: unknown): ClusterInfo | null {
 
 export function validateAppCollectionItem(obj: unknown): boolean {
   if (!obj || typeof obj !== 'object') return false;
-  const app = obj as any;
+  const app = obj as Record<string, unknown>;
 
   return typeof app.name === 'string' &&
          typeof app.slug_name === 'string' &&
@@ -331,7 +338,7 @@ export function validateAppCollectionItem(obj: unknown): boolean {
 
 export function validateListResponse<T extends { id?: string } | { metadata?: { name?: string } }>(obj: unknown, itemValidator: (item: unknown) => boolean): ListResponse<T> | null {
   if (!obj || typeof obj !== 'object') return null;
-  const response = obj as any;
+  const response = obj as Record<string, unknown>;
 
   // Check if it has items array
   if (response.items && Array.isArray(response.items)) {
@@ -356,17 +363,17 @@ export function validateListResponse<T extends { id?: string } | { metadata?: { 
 export function validateHelmSecret(obj: unknown): HelmSecret | null {
   if (!isHelmSecret(obj)) return null;
 
-  const secret = obj as any;
-  if (!secret.metadata?.name || !secret.metadata?.namespace) return null;
+  // obj is now typed as HelmSecret after the guard
+  if (!obj.metadata?.name || !obj.metadata?.namespace) return null;
 
   return {
     metadata: {
-      name: secret.metadata.name,
-      namespace: secret.metadata.namespace,
-      labels: secret.metadata.labels || {},
-      annotations: secret.metadata.annotations || {}
+      name: obj.metadata.name,
+      namespace: obj.metadata.namespace,
+      labels: obj.metadata.labels ?? {},
+      annotations: obj.metadata.annotations ?? {}
     },
-    type: secret.type,
-    data: secret.data || {}
+    type: obj.type,
+    data: obj.data ?? {}
   };
 }

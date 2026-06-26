@@ -312,7 +312,7 @@ export function getDocLink(id: string): DocLink | null {
  * Get all categories with link counts
  */
 export function getCategoriesWithCounts(): Array<{ category: DocCategory; count: number; name: string }> {
-  const counts: Record<DocCategory, number> = {} as any;
+  const counts: Record<DocCategory, number> = {} as Record<DocCategory, number>;
   
   Object.values(DOCUMENTATION_LINKS).forEach(link => {
     counts[link.category] = (counts[link.category] || 0) + 1;

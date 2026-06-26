@@ -343,7 +343,7 @@ export function needsAttention(
   }
   
   // Apps stuck in transitional states for too long need attention
-  if ([APP_STATUS.INSTALLING, APP_STATUS.UPGRADING, APP_STATUS.UNINSTALLING].includes(appStatus as any)) {
+  if (([APP_STATUS.INSTALLING, APP_STATUS.UPGRADING, APP_STATUS.UNINSTALLING] as string[]).includes(appStatus)) {
     if (lastUpdateTime) {
       const updateTime = new Date(lastUpdateTime);
       const now = new Date();
@@ -415,7 +415,7 @@ export function isTransitionalStatus(status: AppStatus | InstallationStatus): bo
     INSTALLATION_STATUS.UNINSTALLING
   ];
   
-  return transitionalStates.includes(status as any);
+  return (transitionalStates as string[]).includes(status);
 }
 
 /**

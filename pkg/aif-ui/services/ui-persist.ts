@@ -22,7 +22,7 @@ export function persistLoad<T extends Record<string, unknown> | string | number 
 }
 
 /** Save a value with a timestamp. */
-export function persistSave<T extends Record<string, unknown> | string | number | boolean | null>(key: string, value: T): void {
+export function persistSave<T extends Record<string, unknown> | string | number | boolean | null>(_key: string, _value: T): void {
   // Not storing aything in the browser localstorage. May want to completely remove this file and it's reference in the future
   // safe(() => localStorage.setItem(PREFIX + key, JSON.stringify({ ts: Date.now(), v: value } as PersistWrap<T>)), undefined);
 }

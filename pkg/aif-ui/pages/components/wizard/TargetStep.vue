@@ -38,19 +38,19 @@ const deployTypeCards = [
   {
     id:      'FleetBundle' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Fleet Bundle' } },
-    image:   { icon: 'fleet' as any },
+    image:   { icon: 'fleet' as string },
     content: { text: 'Create a Fleet Bundle; Fleet deploys to selected clusters' },
   },
   {
     id:      'GitOps' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Publish to Fleet Git' } },
-    image:   { icon: 'git' as any },
+    image:   { icon: 'git' as string },
     content: { text: 'Commit Fleet Bundle YAML to the git repo configured in Settings' },
   },
   {
     id:      'Helm' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Helm' } },
-    image:   { icon: 'helm' as any },
+    image:   { icon: 'helm' as string },
     content: { text: 'Deploy directly to each selected cluster via Helm install' },
   },
 ];
@@ -81,13 +81,22 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
         @card-click="onCardClick(card.id)"
       />
     </div>
-    <p v-if="!isManageMode && helmUnsupported" class="hint">
+    <p
+      v-if="!isManageMode && helmUnsupported"
+      class="hint"
+    >
       Helm is not available for this installation. Use Fleet Bundle or Fleet Git.
     </p>
-    <p v-else-if="!isManageMode && hasNonLocalClusters" class="hint">
+    <p
+      v-else-if="!isManageMode && hasNonLocalClusters"
+      class="hint"
+    >
       Helm is only available for the local management cluster. Use Fleet Bundle or Fleet Git for multi-cluster deployments.
     </p>
-    <p v-else-if="!isManageMode && helmOversized" class="hint">
+    <p
+      v-else-if="!isManageMode && helmOversized"
+      class="hint"
+    >
       This chart is too large for the Helm deployment method (it exceeds Kubernetes' 1 MiB Secret limit). Use Fleet Bundle or Fleet Git.
     </p>
     <p
@@ -104,7 +113,10 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
       :disabled="isManageMode"
       @update:selected-clusters="isManageMode ? undefined : $emit('update:clusters', $event)"
     />
-    <p v-if="isManageMode" class="hint">
+    <p
+      v-if="isManageMode"
+      class="hint"
+    >
       {{ t('suseai.wizard.target.readOnly', 'Target cluster and deployment type are read-only in Manage mode.') }}
     </p>
   </div>

@@ -1,11 +1,11 @@
 import { operatorFetch } from './operator-config';
 import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryCredentials } from '../types/aiworkload-types';
 
-export function getSettings(): Promise<any> {
+export function getSettings(): Promise<unknown> {
   return operatorFetch('/api/v1/settings');
 }
 
-export function putSettings(spec: any): Promise<any> {
+export function putSettings(spec: unknown): Promise<unknown> {
   return operatorFetch('/api/v1/settings', {
     method: 'PUT',
     body:   JSON.stringify({ spec }),

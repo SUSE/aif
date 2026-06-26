@@ -1,6 +1,9 @@
 <template>
   <div class="installation-progress">
-    <div v-if="progress !== undefined" class="progress-container">
+    <div
+      v-if="progress !== undefined"
+      class="progress-container"
+    >
       <div class="progress-bar">
         <div
           class="progress-fill"
@@ -14,7 +17,10 @@
       </div>
       <span class="progress-text">{{ progressText }}</span>
     </div>
-    <div v-else class="progress-indeterminate">
+    <div
+      v-else
+      class="progress-indeterminate"
+    >
       <i class="icon icon-spinner icon-spin"></i>
       <span>{{ statusText || 'Installing...' }}</span>
     </div>
