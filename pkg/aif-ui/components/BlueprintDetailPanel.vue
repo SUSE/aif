@@ -1,7 +1,7 @@
 <template>
   <div class="bp-detail">
     <h3 class="bp-section-heading bp-versions-heading">
-      Versions
+      {{ t('suseai.common.labels.versions', 'Versions') }}
     </h3>
     <div
       v-for="bp in versions"
@@ -26,7 +26,7 @@
       >
         <template v-if="bp.spec.description">
           <h3 class="bp-section-heading">
-            Description
+            {{ t('suseai.wizard.form.description', 'Description') }}
           </h3>
           <p class="bp-version-description">
             {{ bp.spec.description }}
@@ -34,13 +34,14 @@
         </template>
 
         <h3 class="bp-section-heading">
-          Applications
+          {{ t('suseai.wizard.labels.applications', 'Applications') }}
         </h3>
         <table class="bp-components-table">
           <thead>
             <tr>
-              <th>Chart</th>
-              <th>Version</th>
+              <th>{{ t('suseai.wizard.labels.chart', 'Chart') }}</th>
+              <th>{{ t('suseai.common.labels.version', 'Version') }}</th>
+              <th>{{ t('suseai.wizard.labels.repository', 'Repository') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -50,13 +51,14 @@
             >
               <td>{{ comp.chartName }}</td>
               <td>{{ comp.chartVersion }}</td>
+              <td>{{ comp.chartRepo }}</td>
             </tr>
             <tr v-if="!bp.spec.components.length">
               <td
                 colspan="2"
                 class="bp-no-components"
               >
-                No components defined
+                {{ t('suseai.common.labels.noComponents', 'No components defined') }}
               </td>
             </tr>
           </tbody>
@@ -68,6 +70,7 @@
 
 <script lang="ts">
 import { defineComponent, computed, ref, watch } from 'vue';
+import { useT } from '../composables/useT';
 import type { Blueprint } from '../types/blueprint-types';
 
 export default defineComponent({
@@ -87,6 +90,7 @@ export default defineComponent({
     },
   },
   setup(props) {
+    const t     = useT();
     const latest = computed(() => props.versions[0] ?? null);
 
     const openVersions = ref<Set<string>>(new Set([props.expandedVersion || latest.value?.spec.version || ''].filter(Boolean)));
@@ -105,7 +109,7 @@ export default defineComponent({
       openVersions.value = next;
     }
 
-    return { openVersions, toggleVersion };
+    return { t, openVersions, toggleVersion };
   },
 });
 </script>
@@ -196,8 +200,9 @@ export default defineComponent({
     color: var(--muted);
     font-weight: 500;
 
-    &:first-child { width: 65%; }
-    &:last-child  { width: 35%; }
+    &:nth-child(1) { width: 40%; }
+    &:nth-child(2) { width: 25%; }
+    &:nth-child(3) { width: 35%; }
   }
 
   td {

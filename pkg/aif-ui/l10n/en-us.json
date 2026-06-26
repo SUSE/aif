@@ -279,11 +279,13 @@
         "name": "Name",
         "description": "Description",
         "version": "Version",
+        "versions": "Versions",
         "created": "Created",
         "updated": "Updated",
         "status": "Status",
         "cluster": "Cluster",
-        "namespace": "Namespace"
+        "namespace": "Namespace",
+        "noComponents": "No components defined"
       },
       "messages": {
         "noData": "No data available",
