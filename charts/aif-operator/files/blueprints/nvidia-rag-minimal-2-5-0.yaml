@@ -15,27 +15,18 @@ spec:
   - chartName: nvidia-blueprint-rag
     chartRepo: nvidia-blueprints
     chartVersion: v2.5.0
+    # vendor: nvidia makes the operator's nvidiaInjector auto-create the
+    # conventional ngc-secret (dockerconfigjson for nvcr.io) and ngc-api
+    # (NGC_CLI_API_KEY/NGC_API_KEY/NVIDIA_API_KEY) in the release namespace from
+    # the configured NVIDIA credentials, and deliver them to target clusters.
+    # Without it the default suse combined-secret injector runs instead and the
+    # create:false references below resolve to MISSING secrets — rag-server hits
+    # CreateContainerConfigError on ngc-api and rag-nv-ingest gets
+    # 403/ImagePullBackOff pulling gated nvcr.io images.
+    vendor: nvidia
     values:
-      # Reference pre-existing secrets instead of letting the chart create them
-      # from inline passwords. Create both in the release namespace BEFORE
-      # applying this Blueprint:
-      #
-      #   NS=<release-namespace>
-      #   NGC_API_KEY=<your-nvapi-key>
-      #
-      #   # 1. dockerconfigjson for pulling nvcr.io images
-      #   kubectl create secret docker-registry ngc-secret \
-      #     --docker-server=nvcr.io \
-      #     --docker-username='$oauthtoken' \
-      #     --docker-password="$NGC_API_KEY" \
-      #     -n "$NS"
-      #
-      #   # 2. Opaque secret with the three key names the chart/NIMs expect
-      #   kubectl create secret generic ngc-api \
-      #     --from-literal=NGC_CLI_API_KEY="$NGC_API_KEY" \
-      #     --from-literal=NGC_API_KEY="$NGC_API_KEY" \
-      #     --from-literal=NVIDIA_API_KEY="$NGC_API_KEY" \
-      #     -n "$NS"
+      # Reference the operator-delivered secrets (see vendor: nvidia above)
+      # rather than letting the chart create its own from inline passwords.
       imagePullSecret:
         create: false
         name: ngc-secret
