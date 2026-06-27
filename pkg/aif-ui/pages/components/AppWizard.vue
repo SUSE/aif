@@ -405,6 +405,14 @@ async function loadAIWorkloadDetails() {
     if (app?.chartName)    form.value.chartName    = app.chartName;
     if (app?.chartVersion) form.value.chartVersion = app.chartVersion;
     if (app?.chartRepo)    form.value.chartRepo    = app.chartRepo;
+    // Restore the user's original release name from the CR. The URL query
+    // parameter (instanceName) contains the AIWorkload CR's metadata.name,
+    // which includes cluster ID suffixes for downstream deployments (e.g.,
+    // "qdrant-c-785f4"), but the Helm release name should stay stable across
+    // upgrades (e.g., "qdrant"). Without this sync, an upgrade would write a
+    // different releaseName to the HelmOp and Fleet would create a new Helm
+    // install instead of upgrading the existing release.
+    if (app?.release)      form.value.release      = app.release;
 
     // Authoritative deploy strategy from the CR.
     if (workload.spec.deployStrategy) {
