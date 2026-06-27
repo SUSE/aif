@@ -386,6 +386,17 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 		t.Errorf("nvidia-blueprint clientSecret = %q, want %q", nvSecret, credentials.AuthSecretNvidia)
 	}
 
+	// ngc-helm-auth must be mirrored to every consuming namespace so a rotated
+	// key propagates without needing an AIWorkload reconcile: cattle-system (the
+	// ClusterRepo's clientSecret) plus the Fleet workspaces (HelmOp
+	// helmSecretName). Regression guard for the stale-fleet-mirror bug.
+	for _, ns := range []string{"cattle-system", "fleet-local", "fleet-default"} {
+		authSec := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: ns}, authSec); err != nil {
+			t.Errorf("expected %s in namespace %s: %v", credentials.AuthSecretNvidia, ns, err)
+		}
+	}
+
 	// The public NGC charts catalog must be ANONYMOUS (no clientSecret).
 	// Presenting a key not entitled to the full /nvidia path makes NGC return
 	// 403 (surfaced by Rancher as "no API version specified"); anonymous access

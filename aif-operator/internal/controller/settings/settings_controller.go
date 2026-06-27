@@ -295,10 +295,19 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 	)
 }
 
+// authSecretNamespaces lists every namespace the operator-managed registry
+// basic-auth secret must exist in: cattle-system for ClusterRepo catalog pulls,
+// and the Fleet workspaces for HelmOp `helmSecretName` chart pulls. Writing all
+// of them here keeps a rotated key in lockstep across copies — the per-workload
+// ensureFleetAuthSecret only refreshes the Fleet mirrors on an AIWorkload
+// reconcile, which a key rotation does not trigger, so they would otherwise go
+// stale and gated HelmOp installs would fail with a 403 reading the index.
+var authSecretNamespaces = []string{"cattle-system", "fleet-local", "fleet-default"}
+
 func (r *SettingsReconciler) applyRegistryAuthSecret(
 	ctx context.Context,
 	ns string,
-	cattleSecretName string,
+	secretName string,
 	userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef,
 ) (string, error) {
 	user, token, ok, err := credentials.ReadPair(ctx, r.Client, ns, userRef, tokenRef)
@@ -309,24 +318,30 @@ func (r *SettingsReconciler) applyRegistryAuthSecret(
 		return "", nil
 	}
 
-	mirror := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cattleSecretName,
-			Namespace: "cattle-system",
-		},
-		Type: corev1.SecretTypeBasicAuth,
-		Data: map[string][]byte{
-			"username": []byte(user),
-			"password": []byte(token),
-		},
+	for _, targetNS := range authSecretNamespaces {
+		mirror := &corev1.Secret{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: targetNS,
+			},
+			Type: corev1.SecretTypeBasicAuth,
+			Data: map[string][]byte{
+				"username": []byte(user),
+				"password": []byte(token),
+			},
+		}
+		if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
+			// The Fleet workspaces are absent on clusters without Fleet; only
+			// cattle-system is mandatory (the ClusterRepo's clientSecret lives there).
+			if targetNS != "cattle-system" && errors.IsNotFound(err) {
+				continue
+			}
+			return "", fmt.Errorf("apply auth secret %s/%s: %w", targetNS, secretName, err)
+		}
 	}
 
-	if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
-		return "", fmt.Errorf("apply auth secret %s: %w", cattleSecretName, err)
-	}
-
-	return cattleSecretName, nil
+	return secretName, nil
 }
 
 func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, clientSecretName string) error {
@@ -363,8 +378,14 @@ func (r *SettingsReconciler) deleteClusterRepo(ctx context.Context, name string)
 // deleteAuthSecret removes a cattle-system basic-auth mirror by name, ignoring
 // NotFound. Pairs with deleteClusterRepo when pruning a registry.
 func (r *SettingsReconciler) deleteAuthSecret(ctx context.Context, name string) error {
-	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "cattle-system"}}
-	return client.IgnoreNotFound(r.Delete(ctx, sec))
+	var firstErr error
+	for _, ns := range authSecretNamespaces {
+		sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		if err := client.IgnoreNotFound(r.Delete(ctx, sec)); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
