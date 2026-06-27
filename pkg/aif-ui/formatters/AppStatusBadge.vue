@@ -3,7 +3,10 @@
     :class="`badge-state ${statusClass}`"
     :title="statusTooltip"
   >
-    <i v-if="isLoading" class="icon icon-spinner icon-spin"></i>
+    <i
+      v-if="isLoading"
+      class="icon icon-spinner icon-spin"
+    ></i>
     <span>{{ statusText }}</span>
   </span>
 </template>

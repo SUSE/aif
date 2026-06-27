@@ -6,10 +6,20 @@
       :title="healthTooltip"
     >
       <i :class="healthIcon"></i>
-      <span v-if="showText" class="health-text">{{ healthText }}</span>
+      <span
+        v-if="showText"
+        class="health-text"
+      >{{ healthText }}</span>
     </div>
-    <div v-if="details && showDetails" class="health-details">
-      <div v-for="detail in details" :key="detail.name" class="health-detail">
+    <div
+      v-if="details && showDetails"
+      class="health-details"
+    >
+      <div
+        v-for="detail in details"
+        :key="detail.name"
+        class="health-detail"
+      >
         <span class="detail-name">{{ detail.name }}:</span>
         <span :class="`detail-status detail-${detail.status}`">
           {{ detail.value }}

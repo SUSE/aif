@@ -2,6 +2,7 @@
  * Internationalization configuration for SUSE AI Extension
  * Following Rancher UI patterns for consistent i18n implementation
  */
+import logger from '../utils/logger';
 
 export interface TranslationKey {
   [key: string]: string | TranslationKey;
@@ -224,11 +225,11 @@ export const translations: Translations = {
  * Get translated string by key
  * Supports nested keys with dot notation (e.g., 'suseai.apps.title')
  */
-export function t(key: string, params?: Record<string, any>, locale: string = DEFAULT_LOCALE): string {
+export function t(key: string, params?: Record<string, unknown>, locale: string = DEFAULT_LOCALE): string {
   const translation = getNestedValue(translations[locale] || translations[DEFAULT_LOCALE], key);
 
   if (typeof translation !== 'string') {
-    console.warn(`Translation key not found: ${key}`);
+    logger.warn(`Translation key not found: ${key}`);
     return key;
   }
 
@@ -245,9 +246,12 @@ export function t(key: string, params?: Record<string, any>, locale: string = DE
 /**
  * Get nested value from object using dot notation
  */
-function getNestedValue(obj: any, path: string): any {
-  return path.split('.').reduce((current, key) => {
-    return current && current[key] !== undefined ? current[key] : undefined;
+function getNestedValue(obj: unknown, path: string): unknown {
+  return path.split('.').reduce((current: unknown, key: string) => {
+    if (current && typeof current === 'object') {
+      return (current as Record<string, unknown>)[key];
+    }
+    return undefined;
   }, obj);
 }
 
@@ -270,5 +274,5 @@ export function getAvailableLocales(): readonly string[] {
  * Validate locale
  */
 export function isValidLocale(locale: string): boolean {
-  return AVAILABLE_LOCALES.includes(locale as any);
+  return (AVAILABLE_LOCALES as readonly string[]).includes(locale);
 }

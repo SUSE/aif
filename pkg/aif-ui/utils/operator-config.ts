@@ -23,6 +23,8 @@ let cache: OperatorCache | null = null;
 let loadPromise: Promise<void> | null = null;
 let connectionError: string | null = null;
 let checkPromise: Promise<void> | null = null;
+let checkExtPromise: Promise<boolean> | null = null;
+let extensionForbidden = false;
 
 function configMapUrl(): string {
   return `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ CONFIG_NAMESPACE }/configmaps/${ CONFIG_MAP_NAME }`;
@@ -34,7 +36,7 @@ function configMapCollectionUrl(): string {
 
 /** Shared fetch wrapper for operator API calls. Handles 204 No Content, JSON error
  *  extraction, and attaches typed status/code fields to thrown errors. */
-export async function operatorFetch(path: string, options: RequestInit = {}): Promise<any> {
+export async function operatorFetch(path: string, options: RequestInit = {}): Promise<unknown> {
   await loadOperatorConfig();
   const res = await fetch(`${ getOperatorBaseUrl() }${ path }`, {
     ...options,
@@ -116,8 +118,8 @@ async function runConnectionCheck(): Promise<void> {
     }
 
     connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }".`;
-  } catch (e: any) {
-    connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }": ${ e?.message || 'network error' }`;
+  } catch (e) {
+    connectionError = `Cannot connect to the SUSE AI operator in namespace "${ ns }": ${ e instanceof Error ? e.message : 'network error' }`;
   }
 }
 
@@ -147,11 +149,47 @@ export function isConfigMapFound(): boolean {
   return cache?.found ?? false;
 }
 
+/** Returns true when at least one InstallAIExtension CR exists in the cluster,
+ *  meaning the operator owns the ConfigMap and the Settings fields should be read-only.
+ *  Returns false on any error (404 = CRD not installed, network error).
+ *  On 403, sets the extensionForbidden flag — call isExtensionCheckForbidden() to
+ *  distinguish "not managed" from "cannot determine". Idempotent: subsequent calls
+ *  return the shared in-flight promise; pass force=true to re-run the check. */
+export function hasInstallAIExtension(force = false): Promise<boolean> {
+  if (force) { checkExtPromise = null; extensionForbidden = false; }
+  if (!checkExtPromise) checkExtPromise = _doCheckExtension();
+  return checkExtPromise;
+}
+
+async function _doCheckExtension(): Promise<boolean> {
+  try {
+    const url = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/apis/ai-platform.suse.com/v1alpha1/installaiextensions`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (res.status === 403) {
+      extensionForbidden = true;
+      return false;
+    }
+    if (!res.ok) return false;
+    const body = await res.json().catch(() => null);
+    return Array.isArray(body?.items) && body.items.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Returns true when hasInstallAIExtension() returned false due to a 403 —
+ *  meaning the managed state is unknown, not confirmed absent. */
+export function isExtensionCheckForbidden(): boolean {
+  return extensionForbidden;
+}
+
 export function invalidateOperatorConfig(): void {
-  cache           = null;
-  loadPromise     = null;
-  connectionError = null;
-  checkPromise    = null;
+  cache               = null;
+  loadPromise         = null;
+  connectionError     = null;
+  checkPromise        = null;
+  checkExtPromise     = null;
+  extensionForbidden  = false;
 }
 
 /** Write operator coordinates to the ConfigMap and refresh the in-memory cache.

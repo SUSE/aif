@@ -5,7 +5,7 @@
 import type { ValidationResult, ValidationError, FieldValidationRule } from '../utils/validation';
 import { ERROR_CODES } from '../utils/constants';
 
-export function validateRequired(value: any, fieldName = 'field'): ValidationResult {
+export function validateRequired(value: unknown, fieldName = 'field'): ValidationResult {
   const errors: ValidationError[] = [];
 
   if (value === null || value === undefined || value === '' ||
@@ -140,10 +140,10 @@ export function validateJson(jsonString: string): ValidationResult {
 
   try {
     JSON.parse(jsonString);
-  } catch (error: any) {
+  } catch (error) {
     errors.push({
       field: 'json',
-      message: `Invalid JSON: ${error.message}`,
+      message: `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
       code: ERROR_CODES.INVALID_FORMAT,
       severity: 'error'
     });
@@ -166,10 +166,10 @@ export function validateYaml(yamlString: string): ValidationResult {
   try {
     const yaml = require('js-yaml');
     yaml.load(yamlString);
-  } catch (error: any) {
+  } catch (error) {
     errors.push({
       field: 'yaml',
-      message: `Invalid YAML: ${error.message}`,
+      message: `Invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
       code: ERROR_CODES.INVALID_FORMAT,
       severity: 'error'
     });
@@ -217,7 +217,7 @@ export function validateRange(value: number, min?: number, max?: number, fieldNa
 // Export common validation rules
 export const requiredRule: FieldValidationRule = {
   name: 'required',
-  validate: (value: any) => validateRequired(value)
+  validate: (value) => validateRequired(value)
 };
 
 export const emailRule: FieldValidationRule = {
@@ -244,20 +244,20 @@ export const yamlRule: FieldValidationRule = {
 export function lengthRule(min?: number, max?: number): FieldValidationRule {
   return {
     name: 'length',
-    validate: (value: any) => validateLength(value, min, max)
+    validate: (value) => validateLength(value as string, min, max)
   };
 }
 
 export function patternRule(pattern: RegExp, message: string): FieldValidationRule {
   return {
     name: 'pattern',
-    validate: (value: any) => validatePattern(value, pattern, message)
+    validate: (value) => validatePattern(value as string, pattern, message)
   };
 }
 
 export function rangeRule(min?: number, max?: number): FieldValidationRule {
   return {
     name: 'range',
-    validate: (value: any) => validateRange(value, min, max)
+    validate: (value) => validateRange(value as number, min, max)
   };
 }

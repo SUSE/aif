@@ -15,9 +15,10 @@ import ClusterChips from '../formatters/ClusterChips.vue';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
 
-const vm      = getCurrentInstance()!.proxy as any;
-const router  = vm.$router;
-const route   = vm.$route;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vm      = getCurrentInstance()?.proxy as any;
+const router  = vm?.$router;
+const route   = vm?.$route;
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading       = ref(true);
@@ -142,8 +143,8 @@ async function refresh() {
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
     clusters.value   = clResult;
-  } catch (e: any) {
-    error.value = e?.message || 'Failed to load workloads';
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : null) || 'Failed to load workloads';
   } finally {
     loading.value = false;
   }
@@ -194,8 +195,8 @@ async function executeDelete() {
       w => !(w.metadata.name === deleteModal.name && w.metadata.namespace === deleteModal.namespace),
     );
     deleteModal.show = false;
-  } catch (e: any) {
-    error.value = e?.message || 'Failed to delete workload';
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : null) || 'Failed to delete workload';
     deleteModal.show = false;
   } finally {
     deleteModal.deleting = false;
@@ -236,7 +237,7 @@ async function executeUpgrade() {
       source: {
         ...w.spec.source,
         blueprint: {
-          ...w.spec.source.blueprint!,
+          ...w.spec.source.blueprint,
           version: upgradeModal.selectedVersion,
         },
       },
@@ -244,8 +245,8 @@ async function executeUpgrade() {
     await updateAIWorkload(w.metadata.namespace, w.metadata.name, newSpec);
     upgradeModal.show = false;
     await refresh();
-  } catch (e: any) {
-    error.value = e?.message || 'Failed to upgrade workload';
+  } catch (e: unknown) {
+    error.value = (e instanceof Error ? e.message : null) || 'Failed to upgrade workload';
     upgradeModal.show = false;
   } finally {
     upgradeModal.upgrading = false;
@@ -267,40 +268,88 @@ async function executeUpgrade() {
               class="input-sm"
             />
           </div>
-          <select v-model="sortBy" class="sort-select form-control-sm" aria-label="Sort workloads">
-            <option value="name-asc">Name (A → Z)</option>
-            <option value="name-desc">Name (Z → A)</option>
-            <option value="status">Status (healthy first)</option>
-            <option value="source">Source (App, Blueprint)</option>
+          <select
+            v-model="sortBy"
+            class="sort-select form-control-sm"
+            aria-label="Sort workloads"
+          >
+            <option value="name-asc">
+              Name (A → Z)
+            </option>
+            <option value="name-desc">
+              Name (Z → A)
+            </option>
+            <option value="status">
+              Status (healthy first)
+            </option>
+            <option value="source">
+              Source (App, Blueprint)
+            </option>
           </select>
-          <button class="btn role-secondary ml-auto" @click="refresh" :disabled="loading" type="button">
-            <i v-if="loading" class="icon icon-spinner icon-spin" />
-            <i v-else class="icon icon-refresh" />
+          <button
+            class="btn role-secondary ml-auto"
+            :disabled="loading"
+            type="button"
+            @click="refresh"
+          >
+            <i
+              v-if="loading"
+              class="icon icon-spinner icon-spin"
+            />
+            <i
+              v-else
+              class="icon icon-refresh"
+            />
             Refresh
           </button>
         </div>
       </header>
 
-      <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
+      <OperatorErrorBanner
+        v-if="operatorError"
+        :operator-error="operatorError"
+        @retry="retryConnection"
+      />
 
-      <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
+      <Banner
+        v-if="error"
+        color="error"
+        class="mb-20"
+      >
+        {{ error }}
+      </Banner>
 
       <div class="main-content">
         <!-- Loading state -->
-        <div v-if="loading" class="loading-row">
+        <div
+          v-if="loading"
+          class="loading-row"
+        >
           <i class="icon icon-spinner icon-spin" /> Loading workloads...
         </div>
 
         <!-- Empty state -->
-        <div v-else-if="!filteredWorkloads.length && !error && !operatorError" class="empty-state-content">
+        <div
+          v-else-if="!filteredWorkloads.length && !error && !operatorError"
+          class="empty-state-content"
+        >
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No workloads found</h3>
-          <p class="text-muted">Deploy an App or install a Blueprint to see workloads here.</p>
+          <p class="text-muted">
+            Deploy an App or install a Blueprint to see workloads here.
+          </p>
         </div>
 
         <!-- Workloads table -->
-        <div v-else class="workloads-table">
-          <table class="table" role="table" aria-label="AI Workloads">
+        <div
+          v-else
+          class="workloads-table"
+        >
+          <table
+            class="table"
+            role="table"
+            aria-label="AI Workloads"
+          >
             <thead>
               <tr>
                 <th>State</th>
@@ -310,7 +359,9 @@ async function executeUpgrade() {
                 <th>Source</th>
                 <th>Deploy</th>
                 <th>Version</th>
-                <th class="text-right">Actions</th>
+                <th class="text-right">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -330,7 +381,9 @@ async function executeUpgrade() {
 
                 <!-- Name -->
                 <td class="col-name">
-                  <div class="name-primary">{{ w.metadata.name }}</div>
+                  <div class="name-primary">
+                    {{ w.metadata.name }}
+                  </div>
                 </td>
 
                 <!-- Namespace -->
@@ -350,10 +403,15 @@ async function executeUpgrade() {
 
                 <!-- Source -->
                 <td class="col-source">
-                  <span class="source-type-badge" :class="w.spec.source.sourceType === 'App' ? 'source-app' : 'source-blueprint'">
+                  <span
+                    class="source-type-badge"
+                    :class="w.spec.source.sourceType === 'App' ? 'source-app' : 'source-blueprint'"
+                  >
                     {{ w.spec.source.sourceType }}
                   </span>
-                  <div class="source-name">{{ workloadSource(w) }}{{ workloadVersion(w) !== '—' ? '-' + workloadVersion(w) : '' }}</div>
+                  <div class="source-name">
+                    {{ workloadSource(w) }}{{ workloadVersion(w) !== '—' ? '-' + workloadVersion(w) : '' }}
+                  </div>
                 </td>
 
                 <!-- Deploy strategy -->
@@ -374,8 +432,8 @@ async function executeUpgrade() {
                       v-if="w.spec.source.sourceType === 'App'"
                       class="btn btn-sm role-secondary"
                       :disabled="w.status?.phase !== 'Running'"
-                      @click="onManage(w)"
                       type="button"
+                      @click="onManage(w)"
                     >
                       <i class="icon icon-edit" />
                       Manage
@@ -386,8 +444,8 @@ async function executeUpgrade() {
                       v-else
                       class="btn btn-sm role-secondary"
                       :disabled="w.status?.phase !== 'Running'"
-                      @click="openUpgradeModal(w)"
                       type="button"
+                      @click="openUpgradeModal(w)"
                     >
                       <i class="icon icon-upload" />
                       Upgrade
@@ -396,8 +454,8 @@ async function executeUpgrade() {
                     <!-- Delete (both types) -->
                     <button
                       class="btn btn-sm role-secondary text-error"
-                      @click="openDeleteModal(w)"
                       type="button"
+                      @click="openDeleteModal(w)"
                     >
                       <i class="icon icon-delete" />
                       Delete
@@ -412,7 +470,12 @@ async function executeUpgrade() {
     </div>
 
     <!-- Delete confirmation modal -->
-    <AppModal v-if="deleteModal.show" :click-to-close="true" :width="480" @close="deleteModal.show = false">
+    <AppModal
+      v-if="deleteModal.show"
+      :click-to-close="true"
+      :width="480"
+      @close="deleteModal.show = false"
+    >
       <div class="modal-body">
         <h3>Delete Workload</h3>
         <p>
@@ -424,14 +487,23 @@ async function executeUpgrade() {
           and Helm releases — will be removed. This action cannot be undone.
         </p>
         <div class="modal-buttons">
-          <button class="btn role-secondary" @click="deleteModal.show = false" type="button">Cancel</button>
+          <button
+            class="btn role-secondary"
+            type="button"
+            @click="deleteModal.show = false"
+          >
+            Cancel
+          </button>
           <button
             class="btn role-primary btn-danger"
-            @click="executeDelete"
             :disabled="deleteModal.deleting"
             type="button"
+            @click="executeDelete"
           >
-            <i v-if="deleteModal.deleting" class="icon icon-spinner icon-spin" />
+            <i
+              v-if="deleteModal.deleting"
+              class="icon icon-spinner icon-spin"
+            />
             Delete
           </button>
         </div>
@@ -439,7 +511,12 @@ async function executeUpgrade() {
     </AppModal>
 
     <!-- Blueprint upgrade modal -->
-    <AppModal v-if="upgradeModal.show" :click-to-close="true" :width="480" @close="upgradeModal.show = false">
+    <AppModal
+      v-if="upgradeModal.show"
+      :click-to-close="true"
+      :width="480"
+      @close="upgradeModal.show = false"
+    >
       <div class="modal-body">
         <h3>Upgrade Blueprint Workload</h3>
         <p>
@@ -461,14 +538,23 @@ async function executeUpgrade() {
         </div>
 
         <div class="modal-buttons">
-          <button class="btn role-secondary" @click="upgradeModal.show = false" type="button">Cancel</button>
+          <button
+            class="btn role-secondary"
+            type="button"
+            @click="upgradeModal.show = false"
+          >
+            Cancel
+          </button>
           <button
             class="btn role-primary"
-            @click="executeUpgrade"
             :disabled="upgradeModal.upgrading || upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version"
             type="button"
+            @click="executeUpgrade"
           >
-            <i v-if="upgradeModal.upgrading" class="icon icon-spinner icon-spin" />
+            <i
+              v-if="upgradeModal.upgrading"
+              class="icon icon-spinner icon-spin"
+            />
             Upgrade
           </button>
         </div>

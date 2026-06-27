@@ -11,7 +11,6 @@ import {
   InstallationState,
   RepositoryState,
   DiscoveryProgress,
-  NotificationState,
   DiscoverInstallationsPayload,
   InstallAppPayload,
   UpgradeAppPayload,
@@ -23,6 +22,7 @@ import { ClusterResourceData } from '../../models/cluster/cluster-resource';
 import { RepositoryResourceData } from '../../models/cluster/repository-resource';
 
 // === Common Store Module Interface ===
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface StoreModule<S, R = any> {
   namespaced?: boolean;
   state: S | (() => S);
@@ -38,7 +38,9 @@ export interface AppStoreModule extends StoreModule<AppState, SuseAIState> {
     appById: (state: AppState) => (id: string) => AppSummary | null;
     appsByCategory: (state: AppState) => Record<string, AppSummary[]>;
     appsByRepository: (state: AppState) => Record<string, AppSummary[]>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installedApps: (state: AppState, getters: any, rootState: SuseAIState) => AppSummary[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     availableApps: (state: AppState, getters: any, rootState: SuseAIState) => AppSummary[];
     filteredApps: (state: AppState) => AppSummary[];
     searchResults: (state: AppState) => AppSummary[];
@@ -80,7 +82,7 @@ export interface InstallationStoreModule extends StoreModule<InstallationState, 
     installationsForCluster: (state: InstallationState) => (clusterId: string) => AppInstallationInfo[];
     isAppInstalled: (state: InstallationState) => (appId: string, clusterId?: string) => boolean;
     installedAppIds: (state: InstallationState) => string[];
-    activeOperations: (state: InstallationState) => Record<string, any>;
+    activeOperations: (state: InstallationState) => Record<string, unknown>;
     isOperationActive: (state: InstallationState) => (key: string) => boolean;
     operationProgress: (state: InstallationState) => (key: string) => number;
   };
@@ -90,7 +92,7 @@ export interface InstallationStoreModule extends StoreModule<InstallationState, 
     SET_INSTALLATION: (state: InstallationState, installation: AppInstallationInfo) => void;
     REMOVE_INSTALLATION: (state: InstallationState, key: string) => void;
     UPDATE_INSTALLATION_STATUS: (state: InstallationState, payload: { key: string; status: string; progress?: number }) => void;
-    START_OPERATION: (state: InstallationState, operation: any) => void;
+    START_OPERATION: (state: InstallationState, operation: unknown) => void;
     UPDATE_OPERATION: (state: InstallationState, payload: { key: string; progress: number; stage: string }) => void;
     COMPLETE_OPERATION: (state: InstallationState, key: string) => void;
     FAIL_OPERATION: (state: InstallationState, payload: { key: string; error: string }) => void;
@@ -102,7 +104,7 @@ export interface InstallationStoreModule extends StoreModule<InstallationState, 
     installApp: (context: ActionContext<InstallationState, SuseAIState>, payload: InstallAppPayload) => Promise<void>;
     upgradeApp: (context: ActionContext<InstallationState, SuseAIState>, payload: UpgradeAppPayload) => Promise<void>;
     uninstallApp: (context: ActionContext<InstallationState, SuseAIState>, payload: UninstallAppPayload) => Promise<void>;
-    rollbackApp: (context: ActionContext<InstallationState, SuseAIState>, payload: any) => Promise<void>;
+    rollbackApp: (context: ActionContext<InstallationState, SuseAIState>, payload: unknown) => Promise<void>;
     refreshInstallations: (context: ActionContext<InstallationState, SuseAIState>, clusterId?: string) => Promise<void>;
     pollOperationStatus: (context: ActionContext<InstallationState, SuseAIState>, operationKey: string) => Promise<void>;
     cancelOperation: (context: ActionContext<InstallationState, SuseAIState>, operationKey: string) => Promise<void>;
@@ -116,7 +118,7 @@ export interface ClusterStoreModule extends StoreModule<ClusterState, SuseAIStat
     clusterById: (state: ClusterState) => (id: string) => ClusterResourceData | null;
     connectedClusters: (state: ClusterState) => ClusterResourceData[];
     availableClusters: (state: ClusterState) => ClusterResourceData[];
-    clusterCapabilities: (state: ClusterState) => (clusterId: string) => any;
+    clusterCapabilities: (state: ClusterState) => (clusterId: string) => unknown;
     canInstallApps: (state: ClusterState) => (clusterId: string) => boolean;
     isClusterHealthy: (state: ClusterState) => (clusterId: string) => boolean;
     clusterConnectionStatus: (state: ClusterState) => (clusterId: string) => string;
@@ -126,7 +128,7 @@ export interface ClusterStoreModule extends StoreModule<ClusterState, SuseAIStat
     SET_CLUSTERS: (state: ClusterState, clusters: ClusterResourceData[]) => void;
     SET_CLUSTER: (state: ClusterState, cluster: ClusterResourceData) => void;
     UPDATE_CLUSTER_STATUS: (state: ClusterState, payload: { clusterId: string; status: string }) => void;
-    SET_CLUSTER_CAPABILITIES: (state: ClusterState, payload: { clusterId: string; capabilities: any }) => void;
+    SET_CLUSTER_CAPABILITIES: (state: ClusterState, payload: { clusterId: string; capabilities: unknown }) => void;
     START_CLUSTER_CONNECTION: (state: ClusterState, clusterId: string) => void;
     UPDATE_CONNECTION_PROGRESS: (state: ClusterState, payload: { clusterId: string; progress: number; stage: string }) => void;
     COMPLETE_CLUSTER_CONNECTION: (state: ClusterState, payload: { clusterId: string; success: boolean; error?: string }) => void;
@@ -146,7 +148,7 @@ export interface RepositoryStoreModule extends StoreModule<RepositoryState, Suse
     allRepositories: (state: RepositoryState) => RepositoryResourceData[];
     repositoryByName: (state: RepositoryState) => (name: string) => RepositoryResourceData | null;
     repositoriesForCluster: (state: RepositoryState) => (clusterId: string) => RepositoryResourceData[];
-    activeSyncOperations: (state: RepositoryState) => Record<string, any>;
+    activeSyncOperations: (state: RepositoryState) => Record<string, unknown>;
     isSyncing: (state: RepositoryState) => (repoName: string) => boolean;
     syncProgress: (state: RepositoryState) => (repoName: string) => number;
   };
@@ -155,7 +157,7 @@ export interface RepositoryStoreModule extends StoreModule<RepositoryState, Suse
     SET_REPOSITORIES: (state: RepositoryState, repositories: RepositoryResourceData[]) => void;
     SET_REPOSITORY: (state: RepositoryState, repository: RepositoryResourceData) => void;
     UPDATE_REPOSITORY_STATUS: (state: RepositoryState, payload: { repoName: string; status: string; lastSynced?: string }) => void;
-    START_SYNC_OPERATION: (state: RepositoryState, operation: any) => void;
+    START_SYNC_OPERATION: (state: RepositoryState, operation: unknown) => void;
     UPDATE_SYNC_PROGRESS: (state: RepositoryState, payload: { repoName: string; progress: number; stage: string }) => void;
     COMPLETE_SYNC_OPERATION: (state: RepositoryState, payload: { repoName: string; success: boolean; error?: string }) => void;
   };
@@ -177,7 +179,7 @@ export interface SuseAIStore {
     // Discovery getters
     isDiscovering: (state: SuseAIState) => boolean;
     discoveryProgress: (state: SuseAIState) => DiscoveryProgress;
-    discoveryErrors: (state: SuseAIState) => any[];
+    discoveryErrors: (state: SuseAIState) => unknown[];
     
     // Cross-module getters
     appsWithInstallations: (state: SuseAIState) => AppSummary[];
@@ -199,9 +201,9 @@ export interface SuseAIStore {
   mutations: {
     // Discovery mutations
     START_DISCOVERY: (state: SuseAIState) => void;
-    UPDATE_DISCOVERY_PROGRESS: (state: SuseAIState, payload: any) => void;
-    COMPLETE_DISCOVERY: (state: SuseAIState, payload?: any) => void;
-    FAIL_DISCOVERY: (state: SuseAIState, error: any) => void;
+    UPDATE_DISCOVERY_PROGRESS: (state: SuseAIState, payload: unknown) => void;
+    COMPLETE_DISCOVERY: (state: SuseAIState, payload?: unknown) => void;
+    FAIL_DISCOVERY: (state: SuseAIState, error: unknown) => void;
     
     // Settings mutations
     UPDATE_SETTINGS: (state: SuseAIState, settings: Partial<SuseAIState['settings']>) => void;
@@ -221,9 +223,9 @@ export interface SuseAIStore {
     discoverAllData: (context: ActionContext<SuseAIState, SuseAIState>, payload?: DiscoverInstallationsPayload) => Promise<void>;
     
     // Bulk operations
-    performBulkInstall: (context: ActionContext<SuseAIState, SuseAIState>, payload: any) => Promise<void>;
-    performBulkUpgrade: (context: ActionContext<SuseAIState, SuseAIState>, payload: any) => Promise<void>;
-    performBulkUninstall: (context: ActionContext<SuseAIState, SuseAIState>, payload: any) => Promise<void>;
+    performBulkInstall: (context: ActionContext<SuseAIState, SuseAIState>, payload: unknown) => Promise<void>;
+    performBulkUpgrade: (context: ActionContext<SuseAIState, SuseAIState>, payload: unknown) => Promise<void>;
+    performBulkUninstall: (context: ActionContext<SuseAIState, SuseAIState>, payload: unknown) => Promise<void>;
     
     // Settings actions  
     updateSettings: (context: ActionContext<SuseAIState, SuseAIState>, settings: Partial<SuseAIState['settings']>) => void;
@@ -245,6 +247,7 @@ export interface SuseAIStore {
 
 // === Store Plugin Interface ===
 export interface StorePlugin {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   install: (store: any) => void;
 }
 

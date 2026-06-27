@@ -11,14 +11,17 @@ import (
 	urlpkg "net/url"
 
 	"helm.sh/helm/v3/pkg/cli"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/config"
 	helmClient "github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/infra/kubernetes"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
@@ -28,6 +31,7 @@ import (
 const (
 	defaultReadinessTimeout = 5 * time.Minute
 	readinessRequeue        = 10 * time.Second
+	uiConfigMapName         = "aif-ui-config"
 	healthCheckInterval     = 60 * time.Second
 
 	conditionTypeReady           = "Ready"
@@ -143,8 +147,40 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 	ext.Status.ActiveExtensionName = ext.Spec.Extension.Name
 	ext.Status.ActiveSourceKind = ext.Spec.Source.Kind
 
+	if err := r.syncUIConfigMap(ctx); err != nil {
+		logger.Error(err, "failed to sync operator coordinates to UI ConfigMap")
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	logger.Info("reconciled successfully")
 	return ctrl.Result{RequeueAfter: healthCheckInterval}, nil
+}
+
+// syncUIConfigMap writes the operator namespace and service name into the
+// aif-ui-config ConfigMap so the UI extension can reach the operator without
+// manual configuration. It runs on every successful reconcile loop, giving
+// self-healing behaviour if the ConfigMap is deleted or corrupted.
+// The ConfigMap is intentionally not deleted when the CR is removed — the UI
+// retains the last-known operator coordinates so it remains functional.
+func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	ns, svc := config.GetOperatorNamespace(), config.GetOperatorService()
+	logger.V(1).Info("syncing UI ConfigMap", "operatorNamespace", ns, "operatorService", svc)
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      uiConfigMapName,
+			Namespace: r.ExtensionNamespace,
+		},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		cm.Data["operatorNamespace"] = ns
+		cm.Data["operatorService"] = svc
+		return nil
+	})
+	return err
 }
 
 func (r *InstallAIExtensionReconciler) reconcileHelmSource(

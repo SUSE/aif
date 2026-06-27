@@ -101,6 +101,14 @@ export default [
     meta:      { product: PRODUCT, category: 'workloads' }
   },
 
+  // About page
+  {
+    name:      `c-cluster-${ PRODUCT }-${ PAGE_TYPES.ABOUT }`,
+    path:      `/c/:cluster/${ PRODUCT }/${ PAGE_TYPES.ABOUT }`,
+    component: () => import('./pages/About.vue'),
+    meta:      { product: PRODUCT, category: 'about' }
+  },
+
   // Legacy routes (kept for compatibility during transition)
   {
     name:      `c-cluster-${PRODUCT}-home`,

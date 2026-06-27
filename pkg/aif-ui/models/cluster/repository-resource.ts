@@ -5,6 +5,7 @@
 
 import SuseaiResource, { Action, ActionOpts } from '../base/suseai-resource';
 import { StateMixin, MetadataMixin } from '../base/resource-mixin';
+import logger from '../../utils/logger';
 
 export type RepositoryType = 'helm' | 'oci' | 'git';
 
@@ -103,7 +104,7 @@ export default class RepositoryResource extends SuseaiResource {
   private stateMixin: StateMixin;
   private metadataMixin: MetadataMixin;
 
-  constructor(data: RepositoryResourceData, store?: any, router?: any, route?: any) {
+  constructor(data: RepositoryResourceData, store?: unknown, router?: unknown, route?: unknown) {
     super(data, store, router, route);
     
     // Map data properties
@@ -470,7 +471,7 @@ export default class RepositoryResource extends SuseaiResource {
         query
       });
     } catch (error) {
-      console.warn(`Failed to search charts in ${this.repoName}:`, error);
+      logger.warn(`Failed to search charts in ${this.repoName}:`, { data: error });
       return [];
     }
   }
@@ -494,7 +495,7 @@ export default class RepositoryResource extends SuseaiResource {
         chartName
       });
     } catch (error) {
-      console.warn(`Failed to get chart ${chartName} from ${this.repoName}:`, error);
+      logger.warn(`Failed to get chart ${chartName} from ${this.repoName}:`, { data: error });
       return null;
     }
   }

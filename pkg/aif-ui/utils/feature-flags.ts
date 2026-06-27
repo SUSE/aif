@@ -23,6 +23,7 @@
 
 import { FEATURE_FLAGS, VERSION_REQUIREMENTS } from './constants';
 import type { FeatureFlag } from './constants';
+import logger from './logger';
 
 type ClusterId = string;
 
@@ -223,7 +224,7 @@ export function isVersionCompatible(version: string, minVersion?: string, maxVer
 }
 
 // === Cluster Version Detection ===
-export function getClusterVersion(clusterId: string, store?: any): ClusterVersion {
+export function getClusterVersion(_clusterId: string, _store?: unknown): ClusterVersion {
   // This would get version info from the store
   // For now, return default values
   return {
@@ -287,7 +288,7 @@ export function checkCapabilityRequirements(
   // Check required capabilities
   if (requirements.requiredCapabilities) {
     for (const capability of requirements.requiredCapabilities) {
-      if (!(clusterCapabilities as any)[capability]) {
+      if (!(clusterCapabilities as Record<string, unknown>)[capability]) {
         return false;
       }
     }
@@ -327,17 +328,17 @@ export function checkCapabilityRequirements(
 export function featureEnabled(
   flag: FeatureFlag,
   clusterId?: ClusterId,
-  store?: any
+  store?: unknown
 ): boolean {
   const config = RELEASE_FEATURES[flag];
   if (!config) {
-    console.warn(`Unknown feature flag: ${flag}`);
+    logger.warn(`Unknown feature flag: ${flag}`);
     return false;
   }
   
   // Check if feature is deprecated
   if (config.deprecated) {
-    console.warn(`Feature ${flag} is deprecated and will be removed in a future version`);
+    logger.warn(`Feature ${flag} is deprecated and will be removed in a future version`);
     return false;
   }
   
@@ -352,7 +353,8 @@ export function featureEnabled(
     }
     
     // Get cluster capabilities from store
-    const clusterCapabilities = store.getters[`suseai/clusters/clusterCapabilities`](clusterId);
+    const clusterCapabilities = (store as { getters: Record<string, (id: string) => ClusterCapabilities | undefined> })
+      .getters[`suseai/clusters/clusterCapabilities`]?.(clusterId);
     if (clusterCapabilities && !checkCapabilityRequirements(clusterCapabilities, config.requirements)) {
       return false;
     }
@@ -365,13 +367,13 @@ export function featureEnabled(
       enabled = userPreferences[flag];
     }
   } catch (error) {
-    console.warn('Failed to load user feature preferences:', error);
+    logger.warn('Failed to load user feature preferences:', error);
   }
   
   return enabled;
 }
 
-export function getAllEnabledFeatures(clusterId?: ClusterId, store?: any): FeatureFlag[] {
+export function getAllEnabledFeatures(clusterId?: ClusterId, store?: unknown): FeatureFlag[] {
   const enabledFeatures: FeatureFlag[] = [];
   
   for (const flag of Object.values(FEATURE_FLAGS)) {
@@ -398,7 +400,7 @@ export function setUserFeaturePreference(flag: FeatureFlag, enabled: boolean): v
     preferences[flag] = enabled;
     localStorage.setItem('suseai-feature-flags', JSON.stringify(preferences));
   } catch (error) {
-    console.error('Failed to save user feature preference:', error);
+    logger.error('Failed to save user feature preference:', error);
   }
 }
 
@@ -406,7 +408,7 @@ export function resetUserFeaturePreferences(): void {
   try {
     localStorage.removeItem('suseai-feature-flags');
   } catch (error) {
-    console.error('Failed to reset user feature preferences:', error);
+    logger.error('Failed to reset user feature preferences:', error);
   }
 }
 
@@ -414,7 +416,7 @@ export function resetUserFeaturePreferences(): void {
 export function validateClusterForFeature(
   flag: FeatureFlag,
   clusterId: ClusterId,
-  store: any
+  store: unknown
 ): { valid: boolean; reason?: string } {
   const config = getFeatureConfig(flag);
   if (!config) {
@@ -452,26 +454,24 @@ export function validateClusterForFeature(
 }
 
 // === Debug and Development Utilities ===
-export function debugFeatureFlags(clusterId?: ClusterId, store?: any): void {
-  console.group('🏁 SUSE AI Feature Flags');
-  
+export function debugFeatureFlags(clusterId?: ClusterId, store?: unknown): void {
+  logger.debug('SUSE AI Feature Flags');
+
   for (const [flagName, config] of Object.entries(RELEASE_FEATURES)) {
     const enabled = featureEnabled(flagName as FeatureFlag, clusterId, store);
-    const status = enabled ? '✅ ENABLED' : '❌ DISABLED';
+    const status = enabled ? 'ENABLED' : 'DISABLED';
     const experimental = config.experimental ? ' [EXPERIMENTAL]' : '';
     const deprecated = config.deprecated ? ' [DEPRECATED]' : '';
-    
-    console.log(`${status} ${config.displayName}${experimental}${deprecated}`);
-    
+
+    logger.debug(`${status} ${config.displayName}${experimental}${deprecated}`);
+
     if (!enabled && clusterId && store) {
       const validation = validateClusterForFeature(flagName as FeatureFlag, clusterId, store);
       if (!validation.valid && validation.reason) {
-        console.log(`  └─ Reason: ${validation.reason}`);
+        logger.debug(`  └─ Reason: ${validation.reason}`);
       }
     }
   }
-  
-  console.groupEnd();
 }
 
 // Export types for use elsewhere

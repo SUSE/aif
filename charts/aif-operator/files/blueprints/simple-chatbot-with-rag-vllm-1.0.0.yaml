@@ -2,154 +2,163 @@ apiVersion: ai-platform.suse.com/v1alpha1
 kind: Blueprint
 metadata:
   labels:
-    ai-platform.suse.com/blueprint-name: suse-gen-ai-minimal
+    ai-platform.suse.com/blueprint-name: simple-chatbot-with-rag-vllm
     ai-platform.suse.com/blueprint-version: 1.0.0
-  name: suse-gen-ai-minimal-1-0-0
+  name: simple-chatbot-with-rag-vllm-1-0-0
 spec:
   source: SUSE
   components:
-  - chartName: ollama
+  - chartName: vllm
     chartRepo: application-collection
-    chartVersion: 1.55.0
+    chartVersion: 0.1.10
     values:
-      affinity: {}
-      autoscaling:
-        enabled: false
-        maxReplicas: 100
-        minReplicas: 1
-        targetCPUUtilizationPercentage: 80
-      deployment:
-        labels: {}
-      extraArgs: []
-      extraEnv: []
-      extraEnvFrom: []
       extraObjects: []
-      # Pin the service name so cross-component URLs don't depend on the Helm
-      # release name (the operator derives it from the chart name). open-webui
-      # reaches this as http://ollama:11434 (namespace-relative short name), so
-      # the blueprint installs cleanly under any release name or namespace.
-      fullnameOverride: ollama
       global:
         imagePullSecrets: []
         imageRegistry: ""
-      hostIPC: false
-      hostNetwork: false
-      hostPID: false
-      image:
-        pullPolicy: IfNotPresent
-        registry: dp.apps.rancher.io
-        repository: containers/ollama
-        tag: 0.21.2-11.48
-      imagePullSecrets: []
-      ingress:
-        annotations: {}
-        className: ""
-        enabled: false
-        hosts:
-        - host: ollama.local
-          paths:
-          - path: /
-            pathType: Prefix
-        tls: []
-      initContainers: []
-      knative:
-        annotations: {}
-        containerConcurrency: 0
-        enabled: false
-        idleTimeoutSeconds: 300
-        modelBootstrap:
-          ttlSecondsAfterFinished: 300
-        responseStartTimeoutSeconds: 300
-        timeoutSeconds: 300
-      lifecycle: {}
-      livenessProbe:
-        enabled: true
-        failureThreshold: 6
-        initialDelaySeconds: 60
-        path: /
-        periodSeconds: 10
-        successThreshold: 1
-        timeoutSeconds: 5
-      nameOverride: ""
-      namespaceOverride: ""
-      nodeSelector: {}
-      ollama:
-        gpu:
-          draDriverClass: gpu.nvidia.com
-          draEnabled: false
-          draExistingClaimTemplate: ""
+      loraController:
+        enableLoraController: false
+      routerSpec:
+        affinity: {}
+        autoscaling:
           enabled: false
-          mig:
-            devices: {}
+          maxReplicas: 3
+          minReplicas: 1
+          targetCPUUtilizationPercentage: 80
+        containerPort: 8000
+        containerSecurityContext: {}
+        enableRouter: true
+        engineScrapeInterval: 15
+        extraArgs: []
+        extraPorts: []
+        imagePullPolicy: Always
+        imagePullSecrets: []
+        ingress:
+          annotations: {}
+          className: ""
+          enabled: false
+          hosts:
+          - host: vllm-router.local
+            paths:
+            - path: /
+              pathType: Prefix
+          tls: []
+        k8sServiceDiscoveryType: pod-ip
+        labels:
+          environment: router
+          release: router
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        nodeSelectorTerms: []
+        otel:
+          endpoint: ""
+          secure: false
+          serviceName: vllm-router
+        podAnnotations: {}
+        priorityClassName: ""
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        registry: dp.apps.rancher.io
+        replicaCount: 1
+        repository: containers/lmcache-lmstack-router
+        requestStatsWindow: 60
+        resources:
+          limits:
+            memory: 1000Mi
+          requests:
+            cpu: 400m
+            memory: 1000Mi
+        rootPath: ""
+        route:
+          main:
+            additionalRules: []
+            annotations: {}
+            apiVersion: gateway.networking.k8s.io/v1
             enabled: false
-          number: 1
-          nvidiaResource: nvidia.com/gpu
-          type: nvidia
-        insecure: false
-        models:
-          clean: false
-          create: []
-          pull:
-          - gemma:2b
-          run:
-          - gemma:2b
-        mountPath: ""
-        port: 11434
-      persistentVolume:
-        accessModes:
-        - ReadWriteOnce
-        annotations: {}
-        enabled: false
-        existingClaim: ""
-        size: 30Gi
-        storageClass: ""
-        subPath: ""
-        volumeMode: ""
-        volumeName: ""
-      podAnnotations: {}
-      podLabels: {}
-      podSchedulerName: ""
-      podSecurityContext: {}
-      priorityClassName: ""
-      readinessProbe:
-        enabled: true
-        failureThreshold: 6
-        initialDelaySeconds: 30
-        path: /
-        periodSeconds: 5
-        successThreshold: 1
-        timeoutSeconds: 3
-      replicaCount: 1
-      resources:
-        limits: {}
-        requests: {}
-      runtimeClassName: ""
-      securityContext: {}
-      service:
-        annotations: {}
-        ipFamilies: []
-        ipFamilyPolicy: ""
-        labels: {}
-        loadBalancerIP: null
-        nodePort: 31434
-        port: 11434
-        type: ClusterIP
-      serviceAccount:
-        annotations: {}
-        automount: true
-        create: true
-        name: ""
-      terminationGracePeriodSeconds: 120
-      tests:
-        annotations: {}
-        enabled: true
-        labels: {}
-      tolerations: []
-      topologySpreadConstraints: {}
-      updateStrategy:
-        type: Recreate
-      volumeMounts: []
-      volumes: []
+            filters: []
+            hostnames: []
+            httpsRedirect: false
+            kind: HTTPRoute
+            labels: {}
+            matches:
+            - path:
+                type: PathPrefix
+                value: /
+            parentRefs: []
+        routingLogic: roundrobin
+        securityContext: {}
+        serviceAnnotations: {}
+        serviceDiscovery: k8s
+        servicePort: 80
+        serviceType: ClusterIP
+        sessionKey: ""
+        startupProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        staticBackends: ""
+        staticModels: ""
+        strategy: {}
+        tag: 0.1.10-3.60
+      servingEngineSpec:
+        configs: {}
+        containerPort: 8000
+        containerSecurityContext:
+          runAsNonRoot: false
+        enableEngine: true
+        extraPorts: []
+        labels:
+          environment: test
+          release: test
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        maxUnavailablePodDisruptionBudget: ""
+        modelSpec:
+        - imagePullPolicy: IfNotPresent
+          modelURL: microsoft/Phi-3-mini-4k-instruct
+          name: phi3-mini-4k
+          registry: dp.apps.rancher.io
+          repository: containers/vllm-openai
+          replicaCount: 1
+          requestCPU: 6
+          requestGPU: 1
+          requestMemory: 16Gi
+          tag: 0.19.0
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        runtimeClassName: nvidia
+        schedulerName: ""
+        securityContext: {}
+        servicePort: 80
+        startupProbe:
+          failureThreshold: 60
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        strategy: {}
+        tolerations: []
   - chartName: open-webui
     chartRepo: application-collection
     chartVersion: 8.19.1
@@ -169,8 +178,6 @@ spec:
       enableOpenaiApi: true
       extraEnvFrom: []
       extraEnvVars:
-      - name: DEFAULT_MODELS
-        value: gemma:2b
       - name: DEFAULT_USER_ROLE
         value: user
       - name: ENABLE_SIGNUP
@@ -188,6 +195,13 @@ spec:
         value: http://milvus:19530
       - name: INSTALL_NLTK_DATASETS
         value: "true"
+      # vLLM exposes an OpenAI-compatible API via its router.
+      - name: ENABLE_OPENAI_API
+        value: "true"
+      - name: OPENAI_API_BASE_URL
+        value: http://vllm-router-service/v1
+      - name: OPENAI_API_KEY
+        value: dummy
       extraInitContainers: []
       extraLabels: {}
       extraResources: []
@@ -219,7 +233,7 @@ spec:
         enabled: true
         existingSecret: ""
         extraLabels: {}
-        host: suse-ollama-webui
+        host: suse-open-webui
         tls: true
       livenessProbe: {}
       logging:
@@ -247,15 +261,9 @@ spec:
       ollama:
         enabled: false
         fullnameOverride: open-webui-ollama
-      ollamaUrls:
-      # Namespace-relative short name: resolves in open-webui's own namespace,
-      # so this works under any install namespace. Service name is pinned via
-      # the ollama component's fullnameOverride.
-      - http://ollama:11434
+      ollamaUrls: []
       ollamaUrlsFromExtraEnv: false
-      # openaiApiKey: 0p3n-w3bu!
       openaiApiKeys: []
-      # openaiBaseApiUrl: https://api.openai.com/v1
       openaiBaseApiUrls: []
       persistence:
         accessModes:
@@ -697,6 +705,8 @@ spec:
         iamEndpoint: ""
         mode: standalone
         name: minio
+        persistence:
+          size: 50Gi
         region: ""
         replicas: 4
         resources:
@@ -978,11 +988,14 @@ spec:
         name: ""
       tolerations: []
   description: |
-    suse-gen-ai-minimal with ollama, open-webui, open-webui-mcpo and milvus.
+    Simple Chatbot with RAG using vLLM, open-webui, Milvus and open-webui-mcpo.
+    Suitable for PoCs and beyond.
+    vllm serves the LLM over an OpenAI-compatible API and requires NVIDIA GPU
+    nodes (the serving engine requests 1 GPU and uses the nvidia runtime class).
     Requires a default StorageClass defined in the cluster for persistent volumes.
     Requires a cert-manager instance running in the cluster.
-    The open-webui chat UI is exposed via Ingress at https://suse-ollama-webui;
-    point a DNS record (or /etc/hosts entry) for the host "suse-ollama-webui"
+    The open-webui chat UI is exposed via Ingress at https://suse-open-webui;
+    point a DNS record (or /etc/hosts entry) for the host "suse-open-webui"
     at the cluster's ingress controller to reach it. The hostname can also be patched after deployment.
-  displayName: suse-gen-ai-minimal
+  displayName: Simple Chatbot with RAG (vLLM and Milvus)
   version: 1.0.0

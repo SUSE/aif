@@ -111,7 +111,7 @@ aiExtension:
       # values are merged onto the aif-ui chart's default values. Useful for
       # overriding the UI image during development:
       #   aiExtension.source.helm.values.image.registry=ghcr.io
-      #   aiExtension.source.helm.values.image.repository=thbertoldi/aif-ui
+      #   aiExtension.source.helm.values.image.repository=suse/aif-ui
       #   aiExtension.source.helm.values.image.tag=0.1.0-dev.4
       values: {}
   extension:

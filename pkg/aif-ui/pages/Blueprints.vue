@@ -108,7 +108,7 @@
               <div class="tile-info">
                 <div class="tile-title-row">
                   <h3 class="tile-title">
-                    {{ latestFor(versions).spec.displayName }}
+                    {{ toTitleCase(latestFor(versions).spec.displayName) }}
                   </h3>
                   <select
                     v-model="selectedVersions[family]"
@@ -329,14 +329,16 @@ import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
+import logger from '../utils/logger';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
   components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner, BlueprintDetailPanel },
   setup() {
-    const vm        = getCurrentInstance()!.proxy as any;
-    const $router   = vm.$router;
-    const $route    = vm.$route;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vm        = getCurrentInstance()?.proxy as any;
+    const $router   = vm?.$router;
+    const $route    = vm?.$route;
     const cluster   = ($route?.params?.cluster as string) || '_';
 
     const loading         = ref(true);
@@ -463,8 +465,8 @@ export default defineComponent({
         if (Object.keys(updates).length) {
           selectedVersions.value = { ...selectedVersions.value, ...updates };
         }
-      } catch (e: any) {
-        error.value = e?.message || 'Failed to load blueprints';
+      } catch (e: unknown) {
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to load blueprints';
       } finally {
         loading.value = false;
       }
@@ -553,7 +555,7 @@ export default defineComponent({
       displayName:     '',
       version:         '',
       crName:          '',
-      activeWorkloads: [] as any[],
+      activeWorkloads: [] as unknown[],
       deleting:        false,
     });
 
@@ -573,8 +575,8 @@ export default defineComponent({
         await deleteBlueprint(deleteModal.crName);
         deleteModal.show = false;
         await refresh();
-      } catch (e: any) {
-        error.value = e?.message || 'Failed to delete blueprint';
+      } catch (e: unknown) {
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to delete blueprint';
         deleteModal.show = false;
       } finally {
         deleteModal.deleting = false;
@@ -589,7 +591,7 @@ export default defineComponent({
       version:         '',
       crName:          '',
       currentlyDeprecated: false,
-      activeWorkloads: [] as any[],
+      activeWorkloads: [] as unknown[],
       saving:          false,
     });
 
@@ -612,8 +614,8 @@ export default defineComponent({
         await updateBlueprintDeprecated(deprecateModal.crName, !deprecateModal.currentlyDeprecated);
         deprecateModal.show = false;
         await refresh();
-      } catch (e: any) {
-        error.value = e?.message || 'Failed to update blueprint';
+      } catch (e: unknown) {
+        error.value = (e instanceof Error ? e.message : null) || 'Failed to update blueprint';
         deprecateModal.show = false;
       } finally {
         deprecateModal.saving = false;
@@ -640,14 +642,14 @@ export default defineComponent({
         // login username, so the global admin was only ever seen as a non-admin.
         isAdmin.value = isAdminUser(vm.$store.getters);
       } catch (e) {
-        console.warn('[SUSE-AI] checkAdminRole failed — admin actions will be hidden:', e);
+        logger.warn('[SUSE-AI] checkAdminRole failed — admin actions will be hidden', { data: e });
         isAdmin.value = false;
       }
     }
 
     // ── Three-dot tile menu ────────────────────────────────────────────────────
-    function tileActions(family: string, versions: Blueprint[]): any[] {
-      const actions: any[] = [
+    function tileActions(family: string, versions: Blueprint[]): unknown[] {
+      const actions: unknown[] = [
         { action: 'copy', label: 'Copy', enabled: true },
       ];
       if (isAdmin.value) {

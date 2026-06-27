@@ -20,28 +20,37 @@ export default defineComponent({
   },
   computed: {
     selected(): string {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mv = (this as any).modelValue as string | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const legacy = (this as any).value as string | undefined;
-      return (mv != null ? mv : (legacy || '')) as string;
+      return (mv !== null && mv !== undefined ? mv : (legacy || '')) as string;
     }
   },
   async mounted() {
-    const store: any = (this as any).$store;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const store: unknown = (this as any).$store;
     try {
       const rows = await getAllClusters(store);
-      (this as any).options = (rows || []).map((c: any) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this as any).options = (rows || []).map((c: { id: string; name?: string; ready?: boolean }) => ({
         id:    c.id,
         name:  c.name || c.id,
         ready: c.ready !== false
       }));
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const readyOptions = ((this as any).options as { id: string; name: string; ready: boolean }[]).filter(o => o.ready);
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if ((this as any).options.length === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (this as any).error = 'No clusters found';
       } else if (readyOptions.length === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (this as any).error = 'All clusters are currently unavailable';
       } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (this as any).error = null;
       }
 
@@ -50,10 +59,13 @@ export default defineComponent({
         this.$emit('update:modelValue', readyOptions[0].id);
         this.$emit('input', readyOptions[0].id);
       }
-    } catch (e: any) {
-      (this as any).error = e?.message || 'Failed to list clusters';
+    } catch (e: unknown) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this as any).error = (e instanceof Error ? e.message : null) || 'Failed to list clusters';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (this as any).options = [];
     } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (this as any).loading = false;
     }
   },
@@ -70,20 +82,36 @@ export default defineComponent({
 
 <template>
   <div>
-    <div v-if="loading" class="hint">Loading clusters…</div>
-    <div v-else-if="error" class="hint">{{ error }}</div>
-    <select v-else 
-            class="control" 
-            :value="selected" 
-            :disabled="disabled"
-            @change="onSelect">
-      <option value="">— Select a cluster —</option>
+    <div
+      v-if="loading"
+      class="hint"
+    >
+      Loading clusters…
+    </div>
+    <div
+      v-else-if="error"
+      class="hint"
+    >
+      {{ error }}
+    </div>
+    <select
+      v-else 
+      class="control" 
+      :value="selected" 
+      :disabled="disabled"
+      @change="onSelect"
+    >
+      <option value="">
+        — Select a cluster —
+      </option>
       <option
         v-for="o in options"
         :key="o.id"
         :value="o.id"
         :disabled="!o.ready"
-      >{{ o.ready ? o.name : `${o.name} (Unavailable)` }}</option>
+      >
+        {{ o.ready ? o.name : `${o.name} (Unavailable)` }}
+      </option>
     </select>
   </div>
 </template>

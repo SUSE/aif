@@ -11,7 +11,7 @@ export interface GitPublishParams {
   chartVersion:     string;
   chartRepoUrl:     string;
   helmSecretName:   string | null;
-  values:           Record<string, any>;
+  values:           Record<string, unknown>;
   pullSecretNames:  string[];
   targetClusterIds: string[];
   targetNamespace:  string;

@@ -1,6 +1,8 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ t('suseai.wizard.steps.selectApps', 'Select Applications') }}</h2>
+    <h2 class="step-title">
+      {{ t('suseai.wizard.steps.selectApps', 'Select Applications') }}
+    </h2>
 
     <div class="search-row">
       <input
@@ -10,23 +12,38 @@
         :placeholder="t('suseai.wizard.form.searchApps', 'Search applications...')"
         @input="onSearch"
       />
-      <div v-if="searchResults.length" class="search-dropdown">
+      <div
+        v-if="searchResults.length"
+        class="search-dropdown"
+      >
         <div
           v-for="app in searchResults"
           :key="app.slug_name"
           class="search-result"
           @click="addApp(app)"
         >
-          <img :src="app.logo_url || genericIcon" alt="" class="result-logo" @error="onImgError" />
+          <img
+            :src="app.logo_url || genericIcon"
+            alt=""
+            class="result-logo"
+            @error="onImgError"
+          />
           <div>
-            <div class="result-name">{{ app.name }}</div>
-            <div class="result-meta text-muted">{{ app.description?.slice(0, 60) }}</div>
+            <div class="result-name">
+              {{ app.name }}
+            </div>
+            <div class="result-meta text-muted">
+              {{ app.description?.slice(0, 60) }}
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div v-if="!components.length" class="empty-hint text-muted mt-20">
+    <div
+      v-if="!components.length"
+      class="empty-hint text-muted mt-20"
+    >
       Search and select at least one application.
     </div>
 
@@ -37,9 +54,23 @@
         class="selected-tile"
       >
         <div class="tile-header">
-          <img :src="logoFor(comp.chartName)" alt="" class="tile-logo" @error="onImgError" />
-          <div class="tile-name">{{ comp.chartName }}</div>
-          <button class="btn-remove" type="button" :aria-label="t('suseai.wizard.form.removeApp', 'Remove application')" @click="removeApp(idx)">✕</button>
+          <img
+            :src="logoFor(comp.chartName)"
+            alt=""
+            class="tile-logo"
+            @error="onImgError"
+          />
+          <div class="tile-name">
+            {{ comp.chartName }}
+          </div>
+          <button
+            class="btn-remove"
+            type="button"
+            :aria-label="t('suseai.wizard.form.removeApp', 'Remove application')"
+            @click="removeApp(idx)"
+          >
+            ✕
+          </button>
         </div>
         <div class="row tile-fields">
           <div class="col span-6">
@@ -86,8 +117,9 @@ interface Emits { (e: 'update:components', v: BlueprintComponent[]): void }
 
 const props  = defineProps<Props>();
 const emit   = defineEmits<Emits>();
-const vm     = getCurrentInstance()!.proxy as any;
-const store  = vm.$store;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vm     = getCurrentInstance()?.proxy as any;
+const store  = vm?.$store;
 
 const t = useT();
 

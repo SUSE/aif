@@ -9,7 +9,12 @@
           :disabled="props.releaseDisabled"
           required
         />
-        <p v-if="releaseError" class="release-error">{{ releaseError }}</p>
+        <p
+          v-if="releaseError"
+          class="release-error"
+        >
+          {{ releaseError }}
+        </p>
       </div>
       <div class="col span-6">
         <NamespaceAutocomplete

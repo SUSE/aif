@@ -18,7 +18,7 @@ export interface ValidationError {
   field: string;
   message: string;
   code: ErrorCode;
-  value?: any;
+  value?: unknown;
   severity: 'error' | 'warning';
 }
 
@@ -30,7 +30,7 @@ export interface ValidationWarning {
 
 export interface FieldValidationRule {
   name: string;
-  validate: (value: any, context?: any) => ValidationResult | Promise<ValidationResult>;
+  validate: (value: unknown, context?: unknown) => ValidationResult | Promise<ValidationResult>;
   async?: boolean;
 }
 
@@ -43,10 +43,10 @@ export interface FormField {
   disabled?: boolean;
   placeholder?: string;
   description?: string;
-  defaultValue?: any;
+  defaultValue?: unknown;
   rules?: FieldValidationRule[];
   dependsOn?: string[];
-  showWhen?: (values: Record<string, any>) => boolean;
+  showWhen?: (values: Record<string, unknown>) => boolean;
 }
 
 export type FieldType = 
@@ -76,7 +76,7 @@ export interface FormSchema {
 
 export interface FormValidationRule {
   name: string;
-  validate: (values: Record<string, any>) => ValidationResult | Promise<ValidationResult>;
+  validate: (values: Record<string, unknown>) => ValidationResult | Promise<ValidationResult>;
   async?: boolean;
 }
 
@@ -87,12 +87,12 @@ export interface FormValidationRule {
  */
 export const requiredRule: FieldValidationRule = {
   name: 'required',
-  validate: (value: any): ValidationResult => {
-    const isEmpty = value === null || 
-                   value === undefined || 
-                   value === '' || 
+  validate: (value): ValidationResult => {
+    const isEmpty = value === null ||
+                   value === undefined ||
+                   value === '' ||
                    (Array.isArray(value) && value.length === 0) ||
-                   (typeof value === 'object' && Object.keys(value).length === 0);
+                   (typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length === 0);
     
     if (isEmpty) {
       return {
@@ -116,7 +116,7 @@ export const requiredRule: FieldValidationRule = {
  */
 export const lengthRule = (min?: number, max?: number): FieldValidationRule => ({
   name: 'length',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -156,7 +156,7 @@ export const lengthRule = (min?: number, max?: number): FieldValidationRule => (
  */
 export const patternRule = (pattern: RegExp, message: string): FieldValidationRule => ({
   name: 'pattern',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -184,7 +184,7 @@ export const patternRule = (pattern: RegExp, message: string): FieldValidationRu
  */
 export const emailRule: FieldValidationRule = {
   name: 'email',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -214,7 +214,7 @@ export const emailRule: FieldValidationRule = {
  */
 export const urlRule: FieldValidationRule = {
   name: 'url',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -243,7 +243,7 @@ export const urlRule: FieldValidationRule = {
  */
 export const rangeRule = (min?: number, max?: number): FieldValidationRule => ({
   name: 'range',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     const num = typeof value === 'string' ? parseFloat(value) : value;
     
     if (typeof num !== 'number' || isNaN(num)) {
@@ -285,7 +285,7 @@ export const rangeRule = (min?: number, max?: number): FieldValidationRule => ({
  */
 export const jsonRule: FieldValidationRule = {
   name: 'json',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -293,12 +293,12 @@ export const jsonRule: FieldValidationRule = {
     try {
       JSON.parse(value);
       return { valid: true, errors: [], warnings: [] };
-    } catch (error: any) {
+    } catch (error) {
       return {
         valid: false,
         errors: [{
           field: '',
-          message: `Invalid JSON: ${error.message}`,
+          message: `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
           code: ERROR_CODES.UNKNOWN,
           value,
           severity: 'error'
@@ -314,7 +314,7 @@ export const jsonRule: FieldValidationRule = {
  */
 export const yamlRule: FieldValidationRule = {
   name: 'yaml',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -337,12 +337,12 @@ export const yamlRule: FieldValidationRule = {
       }
       
       return { valid: true, errors: [], warnings: [] };
-    } catch (error: any) {
+    } catch (error) {
       return {
         valid: false,
         errors: [{
           field: '',
-          message: `Invalid YAML: ${error.message}`,
+          message: `Invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
           code: ERROR_CODES.UNKNOWN,
           value,
           severity: 'error'
@@ -360,7 +360,7 @@ export const yamlRule: FieldValidationRule = {
  */
 export const k8sNameRule: FieldValidationRule = {
   name: 'k8s-name',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -401,7 +401,7 @@ export const k8sNameRule: FieldValidationRule = {
  */
 export const k8sLabelRule: FieldValidationRule = {
   name: 'k8s-label',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -442,7 +442,7 @@ export const k8sLabelRule: FieldValidationRule = {
  */
 export const resourceQuantityRule: FieldValidationRule = {
   name: 'resource-quantity',
-  validate: (value: any): ValidationResult => {
+  validate: (value): ValidationResult => {
     if (!value || typeof value !== 'string') {
       return { valid: true, errors: [], warnings: [] };
     }
@@ -473,15 +473,16 @@ export const resourceQuantityRule: FieldValidationRule = {
  * Validate chart values against schema
  */
 export function validateChartValues(
-  values: Record<string, any>,
-  schema: Record<string, any>
+  values: Record<string, unknown>,
+  schema: Record<string, unknown>
 ): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationWarning[] = [];
-  
+
   function validateValue(
     path: string,
-    value: any,
+    value: unknown,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     fieldSchema: any
   ): void {
     // Required field check
@@ -652,7 +653,7 @@ export function validateChartValues(
  * Validate entire form
  */
 export async function validateForm(
-  values: Record<string, any>,
+  values: Record<string, unknown>,
   schema: FormSchema
 ): Promise<ValidationResult> {
   const errors: ValidationError[] = [];
@@ -671,28 +672,28 @@ export async function validateForm(
     if (field.required) {
       const result = await Promise.resolve(requiredRule.validate(value));
       if (!result.valid) {
-        errors.push(...result.errors.map((e: any) => ({ ...e, field: field.name })));
+        errors.push(...result.errors.map((e: ValidationError) => ({ ...e, field: field.name })));
       }
     }
-    
+
     // Field-specific rules
     if (field.rules) {
       for (const rule of field.rules) {
         try {
-          const result = rule.async ? 
-            await rule.validate(value, values) : 
+          const result = rule.async ?
+            await rule.validate(value, values) :
             rule.validate(value, values);
-          
+
           const resolvedResult = await Promise.resolve(result);
-          
+
           if (!resolvedResult.valid) {
-            errors.push(...resolvedResult.errors.map((e: any) => ({ ...e, field: field.name })));
-            warnings.push(...resolvedResult.warnings.map((w: any) => ({ ...w, field: field.name })));
+            errors.push(...resolvedResult.errors.map((e: ValidationError) => ({ ...e, field: field.name })));
+            warnings.push(...resolvedResult.warnings.map((w: ValidationWarning) => ({ ...w, field: field.name })));
           }
-        } catch (error: any) {
+        } catch (error) {
           errors.push({
             field: field.name,
-            message: `Validation failed: ${error.message}`,
+            message: `Validation failed: ${error instanceof Error ? error.message : String(error)}`,
             code: ERROR_CODES.UNKNOWN,
             severity: 'error'
           });
@@ -700,25 +701,25 @@ export async function validateForm(
       }
     }
   }
-  
+
   // Form-level rules
   if (schema.rules) {
     for (const rule of schema.rules) {
       try {
-        const result = rule.async ? 
-          await rule.validate(values) : 
+        const result = rule.async ?
+          await rule.validate(values) :
           rule.validate(values);
-        
+
         const resolvedResult = await Promise.resolve(result);
-        
+
         if (!resolvedResult.valid) {
           errors.push(...resolvedResult.errors);
           warnings.push(...resolvedResult.warnings);
         }
-      } catch (error: any) {
+      } catch (error) {
         errors.push({
           field: 'form',
-          message: `Form validation failed: ${error.message}`,
+          message: `Form validation failed: ${error instanceof Error ? error.message : String(error)}`,
           code: ERROR_CODES.UNKNOWN,
           severity: 'error' as const
         });
@@ -737,9 +738,9 @@ export async function validateForm(
  * Validate single field
  */
 export async function validateField(
-  value: any,
+  value: unknown,
   field: FormField,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): Promise<ValidationResult> {
   const errors: ValidationError[] = [];
   const warnings: ValidationWarning[] = [];
@@ -807,17 +808,17 @@ export async function validateField(
           errors.push(...resolvedResult.errors.map((e: ValidationError) => ({ ...e, field: field.name })));
           warnings.push(...resolvedResult.warnings.map((w: ValidationWarning) => ({ ...w, field: field.name })));
         }
-      } catch (error: any) {
+      } catch (error) {
         errors.push({
           field: field.name,
-          message: `Validation failed: ${error.message}`,
+          message: `Validation failed: ${error instanceof Error ? error.message : String(error)}`,
           code: ERROR_CODES.UNKNOWN,
           severity: 'error' as const
         });
       }
     }
   }
-  
+
   return {
     valid: errors.length === 0,
     errors,

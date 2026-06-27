@@ -49,8 +49,9 @@ interface Emits {
 
 const props = defineProps<Props>();
 const emit  = defineEmits<Emits>();
-const vm    = getCurrentInstance()!.proxy as any;
-const store = vm.$store;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const vm    = getCurrentInstance()?.proxy as any;
+const store = vm?.$store;
 
 const t = useT();
 

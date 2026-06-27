@@ -6,9 +6,16 @@
         <h1>Applications</h1>
 
         <!-- Toolbar with filters and actions -->
-        <div class="actions-container" role="toolbar" aria-label="Application filters and actions">
+        <div
+          class="actions-container"
+          role="toolbar"
+          aria-label="Application filters and actions"
+        >
           <div class="search-box">
-            <label for="search-input" class="sr-only">Search applications</label>
+            <label
+              for="search-input"
+              class="sr-only"
+            >Search applications</label>
             <input
               id="search-input"
               v-model="search"
@@ -21,213 +28,334 @@
           </div>
 
           <div class="filter-group">
-            <label for="repository-filter" class="sr-only">Filter by repository</label>
+            <label
+              for="repository-filter"
+              class="sr-only"
+            >Filter by repository</label>
             <select
               id="repository-filter"
               v-model="selectedRepo"
               class="form-control"
               aria-label="Filter applications by repository"
             >
-              <option v-for="option in repositoryOptions" :key="option.value" :value="option.value">
+              <option
+                v-for="option in repositoryOptions"
+                :key="option.value"
+                :value="option.value"
+              >
                 {{ option.label }}
               </option>
             </select>
           </div>
 
-          <div class="view-controls" role="group" aria-label="View mode selection">
+          <div
+            class="view-controls"
+            role="group"
+            aria-label="View mode selection"
+          >
             <button
               :class="['btn', 'btn-sm', viewMode === 'tiles' ? 'role-primary' : 'role-secondary']"
-              @click="viewMode = 'tiles'"
               :title="t('suseai.apps.tileView', 'Tile View')"
               :aria-label="t('suseai.apps.tileView', 'Tile View')"
               :aria-pressed="viewMode === 'tiles'"
               type="button"
+              @click="viewMode = 'tiles'"
             >
-              <i class="icon icon-th view-icon-grid" aria-hidden="true" />
+              <i
+                class="icon icon-th view-icon-grid"
+                aria-hidden="true"
+              />
             </button>
             <button
               :class="['btn', 'btn-sm', viewMode === 'list' ? 'role-primary' : 'role-secondary']"
-              @click="viewMode = 'list'"
               :title="t('suseai.apps.listView', 'List View')"
               :aria-label="t('suseai.apps.listView', 'List View')"
               :aria-pressed="viewMode === 'list'"
               type="button"
+              @click="viewMode = 'list'"
             >
-              <i class="icon icon-th-list view-icon-list" aria-hidden="true" />
+              <i
+                class="icon icon-th-list view-icon-list"
+                aria-hidden="true"
+              />
             </button>
           </div>
 
           <button
             class="btn role-primary"
-            @click="refresh"
             :disabled="loading"
             :title="t('suseai.apps.refresh', 'Refresh')"
             :aria-label="loading ? 'Refreshing applications...' : 'Refresh applications'"
             type="button"
+            @click="refresh"
           >
-            <i v-if="loading" class="icon icon-spinner icon-spin" aria-hidden="true" />
-            <i v-else class="icon icon-refresh" aria-hidden="true" />
+            <i
+              v-if="loading"
+              class="icon icon-spinner icon-spin"
+              aria-hidden="true"
+            />
+            <i
+              v-else
+              class="icon icon-refresh"
+              aria-hidden="true"
+            />
             {{ t('suseai.apps.refresh', 'Refresh') }}
           </button>
         </div>
       </header>
 
       <!-- Error state -->
-      <div v-if="error" class="banner bg-error">
+      <div
+        v-if="error"
+        class="banner bg-error"
+      >
         <span>{{ error }}</span>
       </div>
 
       <!-- Search results count -->
-      <div v-if="search && !loading" id="search-results-count" class="sr-only" aria-live="polite">
+      <div
+        v-if="search && !loading"
+        id="search-results-count"
+        class="sr-only"
+        aria-live="polite"
+      >
         {{ filteredApps.length }} {{ filteredApps.length === 1 ? 'application' : 'applications' }} found for "{{ search }}"
       </div>
 
       <!-- Main content area - always present to avoid layout jumps -->
       <div class="main-content">
         <!-- Results/Loading summary - fixed position to prevent jumps -->
-        <div class="results-summary" aria-live="polite">
-          <div v-if="filteredApps.length" class="results-text">
+        <div
+          class="results-summary"
+          aria-live="polite"
+        >
+          <div
+            v-if="filteredApps.length"
+            class="results-text"
+          >
             Showing {{ filteredApps.length }} of {{ filteredApps.length }} applications
           </div>
-          <div v-else-if="!loading && !error && items.length > 0" class="results-text">
+          <div
+            v-else-if="!loading && !error && items.length > 0"
+            class="results-text"
+          >
             No applications found
           </div>
         </div>
 
         <!-- Tiles view -->
-        <div v-if="viewMode === 'tiles'" class="tiles-grid" role="grid" aria-label="Applications grid">
+        <div
+          v-if="viewMode === 'tiles'"
+          class="tiles-grid"
+          role="grid"
+          aria-label="Applications grid"
+        >
           <div
             v-for="app in filteredApps"
             :key="app.slug_name"
             :class="['app-tile', 'clickable-tile']"
-            @click="onTileClick(app)"
             :aria-label="`Install ${ app.name }`"
             role="button"
             tabindex="0"
+            @click="onTileClick(app)"
             @keydown.enter="onTileClick(app)"
             @keydown.space.prevent="onTileClick(app)"
           >
             <div class="tile-header">
-              <img :src="logoFor(app)" alt="" @error="onImgError($event)" class="tile-logo" />
+              <img
+                :src="logoFor(app)"
+                alt=""
+                class="tile-logo"
+                @error="onImgError($event)"
+              />
               <div class="tile-info">
                 <div class="tile-title-row">
-                  <h3 class="tile-title">{{ app.name }}</h3>
+                  <h3 class="tile-title">
+                    {{ app.name }}
+                  </h3>
                 </div>
                 <div class="tile-meta">
-                  <span v-if="app.packaging_format" class="tile-meta-item">
+                  <span
+                    v-if="app.packaging_format"
+                    class="tile-meta-item"
+                  >
                     {{ formatPackagingType(app.packaging_format) }}
                   </span>
                 </div>
               </div>
               <div class="tile-actions">
-                <a v-if="app.project_url" :href="app.project_url" target="_blank" rel="noopener noreferrer" class="action-link" title="Project page" @click.stop>
+                <a
+                  v-if="app.project_url"
+                  :href="app.project_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="action-link"
+                  title="Project page"
+                  @click.stop
+                >
                   <i class="icon icon-external-link" />
                 </a>
-                <a v-if="app.documentation_url" :href="app.documentation_url" target="_blank" rel="noopener noreferrer" class="action-link" title="Documentation" @click.stop>
+                <a
+                  v-if="app.documentation_url"
+                  :href="app.documentation_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="action-link"
+                  title="Documentation"
+                  @click.stop
+                >
                   <i class="icon icon-document" />
                 </a>
               </div>
             </div>
 
             <div class="tile-content">
-              <p class="tile-description">{{ app.description || '—' }}</p>
+              <p class="tile-description">
+                {{ app.description || '—' }}
+              </p>
             </div>
           </div>
           <div
-              v-for="n in 5"
-              :key="`filler-${n}`"
-              class="app-tile app-tile-filler"
+            v-for="n in 5"
+            :key="`filler-${n}`"
+            class="app-tile app-tile-filler"
           ></div>
         </div>
 
-      <!-- List view -->
-      <div v-else class="list-view">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t('suseai.apps.name', 'Name') }}</th>
-              <th>{{ t('suseai.apps.description', 'Description') }}</th>
-              <th class="text-right">{{ t('suseai.apps.actions', 'Actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!filteredApps.length && items.length > 0" class="empty-row">
-              <td colspan="3" class="text-center text-muted">{{ t('suseai.apps.noApps', 'No applications found') }}</td>
-            </tr>
-            <tr
-              v-else
-              v-for="app in filteredApps"
-              :key="app.slug_name"
-              class="main-row clickable-row"
-              @click="onTileClick(app)"
-              :aria-label="`Install ${ app.name }`"
-              role="button"
-              tabindex="0"
-              @keydown.enter="onTileClick(app)"
-              @keydown.space.prevent="onTileClick(app)"
-            >
-              <!-- Name column with logo -->
-              <td class="col-name">
-                <div class="name-cell">
-                  <img :src="logoFor(app)" alt="" @error="onImgError($event)" class="table-logo" />
-                  <div class="name-info">
-                    <div class="app-name">{{ app.name }}</div>
-                    <div v-if="app.packaging_format" class="app-meta">
-                      <span class="badge-state badge-sm" :class="getBadgeClass(app.packaging_format)">
-                        {{ formatPackagingType(app.packaging_format) }}
-                      </span>
+        <!-- List view -->
+        <div
+          v-else
+          class="list-view"
+        >
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ t('suseai.apps.name', 'Name') }}</th>
+                <th>{{ t('suseai.apps.description', 'Description') }}</th>
+                <th class="text-right">
+                  {{ t('suseai.apps.actions', 'Actions') }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-if="!filteredApps.length && items.length > 0"
+                class="empty-row"
+              >
+                <td
+                  colspan="3"
+                  class="text-center text-muted"
+                >
+                  {{ t('suseai.apps.noApps', 'No applications found') }}
+                </td>
+              </tr>
+              <tr
+                v-for="app in filteredApps"
+                v-else
+                :key="app.slug_name"
+                class="main-row clickable-row"
+                :aria-label="`Install ${ app.name }`"
+                role="button"
+                tabindex="0"
+                @click="onTileClick(app)"
+                @keydown.enter="onTileClick(app)"
+                @keydown.space.prevent="onTileClick(app)"
+              >
+                <!-- Name column with logo -->
+                <td class="col-name">
+                  <div class="name-cell">
+                    <img
+                      :src="logoFor(app)"
+                      alt=""
+                      class="table-logo"
+                      @error="onImgError($event)"
+                    />
+                    <div class="name-info">
+                      <div class="app-name">
+                        {{ app.name }}
+                      </div>
+                      <div
+                        v-if="app.packaging_format"
+                        class="app-meta"
+                      >
+                        <span
+                          class="badge-state badge-sm"
+                          :class="getBadgeClass(app.packaging_format)"
+                        >
+                          {{ formatPackagingType(app.packaging_format) }}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </td>
+                </td>
 
-              <!-- Description -->
-              <td class="col-description">
-                <span class="list-description">{{ app.description || '—' }}</span>
-              </td>
+                <!-- Description -->
+                <td class="col-description">
+                  <span class="list-description">{{ app.description || '—' }}</span>
+                </td>
 
-              <!-- Actions -->
-              <td class="col-actions text-right">
-                <i class="icon icon-chevron-right" aria-hidden="true"></i>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+                <!-- Actions -->
+                <td class="col-actions text-right">
+                  <i
+                    class="icon icon-chevron-right"
+                    aria-hidden="true"
+                  ></i>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <!-- Empty state: no credentials configured (Settings CR absent or has no secretRef pairs) -->
-        <div v-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
+        <div
+          v-if="!loading && !items.length && !hasRegistryConfigured && !error"
+          class="empty-state-content"
+        >
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noRegistryTitle', 'No applications available') }}</h3>
           <p class="text-muted">
             {{ t('suseai.apps.noRegistryDescBefore', 'To browse applications, add your registry connection details on the') }}
-            <a class="empty-state-link" role="button" tabindex="0" @click.prevent="goToSettings" @keydown.enter.prevent="goToSettings">{{ t('suseai.apps.settingsLink', 'Settings') }}</a>
+            <a
+              class="empty-state-link"
+              role="button"
+              tabindex="0"
+              @click.prevent="goToSettings"
+              @keydown.enter.prevent="goToSettings"
+            >{{ t('suseai.apps.settingsLink', 'Settings') }}</a>
             {{ t('suseai.apps.noRegistryDescAfter', 'page.') }}
           </p>
         </div>
 
         <!-- Empty state: credentials configured but no apps found yet -->
-        <div v-else-if="!loading && !items.length && hasRegistryConfigured && !error" class="empty-state-content">
+        <div
+          v-else-if="!loading && !items.length && hasRegistryConfigured && !error"
+          class="empty-state-content"
+        >
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noAppsYetTitle', 'No applications available yet') }}</h3>
           <p class="text-muted">
             {{ t('suseai.apps.noAppsYetDescBefore', 'Registry connections are configured but no applications were found. If you recently added your registry, the catalog may still be loading — this can take a few minutes.') }}
             <a
-                class="empty-state-link"
-                role="button"
-                :tabindex="loading ? -1 : 0"
-                :aria-disabled="loading || undefined"
-                @click.prevent="!loading && refresh()"
-                @keydown.enter.prevent="!loading && refresh()"
-              >{{ t('suseai.apps.refresh', 'Refresh') }}</a> {{ t('suseai.apps.noAppsYetDescAfter', 'to check again.') }}
+              class="empty-state-link"
+              role="button"
+              :tabindex="loading ? -1 : 0"
+              :aria-disabled="loading || undefined"
+              @click.prevent="!loading && refresh()"
+              @keydown.enter.prevent="!loading && refresh()"
+            >{{ t('suseai.apps.refresh', 'Refresh') }}</a> {{ t('suseai.apps.noAppsYetDescAfter', 'to check again.') }}
           </p>
         </div>
 
         <!-- Empty state: apps loaded but search/filter yields no results -->
-        <div v-else-if="!loading && !filteredApps.length && items.length > 0 && !error" class="empty-state-content">
+        <div
+          v-else-if="!loading && !filteredApps.length && items.length > 0 && !error"
+          class="empty-state-content"
+        >
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noApps', 'No applications found') }}</h3>
-          <p class="text-muted">{{ search ? t('suseai.apps.noAppsDesc', 'Try adjusting your search or filter.') : t('suseai.apps.noAppsLibrary', 'No applications are available in the selected library.') }}</p>
+          <p class="text-muted">
+            {{ search ? t('suseai.apps.noAppsDesc', 'Try adjusting your search or filter.') : t('suseai.apps.noAppsLibrary', 'No applications are available in the selected library.') }}
+          </p>
         </div>
       </div>
     </div>
@@ -240,14 +368,18 @@ import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
+import logger from '../utils/logger';
 
 export default defineComponent({
   name: 'SuseAIApps',
 
   setup() {
     const vm = getCurrentInstance();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const $router = (vm as any)?.proxy?.$router;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = (vm as any)?.proxy?.$store;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const route = (vm as any)?.proxy?.$route;
     const currentClusterId = (route?.params?.cluster as string) || 'local';
 
@@ -258,7 +390,7 @@ export default defineComponent({
     const selectedRepo = ref('suse-ai');
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
-    const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
+    const settingsData = ref<Record<string, unknown> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
 
     const repositoryOptions = computed(() => [
       { label: 'SUSE AI Library', value: 'suse-ai' },
@@ -320,7 +452,7 @@ export default defineComponent({
       try {
         await loadApps();
       } catch (err) {
-        console.error('Failed to refresh:', err);
+        logger.error('Failed to refresh', err);
         error.value = 'Failed to refresh applications';
       } finally {
         loading.value = false;
@@ -337,15 +469,15 @@ export default defineComponent({
         ]);
         items.value = [...suseApps, ...nvidiaApps];
       } catch (err) {
-        console.error('Failed to load apps:', err);
+        logger.error('Failed to load apps', err);
         throw err;
       }
     };
 
     const goToSettings = () => {
       $router.push({ name: 'c-cluster-suseai-settings', params: { cluster: currentClusterId } })
-        .catch((err: any) => {
-          if (err?.name !== 'NavigationDuplicated') console.warn('Navigation failed:', err);
+        .catch((err: unknown) => {
+          if ((err as Record<string, unknown>)?.name !== 'NavigationDuplicated') logger.warn('Navigation failed', { data: err });
         });
     };
 

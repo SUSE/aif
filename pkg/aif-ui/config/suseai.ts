@@ -34,7 +34,7 @@ export const SUSEAI_PRODUCT: ProductConfig = {
   icon: 'extension',
   inStore: 'management',
   supportRoute: 'https://www.suse.com/support/',
-  docsRoute: 'https://documentation.suse.com/'
+  docsRoute: 'https://documentation.suse.com/suse-ai-factory/latest/'
 };
 
 // === Navigation Configuration ===
@@ -122,7 +122,8 @@ export const PAGE_TYPES = {
   REPOSITORIES: 'repositories',
   BLUEPRINTS:   'blueprints',
   WORKLOADS:    'workloads',
-  SETTINGS:     'settings'
+  SETTINGS:     'settings',
+  ABOUT:        'about',
 } as const;
 
 export type PageType = typeof PAGE_TYPES[keyof typeof PAGE_TYPES];
@@ -179,6 +180,15 @@ export const VIRTUAL_TYPES: VirtualTypeConfig[] = [
       params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
       meta:   { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
     }
+  },
+  {
+    name:  PAGE_TYPES.ABOUT,
+    label: 'About',
+    route: {
+      name:   `c-cluster-${ PRODUCT }-${ PAGE_TYPES.ABOUT }`,
+      params: { product: PRODUCT, cluster: BLANK_CLUSTER },
+      meta:   { product: PRODUCT }
+    }
   }
 ];
 
@@ -189,10 +199,11 @@ export const NAV_WEIGHTS: Record<string, number> = {
   [PAGE_TYPES.BLUEPRINTS]: 30,
   [PAGE_TYPES.WORKLOADS]:  20,
   [PAGE_TYPES.SETTINGS]:   10,
+  [PAGE_TYPES.ABOUT]:      5,
 };
 
 // === Basic Types Configuration ===
-export const BASIC_TYPES = [PAGE_TYPES.OVERVIEW, PAGE_TYPES.APPS, PAGE_TYPES.BLUEPRINTS, PAGE_TYPES.WORKLOADS, PAGE_TYPES.SETTINGS];
+export const BASIC_TYPES = [PAGE_TYPES.OVERVIEW, PAGE_TYPES.APPS, PAGE_TYPES.BLUEPRINTS, PAGE_TYPES.WORKLOADS, PAGE_TYPES.SETTINGS, PAGE_TYPES.ABOUT];
 
 // === Product Metadata ===
 export const PRODUCT_METADATA = {
@@ -208,7 +219,7 @@ export const PRODUCT_METADATA = {
   support: {
     level: 'enterprise',
     contact: 'support@suse.com',
-    documentation: 'https://documentation.suse.com/',
+    documentation: 'https://documentation.suse.com/suse-ai-factory/latest/',
     community: 'https://community.suse.com/'
   }
 };

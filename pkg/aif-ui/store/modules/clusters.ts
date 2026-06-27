@@ -4,8 +4,9 @@
  * Following standard Vuex patterns for consistency
  */
 
-import { ClusterState } from '../types/state-types';
+import { ClusterState, ClusterInfo } from '../types/state-types';
 import { ClusterResourceData } from '../../models/cluster/cluster-resource';
+import logger from '../../utils/logger';
 
 // === Initial State ===
 function createInitialState(): ClusterState {
@@ -102,12 +103,12 @@ const mutations = {
   UPDATE_CLUSTER_STATUS(state: ClusterState, payload: { clusterId: string; status: string }) {
     const cluster = state.clusters[payload.clusterId];
     if (cluster) {
-      cluster.connectionStatus = payload.status as any;
+      cluster.connectionStatus = payload.status as ClusterInfo['connectionStatus'];
       cluster.lastHealthCheck = new Date().toISOString();
     }
   },
   
-  SET_CLUSTER_CAPABILITIES(state: ClusterState, payload: { clusterId: string; capabilities: any }) {
+  SET_CLUSTER_CAPABILITIES(state: ClusterState, payload: { clusterId: string; capabilities: ClusterState['capabilities'][string] }) {
     state.capabilities[payload.clusterId] = payload.capabilities;
   },
   
@@ -164,12 +165,15 @@ const mutations = {
 
 // === Actions ===
 const actions = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async fetchClusters({ commit }: any) {
     try {
       // Get clusters from Rancher's management store
       // For now, we'll return a placeholder until we integrate with Rancher store
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mgmtStore: any[] = [];
-      
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const clusters: ClusterResourceData[] = mgmtStore.map((cluster: any) => {
         const clusterData: ClusterResourceData = {
           id: cluster.id,
@@ -208,18 +212,19 @@ const actions = {
       const capabilityPromises = clusters.map(cluster => 
         actions.refreshClusterCapabilities({ commit }, cluster.id)
           .catch(error => {
-            console.warn(`Failed to fetch capabilities for cluster ${cluster.id}:`, error);
+            logger.warn(`Failed to fetch capabilities for cluster ${cluster.id}`, { data: error });
           })
       );
       
       await Promise.allSettled(capabilityPromises);
       
     } catch (error) {
-      console.error('Failed to fetch clusters:', error);
+      logger.error('Failed to fetch clusters', error);
       throw error;
     }
   },
   
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async connectToCluster({ commit }: any, clusterId: string) {
     commit('START_CLUSTER_CONNECTION', clusterId);
     
@@ -277,22 +282,24 @@ const actions = {
         success: true
       });
       
-    } catch (error: any) {
-      console.error(`Failed to connect to cluster ${clusterId}:`, error);
+    } catch (error) {
+      const err = error as Error;
+      logger.error(`Failed to connect to cluster ${clusterId}`, error);
       commit('COMPLETE_CLUSTER_CONNECTION', {
         clusterId,
         success: false,
-        error: error.message || 'Connection failed'
+        error: err.message || 'Connection failed'
       });
       throw error;
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async checkClusterHealth({ commit }: any, clusterId: string) {
     try {
       // Basic health check - try to get cluster info (simplified)
       const cluster = null; // Will be populated when integrated with Rancher store
-      
+
       if (!cluster) {
         commit('UPDATE_CLUSTER_STATUS', {
           clusterId,
@@ -300,28 +307,23 @@ const actions = {
         });
         return;
       }
-      
-      if ((cluster as any)?.isReady) {
-        commit('UPDATE_CLUSTER_STATUS', {
-          clusterId,
-          status: 'connected'
-        });
-      } else {
-        commit('UPDATE_CLUSTER_STATUS', {
-          clusterId,
-          status: 'error'
-        });
-      }
-      
-    } catch (error: any) {
-      console.error(`Health check failed for cluster ${clusterId}:`, error);
+
+      // cluster is always null here (placeholder), so this branch is unreachable
+      commit('UPDATE_CLUSTER_STATUS', {
+        clusterId,
+        status: 'error'
+      });
+
+    } catch (error) {
+      logger.error(`Health check failed for cluster ${clusterId}`, error);
       commit('UPDATE_CLUSTER_STATUS', {
         clusterId,
         status: 'error'
       });
     }
   },
-  
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async refreshClusterCapabilities({ commit }: any, clusterId: string) {
     try {
       // Get cluster-specific store (simplified)
@@ -353,7 +355,7 @@ const actions = {
       });
       
     } catch (error) {
-      console.error(`Failed to refresh capabilities for cluster ${clusterId}:`, error);
+      logger.error(`Failed to refresh capabilities for cluster ${clusterId}`, error);
       
       // Set minimal capabilities on error
       commit('SET_CLUSTER_CAPABILITIES', {

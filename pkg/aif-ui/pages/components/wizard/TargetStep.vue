@@ -6,11 +6,12 @@ import ClusterResourceTable from '../ClusterResourceTable.vue';
 import type { AIWorkloadDeployStrategy } from '../../../types/aiworkload-types';
 
 interface Props {
-  mode:            'install' | 'manage';
-  clusters:        string[];
-  deployType:      AIWorkloadDeployStrategy;
-  helmOversized?:  boolean;
-  helmUnsupported?: boolean;
+  mode:               'install' | 'manage';
+  clusters:           string[];
+  deployType:         AIWorkloadDeployStrategy;
+  helmOversized?:     boolean;
+  helmUnsupported?:   boolean;
+  gitOpsUnconfigured?: boolean;
 }
 
 interface Emits {
@@ -37,19 +38,19 @@ const deployTypeCards = [
   {
     id:      'FleetBundle' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Fleet Bundle' } },
-    image:   { icon: 'fleet' as any },
+    image:   { icon: 'fleet' as string },
     content: { text: 'Create a Fleet Bundle; Fleet deploys to selected clusters' },
   },
   {
     id:      'GitOps' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Publish to Fleet Git' } },
-    image:   { icon: 'git' as any },
+    image:   { icon: 'git' as string },
     content: { text: 'Commit Fleet Bundle YAML to the git repo configured in Settings' },
   },
   {
     id:      'Helm' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Helm' } },
-    image:   { icon: 'helm' as any },
+    image:   { icon: 'helm' as string },
     content: { text: 'Deploy directly to each selected cluster via Helm install' },
   },
 ];
@@ -57,6 +58,7 @@ const deployTypeCards = [
 function onCardClick(id: AIWorkloadDeployStrategy) {
   if (isManageMode.value) return;
   if (id === 'Helm' && helmCardDisabled.value) return;
+  if (id === 'GitOps' && props.gitOpsUnconfigured) return;
   emit('update:deployType', id);
 }
 </script>
@@ -73,20 +75,35 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
         :image="card.image"
         :content="card.content"
         :selected="deployType === card.id"
-        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled)"
+        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled) && !(card.id === 'GitOps' && gitOpsUnconfigured)"
         variant="small"
-        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) }"
+        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) || (card.id === 'GitOps' && gitOpsUnconfigured) }"
         @card-click="onCardClick(card.id)"
       />
     </div>
-    <p v-if="!isManageMode && helmUnsupported" class="hint">
+    <p
+      v-if="!isManageMode && helmUnsupported"
+      class="hint"
+    >
       Helm is not available for this installation. Use Fleet Bundle or Fleet Git.
     </p>
-    <p v-else-if="!isManageMode && hasNonLocalClusters" class="hint">
+    <p
+      v-else-if="!isManageMode && hasNonLocalClusters"
+      class="hint"
+    >
       Helm is only available for the local management cluster. Use Fleet Bundle or Fleet Git for multi-cluster deployments.
     </p>
-    <p v-else-if="!isManageMode && helmOversized" class="hint">
+    <p
+      v-else-if="!isManageMode && helmOversized"
+      class="hint"
+    >
       This chart is too large for the Helm deployment method (it exceeds Kubernetes' 1 MiB Secret limit). Use Fleet Bundle or Fleet Git.
+    </p>
+    <p
+      v-if="!isManageMode && gitOpsUnconfigured"
+      class="hint"
+    >
+      Publish to Fleet Git requires a git repository configured in Settings.
     </p>
 
     <label class="lbl mt-16">{{ isManageMode ? t('suseai.wizard.labels.targetCluster', 'Target Cluster') : t('suseai.wizard.target.selectClusters', 'Select Target Cluster(s)') }}</label>
@@ -96,7 +113,10 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
       :disabled="isManageMode"
       @update:selected-clusters="isManageMode ? undefined : $emit('update:clusters', $event)"
     />
-    <p v-if="isManageMode" class="hint">
+    <p
+      v-if="isManageMode"
+      class="hint"
+    >
       {{ t('suseai.wizard.target.readOnly', 'Target cluster and deployment type are read-only in Manage mode.') }}
     </p>
   </div>

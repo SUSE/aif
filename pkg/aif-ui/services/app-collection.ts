@@ -2,6 +2,7 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
 import { getSettings } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import type { RancherStore } from '../types/rancher-types';
 
 // Canonical OCI registry URLs for the two SUSE chart repositories.
 // These are the single source of truth for all hardcoded registry URLs in the codebase.
@@ -40,13 +41,13 @@ function normalizeLogoUrl(logo?: string): string | undefined {
 
 
 /** Find repository name by URL */
-export async function findRepositoryByUrl($store: any, targetUrl: string): Promise<string | null> {
+export async function findRepositoryByUrl($store: RancherStore, targetUrl: string): Promise<string | null> {
   try {
     const repositories = await fetchClusterRepositories($store);
     const repo = repositories.find(r => r.url === targetUrl);
     return repo?.name || null;
   } catch (err) {
-    console.warn('Failed to find repository by URL:', err);
+    logger.warn('Failed to find repository by URL', { data: err });
     return null;
   }
 }
@@ -73,7 +74,7 @@ export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | u
 }
 
 /** Get cluster repository name from repository URL */
-export async function getClusterRepoNameFromUrl($store: any, repoUrl: string): Promise<string | null> {
+export async function getClusterRepoNameFromUrl($store: RancherStore, repoUrl: string): Promise<string | null> {
   return await findRepositoryByUrl($store, repoUrl);
 }
 
@@ -82,11 +83,11 @@ export async function getClusterRepoNameFromUrl($store: any, repoUrl: string): P
  * Real failures (operator unreachable, 5xx) are rethrown so callers don't silently
  * fall back to default/public registry URLs — which in air-gap is exactly wrong.
  */
-export async function fetchSettingsOrNull(): Promise<any | null> {
+export async function fetchSettingsOrNull(): Promise<unknown> {
   try {
     return await getSettings();
-  } catch (e: any) {
-    if (e?.status === 404) return null;
+  } catch (e) {
+    if ((e as { status?: number })?.status === 404) return null;
     throw e;
   }
 }
@@ -96,9 +97,10 @@ export async function fetchSettingsOrNull(): Promise<any | null> {
  * Pass `settings` to reuse an already-fetched Settings object (avoids a duplicate round trip when
  * the caller also calls fetchNvidiaApps). Omit it to fetch on demand.
  */
-export async function fetchSuseAiApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
+export async function fetchSuseAiApps($store: RancherStore, settings?: unknown): Promise<AppCollectionItem[]> {
   const s = settings !== undefined ? settings : await fetchSettingsOrNull();
-  const re = s?.spec?.registryEndpoints || {};
+  const sSettings = s as { spec?: { registryEndpoints?: { applicationCollection?: string; suseRegistry?: string } } } | null | undefined;
+  const re = sSettings?.spec?.registryEndpoints || {};
   const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
   const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
 
@@ -130,9 +132,10 @@ export async function fetchSuseAiApps($store: any, settings?: any | null): Promi
  *  - Connected (registryEndpoints.nvidia empty): the two public NGC HTTPS repos.
  *  - Air-gapped (registryEndpoints.nvidia set): the single mirrored OCI repo at that URL.
  */
-export async function fetchNvidiaApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
+export async function fetchNvidiaApps($store: RancherStore, settings?: unknown): Promise<AppCollectionItem[]> {
   const s = settings !== undefined ? settings : await fetchSettingsOrNull();
-  const nvUrl = s?.spec?.registryEndpoints?.nvidia;
+  const sSettings = s as { spec?: { registryEndpoints?: { nvidia?: string } } } | null | undefined;
+  const nvUrl = sSettings?.spec?.registryEndpoints?.nvidia;
   const urls = nvUrl ? [nvUrl] : [NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL];
 
   const repos = await fetchClusterRepositories($store);
@@ -169,7 +172,7 @@ export interface AppRepository {
 }
 
 /** Get list of all cluster repositories */
-export async function fetchClusterRepositories($store: any): Promise<AppRepository[]> {
+export async function fetchClusterRepositories($store: RancherStore): Promise<AppRepository[]> {
   logger.debug('Starting cluster repositories fetch', {
     component: 'AppCollection'
   });
@@ -179,7 +182,8 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
       component: 'AppCollection',
       data: { url }
     });
-    const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res: any = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ }); // Rancher store dispatch returns untyped response
 
     logger.debug('Cluster repositories response received', {
       component: 'AppCollection',
@@ -209,22 +213,25 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
       });
     }
     
-    const filtered = repos.filter((repo: any) => {
-      const enabled = repo?.spec?.enabled !== false;
-      
+    const filtered = repos.filter((repo: Record<string, unknown>) => {
+      const spec = repo?.spec as Record<string, unknown> | undefined;
+      const enabled = spec?.enabled !== false;
+
       // Check if repository is ready based on status conditions
-      const conditions = repo?.status?.conditions || [];
-      const hasDownloadedCondition = conditions.some((c: any) => 
-        (c.type === 'FollowerDownloaded' || c.type === 'OCIDownloaded' || c.type === 'Downloaded') && 
+      const status = repo?.status as Record<string, unknown> | undefined;
+      const conditions = (status?.conditions as Array<{ type: string; status: string }>) || [];
+      const hasDownloadedCondition = conditions.some((c) =>
+        (c.type === 'FollowerDownloaded' || c.type === 'OCIDownloaded' || c.type === 'Downloaded') &&
         c.status === 'True'
       );
-      const hasIndexConfigMap = !!repo?.status?.indexConfigMapName;
+      const hasIndexConfigMap = !!(status?.indexConfigMapName);
       const isReady = hasDownloadedCondition || hasIndexConfigMap;
-      
+      const metadata = repo?.metadata as Record<string, unknown> | undefined;
+
       logger.debug('Repository filtering', {
         component: 'AppCollection',
         data: {
-          repo: repo?.metadata?.name,
+          repo: metadata?.name,
           enabled,
           isReady,
           conditionsCount: conditions.length
@@ -238,13 +245,17 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
       data: { count: filtered.length }
     });
     
-    const mapped = filtered.map((repo: any) => ({
-      name: repo.metadata?.name || '',
-      displayName: getRepoDisplayName(repo.metadata?.name || ''),
-      type: getRepoType(repo),
-      url: repo.spec?.url || repo.spec?.gitRepo || '',
-      enabled: repo.spec?.enabled !== false
-    }));
+    const mapped = filtered.map((repo: Record<string, unknown>) => {
+      const meta = repo.metadata as Record<string, unknown> | undefined;
+      const spec = repo.spec as Record<string, unknown> | undefined;
+      return {
+        name: (meta?.name as string) || '',
+        displayName: getRepoDisplayName((meta?.name as string) || ''),
+        type: getRepoType(repo),
+        url: (spec?.url as string) || (spec?.gitRepo as string) || '',
+        enabled: spec?.enabled !== false
+      };
+    });
     
     const final = mapped.filter((repo: AppRepository) => repo.name);
     logger.info('Cluster repositories fetched successfully', {
@@ -256,7 +267,7 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
     });
     
     return final;
-  } catch (e: any) {
+  } catch (e) {
     logger.error('Failed to fetch cluster repositories', e, {
       component: 'AppCollection'
     });
@@ -275,14 +286,15 @@ function getRepoDisplayName(name: string): string {
   return displayNames[name] || name.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 }
 
-function getRepoType(repo: any): string {
-  if (repo.spec?.gitRepo) return 'git';
-  if (repo.spec?.url?.startsWith('oci:')) return 'oci';
+function getRepoType(repo: Record<string, unknown>): string {
+  const spec = repo.spec as Record<string, unknown> | undefined;
+  if (spec?.gitRepo) return 'git';
+  if (typeof spec?.url === 'string' && spec.url.startsWith('oci:')) return 'oci';
   return 'helm';
 }
 
 /** Fetch apps from a specific cluster repository */
-export async function fetchAppsFromRepository($store: any, repoName: string): Promise<AppCollectionItem[]> {
+export async function fetchAppsFromRepository($store: RancherStore, repoName: string): Promise<AppCollectionItem[]> {
   logger.debug('Starting repository apps fetch', {
     component: 'AppCollection',
     data: { repoName }
@@ -301,8 +313,9 @@ export async function fetchAppsFromRepository($store: any, repoName: string): Pr
       component: 'AppCollection',
       data: { repoName, indexUrl }
     });
-    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.READ });
-    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res: any = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.READ }); // Rancher store dispatch returns untyped response
+
     logger.debug('Repository index response', {
       component: 'AppCollection',
       data: {
@@ -327,15 +340,15 @@ export async function fetchAppsFromRepository($store: any, repoName: string): Pr
     for (const [chartName, versions] of Object.entries(entries)) {
       if (!Array.isArray(versions) || versions.length === 0) continue;
       
-      const latestVersion = versions[0] as any;
+      const latestVersion = versions[0] as Record<string, unknown>;
       const app: AppCollectionItem = {
-        name: latestVersion.name || chartName,
+        name: (latestVersion.name as string) || chartName,
         slug_name: chartName,
-        description: latestVersion.description || '',
-        project_url: latestVersion.home || '',
-        source_code_url: Array.isArray(latestVersion.sources) ? latestVersion.sources[0] : latestVersion.sources,
-        logo_url: latestVersion.icon ? normalizeLogoUrl(latestVersion.icon) : undefined,
-        last_updated_at: latestVersion.created || new Date().toISOString(),
+        description: (latestVersion.description as string) || '',
+        project_url: (latestVersion.home as string) || '',
+        source_code_url: Array.isArray(latestVersion.sources) ? (latestVersion.sources[0] as string) : (latestVersion.sources as string | undefined),
+        logo_url: latestVersion.icon ? normalizeLogoUrl(latestVersion.icon as string) : undefined,
+        last_updated_at: (latestVersion.created as string) || new Date().toISOString(),
         packaging_format: 'HELM_CHART'
       };
       
@@ -357,7 +370,7 @@ export async function fetchAppsFromRepository($store: any, repoName: string): Pr
 }
 
 /** Fetch apps from all cluster repositories */
-export async function fetchAllRepositoryApps($store: any): Promise<{ [repoName: string]: AppCollectionItem[] }> {
+export async function fetchAllRepositoryApps($store: RancherStore): Promise<{ [repoName: string]: AppCollectionItem[] }> {
   logger.debug('Starting fetch all repository apps', {
     component: 'AppCollection'
   });

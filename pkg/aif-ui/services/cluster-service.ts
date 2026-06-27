@@ -1,13 +1,10 @@
 import { log as logger } from '../utils/logger';
-import { createErrorHandler } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { getClusters as getReadyClusters } from './rancher-apps';
 import type {
   RancherStore,
   ClusterInfo,
-  ClusterResource,
-  AppCRD,
-  ListResponse
+  AppCRD
 } from '../types/rancher-types';
 
 /**

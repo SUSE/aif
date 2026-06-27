@@ -5,6 +5,7 @@
 
 import SuseaiResource, { Action, ActionOpts } from '../base/suseai-resource';
 import { StateMixin, MetadataMixin, ResourceUtils } from '../base/resource-mixin';
+import logger from '../../utils/logger';
 
 export interface ChartMaintainer {
   name: string;
@@ -147,7 +148,7 @@ export default class ChartResource extends SuseaiResource {
   private stateMixin: StateMixin;
   private metadataMixin: MetadataMixin;
 
-  constructor(data: ChartResourceData, store?: any, router?: any, route?: any) {
+  constructor(data: ChartResourceData, store?: unknown, router?: unknown, route?: unknown) {
     super(data, store, router, route);
     
     // Map data properties
@@ -489,7 +490,7 @@ export default class ChartResource extends SuseaiResource {
         });
       }
     } catch (error) {
-      console.warn('Failed to copy to clipboard:', error);
+      logger.warn('Failed to copy to clipboard:', { data: error });
       // Fallback: show the command in a modal or alert
       alert(`Copy this command:\n${command}`);
     }
@@ -511,14 +512,14 @@ export default class ChartResource extends SuseaiResource {
         Object.assign(this, updated);
       }
     } catch (error) {
-      console.warn('Failed to refresh chart:', error);
+      logger.warn('Failed to refresh chart:', { data: error });
     }
   }
 
   /**
    * Get chart values for specific version
    */
-  async getValues(version?: string): Promise<Record<string, any>> {
+  async getValues(version?: string): Promise<Record<string, unknown>> {
     if (!this.$store) return {};
     
     try {
@@ -528,7 +529,7 @@ export default class ChartResource extends SuseaiResource {
         version: version || this.currentVersion
       });
     } catch (error) {
-      console.warn('Failed to get chart values:', error);
+      logger.warn('Failed to get chart values:', { data: error });
       return {};
     }
   }
@@ -546,7 +547,7 @@ export default class ChartResource extends SuseaiResource {
         version: version || this.currentVersion
       });
     } catch (error) {
-      console.warn('Failed to get chart readme:', error);
+      logger.warn('Failed to get chart readme:', { data: error });
       return '';
     }
   }

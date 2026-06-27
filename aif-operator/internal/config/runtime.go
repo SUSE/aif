@@ -19,3 +19,12 @@ func GetOperatorNamespace() string {
 	}
 	return DefaultOperatorNamespace
 }
+
+const DefaultOperatorService = "aif-operator"
+
+func GetOperatorService() string {
+	if svc := os.Getenv("OPERATOR_SERVICE"); svc != "" {
+		return svc
+	}
+	return DefaultOperatorService
+}
