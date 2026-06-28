@@ -99,7 +99,7 @@ export function init($plugin: IPlugin, store: RancherStore) {
   // the first navigation hits the Vuex cache rather than blocking on a network
   // request inside the nav guard. Skipped for users without schema access to
   // avoid a guaranteed 403 on every login.
-  if (store.getters['management/schemaFor']?.(CRTB_TYPE)) {
+  if (store.getters?.['management/schemaFor']?.(CRTB_TYPE)) {
     void store.dispatch('management/findAll', { type: CRTB_TYPE, opt: { namespaced: LOCAL_CLUSTER } });
   }
 
