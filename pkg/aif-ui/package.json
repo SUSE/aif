@@ -10,7 +10,7 @@
       "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
     }
   },
-  "icon": "https://raw.githubusercontent.com/SUSE/suse-ai-lifecycle-manager/refs/heads/main/pkg/aif-ui/assets/logo.svg",
+  "icon": "https://raw.githubusercontent.com/SUSE/aif/refs/heads/main/pkg/aif-ui/assets/logo.svg",
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
     "lint": "npx eslint --max-warnings 2000 --ext .js,.ts,.vue .",

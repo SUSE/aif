@@ -211,7 +211,7 @@ export const PRODUCT_METADATA = {
   description: 'Enterprise AI/ML application management for Kubernetes',
   vendor: 'SUSE',
   homepage: 'https://www.suse.com/',
-  repository: 'https://github.com/suse/suse-ai-lifecycle-manager',
+  repository: 'https://github.com/SUSE/aif',
   license: 'Apache-2.0',
   keywords: ['ai', 'ml', 'kubernetes', 'helm', 'applications'],
   categories: ['AI/ML', 'Applications', 'Management'],
