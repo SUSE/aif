@@ -2,6 +2,7 @@
 import type { Dispatchable, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
 import { handleSimpleError } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import logger from '../utils/logger';
 
 export interface NodeResourceInfo {
   nodeId: string;
