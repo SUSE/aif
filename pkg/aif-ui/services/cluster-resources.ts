@@ -2,7 +2,6 @@
 import type { Dispatchable, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
 import { handleSimpleError } from '../utils/error-handler';
 import { TIMEOUT_VALUES } from '../utils/constants';
-import logger from '../utils/logger';
 
 export interface NodeResourceInfo {
   nodeId: string;
@@ -52,7 +51,7 @@ export async function getClusterResourceMetrics(store: Dispatchable, clusterId: 
       clusterName = cluster?.spec?.displayName || cluster?.metadata?.name || cluster?.name || clusterId;
     }
 
-    logger.debug(`getClusterResourceMetrics: Found cluster ${clusterName}`);
+    console.log(`[SUSE-AI] getClusterResourceMetrics: Found cluster ${clusterName}`);
 
     // Get node information using simplified API pattern
     let nodes: NodeResource[] = [];
@@ -78,7 +77,7 @@ export async function getClusterResourceMetrics(store: Dispatchable, clusterId: 
     
     // If no nodes are available, try to provide reasonable defaults or mark as unavailable
     if (nodes.length === 0) {
-      logger.debug(`getClusterResourceMetrics: No nodes found for ${clusterId}, using fallback approach`);
+      console.log(`[SUSE-AI] getClusterResourceMetrics: No nodes found for ${clusterId}, using fallback approach`);
       
       // For imported/managed clusters that we can't access directly, provide a status that indicates unknown
       const summary: ClusterResourceSummary = {
@@ -96,13 +95,13 @@ export async function getClusterResourceMetrics(store: Dispatchable, clusterId: 
         nodes: []
       };
 
-      logger.debug(`getClusterResourceMetrics: Returning fallback summary for ${clusterId}`);
+      console.log(`[SUSE-AI] getClusterResourceMetrics: Returning fallback summary for ${clusterId}`);
       return summary;
     }
     
     for (const node of nodes) {
       // Handle different data formats: global API vs cluster-specific API
-      const nodeName = node.metadata?.name || (node as unknown as { id?: string }).id || (node as unknown as { name?: string }).name || '';
+      const nodeName = node.metadata?.name || (node as any).id || (node as unknown as { name?: string }).name || '';
       const nodeMetric = nodeMetrics.find((m: NodeMetric) =>
         (m.metadata?.name === nodeName) || (m as unknown as { name?: string }).name === nodeName
       );
@@ -164,12 +163,17 @@ export async function getClusterResourceMetrics(store: Dispatchable, clusterId: 
       nodes: nodeInfos
     };
 
-    logger.debug(`getClusterResourceMetrics: Completed for ${clusterId}`, { data: { cpu: summary.resources.cpu, memory: summary.resources.memory, gpu: summary.resources.gpu, nodes: summary.nodeCount } });
+    console.log(`[SUSE-AI] getClusterResourceMetrics: Completed for ${clusterId}:`, {
+      cpu: summary.resources.cpu,
+      memory: summary.resources.memory,
+      gpu: summary.resources.gpu,
+      nodes: summary.nodeCount
+    });
 
     return summary;
   } catch (error: unknown) {
     const err = error as { message?: string };
-    logger.error(`getClusterResourceMetrics: Failed for cluster ${clusterId}`, error);
+    console.error(`[SUSE-AI] getClusterResourceMetrics: Failed for cluster ${clusterId}:`, error);
     
     // Try to get basic cluster info even if metrics fail
     let clusterName = clusterId;
@@ -212,7 +216,7 @@ export async function getAllClusterResourceMetrics(store: Dispatchable): Promise
   try {
     const { getAllClusters } = await import('./rancher-apps');
     const clusters = await getAllClusters(store);
-    logger.debug(`getAllClusterResourceMetrics: Found ${clusters.length} clusters`);
+    console.log(`[SUSE-AI] getAllClusterResourceMetrics: Found ${clusters.length} clusters`);
 
     const settled = await Promise.allSettled(
       clusters.map((cluster: ClusterInfo) => {
@@ -239,10 +243,10 @@ export async function getAllClusterResourceMetrics(store: Dispatchable): Promise
       .filter((r): r is PromiseFulfilledResult<ClusterResourceSummary> => r.status === 'fulfilled')
       .map(r => r.value);
 
-    logger.debug(`getAllClusterResourceMetrics: Completed for ${results.length}/${clusters.length} clusters`);
+    console.log(`[SUSE-AI] getAllClusterResourceMetrics: Completed for ${results.length}/${clusters.length} clusters`);
     return results;
   } catch (error) {
-    logger.error('getAllClusterResourceMetrics: Failed', error);
+    console.error('[SUSE-AI] getAllClusterResourceMetrics: Failed:', error);
     return [];
   }
 }
@@ -293,10 +297,10 @@ async function fetchClusterData<T>(
   try {
     const res = await store.dispatch('rancher/request', { url: baseUrl, timeout: TIMEOUT_VALUES.CLUSTER });
     const data = res?.data?.data || res?.data || [];
-    logger.debug(`getClusterResourceMetrics: Got ${data.length} ${label} from ${isLocalCluster ? 'global' : 'cluster-specific'} API`);
+    console.log(`[SUSE-AI] getClusterResourceMetrics: Got ${data.length} ${label} from ${isLocalCluster ? 'global' : 'cluster-specific'} API`);
     return Array.isArray(data) ? data : [];
   } catch (error) {
-    logger.warn(`getClusterResourceMetrics: ${label} API failed for ${clusterId}`, { data: handleSimpleError(error) });
+    console.warn(`[SUSE-AI] getClusterResourceMetrics: ${label} API failed for ${clusterId}:`, handleSimpleError(error));
     return [];
   }
 }
@@ -310,10 +314,7 @@ async function fetchStorageClasses(store: Dispatchable, clusterId: string): Prom
   );
 
   return storageClasses
-    .map((sc) => {
-      const meta = sc.metadata as Record<string, unknown> | undefined;
-      return (meta?.name as string) || (sc.name as string) || (sc.id as string);
-    })
+    .map((sc: any) => sc.metadata?.name || sc.name || sc.id)
     .filter(Boolean);
 }
 

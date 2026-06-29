@@ -2,7 +2,7 @@ export interface BlueprintComponent {
   chartRepo:        string;
   chartName:        string;
   chartVersion:     string;
-  values?:          Record<string, unknown>;
+  values?:          Record<string, any>;
   targetNamespace?: string;
 }
 

@@ -11,7 +11,7 @@ export interface TableColumn {
   name: string;
   labelKey: string;
   value?: string;
-  getValue?: (row: Record<string, unknown>) => unknown;
+  getValue?: (row: any) => any;
   sort?: string[] | string | boolean;
   search?: string[] | string | boolean;
   width?: number;
@@ -19,7 +19,7 @@ export interface TableColumn {
   maxWidth?: number;
   align?: 'left' | 'center' | 'right';
   formatter?: string;
-  formatterOpts?: Record<string, unknown>;
+  formatterOpts?: Record<string, any>;
   dashIfEmpty?: boolean;
   canBeVariable?: boolean;
   type?: ColumnType;
@@ -59,7 +59,7 @@ export const APPS_TABLE_HEADERS: TableColumn[] = [
   {
     name: 'clusters',
     labelKey: 'tableHeaders.clusters',
-    getValue: (row: Record<string, unknown>) => (row.installationCount as number) || 0,
+    getValue: (row: any) => row.installationCount || 0,
     sort: false,
     width: 80,
     priority: 4,
@@ -201,7 +201,7 @@ export const REPOSITORIES_TABLE_HEADERS: TableColumn[] = [
   {
     name: 'status',
     labelKey: 'tableHeaders.status',
-    getValue: (row: Record<string, unknown>) => row.enabled && row.ready ? 'active' : 'pending',
+    getValue: (row: any) => row.enabled && row.ready ? 'active' : 'pending',
     sort: false,
     width: 100,
     type: 'badge',
@@ -230,7 +230,7 @@ export const REPOSITORIES_TABLE_HEADERS: TableColumn[] = [
   {
     name: 'charts',
     labelKey: 'tableHeaders.charts',
-    getValue: (row: Record<string, unknown>) => ((row.stats as Record<string, unknown>)?.chartCount as number) || 0,
+    getValue: (row: any) => row.stats?.chartCount || 0,
     sort: false,
     width: 80,
     priority: 5,
@@ -240,7 +240,7 @@ export const REPOSITORIES_TABLE_HEADERS: TableColumn[] = [
   {
     name: 'lastSync',
     labelKey: 'tableHeaders.lastSync',
-    getValue: (row: Record<string, unknown>) => (row.stats as Record<string, unknown>)?.lastIndexed,
+    getValue: (row: any) => row.stats?.lastIndexed,
     sort: false,
     width: 120,
     type: 'age',
@@ -301,7 +301,7 @@ export const CLUSTERS_TABLE_HEADERS: TableColumn[] = [
   {
     name: 'nodes',
     labelKey: 'tableHeaders.nodes',
-    getValue: (row: Record<string, unknown>) => `${(row.readyNodes as number) || 0}/${(row.totalNodes as number) || 0}`,
+    getValue: (row: any) => `${row.readyNodes || 0}/${row.totalNodes || 0}`,
     sort: false,
     width: 80,
     priority: 5,
@@ -310,7 +310,7 @@ export const CLUSTERS_TABLE_HEADERS: TableColumn[] = [
   {
     name: 'apps',
     labelKey: 'tableHeaders.apps',
-    getValue: (row: Record<string, unknown>) => (row.appCount as number) || 0,
+    getValue: (row: any) => row.appCount || 0,
     sort: false,
     width: 60,
     priority: 6,

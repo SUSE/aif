@@ -4,6 +4,7 @@
  */
 
 import AppResource, { AppResourceData } from './app-resource';
+import { ResourceUtils } from '../base/resource-mixin';
 
 export type SortField = 'name' | 'updated' | 'status' | 'clusters';
 export type SortDirection = 'asc' | 'desc';
@@ -28,11 +29,11 @@ export interface SortOptions {
  */
 export class AppCollection {
   private apps: AppResource[] = [];
-  private store?: unknown;
-  private router?: unknown;
-  private route?: unknown;
+  private store?: any;
+  private router?: any;
+  private route?: any;
 
-  constructor(apps: AppResourceData[] = [], store?: unknown, router?: unknown, route?: unknown) {
+  constructor(apps: AppResourceData[] = [], store?: any, router?: any, route?: any) {
     this.store = store;
     this.router = router;
     this.route = route;
@@ -167,7 +168,7 @@ export class AppCollection {
     let filtered = this.apps;
 
     if (filters.search) {
-      filtered = filtered.filter(app => app.matchesSearch(filters.search ?? ''));
+      filtered = filtered.filter(app => app.matchesSearch(filters.search!));
     }
 
     if (filters.status && filters.status !== 'all') {
@@ -183,7 +184,7 @@ export class AppCollection {
     }
 
     if (filters.cluster && filters.cluster !== 'all') {
-      filtered = filtered.filter(app => app.installationClusters.includes(filters.cluster ?? ''));
+      filtered = filtered.filter(app => app.installationClusters.includes(filters.cluster!));
     }
 
     return filtered;
@@ -393,7 +394,7 @@ export class AppCollection {
   /**
    * Perform bulk action on multiple apps
    */
-  async performBulkAction(action: string, appSlugs: string[], options: Record<string, unknown> = {}): Promise<void> {
+  async performBulkAction(action: string, appSlugs: string[], options: any = {}): Promise<void> {
     const apps = appSlugs
       .map(slug => this.getApp(slug))
       .filter((app): app is AppResource => !!app);
@@ -421,7 +422,7 @@ export class AppCollection {
     
     return this.apps.filter(app => {
       return searchFields.some(field => {
-        const value = (app as Record<string, unknown>)[field];
+        const value = (app as any)[field];
         return value && String(value).toLowerCase().includes(searchText);
       });
     });
@@ -474,10 +475,10 @@ export class AppCollection {
    */
   async refreshInstallations(): Promise<void> {
     if (!this.store) return;
-
+    
     // This would dispatch to store to refresh installation data
     // Implementation depends on store setup
-    await (this.store as { dispatch: (action: string) => Promise<unknown> }).dispatch('suseai/discoverInstallations');
+    await this.store.dispatch('suseai/discoverInstallations');
   }
 
   /**

@@ -8,6 +8,7 @@ import type {
   Dispatchable,
   ClusterResource,
   RepositoryIndex,
+  FileEntry
 } from '../types/rancher-types';
 
 // Helper functions for string matching and version sorting
@@ -17,6 +18,28 @@ function normName(s?: string): string {
 
 function sameName(a?: string, b?: string): boolean {
   return !!a && !!b && normName(a) === normName(b);
+}
+
+// Helper functions for file content processing
+function decodeMaybeB64(s?: string): string {
+  if (!s || typeof s !== 'string') return '';
+  try {
+    const t = atob(s.replace(/\s+/g, ''));
+    if (/[:\n]/.test(t)) return t; // looks like YAML
+  } catch {}
+  return s;
+}
+
+function textFromFileEntry(v: FileEntry): string {
+  if (!v) return '';
+  if (typeof v === 'string') return decodeMaybeB64(v);
+  if (typeof v === 'object') {
+    const candidates = [v.content, v.contents, v.data, v.base64, v.value, v.Value, v.text];
+    for (const c of candidates) {
+      if (typeof c === 'string' && c) return decodeMaybeB64(c);
+    }
+  }
+  return '';
 }
 
 /**
