@@ -20,11 +20,11 @@ export interface SettingDefinition {
   name: string;
   description: string;
   type: SettingType;
-  defaultValue: unknown;
+  defaultValue: any;
   options?: SettingOption[];
   min?: number;
   max?: number;
-  validation?: (value: unknown) => string | null;
+  validation?: (value: any) => string | null;
   category: SettingCategory;
   required?: boolean;
   sensitive?: boolean;
@@ -62,10 +62,9 @@ export const SETTINGS_DEFINITIONS: Record<string, SettingDefinition> = {
     min: 30,
     max: 3600,
     category: SETTING_CATEGORIES.GENERAL,
-    validation: (value: unknown) => {
-      const v = value as number;
-      if (v < 30) return 'Minimum refresh interval is 30 seconds';
-      if (v > 3600) return 'Maximum refresh interval is 1 hour';
+    validation: (value: number) => {
+      if (value < 30) return 'Minimum refresh interval is 30 seconds';
+      if (value > 3600) return 'Maximum refresh interval is 1 hour';
       return null;
     }
   },
@@ -77,8 +76,7 @@ export const SETTINGS_DEFINITIONS: Record<string, SettingDefinition> = {
     type: 'string',
     defaultValue: DEFAULT_VALUES.NAMESPACE,
     category: SETTING_CATEGORIES.INSTALLATION,
-    validation: (value: unknown) => {
-      if (typeof value !== 'string') return 'Default namespace must be a string';
+    validation: (value: string) => {
       if (!value.trim()) return 'Default namespace cannot be empty';
       if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value)) {
         return 'Invalid namespace name format';
@@ -258,7 +256,7 @@ export const CATEGORY_CONFIGS = {
 };
 
 // === Default Settings Values ===
-export const DEFAULT_SETTINGS: Record<string, unknown> = {};
+export const DEFAULT_SETTINGS: Record<string, any> = {};
 
 // Initialize default values from definitions
 Object.entries(SETTINGS_DEFINITIONS).forEach(([key, definition]) => {
@@ -284,7 +282,7 @@ export function getSettingDefinition(key: string): SettingDefinition | null {
 /**
  * Validate setting value
  */
-export function validateSettingValue(key: string, value: unknown): string | null {
+export function validateSettingValue(key: string, value: any): string | null {
   const definition = SETTINGS_DEFINITIONS[key];
   if (!definition) {
     return 'Unknown setting';

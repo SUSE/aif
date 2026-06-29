@@ -4,8 +4,7 @@
  */
 
 import SuseaiResource, { Action, ActionOpts } from '../base/suseai-resource';
-import { StateMixin, MetadataMixin } from '../base/resource-mixin';
-import logger from '../../utils/logger';
+import { StateMixin, MetadataMixin, ResourceUtils } from '../base/resource-mixin';
 
 export interface ClusterCapabilities {
   canInstallApps: boolean;
@@ -86,7 +85,7 @@ export default class ClusterResource extends SuseaiResource {
   private stateMixin: StateMixin;
   private metadataMixin: MetadataMixin;
 
-  constructor(data: ClusterResourceData, store?: unknown, router?: unknown, route?: unknown) {
+  constructor(data: ClusterResourceData, store?: any, router?: any, route?: any) {
     super(data, store, router, route);
     
     // Map data properties
@@ -327,7 +326,7 @@ export default class ClusterResource extends SuseaiResource {
         method: 'POST'
       });
     } catch (error) {
-      logger.error('Failed to download kubeconfig:', error);
+      console.error('Failed to download kubeconfig:', error);
     }
   }
 
@@ -346,7 +345,7 @@ export default class ClusterResource extends SuseaiResource {
         Object.assign(this, updated);
       }
     } catch (error) {
-      logger.warn('Failed to refresh cluster:', { data: error });
+      console.warn('Failed to refresh cluster:', error);
     }
   }
 
@@ -368,7 +367,7 @@ export default class ClusterResource extends SuseaiResource {
       });
       
       return result;
-    } catch (error) {
+    } catch (error: any) {
       return {
         connected: false,
         capabilities: {
@@ -380,7 +379,7 @@ export default class ClusterResource extends SuseaiResource {
           hasRancherAppsSupport: false,
           supportedApiVersions: []
         },
-        error: error instanceof Error ? error.message : 'Connection test failed'
+        error: error?.message || 'Connection test failed'
       };
     }
   }
@@ -400,7 +399,7 @@ export default class ClusterResource extends SuseaiResource {
         clusterId: this.clusterId
       });
     } catch (error) {
-      logger.warn('Failed to get resource usage:', { data: error });
+      console.warn('Failed to get resource usage:', error);
       return null;
     }
   }

@@ -106,8 +106,8 @@ export interface AppInstallationInfo {
   appVersion?: string;
   lastDeployed?: string;
   notes?: string;
-  values?: Record<string, unknown>;
-  userValues?: Record<string, unknown>;
+  values?: Record<string, any>;
+  userValues?: Record<string, any>;
   
   // Progress tracking
   progress?: InstallationProgress;
@@ -162,7 +162,7 @@ export interface ResourceCondition {
 export interface InstallationError {
   code: string;
   message: string;
-  details?: unknown;
+  details?: any;
   retryable: boolean;
   timestamp: string;
   phase?: InstallationStatus;
@@ -175,7 +175,7 @@ export interface InstallOptions {
   namespace: string;
   releaseName: string;
   chartVersion?: string;
-  values?: Record<string, unknown>;
+  values?: Record<string, any>;
   dryRun?: boolean;
   wait?: boolean;
   timeout?: number; // in seconds
@@ -400,12 +400,12 @@ export interface AppAction {
   bulk?: boolean;
   requiresConfirmation?: boolean;
   confirmationMessage?: string;
-  execute: (options?: unknown) => Promise<void>;
+  execute: (options?: any) => Promise<void>;
 }
 
 export interface AppBulkAction extends AppAction {
   bulk: true;
-  execute: (apps: AppSummary[], options?: unknown) => Promise<void>;
+  execute: (apps: AppSummary[], options?: any) => Promise<void>;
 }
 
 export interface AppContextMenuAction extends AppAction {
@@ -462,7 +462,7 @@ export interface AppEvent {
   namespace: string;
   releaseName: string;
   message: string;
-  details?: Record<string, unknown>;
+  details?: Record<string, any>;
   timestamp: string;
   user?: string;
   severity: 'info' | 'warning' | 'error' | 'success';
@@ -501,7 +501,7 @@ export interface AppValidationError {
   field: string;
   message: string;
   code: string;
-  value?: unknown;
+  value?: any;
 }
 
 export interface AppValidationWarning {
@@ -519,16 +519,16 @@ export interface AppFormField {
   required?: boolean;
   disabled?: boolean;
   hidden?: boolean;
-  default?: unknown;
+  default?: any;
   validation?: {
     min?: number;
     max?: number;
     pattern?: string;
-    custom?: (value: unknown) => string | null;
+    custom?: (value: any) => string | null;
   };
-  options?: Array<{ label: string; value: unknown; disabled?: boolean }>;
+  options?: Array<{ label: string; value: any; disabled?: boolean }>;
   dependsOn?: string;
-  showWhen?: (values: Record<string, unknown>) => boolean;
+  showWhen?: (values: Record<string, any>) => boolean;
 }
 
 export interface AppFormSchema {
@@ -540,12 +540,12 @@ export interface AppFormSchema {
     collapsible?: boolean;
     collapsed?: boolean;
   }>;
-  validation?: (values: Record<string, unknown>) => AppValidationResult;
+  validation?: (values: Record<string, any>) => AppValidationResult;
 }
 
 // === API Response Types ===
 
-export interface ApiResponse<T = unknown> {
+export interface ApiResponse<T = any> {
   data: T;
   success: boolean;
   message?: string;
@@ -564,7 +564,7 @@ export interface ApiResponse<T = unknown> {
 export interface ApiError {
   code: string;
   message: string;
-  details?: unknown;
+  details?: any;
   field?: string;
   timestamp: string;
   requestId?: string;
@@ -583,27 +583,26 @@ export type RequiredBy<T, K extends keyof T> = T & Required<Pick<T, K>>;
 
 // === Type Guards ===
 
-export function isAppStatus(value: unknown): value is AppStatus {
+export function isAppStatus(value: any): value is AppStatus {
   return typeof value === 'string' && [
-    'available', 'installing', 'deployed', 'upgrading',
+    'available', 'installing', 'deployed', 'upgrading', 
     'uninstalling', 'failed', 'unknown'
   ].includes(value);
 }
 
-export function isInstallationStatus(value: unknown): value is InstallationStatus {
+export function isInstallationStatus(value: any): value is InstallationStatus {
   return typeof value === 'string' && [
     'pending', 'installing', 'deployed', 'upgrading',
     'uninstalling', 'failed', 'superseded', 'unknown'
   ].includes(value);
 }
 
-export function isAppAction(value: unknown): value is AppAction {
-  return !!value &&
-    typeof value === 'object' &&
-    typeof (value as AppAction).name === 'string' &&
-    typeof (value as AppAction).label === 'string' &&
-    typeof (value as AppAction).enabled === 'boolean' &&
-    typeof (value as AppAction).execute === 'function';
+export function isAppAction(value: any): value is AppAction {
+  return value && 
+    typeof value.name === 'string' &&
+    typeof value.label === 'string' &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.execute === 'function';
 }
 
 export function hasInstallationInfo(app: AppSummary): app is AppSummary & { installations: AppInstallationSummary[] } {

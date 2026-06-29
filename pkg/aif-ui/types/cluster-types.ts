@@ -147,7 +147,7 @@ export interface ClusterMetadata {
   annotations: Record<string, string>;
   finalizers?: string[];
   ownerReferences?: OwnerReference[];
-  managedFields?: unknown[];
+  managedFields?: any[];
   resourceVersion?: string;
   selfLink?: string;
   uid?: string;
@@ -511,13 +511,13 @@ export interface KubeProxyConfiguration {
 export interface AddonConfiguration {
   name: string;
   enabled: boolean;
-  configuration?: Record<string, unknown>;
+  configuration?: Record<string, any>;
 }
 
 export interface PodSecurityPolicyConfiguration {
   enabled: boolean;
   defaultPolicy?: string;
-  policies?: Record<string, unknown>;
+  policies?: Record<string, any>;
 }
 
 export interface NetworkPolicyConfiguration {
@@ -670,7 +670,7 @@ export interface ClusterFlags {
 
 // === API Response Types ===
 
-export interface ClusterApiResponse<T = unknown> {
+export interface ClusterApiResponse<T = any> {
   data: T;
   success: boolean;
   message?: string;
@@ -687,7 +687,7 @@ export interface ClusterApiResponse<T = unknown> {
 export interface ClusterApiError {
   code: string;
   message: string;
-  details?: unknown;
+  details?: any;
   clusterId?: string;
   timestamp: string;
   requestId?: string;
@@ -701,19 +701,19 @@ export type NamespaceName = string;
 
 // === Type Guards ===
 
-export function isClusterState(value: unknown): value is ClusterState {
+export function isClusterState(value: any): value is ClusterState {
   return typeof value === 'string' && [
     'active', 'pending', 'updating', 'error', 'unavailable', 'removed', 'unknown'
   ].includes(value);
 }
 
-export function isConnectionState(value: unknown): value is ClusterConnectionState {
+export function isConnectionState(value: any): value is ClusterConnectionState {
   return typeof value === 'string' && [
     'connected', 'connecting', 'disconnected', 'error', 'unknown'
   ].includes(value);
 }
 
-export function isNodeState(value: unknown): value is NodeState {
+export function isNodeState(value: any): value is NodeState {
   return typeof value === 'string' && [
     'Ready', 'NotReady', 'Unknown', 'SchedulingDisabled'
   ].includes(value);

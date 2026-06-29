@@ -33,8 +33,7 @@ export function init($plugin: IPlugin, store: RancherStore) {
       params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
       meta: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
     }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any); // Rancher product DSL accepts options beyond its declared type; cast is required
+  } as any);
 
   // Register virtual types following standard patterns
   VIRTUAL_TYPES.forEach(vType => {

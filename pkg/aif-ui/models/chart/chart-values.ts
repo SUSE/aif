@@ -6,33 +6,33 @@
 export interface ValueSchema {
   type: 'string' | 'number' | 'boolean' | 'array' | 'object';
   description?: string;
-  default?: unknown;
+  default?: any;
   required?: boolean;
-  enum?: unknown[];
+  enum?: any[];
   minimum?: number;
   maximum?: number;
   pattern?: string;
   properties?: Record<string, ValueSchema>;
   items?: ValueSchema;
-  examples?: unknown[];
+  examples?: any[];
 }
 
 export interface ValueValidationError {
   path: string;
   message: string;
-  value: unknown;
+  value: any;
   schema: ValueSchema;
 }
 
 export interface ValueDiff {
   path: string;
-  oldValue: unknown;
-  newValue: unknown;
+  oldValue: any;
+  newValue: any;
   type: 'added' | 'removed' | 'modified';
 }
 
 export interface ProcessedValues {
-  values: Record<string, unknown>;
+  values: Record<string, any>;
   schema?: Record<string, ValueSchema>;
   errors: ValueValidationError[];
   warnings: string[];
@@ -43,11 +43,11 @@ export interface ProcessedValues {
  * Chart Values Processor class for handling chart values operations
  */
 export class ChartValuesProcessor {
-  private defaultValues: Record<string, unknown> = {};
+  private defaultValues: Record<string, any> = {};
   private schema?: Record<string, ValueSchema>;
-  private userValues: Record<string, unknown> = {};
+  private userValues: Record<string, any> = {};
 
-  constructor(defaultValues: Record<string, unknown> = {}, schema?: Record<string, ValueSchema>) {
+  constructor(defaultValues: Record<string, any> = {}, schema?: Record<string, ValueSchema>) {
     this.defaultValues = defaultValues;
     this.schema = schema;
     this.userValues = {};
@@ -58,35 +58,35 @@ export class ChartValuesProcessor {
   /**
    * Set user-provided values
    */
-  setUserValues(values: Record<string, unknown>): void {
+  setUserValues(values: Record<string, any>): void {
     this.userValues = { ...values };
   }
 
   /**
    * Get user-provided values
    */
-  getUserValues(): Record<string, unknown> {
+  getUserValues(): Record<string, any> {
     return { ...this.userValues };
   }
 
   /**
    * Get default values
    */
-  getDefaultValues(): Record<string, unknown> {
+  getDefaultValues(): Record<string, any> {
     return { ...this.defaultValues };
   }
 
   /**
    * Get merged values (defaults + user values)
    */
-  getMergedValues(): Record<string, unknown> {
+  getMergedValues(): Record<string, any> {
     return this.deepMerge(this.defaultValues, this.userValues);
   }
 
   /**
    * Get value at specific path
    */
-  getValue(path: string): unknown {
+  getValue(path: string): any {
     const mergedValues = this.getMergedValues();
     return this.getNestedValue(mergedValues, path);
   }
@@ -94,7 +94,7 @@ export class ChartValuesProcessor {
   /**
    * Set value at specific path
    */
-  setValue(path: string, value: unknown): void {
+  setValue(path: string, value: any): void {
     this.setNestedValue(this.userValues, path, value);
   }
 
@@ -178,7 +178,7 @@ export class ChartValuesProcessor {
   /**
    * Validate specific value
    */
-  validateValue(path: string, value: unknown): ValueValidationError[] {
+  validateValue(path: string, value: any): ValueValidationError[] {
     const schema = this.getSchema(path);
     if (!schema) return [];
     
@@ -268,7 +268,7 @@ export class ChartValuesProcessor {
   /**
    * Generate diff between two value objects
    */
-  generateDiff(oldValues: Record<string, unknown>, newValues: Record<string, unknown>): ValueDiff[] {
+  generateDiff(oldValues: Record<string, any>, newValues: Record<string, any>): ValueDiff[] {
     const diffs: ValueDiff[] = [];
     const allPaths = new Set([
       ...this.getAllPaths(oldValues),
@@ -344,43 +344,41 @@ export class ChartValuesProcessor {
   /**
    * Deep merge two objects
    */
-  private deepMerge(target: unknown, source: unknown): unknown {
+  private deepMerge(target: any, source: any): any {
     if (source === null || source === undefined) return target;
     if (target === null || target === undefined) return source;
-
+    
     if (Array.isArray(source)) {
       return [...source];
     }
-
+    
     if (typeof source === 'object' && typeof target === 'object') {
-      const src = source as Record<string, unknown>;
-      const tgt = target as Record<string, unknown>;
-      const result: Record<string, unknown> = { ...tgt };
-
-      for (const key in src) {
-        if (Object.prototype.hasOwnProperty.call(src, key)) {
-          result[key] = this.deepMerge(result[key], src[key]);
+      const result = { ...target };
+      
+      for (const key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+          result[key] = this.deepMerge(result[key], source[key]);
         }
       }
-
+      
       return result;
     }
-
+    
     return source;
   }
 
   /**
    * Deep equality check
    */
-  private deepEqual(a: unknown, b: unknown): boolean {
+  private deepEqual(a: any, b: any): boolean {
     if (a === b) return true;
-
+    
     if (a === null || b === null || a === undefined || b === undefined) {
       return a === b;
     }
-
+    
     if (typeof a !== typeof b) return false;
-
+    
     if (Array.isArray(a) && Array.isArray(b)) {
       if (a.length !== b.length) return false;
       for (let i = 0; i < a.length; i++) {
@@ -388,97 +386,94 @@ export class ChartValuesProcessor {
       }
       return true;
     }
-
+    
     if (typeof a === 'object' && typeof b === 'object') {
-      const objA = a as Record<string, unknown>;
-      const objB = b as Record<string, unknown>;
-      const keysA = Object.keys(objA);
-      const keysB = Object.keys(objB);
-
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      
       if (keysA.length !== keysB.length) return false;
-
+      
       for (const key of keysA) {
         if (!keysB.includes(key)) return false;
-        if (!this.deepEqual(objA[key], objB[key])) return false;
+        if (!this.deepEqual(a[key], b[key])) return false;
       }
-
+      
       return true;
     }
-
+    
     return false;
   }
 
   /**
    * Get nested value by path
    */
-  private getNestedValue(obj: unknown, path: string): unknown {
+  private getNestedValue(obj: any, path: string): any {
     const parts = path.split('.');
-    let current: unknown = obj;
-
+    let current = obj;
+    
     for (const part of parts) {
       if (current === null || current === undefined) return undefined;
-      current = (current as Record<string, unknown>)[part];
+      current = current[part];
     }
-
+    
     return current;
   }
 
   /**
    * Set nested value by path
    */
-  private setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
+  private setNestedValue(obj: any, path: string, value: any): void {
     const parts = path.split('.');
-    let current: Record<string, unknown> = obj;
-
+    let current = obj;
+    
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i];
       if (current[part] === undefined || current[part] === null) {
         current[part] = {};
       }
-      current = current[part] as Record<string, unknown>;
+      current = current[part];
     }
-
+    
     current[parts[parts.length - 1]] = value;
   }
 
   /**
    * Delete nested value by path
    */
-  private deleteNestedValue(obj: Record<string, unknown>, path: string): void {
+  private deleteNestedValue(obj: any, path: string): void {
     const parts = path.split('.');
-    let current: Record<string, unknown> = obj;
-
+    let current = obj;
+    
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i];
       if (current[part] === undefined || current[part] === null) {
         return;
       }
-      current = current[part] as Record<string, unknown>;
+      current = current[part];
     }
-
+    
     delete current[parts[parts.length - 1]];
   }
 
   /**
    * Get all paths in an object
    */
-  private getAllPaths(obj: unknown, prefix = ''): string[] {
+  private getAllPaths(obj: any, prefix = ''): string[] {
     const paths: string[] = [];
-
+    
     if (obj === null || obj === undefined || typeof obj !== 'object') {
       return prefix ? [prefix] : [];
     }
-
+    
     if (Array.isArray(obj)) {
       return prefix ? [prefix] : [];
     }
-
-    const record = obj as Record<string, unknown>;
-    for (const key in record) {
-      if (Object.prototype.hasOwnProperty.call(record, key)) {
+    
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
         const path = prefix ? `${prefix}.${key}` : key;
-        const value = record[key];
-
+        const value = obj[key];
+        
         if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
           paths.push(...this.getAllPaths(value, path));
         } else {
@@ -486,20 +481,19 @@ export class ChartValuesProcessor {
         }
       }
     }
-
+    
     return paths;
   }
 
   /**
    * Validate object against schema
    */
-  private validateObject(obj: unknown, schema: Record<string, ValueSchema>, prefix: string, errors: ValueValidationError[]): void {
-    const record = (obj ?? {}) as Record<string, unknown>;
+  private validateObject(obj: any, schema: Record<string, ValueSchema>, prefix: string, errors: ValueValidationError[]): void {
     for (const key in schema) {
       if (Object.prototype.hasOwnProperty.call(schema, key)) {
         const path = prefix ? `${prefix}.${key}` : key;
         const valueSchema = schema[key];
-        const value = record[key];
+        const value = obj?.[key];
         
         this.validateSingleValue(value, valueSchema, path, errors);
         
@@ -513,7 +507,7 @@ export class ChartValuesProcessor {
   /**
    * Validate single value against schema
    */
-  private validateSingleValue(value: unknown, schema: ValueSchema, path: string, errors: ValueValidationError[]): void {
+  private validateSingleValue(value: any, schema: ValueSchema, path: string, errors: ValueValidationError[]): void {
     // Required check
     if (schema.required && (value === undefined || value === null)) {
       errors.push({
@@ -553,8 +547,7 @@ export class ChartValuesProcessor {
     
     // Range checks for numbers
     if (schema.type === 'number') {
-      const numValue = value as number;
-      if (schema.minimum !== undefined && numValue < schema.minimum) {
+      if (schema.minimum !== undefined && value < schema.minimum) {
         errors.push({
           path,
           message: `Value must be at least ${schema.minimum}`,
@@ -562,8 +555,8 @@ export class ChartValuesProcessor {
           schema
         });
       }
-
-      if (schema.maximum !== undefined && numValue > schema.maximum) {
+      
+      if (schema.maximum !== undefined && value > schema.maximum) {
         errors.push({
           path,
           message: `Value must be at most ${schema.maximum}`,
@@ -572,11 +565,11 @@ export class ChartValuesProcessor {
         });
       }
     }
-
+    
     // Pattern check for strings
     if (schema.type === 'string' && schema.pattern) {
       const regex = new RegExp(schema.pattern);
-      if (!regex.test(value as string)) {
+      if (!regex.test(value)) {
         errors.push({
           path,
           message: `Value does not match pattern: ${schema.pattern}`,
@@ -589,7 +582,7 @@ export class ChartValuesProcessor {
     // Array item validation
     if (schema.type === 'array' && schema.items && Array.isArray(value)) {
       value.forEach((item, index) => {
-        this.validateSingleValue(item, schema.items, `${path}[${index}]`, errors);
+        this.validateSingleValue(item, schema.items!, `${path}[${index}]`, errors);
       });
     }
   }
@@ -597,7 +590,7 @@ export class ChartValuesProcessor {
   /**
    * Check if value matches expected type
    */
-  private isTypeValid(value: unknown, expectedType: ValueSchema['type']): boolean {
+  private isTypeValid(value: any, expectedType: ValueSchema['type']): boolean {
     switch (expectedType) {
       case 'string':
         return typeof value === 'string';
@@ -617,7 +610,7 @@ export class ChartValuesProcessor {
   /**
    * Convert object to YAML (simple implementation)
    */
-  private objectToYaml(obj: unknown, indent = 0): string {
+  private objectToYaml(obj: any, indent = 0): string {
     const spaces = '  '.repeat(indent);
     
     if (obj === null) return 'null';
@@ -631,7 +624,7 @@ export class ChartValuesProcessor {
     }
     
     if (typeof obj === 'object') {
-      const entries = Object.entries(obj as Record<string, unknown>);
+      const entries = Object.entries(obj);
       if (entries.length === 0) return '{}';
       
       return '\n' + entries.map(([key, value]) => {
@@ -647,16 +640,16 @@ export class ChartValuesProcessor {
    * Convert YAML to object (simple implementation)
    * Note: In a real implementation, you'd use a proper YAML parser like js-yaml
    */
-  private yamlToObject(yaml: string): Record<string, unknown> {
+  private yamlToObject(yaml: string): any {
     // This is a very basic YAML parser - in production, use js-yaml
     try {
       // Try JSON parsing first for simple cases
-      return JSON.parse(yaml) as Record<string, unknown>;
+      return JSON.parse(yaml);
     } catch {
       // Fallback to basic YAML parsing
       const lines = yaml.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
-      const result: Record<string, unknown> = {};
-
+      const result: any = {};
+      
       for (const line of lines) {
         const match = line.match(/^(\s*)([^:]+):\s*(.*)$/);
         if (match) {
@@ -664,7 +657,7 @@ export class ChartValuesProcessor {
           result[key.trim()] = this.parseYamlValue(value.trim());
         }
       }
-
+      
       return result;
     }
   }
@@ -672,7 +665,7 @@ export class ChartValuesProcessor {
   /**
    * Parse individual YAML value
    */
-  private parseYamlValue(value: string): unknown {
+  private parseYamlValue(value: string): any {
     if (value === 'null' || value === '~' || value === '') return null;
     if (value === 'true') return true;
     if (value === 'false') return false;

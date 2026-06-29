@@ -7,48 +7,28 @@
         <div class="breadcrumb-nav">
           <button
             class="btn btn-link breadcrumb-link"
-            :aria-label="t('suseai.apps.backToApps', 'Back to Apps')"
             @click="navigateToApps"
+            :aria-label="t('suseai.apps.backToApps', 'Back to Apps')"
           >
-            <i
-              class="icon icon-chevron-left"
-              aria-hidden="true"
-            />
+            <i class="icon icon-chevron-left" aria-hidden="true" />
             <span>{{ t('suseai.apps.title', 'Apps') }}</span>
           </button>
           <span class="breadcrumb-separator">/</span>
           <span class="breadcrumb-current">{{ appDisplayName }}</span>
-          <div
-            v-if="appInfo"
-            class="app-meta-inline"
-          >
-            <span
-              v-if="appInfo.packaging_format"
-              class="badge-state"
-              :class="getBadgeClass(appInfo.packaging_format)"
-            >
+          <div v-if="appInfo" class="app-meta-inline">
+            <span v-if="appInfo.packaging_format" class="badge-state" :class="getBadgeClass(appInfo.packaging_format)">
               {{ formatPackagingType(appInfo.packaging_format) }}
             </span>
-            <span
-              v-if="appInfo.version"
-              class="app-version"
-            >v{{ appInfo.version }}</span>
+            <span v-if="appInfo.version" class="app-version">v{{ appInfo.version }}</span>
           </div>
         </div>
 
         <!-- Actions toolbar -->
-        <div
-          class="actions-container"
-          role="toolbar"
-          aria-label="Instance actions"
-        >
+        <div class="actions-container" role="toolbar" aria-label="Instance actions">
           <!-- Left side: Search and filters -->
           <div class="left-actions">
             <div class="search-box">
-              <label
-                for="instance-search"
-                class="sr-only"
-              >Search instances</label>
+              <label for="instance-search" class="sr-only">Search instances</label>
               <input
                 id="instance-search"
                 v-model="search"
@@ -60,55 +40,33 @@
             </div>
 
             <div class="filter-group">
-              <label
-                for="cluster-filter"
-                class="sr-only"
-              >Filter by cluster</label>
+              <label for="cluster-filter" class="sr-only">Filter by cluster</label>
               <select
                 id="cluster-filter"
                 v-model="selectedCluster"
                 class="form-control"
                 aria-label="Filter instances by cluster"
               >
-                <option value="all">
-                  All Clusters
-                </option>
-                <option
-                  v-for="cluster in availableClusters"
-                  :key="cluster"
-                  :value="cluster"
-                >
+                <option value="all">All Clusters</option>
+                <option v-for="cluster in availableClusters" :key="cluster" :value="cluster">
                   {{ cluster }}
                 </option>
               </select>
             </div>
 
             <div class="filter-group">
-              <label
-                for="status-filter"
-                class="sr-only"
-              >Filter by status</label>
+              <label for="status-filter" class="sr-only">Filter by status</label>
               <select
                 id="status-filter"
                 v-model="selectedStatus"
                 class="form-control"
                 aria-label="Filter instances by status"
               >
-                <option value="all">
-                  All Status
-                </option>
-                <option value="deployed">
-                  Deployed
-                </option>
-                <option value="installing">
-                  Installing
-                </option>
-                <option value="upgrading">
-                  Upgrading
-                </option>
-                <option value="failed">
-                  Failed
-                </option>
+                <option value="all">All Status</option>
+                <option value="deployed">Deployed</option>
+                <option value="installing">Installing</option>
+                <option value="upgrading">Upgrading</option>
+                <option value="failed">Failed</option>
               </select>
             </div>
           </div>
@@ -117,37 +75,26 @@
           <div class="right-actions">
             <button
               class="btn role-primary"
+              @click="onInstall"
               :disabled="loading"
               :title="t('suseai.instances.installNew', 'Install new instance')"
               :aria-label="t('suseai.instances.installNew', 'Install new instance')"
               type="button"
-              @click="onInstall"
             >
-              <i
-                class="icon icon-plus"
-                aria-hidden="true"
-              />
+              <i class="icon icon-plus" aria-hidden="true" />
               {{ t('suseai.instances.install', 'Install') }}
             </button>
 
             <button
               class="btn role-secondary"
+              @click="refresh"
               :disabled="loading"
               :title="t('suseai.instances.refresh', 'Refresh instances')"
               :aria-label="loading ? 'Refreshing instances...' : 'Refresh instances'"
               type="button"
-              @click="refresh"
             >
-              <i
-                v-if="loading"
-                class="icon icon-spinner icon-spin"
-                aria-hidden="true"
-              />
-              <i
-                v-else
-                class="icon icon-refresh"
-                aria-hidden="true"
-              />
+              <i v-if="loading" class="icon icon-spinner icon-spin" aria-hidden="true" />
+              <i v-else class="icon icon-refresh" aria-hidden="true" />
               {{ t('suseai.instances.refresh', 'Refresh') }}
             </button>
           </div>
@@ -155,77 +102,37 @@
       </header>
 
       <!-- Error state -->
-      <div
-        v-if="error"
-        class="banner bg-error"
-      >
+      <div v-if="error" class="banner bg-error">
         <span>{{ error }}</span>
       </div>
 
       <!-- Main content area -->
       <div class="main-content">
         <!-- Results summary -->
-        <div
-          class="results-summary"
-          aria-live="polite"
-        >
-          <div
-            v-if="loading"
-            class="inline-loading"
-          >
-            <i
-              class="icon icon-spinner icon-spin"
-              aria-hidden="true"
-            />
+        <div class="results-summary" aria-live="polite">
+          <div v-if="loading" class="inline-loading">
+            <i class="icon icon-spinner icon-spin" aria-hidden="true" />
             <span>{{ t('suseai.instances.loading', 'Loading instances...') }}</span>
           </div>
-          <div
-            v-else-if="filteredInstances.length"
-            class="results-text"
-          >
+          <div v-else-if="filteredInstances.length" class="results-text">
             {{ filteredInstances.length }} {{ filteredInstances.length === 1 ? 'instance' : 'instances' }} found
           </div>
-          <div
-            v-else-if="!loading && !error"
-            class="results-text"
-          >
+          <div v-else-if="!loading && !error" class="results-text">
             No instances found
           </div>
         </div>
 
         <!-- Instances table -->
-        <div
-          v-if="!loading && filteredInstances.length"
-          class="instances-table"
-        >
-          <table
-            class="table"
-            role="table"
-            aria-label="Application instances"
-          >
+        <div v-if="!loading && filteredInstances.length" class="instances-table">
+          <table class="table" role="table" aria-label="Application instances">
             <thead>
               <tr>
-                <th scope="col">
-                  {{ t('suseai.instances.name', 'Instance Name') }}
-                </th>
-                <th scope="col">
-                  {{ t('suseai.instances.cluster', 'Cluster') }}
-                </th>
-                <th scope="col">
-                  {{ t('suseai.instances.namespace', 'Namespace') }}
-                </th>
-                <th scope="col">
-                  {{ t('suseai.instances.version', 'Version') }}
-                </th>
-                <th scope="col">
-                  {{ t('suseai.instances.status', 'Status') }}
-                </th>
-                <th
-                  scope="col"
-                  class="text-right"
-                >
-                  {{ t('suseai.instances.actions', 'Actions') }}
-                </th>
+                <th scope="col">{{ t('suseai.instances.name', 'Instance Name') }}</th>
+                <th scope="col">{{ t('suseai.instances.cluster', 'Cluster') }}</th>
+                <th scope="col">{{ t('suseai.instances.namespace', 'Namespace') }}</th>
+                <th scope="col">{{ t('suseai.instances.version', 'Version') }}</th>
+                <th scope="col">{{ t('suseai.instances.status', 'Status') }}</th>
+                <th scope="col" class="text-right">{{ t('suseai.instances.actions', 'Actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -237,13 +144,8 @@
                 <!-- Instance Name -->
                 <td class="col-name">
                   <div class="instance-name-cell">
-                    <div class="instance-name">
-                      {{ instance.instanceName || instance.releaseName }}
-                    </div>
-                    <div
-                      v-if="instance.description"
-                      class="instance-description text-muted"
-                    >
+                    <div class="instance-name">{{ instance.instanceName || instance.releaseName }}</div>
+                    <div v-if="instance.description" class="instance-description text-muted">
                       {{ instance.description }}
                     </div>
                   </div>
@@ -273,16 +175,10 @@
                     :class="getStatusClass(instance.status)"
                     :title="getStatusTooltip(instance)"
                   >
-                    <i
-                      :class="getStatusIcon(instance.status)"
-                      aria-hidden="true"
-                    />
+                    <i :class="getStatusIcon(instance.status)" aria-hidden="true" />
                     {{ getStatusLabel(instance.status) }}
                   </span>
-                  <div
-                    v-if="instance.lastDeployed"
-                    class="last-deployed text-muted"
-                  >
+                  <div v-if="instance.lastDeployed" class="last-deployed text-muted">
                     {{ formatDate(instance.lastDeployed) }}
                   </div>
                 </td>
@@ -290,41 +186,26 @@
 
                 <!-- Actions -->
                 <td class="col-actions text-right">
-                  <div
-                    class="btn-group"
-                    role="group"
-                    :aria-label="`Actions for ${instance.instanceName || instance.releaseName}`"
-                  >
+                  <div class="btn-group" role="group" :aria-label="`Actions for ${instance.instanceName || instance.releaseName}`">
                     <button
                       class="btn btn-sm role-secondary manage-instance-btn"
+                      @click="onManage(instance)"
                       :disabled="!canManage(instance)"
                       :title="t('suseai.instances.manage', 'Manage instance')"
                       :aria-label="`Manage ${instance.instanceName || instance.releaseName}`"
-                      @click="onManage(instance)"
                     >
-                      <i
-                        class="icon icon-edit"
-                        aria-hidden="true"
-                      />
+                      <i class="icon icon-edit" aria-hidden="true" />
                       {{ t('suseai.instances.manage', 'Manage') }}
                     </button>
                     <button
                       class="btn btn-sm role-secondary text-error"
+                      @click="onDelete(instance)"
                       :disabled="!canDelete(instance) || deletingInstances.has(getInstanceKey(instance))"
                       :title="t('suseai.instances.delete', 'Delete instance')"
                       :aria-label="`Delete ${instance.instanceName || instance.releaseName}`"
-                      @click="onDelete(instance)"
                     >
-                      <i
-                        v-if="deletingInstances.has(getInstanceKey(instance))"
-                        class="icon icon-spinner icon-spin"
-                        aria-hidden="true"
-                      />
-                      <i
-                        v-else
-                        class="icon icon-delete"
-                        aria-hidden="true"
-                      />
+                      <i v-if="deletingInstances.has(getInstanceKey(instance))" class="icon icon-spinner icon-spin" aria-hidden="true" />
+                      <i v-else class="icon icon-delete" aria-hidden="true" />
                       <span v-if="deletingInstances.has(getInstanceKey(instance))">
                         {{ t('suseai.instances.deleting', 'Deleting...') }}
                       </span>
@@ -340,10 +221,7 @@
         </div>
 
         <!-- Empty state -->
-        <div
-          v-if="!loading && !filteredInstances.length && !error"
-          class="empty-state-content"
-        >
+        <div v-if="!loading && !filteredInstances.length && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.instances.noInstances', 'No instances found') }}</h3>
           <p class="text-muted">
@@ -357,10 +235,7 @@
             class="btn role-primary install-first-btn"
             @click="onInstall"
           >
-            <i
-              class="icon icon-plus"
-              aria-hidden="true"
-            />
+            <i class="icon icon-plus" aria-hidden="true" />
             {{ t('suseai.instances.installFirst', 'Install First Instance') }}
           </button>
         </div>
@@ -371,11 +246,10 @@
 
 <script lang="ts">
 import { defineComponent, computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue';
-import logger from '../utils/logger';
 import type { AppInstallationSummary } from '../types/app-types';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchAppsFromRepository } from '../services/app-collection';
-import { getClusters, listCatalogApps, deleteApp } from '../services/rancher-apps';
+import { discoverExistingInstall, getClusters, listCatalogApps, deleteApp } from '../services/rancher-apps';
 import { DEFAULT_VALUES } from '../utils/constants';
 import { PRODUCT } from '../config/suseai';
 
@@ -399,11 +273,8 @@ export default defineComponent({
 
   setup(props) {
     const vm = getCurrentInstance();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const $router = (vm as any)?.proxy?.$router;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const $route = (vm as any)?.proxy?.$route;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = (vm as any)?.proxy?.$store;
     const currentClusterId = ($route?.params?.cluster as string) || 'local';
 
@@ -587,12 +458,12 @@ export default defineComponent({
       deletingInstances.value.add(instanceKey);
 
       try {
-        logger.info(`[SUSE-AI] Deleting instance: ${instance.releaseName} in ${instance.clusterId}/${instance.namespace}`);
+        console.log(`[SUSE-AI] Deleting instance: ${instance.releaseName} in ${instance.clusterId}/${instance.namespace}`);
 
         // Call the actual delete service
         await deleteApp(store, instance.clusterId, instance.namespace, instance.releaseName);
 
-        logger.info(`[SUSE-AI] Successfully deleted instance: ${instance.releaseName}`);
+        console.log(`[SUSE-AI] Successfully deleted instance: ${instance.releaseName}`);
 
         // Remove from instances array
         const index = instances.value.findIndex(i => getInstanceKey(i) === instanceKey);
@@ -602,25 +473,20 @@ export default defineComponent({
 
         // Show success message
         if (store.dispatch) {
-          // Rancher store dispatch untyped
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           store.dispatch('growl/success', {
             title: 'Instance Deleted',
             message: `${instance.instanceName || instance.releaseName} has been deleted successfully.`
           });
         }
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : 'Unknown error';
-        logger.error('Delete failed:', err);
-        error.value = `Failed to delete instance: ${errMsg}`;
+      } catch (err: any) {
+        console.error('Delete failed:', err);
+        error.value = `Failed to delete instance: ${err?.message || 'Unknown error'}`;
 
         // Show error message
         if (store.dispatch) {
-          // Rancher store dispatch untyped
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           store.dispatch('growl/error', {
             title: 'Delete Failed',
-            message: `Failed to delete ${instance.instanceName || instance.releaseName}: ${errMsg}`
+            message: `Failed to delete ${instance.instanceName || instance.releaseName}: ${err?.message || 'Unknown error'}`
           });
         }
       } finally {
@@ -636,21 +502,21 @@ export default defineComponent({
         // If we have a specific repository from navigation, try that first
         if (repoFromQuery) {
           try {
-            logger.info(`[SUSE-AI] Loading app info from specified repository: ${repoFromQuery}`);
+            console.log(`[SUSE-AI] Loading app info from specified repository: ${repoFromQuery}`);
             const repoApps = await fetchAppsFromRepository(store, repoFromQuery);
             const repoApp = repoApps.find(a => a.slug_name === props.slug);
             if (repoApp) {
               appInfo.value = repoApp;
-              logger.info(`[SUSE-AI] Found app "${props.slug}" in repository "${repoFromQuery}"`);
+              console.log(`[SUSE-AI] Found app "${props.slug}" in repository "${repoFromQuery}"`);
               return;
             }
           } catch (repoErr) {
-            logger.warn(`Failed to load app from specified repository ${repoFromQuery}:`, repoErr);
+            console.warn(`Failed to load app from specified repository ${repoFromQuery}:`, repoErr);
           }
         }
-      } catch (err: unknown) {
-        logger.error('Failed to load app info:', err);
-        error.value = `Failed to load app information: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      } catch (err: any) {
+        console.error('Failed to load app info:', err);
+        error.value = `Failed to load app information: ${err?.message || 'Unknown error'}`;
       }
     };
 
@@ -675,7 +541,7 @@ export default defineComponent({
         // Search for installations across all clusters in parallel
         const clusterResults = await Promise.allSettled(
           allClusters.map(async (cluster) => {
-            logger.debug(`[SUSE-AI] Searching for ${props.slug} instances in cluster ${cluster.name}...`);
+            console.log(`[SUSE-AI] Searching for ${props.slug} instances in cluster ${cluster.name}...`);
             const catalogApps = await listCatalogApps(store, cluster.id);
             return { cluster, catalogApps };
           })
@@ -684,7 +550,7 @@ export default defineComponent({
         for (const [i, result] of clusterResults.entries()) {
           if (result.status === 'rejected') {
             const c = allClusters[i];
-            logger.warn(`[SUSE-AI] Failed to search cluster ${ c?.name } (${ c?.id }):`, result.reason);
+            console.warn(`[SUSE-AI] Failed to search cluster ${ c?.name } (${ c?.id }):`, result.reason);
             continue;
           }
           const { cluster, catalogApps } = result.value;
@@ -700,16 +566,15 @@ export default defineComponent({
             const matchesChart = chart.toLowerCase() === props.slug.toLowerCase();
 
             if (matchesChart) {
-              logger.debug(`[SUSE-AI] Found instance: ${release} in ${cluster.name}/${meta.namespace}`);
+              console.log(`[SUSE-AI] Found instance: ${release} in ${cluster.name}/${meta.namespace}`);
 
               // Extract status information from the catalog app
               // The API returns status in metadata.state.name and status.summary.state
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const metadataState = (catalogApp as any)?.metadata?.state?.name;
               const statusState = catalogApp?.status?.summary?.state;
               const actualStatus = statusState || metadataState || 'unknown';
 
-              logger.debug(`[SUSE-AI] Instance ${release} status: metadata.state.name="${metadataState}", status.summary.state="${statusState}"`);
+              console.log(`[SUSE-AI] Instance ${release} status: metadata.state.name="${metadataState}", status.summary.state="${statusState}"`);
 
               // Determine instance status
               let instanceStatus: 'pending' | 'installing' | 'deployed' | 'upgrading' | 'uninstalling' | 'failed' | 'superseded' | 'unknown' = 'unknown';
@@ -720,13 +585,11 @@ export default defineComponent({
               switch (actualStatus?.toLowerCase()) {
                 case 'deployed':
                   instanceStatus = 'deployed';
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   ready = !(catalogApp as any)?.metadata?.state?.error && !(catalogApp as any)?.metadata?.state?.transitioning;
                   break;
                 case 'failed':
                 case 'error':
                   instanceStatus = 'failed';
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   errorMessage = (catalogApp as any)?.metadata?.state?.message || 'Deployment failed';
                   break;
                 case 'installing':
@@ -752,10 +615,8 @@ export default defineComponent({
               }
 
               // If state indicates error, override status
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               if ((catalogApp as any)?.metadata?.state?.error) {
                 instanceStatus = 'failed';
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 errorMessage = (catalogApp as any)?.metadata?.state?.message || 'Application error';
               }
 
@@ -780,11 +641,11 @@ export default defineComponent({
         }
 
         instances.value = foundInstances;
-        logger.info(`[SUSE-AI] Found ${foundInstances.length} instances of ${props.slug}`);
+        console.log(`[SUSE-AI] Found ${foundInstances.length} instances of ${props.slug}`);
 
-      } catch (err: unknown) {
-        logger.error('Failed to load app instances:', err);
-        error.value = `Failed to load instances: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      } catch (err: any) {
+        console.error('Failed to load app instances:', err);
+        error.value = `Failed to load instances: ${err?.message || 'Unknown error'}`;
       }
     };
 
@@ -797,8 +658,8 @@ export default defineComponent({
           loadAppInfo(),
           loadAppInstances()
         ]);
-      } catch (err: unknown) {
-        logger.error('Failed to refresh:', err);
+      } catch (err: any) {
+        console.error('Failed to refresh:', err);
         error.value = 'Failed to refresh data';
       } finally {
         loading.value = false;
@@ -807,7 +668,7 @@ export default defineComponent({
 
     // Auto-refresh functionality for real-time status updates
     let refreshTimer: NodeJS.Timeout | null = null;
-    let clustersCache: unknown[] | null = null;
+    let clustersCache: any[] | null = null;
     let clustersCacheTime = 0;
     const CLUSTERS_CACHE_TTL = DEFAULT_VALUES.CLUSTER_CACHE_TTL;
 
@@ -823,9 +684,9 @@ export default defineComponent({
           loadAppInfo(),
           loadAppInstances()
         ]);
-      } catch (err: unknown) {
+      } catch (err: any) {
         // Silently handle errors during auto-refresh to avoid spamming users
-        logger.warn('[SUSE-AI] Silent refresh failed:', { data: err });
+        console.warn('[SUSE-AI] Silent refresh failed:', err);
       }
     };
 

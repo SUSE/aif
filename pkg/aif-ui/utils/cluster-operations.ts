@@ -4,7 +4,7 @@
  * Following standard patterns for cluster management
  */
 
-import { CONNECTION_STATUS, RETRY_CONFIG } from './constants';
+import { CONNECTION_STATUS, TIMEOUT_VALUES, RETRY_CONFIG } from './constants';
 import type { ConnectionStatus } from './constants';
 import { retryWithBackoff } from './promise';
 import { getClusters } from '../services/rancher-apps';
@@ -199,7 +199,7 @@ export function validateClusterForAppInstall(
 /**
  * Discover available clusters
  */
-export async function discoverClusters(_store: unknown): Promise<ClusterInfo[]> {
+export async function discoverClusters(store: any): Promise<ClusterInfo[]> {
   try {
     // Get clusters from Rancher management store
     const clusters: ClusterInfo[] = [];
@@ -208,7 +208,7 @@ export async function discoverClusters(_store: unknown): Promise<ClusterInfo[]> 
     
     return clusters;
   } catch (error) {
-    logger.error('Failed to discover clusters:', error);
+    console.error('Failed to discover clusters:', error);
     throw error;
   }
 }
@@ -218,7 +218,7 @@ export async function discoverClusters(_store: unknown): Promise<ClusterInfo[]> 
  */
 export async function testClusterConnection(
   clusterId: string,
-  _store: unknown
+  store: any
 ): Promise<ClusterOperationResult> {
   const startTime = Date.now();
   
@@ -240,12 +240,12 @@ export async function testClusterConnection(
       duration: Date.now() - startTime,
       timestamp: new Date().toISOString()
     };
-  } catch (error) {
+  } catch (error: any) {
     return {
       success: false,
       clusterId,
       operation: 'connection-test',
-      error: error instanceof Error ? error.message : 'Connection test failed',
+      error: error.message || 'Connection test failed',
       duration: Date.now() - startTime,
       timestamp: new Date().toISOString()
     };
@@ -257,7 +257,7 @@ export async function testClusterConnection(
  */
 export async function getClusterCapabilities(
   clusterId: string,
-  _store: unknown
+  store: any
 ): Promise<ClusterCapabilities> {
   try {
     const capabilities: ClusterCapabilities = {
@@ -301,17 +301,16 @@ export async function getClusterCapabilities(
     
     return capabilities;
   } catch (error) {
-    logger.error(`Failed to get cluster capabilities for ${clusterId}:`, error);
+    console.error(`Failed to get cluster capabilities for ${clusterId}:`, error);
     throw error;
   }
 }
 
 export async function getClusterContext(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   store: any,
   opts?: { repoName?: string }
 ) {
-  let cluster: unknown = null;
+  let cluster: any = null;
   let clusterId = 'local';
   let isLocalCluster = true;
   let baseApi = '/v1';
@@ -360,7 +359,7 @@ export async function getClusterContext(
       return { cluster: null, clusterId: null, isLocalCluster: null, baseApi: null, repo: null };
     }
 
-    cluster = clusters.find((c: { id: string }) => c.id === 'local') || clusters[0];
+    cluster = clusters.find((c: any) => c.id === 'local') || clusters[0];
     clusterId = cluster.id;
     isLocalCluster = cluster.id === 'local';
     baseApi = isLocalCluster
@@ -386,8 +385,8 @@ export async function getClusterContext(
  * Check cluster health
  */
 export async function checkClusterHealth(
-  _clusterId: string,
-  _store: unknown
+  clusterId: string,
+  store: any
 ): Promise<ClusterHealth> {
   const components: ClusterComponent[] = [];
   const issues: ClusterIssue[] = [];
@@ -558,7 +557,6 @@ export function sortClusters(
 export async function performBulkClusterOperation(
   clusterIds: string[],
   operation: 'health-check' | 'connection-test' | 'capabilities-refresh',
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   store: any,
   options: { parallel?: boolean; batchSize?: number } = {}
 ): Promise<BulkClusterOperationResult> {
@@ -596,19 +594,19 @@ export async function performBulkClusterOperation(
             default:
               throw new Error(`Unknown operation: ${operation}`);
           }
-        } catch (error) {
+        } catch (error: any) {
           return {
             success: false,
             clusterId,
             operation,
-            error: error instanceof Error ? error.message : 'Operation failed',
+            error: error.message || 'Operation failed',
             timestamp: new Date().toISOString()
           };
         }
       });
-
+      
       const batchResults = await Promise.allSettled(batchPromises);
-      results.push(...batchResults.map(result =>
+      results.push(...batchResults.map(result => 
         result.status === 'fulfilled' ? result.value : {
           success: false,
           clusterId: 'unknown',
@@ -624,12 +622,12 @@ export async function performBulkClusterOperation(
       try {
         const result = await testClusterConnection(clusterId, store);
         results.push(result);
-      } catch (error) {
+      } catch (error: any) {
         results.push({
           success: false,
           clusterId,
           operation,
-          error: error instanceof Error ? error.message : 'Operation failed',
+          error: error.message || 'Operation failed',
           timestamp: new Date().toISOString()
         });
       }

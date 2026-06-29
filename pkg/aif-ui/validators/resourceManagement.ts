@@ -199,7 +199,7 @@ export function validateNodeSelector(nodeSelector: Record<string, string>): Vali
   };
 }
 
-export function validateTolerations(tolerations: Array<Record<string, unknown>>): ValidationResult {
+export function validateTolerations(tolerations: Array<Record<string, any>>): ValidationResult {
   const errors: ValidationError[] = [];
 
   if (!tolerations || tolerations.length === 0) {
@@ -257,17 +257,17 @@ export function validateTolerations(tolerations: Array<Record<string, unknown>>)
 // Export validation rules for use in forms
 export const cpuRule: FieldValidationRule = {
   name: 'cpu',
-  validate: (value) => validateResourceQuantity(value as string, 'cpu')
+  validate: (value: any) => validateResourceQuantity(value, 'cpu')
 };
 
 export const memoryRule: FieldValidationRule = {
   name: 'memory',
-  validate: (value) => validateResourceQuantity(value as string, 'memory')
+  validate: (value: any) => validateResourceQuantity(value, 'memory')
 };
 
 export const storageRule: FieldValidationRule = {
   name: 'storage',
-  validate: (value) => validateResourceQuantity(value as string, 'storage')
+  validate: (value: any) => validateResourceQuantity(value, 'storage')
 };
 
 export const nodeSelectorRule: FieldValidationRule = {
