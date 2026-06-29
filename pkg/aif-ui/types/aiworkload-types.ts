@@ -24,7 +24,7 @@ export interface AIWorkloadSource {
 
 export interface ComponentValueOverride {
   componentName: string;
-  values?:       Record<string, unknown>;
+  values?:       Record<string, any>;
 }
 
 export interface AIWorkloadSpec {
@@ -46,7 +46,7 @@ export interface AIWorkloadClusterStatus {
 export interface AIWorkloadStatus {
   phase?:              AIWorkloadPhase;
   clusterStatuses?:    AIWorkloadClusterStatus[];
-  conditions?:         unknown[];
+  conditions?:         any[];
   observedGeneration?: number;
 }
 

@@ -5,9 +5,8 @@ module.exports = {
     node:    true
   },
   globals: {
-    NodeJS:      true,
-    Timer:       true,
-    RequestInit: true
+    NodeJS: true,
+    Timer:  true
   },
   parser: 'vue-eslint-parser',
   parserOptions: {
@@ -71,7 +70,7 @@ module.exports = {
     'no-eq-null':                    'off',
     'no-eval':                       'warn',
     'no-undef':                      'warn',
-    'no-unused-vars':                'off',
+    'no-unused-vars':                'warn',
     'no-whitespace-before-property': 'off',
     'object-curly-spacing':          'off',
     'object-shorthand':              'off',
@@ -93,7 +92,7 @@ module.exports = {
     'vue/v-slot-style':                   'off',
     'vue/component-tags-order':           'off',
     'vue/no-mutating-props':              'off',
-    '@typescript-eslint/no-unused-vars':  ['warn', { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true }],
+    '@typescript-eslint/no-unused-vars':  'off',
     '@typescript-eslint/no-var-requires': 'off',
     '@typescript-eslint/no-this-alias':   'off',
     'array-callback-return':              'off',

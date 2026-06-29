@@ -89,7 +89,7 @@ export interface BaseAction {
   
   // Metadata
   tags?: string[];
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, any>;
 }
 
 export interface ResourceAction extends BaseAction {
@@ -98,8 +98,8 @@ export interface ResourceAction extends BaseAction {
   
   // Bulk operation support
   bulkAction?: boolean;
-  bulkExecute?: (resources: unknown[], opts: ActionOpts) => Promise<void> | void;
-
+  bulkExecute?: (resources: any[], opts: ActionOpts) => Promise<void> | void;
+  
   // Resource-specific
   resourceTypes?: string[];
   resourceStates?: string[];
@@ -111,7 +111,7 @@ export interface ResourceAction extends BaseAction {
   
   // Error handling
   onError?: (error: Error, opts: ActionOpts) => void;
-  onSuccess?: (result: unknown, opts: ActionOpts) => void;
+  onSuccess?: (result: any, opts: ActionOpts) => void;
   
   // Loading state
   loadingMessage?: string;
@@ -141,7 +141,7 @@ export interface MenuAction extends BaseAction {
 
 export interface BulkAction extends BaseAction {
   // Bulk execution
-  execute: (items: unknown[], context: ActionExecutionContext) => Promise<ActionResult[]>;
+  execute: (items: any[], context: ActionExecutionContext) => Promise<ActionResult[]>;
   
   // Bulk-specific
   minItems?: number;
@@ -180,58 +180,50 @@ export interface WorkflowAction extends BaseAction {
 // === Action Execution Context ===
 
 export interface ActionExecutionContext {
-  // Resource context — external/runtime objects with unknown shapes
-  resource?: unknown;
-  resources?: unknown[];
-
-  // UI context — Vue/router/store instances passed at runtime
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Resource context
+  resource?: any;
+  resources?: any[];
+  
+  // UI context
   component?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   router?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   route?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   store?: any;
-
-  // User context — runtime user object with unknown shape
-  user?: unknown;
+  
+  // User context
+  user?: any;
   permissions?: string[];
-
-  // Cluster context — runtime cluster object with unknown shape
-  cluster?: unknown;
+  
+  // Cluster context
+  cluster?: any;
   clusterId?: string;
   namespace?: string;
-
+  
   // Additional context
-  metadata?: Record<string, unknown>;
-
+  metadata?: Record<string, any>;
+  
   // Event information
   event?: Event;
   source?: string;
 }
 
 export interface ActionOpts {
-  // Resource — external resource object, shape varies at runtime
-  resource: unknown;
-  resources?: unknown[];
-
+  // Resource
+  resource: any;
+  resources?: any[];
+  
   // Context
   alt?: boolean;
   ctrl?: boolean;
   shift?: boolean;
   meta?: boolean;
-
-  // UI references — Vue/router/store instances with opaque shapes
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
+  // UI references
   $router?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   $route?: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   $store?: any;
-
-  // Additional options — open-ended extension map
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
+  // Additional options
   [key: string]: any;
 }
 
@@ -240,19 +232,19 @@ export interface ActionOpts {
 export interface ActionResult {
   success: boolean;
   message?: string;
-  data?: unknown;
+  data?: any;
   error?: Error | string;
-
+  
   // Resource information
-  resource?: unknown;
+  resource?: any;
   resourceId?: string;
-
+  
   // Timing
   duration?: number; // in milliseconds
   timestamp?: string;
-
+  
   // Additional metadata
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, any>;
 }
 
 export interface WorkflowResult {
@@ -269,9 +261,9 @@ export interface WorkflowResult {
   // Error information
   error?: Error | string;
   failedStepIndex?: number;
-
+  
   // Metadata
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, any>;
 }
 
 export interface WorkflowStep {
@@ -305,19 +297,19 @@ export interface WorkflowStepResult {
   stepId: string;
   success: boolean;
   message?: string;
-  data?: unknown;
+  data?: any;
   error?: Error | string;
-
+  
   // Timing
   startTime: string;
   endTime: string;
   duration: number; // in milliseconds
-
+  
   // Retry information
   retryCount: number;
-
+  
   // Metadata
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, any>;
 }
 
 // === Action Configuration ===
@@ -362,7 +354,6 @@ export interface ActionConfiguration {
 export interface ActionDefinition {
   id: string;
   type: 'resource' | 'menu' | 'bulk' | 'workflow';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   config: any; // Configuration specific to action type
   
   // Override default behavior
@@ -399,7 +390,7 @@ export interface ActionRegistry {
   
   // Execution
   execute(actionId: string, context: ActionExecutionContext): Promise<ActionResult>;
-  executeBulk(actionId: string, items: unknown[], context: ActionExecutionContext): Promise<ActionResult[]>;
+  executeBulk(actionId: string, items: any[], context: ActionExecutionContext): Promise<ActionResult[]>;
 }
 
 // === Action Manager ===
@@ -417,7 +408,7 @@ export interface ActionManager {
   
   // Methods
   executeAction(action: BaseAction, context: ActionExecutionContext): Promise<ActionResult>;
-  executeBulkAction(action: BulkAction, items: unknown[], context: ActionExecutionContext): Promise<ActionResult[]>;
+  executeBulkAction(action: BulkAction, items: any[], context: ActionExecutionContext): Promise<ActionResult[]>;
   executeWorkflow(action: WorkflowAction, context: ActionExecutionContext): Promise<WorkflowResult>;
   
   // State management
@@ -427,7 +418,7 @@ export interface ActionManager {
   // Event system
   on(event: ActionEvent, handler: ActionEventHandler): void;
   off(event: ActionEvent, handler: ActionEventHandler): void;
-  emit(event: ActionEvent, data: unknown): void;
+  emit(event: ActionEvent, data: any): void;
   
   // Utilities
   hasPermission(action: BaseAction, context: ActionExecutionContext): boolean;
@@ -505,10 +496,10 @@ export interface ActionEventData {
   actionId: string;
   executionId?: string;
   context?: ActionExecutionContext;
-  result?: unknown;
+  result?: any;
   error?: Error | string;
   progress?: number;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, any>;
 }
 
 export type ActionEventHandler = (data: ActionEventData) => void;
@@ -608,8 +599,8 @@ export interface ActionToolbar {
 export interface RouteTarget {
   name?: string;
   path?: string;
-  params?: Record<string, string | number>;
-  query?: Record<string, string | string[] | null | undefined>;
+  params?: Record<string, any>;
+  query?: Record<string, any>;
   hash?: string;
   
   // Modifiers
@@ -626,12 +617,10 @@ export type ActionCategoryId = string;
 // === Type Guards ===
 
 export function isResourceAction(action: BaseAction): action is ResourceAction {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return 'invoke' in action && typeof (action as any).invoke === 'function';
 }
 
 export function isMenuAction(action: BaseAction): action is MenuAction {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return 'execute' in action && typeof (action as any).execute === 'function';
 }
 
@@ -640,7 +629,6 @@ export function isBulkAction(action: BaseAction): action is BulkAction {
 }
 
 export function isWorkflowAction(action: BaseAction): action is WorkflowAction {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return 'steps' in action && Array.isArray((action as any).steps);
 }
 

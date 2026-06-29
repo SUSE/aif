@@ -8,8 +8,7 @@ import { getCurrentInstance } from 'vue';
  * `getCurrentInstance()` resolves to the calling component.
  */
 export function useT() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const store = (getCurrentInstance()?.proxy as any)?.$store; // Vue component proxy has $store but no type declaration in this context
+  const store = (getCurrentInstance()!.proxy as any)?.$store;
 
   return (key: string, fallback: string): string => store?.getters['i18n/t']?.(key) || fallback;
 }

@@ -10,8 +10,5 @@ export default defineComponent({
 </script>
 
 <template>
-  <AppWizard
-    :slug="slug"
-    mode="install"
-  />
+  <AppWizard :slug="slug" mode="install" />
 </template>

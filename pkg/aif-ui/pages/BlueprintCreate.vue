@@ -4,11 +4,9 @@ import Loading from '@shell/components/Loading';
 import BlueprintCreateWizard from './components/BlueprintCreateWizard.vue';
 import { getBlueprint, blueprintCRName } from '../utils/blueprint-api';
 import type { BlueprintSpec } from '../types/blueprint-types';
-import logger from '../utils/logger';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const vm    = getCurrentInstance()?.proxy as any;
-const route = vm?.$route;
+const vm    = getCurrentInstance()!.proxy as any;
+const route = vm.$route;
 
 const editName    = route.query.editName    as string | undefined;
 const fromVersion = route.query.fromVersion as string | undefined;
@@ -28,7 +26,7 @@ onMounted(async () => {
         version: suggestNextPatch(bp.spec.version),
       };
     } catch (e) {
-      logger.warn('[SUSE-AI] Failed to load blueprint for edit', { data: e });
+      console.warn('[SUSE-AI] Failed to load blueprint for edit:', e);
     } finally {
       loading.value = false;
     }
@@ -49,7 +47,7 @@ onMounted(async () => {
         })),
       };
     } catch (e) {
-      logger.warn('[SUSE-AI] Failed to load blueprint for copy', { data: e });
+      console.warn('[SUSE-AI] Failed to load blueprint for copy:', e);
     } finally {
       loading.value = false;
     }

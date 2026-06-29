@@ -355,7 +355,7 @@ export class ResourceUtils {
   /**
    * Debounce function
    */
-  static debounce<T extends (...args: unknown[]) => unknown>(
+  static debounce<T extends (...args: any[]) => any>(
     func: T,
     wait: number
   ): (...args: Parameters<T>) => void {
