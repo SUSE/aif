@@ -137,7 +137,7 @@ func (c *Client) clone(ctx context.Context) (*gogit.Repository, *gogit.Worktree,
 func (c *Client) commitAndPush(ctx context.Context, repo *gogit.Repository, wt *gogit.Worktree, msg string) (string, error) {
 	hash, err := wt.Commit(msg, &gogit.CommitOptions{
 		Author: &object.Signature{
-			Name:  "SUSE AI Lifecycle Manager",
+			Name:  "SUSE AI Factory",
 			Email: "noreply@suse.com",
 			When:  time.Now(),
 		},
