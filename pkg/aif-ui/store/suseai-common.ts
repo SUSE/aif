@@ -4,9 +4,8 @@
  * Integrates with Rancher's store system
  */
 
-import { SuseAIState, DiscoveryProgress, DiscoverInstallationsPayload, InstallAppPayload, UpgradeAppPayload, UninstallAppPayload } from './types/state-types';
-import { AppInstallationInfo } from '../types/app-types';
-import logger from '../utils/logger';
+import { SuseAIState, DiscoveryProgress, DiscoverInstallationsPayload } from './types/state-types';
+import { SuseAIStore } from './types/store-types';
 
 // Store modules
 import appsModule from './modules/apps';
@@ -143,17 +142,17 @@ const getters = {
     const installedAppIds = new Set<string>();
     Object.values(state.installations.installations).forEach(installation => {
       if (installation.status === 'deployed') {
-        const appId = installation.appId || installation.releaseName;
+        const appId = (installation as any).appId || installation.releaseName;
         installedAppIds.add(appId);
       }
     });
-
+    
     return Array.from(installedAppIds)
       .map(id => state.apps.apps[id])
       .filter(Boolean);
   },
 
-  // Apps for Cluster getter (specific from task list)
+  // Apps for Cluster getter (specific from task list)  
   appsForCluster: (state: SuseAIState) => (clusterId: string) => {
     const cluster = state.clusters.clusters[clusterId];
     if (!cluster || !cluster.ready) {
@@ -162,14 +161,14 @@ const getters = {
         installed: []
       };
     }
-
+    
     const installationKeys = state.installations.installationsByCluster[clusterId] || [];
     const installedAppIds = new Set<string>();
-
+    
     installationKeys.forEach(key => {
       const installation = state.installations.installations[key];
       if (installation && installation.status === 'deployed') {
-        const appId = installation.appId || installation.releaseName;
+        const appId = (installation as any).appId || installation.releaseName;
         installedAppIds.add(appId);
       }
     });
@@ -218,7 +217,7 @@ const getters = {
       return [];
     }
     
-    return Object.values(state.apps.apps).filter(_app => {
+    return Object.values(state.apps.apps).filter(app => {
       // Add logic to filter apps based on cluster capabilities
       return true; // For now, return all apps
     });
@@ -231,18 +230,18 @@ const getters = {
     const uniqueAppIds = new Set<string>();
     Object.values(state.installations.installations).forEach(installation => {
       if (installation.status === 'deployed') {
-        const appId = installation.appId || installation.releaseName;
+        const appId = (installation as any).appId || installation.releaseName;
         uniqueAppIds.add(appId);
       }
     });
     return uniqueAppIds.size;
   },
-
+  
   availableAppsCount: (state: SuseAIState): number => {
     const installedAppIds = new Set<string>();
     Object.values(state.installations.installations).forEach(installation => {
       if (installation.status === 'deployed') {
-        const appId = installation.appId || installation.releaseName;
+        const appId = (installation as any).appId || installation.releaseName;
         installedAppIds.add(appId);
       }
     });
@@ -290,7 +289,7 @@ const getters = {
 // === Mutations ===
 const mutations = {
   // Installation Info mutations (specific from task list)
-  setInstallationInfo(state: SuseAIState, payload: { appId: string; clusterId: string; installation: AppInstallationInfo }) {
+  setInstallationInfo(state: SuseAIState, payload: { appId: string; clusterId: string; installation: any }) {
     const key = `${payload.clusterId}/${payload.installation.namespace}/${payload.installation.releaseName}`;
     
     // Set installation in main installations object
@@ -323,8 +322,8 @@ const mutations = {
     Object.assign(state.discovery, progress);
   },
 
-  // Repositories mutations (specific from task list)
-  setRepositories(state: SuseAIState, repositories: Array<{ name: string; clusterId?: string; [key: string]: unknown }>) {
+  // Repositories mutations (specific from task list)  
+  setRepositories(state: SuseAIState, repositories: any[]) {
     // Clear existing repositories
     state.repositories.repositories = {};
     state.repositories.repositoriesByCluster = {};
@@ -359,7 +358,7 @@ const mutations = {
     state.discovery.discoveredApps = 0;
   },
   
-  UPDATE_DISCOVERY_PROGRESS(state: SuseAIState, payload: Partial<{ stage: string; clustersProgress: Record<string, unknown>; totalClusters: number; discoveredClusters: number; totalApps: number; discoveredApps: number }>) {
+  UPDATE_DISCOVERY_PROGRESS(state: SuseAIState, payload: any) {
     if (payload.stage) {
       state.discovery.stage = payload.stage;
     }
@@ -380,17 +379,17 @@ const mutations = {
     }
   },
   
-  COMPLETE_DISCOVERY(state: SuseAIState, payload?: { errors?: typeof state.discovery.errors }) {
+  COMPLETE_DISCOVERY(state: SuseAIState, payload?: any) {
     state.discovery.discovering = false;
     state.discovery.stage = 'completed';
     state.discovery.lastDiscovery = new Date().toISOString();
-
+    
     if (payload?.errors && payload.errors.length > 0) {
       state.discovery.errors = payload.errors;
     }
   },
-
-  FAIL_DISCOVERY(state: SuseAIState, error: { clusterId?: string; clusterName?: string; message?: string; retryable?: boolean }) {
+  
+  FAIL_DISCOVERY(state: SuseAIState, error: any) {
     state.discovery.discovering = false;
     state.discovery.stage = 'error';
     state.discovery.errors.push({
@@ -450,43 +449,41 @@ const mutations = {
 // === Actions ===
 const actions = {
   // Discovery Installations action (specific from task list)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async discoverInstallations(context: any, payload: DiscoverInstallationsPayload = {}) {
     const { commit, dispatch } = context;
-
+    
     try {
-      commit('setDiscoveryProgress', {
+      commit('setDiscoveryProgress', { 
         stage: 'discovering-installations',
-        discovering: true
+        discovering: true 
       });
-
+      
       // Delegate to installations module
       await dispatch('installations/discoverInstallations', payload);
-
-      commit('setDiscoveryProgress', {
+      
+      commit('setDiscoveryProgress', { 
         stage: 'completed',
-        discovering: false
+        discovering: false 
       });
-
-    } catch (error) {
-      commit('setDiscoveryProgress', {
+      
+    } catch (error: any) {
+      commit('setDiscoveryProgress', { 
         stage: 'error',
         discovering: false,
-        errors: [error]
+        errors: [error] 
       });
       throw error;
     }
   },
 
   // Install action (specific from task list)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async install(context: any, payload: InstallAppPayload) {
+  async install(context: any, payload: any) {
     const { commit, dispatch } = context;
-
+    
     try {
       // Delegate to installations module
       const result = await dispatch('installations/installApp', payload);
-
+      
       // Update installation info in main store
       if (result && payload.appId && payload.clusterId) {
         commit('setInstallationInfo', {
@@ -501,23 +498,22 @@ const actions = {
           }
         });
       }
-
+      
       return result;
-    } catch (error) {
-      logger.error('Installation failed:', error);
+    } catch (error: any) {
+      console.error('Installation failed:', error);
       throw error;
     }
   },
 
   // Upgrade action (specific from task list)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async upgrade(context: any, payload: UpgradeAppPayload) {
+  async upgrade(context: any, payload: any) {
     const { commit, dispatch } = context;
-
+    
     try {
       // Delegate to installations module
       const result = await dispatch('installations/upgradeApp', payload);
-
+      
       // Update installation info in main store
       if (result && payload.appId && payload.clusterId) {
         commit('setInstallationInfo', {
@@ -532,23 +528,22 @@ const actions = {
           }
         });
       }
-
+      
       return result;
-    } catch (error) {
-      logger.error('Upgrade failed:', error);
+    } catch (error: any) {
+      console.error('Upgrade failed:', error);
       throw error;
     }
   },
 
   // Uninstall action (specific from task list)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async uninstall(context: any, payload: UninstallAppPayload) {
+  async uninstall(context: any, payload: any) {
     const { commit, dispatch } = context;
-
+    
     try {
       // Delegate to installations module
       const result = await dispatch('installations/uninstallApp', payload);
-
+      
       // Update installation info in main store
       if (result && payload.appId && payload.clusterId) {
         commit('setInstallationInfo', {
@@ -558,61 +553,60 @@ const actions = {
             namespace: payload.namespace || 'default',
             releaseName: payload.releaseName || payload.appId,
             status: 'uninstalling',
-            values: {}
+            chartVersion: payload.chartVersion,
+            values: payload.values || {}
           }
         });
       }
-
+      
       return result;
-    } catch (error) {
-      logger.error('Uninstall failed:', error);
+    } catch (error: any) {
+      console.error('Uninstall failed:', error);
       throw error;
     }
   },
 
   // Main discovery action - coordinates all discovery across modules
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async discoverAllData(context: any, payload: DiscoverInstallationsPayload = {}) {
     const { commit, dispatch } = context;
     commit('START_DISCOVERY');
-
+    
     try {
       // Step 1: Discover clusters
       commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'connecting' });
       await dispatch('clusters/fetchClusters');
-
+      
       const clusters = Object.values(context.rootState.suseai.clusters.clusters);
-      commit('UPDATE_DISCOVERY_PROGRESS', {
+      commit('UPDATE_DISCOVERY_PROGRESS', { 
         totalClusters: clusters.length,
         stage: 'discovering-repositories'
       });
-
+      
       // Step 2: Discover repositories in parallel
       await dispatch('repositories/fetchRepositories');
-
+      
       // Step 3: Discover apps
       commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'discovering-apps' });
       await dispatch('apps/fetchAllApps', { force: payload.force });
-
+      
       // Step 4: Discover installations
       commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'discovering-installations' });
       await dispatch('installations/discoverInstallations', payload);
-
+      
       // Step 5: Complete discovery
       commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'processing' });
-
+      
       commit('COMPLETE_DISCOVERY');
-
-    } catch (error) {
-      logger.error('Discovery failed:', error);
+      
+    } catch (error: any) {
+      console.error('Discovery failed:', error);
       commit('FAIL_DISCOVERY', error);
       throw error;
     }
   },
-
+  
   // Bulk operations
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async performBulkInstall({ state, dispatch }: any, payload: Record<string, unknown>) {
+  async performBulkInstall({ state, dispatch }: any, payload: any) {
     const selectedApps = state.ui.selectedApps;
     const promises = selectedApps.map((appId: string) =>
       dispatch('installations/installApp', {
@@ -620,12 +614,11 @@ const actions = {
         ...payload
       })
     );
-
+    
     await Promise.allSettled(promises);
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async performBulkUpgrade({ state, dispatch }: any, payload: Record<string, unknown>) {
+  
+  async performBulkUpgrade({ state, dispatch }: any, payload: any) {
     const selectedApps = state.ui.selectedApps;
     const promises = selectedApps.map((appId: string) =>
       dispatch('installations/upgradeApp', {
@@ -633,12 +626,11 @@ const actions = {
         ...payload
       })
     );
-
+    
     await Promise.allSettled(promises);
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async performBulkUninstall({ state, dispatch }: any, payload: Record<string, unknown>) {
+  
+  async performBulkUninstall({ state, dispatch }: any, payload: any) {
     const selectedApps = state.ui.selectedApps;
     const promises = selectedApps.map((appId: string) => {
       const installationKeys = state.installations.installationsByApp[appId] || [];
@@ -653,17 +645,15 @@ const actions = {
         });
       });
     }).flat();
-
+    
     await Promise.allSettled(promises);
   },
-
+  
   // Settings actions
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateSettings({ commit }: any, settings: Partial<SuseAIState['settings']>) {
     commit('UPDATE_SETTINGS', settings);
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
   async loadSettings({ commit }: any) {
     // Load settings from localStorage or API
     try {
@@ -673,28 +663,25 @@ const actions = {
         commit('UPDATE_SETTINGS', settings);
       }
     } catch (error) {
-      logger.warn('Failed to load settings:', { data: error });
+      console.warn('Failed to load settings:', error);
     }
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
   async saveSettings({ state }: any) {
     // Save settings to localStorage or API
     try {
       localStorage.setItem('suseai-settings', JSON.stringify(state.settings));
     } catch (error) {
-      logger.warn('Failed to save settings:', { data: error });
+      console.warn('Failed to save settings:', error);
     }
   },
-
+  
   // Initialization
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async initialize({ dispatch }: any) {
     await dispatch('loadSettings');
     // Additional initialization logic
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
   cleanup({ commit }: any) {
     // Cleanup when leaving the extension
     commit('CLEAR_SELECTED_APPS');

@@ -10,8 +10,5 @@ export default defineComponent({
 </script>
 
 <template>
-  <AppWizard
-    :slug="slug"
-    mode="manage"
-  />
+  <AppWizard :slug="slug" mode="manage" />
 </template>

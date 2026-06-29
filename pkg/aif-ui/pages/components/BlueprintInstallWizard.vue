@@ -14,17 +14,15 @@ import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import type { Blueprint } from '../../types/blueprint-types';
 import type { AIWorkloadDeployStrategy } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
-import logger from '../../utils/logger';
 
 interface Props {
   blueprintName:    string;
   blueprintVersion: string;
 }
 const props   = defineProps<Props>();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const vm      = getCurrentInstance()?.proxy as any;
-const router  = vm?.$router;
-const route   = vm?.$route;
+const vm      = getCurrentInstance()!.proxy as any;
+const router  = vm.$router;
+const route   = vm.$route;
 
 const t = useT();
 const cluster = (route?.params?.cluster as string) || '_';
@@ -63,8 +61,8 @@ onMounted(async () => {
     const slug = slugifyBlueprintName(props.blueprintName);
     workloadName.value = slug;
     namespace.value    = `${ slug }-system`;
-  } catch (e: unknown) {
-    error.value = (e instanceof Error ? e.message : null) || 'Failed to load blueprint';
+  } catch (e: any) {
+    error.value = e?.message || 'Failed to load blueprint';
   } finally {
     loading.value = false;
   }
@@ -118,7 +116,7 @@ async function onInstall() {
       return;
     }
   } catch (e) {
-    logger.warn('[SUSE-AI] Could not check for existing deployments (proceeding)', { data: e });
+    console.warn('[SUSE-AI] Could not check for existing deployments (proceeding):', e);
   }
 
   installProgress.value = targets.map((t) => ({
@@ -185,15 +183,10 @@ function onProgressCancel() { showProgressModal.value = false; }
 <template>
   <div class="install-steps pt-20 outlet">
     <Loading v-if="loading" />
-    <div
-      v-else
-      class="custom-wizard"
-    >
+    <div v-else class="custom-wizard">
       <div class="wizard-header">
         <h1>Install Blueprint</h1>
-        <p class="text-muted">
-          {{ blueprint?.spec.displayName }} v{{ props.blueprintVersion }}
-        </p>
+        <p class="text-muted">{{ blueprint?.spec.displayName }} v{{ props.blueprintVersion }}</p>
       </div>
 
       <div class="wizard-nav">
@@ -205,27 +198,16 @@ function onProgressCancel() { showProgressModal.value = false; }
             :class="{ active: idx === currentStep, completed: idx < currentStep }"
           >
             <div class="step-number">
-              <i
-                v-if="idx < currentStep"
-                class="icon icon-checkmark"
-              />
+              <i v-if="idx < currentStep" class="icon icon-checkmark" />
               <span v-else>{{ idx + 1 }}</span>
             </div>
-            <div class="step-label">
-              {{ step.label }}
-            </div>
+            <div class="step-label">{{ step.label }}</div>
           </div>
         </div>
       </div>
 
       <div class="wizard-content-wrapper">
-        <Banner
-          v-if="error"
-          color="error"
-          class="mb-20"
-        >
-          {{ error }}
-        </Banner>
+        <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
         <div class="wizard-content">
           <BlueprintInstallBasicInfoStep
             v-if="currentStep === 0"
@@ -262,20 +244,9 @@ function onProgressCancel() { showProgressModal.value = false; }
       </div>
 
       <div class="wizard-buttons-fixed">
-        <button
-          v-if="currentStep > 0"
-          class="btn role-secondary"
-          @click="previousStep"
-        >
-          Previous
-        </button>
+        <button v-if="currentStep > 0" class="btn role-secondary" @click="previousStep">Previous</button>
         <div class="flex-spacer" />
-        <button
-          class="btn role-secondary mr-10"
-          @click="onCancel"
-        >
-          Cancel
-        </button>
+        <button class="btn role-secondary mr-10" @click="onCancel">Cancel</button>
         <button
           v-if="currentStep < 2"
           class="btn role-primary"
@@ -290,10 +261,7 @@ function onProgressCancel() { showProgressModal.value = false; }
           :disabled="submitting || clusters.length === 0"
           @click="onInstall"
         >
-          <i
-            v-if="submitting"
-            class="icon icon-spinner icon-spin mr-5"
-          />
+          <i v-if="submitting" class="icon icon-spinner icon-spin mr-5" />
           Install
         </button>
       </div>

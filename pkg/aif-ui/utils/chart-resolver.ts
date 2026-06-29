@@ -7,7 +7,6 @@
 import { REPOSITORY_TYPE, APP_CATEGORIES, BUILT_IN_REPOSITORIES } from './constants';
 import { retry, isRetryableError } from './promise';
 import type { RepositoryType, AppCategory } from './constants';
-import logger from './logger';
 
 // === Chart Information Types ===
 export interface ChartInfo {
@@ -75,7 +74,7 @@ export interface ChartDependency {
 
 export interface ChartValues {
   raw: string;
-  parsed: Record<string, unknown>;
+  parsed: Record<string, any>;
   schema?: ChartValuesSchema;
 }
 
@@ -86,15 +85,15 @@ export interface ChartValuesSchema {
 export interface ChartValueField {
   type: 'string' | 'number' | 'boolean' | 'array' | 'object';
   description?: string;
-  default?: unknown;
+  default?: any;
   required?: boolean;
-  enum?: unknown[];
+  enum?: any[];
   minimum?: number;
   maximum?: number;
   pattern?: string;
   items?: ChartValueField;
   properties?: ChartValuesSchema;
-  examples?: unknown[];
+  examples?: any[];
 }
 
 // === Chart Resolution Options ===
@@ -180,7 +179,7 @@ export async function discoverChartsInRepository(
     throw new Error(`Unsupported repository type: ${repository.type}`);
     
   } catch (error) {
-    logger.error(`Failed to discover charts in repository ${repository.name}:`, error);
+    console.error(`Failed to discover charts in repository ${repository.name}:`, error);
     throw error;
   }
 }
@@ -192,6 +191,8 @@ async function discoverHelmCharts(
   repository: ChartRepository,
   options: { useCache: boolean; maxAge: number }
 ): Promise<ChartInfo[]> {
+  const indexUrl = `${repository.url.replace(/\/$/, '')}/index.yaml`;
+  
   try {
     // This would fetch the Helm repository index
     // For now, return mock data
@@ -216,8 +217,8 @@ async function discoverHelmCharts(
  * Discover OCI charts from registry
  */
 async function discoverOCICharts(
-  _repository: ChartRepository,
-  _options: { useCache: boolean; maxAge: number }
+  repository: ChartRepository,
+  options: { useCache: boolean; maxAge: number }
 ): Promise<ChartInfo[]> {
   // Implementation for OCI registry chart discovery
   // This would use Docker registry API to discover charts
@@ -228,8 +229,8 @@ async function discoverOCICharts(
  * Discover Git charts from repository
  */
 async function discoverGitCharts(
-  _repository: ChartRepository,
-  _options: { useCache: boolean; maxAge: number }
+  repository: ChartRepository,
+  options: { useCache: boolean; maxAge: number }
 ): Promise<ChartInfo[]> {
   // Implementation for Git repository chart discovery
   // This would clone/fetch the repository and scan for Chart.yaml files
@@ -265,7 +266,7 @@ export async function searchCharts(
   // Discover charts from all repositories
   const chartPromises = searchRepos.map(repo => 
     discoverChartsInRepository(repo).catch(error => {
-      logger.warn(`Failed to search repository ${repo.name}:`, { data: error });
+      console.warn(`Failed to search repository ${repo.name}:`, error);
       return [] as ChartInfo[];
     })
   );
@@ -297,8 +298,8 @@ export async function searchCharts(
   // Keywords filter
   if (keywords && keywords.length > 0) {
     filteredCharts = filteredCharts.filter(chart =>
-      chart.keywords && keywords.some(k =>
-        chart.keywords?.some(ck => ck.toLowerCase().includes(k.toLowerCase()))
+      chart.keywords && keywords.some(k => 
+        chart.keywords!.some(ck => ck.toLowerCase().includes(k.toLowerCase()))
       )
     );
   }
@@ -402,7 +403,7 @@ export async function resolveChart(
     };
     
   } catch (error) {
-    logger.error(`Failed to resolve chart ${chartName}:`, error);
+    console.error(`Failed to resolve chart ${chartName}:`, error);
     throw error;
   }
 }
@@ -553,8 +554,8 @@ export async function resolveDependencies(
  */
 export async function getChartValues(
   chartName: string,
-  _version: string,
-  _repository: ChartRepository
+  version: string,
+  repository: ChartRepository
 ): Promise<ChartValues> {
   try {
     // This would fetch the values.yaml file from the chart
@@ -580,7 +581,7 @@ service:
     };
     
   } catch (error) {
-    logger.error(`Failed to get chart values for ${chartName}:`, error);
+    console.error(`Failed to get chart values for ${chartName}:`, error);
     return {
       raw: '',
       parsed: {},
@@ -592,10 +593,10 @@ service:
 /**
  * Generate schema from values
  */
-async function generateValuesSchema(values: Record<string, unknown>): Promise<ChartValuesSchema> {
+async function generateValuesSchema(values: Record<string, any>): Promise<ChartValuesSchema> {
   const schema: ChartValuesSchema = {};
-
-  function inferType(value: unknown): ChartValueField {
+  
+  function inferType(value: any): ChartValueField {
     if (typeof value === 'string') {
       return { type: 'string', default: value };
     } else if (typeof value === 'number') {
@@ -610,7 +611,7 @@ async function generateValuesSchema(values: Record<string, unknown>): Promise<Ch
       };
     } else if (typeof value === 'object' && value !== null) {
       const properties: ChartValuesSchema = {};
-      for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      for (const [key, val] of Object.entries(value)) {
         properties[key] = inferType(val);
       }
       return {
@@ -673,14 +674,14 @@ function findRecommendedVersion(versions: ChartVersion[]): ChartVersion {
 /**
  * Parse YAML values (simplified)
  */
-function parseYamlValues(_yaml: string): Record<string, unknown> {
+function parseYamlValues(yaml: string): Record<string, any> {
   // This would use a proper YAML parser
   // For now, return simple object
   try {
     // Simplified YAML parsing - in reality would use js-yaml or similar
     return {};
   } catch (error) {
-    logger.warn('Failed to parse YAML values:', { data: error });
+    console.warn('Failed to parse YAML values:', error);
     return {};
   }
 }

@@ -166,10 +166,10 @@ export function validateHelmValues(values: string): ValidationResult {
       });
     }
 
-  } catch (error) {
+  } catch (error: any) {
     errors.push({
       field: 'helmValues',
-      message: `Invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Invalid YAML: ${error.message}`,
       code: ERROR_CODES.INVALID_FORMAT,
       severity: 'error'
     });
@@ -213,13 +213,13 @@ export function validateClusterSelection(clusterIds: string[]): ValidationResult
 }
 
 // Utility function to check nested object keys
-function hasNestedKey(obj: Record<string, unknown>, key: string): boolean {
+function hasNestedKey(obj: any, key: string): boolean {
   const keys = key.split('.');
-  let current: unknown = obj;
+  let current = obj;
 
   for (const k of keys) {
     if (current && typeof current === 'object' && k in current) {
-      current = (current as Record<string, unknown>)[k];
+      current = current[k];
     } else {
       return false;
     }
@@ -246,7 +246,7 @@ export const helmValuesRule: FieldValidationRule = {
 
 export const clusterSelectionRule: FieldValidationRule = {
   name: 'clusterSelection',
-  validate: (value) => validateClusterSelection(Array.isArray(value) ? value as string[] : [])
+  validate: (value: any) => validateClusterSelection(Array.isArray(value) ? value : [])
 };
 
 // Type import for warnings

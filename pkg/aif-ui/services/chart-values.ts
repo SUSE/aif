@@ -3,7 +3,7 @@
  * Replaces complex fallback chains with simple, reliable endpoints
  */
 
-import type { RancherStore } from '../types/rancher-types';
+import type { Dispatchable } from '../types/rancher-types';
 import { logger } from '../utils/logger';
 import { getClusterContext } from '../utils/cluster-operations';
 import { TIMEOUT_VALUES } from '../utils/constants';
@@ -32,10 +32,9 @@ export async function extractFileFromTarGz(buffer: ArrayBuffer, filenameSuffix: 
     let tarBuffer = buffer;
 
     // Try to decompress if gzipped
-    if (typeof (window as unknown as { DecompressionStream?: unknown }).DecompressionStream === 'function') {
+    if (typeof (window as any).DecompressionStream === 'function') {
       try {
-        const WinDecompress = (window as unknown as { DecompressionStream: new (format: string) => TransformStream }).DecompressionStream;
-        const ds = new WinDecompress('gzip');
+        const ds = new (window as any).DecompressionStream('gzip');
         const stream = new Response(new Blob([buffer]).stream().pipeThrough(ds));
         tarBuffer = await stream.arrayBuffer();
       } catch {
@@ -87,9 +86,9 @@ export async function extractFileFromTarGz(buffer: ArrayBuffer, filenameSuffix: 
 }
 
 export class ChartValuesService {
-  private store: RancherStore;
+  private store: Dispatchable;
 
-  constructor(store: RancherStore) {
+  constructor(store: Dispatchable) {
     this.store = store;
   }
 
@@ -288,21 +287,21 @@ export class ChartValuesService {
   /**
    * Extract values.yaml from files structure
    */
-  private extractValuesFromFiles(files: unknown): string | null {
+  private extractValuesFromFiles(files: any): string | null {
     if (!files) return null;
 
     // Handle object format
     if (!Array.isArray(files) && typeof files === 'object') {
-      for (const key of Object.keys(files as Record<string, unknown>)) {
+      for (const key of Object.keys(files)) {
         if (key.toLowerCase().endsWith('values.yaml') || key.toLowerCase().endsWith('values.yml')) {
-          return this.extractTextFromFileEntry((files as Record<string, unknown>)[key]);
+          return this.extractTextFromFileEntry(files[key]);
         }
       }
     }
 
     // Handle array format
     if (Array.isArray(files)) {
-      const valuesFile = (files as Array<{ name?: string }>).find((file) =>
+      const valuesFile = files.find((file: any) =>
         file?.name &&
         (file.name.toLowerCase().endsWith('values.yaml') || file.name.toLowerCase().endsWith('values.yml'))
       );
@@ -317,15 +316,14 @@ export class ChartValuesService {
   /**
    * Extract text content from various file entry formats
    */
-  private extractTextFromFileEntry(entry: unknown): string | null {
+  private extractTextFromFileEntry(entry: any): string | null {
     if (!entry) return null;
 
     // Try different property names for the content
-    const e = entry as Record<string, unknown>;
     const candidates = [
-      e.content,
-      e.data,
-      e.text,
+      entry.content,
+      entry.data,
+      entry.text,
       entry
     ];
 
@@ -494,6 +492,6 @@ export class ChartValuesService {
 /**
  * Factory function to create ChartValuesService instance
  */
-export function createChartValuesService(store: RancherStore): ChartValuesService {
+export function createChartValuesService(store: Dispatchable): ChartValuesService {
   return new ChartValuesService(store);
 }

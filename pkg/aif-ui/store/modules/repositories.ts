@@ -4,9 +4,8 @@
  * Following standard Vuex patterns for consistency
  */
 
-import { RepositoryState, RepositoryInfo, SyncRepositoryPayload } from '../types/state-types';
+import { RepositoryState, SyncRepositoryPayload } from '../types/state-types';
 import { RepositoryResourceData } from '../../models/cluster/repository-resource';
-import logger from '../../utils/logger';
 
 // === Initial State ===
 function createInitialState(): RepositoryState {
@@ -68,7 +67,7 @@ const getters = {
     return repoNames.map(name => getters.repositoryByName(state)(name)).filter((repo): repo is RepositoryResourceData => repo !== null);
   },
   
-  activeSyncOperations: (state: RepositoryState): Record<string, unknown> => {
+  activeSyncOperations: (state: RepositoryState): Record<string, any> => {
     return state.syncing;
   },
   
@@ -117,7 +116,7 @@ const mutations = {
   UPDATE_REPOSITORY_STATUS(state: RepositoryState, payload: { repoName: string; status: string; lastSynced?: string }) {
     const repo = state.repositories[payload.repoName];
     if (repo) {
-      repo.syncStatus = payload.status as RepositoryInfo['syncStatus'];
+      repo.syncStatus = payload.status as any;
       if (payload.lastSynced) {
         repo.lastSynced = payload.lastSynced;
       }
@@ -125,7 +124,7 @@ const mutations = {
     }
   },
   
-  START_SYNC_OPERATION(state: RepositoryState, operation: { repoName: string; clusterId: string }) {
+  START_SYNC_OPERATION(state: RepositoryState, operation: any) {
     state.syncing[operation.repoName] = {
       repoName: operation.repoName,
       clusterId: operation.clusterId,
@@ -180,22 +179,21 @@ const mutations = {
 
 // === Actions ===
 const actions = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async fetchRepositories({ commit }: any, clusterId?: string) {
     try {
       // Get Helm repositories from cluster(s)
       let repositories: RepositoryResourceData[] = [];
-
+      
       if (clusterId) {
         // Fetch repositories for specific cluster
-        repositories = await actions.fetchRepositoriesForCluster({} as never, clusterId);
+        repositories = await actions.fetchRepositoriesForCluster({ commit }, clusterId);
       } else {
         // Fetch repositories for all clusters
         const clusters: string[] = []; // Will get from rootState when integrated
-
+        
         for (const cId of clusters) {
-          const clusterRepos = await actions.fetchRepositoriesForCluster({} as never, cId);
-
+          const clusterRepos = await actions.fetchRepositoriesForCluster({ commit }, cId);
+          
           // Merge repositories, avoiding duplicates
           clusterRepos.forEach(repo => {
             const existing = repositories.find(r => r.name === repo.name && r.url === repo.url);
@@ -205,23 +203,21 @@ const actions = {
           });
         }
       }
-
+      
       commit('SET_REPOSITORIES', repositories);
-
+      
     } catch (error) {
-      logger.error('Failed to fetch repositories', error);
+      console.error('Failed to fetch repositories:', error);
       throw error;
     }
   },
-
-  async fetchRepositoriesForCluster(_context: never, clusterId: string): Promise<RepositoryResourceData[]> {
+  
+  async fetchRepositoriesForCluster({ commit }: any, clusterId: string): Promise<RepositoryResourceData[]> {
     try {
       // Look for Rancher catalog repositories (simplified)
       // For now, return empty array until integrated with Rancher store
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const catalogRepos: any[] = [];
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      
       const repositories: RepositoryResourceData[] = catalogRepos.map((repo: any) => ({
         name: repo.metadata.name,
         displayName: repo.metadata.name,
@@ -229,7 +225,6 @@ const actions = {
         url: repo.spec.url,
         type: 'helm' as const,
         enabled: true,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ready: repo.status?.conditions?.find((c: any) => c.type === 'Downloaded')?.status === 'True',
         credentials: repo.spec.auth ? {
           username: repo.spec.auth.username,
@@ -238,7 +233,6 @@ const actions = {
         syncInterval: repo.spec.forceUpdate || '24h',
         lastSync: repo.status?.lastRefreshTimestamp,
         // Status determined by ready field instead of separate status property
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         error: repo.status?.conditions?.find((c: any) => c.type === 'Downloaded' && c.status !== 'True')?.message,
         stats: {
           chartCount: repo.status?.downloadTime ? 0 : 0,
@@ -295,12 +289,11 @@ const actions = {
       return repositories;
       
     } catch (error) {
-      logger.error(`Failed to fetch repositories for cluster ${clusterId}`, error);
+      console.error(`Failed to fetch repositories for cluster ${clusterId}:`, error);
       return [];
     }
   },
   
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async syncRepository({ commit }: any, payload: SyncRepositoryPayload) {
     commit('START_SYNC_OPERATION', payload);
     
@@ -336,70 +329,66 @@ const actions = {
         success: true
       });
       
-    } catch (error) {
-      const err = error as Error;
-      logger.error(`Failed to sync repository ${payload.repoName}`, error);
+    } catch (error: any) {
+      console.error(`Failed to sync repository ${payload.repoName}:`, error);
       commit('COMPLETE_SYNC_OPERATION', {
         repoName: payload.repoName,
         success: false,
-        error: err.message || 'Sync failed'
+        error: error.message || 'Sync failed'
       });
       throw error;
     }
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async addRepository({ dispatch }: any, repository: RepositoryResourceData) {
+  
+  async addRepository({ commit, dispatch }: any, repository: RepositoryResourceData) {
     try {
       // Create new ClusterRepo resource
-      const spec: { url: string; gitRepo?: string; helmRepo?: string; auth?: { username?: string; password?: string } } = {
-        url: repository.url,
-        gitRepo: repository.type === 'git' ? repository.url : undefined,
-        helmRepo: repository.type === 'helm' ? repository.url : undefined
+      const resource: any = {
+        type: 'catalog.cattle.io.clusterrepo',
+        metadata: {
+          name: repository.name
+        },
+        spec: {
+          url: repository.url,
+          gitRepo: repository.type === 'git' ? repository.url : undefined,
+          helmRepo: repository.type === 'helm' ? repository.url : undefined
+        }
       };
-
+      
       if (repository.credentials) {
-        spec.auth = {
+        resource.spec.auth = {
           username: repository.credentials.username,
           password: repository.credentials.password
         };
       }
-
-      const _resource = {
-        type: 'catalog.cattle.io.clusterrepo',
-        metadata: { name: repository.name },
-        spec
-      };
-
+      
       // Create repository resource (simplified)
-      // await this.$store.dispatch(`cluster/create`, _resource, { root: true });
-
+      // await this.$store.dispatch(`cluster/create`, resource, { root: true });
+      
       // Refresh repositories
       await dispatch('fetchRepositories');
-
-    } catch (error) {
-      logger.error(`Failed to add repository ${repository.name}`, error);
+      
+    } catch (error: any) {
+      console.error(`Failed to add repository ${repository.name}:`, error);
       throw error;
     }
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async removeRepository({ dispatch }: any, payload: { repoName: string; clusterId: string }) {
+  
+  async removeRepository({ commit, dispatch }: any, payload: { repoName: string; clusterId: string }) {
     try {
       // Find and remove repository resource (simplified)
       // For now, skip actual removal
-      logger.debug(`Would remove repository ${payload.repoName}`);
-
+      console.log(`Would remove repository ${payload.repoName}`);
+      
       // Refresh repositories
       await dispatch('fetchRepositories');
-
-    } catch (error) {
-      logger.error(`Failed to remove repository ${payload.repoName}`, error);
+      
+    } catch (error: any) {
+      console.error(`Failed to remove repository ${payload.repoName}:`, error);
       throw error;
     }
   },
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
   async refreshRepositories({ dispatch }: any) {
     await dispatch('fetchRepositories', { force: true });
   }

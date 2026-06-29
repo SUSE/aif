@@ -2,7 +2,7 @@ import yaml from 'js-yaml';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from './app-collection';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
   const result = { ...target };
 
   for (const key in source) {
@@ -10,7 +10,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
       if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key]) &&
           result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])) {
         // Recursively merge objects
-        result[key] = deepMerge(result[key] as Record<string, unknown>, source[key] as Record<string, unknown>);
+        result[key] = deepMerge(result[key], source[key]);
       } else {
         // Override with source value (including arrays and primitives)
         result[key] = source[key];
@@ -24,16 +24,21 @@ import { log as logger } from '../utils/logger';
 import { createChartValuesService, extractFileFromTarGz } from './chart-values';
 import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
 import type {
-  RancherStore,
+  Dispatchable,
   ClusterInfo,
   ClusterResource,
   NamespaceResource,
   HelmSecret,
   HelmReleaseInfo,
+  HelmInstallationDetails,
   AppCRD,
   RegistrySecret,
   RepositoryIndex,
   FileEntry,
+  RancherError,
+  ListResponse,
+  InstallationPayload,
+  ProjectResource,
   ServiceAccount
 } from '../types/rancher-types';
 import { getClusterContext } from '../utils/cluster-operations';
@@ -86,7 +91,7 @@ function isClusterReady(c: ClusterResource): boolean {
 // getAllClusters returns every cluster Rancher knows about, including unhealthy ones.
 // Each entry carries a `ready` flag so callers can disable/grey out unreachable clusters
 // without hiding them from the user entirely.
-export async function getAllClusters($store: RancherStore): Promise<ClusterInfo[]> {
+export async function getAllClusters($store: Dispatchable): Promise<ClusterInfo[]> {
   try {
     let timer: ReturnType<typeof setTimeout>;
     const rows = await Promise.race([
@@ -112,12 +117,12 @@ export async function getAllClusters($store: RancherStore): Promise<ClusterInfo[
 
 // getClusters returns only ready clusters. Used for polling loops and any code that
 // makes downstream API calls — unhealthy clusters cause those calls to time out.
-export async function getClusters($store: RancherStore): Promise<ClusterInfo[]> {
+export async function getClusters($store: Dispatchable): Promise<ClusterInfo[]> {
   const all = await getAllClusters($store);
   return all.filter(c => c.ready !== false);
 }
 
-export async function ensureNamespace($store: RancherStore, clusterId: string, namespace: string): Promise<void> {
+export async function ensureNamespace($store: Dispatchable, clusterId: string, namespace: string): Promise<void> {
   const getUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}`;
   try {
     await $store.dispatch('rancher/request', { url: getUrl, timeout: TIMEOUT_VALUES.CLUSTER });
@@ -135,7 +140,7 @@ export async function ensureNamespace($store: RancherStore, clusterId: string, n
 
 
 export async function createOrUpgradeApp(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string,
@@ -144,6 +149,7 @@ export async function createOrUpgradeApp(
   preferredAction: 'install' | 'upgrade' = 'install'
 ) {
   const errorHandler = createErrorHandler($store, 'RancherApps');
+  const log = (l: string, ...a: unknown[]) => { try { console.log(`[SUSE-AI-INSTALL] ${l}`, ...a); } catch {} };
 
   log('=== Starting createOrUpgradeApp ===');
   log('Input parameters:', { 
@@ -177,6 +183,28 @@ export async function createOrUpgradeApp(
       }
     ];
     log('Charts array prepared:', charts);
+
+    const appPayload = {
+      apiVersion: 'catalog.cattle.io/v1',
+      kind:       'App',
+      metadata:   {
+        namespace,
+        name:   releaseName,
+        labels: { 'catalog.cattle.io/cluster-repo-name': chart.repoName },
+        resourceVersion: undefined as string | undefined
+      },
+      spec: {
+        chart: {
+          metadata: {
+            name:    chart.chartName,
+            version: chart.version,
+          }
+        },
+        name:      releaseName,
+        namespace: namespace,
+        values,
+      },
+    };
 
     // For upgrade actions, use the clusterRepo action directly instead of trying PUT
     if (preferredAction === 'upgrade') {
@@ -274,7 +302,7 @@ export async function createOrUpgradeApp(
         };
         
         try {
-          await $store.dispatch('rancher/request', {
+          const installResult = await $store.dispatch('rancher/request', {
             method: 'post',
             url: clusterReposUrl,
             data: installData,
@@ -308,7 +336,7 @@ export async function createOrUpgradeApp(
 /* ====================== verify app appears and becomes ready ===================== */
 
 export async function waitForAppInstall(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string,
@@ -325,8 +353,7 @@ export async function waitForAppInstall(
   let everFound     = false; // true once the App CR has been observed at least once
 
   for (;;) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let app: any        = null; // Rancher store dispatch returns untyped response; narrowed below
+    let app: any        = null;
     let is404           = false;
 
     try {
@@ -374,7 +401,7 @@ export async function waitForAppInstall(
 
       if (initialObs < 0) initialObs = obs;
 
-      logger.debug('[SUSE-AI] post-install: app peek', {
+      console.log('[SUSE-AI] post-install: app peek', {
         gen, obs, initialObs, state, ns: namespace, name: releaseName,
         'metadata.state': app?.metadata?.state,
         'status.summary': sum,
@@ -392,7 +419,7 @@ export async function waitForAppInstall(
             const errMsg = app?.metadata?.state?.message
               || (typeof sum?.error === 'string' ? sum.error : null)
               || `Helm install failed (state: ${state})`;
-            logger.error('[SUSE-AI] post-install: app failed', { state, errMsg });
+            console.error('[SUSE-AI] post-install: app failed', { state, errMsg });
             throw new Error(errMsg);
           }
           // Only return for terminal success states; keep polling for transitional states.
@@ -416,7 +443,7 @@ export async function waitForAppInstall(
   }
 }
 
-export async function deleteApp($store: RancherStore, clusterId: string, namespace: string, releaseName: string, _repoName?: string): Promise<void> {
+export async function deleteApp($store: Dispatchable, clusterId: string, namespace: string, releaseName: string, _repoName?: string): Promise<void> {
   try {
     const url =
       `/k8s/clusters/${encodeURIComponent(clusterId)}` +
@@ -439,7 +466,7 @@ export async function deleteApp($store: RancherStore, clusterId: string, namespa
 
 /* ============================ discovery (manage) ============================ */
 
-export async function listCatalogApps($store: RancherStore, clusterId: string): Promise<AppCRD[]> {
+export async function listCatalogApps($store: Dispatchable, clusterId: string): Promise<AppCRD[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=1000`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return res?.data?.items || res?.data || res?.items || [];
@@ -451,7 +478,7 @@ export const SYSTEM_NAMESPACE_PREFIXES = [
   'neuvector', 'ingress-', 'cert-manager',
 ];
 
-export async function listNamespaces($store: RancherStore, clusterId: string): Promise<string[]> {
+export async function listNamespaces($store: Dispatchable, clusterId: string): Promise<string[]> {
   const url = clusterId === 'local'
     ? '/api/v1/namespaces?limit=5000'
     : `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces?limit=5000`;
@@ -462,7 +489,7 @@ export async function listNamespaces($store: RancherStore, clusterId: string): P
 }
 
 export async function fetchUserNamespaces(
-  $store: RancherStore,
+  $store: Dispatchable,
   suggestedDefault: string
 ): Promise<Array<{ label: string; value: string }>> {
   try {
@@ -484,7 +511,7 @@ export async function fetchUserNamespaces(
   }
 }
 
-async function listNsHelmSecrets($store: RancherStore, clusterId: string, ns: string): Promise<HelmSecret[]> {
+async function listNsHelmSecrets($store: Dispatchable, clusterId: string, ns: string): Promise<HelmSecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(ns)}/secrets?labelSelector=owner%3Dhelm`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   return res?.data?.items || res?.data || [];
@@ -513,7 +540,7 @@ function extractHelmRelease(obj: HelmSecret): HelmReleaseInfo {
 type FoundInfo = { release: string; namespace: string; chartName?: string; version?: string; clusters: string[] };
 
 export async function discoverExistingInstall(
-  $store: RancherStore,
+  $store: Dispatchable,
   slug: string,
   chartNameGuess?: string,
   preferClusterId?: string
@@ -557,7 +584,7 @@ export async function discoverExistingInstall(
         }
       } catch {
         // Fallback to per-namespace search if cluster-wide search fails (RBAC restrictions)
-        logger.debug('[SUSE-AI] Cluster-wide secret search not available, using per-namespace fallback');
+        console.log('[SUSE-AI] Cluster-wide secret search not available, using per-namespace fallback');
         const nss = await listNamespaces($store, c.id);
         const nsResults = await Promise.allSettled(
           nss.map(ns => listNsHelmSecrets($store, c.id, ns).then(secs => ({ ns, secs })))
@@ -598,7 +625,7 @@ export async function discoverExistingInstall(
 
 /* =========================== charts: index + versions =========================== */
 
-async function getRepoIndexLink($store: RancherStore, repoName: string): Promise<string | null> {
+async function getRepoIndexLink($store: Dispatchable, repoName: string): Promise<string | null> {
   const found = await getClusterContext($store, { repoName: repoName});
   if (!found) {
     logger.warn(`ClusterRepo "${repoName}" not found in any cluster`);
@@ -619,7 +646,7 @@ async function getRepoIndexLink($store: RancherStore, repoName: string): Promise
   }
 }
 
-async function getRepoIndex($store: RancherStore, repoName: string): Promise<RepositoryIndex | null> {
+async function getRepoIndex($store: Dispatchable, repoName: string): Promise<RepositoryIndex | null> {
 
   const indexLink = await getRepoIndexLink($store, repoName);
   if (!indexLink) return null;
@@ -634,7 +661,7 @@ async function getRepoIndex($store: RancherStore, repoName: string): Promise<Rep
 }
 
 export async function findChartInRepo(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   slug: string
@@ -650,7 +677,7 @@ export async function findChartInRepo(
 }
 
 export async function listChartVersions(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   chartName: string
@@ -689,11 +716,11 @@ function textFromFileEntry(v: FileEntry): string {
 
 
 export async function fetchChartYaml(
-  $store: RancherStore,
+  $store: Dispatchable,
   repoName: string,
   chartName: string,
   version: string
-): Promise<unknown> {
+): Promise<any | null> {
   const found = await getClusterContext($store, { repoName });
 
   if (!found) {
@@ -761,7 +788,7 @@ export async function fetchChartYaml(
 }
 
 export async function fetchChartDefaultValues(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   chartName: string,
@@ -773,7 +800,7 @@ export async function fetchChartDefaultValues(
 }
 
 export async function fetchChartArchiveSize(
-  $store: RancherStore,
+  $store: Dispatchable,
   _repoClusterId: string,
   repoName: string,
   chartName: string,
@@ -787,7 +814,7 @@ export async function fetchChartArchiveSize(
 
 /* ================== NEW: helpers for repo discovery & helm installs ============== */
 
-export async function listClusterRepos($store: RancherStore): Promise<ClusterResource[]> {
+export async function listClusterRepos($store: Dispatchable): Promise<ClusterResource[]> {
     const res = await $store.dispatch('rancher/request', {
     url: '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000',
     timeout: TIMEOUT_VALUES.READ
@@ -796,7 +823,7 @@ export async function listClusterRepos($store: RancherStore): Promise<ClusterRes
 }
 
 export async function inferClusterRepoForChart(
-  $store: RancherStore,
+  $store: Dispatchable,
   chartName: string,
   preferVersion?: string
 ): Promise<string | null> {
@@ -838,7 +865,7 @@ function clusterRepoNameFromUrl(repoUrl: string): string {
 }
 
 async function upsertBasicAuthSecret(
-  $store: RancherStore,
+  $store: Dispatchable,
   namespace: string,
   name: string,
   username: string,
@@ -874,12 +901,12 @@ async function upsertBasicAuthSecret(
 }
 
 export async function ensureClusterRepo(
-  $store: RancherStore,
+  $store: Dispatchable,
   ociUrl: string,
   credentials?: { username: string; password: string },
 ): Promise<string> {
   const repos = await listClusterRepos($store);
-  const existing = repos.find((r) => ((r as { spec?: { url?: string; ociRepo?: string } })?.spec?.url || (r as { spec?: { url?: string; ociRepo?: string } })?.spec?.ociRepo || '') === ociUrl);
+  const existing = repos.find((r: any) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
   const name = existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
 
   let clientSecret: { name: string; namespace: string } | undefined;
@@ -908,7 +935,7 @@ export async function ensureClusterRepo(
   }
 
   // Create the ClusterRepo
-  const spec: Record<string, unknown> = { url: ociUrl };
+  const spec: any = { url: ociUrl };
   if (clientSecret) spec.clientSecret = clientSecret;
   await $store.dispatch('rancher/request', {
     url:    '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos',
@@ -922,10 +949,9 @@ export async function ensureClusterRepo(
     await new Promise(r => setTimeout(r, 2000));
     try {
       const fresh = await listClusterRepos($store);
-      const created = fresh.find((r) => (r as { metadata?: { name?: string } })?.metadata?.name === name);
+      const created = fresh.find((r: any) => r?.metadata?.name === name);
       if (!created) continue;
-      const createdStatus = (created as { status?: { conditions?: Array<{ type: string; status: string }> } })?.status;
-      const ready = (createdStatus?.conditions || []).some((c) =>
+      const ready = (created?.status?.conditions || []).some((c: any) =>
         ['OCIDownloaded', 'Downloaded', 'FollowerDownloaded'].includes(c.type) && c.status === 'True'
       );
       if (ready) return name;
@@ -936,11 +962,13 @@ export async function ensureClusterRepo(
 
 
 async function findHelmReleaseObjects(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string
 ): Promise<{ secret?: HelmSecret }> {
+  const errorHandler = createErrorHandler($store, 'RancherApps');
+
   try {
     // First try to find the latest version of the Helm release secret
     // List all secrets to find the highest version number
@@ -970,24 +998,24 @@ async function findHelmReleaseObjects(
         const secret = await $store.dispatch('rancher/request', { url: detailUrl, timeout: TIMEOUT_VALUES.CLUSTER });
 
         if (secret?.data?.release) {
-          logger.debug('[SUSE-AI] Found Helm secret with includeHelmData=true:', secretName);
+          console.log('[SUSE-AI] Found Helm secret with includeHelmData=true:', secretName);
           return { secret };
         }
       }
     } catch (e: unknown) {
       const errorMsg = handleSimpleError(e, 'Failed to find latest Helm secret');
-      logger.debug('[SUSE-AI] Failed to find Helm secret via list+filter:', errorMsg);
+      console.log('[SUSE-AI] Failed to find Helm secret via list+filter:', errorMsg);
     }
 
     return {};
   } catch (error) {
-    logger.warn(`[SUSE-AI] Failed to find Helm release ${releaseName}:`, { data: error });
+    console.warn(`[SUSE-AI] Failed to find Helm release ${releaseName}:`, error);
     return {};
   }
 }
 
 export async function getInstalledHelmDetails(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   releaseName: string
@@ -1050,7 +1078,7 @@ export async function getInstalledHelmDetails(
     }
   } else {
     // This path should not be reached when using includeHelmData=true
-    logger.warn('[SUSE-AI] Helm release data is not in expected object format. Check API response.');
+    console.warn('[SUSE-AI] Helm release data is not in expected object format. Check API response.');
   }
 
   return {
@@ -1064,7 +1092,7 @@ export async function getInstalledHelmDetails(
 
 // helper: list secrets in a namespace (used to find already-created -dockercfg)
 async function listNsSecrets(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string
 ): Promise<RegistrySecret[]> {
@@ -1074,7 +1102,7 @@ async function listNsSecrets(
 }
 
 export async function ensureRegistrySecret(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   registryHost: string,
@@ -1186,7 +1214,7 @@ export async function ensureRegistrySecret(
 }
 
 export async function listServiceAccounts(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string
 ): Promise<string[]> {
@@ -1197,7 +1225,7 @@ export async function listServiceAccounts(
 }
 
 export async function ensureServiceAccountPullSecret(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   saName: string,
@@ -1228,12 +1256,12 @@ export async function ensureServiceAccountPullSecret(
       timeout: TIMEOUT_VALUES.MUTATION
     });
   } catch (e) {
-    logger.warn('[SUSE-AI] could not update ServiceAccount imagePullSecrets', { namespace, saName, e });
+    try { console.warn('[SUSE-AI] could not update ServiceAccount imagePullSecrets', { namespace, saName, e }); } catch {}
   }
 }
 
 export async function ensurePullSecretOnAllSAs(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   secretName: string
@@ -1243,13 +1271,13 @@ export async function ensurePullSecretOnAllSAs(
     try {
       await ensureServiceAccountPullSecret($store, clusterId, namespace, saName, secretName);
     } catch (e) {
-      logger.warn('[SUSE-AI] SA attach failed', { namespace, saName, e });
+      try { console.warn('[SUSE-AI] SA attach failed', { namespace, saName, e }); } catch {}
     }
   }
 }
 
 export async function ensureRegistrySecretSimple(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   registryHost: string,
@@ -1284,7 +1312,7 @@ export async function ensureRegistrySecretSimple(
   const secretPayload = {
     apiVersion: 'v1',
     kind: 'Secret',
-    metadata: { name: secretName, namespace } as { name: string; namespace: string; resourceVersion?: string },
+    metadata: { name: secretName, namespace } as any,
     type: 'kubernetes.io/dockerconfigjson',
     data: { '.dockerconfigjson': dockerCfgB64 }
   };
@@ -1319,7 +1347,7 @@ export async function ensureRegistrySecretSimple(
       data: { secretName }
     });
 
-  } catch (e) {
+  } catch (e: any) {
     const standardError = errorHandler.normalizeError(e);
 
     if (standardError.status === 404) {
@@ -1361,7 +1389,7 @@ export async function ensureRegistrySecretSimple(
 }
 
 export async function waitForSecretReady(
-  $store: RancherStore,
+  $store: Dispatchable,
   clusterId: string,
   namespace: string,
   name: string,

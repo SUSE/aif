@@ -5,7 +5,7 @@ export interface BlueprintComponent {
   chartName:        string;
   chartVersion:     string;
   vendor?:          BlueprintComponentVendor;
-  values?:          Record<string, unknown>;
+  values?:          Record<string, any>;
   targetNamespace?: string;
 }
 

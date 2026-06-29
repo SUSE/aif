@@ -5,9 +5,10 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import type {
-  RancherStore,
+  Dispatchable,
   ClusterResource,
   RepositoryIndex,
+  FileEntry
 } from '../types/rancher-types';
 
 // Helper functions for string matching and version sorting
@@ -19,6 +20,28 @@ function sameName(a?: string, b?: string): boolean {
   return !!a && !!b && normName(a) === normName(b);
 }
 
+// Helper functions for file content processing
+function decodeMaybeB64(s?: string): string {
+  if (!s || typeof s !== 'string') return '';
+  try {
+    const t = atob(s.replace(/\s+/g, ''));
+    if (/[:\n]/.test(t)) return t; // looks like YAML
+  } catch {}
+  return s;
+}
+
+function textFromFileEntry(v: FileEntry): string {
+  if (!v) return '';
+  if (typeof v === 'string') return decodeMaybeB64(v);
+  if (typeof v === 'object') {
+    const candidates = [v.content, v.contents, v.data, v.base64, v.value, v.Value, v.text];
+    for (const c of candidates) {
+      if (typeof c === 'string' && c) return decodeMaybeB64(c);
+    }
+  }
+  return '';
+}
+
 /**
  * Service for chart discovery and operations
  */
@@ -27,7 +50,7 @@ export class ChartService {
   /**
    * Get repository index link
    */
-  private static async getRepoIndexLink($store: RancherStore, repoName: string): Promise<string | null> {
+  private static async getRepoIndexLink($store: Dispatchable, repoName: string): Promise<string | null> {
     
     const found = await getClusterContext($store, { repoName: repoName});
     if (!found) {
@@ -61,7 +84,7 @@ export class ChartService {
   /**
    * Get repository index data
    */
-  private static async getRepoIndex($store: RancherStore, repoName: string): Promise<RepositoryIndex | null> {
+  private static async getRepoIndex($store: Dispatchable, repoName: string): Promise<RepositoryIndex | null> {
     const indexLink = await this.getRepoIndexLink($store, repoName);
     if (!indexLink) return null;
 
@@ -89,7 +112,7 @@ export class ChartService {
   /**
    * List cluster repositories
    */
-  private static async listClusterRepos($store: RancherStore): Promise<ClusterResource[]> {
+  private static async listClusterRepos($store: Dispatchable): Promise<ClusterResource[]> {
     const { baseApi } = await getClusterContext($store);
 
     try {
@@ -110,7 +133,7 @@ export class ChartService {
    * Find chart in repository by slug name
    */
   static async findChartInRepo(
-    $store: RancherStore,
+    $store: Dispatchable,
     _repoClusterId: string,
     repoName: string,
     slug: string
@@ -146,7 +169,7 @@ export class ChartService {
    * List available versions for a chart
    */
   static async listChartVersions(
-    $store: RancherStore,
+    $store: Dispatchable,
     _repoClusterId: string,
     repoName: string,
     chartName: string
@@ -180,7 +203,7 @@ export class ChartService {
    * Fetch default values for a chart
    */
   static async fetchChartDefaultValues(
-    $store: RancherStore,
+    $store: Dispatchable,
     _repoClusterId: string,
     repoName: string,
     chartName: string,
@@ -202,7 +225,7 @@ export class ChartService {
    * Infer appropriate cluster repository for a chart
    */
   static async inferClusterRepoForChart(
-    $store: RancherStore,
+    $store: Dispatchable,
     chartName: string,
     preferVersion?: string
   ): Promise<string | null> {

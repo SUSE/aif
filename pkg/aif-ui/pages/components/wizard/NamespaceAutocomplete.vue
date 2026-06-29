@@ -1,10 +1,6 @@
 <template>
   <div class="ns-autocomplete">
-    <label
-      v-if="!labelInside"
-      class="ns-label"
-      :class="{ 'ns-label--required': required }"
-    >
+    <label v-if="!labelInside" class="ns-label" :class="{ 'ns-label--required': required }">
       {{ label }}
     </label>
     <div
@@ -15,11 +11,7 @@
         'ns-input-wrap--disabled': disabled,
       }"
     >
-      <label
-        v-if="labelInside"
-        class="ns-label ns-label--inside"
-        :class="{ 'ns-label--required': required }"
-      >
+      <label v-if="labelInside" class="ns-label ns-label--inside" :class="{ 'ns-label--required': required }">
         {{ label }}
       </label>
       <div class="ns-input-row">
@@ -37,15 +29,12 @@
           @keydown="onKeydown"
           @blur="onBlur"
         />
-        <span
-          v-if="loading"
-          class="ns-spinner"
-        />
+        <span v-if="loading" class="ns-spinner" />
       </div>
     </div>
     <ul
-      v-if="isOpen && filteredOptions.length > 0"
       ref="dropdownRef"
+      v-if="isOpen && filteredOptions.length > 0"
       class="ns-dropdown"
     >
       <li

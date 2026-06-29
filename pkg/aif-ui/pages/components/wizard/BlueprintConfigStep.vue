@@ -1,17 +1,9 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">
-      {{ t('suseai.wizard.sections.configureApps', 'Configure Applications') }}
-    </h2>
-    <p class="text-muted mb-20">
-      {{ t('suseai.wizard.sections.configureAppsDesc', 'Set default Helm values for each application in this blueprint.') }}
-    </p>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.configureApps', 'Configure Applications') }}</h2>
+    <p class="text-muted mb-20">{{ t('suseai.wizard.sections.configureAppsDesc', 'Set default Helm values for each application in this blueprint.') }}</p>
 
-    <div
-      v-for="(comp, idx) in components"
-      :key="comp.chartName"
-      class="accordion-panel"
-    >
+    <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel">
       <div
         class="accordion-header"
         @click="togglePanel(idx)"
@@ -21,10 +13,7 @@
         <i :class="['icon', expandedPanels.has(idx) ? 'icon-chevron-up' : 'icon-chevron-down']" />
       </div>
 
-      <div
-        v-if="expandedPanels.has(idx)"
-        class="accordion-body"
-      >
+      <div v-if="expandedPanels.has(idx)" class="accordion-body">
         <ValuesStep
           :key="`${comp.chartName}-${valuesKeys[comp.chartName] || 0}`"
           :values="compValues[comp.chartName] || {}"
@@ -63,19 +52,18 @@ interface Emits { (e: 'update:components', v: BlueprintComponent[]): void }
 const props = defineProps<Props>();
 const emit  = defineEmits<Emits>();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const vm    = getCurrentInstance()?.proxy as any;
-const store = vm?.$store;
+const vm    = getCurrentInstance()!.proxy as any;
+const store = vm.$store;
 
 const t = useT();
 
 const expandedPanels    = ref(new Set<number>([0]));
 const loadingMap        = ref<Record<string, boolean>>({});
 const questionsLoadingMap = ref<Record<string, boolean>>({});
-const versionInfoMap    = ref<Record<string, unknown>>({});
+const versionInfoMap    = ref<Record<string, any>>({});
 const valuesKeys        = ref<Record<string, number>>({});
 
-const compValues = ref<Record<string, Record<string, unknown>>>(
+const compValues = ref<Record<string, Record<string, any>>>(
   Object.fromEntries(props.components.map(c => [c.chartName, { ...(c.values || {}) }]))
 );
 
@@ -143,18 +131,17 @@ async function applyDefaults(
   chartName: string,
   chartRepo: string,
   chartVersion: string,
-  info: unknown,
+  info: any,
 ) {
-  let parsed: Record<string, unknown> = {};
+  let parsed: Record<string, any> = {};
 
-  const infoRec = info as Record<string, unknown> | null | undefined;
-  if (infoRec?.values && Object.keys(infoRec.values as object).length) {
-    parsed = JSON.parse(JSON.stringify(infoRec.values));
+  if (info?.values && Object.keys(info.values).length) {
+    parsed = JSON.parse(JSON.stringify(info.values));
   } else {
     try {
       const raw = await fetchChartDefaultValues(store, 'local', chartRepo, chartName, chartVersion);
       if (raw?.trim()) {
-        parsed = (yaml.load(raw) as Record<string, unknown>) || {};
+        parsed = (yaml.load(raw) as Record<string, any>) || {};
       }
     } catch { /* leave empty */ }
   }
@@ -166,7 +153,7 @@ async function applyDefaults(
   }
 }
 
-function onValuesUpdate(chartName: string, newValues: Record<string, unknown>) {
+function onValuesUpdate(chartName: string, newValues: Record<string, any>) {
   compValues.value = { ...compValues.value, [chartName]: newValues };
   emitComponents();
 }

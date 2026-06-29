@@ -33,6 +33,7 @@ export default {
         this.operatorCommit  = notUnknown(data.commit);
         this.chartVersion    = notUnknown(data.chartVersion);
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.warn('[SUSE-AI] failed to fetch operator version', e);
         this.operatorVersion = null;
       } finally {
@@ -71,7 +72,10 @@ export default {
                 v-if="!operatorVersionLoaded"
                 class="text-muted"
               >…</span>
-              <span v-else-if="operatorVersion">{{ operatorVersion }}<span v-if="operatorCommit" class="text-muted"> (commit {{ operatorCommit }})</span></span>
+              <span v-else-if="operatorVersion">{{ operatorVersion }}<span
+                v-if="operatorCommit"
+                class="text-muted"
+              > (commit {{ operatorCommit }})</span></span>
               <span
                 v-else
                 class="text-muted"

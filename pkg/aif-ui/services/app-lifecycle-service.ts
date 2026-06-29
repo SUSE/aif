@@ -8,7 +8,7 @@
 import { log as logger } from '../utils/logger';
 import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
 import type {
-  RancherStore,
+  Dispatchable,
   AppCRD
 } from '../types/rancher-types';
 import { TIMEOUT_VALUES } from '../utils/constants';
@@ -89,7 +89,7 @@ export class AppLifecycleService {
    * ```
    */
   static async createOrUpgradeApp(
-    $store: RancherStore,
+    $store: Dispatchable,
     clusterId: string,
     namespace: string,
     releaseName: string,
@@ -135,6 +135,28 @@ export class AppLifecycleService {
         }
       ];
 
+      const appPayload = {
+        apiVersion: 'catalog.cattle.io/v1',
+        kind: 'App',
+        metadata: {
+          namespace,
+          name: releaseName,
+          labels: { 'catalog.cattle.io/cluster-repo-name': chart.repoName },
+          resourceVersion: undefined as string | undefined
+        },
+        spec: {
+          chart: {
+            metadata: {
+              name: chart.chartName,
+              version: chart.version,
+            }
+          },
+          name: releaseName,
+          namespace: namespace,
+          values,
+        },
+      };
+
       // For upgrade actions, use the clusterRepo action directly
       if (preferredAction === 'upgrade') {
         logger.info('Performing upgrade via clusterRepo action', {
@@ -154,7 +176,7 @@ export class AppLifecycleService {
         };
 
         try {
-          await $store.dispatch('rancher/request', {
+          const upgradeResult = await $store.dispatch('rancher/request', {
             method: 'post',
             url: clusterReposUrl,
             data: upgradeData,
@@ -305,7 +327,7 @@ export class AppLifecycleService {
    * ```
    */
   static async waitForAppInstall(
-    $store: RancherStore,
+    $store: Dispatchable,
     clusterId: string,
     namespace: string,
     releaseName: string,
@@ -323,10 +345,10 @@ export class AppLifecycleService {
     });
 
     let initialObs = -1;
+    let initialState = '';
 
     for (;;) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let app: any = null; // Rancher store dispatch returns untyped response; narrowed below
+      let app: any = null;
 
       try {
         const r = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
@@ -351,6 +373,7 @@ export class AppLifecycleService {
 
         if (initialObs < 0) {
           initialObs = obs;
+          initialState = (state || '').toLowerCase();
         }
 
         logger.debug('App status check', {
@@ -426,7 +449,7 @@ export class AppLifecycleService {
    * ```
    */
   static async deleteApp(
-    $store: RancherStore,
+    $store: Dispatchable,
     clusterId: string,
     namespace: string,
     releaseName: string,

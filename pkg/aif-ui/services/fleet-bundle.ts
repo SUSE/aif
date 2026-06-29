@@ -1,8 +1,6 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
 import { APP_COLLECTION_REPO_URL } from './app-collection';
 import { TIMEOUT_VALUES } from '../utils/constants';
-import logger from '../utils/logger';
-import type { RancherStore } from '../types/rancher-types';
 
 // The operator-managed AppCollection ClusterRepo name. SUSE-registry charts
 // frequently bundle subcharts whose container images come from AppCollection
@@ -50,7 +48,7 @@ export interface FleetBundleParams {
   chartRepoUrl:            string; // actual OCI/Helm URL for the bundle spec
   chartName:               string;
   chartVersion:            string;
-  values:                  Record<string, unknown>;
+  values:                  Record<string, any>;
   targetNamespace:         string;
   targetClusterIds:        string[];
   additionalPullSecretNames?: string[]; // pre-created pull secrets for extra registries (e.g. subchart registries)
@@ -137,10 +135,9 @@ interface ClientSecretRef { name: string; namespace: string; }
 // Read the clientSecret ref from a Rancher ClusterRepo resource.
 // Rancher stores spec.clientSecret as {name, namespace} for OCI repos,
 // or as a plain string in older versions.
-async function readClusterRepoClientSecret(store: RancherStore, repoName: string): Promise<ClientSecretRef | null> {
+async function readClusterRepoClientSecret(store: any, repoName: string): Promise<ClientSecretRef | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res: any = await store.dispatch('management/find', { // Rancher store dispatch returns untyped response
+    const res = await store.dispatch('management/find', {
       type: 'catalog.cattle.io.clusterrepo',
       id:   repoName,
     });
@@ -153,10 +150,9 @@ async function readClusterRepoClientSecret(store: RancherStore, repoName: string
 }
 
 // Read a kubernetes.io/basic-auth secret and return decoded credentials.
-async function readAuthSecret(store: RancherStore, ref: ClientSecretRef): Promise<{ username: string; password: string } | null> {
+async function readAuthSecret(store: any, ref: ClientSecretRef): Promise<{ username: string; password: string } | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res: any = await store.dispatch('rancher/request', { // Rancher store dispatch returns untyped response
+    const res = await store.dispatch('rancher/request', {
       url:     `/k8s/clusters/local/api/v1/namespaces/${ref.namespace}/secrets/${ref.name}`,
       timeout: TIMEOUT_VALUES.CLUSTER,
     });
@@ -171,7 +167,7 @@ async function readAuthSecret(store: RancherStore, ref: ClientSecretRef): Promis
 
 // Create (or skip-if-exists) a basic-auth secret in a fleet workspace namespace for HelmOp chart pull auth.
 async function ensureFleetHelmAuthSecret(
-  store: RancherStore, fleetNamespace: string, secretName: string, username: string, password: string,
+  store: any, fleetNamespace: string, secretName: string, username: string, password: string,
 ): Promise<void> {
   const base = `/k8s/clusters/local/api/v1/namespaces/${fleetNamespace}/secrets`;
   const body = {
@@ -183,20 +179,20 @@ async function ensureFleetHelmAuthSecret(
   };
   try {
     await store.dispatch('rancher/request', { url: base, method: 'POST', data: body });
-  } catch (e) {
-    if ((e as { code?: number })?.code !== 409) {
-      logger.warn(`FleetHelmOp: failed to create helm auth secret in ${fleetNamespace}`, { data: e });
+  } catch (e: any) {
+    if (e?.code !== 409) {
+      console.warn('[SUSE-AI] FleetHelmOp: failed to create helm auth secret in', fleetNamespace, e);
       return;
     }
     try {
       await store.dispatch('rancher/request', { url: `${base}/${secretName}`, method: 'PUT', data: body });
-    } catch (putErr) {
-      logger.warn(`FleetHelmOp: failed to update helm auth secret in ${fleetNamespace}`, { data: putErr });
+    } catch (putErr: any) {
+      console.warn('[SUSE-AI] FleetHelmOp: failed to update helm auth secret in', fleetNamespace, putErr);
     }
   }
 }
 
-async function upsertFleetHelmOp(store: RancherStore, fleetNamespace: string, name: string, spec: Record<string, unknown>): Promise<void> {
+async function upsertFleetHelmOp(store: any, fleetNamespace: string, name: string, spec: Record<string, any>): Promise<void> {
   const baseUrl = `/k8s/clusters/local/apis/fleet.cattle.io/v1alpha1/namespaces/${fleetNamespace}/helmops`;
   const body = {
     apiVersion: 'fleet.cattle.io/v1alpha1',
@@ -206,8 +202,7 @@ async function upsertFleetHelmOp(store: RancherStore, fleetNamespace: string, na
   };
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res: any = await store.dispatch('rancher/request', { // Rancher store dispatch returns untyped response
+    const res = await store.dispatch('rancher/request', {
       url:     `${baseUrl}/${name}`,
       timeout: TIMEOUT_VALUES.CLUSTER,
     });
@@ -238,7 +233,7 @@ export function buildFleetBundleYAML(params: {
   chartVersion:     string;
   chartRepoUrl:     string;
   helmSecretName:   string | null;
-  values:           Record<string, unknown>;
+  values:           Record<string, any>;
   pullSecretNames:  string[];
   targetClusterIds: string[];
   targetNamespace:  string;
@@ -263,7 +258,7 @@ export function buildFleetBundleYAML(params: {
   disableNvidiaChartSecrets(values, params.library);
 
   const isOCI = params.chartRepoUrl.startsWith('oci://');
-  const spec: Record<string, unknown> = {
+  const spec: Record<string, any> = {
     // defaultNamespace (not namespace): targets the release namespace without
     // forcing every resource into it. Fleet's strict `namespace` field rejects
     // any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
@@ -336,7 +331,7 @@ export async function ensureAppCollectionPullSecrets(
 // createFleetBundle creates Fleet HelmOp CR(s) which pull and deploy the external OCI Helm chart.
 // fleet-local workspace serves the management cluster; fleet-default serves downstream clusters.
 // When both are selected we create one HelmOp in each workspace.
-export async function createFleetBundle(store: RancherStore, params: FleetBundleParams): Promise<string> {
+export async function createFleetBundle(store: any, params: FleetBundleParams): Promise<string> {
   const localClusters      = params.targetClusterIds.filter(id => id === 'local');
   const downstreamClusters = params.targetClusterIds.filter(id => id !== 'local');
 
@@ -344,7 +339,7 @@ export async function createFleetBundle(store: RancherStore, params: FleetBundle
   const pullCreds = secretRef ? await readAuthSecret(store, secretRef) : null;
 
   if (!pullCreds && secretRef) {
-    logger.warn(`FleetHelmOp: could not read auth secret ${secretRef.name} — chart pull auth will be skipped`);
+    console.warn('[SUSE-AI] FleetHelmOp: could not read auth secret', secretRef.name, '— chart pull auth will be skipped');
   }
 
   // Seed with any pre-created secrets passed by the caller (covers additional registries such as
@@ -363,7 +358,7 @@ export async function createFleetBundle(store: RancherStore, params: FleetBundle
         );
         if (secretName && !pullSecretNames.includes(secretName)) pullSecretNames.push(secretName);
       } catch (e) {
-        logger.warn(`pull-secret creation failed for cluster ${clusterId}`, { data: e });
+        console.warn('[SUSE-AI] pull-secret creation failed for cluster', clusterId, e);
       }
     }
   }
@@ -390,7 +385,7 @@ export async function createFleetBundle(store: RancherStore, params: FleetBundle
 
   const isOCI   = params.chartRepoUrl.startsWith('oci://');
   const ociRepo = isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl;
-  const helmSpec: Record<string, unknown> = {
+  const helmSpec: Record<string, any> = {
     ...(isOCI ? {} : { chart: params.chartName }),
     version:     params.chartVersion,
     repo:        ociRepo,
@@ -423,7 +418,7 @@ export async function createFleetBundle(store: RancherStore, params: FleetBundle
   // forcing every resource into it. Fleet's strict `namespace` field rejects
   // any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
   // operator/CRD-bearing charts.
-  const baseSpec: Record<string, unknown> = { defaultNamespace: params.targetNamespace, helm: helmSpec };
+  const baseSpec: Record<string, any> = { defaultNamespace: params.targetNamespace, helm: helmSpec };
   if (pullCreds && secretRef) {
     baseSpec.helmSecretName = secretRef.name;
   }
@@ -459,13 +454,13 @@ export async function createFleetBundle(store: RancherStore, params: FleetBundle
   return params.bundleName;
 }
 
-function addPullSecretsToValues(values: Record<string, unknown>, names: string[], library?: 'suse-ai' | 'nvidia'): Record<string, unknown> {
+function addPullSecretsToValues(values: Record<string, any>, names: string[], library?: 'suse-ai' | 'nvidia'): Record<string, any> {
   const effective = withCombinedPullSecret(names, library);
   if (effective.length === 0 || library === 'nvidia') return values;
   const secrets = effective.map(name => ({ name }));
   return {
     ...values,
-    global:           { ...(values.global as Record<string, unknown> || {}), imagePullSecrets: secrets },
+    global:           { ...(values.global || {}), imagePullSecrets: secrets },
     imagePullSecrets: secrets,
   };
 }

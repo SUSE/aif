@@ -4,8 +4,7 @@
  * Defines standard labels, annotations, and metadata helpers
  */
 
-import { PRODUCT_SLUG } from '../utils/constants';
-import logger from '../utils/logger';
+import { HELM_CONSTANTS, PRODUCT_SLUG } from '../utils/constants';
 
 // === Standard Kubernetes Labels ===
 export const STANDARD_LABELS = {
@@ -156,10 +155,10 @@ export function createStandardLabels(options: {
 export function createStandardAnnotations(options: {
   description?: string;
   chartVersion?: string;
-  installationConfig?: Record<string, unknown>;
+  installationConfig?: Record<string, any>;
   updateStrategy?: string;
   dependencies?: string[];
-  customValues?: Record<string, unknown>;
+  customValues?: Record<string, any>;
 }): StandardAnnotations {
   const now = new Date().toISOString();
   
@@ -228,14 +227,14 @@ export function getHelmReleaseFromLabels(labels?: Record<string, string>): strin
 /**
  * Get installation config from annotations
  */
-export function getInstallationConfigFromAnnotations(annotations?: Record<string, string>): Record<string, unknown> | null {
+export function getInstallationConfigFromAnnotations(annotations?: Record<string, string>): Record<string, any> | null {
   const configStr = annotations?.[STANDARD_ANNOTATIONS.SUSEAI_INSTALLATION_CONFIG];
   if (!configStr) return null;
   
   try {
     return JSON.parse(configStr);
   } catch (error) {
-    logger.warn('Failed to parse installation config annotation', { data: error });
+    console.warn('Failed to parse installation config annotation:', error);
     return null;
   }
 }
@@ -243,14 +242,14 @@ export function getInstallationConfigFromAnnotations(annotations?: Record<string
 /**
  * Get custom values from annotations
  */
-export function getCustomValuesFromAnnotations(annotations?: Record<string, string>): Record<string, unknown> | null {
+export function getCustomValuesFromAnnotations(annotations?: Record<string, string>): Record<string, any> | null {
   const valuesStr = annotations?.[STANDARD_ANNOTATIONS.SUSEAI_CUSTOM_VALUES];
   if (!valuesStr) return null;
-
+  
   try {
     return JSON.parse(valuesStr);
   } catch (error) {
-    logger.warn('Failed to parse custom values annotation', { data: error });
+    console.warn('Failed to parse custom values annotation:', error);
     return null;
   }
 }
@@ -261,11 +260,11 @@ export function getCustomValuesFromAnnotations(annotations?: Record<string, stri
 export function getDependenciesFromAnnotations(annotations?: Record<string, string>): string[] | null {
   const depsStr = annotations?.[STANDARD_ANNOTATIONS.SUSEAI_DEPENDENCIES];
   if (!depsStr) return null;
-
+  
   try {
     return JSON.parse(depsStr);
   } catch (error) {
-    logger.warn('Failed to parse dependencies annotation', { data: error });
+    console.warn('Failed to parse dependencies annotation:', error);
     return null;
   }
 }

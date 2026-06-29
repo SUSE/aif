@@ -1,7 +1,6 @@
 <script>
 import AsyncButton      from '@shell/components/AsyncButton';
 import { Banner }       from '@components/Banner';
-import logger from '../utils/logger';
 import Loading          from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import LabeledSelect    from '@shell/components/form/LabeledSelect';
@@ -383,7 +382,7 @@ export default {
         // save succeeds, so on failure we surface a banner rather than failing the save.
         this.ensureClusterReposWithCredentials()
           .catch((e) => {
-            logger.warn('[SUSE-AI] ClusterRepo setup failed', { data: e });
+            console.warn('[SUSE-AI] ClusterRepo setup failed:', e);
             this.errors = [`Settings saved, but chart repository setup failed: ${ e?.message || e }`];
           });
       } catch (e) {
@@ -685,10 +684,7 @@ export default {
       </div>
 
       <!-- Advanced -->
-      <div
-        id="advanced"
-        class="box mt-10"
-      >
+      <div id="advanced" class="box mt-10">
         <div
           class="accordion-header"
           role="button"
