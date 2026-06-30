@@ -470,8 +470,8 @@ export default defineComponent({
 
     .filter-group {
       .form-control {
-        min-width: 140px;
-        width: 140px;
+        min-width: 200px;
+        width: auto;
         height: 32px;
         padding: 0 12px;
         border: 1px solid var(--border);
@@ -1038,7 +1038,7 @@ export default defineComponent({
       }
 
       .filter-group .form-control {
-        min-width: 160px;
+        min-width: 200px;
       }
     }
   }

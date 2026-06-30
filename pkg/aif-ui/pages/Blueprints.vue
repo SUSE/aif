@@ -125,7 +125,7 @@
                   </select>
                 </div>
                 <div class="tile-meta">
-                  <span class="tile-meta-item">{{ componentCount(versions, family) }} apps</span>
+                  <span class="tile-meta-item">{{ componentCount(versions, family) }} {{ componentCount(versions, family) === 1 ? 'app' : 'apps' }}</span>
                   <span class="tile-meta-sep">·</span>
                   <Tag :aria-label="`Source: ${ sourceLabel(versions) }`">
                     {{ sourceLabel(versions) }}
