@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: settings.ai-platform.suse.com
+  name: settings.ai-factory.suse.com
 spec:
-  group: ai-platform.suse.com
+  group: ai-factory.suse.com
   names:
     kind: Settings
     listKind: SettingsList

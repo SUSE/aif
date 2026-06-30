@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: aiworkloads.ai-platform.suse.com
+  name: aiworkloads.ai-factory.suse.com
 spec:
-  group: ai-platform.suse.com
+  group: ai-factory.suse.com
   names:
     kind: AIWorkload
     listKind: AIWorkloadList
@@ -137,7 +137,7 @@ spec:
                       (Epic 2).
                     properties:
                       name:
-                        description: Name is the blueprint family slug (label ai-platform.suse.com/blueprint-name).
+                        description: Name is the blueprint family slug (label ai-factory.suse.com/blueprint-name).
                         minLength: 1
                         type: string
                       version:
