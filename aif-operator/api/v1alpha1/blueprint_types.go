@@ -285,6 +285,68 @@ const (
 	BlueprintOriginCustom BlueprintOrigin = "Custom"
 )
 
+// BlueprintLifecycle defines install/upgrade/delete policies.
+// v2 preview - not yet functional in v1.
+type BlueprintLifecycle struct {
+	// Install behavior
+	// +optional
+	Install *LifecycleInstall `json:"install,omitempty"`
+
+	// Upgrade behavior
+	// +optional
+	Upgrade *LifecycleUpgrade `json:"upgrade,omitempty"`
+
+	// Delete behavior
+	// +optional
+	Delete *LifecycleDelete `json:"delete,omitempty"`
+}
+
+// LifecycleInstall defines install behavior.
+// v2 preview - not yet functional in v1.
+type LifecycleInstall struct {
+	// Install strategy: "ordered" or "parallel"
+	// +kubebuilder:validation:Enum=ordered;parallel
+	// +optional
+	Strategy string `json:"strategy,omitempty"`
+
+	// Whether pre-flight checks are required
+	// +optional
+	PreflightRequired bool `json:"preflightRequired,omitempty"`
+}
+
+// LifecycleUpgrade defines upgrade behavior.
+// v2 preview - not yet functional in v1.
+type LifecycleUpgrade struct {
+	// Upgrade strategy: "safe" or "force"
+	// +kubebuilder:validation:Enum=safe;force
+	// +optional
+	Strategy string `json:"strategy,omitempty"`
+
+	// Whether manual approval is required
+	// +optional
+	RequiresApproval bool `json:"requiresApproval,omitempty"`
+}
+
+// LifecycleDelete defines delete behavior.
+// v2 preview - not yet functional in v1.
+type LifecycleDelete struct {
+	// Resources to retain on delete
+	// +optional
+	RetainResources []RetainResource `json:"retainResources,omitempty"`
+}
+
+// RetainResource defines a resource type to keep on delete.
+// v2 preview - not yet functional in v1.
+type RetainResource struct {
+	// Resource kind
+	// +kubebuilder:validation:MinLength=1
+	Kind string `json:"kind"`
+
+	// Reason for retention
+	// +optional
+	Reason string `json:"reason,omitempty"`
+}
+
 // BlueprintComponent defines one Helm chart in a Blueprint.
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name.
@@ -312,6 +374,53 @@ type BlueprintComponent struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	TargetNamespace string `json:"targetNamespace,omitempty"`
+
+	// === v2 FIELDS (preview - not yet functional in v1) ===
+
+	// Type is the content type discriminator (defaults to Helm for backward compat).
+	// v2 preview - not yet functional in v1.
+	// +kubebuilder:default=Helm
+	// +kubebuilder:validation:Enum=Helm;Kustomize;Manifests;Git
+	// +optional
+	Type ComponentContentType `json:"type,omitempty"`
+
+	// Name for this component (used in dependsOn references).
+	// Defaults to chartName if omitted.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Kustomize source (used when Type=Kustomize).
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Kustomize *KustomizeSource `json:"kustomize,omitempty"`
+
+	// Manifests source (used when Type=Manifests).
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Manifests *ManifestSource `json:"manifests,omitempty"`
+
+	// Git source (used when Type=Git).
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Git *BlueprintGitSource `json:"git,omitempty"`
+
+	// DependsOn lists components that must be Ready before this one starts.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	DependsOn []string `json:"dependsOn,omitempty"`
+
+	// ValuesFromInputs maps blueprint inputs to Helm values.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	ValuesFromInputs []InputMapping `json:"valuesFromInputs,omitempty"`
+
+	// CEL validation enforces type-specific field requirements.
+	// v2 preview - not yet functional in v1.
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Helm' || !has(self.type) ? (self.chartRepo != '' && self.chartName != '') : true",message="chartRepo and chartName required when type=Helm"
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Kustomize' ? has(self.kustomize) : true",message="kustomize field required when type=Kustomize"
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Manifests' ? has(self.manifests) : true",message="manifests field required when type=Manifests"
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Git' ? has(self.git) : true",message="git field required when type=Git"
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.
