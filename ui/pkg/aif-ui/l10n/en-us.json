@@ -246,7 +246,8 @@
           "tooltips": {
             "FleetBundle": "Creates a Fleet HelmOp bundle resource in your cluster. Fleet continuously reconciles the desired state by managing the Helm release across your target clusters. Changes to the bundle are automatically propagated.",
             "GitOps": "Commits a Fleet bundle definition to a configured Git repository. Fleet monitors the repository and reconciles the declared state to your target clusters. This enables full GitOps workflows with version history and auditability.",
-            "Helm": "Directly installs the Helm chart on the local cluster only. Suitable for single-cluster deployments without ongoing Fleet-based lifecycle management."
+            "Helm": "Directly installs the Helm chart on the local cluster only. Suitable for single-cluster deployments without ongoing Fleet-based lifecycle management.",
+            "HelmDisabled": "Helm is unavailable for this chart because it exceeds the maximum chart size limit."
           }
         }
       },

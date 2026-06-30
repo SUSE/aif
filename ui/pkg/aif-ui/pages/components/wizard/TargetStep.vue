@@ -34,7 +34,21 @@ const helmCardDisabled = computed(() =>
   hasNonLocalClusters.value || !!props.helmOversized || !!props.helmUnsupported
 );
 
-const deployTypeCards = [
+const helmTooltip = computed(() => {
+  if (props.helmOversized || props.helmUnsupported) {
+    return t(
+      'suseai.wizard.target.deploymentStrategy.tooltips.HelmDisabled',
+      'Helm is unavailable for this chart because it exceeds the maximum chart size limit.'
+    );
+  }
+
+  return t(
+    'suseai.wizard.target.deploymentStrategy.tooltips.Helm',
+    'Directly installs the Helm chart on the local cluster only. Suitable for single-cluster deployments without ongoing Fleet-based lifecycle management.'
+  );
+});
+
+const deployTypeCards = computed(() => [
   {
     id:      'FleetBundle' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Fleet Bundle' } },
@@ -53,10 +67,10 @@ const deployTypeCards = [
     id:      'Helm' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Helm' } },
     image:   { icon: 'helm' as any },
-    content: { text: 'Deploy directly to each selected cluster via Helm install' },
-    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.Helm', 'Directly installs the Helm chart on the local cluster only. Suitable for single-cluster deployments without ongoing Fleet-based lifecycle management.'),
+    content: { text: 'Deploy directly to the local cluster via Helm install.' },
+    tooltip: helmTooltip.value,
   },
-];
+]);
 
 function onCardClick(id: AIWorkloadDeployStrategy) {
   if (isManageMode.value) return;
@@ -74,6 +88,7 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
         v-for="card in deployTypeCards"
         :key="card.id"
         :title="card.tooltip"
+        :aria-label="card.tooltip"
         class="deploy-type-card-wrapper"
       >
         <RcItemCard
