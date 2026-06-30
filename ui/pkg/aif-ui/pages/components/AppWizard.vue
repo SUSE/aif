@@ -1181,7 +1181,7 @@ async function installSingleCluster(clusterId: string): Promise<void> {
     updateClusterProgress(clusterId, {
       status: 'success',
       progress: 100,
-      message: 'Installation completed successfully'
+      message: 'Installation scheduled for deployment'
     });
   } catch (e: any) {
     updateClusterProgress(clusterId, {
@@ -1571,7 +1571,7 @@ async function upgradeSingleCluster(clusterId: string): Promise<void> {
     updateClusterProgress(clusterId, {
       status: 'success',
       progress: 100,
-      message: 'Upgrade completed successfully'
+      message: 'Upgrade scheduled for deployment'
     });
   } catch (e: any) {
     updateClusterProgress(clusterId, {

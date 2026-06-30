@@ -170,7 +170,7 @@ const subtitle = computed(() => {
     return installing ? `Installing on ${installing.clusterName}...` : 'Preparing installation...';
   }
   if (allSucceeded.value) {
-    return `Successfully installed on ${successCount.value} cluster${successCount.value !== 1 ? 's' : ''}`;
+    return `Scheduled for deployment on ${successCount.value} cluster${successCount.value !== 1 ? 's' : ''}`;
   }
   if (allFailed.value) {
     return `Installation failed on all ${failedCount.value} cluster${failedCount.value !== 1 ? 's' : ''}`;
