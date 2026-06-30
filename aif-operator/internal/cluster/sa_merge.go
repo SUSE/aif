@@ -307,13 +307,13 @@ metadata:
   name: {{ .JobName }}
   namespace: {{ .Namespace }}
   labels:
-    ai-platform.suse.com/role: pullsecret-sa-merge
+    ai-factory.suse.com/role: pullsecret-sa-merge
 spec:
   backoffLimit: 4
   template:
     metadata:
       labels:
-        ai-platform.suse.com/role: pullsecret-sa-merge
+        ai-factory.suse.com/role: pullsecret-sa-merge
     spec:
       serviceAccountName: {{ .ServiceAccount }}
       restartPolicy: OnFailure
@@ -348,7 +348,7 @@ metadata:
   name: {{ .CronJobName }}
   namespace: {{ .Namespace }}
   labels:
-    ai-platform.suse.com/role: pullsecret-sa-merge
+    ai-factory.suse.com/role: pullsecret-sa-merge
 spec:
   schedule: "{{ .Schedule }}"
   concurrencyPolicy: Forbid
@@ -361,7 +361,7 @@ spec:
       template:
         metadata:
           labels:
-            ai-platform.suse.com/role: pullsecret-sa-merge
+            ai-factory.suse.com/role: pullsecret-sa-merge
         spec:
           serviceAccountName: {{ .ServiceAccount }}
           restartPolicy: OnFailure

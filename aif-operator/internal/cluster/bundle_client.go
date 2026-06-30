@@ -74,7 +74,7 @@ type BundleClientOptions struct {
 // NewBundleClient returns a BundleClient that emits one consolidated Fleet
 // Bundle per ApplyPullSecretBundle call. Bundle name is
 // "ai-pullsecrets-<OwnerName>-<ClusterID>"; owner labels
-// (ai-platform.suse.com/owner-name and /owner-namespace) tie this Bundle
+// (ai-factory.suse.com/owner-name and /owner-namespace) tie this Bundle
 // to its AIWorkload for finalizer cleanup via label selector.
 func NewBundleClient(c client.Client, scheme *runtime.Scheme, opts BundleClientOptions) BundleClient {
 	if opts.SAMergeImage == "" {
@@ -179,8 +179,8 @@ func (b *bundleClient) ApplyPullSecretBundle(ctx context.Context, secrets []*cor
 	bundle.SetName(bundleName)
 	bundle.SetNamespace(b.opts.FleetWorkspace)
 	bundle.SetLabels(map[string]string{
-		"ai-platform.suse.com/owner-name":      b.opts.OwnerName,
-		"ai-platform.suse.com/owner-namespace": b.opts.OwnerNamespace,
+		"ai-factory.suse.com/owner-name":      b.opts.OwnerName,
+		"ai-factory.suse.com/owner-namespace": b.opts.OwnerNamespace,
 	})
 
 	spec := map[string]any{

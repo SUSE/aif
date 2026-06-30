@@ -98,7 +98,7 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 	crName := blueprintCRName(body.Spec.DisplayName, body.Spec.Version)
 
 	bp := &aiplatformv1alpha1.Blueprint{}
-	bp.APIVersion = "ai-platform.suse.com/v1alpha1"
+	bp.APIVersion = "ai-factory.suse.com/v1alpha1"
 	bp.Kind = "Blueprint"
 	bp.Name = crName
 	bp.Labels = map[string]string{

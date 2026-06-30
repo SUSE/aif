@@ -60,11 +60,11 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 	}
 
 	labels := bundle.GetLabels()
-	if labels["ai-platform.suse.com/owner-name"] != "wl-x" {
-		t.Errorf("owner-name label: got %q want wl-x", labels["ai-platform.suse.com/owner-name"])
+	if labels["ai-factory.suse.com/owner-name"] != "wl-x" {
+		t.Errorf("owner-name label: got %q want wl-x", labels["ai-factory.suse.com/owner-name"])
 	}
-	if labels["ai-platform.suse.com/owner-namespace"] != "default" {
-		t.Errorf("owner-namespace label: got %q want default", labels["ai-platform.suse.com/owner-namespace"])
+	if labels["ai-factory.suse.com/owner-namespace"] != "default" {
+		t.Errorf("owner-namespace label: got %q want default", labels["ai-factory.suse.com/owner-namespace"])
 	}
 
 	targets, found, err := unstructured.NestedSlice(bundle.Object, "spec", "targets")

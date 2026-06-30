@@ -50,9 +50,9 @@ type InstallAIExtensionReconciler struct {
 	rancherMgr         *rancher.Manager
 }
 
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=installaiextensions,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=installaiextensions/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=installaiextensions/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
@@ -510,7 +510,7 @@ func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) 
 	return helmClient.New(settings)
 }
 
-const annotationWaitingSince = "ai-platform.suse.com/waiting-since"
+const annotationWaitingSince = "ai-factory.suse.com/waiting-since"
 
 func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIExtension) time.Time {
 	if ext.Annotations == nil {

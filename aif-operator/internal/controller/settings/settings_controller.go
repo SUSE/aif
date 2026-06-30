@@ -45,8 +45,8 @@ type SettingsReconciler struct {
 	OperatorNamespace string
 }
 
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=gitrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete

@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	BlueprintNameLabel    = "ai-platform.suse.com/blueprint-name"
-	BlueprintVersionLabel = "ai-platform.suse.com/blueprint-version"
+	BlueprintNameLabel    = "ai-factory.suse.com/blueprint-name"
+	BlueprintVersionLabel = "ai-factory.suse.com/blueprint-version"
 )
 
 // ComponentVendor selects the secret-injection profile for a Blueprint

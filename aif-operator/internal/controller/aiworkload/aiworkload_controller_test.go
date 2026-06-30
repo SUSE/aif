@@ -72,7 +72,7 @@ var _ = Describe("AIWorkload Controller", func() {
 
 			var got aiplatformv1alpha1.AIWorkload
 			Expect(k8sClient.Get(ctx, req("test-finalizer", "default").NamespacedName, &got)).To(Succeed())
-			Expect(got.Finalizers).To(ContainElement("ai-platform.suse.com/cleanup"))
+			Expect(got.Finalizers).To(ContainElement("ai-factory.suse.com/cleanup"))
 		})
 
 		It("sets observedGeneration on subsequent reconcile", func() {
@@ -159,7 +159,7 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(k8sClient.Get(ctx, req("gitops-sync", "default").NamespacedName, &got)).To(Succeed())
 			Expect(got.Spec.Source.App.ChartVersion).To(Equal("2.0.0"))
 			Expect(got.Spec.TargetNamespace).To(Equal("new-ns"))
-			Expect(got.Annotations).To(HaveKey("ai-platform.suse.com/last-git-sync"))
+			Expect(got.Annotations).To(HaveKey("ai-factory.suse.com/last-git-sync"))
 		})
 	})
 
@@ -204,7 +204,7 @@ var _ = Describe("AIWorkload Controller", func() {
 					Namespace: "default",
 					// Simulate a workload that was previously synced — annotation present
 					Annotations: map[string]string{
-						"ai-platform.suse.com/last-git-sync": "somehash",
+						"ai-factory.suse.com/last-git-sync": "somehash",
 					},
 				},
 				Spec: aiplatformv1alpha1.AIWorkloadSpec{

@@ -90,7 +90,7 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s := &aiplatformv1alpha1.Settings{}
-	s.APIVersion = "ai-platform.suse.com/v1alpha1"
+	s.APIVersion = "ai-factory.suse.com/v1alpha1"
 	s.Kind = "Settings"
 	s.Name = settingsName
 	s.Namespace = h.namespace
