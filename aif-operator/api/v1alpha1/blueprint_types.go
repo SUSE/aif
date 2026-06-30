@@ -445,6 +445,38 @@ type BlueprintSpec struct {
 	// Components are the Helm charts included in this blueprint.
 	// +kubebuilder:validation:MinItems=1
 	Components []BlueprintComponent `json:"components"`
+
+	// === v2 FIELDS (preview - not yet functional in v1) ===
+
+	// Inputs defines user-configurable parameters.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Inputs []BlueprintInput `json:"inputs,omitempty"`
+
+	// Outputs defines values to extract after deployment.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Outputs []BlueprintOutput `json:"outputs,omitempty"`
+
+	// Validation defines pre-flight validation rules.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Validation *BlueprintValidation `json:"validation,omitempty"`
+
+	// RequiredSecrets lists secrets that must exist before install.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	RequiredSecrets []RequiredSecret `json:"requiredSecrets,omitempty"`
+
+	// Requirements defines cluster prerequisites.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Requirements *BlueprintRequirements `json:"requirements,omitempty"`
+
+	// Lifecycle defines install/upgrade/delete policies.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Lifecycle *BlueprintLifecycle `json:"lifecycle,omitempty"`
 }
 
 // +kubebuilder:object:root=true
