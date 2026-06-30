@@ -42,10 +42,12 @@
 
     <!-- Configuration -->
     <h3 class="mt-30">{{ t('suseai.wizard.sections.configuration', 'Configuration') }}</h3>
+    <p class="readonly-notice">{{ t('suseai.wizard.review.readonlyNotice', 'Configuration preview (read-only)') }}</p>
     <YamlEditor
-      v-model:value="localValues"
+      :value="localValues"
       :as-object="true"
-      :editor-mode="'VIEW_CODE'"
+      :editor-mode="EDITOR_MODES.VIEW_CODE"
+      mode="view"
       class="values-editor"
     />
   </div>
@@ -53,7 +55,7 @@
 
 <script lang="ts" setup>
 import { computed } from 'vue';
-import YamlEditor from '@shell/components/YamlEditor';
+import YamlEditor, { EDITOR_MODES } from '@shell/components/YamlEditor';
 import { useT } from '../../../composables/useT';
 
 interface Props {
@@ -138,6 +140,12 @@ const localValues = computed(() => props.values);
     grid-template-columns: 1fr;
     gap: 8px;
   }
+}
+
+.readonly-notice {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 8px 0;
 }
 
 .values-editor {
