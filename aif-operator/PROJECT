@@ -14,7 +14,7 @@ resources:
     namespaced: false
   controller: true
   domain: suse.com
-  group: ai-platform
+  group: ai-factory
   kind: InstallAIExtension
   path: suse.com/aif-operator/api/v1alpha1
   version: v1alpha1

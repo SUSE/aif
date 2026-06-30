@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 contains API Schema definitions for the ai-platform v1alpha1 API group.
+// Package v1alpha1 contains API Schema definitions for the ai-factory v1alpha1 API group.
 // +kubebuilder:object:generate=true
 // +groupName=ai-factory.suse.com
 package v1alpha1
