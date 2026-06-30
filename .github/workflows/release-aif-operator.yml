@@ -117,6 +117,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.VERSION }}
+            COMMIT=${{ github.sha }}
 
   build-chart:
     needs: [prepare, build-container]
