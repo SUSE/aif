@@ -1,8 +1,8 @@
-# SUSE AI Lifecycle Manager
+# SUSE AI Factory
 
-SUSE AI Lifecycle Manager is a Rancher UI Extension for managing SUSE AI components across Kubernetes clusters. This extension provides a unified interface for installing, managing, and monitoring AI workloads in Rancher-managed clusters.
+SUSE AI Factory is a Rancher UI Extension for managing SUSE AI Factory components across Kubernetes clusters. This extension provides a unified interface for installing, managing, and monitoring AI workloads in Rancher-managed clusters.
 
-> **Note:** This extension requires an active [SUSE AI](https://www.suse.com/products/ai/) subscription to access the application catalog.
+> **Note:** This extension requires an active [SUSE AI Factory](https://www.suse.com/products/ai/) subscription to access the application catalog.
 
 ## Development
 
@@ -56,7 +56,7 @@ yarn build-pkg aif-ui --mode production
 
 ## Extension Catalog Container
 
-- The container packages the SUSE AI Lifecycle Manager (Rancher UI Extension) into a single OCI container image.
+- The container packages SUSE AI Factory (Rancher UI Extension) into a single OCI container image.
 - This container is:
    - Built and published during CI
    - Stored in GitHub Container Registry (GHCR)
@@ -102,13 +102,13 @@ https://github.com/SUSE/suse-ai-lifecycle-manager/pkgs/container/aif-ui
    3. From the Extensions page, Go to Manage Repositories. Verify if the SUSE AI Rancher Extension repository has the `Active` state. If not, refresh the connection.
    4. Go back to Extensions and install SUSE AI Rancher Extension.
    5. Re-load Rancher Dashboard. Reload the browser to ensure the extension is loaded in the UI (ctrl+r or F5 or cmd+r).
-   6. The "SUSE AI Lifecycle Manager" logo will now appear on the left panel of the Rancher Dashboard.
+   6. The "SUSE AI Factory" logo will now appear on the left panel of the Rancher Dashboard.
 
 > NOTE: Replace `<version>` with a tag published in GitHub Container Registry.
 > NOTE: Newly published catalogs are not always available immediately. If the catalog does not show up after publishing, navigate to Extensions → Manage Repositories and manually refresh the repository to force a re-sync.
 
 ## Extension GitHub Branch
-- In addition to the OCI-based catalog container, the SUSE AI Lifecycle Manager extension can be distributed via the GitHub branch (`gh-pages`). This method hosts the extension artifacts as files within a specific branch of your repository, allowing Rancher to consume the extension directly from there.
+- In addition to the OCI-based catalog container, the SUSE AI Factory extension can be distributed via the GitHub branch (`gh-pages`). This method hosts the extension artifacts as files within a specific branch of your repository, allowing Rancher to consume the extension directly from there.
 
 **Overview**
 - The extension is built into static assets (`index.yaml`, `.tgz`, etc.)
@@ -151,10 +151,10 @@ This structure mirrors the catalog format that Rancher expects.
    3. Add a Name, then select `Git repository containing Helm chart or cluster template definitions`
    4. Enter the `Git Repo URL` and the `Git Branch` (`gh-pages`)
    5. Click Create
-   6. Wait until the the SUSE AI Lifecycle Manager repository has the `Active` state.
-   7. Go back to Extensions and install SUSE AI Lifecycle Manager.
+   6. Wait until the the SUSE AI Factory repository has the `Active` state.
+   7. Go back to Extensions and install SUSE AI Factory.
    8. Re-load Rancher Dashboard. Reload the browser to ensure the extension is loaded in the UI (ctrl+r or F5 or cmd+r).
-   9. The "SUSE AI Lifecycle Manager" logo will now appear on the left panel of the Rancher Dashboard.
+   9. The "SUSE AI Factory" logo will now appear on the left panel of the Rancher Dashboard.
 
 ## Contributing
 
