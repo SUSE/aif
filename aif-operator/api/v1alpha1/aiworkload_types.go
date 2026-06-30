@@ -227,6 +227,13 @@ type AIWorkloadSpec struct {
 	// have one entry per component.
 	// +optional
 	FleetBundleNames []string `json:"fleetBundleNames,omitempty"`
+
+	// === v2 FIELDS (preview - not yet functional in v1) ===
+
+	// InputValues holds user-provided input values (maps to Blueprint.spec.inputs).
+	// v2 preview - not yet functional in v1.
+	// +optional
+	InputValues []InputValue `json:"inputValues,omitempty"`
 }
 
 // AIWorkloadClusterStatus tracks per-cluster deployment outcome.
@@ -283,6 +290,28 @@ type AIWorkloadStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// === v2 FIELDS (preview - not yet functional in v1) ===
+
+	// Outputs holds resolved output values (extracted from deployed resources).
+	// v2 preview - not yet functional in v1.
+	// +optional
+	Outputs []OutputValue `json:"outputs,omitempty"`
+
+	// ValidationResults holds input validation results.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	ValidationResults []ValidationResult `json:"validationResults,omitempty"`
+
+	// SecretChecks holds per-cluster secret existence checks.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	SecretChecks []SecretCheckResult `json:"secretChecks,omitempty"`
+
+	// RequirementChecks holds per-cluster capability checks.
+	// v2 preview - not yet functional in v1.
+	// +optional
+	RequirementChecks []RequirementCheckResult `json:"requirementChecks,omitempty"`
 }
 
 // +kubebuilder:object:root=true
