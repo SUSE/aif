@@ -1,0 +1,183 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  labels:
+    ai-factory.suse.com/blueprint-name: nvidia-aiq-with-rag
+    ai-factory.suse.com/blueprint-version: 1.0.0
+  name: nvidia-aiq-with-rag-1-0-0
+spec:
+  # NOTE: This blueprint deploys RAG and the AI-Q "web" profile (aiq2-web) configured
+  # for Foundational RAG (FRAG). 
+  # NOTE: This blueprint requires NVIDIA k8s-nim-operator and
+  # Elasticsearch (ECK) Operator. Please make sure they are
+  # installed on the cluster. Please refer to
+  # https://docs.nvidia.com/nim-operator/latest/install.html on how to
+  # install k8s-nim-operator. For Elasticsearch Operator, please
+  # refer to https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/install-using-helm-chart.
+  #
+  source: Nvidia
+  components:
+  - chartName: nvidia-blueprint-rag
+    chartRepo: nvidia-blueprints
+    chartVersion: v2.6.0
+    # vendor: nvidia makes the operator's nvidiaInjector auto-create the
+    # conventional ngc-secret (dockerconfigjson for nvcr.io) and ngc-api
+    # (NGC_CLI_API_KEY/NGC_API_KEY/NVIDIA_API_KEY) in the release namespace from
+    # the configured NVIDIA credentials, and deliver them to target clusters.
+    vendor: nvidia
+    values:
+      # Reference the operator-delivered secrets (see vendor: nvidia above)
+      # rather than letting the chart create its own from inline passwords.
+      imagePullSecret:
+        create: false
+        name: ngc-secret
+      ngcApiSecret:
+        create: false
+        name: ngc-api
+      # DECISION: RAG v2.6.0 ships with the 120B Nemotron Super NIM as the
+      # default generative model. Route the rag-server's generative LLM calls
+      # (main answer, query rewriter, filter-expression generator) to the
+      # smaller Llama 3.3 Nemotron Super 49B model instead.
+      envVars:
+        APP_LLM_MODELNAME: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+        APP_QUERYREWRITER_MODELNAME: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+        APP_FILTEREXPRESSIONGENERATOR_MODELNAME: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+      ingestor-server:
+        resources:
+          requests:
+            memory: "16Gi"
+        envVars:
+          # Keep the automated document-summarization pipeline on the same
+          # 49B model rather than the chart's default 120B summarizer.
+          SUMMARY_LLM: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+      nv-ingest:
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: 4
+      # Swap the default 120B generative NIM (vLLM engine, 2 GPUs) for the
+      # Llama 3.3 Nemotron Super 49B model served via the TensorRT-LLM engine.
+      nimOperator:
+        nim-llm:
+          image:
+            # tag 1.14.0 triggers a successful JIT TensorRT-LLM engine build.
+            repository: nvcr.io/nim/nvidia/llama-3.3-nemotron-super-49b-v1.5
+            tag: "1.14.0"
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+            requests:
+              nvidia.com/gpu: 1
+          model:
+            engine: tensorrt_llm
+            precision: "fp8"
+            qosProfile: "throughput"
+            tensorParallelism: "1"
+          # Helm replaces list values wholesale, so the full env list is
+          # respecified here. The 120B-only vLLM tuning vars from the chart
+          # default (NIM_ENABLE_CHUNKED_PREFILL / NCCL_NVLS_ENABLE /
+          # VLLM_USE_FLASHINFER_MOE_FP8) are intentionally dropped for the
+          # TensorRT-LLM 49B model.
+          env:
+          - name: NIM_HTTP_API_PORT
+            value: "8000"
+          - name: NIM_TRITON_LOG_VERBOSE
+            value: "1"
+          - name: NIM_SERVED_MODEL_NAME
+            value: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+
+  - chartName: aiq2-web
+    chartRepo: nvidia-blueprints
+    chartVersion: 2.1.0
+    values:
+      aiq:
+        apps:
+          backend:
+            env:
+              # DECISION: Switch the backend workflow to the Foundational RAG
+              # (FRAG) config so it delegates retrieval to the NVIDIA
+              # RAG Blueprint.
+              CONFIG_FILE: configs/config_web_frag.yml
+              RAG_SERVER_URL: http://rag-server:8081/v1
+              RAG_INGEST_URL: http://ingestor-server:8082/v1
+              # Point at the RAG v2.6.0 default VL-embedding NIM
+              # (nemotron-vlm-embedding-ms). In v2.6.0 the VL embedding NIM is
+              # enabled by default and the plain text-embedding NIM
+              # (nemotron-embedding-ms) is disabled.
+              EMBED_BASE_URL: http://nemotron-vlm-embedding-ms:8000/v1
+              EMBED_MODEL: nvidia/llama-nemotron-embed-vl-1b-v2
+            volumes:
+              # --- stock volume (must be kept, chart replaces the whole list) ---
+              - name: postgres-init
+                configMap:
+                  name: aiq-postgres-init
+              # --- our override config to talk to locally hosted NIMs---
+              - name: aiq-web-frag-config
+                configMap:
+                  name: aiq-web-frag-config
+            volumeMounts:
+              # Mount just the single file over the baked-in one (subPath keeps the
+              # other files in /app/configs intact).
+              - name: aiq-web-frag-config
+                mountPath: /app/configs/config_web_frag.yml
+                subPath: config_web_frag.yml
+          frontend:
+            # Point DNS (or an /etc/hosts entry) for `hostname` at the ingress
+            # controller; edit it to match your environment's domain.
+            ingress:
+              enabled: true
+              className: ""
+              hostname: aiq-frontend.suse.demo
+  description: |
+    This blueprint deploys the nvidia RAG blueprint with
+    nvidia/llama-3.3-nemotron-super-49b-v1.5 model and
+    AI-Q web profile configured for Foundational RAG (FRAG).
+
+    Before deployment, please take a look at the REQUIRES below:
+
+    REQUIRES: NVIDIA k8s-nim-operator
+
+    REQUIRES: Elastic eck-operator
+              see https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/install-using-helm-chart
+
+    REQUIRES: the default RAG Blueprint requires 8 GPUs — one of:
+      8 x H100-80GB, 8 x B200, 8 x RTX PRO 6000, or (with Multi-Instance
+      GPU) 5 x H100-80GB.
+
+    REQUIRES: must be deployed into the "ns-aiq" namespace. A requirement for aiq.
+
+    REQUIRES: a Secret named "aiq-credentials" must exist in the ns-aiq
+    namespace before deploying, holding the API keys and Postgres
+    credentials the backend reads at startup. Create the namespace and the
+    secret with:
+
+      kubectl create namespace ns-aiq
+
+      kubectl create secret generic aiq-credentials -n ns-aiq \
+      --from-literal=NVIDIA_API_KEY="$NGC_API_KEY" \
+      --from-literal=TAVILY_API_KEY="$TAVILY_API_KEY" \
+      --from-literal=DB_USER_NAME="aiq" \
+      --from-literal=DB_USER_PASSWORD="aiq_dev"
+    
+    TAVILY_API_KEY is optional (used for web search) and can be skipped.
+
+    REQUIRES: a configmap created in ns-aiq namespace with updated 
+    config_web_frag.yml to point to locally hosted NIMs.
+      kubectl create configmap aiq-web-frag-config -n ns-aiq --from-file=config_web_frag.yml=config_web_frag_2_1_0_updated.yaml
+
+    The config_web_frag_2_1_0_updated.yaml can be obtained at https://github.com/SUSE/aif/tree/main/examples
+ 
+    ACCESS: the AIQ frontend is exposed via Ingress at http://aiq-frontend.suse.demo
+    using the cluster's default IngressClass. Point a DNS record (or an
+    /etc/hosts entry) for "aiq-frontend.suse.demo" at the ingress controller's
+    address, then open http://aiq-frontend.suse.demo in a browser. Edit the
+    frontend ingress hostname in this blueprint to use your own domain.
+
+    ADDITIONAL NOTES: Deployment of RAG is heavily dependent on hardware.
+    Use this blueprint as a reference and tweak the values
+    as needed for your hardware. This blueprint has been validated
+    in a single node cluster with two H200 cards and gpu-operator configured
+    wtih timeslicing enabled.
+  displayName: NVIDIA AI-Q With RAG
+  version: 1.0.0
+
