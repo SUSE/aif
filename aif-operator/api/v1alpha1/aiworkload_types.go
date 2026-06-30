@@ -62,6 +62,89 @@ const (
 	AIWorkloadClusterPhasePending AIWorkloadClusterPhase = "Pending"
 )
 
+// InputValue holds a user-provided input value.
+// v2 preview - not yet functional in v1.
+type InputValue struct {
+	// Input name (matches BlueprintInput.Name)
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Value (JSON-encoded)
+	Value *apixv1.JSON `json:"value"`
+}
+
+// OutputValue holds a resolved output value.
+// v2 preview - not yet functional in v1.
+type OutputValue struct {
+	// Output name (matches BlueprintOutput.Name)
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Resolved value (JSON-encoded)
+	Value *apixv1.JSON `json:"value"`
+
+	// Label (copied from BlueprintOutput for UI convenience)
+	// +optional
+	Label string `json:"label,omitempty"`
+
+	// Type (copied from BlueprintOutput)
+	// +optional
+	Type string `json:"type,omitempty"`
+}
+
+// ValidationResult holds the result of validating one rule.
+// v2 preview - not yet functional in v1.
+type ValidationResult struct {
+	// Rule name
+	// +kubebuilder:validation:MinLength=1
+	RuleName string `json:"ruleName"`
+
+	// Whether the rule passed
+	Passed bool `json:"passed"`
+
+	// Error message (when passed=false)
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// SecretCheckResult holds per-cluster secret existence check.
+// v2 preview - not yet functional in v1.
+type SecretCheckResult struct {
+	// Cluster ID
+	// +kubebuilder:validation:MinLength=1
+	ClusterID string `json:"clusterID"`
+
+	// Secret name
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName"`
+
+	// Whether the secret exists
+	Exists bool `json:"exists"`
+
+	// Missing keys (when exists=true but keys missing)
+	// +optional
+	MissingKeys []string `json:"missingKeys,omitempty"`
+}
+
+// RequirementCheckResult holds per-cluster capability check.
+// v2 preview - not yet functional in v1.
+type RequirementCheckResult struct {
+	// Cluster ID
+	// +kubebuilder:validation:MinLength=1
+	ClusterID string `json:"clusterID"`
+
+	// Capability name
+	// +kubebuilder:validation:MinLength=1
+	CapabilityName string `json:"capabilityName"`
+
+	// Whether the capability is available
+	Available bool `json:"available"`
+
+	// Details (version, status, etc.)
+	// +optional
+	Details string `json:"details,omitempty"`
+}
+
 // AppSource contains chart information for App-sourced workloads.
 type AppSource struct {
 	// ChartRepo is the Rancher ClusterRepo name.
