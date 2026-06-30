@@ -45,8 +45,8 @@
     <YamlEditor
       v-model:value="localValues"
       :as-object="true"
+      :editor-mode="'VIEW_CODE'"
       class="values-editor"
-      @update:value="$emit('values-edited')"
     />
   </div>
 </template>
@@ -67,20 +67,11 @@ interface Props {
   values: Record<string, any>;
 }
 
-interface Emits {
-  (e: 'update:values', values: Record<string, any>): void;
-  (e: 'values-edited'): void;
-}
-
 const props = defineProps<Props>();
-const emit = defineEmits<Emits>();
 
 const t = useT();
 
-const localValues = computed({
-  get: () => props.values,
-  set: (value: Record<string, any>) => emit('update:values', value)
-});
+const localValues = computed(() => props.values);
 </script>
 
 <style scoped>
