@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -199,6 +200,28 @@ func (c *helmClient) GetRelease(ctx context.Context, name string) (*ReleaseInfo,
 	}, nil
 }
 
+func releaseNeedsUpgrade(info *ReleaseInfo, spec ReleaseSpec) bool {
+	if info.Version != spec.Version {
+		return true
+	}
+	return !valuesEqual(info.Values, spec.Values)
+}
+
+func valuesEqual(a, b map[string]interface{}) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	aj, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bj, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(aj) == string(bj)
+}
+
 func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error {
 	log := logging.FromContext(ctx, "helm").WithValues(
 		logging.KeyName, spec.Name,
@@ -220,6 +243,11 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	if info == nil {
 		log.Info("Helm release not found, installing")
 		return c.install(ctx, cfg, spec)
+	}
+
+	if !releaseNeedsUpgrade(info, spec) {
+		log.Info("Helm release version and values unchanged, skipping upgrade")
+		return nil
 	}
 
 	current, _ := currentManifest(cfg, spec.Name)
