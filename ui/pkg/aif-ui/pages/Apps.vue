@@ -108,7 +108,11 @@
             @keydown.space.prevent="onTileClick(app)"
           >
             <div class="tile-header">
-              <img :src="logoFor(app)" alt="" @error="onImgError($event)" class="tile-logo" />
+              <template v-if="app.library === 'nvidia' && (!app.logo_url || failedLogos[app.slug_name])">
+                <img :src="nvidiaLogo" alt="" class="tile-logo nvidia-logo--light" />
+                <img :src="nvidiaLogoDark" alt="" class="tile-logo nvidia-logo--dark" />
+              </template>
+              <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="tile-logo" />
               <div class="tile-info">
                 <div class="tile-title-row">
                   <h3 class="tile-title">{{ app.name }}</h3>
@@ -169,7 +173,11 @@
               <!-- Name column with logo -->
               <td class="col-name">
                 <div class="name-cell">
-                  <img :src="logoFor(app)" alt="" @error="onImgError($event)" class="table-logo" />
+                  <template v-if="app.library === 'nvidia' && (!app.logo_url || failedLogos[app.slug_name])">
+                    <img :src="nvidiaLogo" alt="" class="table-logo nvidia-logo--light" />
+                    <img :src="nvidiaLogoDark" alt="" class="table-logo nvidia-logo--dark" />
+                  </template>
+                  <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="table-logo" />
                   <div class="name-info">
                     <div class="app-name">{{ app.name }}</div>
                     <div v-if="app.packaging_format" class="app-meta">
@@ -306,12 +314,18 @@ export default defineComponent({
     };
 
     const logoFor = (item: AppCollectionItem): string => {
-      return item.logo_url || require('../assets/generic-app.svg');
+      if (item.logo_url) return item.logo_url;
+      return require('../assets/generic-app.svg');
     };
 
-    const onImgError = (event: Event) => {
-      const img = event.target as HTMLImageElement;
-      img.src = require('../assets/generic-app.svg');
+    const failedLogos = ref<Record<string, boolean>>({});
+
+    const onImgError = (event: Event, item: AppCollectionItem) => {
+      if (item.library === 'nvidia') {
+        failedLogos.value = { ...failedLogos.value, [item.slug_name]: true };
+      } else {
+        (event.target as HTMLImageElement).src = require('../assets/generic-app.svg');
+      }
     };
 
     const refresh = async () => {
@@ -396,8 +410,11 @@ export default defineComponent({
       formatPackagingType,
       logoFor,
       onImgError,
+      failedLogos,
       goToSettings,
-      t
+      t,
+      nvidiaLogo:      require('../assets/nvidia-logo.svg') as string,
+      nvidiaLogoDark: require('../assets/nvidia-logo-light.svg') as string,
     };
   }
 });
@@ -1130,4 +1147,9 @@ export default defineComponent({
     }
   }
 }
+</style>
+
+<style lang="scss">
+body:not(.theme-dark) .nvidia-logo--dark { display: none; }
+body.theme-dark .nvidia-logo--light { display: none; }
 </style>
