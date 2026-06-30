@@ -38,6 +38,54 @@ const (
 	ComponentVendorNvidia ComponentVendor = "nvidia"
 )
 
+// ComponentContentType identifies the deployment format of a blueprint component.
+// v2 preview - not yet functional in v1.
+// +kubebuilder:validation:Enum=Helm;Kustomize;Manifests;Git
+type ComponentContentType string
+
+const (
+	ComponentContentTypeHelm      ComponentContentType = "Helm"
+	ComponentContentTypeKustomize ComponentContentType = "Kustomize"
+	ComponentContentTypeManifests ComponentContentType = "Manifests"
+	ComponentContentTypeGit       ComponentContentType = "Git"
+)
+
+// KustomizeSource points to a Kustomize overlay directory.
+// v2 preview - not yet functional in v1.
+type KustomizeSource struct {
+	// Path to the directory containing kustomization.yaml
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+	// Optional overlay names to apply
+	// +optional
+	Overlays []string `json:"overlays,omitempty"`
+}
+
+// ManifestSource points to raw Kubernetes YAML manifests.
+// v2 preview - not yet functional in v1.
+type ManifestSource struct {
+	// Path to the directory containing manifest files
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+	// Optional specific files to include (defaults to all *.yaml/*.yml)
+	// +optional
+	Files []string `json:"files,omitempty"`
+}
+
+// BlueprintGitSource points to content in a Git repository for blueprint components.
+// v2 preview - not yet functional in v1.
+type BlueprintGitSource struct {
+	// Repository URL (https:// or git://)
+	// +kubebuilder:validation:MinLength=1
+	RepoURL string `json:"repoURL"`
+	// Git revision (branch, tag, or commit SHA)
+	// +optional
+	Revision string `json:"revision,omitempty"`
+	// Path within the repository
+	// +optional
+	Path string `json:"path,omitempty"`
+}
+
 // BlueprintOrigin identifies where a blueprint came from.
 // Named "Origin" (not "Source") to avoid collision with the existing
 // BlueprintSource struct in aiworkload_types.go, which is a reference type.
