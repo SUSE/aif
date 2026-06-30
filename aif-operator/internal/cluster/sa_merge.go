@@ -172,14 +172,20 @@ var saMergeIndentFuncs = template.FuncMap{
 
 // saMergeScriptTemplate is the POSIX-sh merge script, rendered standalone so it
 // can be indented into both runners. It:
+//
 //  1. lists chart-managed SAs (label app.kubernetes.io/managed-by=Helm),
+//
 //  2. for each, reads its current imagePullSecrets names,
+//
 //  3. computes the sorted union with the desired names,
+//
 //  4. patches the SA strategic-merge with that FULL union — necessary because
 //     SA.ImagePullSecrets is +listType=atomic and strategic-merge replaces the
 //     whole list (see buildSAMergeResources for the rationale),
+//
 //  5. skips the patch when the union equals the existing set, so unchanged SAs
 //     don't generate spurious update events on re-apply, then
+//
 //  6. ONLY IF at least one SA was actually patched this run, bounces
 //     chart-managed Pods stuck in ImagePullBackOff/ErrImagePull: a Pod's
 //     imagePullSecrets are merged from its SA only at admission, so a Pod that
