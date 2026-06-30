@@ -86,6 +86,114 @@ type BlueprintGitSource struct {
 	Path string `json:"path,omitempty"`
 }
 
+// BlueprintInput defines a user-configurable parameter.
+// v2 preview - not yet functional in v1.
+type BlueprintInput struct {
+	// Name of the input (referenced in ValuesFromInputs)
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z][a-zA-Z0-9]*$`
+	Name string `json:"name"`
+
+	// UI label
+	// +kubebuilder:validation:MinLength=1
+	Label string `json:"label"`
+
+	// Description shown in UI
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// Input type (string, number, boolean, array, object)
+	// +kubebuilder:validation:Enum=string;number;boolean;array;object
+	Type string `json:"type"`
+
+	// Whether this input is required
+	// +optional
+	Required bool `json:"required,omitempty"`
+
+	// Default value (JSON-encoded)
+	// +optional
+	Default *apixv1.JSON `json:"default,omitempty"`
+
+	// Example value for documentation
+	// +optional
+	Example string `json:"example,omitempty"`
+
+	// Allowed values (for enum-style inputs)
+	// +optional
+	Enum []string `json:"enum,omitempty"`
+}
+
+// InputMapping maps a blueprint input to a Helm value path.
+// v2 preview - not yet functional in v1.
+type InputMapping struct {
+	// Input name (must match a BlueprintInput.Name)
+	// +kubebuilder:validation:MinLength=1
+	Input string `json:"input"`
+
+	// JSONPath where to inject the value (e.g., "model.name")
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+
+	// Optional transformation (e.g., "toString", "toNumber")
+	// +optional
+	Transform string `json:"transform,omitempty"`
+}
+
+// BlueprintOutput defines a value to extract after deployment.
+// v2 preview - not yet functional in v1.
+type BlueprintOutput struct {
+	// Output name
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// UI label
+	// +kubebuilder:validation:MinLength=1
+	Label string `json:"label"`
+
+	// Description
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// Output type (url, string, number, boolean)
+	// +kubebuilder:validation:Enum=url;string;number;boolean
+	Type string `json:"type"`
+
+	// How to extract the value
+	ValueFrom OutputValueSource `json:"valueFrom"`
+}
+
+// OutputValueSource defines where to extract an output value.
+// v2 preview - not yet functional in v1.
+type OutputValueSource struct {
+	// Resource to query
+	// +optional
+	Resource *ResourceQuery `json:"resource,omitempty"`
+
+	// Static value (alternative to Resource)
+	// +optional
+	Static *apixv1.JSON `json:"static,omitempty"`
+}
+
+// ResourceQuery extracts a value from a deployed Kubernetes resource.
+// v2 preview - not yet functional in v1.
+type ResourceQuery struct {
+	// Resource kind (e.g., "Ingress", "Service")
+	// +kubebuilder:validation:MinLength=1
+	Kind string `json:"kind"`
+
+	// Resource name
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Optional namespace (defaults to component's target namespace)
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// JSONPath to extract (e.g., ".spec.rules[0].host")
+	// +kubebuilder:validation:MinLength=1
+	JSONPath string `json:"jsonPath"`
+}
+
 // BlueprintOrigin identifies where a blueprint came from.
 // Named "Origin" (not "Source") to avoid collision with the existing
 // BlueprintSource struct in aiworkload_types.go, which is a reference type.
