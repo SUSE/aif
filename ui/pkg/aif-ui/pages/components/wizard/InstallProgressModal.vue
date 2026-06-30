@@ -2,7 +2,7 @@
   <div v-if="show" class="install-progress-overlay">
     <div class="install-progress-modal">
       <div class="modal-header">
-        <h2>{{ title }}</h2>
+        <h2>{{ displayTitle }}</h2>
         <p class="modal-subtitle">{{ subtitle }}</p>
       </div>
 
@@ -164,6 +164,13 @@ const allFailed = computed(() =>
 const hasFailures = computed(() => failedCount.value > 0);
 const hasSuccesses = computed(() => successCount.value > 0);
 
+const displayTitle = computed(() => {
+  if (allSucceeded.value) {
+    return props.title?.replace(/^Installing\b/, 'Installed').replace(/^Upgrading\b/, 'Upgraded') || 'Application Deployed';
+  }
+  return props.title || 'Installing Application';
+});
+
 const subtitle = computed(() => {
   if (isInProgress.value) {
     const installing = props.progress.find(p => p.status === 'installing');
@@ -176,7 +183,7 @@ const subtitle = computed(() => {
     return `Installation failed on all ${failedCount.value} cluster${failedCount.value !== 1 ? 's' : ''}`;
   }
   if (hasFailures.value) {
-    return `${successCount.value} succeeded, ${failedCount.value} failed`;
+    return `Scheduled for deployment on ${successCount.value} cluster${successCount.value !== 1 ? 's' : ''}, ${failedCount.value} failed`;
   }
   return '';
 });
