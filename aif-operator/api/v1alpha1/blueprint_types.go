@@ -194,6 +194,84 @@ type ResourceQuery struct {
 	JSONPath string `json:"jsonPath"`
 }
 
+// BlueprintValidation defines pre-flight validation rules.
+// v2 preview - not yet functional in v1.
+type BlueprintValidation struct {
+	// CEL validation rules
+	// +optional
+	Rules []ValidationRule `json:"rules,omitempty"`
+}
+
+// ValidationRule is a single CEL validation expression.
+// v2 preview - not yet functional in v1.
+type ValidationRule struct {
+	// Rule name (for error reporting)
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// CEL expression that must evaluate to true
+	// Context: inputs = map of input values
+	// Example: "inputs.modelName != ''"
+	// +kubebuilder:validation:MinLength=1
+	Expression string `json:"expression"`
+
+	// Error message when rule fails
+	// +kubebuilder:validation:MinLength=1
+	Message string `json:"message"`
+}
+
+// RequiredSecret defines a secret that must exist before install.
+// v2 preview - not yet functional in v1.
+type RequiredSecret struct {
+	// Secret name
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Description of what the secret is for
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// Required keys in the secret
+	// +optional
+	Keys []string `json:"keys,omitempty"`
+}
+
+// BlueprintRequirements defines cluster prerequisites.
+// v2 preview - not yet functional in v1.
+type BlueprintRequirements struct {
+	// Minimum Kubernetes version
+	// +optional
+	Kubernetes *KubernetesRequirement `json:"kubernetes,omitempty"`
+
+	// Required cluster capabilities
+	// +optional
+	Capabilities []CapabilityRequirement `json:"capabilities,omitempty"`
+}
+
+// KubernetesRequirement defines Kubernetes version constraints.
+// v2 preview - not yet functional in v1.
+type KubernetesRequirement struct {
+	// Minimum version (semver)
+	// +optional
+	MinVersion string `json:"minVersion,omitempty"`
+}
+
+// CapabilityRequirement defines a required cluster capability.
+// v2 preview - not yet functional in v1.
+type CapabilityRequirement struct {
+	// Capability name (e.g., "nvidia-gpu", "cert-manager")
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Whether this capability is required
+	// +optional
+	Required bool `json:"required,omitempty"`
+
+	// Description
+	// +optional
+	Description string `json:"description,omitempty"`
+}
+
 // BlueprintOrigin identifies where a blueprint came from.
 // Named "Origin" (not "Source") to avoid collision with the existing
 // BlueprintSource struct in aiworkload_types.go, which is a reference type.
