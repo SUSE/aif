@@ -1,0 +1,16 @@
+# NOTE: The UI extension always reads this ConfigMap from cattle-ui-plugin-system
+# (hardcoded). If the chart is installed in a different namespace, any custom
+# operator.namespace / operator.service values set here will be ignored on first
+# load (the UI falls back to defaults). They take effect after the user saves the
+# Operator Connection section in Settings, which writes the ConfigMap to the
+# correct namespace automatically.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aif-ui-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-ui.labels" . | nindent 4 }}
+data:
+  operatorNamespace: {{ .Values.operator.namespace | quote }}
+  operatorService:   {{ .Values.operator.service   | quote }}

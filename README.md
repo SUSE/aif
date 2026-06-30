@@ -1,252 +1,198 @@
-# SUSE AI Factory (AIF)
+# SUSE AI Factory
 
-SUSE AI Factory is a Rancher Dashboard extension and a Kubernetes operator that
-turn Rancher into an AI-platform management plane: discover AI building blocks,
-compose them into approved stacks, publish those stacks under governance, and
-deploy and operate them on any Rancher-managed cluster — including air-gapped
-ones.
+SUSE AI Factory is a Rancher UI Extension for managing SUSE AI Factory components across Kubernetes clusters. This extension provides a unified interface for installing, managing, and monitoring AI workloads in Rancher-managed clusters.
 
----
+> **Note:** This extension requires an active [SUSE AI Factory](https://www.suse.com/products/ai/) subscription to access the application catalog.
 
-## What it does
+## Development
 
-Today, getting production AI onto Kubernetes usually means stitching together
-Helm charts (NIM models, vector databases, vLLM, observability), copy-pasting
-YAML between teams, and trusting that nothing has drifted. There is no shared
-notion of "this is the RAG-with-Llama stack we approved last quarter."
-Reproducing what someone else deployed is detective work, and governance is
-informal.
+### Prerequisites
 
-AIF makes Rancher itself the catalog, workshop, governed publishing pipeline,
-and deploy/operate console for AI workloads:
+- Node.js 20+ and Yarn
+- Access to a Rancher cluster
+- Extension developer features enabled in Rancher
 
-- **Catalog.** A single screen showing every approved AI building block —
-  NVIDIA NIM models, vector databases, runtimes — sourced from SUSE Registry
-  and SUSE Application Collection.
-- **Workshop.** An ML practitioner picks components, tweaks Helm values, test-
-  deploys to a sandbox, and iterates. Their work-in-progress lives privately
-  in their own namespace.
-- **Governed publishing.** When ready, the author submits the bundle. A
-  designated Blueprint Publisher approves it, which mints an immutable,
-  versioned reference stack that any team in the cluster can deploy with one
-  click.
-- **Deploy and operate.** Anyone can deploy that approved stack to any
-  Rancher-managed cluster. Each running workload remembers what it came
-  from, so the platform can offer "Upgrade to v2" or "this version is now
-  Deprecated" without spreadsheets.
-- **Air-gap parity.** The same workflow works disconnected. There is no
-  separate "online edition" — air-gap is configuration, not a different
-  product.
+### Setup
 
-The business value is straightforward: AIF compresses
-"discover → compose → review → publish → deploy → upgrade" for AI stacks from
-a multi-team, multi-tool, mostly-manual process into a single Rancher-native
-flow with an audit trail.
+1. **Clone and install dependencies:**
+   ```bash
+   git clone <repository-url>
+   cd aif
+   yarn install
+   ```
 
----
+2. **Build the extension:**
+   ```bash
+   yarn build-pkg aif-ui
+   ```
 
-## The four-noun model
+3. **Serve during development:**
+   ```bash
+   yarn serve-pkgs
+   ```
+   Copy the URL shown in the terminal.
 
-Everything in AIF is one of four things:
+4. **Load in Rancher:**
+   - In Rancher, go to your user profile (top right) → Preferences
+   - Enable "Extension Developer Features"
+   - Navigate to Extensions from the side nav
+   - Click the 3 dots (top right) → Developer Load
+   - Paste the URL from step 3, select "Persist"
+   - Reload the page
+  
+### Debug Mode
 
-| Noun       | What it is                                                                         | Mutability                       | Scope             |
-|------------|------------------------------------------------------------------------------------|----------------------------------|-------------------|
-| **App**       | Building-block AI application packaged as a Helm chart in the SUSE catalog.     | Immutable                        | Catalog-wide      |
-| **Bundle**    | Mutable workshop where an author composes Apps and existing Blueprints.         | Mutable; Draft → Submitted → Approved (or Changes Requested → Draft) | Namespaced |
-| **Blueprint** | Published, immutable, versioned AI stack tied to a use case (e.g. RAG).         | Immutable per version            | Cluster-scoped    |
-| **Workload**  | A running instance of an App or Blueprint on a target cluster.                  | Status-only                      | Workload namespace |
-
-A Bundle becomes a Blueprint version through the publish-by-approval workflow.
-Each Workload records its `spec.source` (App or Blueprint), so provenance is
-always recoverable.
-
-> Note: NVIDIA and other vendors publish their own "Reference Blueprints" —
-> these are Helm charts. AIF treats each as an App in the catalog and wraps it
-> as a single-component AIF Blueprint so it shows up on the Blueprints page
-> with the same versioning and governance. A vendor Reference Blueprint is
-> not an AIF Blueprint; it's a chart that AIF wraps. See
-> [`docs/spec/SOFTWARE_SPEC.md`](docs/spec/SOFTWARE_SPEC.md) §6.
-
----
-
-## Architecture at a glance
-
-AIF ships two cooperating pieces:
-
-- A **Kubernetes operator** (`cmd/operator`) that owns the AIF CRDs in the
-  `ai.suse.com` API group — `App`, `Bundle`, `Blueprint`, `Workload`,
-  `Settings`, `InstallAIExtension` — and runs reconcilers, an admission
-  webhook (Blueprint immutability), and a small REST API that the UI calls.
-- A **Rancher Dashboard extension** (`ui/ai-factory`) built against
-  `@rancher/shell`, surfacing the four nouns as a first-class product inside
-  the Rancher Dashboard sidebar.
-
-External integrations are intentionally narrow: AIF reads charts and images
-from SUSE Registry (`registry.suse.com`) and SUSE Application Collection
-(`dp.apps.rancher.io`), and optionally drives Rancher Fleet for GitOps
-deployments. AIF does **not** host an internal registry and does **not** call
-NVIDIA NGC directly — NIMs flow through SUSE Registry via an out-of-band
-mirror process.
-
-For the full design, see [`docs/spec/ARCHITECTURE.md`](docs/spec/ARCHITECTURE.md).
-
----
-
-## Prerequisites
-
-- **Go ≥ 1.26.** `go.mod` declares `go 1.26.0`. If your installed toolchain is
-  older, set `GOTOOLCHAIN=auto` so the Go command can fetch a matching
-  toolchain on demand.
-- **Helm 3.13+** for chart operations.
-- **Rancher 2.10+** (the UI extension is built against the Rancher Dashboard
-  Shell of that era).
-- **Kubernetes 1.24+** for the target cluster running the operator.
-- **Node 18+ and yarn** if you intend to build the UI extension.
-- A local Kubernetes cluster — the project standardises on **k3d** (k3s in
-  Docker) for local dev. `make dev-cluster` will create one for you.
-
----
-
-## Quick start — local dev
-
-Bring up a local cluster, install the CRDs, run the operator from source, and
-apply a sample Bundle.
+Enable debug logging in development:
 
 ```bash
-# 1. Start a local k3d cluster
-make dev-cluster
-
-# 2. Install the CRDs
-make dev-install
-
-# 3. Build and run the operator against your kubeconfig
-make build && ./bin/aif-operator
-
-# 4. In another terminal, apply the sample CRs
-make examples
-kubectl get bundles,blueprints,workloads -A
+NODE_ENV=development yarn build-pkg aif-ui
 ```
 
-The sample manifests live in [`examples/`](examples/) — minimal valid CRs
-intended only to verify the controller reconciles cleanly. To tear the cluster
-down: `make dev-cluster-down`.
-
-To work on the UI extension:
+## Building for Production
 
 ```bash
-cd ui/ai-factory
-yarn install
-yarn build
+yarn build-pkg aif-ui --mode production
 ```
 
----
+## Extension Catalog Container
 
-## Repository layout
+- The container packages SUSE AI Factory (Rancher UI Extension) into a single OCI container image.
+- This container is:
+   - Built and published during CI
+   - Stored in GitHub Container Registry (GHCR)
+   - Consumed by Rancher as an extension catalog source
+- The catalog container allows:
+   - Versioned releases
+   - Immutable distribution
+   - Simple rollout via container tags
+
+ ### Versioning
+- The catalog container tag is derived from the Git tag:
+ 
+```
+aif-ui-<version> → ghcr.io/suse/aif-ui:<version>
+```
+
+In the examples below, `<version>` refers to a published extension release (e.g. `0.2.0`).
+
+Available catalog image versions are published in GitHub Container Registry:
+https://github.com/SUSE/aif/pkgs/container/aif-ui
+ 
+### Container Structure
+```
+/home/plugin-server
+└── plugin-contents/
+    ├── files.txt
+    ├── index.yaml
+    └── plugin/
+        ├── index.yaml
+        ├── package.json
+        ├── aif-ui
+            └── aif-ui-<version>.tgz
+        └── aif-ui-<version>
+            ├── files.txt
+            └── plugin/
+                └── <plugin source code>
+```
+
+### Consuming the Catalog in Rancher
+- Add the catalog source in the Rancher Dashboard:
+   1. Navigate to Extensions → Manage Extensions Catalog
+   2. Import Extension Catalog → Use the Catalog Image Reference: `ghcr.io/suse/aif-ui:<version>` → Press `Load`
+   3. From the Extensions page, Go to Manage Repositories. Verify if the SUSE AI Rancher Extension repository has the `Active` state. If not, refresh the connection.
+   4. Go back to Extensions and install SUSE AI Rancher Extension.
+   5. Re-load Rancher Dashboard. Reload the browser to ensure the extension is loaded in the UI (ctrl+r or F5 or cmd+r).
+   6. The "SUSE AI Factory" logo will now appear on the left panel of the Rancher Dashboard.
+
+> NOTE: Replace `<version>` with a tag published in GitHub Container Registry.
+> NOTE: Newly published catalogs are not always available immediately. If the catalog does not show up after publishing, navigate to Extensions → Manage Repositories and manually refresh the repository to force a re-sync.
+
+## Extension GitHub Branch
+- In addition to the OCI-based catalog container, the SUSE AI Factory extension can be distributed via the GitHub branch (`gh-pages`). This method hosts the extension artifacts as files within a specific branch of your repository, allowing Rancher to consume the extension directly from there.
+
+**Overview**
+- The extension is built into static assets (`index.yaml`, `.tgz`, etc.)
+- These assets are published to the GitHub branch: `gh-pages`
+- Rancher consumes the extension catalog via the repo url and branch.
+
+### GitHub Branch Structure
+- Once the artifacts are pushed to the GitHub branch, the repository will expose the extension files like so:
+```
+https://github.com/<org>/<repo>/tree/gh-pages
+├── index.yaml
+├── assets/
+│   ├── index.yaml
+│   └── aif-ui/
+│       ├── aif-ui-<version>.tgz
+│       └── ...
+├── charts/
+│   └── aif-ui/
+│       ├── <version>/
+│       │   ├── templates/
+│       │   │   ├── _helpers.tpl
+│       │   │   └── cr.yaml
+│       │   ├── Chart.yaml
+│       │   └── values.yaml
+│       └── ...
+└── extensions/
+    └── aif-ui/
+        ├── <version>/
+        │   ├── plugin/
+        │   │   └── ...
+        │   └── files.txt
+        └── ...
+```
+This structure mirrors the catalog format that Rancher expects.
+
+### Consuming the Extension from the GitHub Branch in Rancher
+- To load the extension from a GitHub branch:
+   1. Navigate to Extensions → Manage Repositories
+   2. Click Create New Repository
+   3. Add a Name, then select `Git repository containing Helm chart or cluster template definitions`
+   4. Enter the `Git Repo URL` and the `Git Branch` (`gh-pages`)
+   5. Click Create
+   6. Wait until the the SUSE AI Factory repository has the `Active` state.
+   7. Go back to Extensions and install SUSE AI Factory.
+   8. Re-load Rancher Dashboard. Reload the browser to ensure the extension is loaded in the UI (ctrl+r or F5 or cmd+r).
+   9. The "SUSE AI Factory" logo will now appear on the left panel of the Rancher Dashboard.
+
+## Contributing
+
+When contributing to this extension:
+
+1. **Follow Standard Patterns**: Use the established domain model and store patterns
+2. **Component Organization**: Place components in appropriate directories (formatters/, validators/, pages/)
+3. **Type Safety**: Maintain strict TypeScript usage, avoid `any` types
+4. **Internationalization**: Add translation keys to l10n/en-us.json for new UI text
+5. **Code Quality**: Run `yarn lint` and ensure all pre-commit hooks pass
+6. **Feature Flags**: Use feature flags for new functionality
+7. **Manual Testing**: Ensure all functionality works across multi-cluster scenarios
+
+### Commit Message Format
+
+This project uses conventional commits enforced by commitlint:
 
 ```
-aif/
-├── api/v1alpha1/          # CRD Go types (Bundle, Blueprint, Workload, Settings, InstallAIExtension)
-├── charts/                # Helm charts (aif-operator, aif-ui, generic-container, nim-llm, nim-vlm)
-├── cmd/operator/          # Operator main entry point
-├── docs/spec/             # SOFTWARE_SPEC.md, ARCHITECTURE.md, PROJECT_PLAN.md
-├── internal/
-│   ├── api/               # REST handlers (one per resource group)
-│   ├── controller/        # Kubernetes controllers
-│   └── manager/           # Route registration, manager wiring
-├── pkg/                   # Business logic packages
-├── ui/ai-factory/         # Vue 3 Rancher Dashboard extension
-└── Makefile
+type: subject
+
+body (optional)
+
+footer (optional)
 ```
 
-For a deeper tour of conventions and where things go, see
-[`CLAUDE.md`](CLAUDE.md).
+**Valid types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`, `wip`, `deps`, `security`
 
----
-
-## Build, test, lint
-
-The Makefile wraps the common loops. Target reality reflects the current repo
-state — some operations are still stubs.
-
-| Target                | What it does                                                    |
-|-----------------------|-----------------------------------------------------------------|
-| `make build`          | Build the operator binary to `./bin/aif-operator`.              |
-| `make run`            | Run the operator from source (`go run ./cmd/operator`).         |
-| `make test`           | Run unit tests (`go test ./...`).                               |
-| `make test-controllers` | Run controller integration tests (envtest + Ginkgo).          |
-| `make lint`           | Run `golangci-lint`.                                            |
-| `make manifests`      | Regenerate CRD YAML into `charts/aif-operator/crds/`.           |
-| `make generate`       | Regenerate deepcopy methods.                                    |
-| `make docker-build`   | Build the operator container image.                             |
-| `make docker-push`    | Push the operator container image.                              |
-| `make envtest`        | Download envtest binaries (etcd + kube-apiserver).              |
-| `make install-tools`  | Install pinned dev tools (controller-gen, golangci-lint, mockgen, ginkgo, setup-envtest). |
-
-### Local environment via `.env`
-
-The Makefile auto-loads a `.env` file at the repo root (git-ignored) and
-exports every variable it defines into recipe subprocesses. Useful for
-local credentials consumed by the live verification targets:
-
-| Target                   | Variables                                |
-|--------------------------|------------------------------------------|
-| `make verify-nim-live`   | `SUSE_REG_USER`, `SUSE_REG_TOKEN`        |
-| `make verify-appco-live` | `SUSE_APPCO_USER`, `SUSE_APPCO_TOKEN`    |
-
-The two credential pairs are intentionally separate (per `ARCHITECTURE.md
-§13.2`: SUSE Registry and SUSE Application Collection are distinct
-upstream services), even though customers commonly reuse the same SCC
-value for both.
-
+Example:
 ```bash
-cp .env.example .env
-$EDITOR .env       # fill in values
-make verify-nim-live verify-appco-live
+git commit -m "feat: add multi-cluster installation support"
+git commit -m "fix: resolve app installation error handling"
 ```
 
-Format is **Makefile syntax**, not bash: `KEY=value`, one per line, no
-quotes, no `export` prefix, no spaces around `=`. See `.env.example` for
-the canonical template.
+## Troubleshooting
 
-The following targets exist but currently print "Not implemented yet" — treat
-them as placeholders until later phases land:
+### Common Issues
 
-- `make helm-install`
-- `make helm-uninstall`
-- `make charts-package`
-
-For the UI:
-
-```bash
-cd ui/ai-factory
-yarn install
-yarn build      # production build
-yarn test       # component tests
-```
-
-Helm charts can be lint-checked with `helm lint charts/aif-operator` and
-`helm lint charts/aif-ui`.
-
----
-
-## Where to learn more
-
-- [`docs/spec/SOFTWARE_SPEC.md`](docs/spec/SOFTWARE_SPEC.md) — what users see
-  and can do (product manager / customer-success view).
-- [`docs/spec/ARCHITECTURE.md`](docs/spec/ARCHITECTURE.md) — how it's built
-  (CRDs, REST API, Go packages, controllers, security, observability).
-- [`docs/spec/PROJECT_PLAN.md`](docs/spec/PROJECT_PLAN.md) — engineering
-  roadmap with story-level acceptance criteria.
-- [`CLAUDE.md`](CLAUDE.md) — developer reference: code conventions, "how to
-  add X" recipes, directory pointers.
-
-There is no `CONTRIBUTING.md` in the tree yet. Until one lands, the spec
-documents above are the authoritative guide for contribution scope and code
-conventions.
-
----
-
-## License
-
-No `LICENSE` file is present in this repository at the time of writing.
-Licensing is **TBD**; consult the repository owner before redistribution.
+1. **Extension not loading**: Verify URL in developer tools console
+2. **Build errors**: Check Node.js version compatibility (requires 20+)
+3. **API errors**: Verify cluster permissions and connectivity
+4. **Linting errors**: Run `cd pkg/aif-ui && yarn lint` to see details

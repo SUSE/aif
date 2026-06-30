@@ -1,0 +1,344 @@
+// Cluster resource metrics service
+import type { Dispatchable, ClusterResource, ClusterInfo, NodeResource, NodeMetric } from '../types/rancher-types';
+import { handleSimpleError } from '../utils/error-handler';
+import { TIMEOUT_VALUES } from '../utils/constants';
+import logger from '../utils/logger';
+
+export interface NodeResourceInfo {
+  nodeId: string;
+  nodeName: string;
+  cpu: { used: number; total: number };
+  memory: { used: number; total: number };  // in GB
+  gpu?: { used: number; total: number; type?: string };  // GPU memory in GB
+}
+
+export interface ClusterResourceSummary {
+  clusterId: string;
+  name: string;
+  nodeCount: number;
+  resources: {
+    cpu: { used: number; total: number };
+    memory: { used: number; total: number };  // in GB
+    gpu?: { used: number; total: number; type?: string };  // GPU memory in GB
+  };
+  status: 'ready' | 'unavailable';
+  statusMessage?: string;
+  storageClasses: string[];
+  lastUpdated: Date;
+  nodes: NodeResourceInfo[];
+}
+
+export async function getClusterResourceMetrics(store: Dispatchable, clusterId: string): Promise<ClusterResourceSummary> {
+  logger.debug(`getClusterResourceMetrics: Starting for cluster ${clusterId}`);
+  
+  try {
+    // Get cluster basic info first using the same approach as getClusters
+    let clusterName = clusterId;
+    try {
+      let timer: ReturnType<typeof setTimeout>;
+      const clusters = await Promise.race([
+        store.dispatch('management/findAll', { type: 'cluster' }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), TIMEOUT_VALUES.READ); }),
+      ]).finally(() => clearTimeout(timer)) as ClusterResource[];
+      const cluster = clusters.find((c: ClusterResource) => c.id === clusterId);
+      clusterName = cluster?.metadata?.name || clusterId;
+    } catch {
+      // Fallback to API call if store doesn't work
+      const res = await store.dispatch('rancher/request', { url: '/v1/management.cattle.io.clusters?limit=2000', timeout: TIMEOUT_VALUES.READ });
+      const items = res?.data?.data || res?.data || [];
+      const cluster = items.find((c: ClusterResource) =>
+        (c?.metadata?.name === clusterId) || (c?.id === clusterId) || (c?.spec?.displayName === clusterId)
+      );
+      clusterName = cluster?.spec?.displayName || cluster?.metadata?.name || cluster?.name || clusterId;
+    }
+
+    console.log(`[SUSE-AI] getClusterResourceMetrics: Found cluster ${clusterName}`);
+
+    // Get node information using simplified API pattern
+    let nodes: NodeResource[] = [];
+    let nodeMetrics: NodeMetric[] = [];
+    let storageClasses: string[] = [];
+    
+    nodes = await fetchNodes(store, clusterId);
+
+    // Get node metrics using simplified API pattern
+    nodeMetrics = await fetchNodeMetrics(store, clusterId);
+
+
+    // Get storage classes using the same API that works in Rancher
+
+    storageClasses = await fetchStorageClasses(store, clusterId);
+
+    // Process nodes and calculate resources
+    const nodeInfos: NodeResourceInfo[] = [];
+    let totalCpu = 0, usedCpu = 0, totalMemory = 0, usedMemory = 0;
+    let totalGpu = 0;
+    const usedGpu = 0;
+    let gpuType = '';
+    
+    // If no nodes are available, try to provide reasonable defaults or mark as unavailable
+    if (nodes.length === 0) {
+      console.log(`[SUSE-AI] getClusterResourceMetrics: No nodes found for ${clusterId}, using fallback approach`);
+      
+      // For imported/managed clusters that we can't access directly, provide a status that indicates unknown
+      const summary: ClusterResourceSummary = {
+        clusterId,
+        name: clusterName,
+        nodeCount: 0,
+        resources: {
+          cpu: { used: 0, total: 0 },
+          memory: { used: 0, total: 0 }
+        },
+        status: 'ready',
+        statusMessage: 'Node data unavailable',
+        storageClasses,
+        lastUpdated: new Date(),
+        nodes: []
+      };
+
+      console.log(`[SUSE-AI] getClusterResourceMetrics: Returning fallback summary for ${clusterId}`);
+      return summary;
+    }
+    
+    for (const node of nodes) {
+      // Handle different data formats: global API vs cluster-specific API
+      const nodeName = node.metadata?.name || (node as any).id || (node as unknown as { name?: string }).name || '';
+      const nodeMetric = nodeMetrics.find((m: NodeMetric) =>
+        (m.metadata?.name === nodeName) || (m as unknown as { name?: string }).name === nodeName
+      );
+      
+      // Kubernetes v1.Node provides status.allocatable and status.capacity
+      const allocatable = node.status?.allocatable ?? {};
+      const capacity = node.status?.capacity ?? {};
+
+      // Prefer allocatable (accounts for system reservations), fallback to capacity if allocatable is empty
+      const resourceData = Object.keys(allocatable).length > 0 ? allocatable : capacity;
+      
+      const nodeTotalCpu = parseFloat(resourceData.cpu || '0');
+      const nodeTotalMemory = parseK8sMemory(resourceData.memory || '0Ki');
+      
+      // Parse usage from metrics - handle different formats
+      const usage = nodeMetric?.usage || nodeMetric?.metrics || {};
+      const nodeUsedCpu = parseFloat(usage.cpu?.replace?.('n', '') || '0') / 1000000000; // nanocores to cores
+      const nodeUsedMemory = parseK8sMemory(usage.memory || '0Ki');
+      
+      // Check for GPU resources (NVIDIA GPU Operator) - handle different formats
+      let nodeGpu: { used: number; total: number; type?: string } = { used: 0, total: 0 };
+      const gpuCapacity = resourceData['nvidia.com/gpu'] || capacity['nvidia.com/gpu'];
+      if (gpuCapacity) {
+        const gpuCount = parseInt(gpuCapacity);
+        // For GPU memory, we'll need to query GPU metrics or make assumptions
+        // For now, assume common GPU memory sizes based on GPU count
+        const estimatedGpuMemory = estimateGpuMemory(node, gpuCount);
+        nodeGpu = { used: 0, total: estimatedGpuMemory, type: 'NVIDIA' };
+        totalGpu += estimatedGpuMemory;
+        gpuType = 'NVIDIA';
+      }
+      
+      nodeInfos.push({
+        nodeId: nodeName,
+        nodeName: nodeName,
+        cpu: { used: nodeUsedCpu, total: nodeTotalCpu },
+        memory: { used: nodeUsedMemory, total: nodeTotalMemory },
+        gpu: nodeGpu.total > 0 ? nodeGpu : undefined
+      });
+      
+      totalCpu += nodeTotalCpu;
+      usedCpu += nodeUsedCpu;
+      totalMemory += nodeTotalMemory;
+      usedMemory += nodeUsedMemory;
+    }
+
+    const summary: ClusterResourceSummary = {
+      clusterId,
+      name: clusterName,
+      nodeCount: nodes.length,
+      resources: {
+        cpu: { used: Math.round(usedCpu * 10) / 10, total: Math.round(totalCpu * 10) / 10 },
+        memory: { used: Math.round(usedMemory), total: Math.round(totalMemory) },
+        gpu: totalGpu > 0 ? { used: usedGpu, total: totalGpu, type: gpuType } : undefined
+      },
+      status: 'ready',
+      storageClasses,
+      lastUpdated: new Date(),
+      nodes: nodeInfos
+    };
+
+    console.log(`[SUSE-AI] getClusterResourceMetrics: Completed for ${clusterId}:`, {
+      cpu: summary.resources.cpu,
+      memory: summary.resources.memory,
+      gpu: summary.resources.gpu,
+      nodes: summary.nodeCount
+    });
+
+    return summary;
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error(`[SUSE-AI] getClusterResourceMetrics: Failed for cluster ${clusterId}:`, error);
+    
+    // Try to get basic cluster info even if metrics fail
+    let clusterName = clusterId;
+    try {
+      const { getClusters } = await import('./rancher-apps');
+      const clusters = await getClusters(store);
+      const cluster = clusters.find((c: ClusterInfo) => c.id === clusterId);
+      clusterName = cluster?.name || clusterId;
+      
+      return {
+        clusterId,
+        name: clusterName,
+        nodeCount: 0,
+        resources: { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
+        status: 'unavailable',
+        statusMessage: err.message || 'Failed to retrieve cluster metrics',
+        storageClasses: [],
+        lastUpdated: new Date(),
+        nodes: []
+      };
+    } catch {
+      return {
+        clusterId,
+        name: clusterId,
+        nodeCount: 0,
+        resources: { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
+        status: 'unavailable',
+        statusMessage: 'Failed to retrieve cluster information',
+        storageClasses: [],
+        lastUpdated: new Date(),
+        nodes: []
+      };
+    }
+  }
+}
+
+export async function getAllClusterResourceMetrics(store: Dispatchable): Promise<ClusterResourceSummary[]> {
+  logger.debug('getAllClusterResourceMetrics: Starting...');
+
+  try {
+    const { getAllClusters } = await import('./rancher-apps');
+    const clusters = await getAllClusters(store);
+    console.log(`[SUSE-AI] getAllClusterResourceMetrics: Found ${clusters.length} clusters`);
+
+    const settled = await Promise.allSettled(
+      clusters.map((cluster: ClusterInfo) => {
+        // Skip API calls to unhealthy clusters — return a placeholder immediately so they
+        // still appear in the UI but cannot be selected.
+        if (cluster.ready === false) {
+          return Promise.resolve<ClusterResourceSummary>({
+            clusterId:     cluster.id,
+            name:          cluster.name,
+            nodeCount:     0,
+            resources:     { cpu: { used: 0, total: 0 }, memory: { used: 0, total: 0 } },
+            status:        'unavailable',
+            statusMessage: 'Cluster is not ready',
+            storageClasses: [],
+            lastUpdated:   new Date(),
+            nodes:         []
+          });
+        }
+        return getClusterResourceMetrics(store, cluster.id);
+      })
+    );
+
+    const results = settled
+      .filter((r): r is PromiseFulfilledResult<ClusterResourceSummary> => r.status === 'fulfilled')
+      .map(r => r.value);
+
+    console.log(`[SUSE-AI] getAllClusterResourceMetrics: Completed for ${results.length}/${clusters.length} clusters`);
+    return results;
+  } catch (error) {
+    console.error('[SUSE-AI] getAllClusterResourceMetrics: Failed:', error);
+    return [];
+  }
+}
+
+// Helper functions
+
+function parseK8sMemory(memoryStr: string): number {
+  // Parse Kubernetes memory strings like "4Gi", "1024Mi", "1073741824" (bytes)
+  const str = memoryStr.trim();
+  
+  if (str.endsWith('Gi')) {
+    return parseFloat(str.slice(0, -2));
+  } else if (str.endsWith('Mi')) {
+    return parseFloat(str.slice(0, -2)) / 1024;
+  } else if (str.endsWith('Ki')) {
+    return parseFloat(str.slice(0, -2)) / (1024 * 1024);
+  } else if (str.endsWith('G')) {
+    return parseFloat(str.slice(0, -1));
+  } else if (str.endsWith('M')) {
+    return parseFloat(str.slice(0, -1)) / 1024;
+  } else if (str.endsWith('K')) {
+    return parseFloat(str.slice(0, -1)) / (1024 * 1024);
+  } else {
+    // Assume bytes
+    return parseFloat(str) / (1024 * 1024 * 1024);
+  }
+}
+
+async function fetchNodes(store: Dispatchable, clusterId: string): Promise<NodeResource[]> {
+  return fetchClusterData<NodeResource>(store, clusterId, 'nodes', 'nodes');
+}
+
+async function fetchNodeMetrics(store: Dispatchable, clusterId: string): Promise<NodeMetric[]> {
+  return fetchClusterData<NodeMetric>(store, clusterId, 'metrics.k8s.io.nodes', 'node metrics');
+}
+
+async function fetchClusterData<T>(
+  store: Dispatchable,
+  clusterId: string,
+  resourcePath: string,
+  label: string
+): Promise<T[]> {
+  const isLocalCluster = clusterId === 'local';
+  const baseUrl = isLocalCluster
+    ? `/v1/${resourcePath}?exclude=metadata.managedFields`
+    : `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/${resourcePath}?exclude=metadata.managedFields`;
+
+  try {
+    const res = await store.dispatch('rancher/request', { url: baseUrl, timeout: TIMEOUT_VALUES.CLUSTER });
+    const data = res?.data?.data || res?.data || [];
+    console.log(`[SUSE-AI] getClusterResourceMetrics: Got ${data.length} ${label} from ${isLocalCluster ? 'global' : 'cluster-specific'} API`);
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.warn(`[SUSE-AI] getClusterResourceMetrics: ${label} API failed for ${clusterId}:`, handleSimpleError(error));
+    return [];
+  }
+}
+
+async function fetchStorageClasses(store: Dispatchable, clusterId: string): Promise<string[]> {
+  const storageClasses = await fetchClusterData<Record<string, unknown>>(
+    store,
+    clusterId,
+    'storage.k8s.io.storageclasses',
+    'storage classes'
+  );
+
+  return storageClasses
+    .map((sc: any) => sc.metadata?.name || sc.name || sc.id)
+    .filter(Boolean);
+}
+
+function estimateGpuMemory(node: NodeResource, gpuCount: number): number {
+  // Try to detect GPU type from node labels or annotations
+  const labels = node.metadata?.labels || {};
+  const annotations = node.metadata?.annotations || {};
+  
+  // Look for common GPU indicators
+  const gpuInfo = JSON.stringify({ labels, annotations }).toLowerCase();
+  
+  if (gpuInfo.includes('a100') || gpuInfo.includes('a40')) {
+    return gpuCount * 40; // A100 = 40GB, A40 = 48GB (use conservative)
+  } else if (gpuInfo.includes('v100')) {
+    return gpuCount * 16; // V100 = 16GB or 32GB (use conservative)
+  } else if (gpuInfo.includes('t4')) {
+    return gpuCount * 16; // T4 = 16GB
+  } else if (gpuInfo.includes('rtx') || gpuInfo.includes('4090')) {
+    return gpuCount * 24; // RTX 4090 = 24GB
+  } else if (gpuInfo.includes('3090')) {
+    return gpuCount * 24; // RTX 3090 = 24GB
+  } else {
+    // Default assumption for consumer/prosumer GPUs
+    return gpuCount * 8; // Conservative estimate
+  }
+}

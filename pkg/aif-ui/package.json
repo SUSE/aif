@@ -1,0 +1,42 @@
+{
+  "name": "aif-ui",
+  "description": "SUSE AI Factory",
+  "version": "0.1.0-dev.5",
+  "private": false,
+  "rancher": {
+    "annotations": {
+      "catalog.cattle.io/rancher-version": ">= 2.10.0",
+      "catalog.cattle.io/display-name": "SUSE AI Factory",
+      "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
+    }
+  },
+  "icon": "https://raw.githubusercontent.com/SUSE/aif/refs/heads/main/pkg/aif-ui/assets/logo.svg",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "npx eslint --max-warnings 2000 --ext .js,.ts,.vue .",
+    "commitlint": "commitlint --edit",
+    "prepare": "husky"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-promise": "^7.1.0",
+    "husky": "^9.1.7",
+    "vue-tsc": "^2.0.29"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+}

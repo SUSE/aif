@@ -1,0 +1,253 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: installaiextensions.ai-platform.suse.com
+spec:
+  group: ai-platform.suse.com
+  names:
+    kind: InstallAIExtension
+    listKind: InstallAIExtensionList
+    plural: installaiextensions
+    shortNames:
+    - aifext
+    singular: installaiextension
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.source.kind
+      name: Source
+      type: string
+    - jsonPath: .spec.extension.name
+      name: Extension
+      type: string
+    - jsonPath: .spec.extension.version
+      name: Version
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: InstallAIExtension is the Schema for the installaiextensions
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of InstallAIExtension
+            properties:
+              extension:
+                description: Extension identifies the UIPlugin for post-install verification.
+                properties:
+                  name:
+                    description: |-
+                      Name is the UIPlugin resource name to verify after chart installation.
+                      This must match the UIPlugin name created by the Helm chart.
+                    minLength: 1
+                    type: string
+                  version:
+                    description: Version is the expected extension version in the
+                      UIPlugin spec.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - version
+                type: object
+              source:
+                description: |-
+                  Source configures how the UI extension assets are served and
+                  how the ClusterRepo is created.
+                properties:
+                  git:
+                    description: Git is populated when Kind=Git.
+                    properties:
+                      branch:
+                        default: gh-pages
+                        description: Branch is the git branch serving the extension
+                          assets (typically "gh-pages").
+                        minLength: 1
+                        type: string
+                      repo:
+                        description: Repo is the git repository URL containing the
+                          extension's index.yaml.
+                        minLength: 1
+                        type: string
+                    required:
+                    - branch
+                    - repo
+                    type: object
+                  helm:
+                    description: Helm is populated when Kind=Helm.
+                    properties:
+                      chartURL:
+                        description: |-
+                          ChartURL is the Helm chart repository URL (oci:// or https://).
+                          The Helm release name is derived from the last path segment of this URL.
+                        minLength: 1
+                        pattern: ^(oci://|https://).+
+                        type: string
+                      values:
+                        additionalProperties:
+                          x-kubernetes-preserve-unknown-fields: true
+                        description: Values are optional Helm values overrides passed
+                          to the chart installation.
+                        type: object
+                      version:
+                        description: Version is the chart version to install.
+                        minLength: 1
+                        type: string
+                    required:
+                    - chartURL
+                    - version
+                    type: object
+                  kind:
+                    description: |-
+                      Kind selects the source type for the UI extension assets.
+                      "Helm" installs a Helm chart that deploys a container serving extension assets and creates a URL-based ClusterRepo.
+                      "Git" creates a ClusterRepo pointing to a git repository branch.
+                    enum:
+                    - Helm
+                    - Git
+                    type: string
+                required:
+                - kind
+                type: object
+                x-kubernetes-validations:
+                - message: helm is required when kind is Helm
+                  rule: 'self.kind == ''Helm'' ? has(self.helm) : true'
+                - message: git must not be set when kind is Helm
+                  rule: 'self.kind == ''Helm'' ? !has(self.git) : true'
+                - message: git is required when kind is Git
+                  rule: 'self.kind == ''Git'' ? has(self.git) : true'
+                - message: helm must not be set when kind is Git
+                  rule: 'self.kind == ''Git'' ? !has(self.helm) : true'
+            required:
+            - extension
+            - source
+            type: object
+          status:
+            description: status defines the observed state of InstallAIExtension
+            properties:
+              activeExtensionName:
+                description: |-
+                  ActiveExtensionName is the extension name last successfully reconciled.
+                  Used to detect name changes and clean up orphaned resources.
+                type: string
+              activeSourceKind:
+                description: |-
+                  ActiveSourceKind is the source kind last successfully reconciled.
+                  Used to detect source switches and clean up old source's resources.
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the InstallAIExtension state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              helmReleaseName:
+                description: HelmReleaseName is the name of the installed Helm release,
+                  derived from the chart URL.
+                type: string
+              helmReleaseRevision:
+                description: HelmReleaseRevision is the Helm release revision number.
+                format: int32
+                type: integer
+              observedGeneration:
+                description: ObservedGeneration is the generation observed by the
+                  controller.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the current installation phase.
+                enum:
+                - Pending
+                - Installing
+                - Installed
+                - Failed
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

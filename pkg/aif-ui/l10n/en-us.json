@@ -1,0 +1,340 @@
+{
+  "product": {
+    "suseai": "SUSE AI Factory"
+  },
+  "suseai": {
+    "product": {
+      "name": "SUSE AI",
+      "title": "AI/ML Applications",
+      "description": "Deploy and manage AI/ML applications in your clusters"
+    },
+    "nav": {
+      "apps": "Applications",
+      "install": "Install",
+      "manage": "Manage",
+      "repositories": "Repositories",
+      "settings": "Settings"
+    },
+    "pages": {
+      "about": {
+        "title": "About",
+        "sections": {
+          "versions": {
+            "title": "Component Versions",
+            "extension": "UI Extension",
+            "operator": "Operator",
+            "chart": "Helm Chart",
+            "unavailable": "Unavailable"
+          },
+          "resources": {
+            "title": "Resources",
+            "documentation": "Documentation",
+            "support": "Support"
+          }
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "apply": "Apply",
+        "notConfigured": "No settings configured yet. Fill in the form and save to create them.",
+        "sections": {
+          "appCollection": {
+            "title": "SUSE Application Collection",
+            "userSecretRef": {
+              "label": "Username Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "tokenSecretRef": {
+              "label": "Access Token Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "categories": {
+              "label": "Categories",
+              "placeholder": "ai, nlp, vision"
+            }
+          },
+          "suseRegistry": {
+            "title": "SUSE Registry",
+            "userSecretRef": {
+              "label": "Username Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "tokenSecretRef": {
+              "label": "Access Token Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "refreshIntervalMinutes": {
+              "label": "NIM Index Refresh (minutes)"
+            }
+          },
+          "nvidia": {
+            "title": "NVIDIA",
+            "description": "NGC credential used to pull gated NVIDIA images (nvcr.io), and — in air-gapped mode, when a mirrored NVIDIA chart repository is set under Registry Endpoints — to authenticate to that OCI chart repo. Username is conventionally “$oauthtoken”.",
+            "userSecretRef": {
+              "label": "Username Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "tokenSecretRef": {
+              "label": "API Key Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            }
+          },
+          "fleet": {
+            "title": "Fleet / GitOps",
+            "repoURL": {
+              "label": "Repository URL",
+              "placeholder": "https://github.com/org/repo.git"
+            },
+            "branch": {
+              "label": "Branch",
+              "placeholder": "main"
+            },
+            "authType": {
+              "label": "Auth Type",
+              "options": {
+                "none": "None",
+                "ssh": "SSH",
+                "token": "Token",
+                "basic": "Basic"
+              }
+            },
+            "credSecretRef": {
+              "label": "Git Credentials",
+              "secretNameLabel": "Credential Secret",
+              "keyNameLabel": "Secret Key"
+            }
+          },
+          "advanced": {
+            "title": "Advanced",
+            "warning": "Advanced settings for air-gapped or custom deployments only. Modify with care.",
+            "operatorConnection": {
+              "title": "Operator Connection",
+              "managed": "Operator namespace and service are managed by an InstallAIExtension resource. The operator updates these values automatically — editing is disabled.",
+              "forbidden": "Cannot verify whether the operator connection is managed — access to InstallAIExtension resources is restricted. If a resource exists, changes saved here may be overwritten by the operator.",
+              "found": "Configuration loaded from the aif-ui-config ConfigMap in cattle-ui-plugin-system. Changes take effect immediately on save.",
+              "notFound": "No aif-ui-config ConfigMap found in cattle-ui-plugin-system. Fields below show defaults. Saving will create the ConfigMap.",
+              "namespace": {
+                "label": "Operator Namespace",
+                "placeholder": "aif-operator"
+              },
+              "service": {
+                "label": "Operator Service",
+                "placeholder": "aif-operator"
+              }
+            },
+            "registryEndpoints": {
+              "title": "Registry Endpoints",
+              "suseRegistry": {
+                "label": "SUSE Registry (OCI)",
+                "placeholder": "oci://registry.example.com/charts"
+              },
+              "applicationCollection": {
+                "label": "Application Collection (OCI)",
+                "placeholder": "oci://registry.example.com/charts"
+              },
+              "applicationCollectionAPI": {
+                "label": "Application Collection API",
+                "placeholder": "https://api.apps.rancher.io"
+              },
+              "nvidia": {
+                "label": "NVIDIA Charts (OCI)",
+                "placeholder": "oci://registry.example.com/nvidia/charts"
+              }
+            },
+            "catalogDiscovery": {
+              "title": "Catalog Discovery",
+              "applicationCollectionMode": {
+                "label": "Discovery Mode",
+                "options": {
+                  "api": "API (default)",
+                  "registryFallback": "Registry Fallback (air-gap)",
+                  "disabled": "Disabled"
+                }
+              }
+            },
+            "imageRewrite": {
+              "title": "Image Rewrite Rules",
+              "enabled": {
+                "label": "Enable image rewriting"
+              },
+              "rules": {
+                "match": {
+                  "label": "Match Prefix",
+                  "placeholder": "nvcr.io"
+                },
+                "replace": {
+                  "label": "Replace With",
+                  "placeholder": "registry.suse.com/ai"
+                },
+                "add": "Add Rule"
+              }
+            }
+          }
+        }
+      }
+    },
+    "apps": {
+      "title": "AI/ML Applications",
+      "subtitle": "Browse and install AI/ML applications",
+      "search": "Search applications...",
+      "install": "Install Application",
+      "manage": "Manage Application",
+      "noApps": "No applications found",
+      "loading": "Loading applications and discovering installations...",
+      "status": {
+        "available": "Available",
+        "installing": "Installing...",
+        "deployed": "Running",
+        "upgrading": "Upgrading...",
+        "failed": "Failed",
+        "unknown": "Unknown"
+      },
+      "categories": {
+        "all": "All Categories",
+        "ai": "AI/Machine Learning",
+        "data": "Data Processing",
+        "inference": "Inference",
+        "training": "Training",
+        "workflow": "Workflow"
+      }
+    },
+    "wizard": {
+      "steps": {
+        "basicInfo": "Basic Information",
+        "targetCluster": "Target Cluster",
+        "configuration": "Configuration",
+        "selectApps": "Select Applications",
+        "review": "Review"
+      },
+      "form": {
+        "release": "Instance Name",
+        "releasePlaceholder": "Enter instance name",
+        "namespace": "Namespace",
+        "namespacePlaceholder": "Select or create a namespace",
+        "chartName": "Chart Name",
+        "chartNamePlaceholder": "e.g. ollama",
+        "version": "Version",
+        "versionPlaceholder": "e.g. 1.0.0",
+        "valuesYaml": "Configuration",
+        "questionsUnavailable": "Questions metadata is not available for this chart version. Use the YAML editor instead.",
+        "versionDirtyWarning": "Version changed after you edited values. Click \"Load defaults from chart\" to apply defaults for the new version, or continue with your customizations.",
+        "workloadName": "Instance Name",
+        "workloadNamePlaceholder": "e.g. my-ai-deployment",
+        "workloadNameHelp": "Used as prefix for Fleet Bundle names",
+        "blueprintName": "Name",
+        "blueprintNamePlaceholder": "e.g. My AI Stack",
+        "description": "Description",
+        "descriptionPlaceholder": "Optional description",
+        "deploymentType": "Deployment Type",
+        "searchApps": "Search applications...",
+        "componentNamespace": "Target namespace (optional)",
+        "componentNamespacePlaceholder": "defaults to install namespace",
+        "componentNamespaceInvalid": "Must be a valid namespace: lowercase letters, digits and '-', starting and ending with a letter or digit (max 63 chars).",
+        "componentNamespacesInvalid": "One or more components have an invalid target namespace.",
+        "removeApp": "Remove application"
+      },
+      "target": {
+        "selectClusters": "Select Target Cluster(s)",
+        "readOnly": "Target cluster and deployment type are read-only in Manage mode."
+      },
+      "sections": {
+        "applicationDetails": "Application Details",
+        "blueprintDetails": "Blueprint Details",
+        "configureApps": "Configure Applications",
+        "configureAppsDesc": "Set default Helm values for each application in this blueprint.",
+        "configuration": "Configuration",
+        "reviewInstall": "Review & Install",
+        "reviewCreate": "Review & Create",
+        "reviewSaveVersion": "Review & Save as New Version"
+      },
+      "labels": {
+        "repository": "Repository",
+        "chart": "Chart",
+        "targetCluster": "Target Cluster",
+        "blueprint": "Blueprint",
+        "clusters": "Clusters",
+        "components": "Components",
+        "applications": "Applications",
+        "namespace": "Namespace",
+        "fixedNamespace": "fixed"
+      }
+    },
+    "repositories": {
+      "title": "Repositories",
+      "add": "Add Repository",
+      "refresh": "Refresh",
+      "form": {
+        "name": "Repository Name",
+        "url": "Repository URL",
+        "username": "Username",
+        "password": "Password"
+      }
+    },
+    "common": {
+      "actions": {
+        "save": "Save",
+        "cancel": "Cancel",
+        "edit": "Edit",
+        "delete": "Delete",
+        "refresh": "Refresh",
+        "close": "Close",
+        "confirm": "Confirm",
+        "view": "View"
+      },
+      "status": {
+        "loading": "Loading...",
+        "error": "Error",
+        "success": "Success",
+        "pending": "Pending",
+        "completed": "Completed"
+      },
+      "labels": {
+        "name": "Name",
+        "description": "Description",
+        "version": "Version",
+        "versions": "Versions",
+        "created": "Created",
+        "updated": "Updated",
+        "status": "Status",
+        "cluster": "Cluster",
+        "namespace": "Namespace",
+        "noComponents": "No components defined",
+        "deprecated": "deprecated"
+      },
+      "messages": {
+        "noData": "No data available",
+        "loadingFailed": "Failed to load data",
+        "saveSuccess": "Saved successfully",
+        "deleteSuccess": "Deleted successfully",
+        "confirmDelete": "Are you sure you want to delete this item?"
+      }
+    },
+    "validation": {
+      "required": "{field} is required",
+      "invalidFormat": "{field} has invalid format",
+      "invalidValue": "{field} has invalid value",
+      "tooShort": "{field} is too short (minimum {min} characters)",
+      "tooLong": "{field} is too long (maximum {max} characters)",
+      "releaseName": {
+        "required": "Release name is required",
+        "invalid": "Release name must be a valid DNS-1123 subdomain",
+        "tooLong": "Release name must be 53 characters or less"
+      },
+      "namespace": {
+        "required": "Namespace is required",
+        "invalid": "Namespace must be a valid DNS-1123 label",
+        "reserved": "Cannot use reserved namespace"
+      },
+      "helmValues": {
+        "invalidYaml": "Invalid YAML format",
+        "warning": "Be careful when overriding {key}"
+      }
+    }
+  }
+}

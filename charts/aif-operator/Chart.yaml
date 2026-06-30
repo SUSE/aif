@@ -1,17 +1,23 @@
+annotations:
+  helm.sh/images: |
+    - image: ghcr.io/suse/aif-operator:0.1.0-dev.5
+      name: aif-operator
 apiVersion: v2
 name: aif-operator
-description: SUSE AI Factory operator for deploying and managing AI workloads
+version: 0.1.0-dev.5
+description: SUSE AI Operator
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
-keywords:
-  - ai
-  - machine-learning
-  - kubernetes-operator
-  - nvidia
-home: https://github.com/suse/aif
+home: https://github.com/SUSE/aif
+icon: https://raw.githubusercontent.com/SUSE/aif/main/pkg/aif-ui/assets/logo.svg
 sources:
-  - https://github.com/suse/aif
+  - https://github.com/SUSE/aif
+appVersion: 0.1.0-dev.5
 maintainers:
-  - name: SUSE AI Factory Team
-    email: aif-maintainers@suse.com
+  - url: https://www.suse.com/
+    name: SUSE LLC
+keywords:
+  - rancher
+  - extension
+  - ai
+  - kubernetes
+  - operator

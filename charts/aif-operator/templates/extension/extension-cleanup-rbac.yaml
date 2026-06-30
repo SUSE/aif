@@ -1,0 +1,53 @@
+{{- if .Values.aiExtension.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-cleanup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-cleanup
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+rules:
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - installaiextensions
+    verbs:
+      - delete
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-cleanup
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "aif-operator.fullname" . }}-cleanup
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aif-operator.fullname" . }}-cleanup
+    namespace: {{ .Release.Namespace }}
+{{- end }}

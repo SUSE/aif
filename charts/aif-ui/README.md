@@ -29,11 +29,15 @@ The chart creates a Deployment and Service that serve the built extension assets
 | `podLabels` | object | `{}` | Additional pod labels |
 | `podSecurityContext` | object | See `values.yaml` | Pod-level security context |
 | `containerSecurityContext` | object | See `values.yaml` | Container-level security context |
-| `resources` | object | `{}` | Container resource requests/limits |
+| `resources` | object | See `values.yaml` | Container resource requests/limits |
 | `probes.liveness.enabled` | bool | `true` | Enable liveness probe |
+| `probes.liveness.initialDelaySeconds` | int | `10` | Liveness probe initial delay |
 | `probes.readiness.enabled` | bool | `true` | Enable readiness probe |
+| `probes.readiness.initialDelaySeconds` | int | `5` | Readiness probe initial delay |
 | `nodeSelector` | object | `{}` | Node selector |
 | `tolerations` | list | `[]` | Tolerations |
 | `affinity` | object | `{}` | Affinity rules |
 | `rollingUpdate.maxSurge` | string | `25%` | Rolling update max surge |
 | `rollingUpdate.maxUnavailable` | string | `25%` | Rolling update max unavailable |
+| `operator.namespace` | string | `aif-operator` | Namespace where the SUSE AI operator is installed. Written to the `aif-ui-config` ConfigMap and read by the UI extension at runtime to build the operator API URL. |
+| `operator.service` | string | `aif-operator` | Service name of the SUSE AI operator. |

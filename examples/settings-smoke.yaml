@@ -1,9 +1,0 @@
-apiVersion: ai.suse.com/v1alpha1
-kind: Settings
-metadata:
-  namespace: aif
-  name: settings
-spec:
-  registryEndpoints:
-    suseRegistry: registry.suse.com
-    applicationCollection: dp.apps.rancher.io

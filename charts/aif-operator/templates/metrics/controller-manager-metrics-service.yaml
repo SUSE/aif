@@ -1,0 +1,17 @@
+{{- if .Values.metrics.enable }}
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.serviceName" (dict "context" . "suffix" "metrics") }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  ports:
+    - name: https
+      port: {{ .Values.metrics.port }}
+      protocol: TCP
+      targetPort: {{ .Values.metrics.port }}
+  selector:
+    {{- include "aif-operator.selectorLabels" . | nindent 4 }}
+{{- end }}

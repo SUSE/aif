@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}

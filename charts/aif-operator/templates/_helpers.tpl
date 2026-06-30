@@ -1,48 +1,63 @@
 {{/*
-Expand the name of the chart.
+Name of the chart.
+Uses .Values.nameOverride if set, otherwise falls back to chart name.
 */}}
 {{- define "aif-operator.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 
 {{/*
-Create a default fully qualified app name.
+Full name of the chart.
+Always truncated to 63 chars for Kubernetes compatibility.
 */}}
 {{- define "aif-operator.fullname" -}}
 {{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- include "aif-operator.name" . | trunc 63 | trimSuffix "-" -}}
 {{- end }}
 {{- end }}
 
 {{/*
-Create chart name and version as used by the chart label.
+Namespace for generated references.
+Always uses the Helm release namespace.
 */}}
-{{- define "aif-operator.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- define "aif-operator.namespaceName" -}}
+{{ .Release.Namespace }}
 {{- end }}
 
 {{/*
-Common labels
+Service name with proper truncation for Kubernetes 63-character limit.
+Takes a context with .suffix for the service type (e.g., "webhook-service").
+If fullname + suffix exceeds 63 chars, truncates fullname to 45 chars.
+*/}}
+{{- define "aif-operator.serviceName" -}}
+{{- $fullname := include "aif-operator.fullname" .context -}}
+{{- if gt (len $fullname) 45 -}}
+{{- printf "%s-%s" (trunc 45 $fullname | trimSuffix "-") .suffix | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" $fullname .suffix | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Common labels for Helm charts.
+Includes app version, chart version, app name, instance, and managed-by labels.
 */}}
 {{- define "aif-operator.labels" -}}
-helm.sh/chart: {{ include "aif-operator.chart" . }}
-{{ include "aif-operator.selectorLabels" . }}
-app.kubernetes.io/component: controller
-{{- if .Chart.AppVersion }}
+{{- if .Chart.AppVersion -}}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/name: {{ include "aif-operator.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+control-plane: controller-manager
 {{- end }}
 
 {{/*
-Selector labels
+Selector labels for matching pods and services.
+Only includes name and instance for consistent selection.
 */}}
 {{- define "aif-operator.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "aif-operator.name" . }}
@@ -50,58 +65,35 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Create the name of the service account to use
+Namespace where AI extensions (UI plugins, workloads, secrets) are deployed.
+This is intentionally separate from the operator's release namespace.
 */}}
-{{- define "aif-operator.serviceAccountName" -}}
-{{- default (include "aif-operator.fullname" .) .Values.serviceAccount.name }}
-{{- end }}
+{{- define "aif-operator.extensionsNamespace" -}}
+cattle-ui-plugin-system
+{{- end -}}
 
 {{/*
-Selector labels as a kubectl label selector string
-*/}}
-{{- define "aif-operator.selectorLabelsString" -}}
-app.kubernetes.io/name={{ include "aif-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }}
-{{- end }}
-
-{{/*
-Image reference with conditional registry prefix
-*/}}
-{{- define "aif-operator.image" -}}
-{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
-{{- $repo := .Values.image.repository }}
-{{- with (coalesce .Values.global.imageRegistry .Values.image.registry) }}
-{{- printf "%s/%s:%s" . $repo $tag }}
-{{- else }}
-{{- printf "%s:%s" $repo $tag }}
-{{- end }}
-{{- end }}
-
-{{/*
-Return the proper Docker Image Registry Secret Names.
-Merges global.imagePullSecrets and per-chart imagePullSecrets (both lists
-are concatenated so chart-level defaults like suse-registry-creds are never
-silently dropped when a global override is set).
+Return the proper Docker Image Registry Secret Names
 */}}
 {{- define "aif-operator.imagePullSecrets" -}}
-{{- $secrets := list }}
-{{- $seen := dict }}
-{{- range .Values.imagePullSecrets }}
-  {{- $secrets = append $secrets . }}
-  {{- $seen = set $seen .name "true" }}
-{{- end }}
+{{- $secrets := list -}}
 {{- if .Values.global }}
-  {{- range .Values.global.imagePullSecrets }}
-    {{- $entry := . }}
-    {{- if kindIs "string" . }}
-      {{- $entry = dict "name" . }}
-    {{- end }}
-    {{- if not (hasKey $seen $entry.name) }}
-      {{- $secrets = append $secrets $entry }}
-      {{- $seen = set $seen $entry.name "true" }}
-    {{- end }}
+{{- range .Values.global.imagePullSecrets }}
+  {{- if kindIs "string" . }}
+    {{- $secrets = append $secrets (dict "name" .) -}}
+  {{- else }}
+    {{- $secrets = append $secrets . -}}
   {{- end }}
-{{- end -}}
-{{- if $secrets -}}
+{{- end }}
+{{- end }}
+{{- range .Values.manager.imagePullSecrets }}
+  {{- if kindIs "string" . }}
+    {{- $secrets = append $secrets (dict "name" .) -}}
+  {{- else }}
+    {{- $secrets = append $secrets . -}}
+  {{- end }}
+{{- end }}
+{{- if $secrets }}
 imagePullSecrets:
   {{- toYaml $secrets | nindent 2 }}
 {{- end }}

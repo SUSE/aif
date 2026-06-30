@@ -21,12 +21,17 @@ app.kubernetes.io/name: {{ include "aif-ui.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{- define "aif-ui.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "aif-ui.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "aif-ui.podLabels" -}}
+{{ include "aif-ui.selectorLabels" . }}
+catalog.cattle.io/ui-extensions-catalog-image: {{ .Chart.Name }}
 {{- end }}
 
 {{- define "aif-ui.image" -}}

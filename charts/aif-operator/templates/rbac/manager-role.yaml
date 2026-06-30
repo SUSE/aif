@@ -1,0 +1,329 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - create
+      - get
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - persistentvolumeclaims
+      - services
+    verbs:
+      - delete
+      - get
+      - list
+      # `watch` is required by installaiextension_controller's reconciler cache
+      # (kubebuilder marker on services is get;list;watch). Without it, the
+      # operator's controller-runtime informer for *v1.Service fails to start
+      # and hot-loops the kube-apiserver with rejected watch requests. Verb
+      # also applies to configmaps + PVCs in this rule, harmless — both
+      # already have list permission, so watch adds no extra read surface.
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - delete
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - daemonsets
+      - replicasets
+      - statefulsets
+    verbs:
+      - delete
+      - get
+      - list
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - delete
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - rolebindings
+      - roles
+    verbs:
+      - delete
+      - get
+      - list
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - installaiextensions
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - installaiextensions/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - installaiextensions/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - catalog.cattle.io
+    resources:
+      - clusterrepos
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - catalog.cattle.io
+    resources:
+      - clusterrepos/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - settings
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - settings/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - blueprints
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+      - create
+      - delete
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - aiworkloads
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - aiworkloads/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - aiworkloads/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - bundledeployments
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - bundles
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - gitrepos
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - helmops
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - watch
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}
+  namespace: {{ include "aif-operator.extensionsNamespace" . }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - replicasets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - catalog.cattle.io
+    resources:
+      - uiplugins
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - catalog.cattle.io
+    resources:
+      - uiplugins/status
+    verbs:
+      - get
+      - patch
+      - update

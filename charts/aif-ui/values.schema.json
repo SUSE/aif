@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
     "replicaCount": {
       "type": "integer",
@@ -16,6 +17,18 @@
         },
         "imagePullSecrets": {
           "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" }
+                },
+                "required": ["name"]
+              }
+            ]
+          },
           "default": []
         }
       }
@@ -45,6 +58,18 @@
     },
     "imagePullSecrets": {
       "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" }
+            },
+            "required": ["name"]
+          }
+        ]
+      },
       "default": []
     },
     "nameOverride": {
@@ -84,7 +109,23 @@
       "type": "object"
     },
     "resources": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        },
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        }
+      }
     },
     "probes": {
       "type": "object",
@@ -113,7 +154,10 @@
       "type": "object"
     },
     "tolerations": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
     },
     "affinity": {
       "type": "object"
@@ -128,6 +172,22 @@
         "maxUnavailable": {
           "type": ["string", "integer"],
           "default": "25%"
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "default": "aif-operator",
+          "description": "Namespace where the SUSE AI operator is installed"
+        },
+        "service": {
+          "type": "string",
+          "default": "aif-operator",
+          "description": "Service name of the SUSE AI operator"
         }
       }
     }

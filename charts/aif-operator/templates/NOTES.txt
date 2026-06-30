@@ -1,16 +1,9 @@
-AIF Operator has been installed in namespace {{ .Release.Namespace }}.
+SUSE AI Operator has been installed.
 
-API endpoint:
-  kubectl -n {{ .Release.Namespace }} get svc {{ include "aif-operator.fullname" . }}
+Check operator logs:
+kubectl logs deploy/{{ include "aif-operator.fullname" . }} -n {{ .Release.Namespace }} -f
 
-Verify the operator is running:
-  kubectl -n {{ .Release.Namespace }} get pods -l {{ include "aif-operator.selectorLabelsString" . }}
-
-Check CRDs are registered:
-  kubectl get crd | grep ai.suse.com
-
-{{- if .Values.webhook.enabled }}
-Admission webhook is enabled (TLS mode: {{ .Values.webhook.tlsMode }}).
+{{- if .Values.defaultBlueprints.enabled }}
+Default blueprints were installed and are visible on the Blueprints page.
+To manage blueprints yourself instead, set defaultBlueprints.enabled=false.
 {{- end }}
-
-For more information, visit the project documentation.

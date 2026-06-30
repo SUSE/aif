@@ -5,104 +5,118 @@ global:
 nameOverride: ""
 fullnameOverride: ""
 
-# Image configuration — see README.md "Air-Gap Install Modes" for registry override patterns.
-image:
-  registry: ghcr.io
-  repository: suse/aif-operator
-  tag: ""              # empty string → templated to .Chart.AppVersion
-  pullPolicy: IfNotPresent
+# Credentials for SUSE Application Collection, NVIDIA NGC, and
+# SUSE Registry artifact repositories. If not specified, those
+# credentials must be created out-of-band and via Settings
+# in the UI.
+#
+# NOTE: the credentials configured in this file are meant to be
+# used during installation/configuration of the chart. Therefore,
+# credentials must be handled in accordance with your organization's
+# security policies. Please sanitize the credentials before checking
+# this file into source control.
+#
+credentials:
+  # credential for oci://dp.apps.rancher.io/charts
+  applicationCollection:
+    username: ""
+    password: ""
+  # credential to pull NGC artifacts
+  # e.g. https://helm.ngc.nvidia.com/nvidia
+  nvidia:
+    username: ""
+    password: ""
+  # credential for oci://registry.suse.com/ai/charts
+  suseRegistry:
+    username: ""
+    password: ""
 
-imagePullSecrets: []
+manager:
+  replicaCount: 1
+  
+  image:
+    registry: ghcr.io
+    repository: suse/aif-operator
+    tag: "0.1.0-dev.5"
+    pullPolicy: IfNotPresent
 
-serviceAccount:
-  name: ""
+  imagePullSecrets: []
 
-replicaCount: 1
+  args:
+    - --leader-elect
 
-service:
-  type: ClusterIP
-  ports:
-    api: 8080
-    health: 8081
-    metrics: 8082
-    webhook: 9443
+  env: []
 
-resources:
-  requests:
-    cpu: "100m"
-    memory: "256Mi"
-  limits:
-    cpu: "1000m"
-    memory: "512Mi"
+  podAnnotations: {}
 
-persistence:
-  enabled: true
-  size: 10Gi
-  storageClass: ""
-  accessMode: ReadWriteOnce
-  mountPath: /data
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+        type: RuntimeDefault
 
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
-  seccompProfile:
-    type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+        drop:
+            - ALL
+    readOnlyRootFilesystem: true
 
-containerSecurityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-      - ALL
-  readOnlyRootFilesystem: true
+  resources:
+    limits:
+        cpu: 500m
+        memory: 128Mi
+    requests:
+        cpu: 10m
+        memory: 64Mi
 
-podAnnotations: {}
+  probes:
+    liveness:
+      enabled: true
+      httpGet:
+        path: /healthz
+        port: 8081
+      periodSeconds: 20
+      initialDelaySeconds: 15
+    readiness:
+      enabled: true
+      httpGet:
+        path: /readyz
+        port: 8081
+      periodSeconds: 10
+      initialDelaySeconds: 5
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+rbacHelpers:
+  enable: false
 
 metrics:
-  enabled: true
+  enable: true
+  port: 8443
 
-# Writable scratch paths (emptyDir mounts that mask PVC subpaths when persistence is enabled).
-extraEmptyDirs:
-  - /data/charts
-  - /data/git
-  - /tmp
-
-operator:
-  logLevel: info
-  logFormat: json
-  catalogRefresh: 10m
-
-webhook:
-  enabled: true
-  tlsMode: cert-manager
-  certManager:
-    enabled: true
-
-nodeSelector: {}
-tolerations: []
-affinity: {}
-
-# Note: with replicaCount=1 and minAvailable=1, PDB blocks all voluntary evictions.
-# Set replicaCount >= 2 when enabling PDB.
-podDisruptionBudget:
-  enabled: false
-  minAvailable: 1
+api:
+  port: 8080
 
 # UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
 # Set aiExtension.enabled=false to skip extension installation.
 aiExtension:
-  enabled: false
+  enabled: true
   source:
-    kind: Helm          # "Helm" (container-based) or "Git"
+    kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "0.1.0"
-    git:
-      repo: "https://github.com/SUSE/aif"
-      branch: "gh-pages"
+      version: "0.1.0-dev.5"
+      # values are merged onto the aif-ui chart's default values. Useful for
+      # overriding the UI image during development:
+      #   aiExtension.source.helm.values.image.registry=ghcr.io
+      #   aiExtension.source.helm.values.image.repository=suse/aif-ui
+      #   aiExtension.source.helm.values.image.tag=0.1.0-dev.4
+      values: {}
   extension:
-    name: "ai-factory"
-    version: "0.1.0"
+    name: "aif-ui"
+    version: "0.1.0-dev.5"
   cleanup:
     image:
       registry: registry.suse.com
@@ -127,3 +141,10 @@ aiExtension:
         drop:
           - ALL
       readOnlyRootFilesystem: true
+
+# Default blueprints bundled with the chart. When enabled, the curated Blueprint
+# CRs under files/blueprints/ are created on install and reconciled on upgrade.
+# Disable to manage blueprints exclusively through other means (e.g. a future
+# git source) without the chart re-creating its defaults.
+defaultBlueprints:
+  enabled: true
