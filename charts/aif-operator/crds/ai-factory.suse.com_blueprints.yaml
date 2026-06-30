@@ -68,6 +68,72 @@ spec:
                       description: ChartVersion is the semver chart version.
                       minLength: 1
                       type: string
+                    dependsOn:
+                      description: |-
+                        DependsOn lists components that must be Ready before this one starts.
+                        v2 preview - not yet functional in v1.
+                      items:
+                        type: string
+                      type: array
+                    git:
+                      description: |-
+                        Git source (used when Type=Git).
+                        v2 preview - not yet functional in v1.
+                      properties:
+                        path:
+                          description: Path within the repository
+                          type: string
+                        repoURL:
+                          description: Repository URL (https:// or git://)
+                          minLength: 1
+                          type: string
+                        revision:
+                          description: Git revision (branch, tag, or commit SHA)
+                          type: string
+                      required:
+                      - repoURL
+                      type: object
+                    kustomize:
+                      description: |-
+                        Kustomize source (used when Type=Kustomize).
+                        v2 preview - not yet functional in v1.
+                      properties:
+                        overlays:
+                          description: Optional overlay names to apply
+                          items:
+                            type: string
+                          type: array
+                        path:
+                          description: Path to the directory containing kustomization.yaml
+                          minLength: 1
+                          type: string
+                      required:
+                      - path
+                      type: object
+                    manifests:
+                      description: |-
+                        Manifests source (used when Type=Manifests).
+                        v2 preview - not yet functional in v1.
+                      properties:
+                        files:
+                          description: Optional specific files to include (defaults
+                            to all *.yaml/*.yml)
+                          items:
+                            type: string
+                          type: array
+                        path:
+                          description: Path to the directory containing manifest files
+                          minLength: 1
+                          type: string
+                      required:
+                      - path
+                      type: object
+                    name:
+                      description: |-
+                        Name for this component (used in dependsOn references).
+                        Defaults to chartName if omitted.
+                        v2 preview - not yet functional in v1.
+                      type: string
                     targetNamespace:
                       description: |-
                         TargetNamespace optionally pins this component to a fixed namespace.
@@ -77,9 +143,53 @@ spec:
                       maxLength: 63
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    type:
+                      allOf:
+                      - enum:
+                        - Helm
+                        - Kustomize
+                        - Manifests
+                        - Git
+                      - enum:
+                        - Helm
+                        - Kustomize
+                        - Manifests
+                        - Git
+                      default: Helm
+                      description: |-
+                        Type is the content type discriminator (defaults to Helm for backward compat).
+                        v2 preview - not yet functional in v1.
+                      type: string
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
+                    valuesFromInputs:
+                      description: |-
+                        ValuesFromInputs maps blueprint inputs to Helm values.
+                        v2 preview - not yet functional in v1.
+                      items:
+                        description: |-
+                          InputMapping maps a blueprint input to a Helm value path.
+                          v2 preview - not yet functional in v1.
+                        properties:
+                          input:
+                            description: Input name (must match a BlueprintInput.Name)
+                            minLength: 1
+                            type: string
+                          path:
+                            description: JSONPath where to inject the value (e.g.,
+                              "model.name")
+                            minLength: 1
+                            type: string
+                          transform:
+                            description: Optional transformation (e.g., "toString",
+                              "toNumber")
+                            type: string
+                        required:
+                        - input
+                        - path
+                        type: object
+                      type: array
                     vendor:
                       default: suse
                       description: |-
@@ -96,6 +206,16 @@ spec:
                   type: object
                 minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: chartRepo and chartName required when type=Helm
+                  rule: 'self.type == ''Helm'' || !has(self.type) ? (self.chartRepo
+                    != '''' && self.chartName != '''') : true'
+                - message: kustomize field required when type=Kustomize
+                  rule: 'self.type == ''Kustomize'' ? has(self.kustomize) : true'
+                - message: manifests field required when type=Manifests
+                  rule: 'self.type == ''Manifests'' ? has(self.manifests) : true'
+                - message: git field required when type=Git
+                  rule: 'self.type == ''Git'' ? has(self.git) : true'
               deprecated:
                 description: Deprecated marks this blueprint version as deprecated.
                 type: boolean
@@ -107,6 +227,235 @@ spec:
                   all versions.
                 minLength: 1
                 type: string
+              inputs:
+                description: |-
+                  Inputs defines user-configurable parameters.
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    BlueprintInput defines a user-configurable parameter.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    default:
+                      description: Default value (JSON-encoded)
+                      x-kubernetes-preserve-unknown-fields: true
+                    description:
+                      description: Description shown in UI
+                      type: string
+                    enum:
+                      description: Allowed values (for enum-style inputs)
+                      items:
+                        type: string
+                      type: array
+                    example:
+                      description: Example value for documentation
+                      type: string
+                    label:
+                      description: UI label
+                      minLength: 1
+                      type: string
+                    name:
+                      description: Name of the input (referenced in ValuesFromInputs)
+                      minLength: 1
+                      pattern: ^[a-z][a-zA-Z0-9]*$
+                      type: string
+                    required:
+                      description: Whether this input is required
+                      type: boolean
+                    type:
+                      description: Input type (string, number, boolean, array, object)
+                      enum:
+                      - string
+                      - number
+                      - boolean
+                      - array
+                      - object
+                      type: string
+                  required:
+                  - label
+                  - name
+                  - type
+                  type: object
+                type: array
+              lifecycle:
+                description: |-
+                  Lifecycle defines install/upgrade/delete policies.
+                  v2 preview - not yet functional in v1.
+                properties:
+                  delete:
+                    description: Delete behavior
+                    properties:
+                      retainResources:
+                        description: Resources to retain on delete
+                        items:
+                          description: |-
+                            RetainResource defines a resource type to keep on delete.
+                            v2 preview - not yet functional in v1.
+                          properties:
+                            kind:
+                              description: Resource kind
+                              minLength: 1
+                              type: string
+                            reason:
+                              description: Reason for retention
+                              type: string
+                          required:
+                          - kind
+                          type: object
+                        type: array
+                    type: object
+                  install:
+                    description: Install behavior
+                    properties:
+                      preflightRequired:
+                        description: Whether pre-flight checks are required
+                        type: boolean
+                      strategy:
+                        description: 'Install strategy: "ordered" or "parallel"'
+                        enum:
+                        - ordered
+                        - parallel
+                        type: string
+                    type: object
+                  upgrade:
+                    description: Upgrade behavior
+                    properties:
+                      requiresApproval:
+                        description: Whether manual approval is required
+                        type: boolean
+                      strategy:
+                        description: 'Upgrade strategy: "safe" or "force"'
+                        enum:
+                        - safe
+                        - force
+                        type: string
+                    type: object
+                type: object
+              outputs:
+                description: |-
+                  Outputs defines values to extract after deployment.
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    BlueprintOutput defines a value to extract after deployment.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    description:
+                      description: Description
+                      type: string
+                    label:
+                      description: UI label
+                      minLength: 1
+                      type: string
+                    name:
+                      description: Output name
+                      minLength: 1
+                      type: string
+                    type:
+                      description: Output type (url, string, number, boolean)
+                      enum:
+                      - url
+                      - string
+                      - number
+                      - boolean
+                      type: string
+                    valueFrom:
+                      description: How to extract the value
+                      properties:
+                        resource:
+                          description: Resource to query
+                          properties:
+                            jsonPath:
+                              description: JSONPath to extract (e.g., ".spec.rules[0].host")
+                              minLength: 1
+                              type: string
+                            kind:
+                              description: Resource kind (e.g., "Ingress", "Service")
+                              minLength: 1
+                              type: string
+                            name:
+                              description: Resource name
+                              minLength: 1
+                              type: string
+                            namespace:
+                              description: Optional namespace (defaults to component's
+                                target namespace)
+                              type: string
+                          required:
+                          - jsonPath
+                          - kind
+                          - name
+                          type: object
+                        static:
+                          description: Static value (alternative to Resource)
+                          x-kubernetes-preserve-unknown-fields: true
+                      type: object
+                  required:
+                  - label
+                  - name
+                  - type
+                  - valueFrom
+                  type: object
+                type: array
+              requiredSecrets:
+                description: |-
+                  RequiredSecrets lists secrets that must exist before install.
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    RequiredSecret defines a secret that must exist before install.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    description:
+                      description: Description of what the secret is for
+                      type: string
+                    keys:
+                      description: Required keys in the secret
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Secret name
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              requirements:
+                description: |-
+                  Requirements defines cluster prerequisites.
+                  v2 preview - not yet functional in v1.
+                properties:
+                  capabilities:
+                    description: Required cluster capabilities
+                    items:
+                      description: |-
+                        CapabilityRequirement defines a required cluster capability.
+                        v2 preview - not yet functional in v1.
+                      properties:
+                        description:
+                          description: Description
+                          type: string
+                        name:
+                          description: Capability name (e.g., "nvidia-gpu", "cert-manager")
+                          minLength: 1
+                          type: string
+                        required:
+                          description: Whether this capability is required
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  kubernetes:
+                    description: Minimum Kubernetes version
+                    properties:
+                      minVersion:
+                        description: Minimum version (semver)
+                        type: string
+                    type: object
+                type: object
               source:
                 description: |-
                   Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
@@ -117,6 +466,40 @@ spec:
                 - Nvidia
                 - Custom
                 type: string
+              validation:
+                description: |-
+                  Validation defines pre-flight validation rules.
+                  v2 preview - not yet functional in v1.
+                properties:
+                  rules:
+                    description: CEL validation rules
+                    items:
+                      description: |-
+                        ValidationRule is a single CEL validation expression.
+                        v2 preview - not yet functional in v1.
+                      properties:
+                        expression:
+                          description: |-
+                            CEL expression that must evaluate to true
+                            Context: inputs = map of input values
+                            Example: "inputs.modelName != ''"
+                          minLength: 1
+                          type: string
+                        message:
+                          description: Error message when rule fails
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Rule name (for error reporting)
+                          minLength: 1
+                          type: string
+                      required:
+                      - expression
+                      - message
+                      - name
+                      type: object
+                    type: array
+                type: object
               version:
                 description: Version is the semver version string of this blueprint.
                 pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$

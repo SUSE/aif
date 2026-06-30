@@ -92,6 +92,27 @@ spec:
                 items:
                   type: string
                 type: array
+              inputValues:
+                description: |-
+                  InputValues holds user-provided input values (maps to Blueprint.spec.inputs).
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    InputValue holds a user-provided input value.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    name:
+                      description: Input name (matches BlueprintInput.Name)
+                      minLength: 1
+                      type: string
+                    value:
+                      description: Value (JSON-encoded)
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  - value
+                  type: object
+                type: array
               source:
                 description: Source describes what is being deployed.
                 properties:
@@ -265,6 +286,33 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              outputs:
+                description: |-
+                  Outputs holds resolved output values (extracted from deployed resources).
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    OutputValue holds a resolved output value.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    label:
+                      description: Label (copied from BlueprintOutput for UI convenience)
+                      type: string
+                    name:
+                      description: Output name (matches BlueprintOutput.Name)
+                      minLength: 1
+                      type: string
+                    type:
+                      description: Type (copied from BlueprintOutput)
+                      type: string
+                    value:
+                      description: Resolved value (JSON-encoded)
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  - value
+                  type: object
+                type: array
               phase:
                 description: Phase is the overall workload phase derived from clusterStatuses.
                 enum:
@@ -309,6 +357,90 @@ spec:
                   required:
                   - names
                   - namespace
+                  type: object
+                type: array
+              requirementChecks:
+                description: |-
+                  RequirementChecks holds per-cluster capability checks.
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    RequirementCheckResult holds per-cluster capability check.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    available:
+                      description: Whether the capability is available
+                      type: boolean
+                    capabilityName:
+                      description: Capability name
+                      minLength: 1
+                      type: string
+                    clusterID:
+                      description: Cluster ID
+                      minLength: 1
+                      type: string
+                    details:
+                      description: Details (version, status, etc.)
+                      type: string
+                  required:
+                  - available
+                  - capabilityName
+                  - clusterID
+                  type: object
+                type: array
+              secretChecks:
+                description: |-
+                  SecretChecks holds per-cluster secret existence checks.
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    SecretCheckResult holds per-cluster secret existence check.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    clusterID:
+                      description: Cluster ID
+                      minLength: 1
+                      type: string
+                    exists:
+                      description: Whether the secret exists
+                      type: boolean
+                    missingKeys:
+                      description: Missing keys (when exists=true but keys missing)
+                      items:
+                        type: string
+                      type: array
+                    secretName:
+                      description: Secret name
+                      minLength: 1
+                      type: string
+                  required:
+                  - clusterID
+                  - exists
+                  - secretName
+                  type: object
+                type: array
+              validationResults:
+                description: |-
+                  ValidationResults holds input validation results.
+                  v2 preview - not yet functional in v1.
+                items:
+                  description: |-
+                    ValidationResult holds the result of validating one rule.
+                    v2 preview - not yet functional in v1.
+                  properties:
+                    message:
+                      description: Error message (when passed=false)
+                      type: string
+                    passed:
+                      description: Whether the rule passed
+                      type: boolean
+                    ruleName:
+                      description: Rule name
+                      minLength: 1
+                      type: string
+                  required:
+                  - passed
+                  - ruleName
                   type: object
                 type: array
             type: object

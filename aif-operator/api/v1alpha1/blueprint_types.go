@@ -414,13 +414,6 @@ type BlueprintComponent struct {
 	// v2 preview - not yet functional in v1.
 	// +optional
 	ValuesFromInputs []InputMapping `json:"valuesFromInputs,omitempty"`
-
-	// CEL validation enforces type-specific field requirements.
-	// v2 preview - not yet functional in v1.
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Helm' || !has(self.type) ? (self.chartRepo != '' && self.chartName != '') : true",message="chartRepo and chartName required when type=Helm"
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Kustomize' ? has(self.kustomize) : true",message="kustomize field required when type=Kustomize"
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Manifests' ? has(self.manifests) : true",message="manifests field required when type=Manifests"
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Git' ? has(self.git) : true",message="git field required when type=Git"
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.
@@ -444,6 +437,10 @@ type BlueprintSpec struct {
 	Deprecated bool `json:"deprecated,omitempty"`
 	// Components are the Helm charts included in this blueprint.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Helm' || !has(self.type) ? (self.chartRepo != '' && self.chartName != '') : true",message="chartRepo and chartName required when type=Helm"
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Kustomize' ? has(self.kustomize) : true",message="kustomize field required when type=Kustomize"
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Manifests' ? has(self.manifests) : true",message="manifests field required when type=Manifests"
+	// +kubebuilder:validation:XValidation:rule="self.type == 'Git' ? has(self.git) : true",message="git field required when type=Git"
 	Components []BlueprintComponent `json:"components"`
 
 	// === v2 FIELDS (preview - not yet functional in v1) ===
