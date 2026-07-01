@@ -60,9 +60,13 @@ func TestCreateBlueprint(t *testing.T) {
 			"description": "Test blueprint",
 			"components": []any{
 				map[string]any{
-					"chartRepo":    "suse-ai",
-					"chartName":    "ollama",
-					"chartVersion": "1.0.0",
+					"name": "ollama",
+					"type": "Helm",
+					"helm": map[string]any{
+						"chartRepo":    "suse-ai",
+						"chartName":    "ollama",
+						"chartVersion": "1.0.0",
+					},
 				},
 			},
 		},
@@ -99,7 +103,15 @@ func TestGetBlueprint(t *testing.T) {
 			"displayName": "Stack",
 			"version":     "2.0.0",
 			"components": []any{
-				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+				map[string]any{
+					"name": "c",
+					"type": "Helm",
+					"helm": map[string]any{
+						"chartRepo":    "r",
+						"chartName":    "c",
+						"chartVersion": "1.0.0",
+					},
+				},
 			},
 		},
 	}
@@ -127,7 +139,15 @@ func TestDeleteBlueprint(t *testing.T) {
 			"displayName": "Stack",
 			"version":     "3.0.0",
 			"components": []any{
-				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+				map[string]any{
+					"name": "c",
+					"type": "Helm",
+					"helm": map[string]any{
+						"chartRepo":    "r",
+						"chartName":    "c",
+						"chartVersion": "1.0.0",
+					},
+				},
 			},
 		},
 	}
@@ -195,7 +215,15 @@ func TestCreateBlueprint_DuplicateNameVersion_Returns409(t *testing.T) {
 			"displayName": "My Stack",
 			"version":     "1.0.0",
 			"components": []any{
-				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+				map[string]any{
+					"name": "c",
+					"type": "Helm",
+					"helm": map[string]any{
+						"chartRepo":    "r",
+						"chartName":    "c",
+						"chartVersion": "1.0.0",
+					},
+				},
 			},
 		},
 	}
@@ -227,7 +255,15 @@ func TestCreateBlueprint_EditSavingExistingVersion_Returns409(t *testing.T) {
 				"displayName": "My Stack",
 				"version":     version,
 				"components": []any{
-					map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+					map[string]any{
+						"name": "c",
+						"type": "Helm",
+						"helm": map[string]any{
+							"chartRepo":    "r",
+							"chartName":    "c",
+							"chartVersion": "1.0.0",
+						},
+					},
 				},
 			},
 		}
