@@ -2,6 +2,7 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
 import { getSettings } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { fetchStaticCatalog, transformStaticCatalog } from './static-catalog';
 
 // Canonical OCI registry URLs for the two SUSE chart repositories.
 // These are the single source of truth for all hardcoded registry URLs in the codebase.
@@ -97,6 +98,38 @@ export async function fetchSettingsOrNull(): Promise<any | null> {
  * the caller also calls fetchNvidiaApps). Omit it to fetch on demand.
  */
 export async function fetchSuseAiApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
+  // Check if static catalog mode is enabled
+  const useStatic = process.env.VUE_APP_USE_STATIC_CATALOG === 'true';
+
+  if (useStatic) {
+    logger.debug('Using static catalog for SUSE AI apps', {
+      component: 'AppCollection'
+    });
+
+    try {
+      const catalog = await fetchStaticCatalog();
+      const { suseAi } = transformStaticCatalog(catalog);
+      const sorted = suseAi.sort((a, b) => a.name.localeCompare(b.name));
+
+      logger.info('Static SUSE AI apps loaded successfully', {
+        component: 'AppCollection',
+        data: { count: sorted.length }
+      });
+
+      return sorted;
+    } catch (err) {
+      logger.error('Failed to load static SUSE AI catalog', err, {
+        component: 'AppCollection'
+      });
+      throw err;
+    }
+  }
+
+  // Fall through to existing dynamic implementation
+  logger.debug('Using dynamic catalog for SUSE AI apps', {
+    component: 'AppCollection'
+  });
+
   const s = settings !== undefined ? settings : await fetchSettingsOrNull();
   const re = s?.spec?.registryEndpoints || {};
   const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
@@ -131,6 +164,38 @@ export async function fetchSuseAiApps($store: any, settings?: any | null): Promi
  *  - Air-gapped (registryEndpoints.nvidia set): the single mirrored OCI repo at that URL.
  */
 export async function fetchNvidiaApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
+  // Check if static catalog mode is enabled
+  const useStatic = process.env.VUE_APP_USE_STATIC_CATALOG === 'true';
+
+  if (useStatic) {
+    logger.debug('Using static catalog for NVIDIA apps', {
+      component: 'AppCollection'
+    });
+
+    try {
+      const catalog = await fetchStaticCatalog();
+      const { nvidia } = transformStaticCatalog(catalog);
+      const sorted = nvidia.sort((a, b) => a.name.localeCompare(b.name));
+
+      logger.info('Static NVIDIA apps loaded successfully', {
+        component: 'AppCollection',
+        data: { count: sorted.length }
+      });
+
+      return sorted;
+    } catch (err) {
+      logger.error('Failed to load static NVIDIA catalog', err, {
+        component: 'AppCollection'
+      });
+      throw err;
+    }
+  }
+
+  // Fall through to existing dynamic implementation
+  logger.debug('Using dynamic catalog for NVIDIA apps', {
+    component: 'AppCollection'
+  });
+
   const s = settings !== undefined ? settings : await fetchSettingsOrNull();
   const nvUrl = s?.spec?.registryEndpoints?.nvidia;
   const urls = nvUrl ? [nvUrl] : [NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL];
