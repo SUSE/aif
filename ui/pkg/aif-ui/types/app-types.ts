@@ -3,6 +3,8 @@
  * Provides comprehensive type definitions for app domain
  */
 
+import type { AppCollectionItem } from '../services/app-collection';
+
 // === App Status and State Types ===
 
 export type AppStatus = 
@@ -615,4 +617,14 @@ export function hasAppStats(app: AppSummary): app is AppSummary & { stats: AppSt
 
 export function hasAppHealth(app: AppSummary): app is AppSummary & { health: AppHealthSummary } {
   return !!app.health;
+}
+
+// === Static Catalog ===
+
+/**
+ * Static catalog structure for loading apps from JSON
+ */
+export interface StaticAppCatalog {
+  'suse-ai': AppCollectionItem[];
+  'nvidia': AppCollectionItem[];
 }
