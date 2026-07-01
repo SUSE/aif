@@ -1,0 +1,21 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  labels:
+    ai-factory.suse.com/blueprint-name: kustomize-example
+    ai-factory.suse.com/blueprint-version: 1.0.0
+  name: kustomize-example-1-0-0
+spec:
+  source: SUSE
+  components:
+  - name: example-overlay
+    type: Kustomize
+    kustomize:
+      repo: https://github.com/rancher/fleet-examples
+      path: single-cluster/kustomize
+  description: |
+    Example Blueprint demonstrating Kustomize-based component deployment.
+    This blueprint deploys a simple application using Fleet's GitRepo mechanism
+    to apply a Kustomize overlay from the rancher/fleet-examples repository.
+  displayName: Kustomize Example
+  version: 1.0.0

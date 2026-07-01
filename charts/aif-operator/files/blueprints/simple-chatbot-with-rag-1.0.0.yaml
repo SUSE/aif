@@ -8,9 +8,12 @@ metadata:
 spec:
   source: SUSE
   components:
-  - chartName: ollama
-    chartRepo: application-collection
-    chartVersion: 1.55.0
+  - name: ollama
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: ollama
+      chartVersion: 1.55.0
     values:
       affinity: {}
       autoscaling:
@@ -150,9 +153,12 @@ spec:
         type: Recreate
       volumeMounts: []
       volumes: []
-  - chartName: open-webui
-    chartRepo: application-collection
-    chartVersion: 8.19.1
+  - name: open-webui
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: open-webui
+      chartVersion: 8.19.1
     values:
       affinity: {}
       annotations: {}
@@ -401,9 +407,12 @@ spec:
             type: ClusterIP
           tolerations: []
         url: redis://open-webui-redis:6379/0
-  - chartName: open-webui-mcpo
-    chartRepo: application-collection
-    chartVersion: 1.0.2
+  - name: open-webui-mcpo
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: open-webui-mcpo
+      chartVersion: 1.0.2
     values:
       affinity: {}
       autoscaling:

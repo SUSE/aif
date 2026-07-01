@@ -8,9 +8,12 @@ metadata:
 spec:
   source: SUSE
   components:
-  - chartName: vllm
-    chartRepo: application-collection
-    chartVersion: 0.1.10
+  - name: vllm
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: vllm
+      chartVersion: 0.1.10
     values:
       extraObjects: []
       global:
@@ -159,9 +162,12 @@ spec:
           periodSeconds: 10
         strategy: {}
         tolerations: []
-  - chartName: open-webui
-    chartRepo: application-collection
-    chartVersion: 8.19.1
+  - name: open-webui
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: open-webui
+      chartVersion: 8.19.1
     values:
       affinity: {}
       annotations: {}
@@ -411,9 +417,12 @@ spec:
             type: ClusterIP
           tolerations: []
         url: redis://open-webui-redis:6379/0
-  - chartName: milvus
-    chartRepo: application-collection
-    chartVersion: 5.0.22
+  - name: milvus
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: milvus
+      chartVersion: 5.0.22
     values:
       affinity: {}
       annotations: {}
@@ -931,9 +940,12 @@ spec:
       topologySpreadConstraints: []
       volumeMounts: []
       volumes: []
-  - chartName: open-webui-mcpo
-    chartRepo: application-collection
-    chartVersion: 1.0.2
+  - name: open-webui-mcpo
+    type: Helm
+    helm:
+      chartRepo: application-collection
+      chartName: open-webui-mcpo
+      chartVersion: 1.0.2
     values:
       affinity: {}
       autoscaling:

@@ -15,9 +15,12 @@ spec:
   #
   source: Nvidia
   components:
-  - chartName: nvidia-blueprint-rag
-    chartRepo: nvidia-blueprints
-    chartVersion: v2.6.0
+  - name: nvidia-blueprint-rag
+    type: Helm
+    helm:
+      chartRepo: nvidia-blueprints
+      chartName: nvidia-blueprint-rag
+      chartVersion: v2.6.0
     # vendor: nvidia makes the operator's nvidiaInjector auto-create the
     # conventional ngc-secret (dockerconfigjson for nvcr.io) and ngc-api
     # (NGC_CLI_API_KEY/NGC_API_KEY/NVIDIA_API_KEY) in the release namespace from
