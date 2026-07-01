@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: '24'
           cache: yarn
+          cache-dependency-path: 'ui/'
 
       - run: yarn install --frozen-lockfile --ignore-engines
 
