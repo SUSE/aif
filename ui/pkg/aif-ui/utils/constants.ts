@@ -221,7 +221,8 @@ export const FEATURE_FLAGS = {
   MULTI_CLUSTER: 'multi-cluster',
   OFFLINE_MODE: 'offline-mode',
   BACKUP_RESTORE: 'backup-restore',
-  SECURITY_SCANNING: 'security-scanning'
+  SECURITY_SCANNING: 'security-scanning',
+  STATIC_APP_CATALOG: 'static-app-catalog'
 } as const;
 
 // === Version Requirements ===

@@ -155,6 +155,15 @@ export const FEATURE_DEFINITIONS: Record<FeatureFlag, FeatureFlagDefinition> = {
       kubernetes: '1.21.0'
     },
     documentation: '/docs/features/security-scanning'
+  },
+
+  [FEATURE_FLAGS.STATIC_APP_CATALOG]: {
+    flag: FEATURE_FLAGS.STATIC_APP_CATALOG,
+    name: 'Static App Catalog',
+    description: 'Load applications from static JSON catalog instead of dynamic repository discovery',
+    category: FEATURE_CATEGORIES.CORE,
+    defaultEnabled: true,
+    documentation: '/docs/features/static-app-catalog'
   }
 };
 
