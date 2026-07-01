@@ -9,6 +9,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -237,6 +238,28 @@ func (r *AIWorkloadReconciler) deleteBundle(ctx context.Context, name string) er
 	return stderrors.Join(errs...)
 }
 
+// deleteGitRepo deletes the Fleet GitRepo from whichever fleet workspace namespace it lives in.
+// Like deleteHelmOp, it attempts every namespace and joins any non-NotFound errors.
+// If the GitRepo GVK isn't registered in the scheme (e.g., a Helm-only test suite), it
+// returns nil — the resource doesn't exist, so deletion is a no-op.
+func (r *AIWorkloadReconciler) deleteGitRepo(ctx context.Context, name string) error {
+	var errs []error
+	for _, ns := range fleetNamespaces {
+		gr := &unstructured.Unstructured{}
+		gr.SetGroupVersionKind(gitRepoGVK)
+		gr.SetName(name)
+		gr.SetNamespace(ns)
+		if err := r.Delete(ctx, gr); err != nil {
+			// Ignore NotFound (resource doesn't exist) and NoKindMatchError
+			// (GVK not registered in scheme, e.g. Helm-only test suite).
+			if !errors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+				errs = append(errs, fmt.Errorf("delete GitRepo %s/%s: %w", ns, name, err))
+			}
+		}
+	}
+	return stderrors.Join(errs...)
+}
+
 func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
 	bdList := &unstructured.UnstructuredList{}
 	bdList.SetGroupVersionKind(schema.GroupVersionKind{
@@ -291,15 +314,21 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 			// Delete the HelmOp first so Fleet does not re-create the Bundle,
 			// then delete the Bundle directly (Fleet links them by label only —
 			// no ownerReference — so Fleet's own cleanup is unreliable).
+			// Also delete GitRepo (for Kustomize components): Fleet similarly does
+			// not cascade-delete the generated Bundle, so both need explicit cleanup.
 			//
-			// Keep the finalizer and retry (return the error) if either delete
+			// Keep the finalizer and retry (return the error) if any delete
 			// fails: removing it now would leave the Bundle and its deployed
 			// resources orphaned forever, which is the exact failure this fix
-			// targets. Only delete the Bundle once the HelmOp delete has
-			// succeeded — otherwise a still-live HelmOp could be reconciled and
-			// re-generate the Bundle.
+			// targets. Only delete the Bundle once the HelmOp/GitRepo delete has
+			// succeeded — otherwise a still-live HelmOp/GitRepo could be reconciled
+			// and re-generate the Bundle.
 			if err := r.deleteHelmOp(ctx, name); err != nil {
 				l.Error(err, "HelmOp delete failed — keeping finalizer, will retry", "name", name)
+				return ctrl.Result{}, err
+			}
+			if err := r.deleteGitRepo(ctx, name); err != nil {
+				l.Error(err, "GitRepo delete failed — keeping finalizer, will retry", "name", name)
 				return ctrl.Result{}, err
 			}
 			if err := r.deleteBundle(ctx, name); err != nil {
@@ -308,13 +337,17 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 			}
 		}
 	case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-		// Delete only the git file — it is the source of truth. Fleet's GitRepo
-		// controller then removes the generated HelmOp and Bundle. Do NOT delete
-		// the Bundle directly here (as the FleetBundle case does): the git state
-		// still references it, so Fleet would race to re-create it.
+		// Delete the git file — it is the source of truth for Helm components.
+		// For Kustomize components (which emit a GitRepo directly), also delete
+		// the GitRepo: the git file references it but Fleet's GitRepo controller
+		// does not auto-delete on git file removal in this deployment mode.
 		for _, name := range w.Spec.FleetBundleNames {
 			if err := r.deleteGitFileByName(ctx, w, name); err != nil {
 				l.Error(err, "git file deletion failed — proceeding with finalizer removal", "name", name)
+			}
+			if err := r.deleteGitRepo(ctx, name); err != nil {
+				l.Error(err, "GitRepo delete failed — keeping finalizer, will retry", "name", name)
+				return ctrl.Result{}, err
 			}
 		}
 	}

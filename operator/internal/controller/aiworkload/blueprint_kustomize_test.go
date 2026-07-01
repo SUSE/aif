@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -287,5 +288,118 @@ func TestHelmAndKustomizeCoexist(t *testing.T) {
 	repo2, _, _ := unstructured.NestedString(gr.Object, "spec", "repo")
 	if repo2 != "https://github.com/example/app" {
 		t.Errorf("GitRepo spec.repo: got %q want %q", repo2, "https://github.com/example/app")
+	}
+}
+
+// TestGitRepoDeletedOnTeardown verifies that when an AIWorkload with a Kustomize
+// component is deleted, the GitRepo is removed during finalizer cleanup.
+func TestGitRepoDeletedOnTeardown(t *testing.T) {
+	const opNS = "suse-ai-operator"
+
+	scheme := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+	scheme.AddKnownTypeWithName(gitRepoGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepoList",
+	}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(helmOpGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "HelmOpList",
+	}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList",
+	}, &unstructured.UnstructuredList{})
+
+	// Pre-create a GitRepo that the cleanup must delete.
+	gr := &unstructured.Unstructured{}
+	gr.SetGroupVersionKind(gitRepoGVK)
+	gr.SetName("wl-podinfo")
+	gr.SetNamespace("fleet-local")
+	_ = unstructured.SetNestedField(gr.Object, "https://github.com/stefanprodan/podinfo", "spec", "repo")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gr).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+
+	ctx := context.Background()
+
+	// Verify GitRepo exists before deletion
+	var grBefore unstructured.Unstructured
+	grBefore.SetGroupVersionKind(gitRepoGVK)
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "fleet-local", Name: "wl-podinfo"}, &grBefore); err != nil {
+		t.Fatalf("GitRepo should exist before deletion: %v", err)
+	}
+
+	// Call deleteGitRepo
+	if err := r.deleteGitRepo(ctx, "wl-podinfo"); err != nil {
+		t.Fatalf("deleteGitRepo: %v", err)
+	}
+
+	// Verify GitRepo is deleted
+	var grAfter unstructured.Unstructured
+	grAfter.SetGroupVersionKind(gitRepoGVK)
+	err := c.Get(ctx, types.NamespacedName{Namespace: "fleet-local", Name: "wl-podinfo"}, &grAfter)
+	if err == nil {
+		t.Error("GitRepo should be deleted but still exists")
+	}
+	// NotFound is expected; other errors are real failures
+	if err != nil && !errors.IsNotFound(err) {
+		t.Errorf("unexpected error after deletion: %v", err)
+	}
+}
+
+// TestGitRepoStatusAggregation verifies that BundleDeployments labeled with
+// fleet.cattle.io/repo-name (GitRepo-generated) are aggregated into workload status.
+func TestGitRepoStatusAggregation(t *testing.T) {
+	scheme := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment",
+	}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
+	}, &unstructured.UnstructuredList{})
+
+	// Create a GitRepo-generated BundleDeployment (labeled with repo-name).
+	bd := &unstructured.Unstructured{}
+	bd.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment",
+	})
+	bd.SetName("wl-podinfo-cluster1")
+	bd.SetNamespace("fleet-default")
+	bd.SetLabels(map[string]string{
+		"fleet.cattle.io/repo-name": "wl-podinfo",
+		"fleet.cattle.io/cluster":   "cluster1",
+	})
+	_ = unstructured.SetNestedField(bd.Object, "Ready", "status", "display", "state")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(bd).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			FleetBundleNames: []string{"wl-podinfo"},
+		},
+	}
+
+	if err := r.mirrorBlueprintStatus(context.Background(), w); err != nil {
+		t.Fatalf("mirrorBlueprintStatus: %v", err)
+	}
+
+	// Verify cluster status was aggregated.
+	if len(w.Status.ClusterStatuses) != 1 {
+		t.Fatalf("expected 1 cluster status, got %d", len(w.Status.ClusterStatuses))
+	}
+	cs := w.Status.ClusterStatuses[0]
+	if cs.ClusterID != "cluster1" {
+		t.Errorf("ClusterID: got %q want %q", cs.ClusterID, "cluster1")
+	}
+	if cs.Phase != aiplatformv1alpha1.AIWorkloadClusterPhaseRunning {
+		t.Errorf("Phase: got %q want %q", cs.Phase, aiplatformv1alpha1.AIWorkloadClusterPhaseRunning)
 	}
 }

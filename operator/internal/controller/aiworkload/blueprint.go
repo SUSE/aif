@@ -830,21 +830,40 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 
 // mirrorBlueprintStatus aggregates BundleDeployment statuses across all component bundles.
 // Per-cluster phase is the worst phase across all components for that cluster.
+// Helm components generate BundleDeployments labeled with fleet.cattle.io/bundle-name.
+// Kustomize components (via GitRepo) generate BundleDeployments labeled with
+// fleet.cattle.io/repo-name. Both label types are matched.
 func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
 	clusterPhases := make(map[string]aiplatformv1alpha1.AIWorkloadClusterPhase)
 	clusterMessages := make(map[string]string)
 
 	for _, bundleName := range w.Spec.FleetBundleNames {
-		bdList := &unstructured.UnstructuredList{}
-		bdList.SetGroupVersionKind(schema.GroupVersionKind{
+		// Match both Helm-generated (bundle-name label) and GitRepo-generated
+		// (repo-name label) BundleDeployments. Fleet GitRepo controller sets
+		// fleet.cattle.io/repo-name=<gitrepo-name> on generated bundles.
+		bdListByBundle := &unstructured.UnstructuredList{}
+		bdListByBundle.SetGroupVersionKind(schema.GroupVersionKind{
 			Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
 		})
-		if err := r.List(ctx, bdList, client.MatchingLabels{
+		if err := r.List(ctx, bdListByBundle, client.MatchingLabels{
 			"fleet.cattle.io/bundle-name": bundleName,
 		}); err != nil {
 			return err
 		}
-		for _, bd := range bdList.Items {
+
+		bdListByRepo := &unstructured.UnstructuredList{}
+		bdListByRepo.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
+		})
+		if err := r.List(ctx, bdListByRepo, client.MatchingLabels{
+			"fleet.cattle.io/repo-name": bundleName,
+		}); err != nil {
+			return err
+		}
+
+		// Aggregate statuses from both lists (union).
+		allBDs := append(bdListByBundle.Items, bdListByRepo.Items...)
+		for _, bd := range allBDs {
 			clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
 			if clusterID == "" {
 				continue
