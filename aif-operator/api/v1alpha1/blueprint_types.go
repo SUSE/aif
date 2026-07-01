@@ -348,6 +348,10 @@ type RetainResource struct {
 }
 
 // BlueprintComponent defines one Helm chart in a Blueprint.
+// +kubebuilder:validation:XValidation:rule="self.type == 'Helm' || !has(self.type) ? (self.chartRepo != '' && self.chartName != '') : true",message="chartRepo and chartName required when type=Helm"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Kustomize' ? has(self.kustomize) : true",message="kustomize field required when type=Kustomize"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Manifests' ? has(self.manifests) : true",message="manifests field required when type=Manifests"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Git' ? has(self.git) : true",message="git field required when type=Git"
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name.
 	// +kubebuilder:validation:MinLength=1
@@ -437,10 +441,6 @@ type BlueprintSpec struct {
 	Deprecated bool `json:"deprecated,omitempty"`
 	// Components are the Helm charts included in this blueprint.
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Helm' || !has(self.type) ? (self.chartRepo != '' && self.chartName != '') : true",message="chartRepo and chartName required when type=Helm"
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Kustomize' ? has(self.kustomize) : true",message="kustomize field required when type=Kustomize"
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Manifests' ? has(self.manifests) : true",message="manifests field required when type=Manifests"
-	// +kubebuilder:validation:XValidation:rule="self.type == 'Git' ? has(self.git) : true",message="git field required when type=Git"
 	Components []BlueprintComponent `json:"components"`
 
 	// === v2 FIELDS (preview - not yet functional in v1) ===
