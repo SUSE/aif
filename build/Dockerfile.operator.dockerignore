@@ -1,0 +1,16 @@
+# build artifacts
+bin
+cover.out
+*.exe
+*.tgz
+
+# not needed for image build
+config
+hack
+samples
+test
+.golangci.yml
+Makefile
+PROJECT
+README.md
+VERSION

@@ -7,6 +7,12 @@
 /tmp
 /out-tsc
 
+# Go build artifacts
+/bin
+cover.out
+operator/bin/
+operator/cover.out
+
 # Runtime data
 pids
 *.pid

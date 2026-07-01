@@ -112,7 +112,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          context: aif-operator
+          context: operator
+          file: build/Dockerfile.operator
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           push: true
