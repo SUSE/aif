@@ -1,10 +1,10 @@
 annotations:
   helm.sh/images: |
-    - image: ghcr.io/suse/aif-ui:0.1.0-dev.6
+    - image: ghcr.io/suse/aif-ui:0.1.0-dev.7
       name: aif-ui
 apiVersion: v2
 name: aif-ui
-version: 0.1.0-dev.6
+version: 0.1.0-dev.7
 description: SUSE AI Rancher UI Extension
 type: application
 keywords:
@@ -15,7 +15,7 @@ home: https://github.com/SUSE/aif
 icon: https://raw.githubusercontent.com/SUSE/aif/main/pkg/aif-ui/assets/logo.svg
 sources:
   - https://github.com/SUSE/aif
-appVersion: 0.1.0-dev.6
+appVersion: 0.1.0-dev.7
 maintainers:
   - url: https://www.suse.com/
     name: SUSE LLC
