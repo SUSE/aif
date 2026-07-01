@@ -187,3 +187,70 @@ func TestCreateBlueprint_InvalidJSON(t *testing.T) {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestCreateBlueprint_DuplicateNameVersion_Returns409(t *testing.T) {
+	h := newBlueprintHandler(t)
+	body := map[string]any{
+		"spec": map[string]any{
+			"displayName": "My Stack",
+			"version":     "1.0.0",
+			"components": []any{
+				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+			},
+		},
+	}
+	b, _ := json.Marshal(body)
+
+	req1 := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(b))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	h.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("first create: expected 201, got %d: %s", w1.Code, w1.Body.String())
+	}
+
+	req2 := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(b))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("duplicate create: expected 409, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestCreateBlueprint_EditSavingExistingVersion_Returns409(t *testing.T) {
+	h := newBlueprintHandler(t)
+
+	makeBody := func(version string) []byte {
+		body := map[string]any{
+			"spec": map[string]any{
+				"displayName": "My Stack",
+				"version":     version,
+				"components": []any{
+					map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+				},
+			},
+		}
+		b, _ := json.Marshal(body)
+		return b
+	}
+
+	for _, version := range []string{"1.0.0", "2.0.0"} {
+		req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(makeBody(version)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create %s: expected 201, got %d: %s", version, w.Code, w.Body.String())
+		}
+	}
+
+	// Simulate UI "Save as New Version" from editing v1.0.0 → v2.0.0 (already exists)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(makeBody("2.0.0")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("save as existing version: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}

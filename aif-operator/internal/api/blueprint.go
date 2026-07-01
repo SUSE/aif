@@ -28,8 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const blueprintFieldOwner = "aif-operator-api"
-
 var nonAlphanumRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 // BlueprintHandler serves Blueprint CRUD endpoints.
@@ -107,11 +105,14 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 	}
 	bp.Spec = body.Spec
 
-	if err := h.client.Patch(
-		r.Context(), bp, client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(blueprintFieldOwner),
-	); err != nil {
+	if err := h.client.Create(r.Context(), bp); err != nil {
+		if errors.IsAlreadyExists(err) {
+			writeError(w, http.StatusConflict, fmt.Errorf(
+				"%w: blueprint with normalized name %q and version %q already exists — choose a different name or version",
+				ErrConflict, slug, body.Spec.Version,
+			))
+			return
+		}
 		if errors.IsInvalid(err) {
 			writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 			return
