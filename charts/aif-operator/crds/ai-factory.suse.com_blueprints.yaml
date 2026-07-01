@@ -54,46 +54,91 @@ spec:
               components:
                 description: Components are the Helm charts included in this blueprint.
                 items:
-                  description: BlueprintComponent defines one Helm chart in a Blueprint.
+                  description: BlueprintComponent defines one component in a Blueprint.
                   properties:
-                    chartName:
-                      description: ChartName is the Helm chart name.
-                      minLength: 1
-                      type: string
-                    chartRepo:
-                      description: ChartRepo is the Rancher ClusterRepo name.
-                      minLength: 1
-                      type: string
-                    chartVersion:
-                      description: ChartVersion is the semver chart version.
+                    helm:
+                      description: Helm source; required iff type is Helm.
+                      properties:
+                        chartName:
+                          description: ChartName is the Helm chart name.
+                          minLength: 1
+                          type: string
+                        chartRepo:
+                          description: ChartRepo is the Rancher ClusterRepo name.
+                          minLength: 1
+                          type: string
+                        chartVersion:
+                          description: ChartVersion is the semver chart version.
+                          minLength: 1
+                          type: string
+                      required:
+                      - chartName
+                      - chartRepo
+                      - chartVersion
+                      type: object
+                    kustomize:
+                      description: Kustomize source; required iff type is Kustomize.
+                      properties:
+                        path:
+                          description: Path is the directory containing kustomization.yaml.
+                          minLength: 1
+                          type: string
+                        repo:
+                          description: Repo is the git repository URL containing the
+                            kustomization.
+                          minLength: 1
+                          type: string
+                        revision:
+                          description: Revision is the git branch, tag, or commit.
+                            Defaults to the repo default branch.
+                          type: string
+                      required:
+                      - path
+                      - repo
+                      type: object
+                    name:
+                      description: Name is the component identity within a blueprint
+                        (ordering/reference key).
                       minLength: 1
                       type: string
                     targetNamespace:
                       description: |-
                         TargetNamespace optionally pins this component to a fixed namespace.
-                        When empty, the AIWorkload's targetNamespace (from the install wizard) is used.
-                        Must be a valid DNS-1123 label (lowercase alphanumerics and '-', starting
-                        and ending with an alphanumeric, max 63 chars).
+                        Must be a valid DNS-1123 label.
                       maxLength: 63
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    type:
+                      default: Helm
+                      description: Type selects the content source. Defaults to Helm
+                        for backward-compatible authoring.
+                      enum:
+                      - Helm
+                      - Kustomize
+                      type: string
                     values:
-                      description: Values are the Helm values for this component.
+                      description: Values are deploy-time overrides (Helm values).
                       x-kubernetes-preserve-unknown-fields: true
                     vendor:
                       default: suse
-                      description: |-
-                        Vendor selects the secret-injection profile. Defaults to "suse" so
-                        existing blueprints behave identically after CRD upgrade.
+                      description: Vendor selects the secret-injection profile. Defaults
+                        to "suse".
                       enum:
                       - suse
                       - nvidia
                       type: string
                   required:
-                  - chartName
-                  - chartRepo
-                  - chartVersion
+                  - name
                   type: object
+                  x-kubernetes-validations:
+                  - message: helm is required (and kustomize must be absent) when
+                      type is Helm
+                    rule: 'self.type == ''Helm'' ? has(self.helm) && !has(self.kustomize)
+                      : true'
+                  - message: kustomize is required (and helm must be absent) when
+                      type is Kustomize
+                    rule: 'self.type == ''Kustomize'' ? has(self.kustomize) && !has(self.helm)
+                      : true'
                 minItems: 1
                 type: array
               deprecated:

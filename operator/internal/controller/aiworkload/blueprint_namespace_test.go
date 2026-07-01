@@ -25,14 +25,14 @@ func TestComponentNamespace(t *testing.T) {
 	w.Spec.TargetNamespace = "install-ns"
 
 	t.Run("falls back to workload namespace when component unset", func(t *testing.T) {
-		c := aiplatformv1alpha1.BlueprintComponent{ChartName: "a"}
+		c := aiplatformv1alpha1.BlueprintComponent{Name: "a", Type: aiplatformv1alpha1.ComponentContentTypeHelm, Helm: &aiplatformv1alpha1.BlueprintHelmSource{ChartName: "a"}}
 		if got := componentNamespace(w, c); got != "install-ns" {
 			t.Errorf("expected install-ns, got %q", got)
 		}
 	})
 
 	t.Run("uses component namespace when set", func(t *testing.T) {
-		c := aiplatformv1alpha1.BlueprintComponent{ChartName: "a", TargetNamespace: "fixed-ns"}
+		c := aiplatformv1alpha1.BlueprintComponent{Name: "a", Type: aiplatformv1alpha1.ComponentContentTypeHelm, Helm: &aiplatformv1alpha1.BlueprintHelmSource{ChartName: "a"}, TargetNamespace: "fixed-ns"}
 		if got := componentNamespace(w, c); got != "fixed-ns" {
 			t.Errorf("expected fixed-ns, got %q", got)
 		}
@@ -137,10 +137,10 @@ func TestEnsureBlueprintHelmOp_UsesDefaultNamespace(t *testing.T) {
 		},
 	}
 	comp := aiplatformv1alpha1.BlueprintComponent{
-		ChartRepo:    "nvidia",
-		ChartName:    "k8s-nim-operator",
-		ChartVersion: "3.1.1",
-		Vendor:       aiplatformv1alpha1.ComponentVendorNvidia,
+		Name:   "k8s-nim-operator",
+		Type:   aiplatformv1alpha1.ComponentContentTypeHelm,
+		Helm:   &aiplatformv1alpha1.BlueprintHelmSource{ChartRepo: "nvidia", ChartName: "k8s-nim-operator", ChartVersion: "3.1.1"},
+		Vendor: aiplatformv1alpha1.ComponentVendorNvidia,
 	}
 
 	if err := r.ensureBlueprintHelmOp(context.Background(), w, comp, "bp-comp"); err != nil {
@@ -284,7 +284,7 @@ func TestEnsureBlueprintHelmOp_NamespaceResolution(t *testing.T) {
 
 	t.Run("component override wins", func(t *testing.T) {
 		r := newRepoFakeClient(t)
-		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "pinned", ChartVersion: "1.0.0", TargetNamespace: "fixed-ns"}
+		c := aiplatformv1alpha1.BlueprintComponent{Name: "pinned", Type: aiplatformv1alpha1.ComponentContentTypeHelm, Helm: &aiplatformv1alpha1.BlueprintHelmSource{ChartRepo: "suse-ai", ChartName: "pinned", ChartVersion: "1.0.0"}, TargetNamespace: "fixed-ns"}
 		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-pinned"); err != nil {
 			t.Fatalf("ensureBlueprintHelmOp: %v", err)
 		}
@@ -295,7 +295,7 @@ func TestEnsureBlueprintHelmOp_NamespaceResolution(t *testing.T) {
 
 	t.Run("falls back to install namespace", func(t *testing.T) {
 		r := newRepoFakeClient(t)
-		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "plain", ChartVersion: "1.0.0"}
+		c := aiplatformv1alpha1.BlueprintComponent{Name: "plain", Type: aiplatformv1alpha1.ComponentContentTypeHelm, Helm: &aiplatformv1alpha1.BlueprintHelmSource{ChartRepo: "suse-ai", ChartName: "plain", ChartVersion: "1.0.0"}}
 		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-plain"); err != nil {
 			t.Fatalf("ensureBlueprintHelmOp: %v", err)
 		}

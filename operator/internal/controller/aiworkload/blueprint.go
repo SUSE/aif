@@ -57,7 +57,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	if len(w.Spec.FleetBundleNames) == 0 {
 		names := make([]string, 0, len(bp.Spec.Components))
 		for _, c := range bp.Spec.Components {
-			name := truncateName(w.Name+"-"+slugifyBP(c.ChartName), 63)
+			name := truncateName(w.Name+"-"+slugifyBP(c.Name), 63)
 			names = append(names, name)
 		}
 		w.Spec.FleetBundleNames = names
@@ -100,14 +100,14 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	c aiplatformv1alpha1.BlueprintComponent,
 	bundleName string,
 ) error {
-	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
+	repoInfo, err := r.resolveClusterRepo(ctx, c.Helm.ChartRepo)
 	if err != nil {
-		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
+		return fmt.Errorf("resolve repo %q: %w", c.Helm.ChartRepo, err)
 	}
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
-		"version": c.ChartVersion,
+		"version": c.Helm.ChartVersion,
 		// releaseName uses the chart name (not the full bundleName) so chart
 		// sub-resources templated as `{{ .Release.Name }}-foo` fit under the
 		// 63-char DNS-label limit. bundleName already includes the workload
@@ -118,7 +118,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// the Service. Helm release names are unique per (cluster, namespace),
 		// and Blueprint components are addressed by chart name, so the chart
 		// name alone is the right level of granularity here.
-		"releaseName": capReleaseName(c.ChartName),
+		"releaseName": capReleaseName(c.Helm.ChartName),
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
@@ -138,9 +138,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
-		helmSpec["chart"] = c.ChartName
+		helmSpec["chart"] = c.Helm.ChartName
 	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
+		helmSpec["repo"] = repoInfo.URL + "/" + c.Helm.ChartName
 	}
 	vals := map[string]any{}
 	if c.Values != nil {
@@ -152,7 +152,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals)
 	if err != nil {
-		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return fmt.Errorf("inject secrets for %s: %w", c.Helm.ChartName, err)
 	}
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
@@ -632,14 +632,14 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return nil // already published
 	}
 
-	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
+	repoInfo, err := r.resolveClusterRepo(ctx, c.Helm.ChartRepo)
 	if err != nil {
-		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
+		return fmt.Errorf("resolve repo %q: %w", c.Helm.ChartRepo, err)
 	}
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
-		"version": c.ChartVersion,
+		"version": c.Helm.ChartVersion,
 		// releaseName uses the chart name (not the full bundleName) so chart
 		// sub-resources templated as `{{ .Release.Name }}-foo` fit under the
 		// 63-char DNS-label limit. bundleName already includes the workload
@@ -650,7 +650,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// the Service. Helm release names are unique per (cluster, namespace),
 		// and Blueprint components are addressed by chart name, so the chart
 		// name alone is the right level of granularity here.
-		"releaseName": capReleaseName(c.ChartName),
+		"releaseName": capReleaseName(c.Helm.ChartName),
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
@@ -661,9 +661,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 	if !isOCI {
 		helmSpec["repo"] = repoInfo.URL
-		helmSpec["chart"] = c.ChartName
+		helmSpec["chart"] = c.Helm.ChartName
 	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
+		helmSpec["repo"] = repoInfo.URL + "/" + c.Helm.ChartName
 	}
 
 	// Load the blueprint component's own values BEFORE injecting pull secrets —
@@ -677,7 +677,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals)
 	if err != nil {
-		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return fmt.Errorf("inject secrets for %s: %w", c.Helm.ChartName, err)
 	}
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {

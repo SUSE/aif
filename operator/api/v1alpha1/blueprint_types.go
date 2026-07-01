@@ -51,8 +51,17 @@ const (
 	BlueprintOriginCustom BlueprintOrigin = "Custom"
 )
 
-// BlueprintComponent defines one Helm chart in a Blueprint.
-type BlueprintComponent struct {
+// ComponentContentType is the component source/deploy discriminator.
+// +kubebuilder:validation:Enum=Helm;Kustomize
+type ComponentContentType string
+
+const (
+	ComponentContentTypeHelm      ComponentContentType = "Helm"
+	ComponentContentTypeKustomize ComponentContentType = "Kustomize"
+)
+
+// BlueprintHelmSource describes a Helm-chart-sourced component (via a Rancher ClusterRepo).
+type BlueprintHelmSource struct {
 	// ChartRepo is the Rancher ClusterRepo name.
 	// +kubebuilder:validation:MinLength=1
 	ChartRepo string `json:"chartRepo"`
@@ -62,22 +71,51 @@ type BlueprintComponent struct {
 	// ChartVersion is the semver chart version.
 	// +kubebuilder:validation:MinLength=1
 	ChartVersion string `json:"chartVersion"`
-	// Vendor selects the secret-injection profile. Defaults to "suse" so
-	// existing blueprints behave identically after CRD upgrade.
+}
+
+// KustomizeSource describes a kustomize-sourced component, rendered by Fleet from git.
+type KustomizeSource struct {
+	// Repo is the git repository URL containing the kustomization.
+	// +kubebuilder:validation:MinLength=1
+	Repo string `json:"repo"`
+	// Revision is the git branch, tag, or commit. Defaults to the repo default branch.
+	// +optional
+	Revision string `json:"revision,omitempty"`
+	// Path is the directory containing kustomization.yaml.
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+}
+
+// BlueprintComponent defines one component in a Blueprint.
+// +kubebuilder:validation:XValidation:rule="self.type == 'Helm' ? has(self.helm) && !has(self.kustomize) : true",message="helm is required (and kustomize must be absent) when type is Helm"
+// +kubebuilder:validation:XValidation:rule="self.type == 'Kustomize' ? has(self.kustomize) && !has(self.helm) : true",message="kustomize is required (and helm must be absent) when type is Kustomize"
+type BlueprintComponent struct {
+	// Name is the component identity within a blueprint (ordering/reference key).
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// Type selects the content source. Defaults to Helm for backward-compatible authoring.
+	// +kubebuilder:default=Helm
+	// +optional
+	Type ComponentContentType `json:"type,omitempty"`
+	// Vendor selects the secret-injection profile. Defaults to "suse".
 	// +kubebuilder:default=suse
 	// +optional
 	Vendor ComponentVendor `json:"vendor,omitempty"`
-	// Values are the Helm values for this component.
-	// +optional
-	Values *apixv1.JSON `json:"values,omitempty"`
 	// TargetNamespace optionally pins this component to a fixed namespace.
-	// When empty, the AIWorkload's targetNamespace (from the install wizard) is used.
-	// Must be a valid DNS-1123 label (lowercase alphanumerics and '-', starting
-	// and ending with an alphanumeric, max 63 chars).
+	// Must be a valid DNS-1123 label.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	TargetNamespace string `json:"targetNamespace,omitempty"`
+	// Values are deploy-time overrides (Helm values).
+	// +optional
+	Values *apixv1.JSON `json:"values,omitempty"`
+	// Helm source; required iff type is Helm.
+	// +optional
+	Helm *BlueprintHelmSource `json:"helm,omitempty"`
+	// Kustomize source; required iff type is Kustomize.
+	// +optional
+	Kustomize *KustomizeSource `json:"kustomize,omitempty"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.

@@ -345,8 +345,8 @@ var _ = Describe("Blueprint AIWorkload", func() {
 					DisplayName: "My Stack",
 					Version:     "1.0.0",
 					Components: []aiplatformv1alpha1.BlueprintComponent{
-						{ChartRepo: "suse-ai", ChartName: "ollama", ChartVersion: "1.0.0"},
-						{ChartRepo: "suse-ai", ChartName: "qdrant", ChartVersion: "1.2.0"},
+						{Name: "ollama", Type: aiplatformv1alpha1.ComponentContentTypeHelm, Helm: &aiplatformv1alpha1.BlueprintHelmSource{ChartRepo: "suse-ai", ChartName: "ollama", ChartVersion: "1.0.0"}},
+						{Name: "qdrant", Type: aiplatformv1alpha1.ComponentContentTypeHelm, Helm: &aiplatformv1alpha1.BlueprintHelmSource{ChartRepo: "suse-ai", ChartName: "qdrant", ChartVersion: "1.2.0"}},
 					},
 				},
 			}

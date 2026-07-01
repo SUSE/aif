@@ -8,12 +8,12 @@ import (
 func TestBlueprintTypesCompile(t *testing.T) {
 	_ = Blueprint{}
 	_ = BlueprintList{}
-	_ = BlueprintComponent{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}
+	_ = BlueprintComponent{Name: "n", Type: ComponentContentTypeHelm, Helm: &BlueprintHelmSource{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}}
 	_ = BlueprintSpec{
 		DisplayName: "d",
 		Version:     "1.0.0",
 		Source:      BlueprintOriginCustom,
-		Components:  []BlueprintComponent{{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}},
+		Components:  []BlueprintComponent{{Name: "n", Type: ComponentContentTypeHelm, Helm: &BlueprintHelmSource{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}}},
 	}
 	_ = BlueprintNameLabel
 	_ = BlueprintVersionLabel
@@ -24,7 +24,7 @@ func TestBlueprintTypesCompile(t *testing.T) {
 
 func TestBlueprintComponentTargetNamespaceJSON(t *testing.T) {
 	// Set value round-trips through JSON under the "targetNamespace" key.
-	in := BlueprintComponent{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0", TargetNamespace: "ai-system"}
+	in := BlueprintComponent{Name: "n", Type: ComponentContentTypeHelm, Helm: &BlueprintHelmSource{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}, TargetNamespace: "ai-system"}
 	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -41,7 +41,7 @@ func TestBlueprintComponentTargetNamespaceJSON(t *testing.T) {
 	}
 
 	// Empty value is omitted from JSON (omitempty).
-	empty, _ := json.Marshal(BlueprintComponent{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"})
+	empty, _ := json.Marshal(BlueprintComponent{Name: "n", Type: ComponentContentTypeHelm, Helm: &BlueprintHelmSource{ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0"}})
 	if string(empty) == "" || jsonHasKey(empty, "targetNamespace") {
 		t.Errorf("expected targetNamespace omitted when empty, got %s", empty)
 	}
