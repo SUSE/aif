@@ -185,6 +185,15 @@ export const RELEASE_FEATURES: Record<FeatureFlag, FeatureConfig> = {
     },
     defaultEnabled: false,
     experimental: true
+  },
+
+  [FEATURE_FLAGS.STATIC_APP_CATALOG]: {
+    flag: FEATURE_FLAGS.STATIC_APP_CATALOG,
+    displayName: 'Static Application Catalog',
+    description: 'Use pre-configured static catalog instead of dynamic repository discovery',
+    requirements: {},
+    defaultEnabled: false,
+    experimental: true
   }
 };
 

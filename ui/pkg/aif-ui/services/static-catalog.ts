@@ -1,6 +1,6 @@
-import type { StaticAppCatalog, AppCollectionItem } from '../types/app-types';
+import type { StaticAppCatalog } from '../types/app-types';
+import type { AppCollectionItem } from './app-collection';
 import { log as logger } from '../utils/logger';
-import catalogJson from '../assets/app-catalog.json';
 
 /**
  * Validate that the catalog structure matches StaticAppCatalog interface
@@ -104,7 +104,7 @@ export async function fetchStaticCatalog(): Promise<StaticAppCatalog> {
     component: 'StaticCatalog'
   });
 
-  const catalog = catalogJson as StaticAppCatalog;
+  const catalog = require('../assets/app-catalog.json') as StaticAppCatalog;
   validateCatalogStructure(catalog);
 
   logger.info('Bundled catalog loaded successfully', {
