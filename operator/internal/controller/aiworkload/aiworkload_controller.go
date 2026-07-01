@@ -33,6 +33,7 @@ var (
 	bundleDeploymentGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment"}
 	bundleGVK           = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
 	helmOpGVK           = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "HelmOp"}
+	gitRepoGVK          = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepo"}
 	fleetNamespaces     = []string{"fleet-local", "fleet-default"}
 )
 

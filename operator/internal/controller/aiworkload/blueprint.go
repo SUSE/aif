@@ -74,7 +74,14 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			if i >= len(w.Spec.FleetBundleNames) {
 				break
 			}
-			if err := r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i]); err != nil {
+			var err error
+			switch c.Type {
+			case aiplatformv1alpha1.ComponentContentTypeKustomize:
+				err = r.ensureBlueprintKustomize(ctx, w, c, w.Spec.FleetBundleNames[i])
+			default: // Helm (also the zero value, defaulted by the apiserver)
+				err = r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i])
+			}
+			if err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -83,7 +90,14 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			if i >= len(w.Spec.FleetBundleNames) {
 				break
 			}
-			if err := r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i]); err != nil {
+			var err error
+			switch c.Type {
+			case aiplatformv1alpha1.ComponentContentTypeKustomize:
+				err = r.ensureBlueprintKustomize(ctx, w, c, w.Spec.FleetBundleNames[i])
+			default: // Helm (also the zero value, defaulted by the apiserver)
+				err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
+			}
+			if err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -211,6 +225,71 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 			client.FieldOwner("aif-operator"),
 		); err != nil {
 			return fmt.Errorf("patch HelmOp %s/%s: %w", pair.ns, bundleName, err)
+		}
+	}
+	return nil
+}
+
+// ensureBlueprintKustomize creates (or patches) a Fleet GitRepo for one
+// kustomize-sourced blueprint component. Secret injection is intentionally not
+// applied here in this increment; kustomize components authenticate via their
+// own git credentials.
+func (r *AIWorkloadReconciler) ensureBlueprintKustomize(
+	ctx context.Context,
+	w *aiplatformv1alpha1.AIWorkload,
+	c aiplatformv1alpha1.BlueprintComponent,
+	bundleName string,
+) error {
+	ns := componentNamespace(w, c)
+
+	// Build the same local/downstream targets the Helm path uses.
+	localTargets := make([]any, 0)
+	downstreamTargets := make([]any, 0)
+	for _, id := range w.Spec.TargetClusters {
+		if id == "local" {
+			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
+		} else {
+			downstreamTargets = append(downstreamTargets, map[string]any{
+				"clusterSelector": map[string]any{
+					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
+				},
+			})
+		}
+	}
+
+	// Emit one GitRepo per workspace (fleet-local for local targets, fleet-default
+	// for downstream targets). This mirrors the HelmOp path's workspace dispatch.
+	for _, pair := range []struct {
+		ns      string
+		targets []any
+	}{
+		{"fleet-local", localTargets},
+		{"fleet-default", downstreamTargets},
+	} {
+		if len(pair.targets) == 0 {
+			continue
+		}
+
+		gr := &unstructured.Unstructured{}
+		gr.SetGroupVersionKind(gitRepoGVK)
+		gr.SetName(bundleName)
+		gr.SetNamespace(pair.ns)
+
+		_ = unstructured.SetNestedField(gr.Object, c.Kustomize.Repo, "spec", "repo")
+		_ = unstructured.SetNestedSlice(gr.Object, []any{c.Kustomize.Path}, "spec", "paths")
+		if c.Kustomize.Revision != "" {
+			_ = unstructured.SetNestedField(gr.Object, c.Kustomize.Revision, "spec", "revision")
+		}
+		if ns != "" {
+			_ = unstructured.SetNestedField(gr.Object, ns, "spec", "targetNamespace")
+		}
+		_ = unstructured.SetNestedSlice(gr.Object, pair.targets, "spec", "targets")
+
+		if err := r.Patch(ctx, gr, client.Apply,
+			client.ForceOwnership,
+			client.FieldOwner("aif-operator"),
+		); err != nil {
+			return fmt.Errorf("patch GitRepo %s/%s: %w", pair.ns, bundleName, err)
 		}
 	}
 	return nil
