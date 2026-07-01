@@ -107,6 +107,27 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	return ctrl.Result{}, r.mirrorBlueprintStatus(ctx, w)
 }
 
+// blueprintFleetTargets builds the local/downstream target slices from
+// w.Spec.TargetClusters for Fleet bundle dispatch. Returns separate slices for
+// local targets (bound to fleet-local workspace) and downstream targets (bound
+// to fleet-default workspace).
+func (r *AIWorkloadReconciler) blueprintFleetTargets(w *aiplatformv1alpha1.AIWorkload) (localTargets, downstreamTargets []any) {
+	localTargets = make([]any, 0)
+	downstreamTargets = make([]any, 0)
+	for _, id := range w.Spec.TargetClusters {
+		if id == "local" {
+			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
+		} else {
+			downstreamTargets = append(downstreamTargets, map[string]any{
+				"clusterSelector": map[string]any{
+					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
+				},
+			})
+		}
+	}
+	return localTargets, downstreamTargets
+}
+
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
 func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ctx context.Context,
@@ -173,19 +194,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["values"] = vals
 	}
 
-	localTargets := make([]any, 0)
-	downstreamTargets := make([]any, 0)
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
-		} else {
-			downstreamTargets = append(downstreamTargets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
+	localTargets, downstreamTargets := r.blueprintFleetTargets(w)
 
 	for _, pair := range []struct {
 		ns      string
@@ -243,19 +252,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintKustomize(
 	ns := componentNamespace(w, c)
 
 	// Build the same local/downstream targets the Helm path uses.
-	localTargets := make([]any, 0)
-	downstreamTargets := make([]any, 0)
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
-		} else {
-			downstreamTargets = append(downstreamTargets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
+	localTargets, downstreamTargets := r.blueprintFleetTargets(w)
 
 	// Emit one GitRepo per workspace (fleet-local for local targets, fleet-default
 	// for downstream targets). This mirrors the HelmOp path's workspace dispatch.
