@@ -378,29 +378,32 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 		t.Errorf("ClusterRepo clientSecret = %q, want %q", secretName, credentials.AuthSecretApplicationCollection)
 	}
 
+	// The blueprint repo (https://helm.ngc.nvidia.com/nvidia/blueprint) is PUBLIC,
+	// so it must be created ANONYMOUS just like the /nvidia charts repo. Presenting
+	// an NGC key that is not entitled to a path makes NGC return 403 (surfaced by
+	// Rancher as "no API version specified"); anonymous access serves the public
+	// index. Regression guard.
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoNvidiaBlueprint}, repo); err != nil {
-		t.Fatalf("expected nvidia-blueprint ClusterRepo: %v", err)
+		t.Fatalf("expected nvidia-blueprints ClusterRepo: %v", err)
 	}
-	nvSecret, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
-	if nvSecret != credentials.AuthSecretNvidia {
-		t.Errorf("nvidia-blueprint clientSecret = %q, want %q", nvSecret, credentials.AuthSecretNvidia)
+	if nvSecret, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && nvSecret != "" {
+		t.Errorf("nvidia-blueprints ClusterRepo must be anonymous, got clientSecret = %q", nvSecret)
 	}
 
-	// ngc-helm-auth must be mirrored to every consuming namespace so a rotated
-	// key propagates without needing an AIWorkload reconcile: cattle-system (the
-	// ClusterRepo's clientSecret) plus the Fleet workspaces (HelmOp
-	// helmSecretName). Regression guard for the stale-fleet-mirror bug.
+	// In connected mode both NGC repos are anonymous, so the ngc-helm-auth mirror
+	// is unused and must not be created in any consuming namespace. Guards against
+	// an orphan/stale mirror lingering after a connected-mode reconcile.
 	for _, ns := range []string{"cattle-system", "fleet-local", "fleet-default"} {
 		authSec := &corev1.Secret{}
-		if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: ns}, authSec); err != nil {
-			t.Errorf("expected %s in namespace %s: %v", credentials.AuthSecretNvidia, ns, err)
+		err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: ns}, authSec)
+		if err == nil {
+			t.Errorf("expected no %s in namespace %s (connected mode is anonymous)", credentials.AuthSecretNvidia, ns)
+		} else if !apierrors.IsNotFound(err) {
+			t.Errorf("unexpected error checking %s in %s: %v", credentials.AuthSecretNvidia, ns, err)
 		}
 	}
 
-	// The public NGC charts catalog must be ANONYMOUS (no clientSecret).
-	// Presenting a key not entitled to the full /nvidia path makes NGC return
-	// 403 (surfaced by Rancher as "no API version specified"); anonymous access
-	// serves the public index. Regression guard for that fix.
+	// The public NGC charts catalog must also be ANONYMOUS (no clientSecret).
 	pubRepo := &unstructured.Unstructured{}
 	pubRepo.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",

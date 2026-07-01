@@ -525,23 +525,25 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 
 	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
 
-	secretName := ""
-	changed := false
-	if nvUser != nil && nvToken != nil {
-		var err error
-		secretName, changed, err = r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
-		if err != nil {
-			return err
-		}
-	}
-
-	if secretName == "" {
+	// Configured NVIDIA credentials are the signal that NVIDIA is in use. Without
+	// them, tear every NVIDIA repo + mirror back down.
+	if nvUser == nil || nvToken == nil {
 		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
 	}
 
 	if nvURL != "" {
-		// Air-gap: a single gated OCI repo. Prune the public blueprint repo
-		// in case we are switching modes.
+		// Air-gap: a single gated OCI repo at a private mirror, which genuinely
+		// needs auth. Prune the public blueprint repo in case we are switching
+		// modes.
+		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
+		if err != nil {
+			return err
+		}
+		if secretName == "" {
+			// Refs are set but unreadable: nothing to authenticate the private
+			// mirror with, so tear the repos down rather than create a broken one.
+			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+		}
 		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
 			return err
 		}
@@ -554,28 +556,25 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		return nil
 	}
 
-	// Public NGC charts catalog: created WITHOUT a clientSecret (anonymous).
-	// NGC serves https://helm.ngc.nvidia.com/nvidia/index.yaml anonymously
-	// (HTTP 302 -> valid index), but returns 403 when presented a valid NGC key
-	// that is NOT entitled to the full /nvidia catalog (e.g. a key scoped to
-	// /nvidia/blueprint). Rancher then surfaces that 403 body as the misleading
-	// "no API version specified". Sending no credential restores public access.
-	// (This matches the pre-SettingsReconciler Helm chart, which left this repo
-	// anonymous.) The nvidia presence of credentials still gates creation above;
-	// blueprint and the air-gap OCI repo keep their auth because those paths are
-	// what NGC keys are typically entitled to / require.
+	// Connected: both NGC repos are PUBLIC — https://helm.ngc.nvidia.com/nvidia
+	// and .../nvidia/blueprint each serve their index anonymously. Create them
+	// WITHOUT a clientSecret: presenting a valid NGC key that is NOT entitled to a
+	// path makes NGC return 403, which Rancher surfaces as the misleading "no API
+	// version specified". Sending no credential restores public access (this also
+	// matches what the UI extension creates, so the two reconcilers agree instead
+	// of fighting over the blueprint repo's clientSecret).
+	//
+	// Because both repos are anonymous, the ngc-helm-auth mirror is unused here
+	// (HelmOp helmSecretName is derived from the repo's now-empty clientSecret, so
+	// nothing consumes it). Delete any copy left from a previous air-gap config so
+	// it can't go stale.
+	if err := r.deleteAuthSecret(ctx, credentials.AuthSecretNvidia); err != nil {
+		return err
+	}
 	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, ""); err != nil {
 		return err
 	}
-	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, secretName); err != nil {
-		return err
-	}
-	if changed {
-		// Only the blueprint repo authenticates (the public charts repo is
-		// anonymous), so it's the one whose cached auth must be refreshed.
-		return r.forceUpdateClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint)
-	}
-	return nil
+	return r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, "")
 }
 
 // pruneRegistryRepos deletes the given ClusterRepos and the registry's
