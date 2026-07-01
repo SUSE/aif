@@ -163,7 +163,7 @@ export function hasInstallAIExtension(force = false): Promise<boolean> {
 
 async function _doCheckExtension(): Promise<boolean> {
   try {
-    const url = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/apis/ai-platform.suse.com/v1alpha1/installaiextensions`;
+    const url = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/apis/ai-factory.suse.com/v1alpha1/installaiextensions`;
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (res.status === 403) {
       extensionForbidden = true;

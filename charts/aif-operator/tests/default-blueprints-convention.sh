@@ -22,8 +22,8 @@ for f in "$DIR"/*.yaml; do
   dn="$(yq '.spec.displayName' "$f")"
   ver="$(yq '.spec.version' "$f")"
   name="$(yq '.metadata.name' "$f")"
-  lname="$(yq '.metadata.labels."ai-platform.suse.com/blueprint-name"' "$f")"
-  lver="$(yq '.metadata.labels."ai-platform.suse.com/blueprint-version"' "$f")"
+  lname="$(yq '.metadata.labels."ai-factory.suse.com/blueprint-name"' "$f")"
+  lver="$(yq '.metadata.labels."ai-factory.suse.com/blueprint-version"' "$f")"
 
   # Treat a missing field (yq prints "null") as a hard failure rather than
   # silently slugifying/comparing the literal string "null".

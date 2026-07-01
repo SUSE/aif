@@ -224,7 +224,7 @@ func TestSettingsController_StatusUpdateSurvivesTransientConflict(t *testing.T) 
 		conflicts++
 		if conflicts == 1 {
 			return apierrors.NewConflict(
-				schema.GroupResource{Group: "ai-platform.suse.com", Resource: "settings"},
+				schema.GroupResource{Group: "ai-factory.suse.com", Resource: "settings"},
 				credentials.SettingsName,
 				context.DeadlineExceeded, // any wrapped error; only the Conflict status matters
 			)

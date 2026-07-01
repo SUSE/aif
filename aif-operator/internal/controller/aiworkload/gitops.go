@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	gitSyncAnnotation    = "ai-platform.suse.com/last-git-sync"
+	gitSyncAnnotation    = "ai-factory.suse.com/last-git-sync"
 	operatorSettingsName = "settings"
 )
 

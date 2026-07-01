@@ -13,7 +13,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
-const finalizerName = "ai-platform.suse.com/finalizer"
+const finalizerName = "ai-factory.suse.com/finalizer"
 
 func (r *InstallAIExtensionReconciler) ensureFinalizer(
 	ctx context.Context,

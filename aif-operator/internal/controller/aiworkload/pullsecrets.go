@@ -161,7 +161,7 @@ const (
 	// (ReplicaSet, StatefulSet, DaemonSet, Job, …) every time the operator
 	// bounces a pod owned by that controller. It is read to decide whether
 	// to keep bouncing or give up.
-	chartPodBounceAnnotation = "ai-platform.suse.com/pull-secret-bounce-count"
+	chartPodBounceAnnotation = "ai-factory.suse.com/pull-secret-bounce-count"
 	// chartPodMaxBounces is the hard cap per controller. Once reached, the
 	// operator stops bouncing pods of that controller — the failure
 	// (ImagePullBackOff) stays visible so the user can investigate.
@@ -563,8 +563,8 @@ func (r *AIWorkloadReconciler) cleanupPullSecretBundles(
 	var bundles unstructured.UnstructuredList
 	bundles.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"})
 	selector := client.MatchingLabels{
-		"ai-platform.suse.com/owner-name":      w.Name,
-		"ai-platform.suse.com/owner-namespace": w.Namespace,
+		"ai-factory.suse.com/owner-name":      w.Name,
+		"ai-factory.suse.com/owner-namespace": w.Namespace,
 	}
 	if err := r.List(ctx, &bundles, selector); err != nil {
 		return fmt.Errorf("list pull-secret bundles for %s/%s: %w", w.Namespace, w.Name, err)

@@ -90,7 +90,7 @@ rules:
       - get
       - list
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - installaiextensions
     verbs:
@@ -102,13 +102,13 @@ rules:
       - update
       - watch
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - installaiextensions/finalizers
     verbs:
       - update
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - installaiextensions/status
     verbs:
@@ -143,7 +143,7 @@ rules:
       - patch
       - update
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - settings
     verbs:
@@ -155,7 +155,7 @@ rules:
       - update
       - watch
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - settings/status
     verbs:
@@ -163,7 +163,7 @@ rules:
       - patch
       - update
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - blueprints
     verbs:
@@ -175,7 +175,7 @@ rules:
       - delete
       - update
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - aiworkloads
     verbs:
@@ -187,7 +187,7 @@ rules:
       - update
       - watch
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - aiworkloads/status
     verbs:
@@ -195,7 +195,7 @@ rules:
       - patch
       - update
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - aiworkloads/finalizers
     verbs:

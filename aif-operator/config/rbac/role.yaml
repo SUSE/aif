@@ -54,7 +54,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ai-platform.suse.com
+  - ai-factory.suse.com
   resources:
   - aiworkloads
   - blueprints
@@ -69,14 +69,14 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ai-platform.suse.com
+  - ai-factory.suse.com
   resources:
   - aiworkloads/finalizers
   - installaiextensions/finalizers
   verbs:
   - update
 - apiGroups:
-  - ai-platform.suse.com
+  - ai-factory.suse.com
   resources:
   - aiworkloads/status
   - installaiextensions/status

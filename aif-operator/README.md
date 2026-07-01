@@ -43,7 +43,7 @@ This will deploy the SUSE AI Operator into the `aif-operator` namespace.
 2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the extension:
 
 ```yaml
-apiVersion: ai-platform.suse.com/v1alpha1
+apiVersion: ai-factory.suse.com/v1alpha1
 kind: InstallAIExtension
 metadata:
   name: aif-ui
@@ -77,7 +77,7 @@ helm uninstall aif-operator -n aif-operator
 
 3. **Delete the CRDs.** After uninstalling the operator, you remove the associated Custom Resource Definitions (CRDs). To delete the InstallAIExtension CRD, use:
 ```sh
-kubectl delete crd installaiextensions.ai-platform.suse.com
+kubectl delete crd installaiextensions.ai-factory.suse.com
 ```
 
 ## Development
@@ -131,7 +131,7 @@ helm uninstall aif-operator -n aif-operator
 **Delete the APIs(CRDs) from the cluster:**
 
 ```sh
-kubectl delete crd installaiextensions.ai-platform.suse.com
+kubectl delete crd installaiextensions.ai-factory.suse.com
 ```
 
 ## Testing

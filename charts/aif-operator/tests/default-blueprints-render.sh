@@ -14,7 +14,7 @@ echo "Blueprint CRs rendered: $bp_count"
 [ "$bp_count" -ge 1 ] || { echo "FAIL: expected >=1 Blueprint, got $bp_count"; fail=1; }
 
 # Every rendered Blueprint must carry source: bundled.
-bad="$(echo "$out_true" | yq ea '[select(.kind == "Blueprint" and .metadata.labels."ai-platform.suse.com/source" != "bundled")] | length')"
+bad="$(echo "$out_true" | yq ea '[select(.kind == "Blueprint" and .metadata.labels."ai-factory.suse.com/source" != "bundled")] | length')"
 [ "$bad" -eq 0 ] || { echo "FAIL: $bad Blueprint(s) missing source=bundled label"; fail=1; }
 
 echo "== enabled=false =="

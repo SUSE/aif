@@ -88,7 +88,7 @@ type AppSource struct {
 
 // BlueprintSource references a Blueprint CR (Epic 2).
 type BlueprintSource struct {
-	// Name is the blueprint family slug (label ai-platform.suse.com/blueprint-name).
+	// Name is the blueprint family slug (label ai-factory.suse.com/blueprint-name).
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// Version is the semver version of the blueprint to use.

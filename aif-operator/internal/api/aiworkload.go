@@ -104,7 +104,7 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	wl := &aiplatformv1alpha1.AIWorkload{}
-	wl.APIVersion = "ai-platform.suse.com/v1alpha1"
+	wl.APIVersion = "ai-factory.suse.com/v1alpha1"
 	wl.Kind = "AIWorkload"
 	wl.Name = body.Metadata.Name
 	wl.Namespace = namespace
@@ -167,7 +167,7 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	wl := &aiplatformv1alpha1.AIWorkload{}
-	wl.APIVersion = "ai-platform.suse.com/v1alpha1"
+	wl.APIVersion = "ai-factory.suse.com/v1alpha1"
 	wl.Kind = "AIWorkload"
 	wl.Name = name
 	wl.Namespace = namespace

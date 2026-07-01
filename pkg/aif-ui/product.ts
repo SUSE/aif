@@ -16,7 +16,7 @@ import { logger } from './utils/logger';
 
 export { PRODUCT } from './config/suseai';
 
-const AIFACTORY_API_GROUP = 'ai-platform.suse.com';
+const AIFACTORY_API_GROUP = 'ai-factory.suse.com';
 
 let removeNavGuard:   (() => void) | null = null;
 let removeCrtbWatch:  (() => void) | null = null;
@@ -36,7 +36,7 @@ export function init($plugin: IPlugin, store: RancherStore) {
     // Both conditions are AND-checked by Rancher's activeProducts getter.
     // ifHaveType: users without CRTB schema access (standard users, cluster members)
     // never see the icon.
-    // ifHaveGroup: the ai-platform.suse.com CRDs are management-cluster-scoped;
+    // ifHaveGroup: the ai-factory.suse.com CRDs are management-cluster-scoped;
     // downstream cluster owners do not have access to them in the management store,
     // so they are excluded despite having CRTB access.
     // Navigation is further restricted by the nav guard below.

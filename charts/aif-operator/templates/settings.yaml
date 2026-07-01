@@ -1,5 +1,5 @@
 {{- $credentials := index .Values "credentials" -}}
-apiVersion: ai-platform.suse.com/v1alpha1
+apiVersion: ai-factory.suse.com/v1alpha1
 kind: Settings
 metadata:
   name: settings

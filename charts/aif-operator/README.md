@@ -67,7 +67,7 @@ helm uninstall aif-operator -n aif-operator
 
 This removes all Kubernetes resources created by the chart **except CRDs**, which must be removed manually if desired.
 For example:
- `kubectl delete crd installaiextensions.ai-platform.suse.com`
+ `kubectl delete crd installaiextensions.ai-factory.suse.com`
 
 ## Parameters
 
@@ -191,11 +191,11 @@ When `defaultBlueprints.enabled=true`, the chart renders the curated `Blueprint`
 | ---------------------------- | --------------------------------------------------- | ------- |
 | `defaultBlueprints.enabled`  | Create the bundled default `Blueprint` CRs on install | `true`  |
 
-The defaults are Helm-managed: `helm upgrade` reconciles them to the chart's current set and `helm uninstall` removes them. Each rendered Blueprint carries the marker label `ai-platform.suse.com/source: bundled`. Set `defaultBlueprints.enabled=false` to manage blueprints exclusively by other means.
+The defaults are Helm-managed: `helm upgrade` reconciles them to the chart's current set and `helm uninstall` removes them. Each rendered Blueprint carries the marker label `ai-factory.suse.com/source: bundled`. Set `defaultBlueprints.enabled=false` to manage blueprints exclusively by other means.
 
 ## Bundled blueprints
 
-The chart ships a curated set of `Blueprint` CRs as plain YAML data files. A single template (`templates/default-blueprints.yaml`) discovers every file via `.Files.Glob`, injects the `ai-platform.suse.com/source: bundled` marker label, and renders each one — all gated by `defaultBlueprints.enabled`.
+The chart ships a curated set of `Blueprint` CRs as plain YAML data files. A single template (`templates/default-blueprints.yaml`) discovers every file via `.Files.Glob`, injects the `ai-factory.suse.com/source: bundled` marker label, and renders each one — all gated by `defaultBlueprints.enabled`.
 
 ### Adding a blueprint
 
@@ -205,21 +205,21 @@ The chart ships a curated set of `Blueprint` CRs as plain YAML data files. A sin
 
    - **slug** = `spec.displayName` lowercased, with each run of non-`[a-z0-9]` characters replaced by a single `-`, trimmed of leading/trailing `-`.
    - `metadata.name` = `<slug>-<version>` with any `+build` metadata stripped and dots replaced by hyphens (e.g. *RAG Chatbot* `1.2.0` → `rag-chatbot-1-2-0`).
-   - label `ai-platform.suse.com/blueprint-name` = `<slug>`
-   - label `ai-platform.suse.com/blueprint-version` = the full `spec.version` (keeps dots).
+   - label `ai-factory.suse.com/blueprint-name` = `<slug>`
+   - label `ai-factory.suse.com/blueprint-version` = the full `spec.version` (keeps dots).
 
-   The UI groups versions that share the `blueprint-name` label into one card with a version selector. Do **not** set the `ai-platform.suse.com/source` label — the chart injects it.
+   The UI groups versions that share the `blueprint-name` label into one card with a version selector. Do **not** set the `ai-factory.suse.com/source` label — the chart injects it.
 
    Example (`files/blueprints/rag-chatbot-1.1.0.yaml`):
 
    ```yaml
-   apiVersion: ai-platform.suse.com/v1alpha1
+   apiVersion: ai-factory.suse.com/v1alpha1
    kind: Blueprint
    metadata:
      name: rag-chatbot-1-1-0
      labels:
-       ai-platform.suse.com/blueprint-name: rag-chatbot
-       ai-platform.suse.com/blueprint-version: 1.1.0
+       ai-factory.suse.com/blueprint-name: rag-chatbot
+       ai-factory.suse.com/blueprint-version: 1.1.0
    spec:
      displayName: RAG Chatbot
      version: 1.1.0
@@ -279,6 +279,6 @@ kubectl get svc -n aif-operator
 
 * Ensure the CRD exists:
 ``` bash
-kubectl get crd installaiextensions.ai-platform.suse.com
+kubectl get crd installaiextensions.ai-factory.suse.com
 ```
 * Re-apply CRDs manually if required

@@ -1,5 +1,5 @@
 # NOTE: Git source is not available yet. This sample is for future reference only.
-# apiVersion: ai-platform.suse.com/v1alpha1
+# apiVersion: ai-factory.suse.com/v1alpha1
 # kind: InstallAIExtension
 # metadata:
 #   name: aif-ui

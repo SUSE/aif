@@ -27,7 +27,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
-const aiWorkloadFinalizer = "ai-platform.suse.com/cleanup"
+const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
 
 var (
 	bundleDeploymentGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment"}
@@ -44,12 +44,12 @@ type AIWorkloadReconciler struct {
 	OperatorNamespace string
 }
 
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=aiworkloads/finalizers,verbs=update
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=settings,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups=ai-platform.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundles,verbs=get;list;watch;create;update;patch;delete

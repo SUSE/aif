@@ -1,9 +1,9 @@
-apiVersion: ai-platform.suse.com/v1alpha1
+apiVersion: ai-factory.suse.com/v1alpha1
 kind: Blueprint
 metadata:
   labels:
-    ai-platform.suse.com/blueprint-name: simple-chatbot-with-rag-vllm
-    ai-platform.suse.com/blueprint-version: 1.0.0
+    ai-factory.suse.com/blueprint-name: simple-chatbot-with-rag-vllm
+    ai-factory.suse.com/blueprint-version: 1.0.0
   name: simple-chatbot-with-rag-vllm-1-0-0
 spec:
   source: SUSE

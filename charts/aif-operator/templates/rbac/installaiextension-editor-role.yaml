@@ -7,7 +7,7 @@ metadata:
   name: {{ include "aif-operator.serviceName" (dict "context" . "suffix" "installaiextension-editor") }}
 rules:
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - installaiextensions
     verbs:
@@ -19,7 +19,7 @@ rules:
       - update
       - watch
   - apiGroups:
-      - ai-platform.suse.com
+      - ai-factory.suse.com
     resources:
       - installaiextensions/status
     verbs:

@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: blueprints.ai-platform.suse.com
+  name: blueprints.ai-factory.suse.com
 spec:
-  group: ai-platform.suse.com
+  group: ai-factory.suse.com
   names:
     kind: Blueprint
     listKind: BlueprintList

@@ -1100,8 +1100,8 @@ func newOwnedBundle(name, ns, ownerName, ownerNS string) *unstructured.Unstructu
 	b.SetName(name)
 	b.SetNamespace(ns)
 	b.SetLabels(map[string]string{
-		"ai-platform.suse.com/owner-name":      ownerName,
-		"ai-platform.suse.com/owner-namespace": ownerNS,
+		"ai-factory.suse.com/owner-name":      ownerName,
+		"ai-factory.suse.com/owner-namespace": ownerNS,
 	})
 	return b
 }
