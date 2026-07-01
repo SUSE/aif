@@ -70,3 +70,13 @@ rollingUpdate:
 operator:
   namespace: "aif-operator"
   service:   "aif-operator"
+
+# Application Catalog Configuration
+appCatalog:
+  # Catalog mode: true = static catalog, false = dynamic (repo-based)
+  useStaticCatalog: true
+
+  # Optional: URL to remote catalog JSON file (only used if useStaticCatalog=true)
+  # If empty, uses bundled default catalog from pkg/aif-ui/assets/app-catalog.json
+  # Example: "https://raw.githubusercontent.com/SUSE/aif/main/catalog.json"
+  remoteUrl: ""

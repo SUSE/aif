@@ -36,6 +36,11 @@ spec:
         - name: {{ include "aif-ui.name" . }}
           image: {{ include "aif-ui.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: VUE_APP_USE_STATIC_CATALOG
+              value: {{ .Values.appCatalog.useStaticCatalog | quote }}
+            - name: VUE_APP_CATALOG_URL
+              value: {{ .Values.appCatalog.remoteUrl | quote }}
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}

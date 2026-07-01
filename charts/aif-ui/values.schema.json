@@ -190,6 +190,22 @@
           "description": "Service name of the SUSE AI operator"
         }
       }
+    },
+    "appCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "useStaticCatalog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Catalog mode: true = static catalog, false = dynamic (repo-based)"
+        },
+        "remoteUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: URL to remote catalog JSON file (only used if useStaticCatalog=true)"
+        }
+      }
     }
   }
 }
