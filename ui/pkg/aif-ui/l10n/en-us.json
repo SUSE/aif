@@ -241,7 +241,15 @@
       },
       "target": {
         "selectClusters": "Select Target Cluster(s)",
-        "readOnly": "Target cluster and deployment type are read-only in Manage mode."
+        "readOnly": "Target cluster and deployment type are read-only in Manage mode.",
+        "deploymentStrategy": {
+          "tooltips": {
+            "FleetBundle": "Deploy via Fleet to any cluster (local or downstream). Bypasses chart size limits and applies changes immediately via Kubernetes API. Best for multi-cluster and large charts.",
+            "GitOps": "GitOps workflow — commits to git, Fleet auto-deploys. Best for production with version control and audit trail. Requires git repo configured. Sequential git commits, not instant.",
+            "Helm": "Direct Helm install on local cluster only. Fastest option but limited to management cluster and charts under 1 MiB. Not available for downstream clusters.",
+            "HelmDisabled": "Helm requires charts under 1 MiB (Kubernetes Secret limit) and only targets the local management cluster. Use Fleet Bundle or Fleet GitOps for large charts or downstream clusters."
+          }
+        }
       },
       "sections": {
         "applicationDetails": "Application Details",

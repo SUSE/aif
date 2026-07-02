@@ -34,26 +34,43 @@ const helmCardDisabled = computed(() =>
   hasNonLocalClusters.value || !!props.helmOversized || !!props.helmUnsupported
 );
 
-const deployTypeCards = [
+const helmTooltip = computed(() => {
+  if (props.helmOversized || props.helmUnsupported) {
+    return t(
+      'suseai.wizard.target.deploymentStrategy.tooltips.HelmDisabled',
+      'Helm requires charts under 1 MiB (Kubernetes Secret limit) and only targets the local management cluster. Use Fleet Bundle or Fleet GitOps for large charts or downstream clusters.'
+    );
+  }
+
+  return t(
+    'suseai.wizard.target.deploymentStrategy.tooltips.Helm',
+    'Direct Helm install on local cluster only. Fastest option but limited to management cluster and charts under 1 MiB. Not available for downstream clusters.'
+  );
+});
+
+const deployTypeCards = computed(() => [
   {
     id:      'FleetBundle' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Fleet Bundle' } },
     image:   { icon: 'fleet' as any },
     content: { text: 'Create a Fleet Bundle; Fleet deploys to selected clusters' },
+    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.FleetBundle', 'Deploy via Fleet to any cluster (local or downstream). Bypasses chart size limits and applies changes immediately via Kubernetes API. Best for multi-cluster and large charts.'),
   },
   {
     id:      'GitOps' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Publish to Fleet Git' } },
     image:   { icon: 'git' as any },
     content: { text: 'Commit Fleet Bundle YAML to the git repo configured in Settings' },
+    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.GitOps', 'GitOps workflow — commits to git, Fleet auto-deploys. Best for production with version control and audit trail. Requires git repo configured. Sequential git commits, not instant.'),
   },
   {
     id:      'Helm' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Helm' } },
     image:   { icon: 'helm' as any },
-    content: { text: 'Deploy directly to each selected cluster via Helm install' },
+    content: { text: 'Deploy directly to the local cluster via Helm install.' },
+    tooltip: helmTooltip.value,
   },
-];
+]);
 
 function onCardClick(id: AIWorkloadDeployStrategy) {
   if (isManageMode.value) return;
@@ -67,19 +84,25 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
   <div class="target-step">
     <label class="lbl">{{ t('suseai.wizard.form.deploymentType', 'Deployment Type') }}</label>
     <div class="deploy-type-grid">
-      <RcItemCard
+      <div
         v-for="card in deployTypeCards"
-        :id="card.id"
         :key="card.id"
-        :header="card.header"
-        :image="card.image"
-        :content="card.content"
-        :selected="deployType === card.id"
-        :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled) && !(card.id === 'GitOps' && gitOpsUnconfigured)"
-        variant="small"
-        :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) || (card.id === 'GitOps' && gitOpsUnconfigured) }"
-        @card-click="onCardClick(card.id)"
-      />
+        :title="card.tooltip"
+        :aria-label="card.tooltip"
+        class="deploy-type-card-wrapper"
+      >
+        <RcItemCard
+          :id="card.id"
+          :header="card.header"
+          :image="card.image"
+          :content="card.content"
+          :selected="deployType === card.id"
+          :clickable="!isManageMode && !(card.id === 'Helm' && helmCardDisabled) && !(card.id === 'GitOps' && gitOpsUnconfigured)"
+          variant="small"
+          :class="{ 'card-disabled': isManageMode || (card.id === 'Helm' && helmCardDisabled) || (card.id === 'GitOps' && gitOpsUnconfigured) }"
+          @card-click="onCardClick(card.id)"
+        />
+      </div>
     </div>
     <p v-if="!isManageMode && helmUnsupported" class="hint">
       Helm is not available for this installation. Use Fleet Bundle or Fleet Git.
@@ -138,6 +161,11 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
+}
+
+.deploy-type-card-wrapper {
+  display: flex;
+  flex-direction: column;
 }
 
 .card-disabled {
