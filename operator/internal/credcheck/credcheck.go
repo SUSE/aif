@@ -56,9 +56,9 @@ func probe(ctx context.Context, client *http.Client, scheme, host, username, pas
 	if resp.StatusCode == http.StatusUnauthorized {
 		challenge := resp.Header.Get("WWW-Authenticate")
 		if strings.HasPrefix(strings.ToLower(challenge), "bearer ") {
-			token, terr := fetchBearerToken(ctx, client, challenge, username, password)
-			if terr != nil {
-				return Result{Status: StatusFailed, Message: terr.Error()}
+			token, fr := fetchBearerToken(ctx, client, challenge, username, password)
+			if fr != nil {
+				return *fr
 			}
 			resp2, err2 := doGet(ctx, client, base, username, password, token)
 			if err2 != nil {
@@ -88,15 +88,15 @@ func doGet(ctx context.Context, client *http.Client, reqURL, user, pass, bearer 
 	return client.Do(req)
 }
 
-func fetchBearerToken(ctx context.Context, client *http.Client, challenge, user, pass string) (string, error) {
+func fetchBearerToken(ctx context.Context, client *http.Client, challenge, user, pass string) (string, *Result) {
 	params := parseChallenge(challenge)
 	realm := params["realm"]
 	if realm == "" {
-		return "", fmt.Errorf("no realm in bearer challenge")
+		return "", &Result{Status: StatusError, Message: "no realm in bearer challenge"}
 	}
 	u, err := url.Parse(realm)
 	if err != nil {
-		return "", err
+		return "", &Result{Status: StatusError, Message: err.Error()}
 	}
 	q := u.Query()
 	if svc := params["service"]; svc != "" {
@@ -109,25 +109,28 @@ func fetchBearerToken(ctx context.Context, client *http.Client, challenge, user,
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return "", err
+		return "", &Result{Status: StatusError, Message: err.Error()}
 	}
 	if user != "" || pass != "" {
 		req.SetBasicAuth(user, pass)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", &Result{Status: StatusError, Message: err.Error()}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", &Result{Status: StatusFailed, Message: "token endpoint rejected credentials: " + statusMessage(resp.StatusCode)}
+	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint returned %s", statusMessage(resp.StatusCode))
+		return "", &Result{Status: StatusError, Message: "token endpoint returned " + statusMessage(resp.StatusCode)}
 	}
 	var tok struct {
 		Token       string `json:"token"`
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return "", err
+		return "", &Result{Status: StatusError, Message: err.Error()}
 	}
 	if tok.Token != "" {
 		return tok.Token, nil
@@ -135,7 +138,7 @@ func fetchBearerToken(ctx context.Context, client *http.Client, challenge, user,
 	if tok.AccessToken != "" {
 		return tok.AccessToken, nil
 	}
-	return "", fmt.Errorf("no token in response")
+	return "", &Result{Status: StatusError, Message: "no token in response"}
 }
 
 // parseChallenge parses a `Bearer realm="...",service="...",scope="..."` header.

@@ -314,6 +314,8 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 	}
 
 	var s aiplatformv1alpha1.Settings
+	// Ignore error: if the Settings CR is absent or unreadable, s stays zero-value
+	// and targets without overrides resolve to "skipped".
 	_ = h.client.Get(r.Context(), types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &s)
 
 	targets := req.Targets

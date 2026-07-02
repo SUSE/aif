@@ -97,3 +97,91 @@ func TestProbe_UnreachableIsError(t *testing.T) {
 		t.Fatalf("status=%q want error", res.Status)
 	}
 }
+
+// Token endpoint returns 500 => error.
+func TestProbe_TokenEndpoint500IsError(t *testing.T) {
+	var srvURL string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+			w.Header().Set("WWW-Authenticate", `Bearer realm="`+srvURL+`/token",service="registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/token":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	srvURL = srv.URL
+
+	res := probe(context.Background(), srv.Client(), "https", hostOf(t, srv.URL), "user", "pass")
+	if res.Status != StatusError {
+		t.Fatalf("status=%q msg=%q want error", res.Status, res.Message)
+	}
+}
+
+// Token endpoint returns 401 => failed.
+func TestProbe_TokenEndpoint401IsFailed(t *testing.T) {
+	var srvURL string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+			w.Header().Set("WWW-Authenticate", `Bearer realm="`+srvURL+`/token",service="registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/token":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	srvURL = srv.URL
+
+	res := probe(context.Background(), srv.Client(), "https", hostOf(t, srv.URL), "user", "pass")
+	if res.Status != StatusFailed {
+		t.Fatalf("status=%q msg=%q want failed", res.Status, res.Message)
+	}
+}
+
+// Token endpoint returns 200 with no token field => error.
+func TestProbe_TokenEndpointNoTokenIsError(t *testing.T) {
+	var srvURL string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+			w.Header().Set("WWW-Authenticate", `Bearer realm="`+srvURL+`/token",service="registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/token":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"nope":"x"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	srvURL = srv.URL
+
+	res := probe(context.Background(), srv.Client(), "https", hostOf(t, srv.URL), "user", "pass")
+	if res.Status != StatusError {
+		t.Fatalf("status=%q msg=%q want error", res.Status, res.Message)
+	}
+}
+
+// Token realm unreachable host => error.
+func TestProbe_TokenRealmUnreachableIsError(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="https://127.0.0.1:1/token",service="registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	res := probe(context.Background(), srv.Client(), "https", hostOf(t, srv.URL), "user", "pass")
+	if res.Status != StatusError {
+		t.Fatalf("status=%q msg=%q want error", res.Status, res.Message)
+	}
+}

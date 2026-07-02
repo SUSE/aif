@@ -6,8 +6,7 @@ import { LabeledInput } from '@components/Form/LabeledInput';
 import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
-import { getSettings, putSettings } from '../utils/operator-api';
-import { validateCredentials } from '../utils/operator-api';
+import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
@@ -414,6 +413,9 @@ export default {
       const r = this.testResults[target];
       if (!r) return '';
       const label = this.t(`suseai.pages.settings.test.${ r.status }`);
+      if (r.status === 'ok') {
+        return label + (r.host ? ` — ${ r.host }` : '') + (r.latencyMs != null ? ` (${ r.latencyMs } ms)` : '');
+      }
       return r.message ? `${ label }: ${ r.message }` : label;
     },
 

@@ -59,6 +59,9 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 // authenticate, without cloning or writing. It is the equivalent of
 // `git ls-remote`. An empty remote (no commits yet) counts as reachable.
 func (c *Client) CheckAuth(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	remote := gogit.NewRemote(memory.NewStorage(), &config.RemoteConfig{
 		Name: gogit.DefaultRemoteName,
 		URLs: []string{c.repoURL},
