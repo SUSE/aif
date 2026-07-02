@@ -109,7 +109,7 @@ export const translations: Translations = {
           review: 'Review'
         },
 
-        success: 'Application installed successfully',
+        success: 'Application scheduled for deployment',
         error: 'Failed to install application'
       },
 

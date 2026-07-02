@@ -155,7 +155,7 @@ async function onInstall() {
   installProgress.value = installProgress.value.map((p, i) => {
     const r = results[i];
     if (r.status === 'fulfilled') {
-      return { ...p, status: 'success', progress: 100, message: 'AIWorkload created — controller will deploy bundles' };
+      return { ...p, status: 'success', progress: 100, message: 'Scheduled for deployment — operator will create component bundles' };
     }
     const e: any = r.reason;
     const errMsg = e?.status === 409
