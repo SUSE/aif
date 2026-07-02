@@ -78,3 +78,6 @@ jspm_packages/
 # System Files
 .DS_Store
 Thumbs.db
+
+# Git worktrees
+.worktrees

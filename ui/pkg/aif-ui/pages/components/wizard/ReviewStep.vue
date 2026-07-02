@@ -42,18 +42,20 @@
 
     <!-- Configuration -->
     <h3 class="mt-30">{{ t('suseai.wizard.sections.configuration', 'Configuration') }}</h3>
+    <p class="readonly-notice">{{ t('suseai.wizard.review.readonlyNotice', 'Configuration preview (read-only)') }}</p>
     <YamlEditor
-      v-model:value="localValues"
+      :value="localValues"
       :as-object="true"
+      :editor-mode="EDITOR_MODES.VIEW_CODE"
+      mode="view"
       class="values-editor"
-      @update:value="$emit('values-edited')"
     />
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed } from 'vue';
-import YamlEditor from '@shell/components/YamlEditor';
+import YamlEditor, { EDITOR_MODES } from '@shell/components/YamlEditor';
 import { useT } from '../../../composables/useT';
 
 interface Props {
@@ -67,20 +69,11 @@ interface Props {
   values: Record<string, any>;
 }
 
-interface Emits {
-  (e: 'update:values', values: Record<string, any>): void;
-  (e: 'values-edited'): void;
-}
-
 const props = defineProps<Props>();
-const emit = defineEmits<Emits>();
 
 const t = useT();
 
-const localValues = computed({
-  get: () => props.values,
-  set: (value: Record<string, any>) => emit('update:values', value)
-});
+const localValues = computed(() => props.values);
 </script>
 
 <style scoped>
@@ -147,6 +140,12 @@ const localValues = computed({
     grid-template-columns: 1fr;
     gap: 8px;
   }
+}
+
+.readonly-notice {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 8px 0;
 }
 
 .values-editor {

@@ -1743,8 +1743,7 @@ function previousStep() {
             :chart-name="form.chartName"
             :chart-version="form.chartVersion"
             :clusters="form.clusters"
-            v-model:values="form.values"
-            @values-edited="onValuesEdited"
+            :values="form.values"
           />
         </div>
       </div>
