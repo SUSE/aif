@@ -107,6 +107,9 @@ interface Props {
   show: boolean;
   progress: ClusterInstallProgress[];
   title?: string;
+  doneTitle?: string;
+  deployType?: 'Helm' | 'FleetBundle' | 'GitOps';
+  mode?: 'install' | 'upgrade';
 }
 
 interface Emits {
@@ -118,7 +121,10 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  title: 'Installing Application'
+  title: 'Installing Application',
+  doneTitle: '',
+  deployType: 'FleetBundle',
+  mode: 'install',
 });
 
 defineEmits<Emits>();
@@ -166,24 +172,40 @@ const hasSuccesses = computed(() => successCount.value > 0);
 
 const displayTitle = computed(() => {
   if (allSucceeded.value) {
-    return props.title?.replace(/^Installing\b/, 'Installed').replace(/^Upgrading\b/, 'Upgraded') || 'Application Deployed';
+    if (props.doneTitle) return props.doneTitle;
+    return props.title.replace(/^Installing\b/, 'Installed').replace(/^Upgrading\b/, 'Upgraded');
   }
-  return props.title || 'Installing Application';
+  return props.title;
 });
 
 const subtitle = computed(() => {
+  const isHelm = props.deployType === 'Helm';
+  const isUpgrade = props.mode === 'upgrade';
+  const sc = successCount.value;
+  const fc = failedCount.value;
+  const clusterWord = (n: number) => `cluster${n !== 1 ? 's' : ''}`;
+
   if (isInProgress.value) {
     const installing = props.progress.find(p => p.status === 'installing');
     return installing ? `Installing on ${installing.clusterName}...` : 'Preparing installation...';
   }
   if (allSucceeded.value) {
-    return `Scheduled for deployment on ${successCount.value} cluster${successCount.value !== 1 ? 's' : ''}`;
+    return isHelm
+      ? `Deployed on ${sc} ${clusterWord(sc)}`
+      : `Scheduled for deployment on ${sc} ${clusterWord(sc)}`;
   }
   if (allFailed.value) {
-    return `Installation failed on all ${failedCount.value} cluster${failedCount.value !== 1 ? 's' : ''}`;
+    return `Installation failed on all ${fc} ${clusterWord(fc)}`;
   }
   if (hasFailures.value) {
-    return `Scheduled for deployment on ${successCount.value} cluster${successCount.value !== 1 ? 's' : ''}, ${failedCount.value} failed`;
+    if (isUpgrade) {
+      return isHelm
+        ? `Upgraded on ${sc} ${clusterWord(sc)}, ${fc} failed`
+        : `Update scheduled on ${sc} ${clusterWord(sc)}, ${fc} failed`;
+    }
+    return isHelm
+      ? `Deployed on ${sc} ${clusterWord(sc)}, ${fc} failed`
+      : `Scheduled for deployment on ${sc} ${clusterWord(sc)}, ${fc} failed`;
   }
   return '';
 });
