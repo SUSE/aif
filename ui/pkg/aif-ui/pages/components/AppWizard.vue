@@ -937,7 +937,7 @@ async function performFleetBundleInstall() {
       });
     }));
 
-    applyPerClusterResults(results, 'Fleet Bundle created — Fleet will deploy to selected cluster');
+    applyPerClusterResults(results, 'Scheduled for deployment — monitor status on Workloads page');
   } catch (e: any) {
     installProgress.value = installProgress.value.map(p => ({
       ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
@@ -1029,7 +1029,7 @@ async function performGitOpsInstall() {
       }
     }
 
-    applyPerClusterResults(results, 'Fleet Bundle YAML committed — Fleet will deploy to selected cluster');
+    applyPerClusterResults(results, 'Committed to git — Fleet will sync and deploy automatically');
   } catch (e: any) {
     installProgress.value = installProgress.value.map(p => ({
       ...p, status: 'failed' as const, error: e?.message || 'Unknown error',
@@ -1181,7 +1181,7 @@ async function installSingleCluster(clusterId: string): Promise<void> {
     updateClusterProgress(clusterId, {
       status: 'success',
       progress: 100,
-      message: form.value.deployType === 'Helm' ? 'Deployed successfully' : 'Scheduled for deployment'
+      message: form.value.deployType === 'Helm' ? 'Helm install complete — check Workloads page for status' : 'Scheduled for deployment'
     });
   } catch (e: any) {
     updateClusterProgress(clusterId, {
@@ -1380,7 +1380,7 @@ async function installToCluster(
     }
   }
 
-  onProgress(100, 'Installation complete');
+  onProgress(100, 'Deployment initiated — watch status on Workloads page');
 }
 
 async function performUpgrade() {
@@ -1462,7 +1462,7 @@ async function performFleetBundleUpgrade() {
       library:                  getLibraryFromRepoUrl(chartRepoUrl),
     });
 
-    updateAllProgress(100, 'Fleet Bundle updated — Fleet will reconcile selected clusters');
+    updateAllProgress(100, 'Update scheduled — Fleet will reconcile to new version');
     installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
     managedFleetBundleNames.value = [bundleName];
 
@@ -1537,7 +1537,7 @@ async function performGitOpsUpgrade() {
       library:          getLibraryFromRepoUrl(chartRepoUrl),
     });
 
-    updateAllProgress(100, 'Fleet Bundle YAML committed — Fleet will reconcile selected clusters');
+    updateAllProgress(100, 'Changes committed to git — Fleet will sync and reconcile');
     installProgress.value = installProgress.value.map(p => ({ ...p, status: 'success' as const }));
     managedFleetBundleNames.value = [bundleName];
 
@@ -1571,7 +1571,7 @@ async function upgradeSingleCluster(clusterId: string): Promise<void> {
     updateClusterProgress(clusterId, {
       status: 'success',
       progress: 100,
-      message: form.value.deployType === 'Helm' ? 'Upgraded successfully' : 'Scheduled for deployment'
+      message: form.value.deployType === 'Helm' ? 'Helm upgrade complete — check Workloads page for rollout status' : 'Scheduled for deployment'
     });
   } catch (e: any) {
     updateClusterProgress(clusterId, {
