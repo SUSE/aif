@@ -37,6 +37,13 @@
         "title": "Settings",
         "apply": "Apply",
         "notConfigured": "No settings configured yet. Fill in the form and save to create them.",
+        "test": {
+          "button": "Test",
+          "ok": "Authenticated",
+          "failed": "Authentication failed",
+          "error": "Could not reach endpoint",
+          "skipped": "Not configured"
+        },
         "sections": {
           "appCollection": {
             "title": "SUSE Application Collection",

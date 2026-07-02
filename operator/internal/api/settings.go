@@ -19,15 +19,20 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/credcheck"
 	git "github.com/SUSE/aif-operator/internal/git"
 	"github.com/SUSE/aif-operator/internal/registryurl"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -51,6 +56,7 @@ func (h *SettingsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings", h.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", h.putSettings)
 	mux.HandleFunc("GET /api/v1/settings/registry-credentials", h.getRegistryCredentials)
+	mux.HandleFunc("POST /api/v1/settings/validate-credentials", h.validateCredentials)
 	mux.HandleFunc("POST /api/v1/git/publish", h.publishToGit)
 }
 
@@ -58,7 +64,7 @@ func (h *SettingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 	var s aiplatformv1alpha1.Settings
 	key := types.NamespacedName{Namespace: h.namespace, Name: settingsName}
 	if err := h.client.Get(r.Context(), key, &s); err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, fmt.Errorf("%w: settings CR not found", ErrNotFound))
 			return
 		}
@@ -254,6 +260,217 @@ func (h *SettingsHandler) publishToGit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"commit": commit})
+}
+
+// Function seams so tests can stub the live network checks.
+var (
+	probeRegistryFn = credcheck.ProbeRegistry
+	gitCheckAuthFn  = (*git.Client).CheckAuth
+)
+
+const (
+	statusOK      = "ok"
+	statusFailed  = "failed"
+	statusError   = "error"
+	statusSkipped = "skipped"
+)
+
+var allValidateTargets = []string{"applicationCollection", "suseRegistry", "nvidia", "gitops"}
+
+type validateOverride struct {
+	UserSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"userSecretRef,omitempty"`
+	TokenSecretRef *aiplatformv1alpha1.SecretKeyRef `json:"tokenSecretRef,omitempty"`
+	CredSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"credSecretRef,omitempty"`
+	RepoURL        string                           `json:"repoURL,omitempty"`
+	Branch         string                           `json:"branch,omitempty"`
+}
+
+type validateCredsRequest struct {
+	Targets   []string                    `json:"targets,omitempty"`
+	Overrides map[string]validateOverride `json:"overrides,omitempty"`
+}
+
+type validateResult struct {
+	Target    string `json:"target"`
+	Status    string `json:"status"`
+	Host      string `json:"host,omitempty"`
+	Message   string `json:"message"`
+	LatencyMs int64  `json:"latencyMs,omitempty"`
+}
+
+type validateCredsResponse struct {
+	Results []validateResult `json:"results"`
+}
+
+func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req validateCredsRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		return
+	}
+
+	var s aiplatformv1alpha1.Settings
+	// Ignore error: if the Settings CR is absent or unreadable, s stays zero-value
+	// and targets without overrides resolve to "skipped".
+	_ = h.client.Get(r.Context(), types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &s)
+
+	targets := req.Targets
+	if len(targets) == 0 {
+		targets = allValidateTargets
+	}
+
+	resp := validateCredsResponse{}
+	for _, target := range targets {
+		ov := req.Overrides[target]
+		switch target {
+		case "gitops":
+			resp.Results = append(resp.Results, h.validateGit(r.Context(), &s, ov))
+		case "applicationCollection", "suseRegistry", "nvidia":
+			resp.Results = append(resp.Results, h.validateRegistry(r.Context(), target, &s, ov))
+		default:
+			resp.Results = append(resp.Results, validateResult{
+				Target: target, Status: statusSkipped, Message: "unknown target",
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, &resp)
+}
+
+func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
+	res := validateResult{Target: target, Host: h.registryHost(target, s)}
+
+	savedUser, savedToken := savedRegistryRefs(target, s)
+	userRef := ov.UserSecretRef
+	if userRef == nil {
+		userRef = savedUser
+	}
+	tokenRef := ov.TokenSecretRef
+	if tokenRef == nil {
+		tokenRef = savedToken
+	}
+	// An incomplete ref (no secret name, or no key selected — e.g. a form still
+	// being filled in) is "not configured", not an auth failure. Nothing is sent
+	// to the registry in this case.
+	if !secretRefComplete(userRef) || !secretRefComplete(tokenRef) {
+		res.Status = statusSkipped
+		res.Message = "not configured"
+		return res
+	}
+
+	// A ref that cannot be resolved (secret/key missing at read time, e.g. the
+	// secret was deleted or rotated) is a configuration error, not the registry
+	// rejecting credentials. Classify as error so it is not misread as bad creds.
+	user, err := h.readSecretKey(ctx, userRef)
+	if err != nil {
+		res.Status = statusError
+		res.Message = "could not read credential: " + err.Error()
+		return res
+	}
+	pass, err := h.readSecretKey(ctx, tokenRef)
+	if err != nil {
+		res.Status = statusError
+		res.Message = "could not read credential: " + err.Error()
+		return res
+	}
+	// Empty resolved credentials would make the probe pass on anonymously
+	// readable registries (an anonymous token is issued), giving a misleading
+	// "ok". Treat empty credentials as not configured.
+	if user == "" && pass == "" {
+		res.Status = statusSkipped
+		res.Message = "not configured"
+		return res
+	}
+
+	start := time.Now()
+	probe := probeRegistryFn(ctx, res.Host, user, pass)
+	res.LatencyMs = time.Since(start).Milliseconds()
+	res.Status = string(probe.Status)
+	res.Message = probe.Message
+	return res
+}
+
+func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
+	res := validateResult{Target: "gitops"}
+
+	// Git fallback is all-or-nothing on repoURL (unlike the per-field registry
+	// fallback): repoURL/branch/credRef form one unit and the UI always sends all
+	// three together, so a partial git override is not a real case to support.
+	repoURL, branch, credRef := ov.RepoURL, ov.Branch, ov.CredSecretRef
+	if repoURL == "" {
+		repoURL = s.Spec.Fleet.RepoURL
+		branch = s.Spec.Fleet.Branch
+		credRef = s.Spec.Fleet.CredSecretRef
+	}
+	if repoURL == "" {
+		res.Status = statusSkipped
+		res.Message = "not configured"
+		return res
+	}
+
+	tmp := &aiplatformv1alpha1.Settings{}
+	tmp.Spec.Fleet.RepoURL = repoURL
+	tmp.Spec.Fleet.Branch = branch
+	tmp.Spec.Fleet.CredSecretRef = credRef
+
+	gc, err := git.NewFromSettings(ctx, tmp, h.namespace, settingsSecretReader{h.client})
+	if err != nil {
+		res.Status = statusError
+		res.Message = err.Error()
+		return res
+	}
+
+	switch err := gitCheckAuthFn(gc, ctx); {
+	case err == nil:
+		res.Status = statusOK
+		res.Message = "repository reachable"
+	case errors.Is(err, transport.ErrAuthenticationRequired), errors.Is(err, transport.ErrAuthorizationFailed):
+		res.Status = statusFailed
+		res.Message = err.Error()
+	default:
+		res.Status = statusError
+		res.Message = err.Error()
+	}
+	return res
+}
+
+func savedRegistryRefs(target string, s *aiplatformv1alpha1.Settings) (*aiplatformv1alpha1.SecretKeyRef, *aiplatformv1alpha1.SecretKeyRef) {
+	switch target {
+	case "applicationCollection":
+		return s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef
+	case "suseRegistry":
+		return s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef
+	case "nvidia":
+		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef
+	}
+	return nil, nil
+}
+
+// secretRefComplete reports whether a secret ref names both a secret and a key.
+// A ref missing either is treated as "not configured" rather than a probe input.
+func secretRefComplete(ref *aiplatformv1alpha1.SecretKeyRef) bool {
+	return ref != nil && ref.Name != "" && ref.Key != ""
+}
+
+func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Settings) string {
+	switch target {
+	case "applicationCollection":
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
+			return registryurl.Host(s.Spec.RegistryEndpoints.ApplicationCollection)
+		}
+		return defaultAppCollectionHost
+	case "suseRegistry":
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
+			return registryurl.Host(s.Spec.RegistryEndpoints.SUSERegistry)
+		}
+		return defaultSUSERegistryHost
+	case "nvidia":
+		return defaultNvidiaHost
+	}
+	return ""
 }
 
 // Compile-time guard: SettingsHandler satisfies Handler.

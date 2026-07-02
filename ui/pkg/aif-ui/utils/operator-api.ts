@@ -72,3 +72,39 @@ export function getVersion(timeoutMs = 5000): Promise<{ version: string; commit:
   return operatorFetch('/api/v1/version', { signal: controller.signal })
     .finally(() => clearTimeout(timer));
 }
+
+export interface ValidateOverride {
+  userSecretRef?:  { name: string; key: string } | null;
+  tokenSecretRef?: { name: string; key: string } | null;
+  credSecretRef?:  { name: string; key: string } | null;
+  repoURL?:        string;
+  branch?:         string;
+}
+
+export interface ValidateRequest {
+  targets?:   string[];
+  overrides?: Record<string, ValidateOverride>;
+}
+
+export interface ValidateResult {
+  target:     string;
+  status:     'ok' | 'failed' | 'error' | 'skipped';
+  host?:      string;
+  message:    string;
+  latencyMs?: number;
+}
+
+export interface ValidateResponse {
+  results: ValidateResult[];
+}
+
+export function validateCredentials(body: ValidateRequest, timeoutMs = 20000): Promise<ValidateResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return operatorFetch('/api/v1/settings/validate-credentials', {
+    method: 'POST',
+    body:   JSON.stringify(body),
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
+}

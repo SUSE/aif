@@ -55,6 +55,24 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 	return &Client{repoURL: s.Spec.Fleet.RepoURL, branch: branch, auth: auth}, nil
 }
 
+// CheckAuth verifies the configured repository is reachable and the credentials
+// authenticate, without cloning or writing. It is the equivalent of
+// `git ls-remote`. An empty remote (no commits yet) counts as reachable.
+func (c *Client) CheckAuth(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	remote := gogit.NewRemote(memory.NewStorage(), &config.RemoteConfig{
+		Name: gogit.DefaultRemoteName,
+		URLs: []string{c.repoURL},
+	})
+	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth})
+	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return nil
+	}
+	return err
+}
+
 // WriteFile clones the repo, writes content at path, commits with commitMsg, and pushes.
 func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string) (string, error) {
 	repo, wt, err := c.clone(ctx)
