@@ -7,6 +7,7 @@ import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings } from '../utils/operator-api';
+import { validateCredentials } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
@@ -82,6 +83,12 @@ export default {
         suseRegistry:  false,
         nvidia:        false,
         advanced:      false,
+      },
+      testResults: {
+        applicationCollection: null,
+        suseRegistry:          null,
+        nvidia:                null,
+        gitops:                null,
       },
     };
   },
@@ -390,6 +397,31 @@ export default {
         buttonDone(false);
       }
     },
+
+    async runTest(target, override, buttonDone) {
+      try {
+        const resp = await validateCredentials({ targets: [target], overrides: { [target]: override } });
+        const res = (resp.results || []).find((r) => r.target === target) || null;
+        this.testResults[target] = res;
+        buttonDone(res?.status === 'ok');
+      } catch (e) {
+        this.testResults[target] = { target, status: 'error', message: e?.message || String(e) };
+        buttonDone(false);
+      }
+    },
+
+    testResultText(target) {
+      const r = this.testResults[target];
+      if (!r) return '';
+      const label = this.t(`suseai.pages.settings.test.${ r.status }`);
+      return r.message ? `${ label }: ${ r.message }` : label;
+    },
+
+    testResultClass(target) {
+      const r = this.testResults[target];
+      if (!r) return '';
+      return r.status === 'ok' ? 'text-success' : (r.status === 'skipped' ? 'text-muted' : 'text-error');
+    },
   },
 };
 </script>
@@ -486,6 +518,21 @@ export default {
               />
             </div>
           </div>
+
+          <div class="row mt-10">
+            <div class="col span-12">
+              <AsyncButton
+                mode="edit"
+                :action-label="t('suseai.pages.settings.test.button')"
+                @click="cb => runTest('applicationCollection', { userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef }, cb)"
+              />
+              <span
+                v-if="testResults.applicationCollection"
+                :class="testResultClass('applicationCollection')"
+                class="ml-10"
+              >{{ testResultText('applicationCollection') }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -556,6 +603,21 @@ export default {
               />
             </div>
           </div>
+
+          <div class="row mt-10">
+            <div class="col span-12">
+              <AsyncButton
+                mode="edit"
+                :action-label="t('suseai.pages.settings.test.button')"
+                @click="cb => runTest('suseRegistry', { userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef }, cb)"
+              />
+              <span
+                v-if="testResults.suseRegistry"
+                :class="testResultClass('suseRegistry')"
+                class="ml-10"
+              >{{ testResultText('suseRegistry') }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -611,6 +673,21 @@ export default {
                 :mode="mode"
                 @update:value="spec.nvidia.tokenSecretRef = fromSelectorValue($event)"
               />
+            </div>
+          </div>
+
+          <div class="row mt-10">
+            <div class="col span-12">
+              <AsyncButton
+                mode="edit"
+                :action-label="t('suseai.pages.settings.test.button')"
+                @click="cb => runTest('nvidia', { userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef }, cb)"
+              />
+              <span
+                v-if="testResults.nvidia"
+                :class="testResultClass('nvidia')"
+                class="ml-10"
+              >{{ testResultText('nvidia') }}</span>
             </div>
           </div>
         </div>
@@ -678,6 +755,21 @@ export default {
                 :mode="mode"
                 @update:value="spec.fleet.credSecretRef = fromSelectorValue($event)"
               />
+            </div>
+          </div>
+
+          <div class="row mt-10">
+            <div class="col span-12">
+              <AsyncButton
+                mode="edit"
+                :action-label="t('suseai.pages.settings.test.button')"
+                @click="cb => runTest('gitops', { repoURL: spec.fleet.repoURL, branch: spec.fleet.branch, credSecretRef: spec.fleet.credSecretRef }, cb)"
+              />
+              <span
+                v-if="testResults.gitops"
+                :class="testResultClass('gitops')"
+                class="ml-10"
+              >{{ testResultText('gitops') }}</span>
             </div>
           </div>
         </div>
