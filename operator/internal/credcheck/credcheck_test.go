@@ -77,6 +77,19 @@ func TestProbe_BadCredsFailed(t *testing.T) {
 	}
 }
 
+// 403 on /v2/ => failed (reached, authorization denied — not unreachable).
+func TestProbe_ForbiddenIsFailed(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	res := probe(context.Background(), srv.Client(), "https", hostOf(t, srv.URL), "user", "pass")
+	if res.Status != StatusFailed {
+		t.Fatalf("status=%q want failed", res.Status)
+	}
+}
+
 // 500 => error.
 func TestProbe_ServerErrorIsError(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

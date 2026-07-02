@@ -352,22 +352,36 @@ func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s
 	if tokenRef == nil {
 		tokenRef = savedToken
 	}
-	if userRef == nil || tokenRef == nil {
+	// An incomplete ref (no secret name, or no key selected — e.g. a form still
+	// being filled in) is "not configured", not an auth failure. Nothing is sent
+	// to the registry in this case.
+	if !secretRefComplete(userRef) || !secretRefComplete(tokenRef) {
 		res.Status = statusSkipped
 		res.Message = "not configured"
 		return res
 	}
 
+	// A ref that cannot be resolved (secret/key missing at read time, e.g. the
+	// secret was deleted or rotated) is a configuration error, not the registry
+	// rejecting credentials. Classify as error so it is not misread as bad creds.
 	user, err := h.readSecretKey(ctx, userRef)
 	if err != nil {
-		res.Status = statusFailed
-		res.Message = err.Error()
+		res.Status = statusError
+		res.Message = "could not read credential: " + err.Error()
 		return res
 	}
 	pass, err := h.readSecretKey(ctx, tokenRef)
 	if err != nil {
-		res.Status = statusFailed
-		res.Message = err.Error()
+		res.Status = statusError
+		res.Message = "could not read credential: " + err.Error()
+		return res
+	}
+	// Empty resolved credentials would make the probe pass on anonymously
+	// readable registries (an anonymous token is issued), giving a misleading
+	// "ok". Treat empty credentials as not configured.
+	if user == "" && pass == "" {
+		res.Status = statusSkipped
+		res.Message = "not configured"
 		return res
 	}
 
@@ -382,6 +396,9 @@ func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s
 func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
 	res := validateResult{Target: "gitops"}
 
+	// Git fallback is all-or-nothing on repoURL (unlike the per-field registry
+	// fallback): repoURL/branch/credRef form one unit and the UI always sends all
+	// three together, so a partial git override is not a real case to support.
 	repoURL, branch, credRef := ov.RepoURL, ov.Branch, ov.CredSecretRef
 	if repoURL == "" {
 		repoURL = s.Spec.Fleet.RepoURL
@@ -430,6 +447,12 @@ func savedRegistryRefs(target string, s *aiplatformv1alpha1.Settings) (*aiplatfo
 		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef
 	}
 	return nil, nil
+}
+
+// secretRefComplete reports whether a secret ref names both a secret and a key.
+// A ref missing either is treated as "not configured" rather than a probe input.
+func secretRefComplete(ref *aiplatformv1alpha1.SecretKeyRef) bool {
+	return ref != nil && ref.Name != "" && ref.Key != ""
 }
 
 func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Settings) string {

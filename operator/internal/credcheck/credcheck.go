@@ -50,8 +50,19 @@ func probe(ctx context.Context, client *http.Client, scheme, host, username, pas
 	}
 	defer resp.Body.Close()
 
+	// A 200 here means the registry is reachable and issued (or accepted) a token.
+	// On anonymously readable registries this can succeed with weak/empty creds
+	// (an anonymous token is granted), so "ok" attests reachability + token
+	// issuance, not that credentials are strictly required. Empty credentials are
+	// filtered out by the caller before probing.
 	if resp.StatusCode == http.StatusOK {
 		return Result{Status: StatusOK, Message: "authenticated"}
+	}
+	// 403 means the request authenticated but authorization was denied — the
+	// endpoint was reached and rejected the caller, which is a credential-level
+	// failure rather than an unreachable error.
+	if resp.StatusCode == http.StatusForbidden {
+		return Result{Status: StatusFailed, Message: statusMessage(resp.StatusCode)}
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		challenge := resp.Header.Get("WWW-Authenticate")

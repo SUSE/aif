@@ -535,3 +535,65 @@ func TestValidateCredentials_GitNetworkError(t *testing.T) {
 		t.Fatalf("want status=error for network error, got %+v", resp.Results)
 	}
 }
+
+// A ref with an empty key (form still being filled in) is "not configured",
+// not an authentication failure.
+func TestValidateCredentials_IncompleteRefIsSkipped(t *testing.T) {
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: ""}, // key not yet selected
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr)
+	h := newSettingsHandler(c, ns)
+
+	body := `{"targets":["nvidia"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusSkipped {
+		t.Fatalf("want status=skipped for incomplete ref, got %+v", resp.Results)
+	}
+}
+
+// A complete ref whose secret cannot be resolved (deleted/rotated) is a config
+// error, not the registry rejecting credentials.
+func TestValidateCredentials_UnresolvableSecretIsError(t *testing.T) {
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "missing-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "missing-token", Key: "token"},
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr) // secrets intentionally absent
+	h := newSettingsHandler(c, ns)
+
+	body := `{"targets":["nvidia"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusError {
+		t.Fatalf("want status=error for unresolvable secret, got %+v", resp.Results)
+	}
+}

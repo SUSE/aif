@@ -397,12 +397,30 @@ export default {
       }
     },
 
+    secretRefComplete(ref) {
+      return !!(ref && ref.name && ref.key);
+    },
+
+    // canTest gates the per-section Test button so it only fires with inputs the
+    // probe can actually use. Registries need both secret name+key on each ref;
+    // gitops needs a repoURL and an auth type the git check supports (SSH is not
+    // wired for the HTTP-based CheckAuth, so it would always error).
+    canTest(target) {
+      if (target === 'gitops') {
+        return !!this.spec.fleet.repoURL && this.spec.fleet.authType !== 'ssh';
+      }
+      const sec = this.spec[target];
+      return this.secretRefComplete(sec?.userSecretRef) && this.secretRefComplete(sec?.tokenSecretRef);
+    },
+
     async runTest(target, override, buttonDone) {
       try {
         const resp = await validateCredentials({ targets: [target], overrides: { [target]: override } });
         const res = (resp.results || []).find((r) => r.target === target) || null;
         this.testResults[target] = res;
-        buttonDone(res?.status === 'ok');
+        // skipped is a neutral outcome (nothing was probed), not a failure — don't
+        // drive the button's error animation for it.
+        buttonDone(!!res && res.status !== 'failed' && res.status !== 'error');
       } catch (e) {
         this.testResults[target] = { target, status: 'error', message: e?.message || String(e) };
         buttonDone(false);
@@ -526,6 +544,7 @@ export default {
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
+                :disabled="!canTest('applicationCollection')"
                 @click="cb => runTest('applicationCollection', { userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef }, cb)"
               />
               <span
@@ -611,6 +630,7 @@ export default {
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
+                :disabled="!canTest('suseRegistry')"
                 @click="cb => runTest('suseRegistry', { userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef }, cb)"
               />
               <span
@@ -683,6 +703,7 @@ export default {
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
+                :disabled="!canTest('nvidia')"
                 @click="cb => runTest('nvidia', { userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef }, cb)"
               />
               <span
@@ -765,6 +786,7 @@ export default {
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
+                :disabled="!canTest('gitops')"
                 @click="cb => runTest('gitops', { repoURL: spec.fleet.repoURL, branch: spec.fleet.branch, credSecretRef: spec.fleet.credSecretRef }, cb)"
               />
               <span
