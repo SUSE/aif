@@ -17,7 +17,7 @@ SUSE AI Factory is a Rancher UI Extension for managing SUSE AI Factory component
 1. **Clone and install dependencies:**
    ```bash
    git clone <repository-url>
-   cd aif
+   cd aif/ui
    yarn install
    ```
 
@@ -42,13 +42,15 @@ SUSE AI Factory is a Rancher UI Extension for managing SUSE AI Factory component
   
 ### Debug Mode
 
-Enable debug logging in development:
+Enable debug logging in development (from the `ui/` directory):
 
 ```bash
 NODE_ENV=development yarn build-pkg aif-ui
 ```
 
 ## Building for Production
+
+From the `ui/` directory:
 
 ```bash
 yarn build-pkg aif-ui --mode production
@@ -195,4 +197,4 @@ git commit -m "fix: resolve app installation error handling"
 1. **Extension not loading**: Verify URL in developer tools console
 2. **Build errors**: Check Node.js version compatibility (requires 20+)
 3. **API errors**: Verify cluster permissions and connectivity
-4. **Linting errors**: Run `cd pkg/aif-ui && yarn lint` to see details
+4. **Linting errors**: Run `cd ui/pkg/aif-ui && yarn lint` to see details
