@@ -25,6 +25,9 @@ import (
 	"testing"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/credcheck"
+	"github.com/SUSE/aif-operator/internal/git"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -298,5 +301,152 @@ func TestGetRegistryCredentials_AppCollectionHostFromOCIURL(t *testing.T) {
 	// host must be just the registry host, not the whole URL.
 	if body.ApplicationCollection.RegistryHost != "registry.example.com" {
 		t.Errorf("expected host registry.example.com (base of OCI URL), got %q", body.ApplicationCollection.RegistryHost)
+	}
+}
+
+func TestValidateCredentials_RegistryOKFromSaved(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "su-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("u")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "su-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("p")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			SUSERegistry: aiplatformv1alpha1.SUSERegistrySettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "su-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "su-token", Key: "token"},
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	// Stub the probe: assert it receives the resolved creds + default host.
+	orig := probeRegistryFn
+	defer func() { probeRegistryFn = orig }()
+	probeRegistryFn = func(_ context.Context, host, user, pass string) credcheck.Result {
+		if host != "registry.suse.com" || user != "u" || pass != "p" {
+			return credcheck.Result{Status: credcheck.StatusFailed, Message: "unexpected inputs"}
+		}
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
+	}
+
+	body := `{"targets":["suseRegistry"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Target != "suseRegistry" || resp.Results[0].Status != statusOK {
+		t.Fatalf("unexpected results: %+v", resp.Results)
+	}
+	if resp.Results[0].Host != "registry.suse.com" {
+		t.Errorf("host=%q want registry.suse.com", resp.Results[0].Host)
+	}
+}
+
+func TestValidateCredentials_SkippedWhenUnconfigured(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	body := `{"targets":["nvidia"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusSkipped {
+		t.Fatalf("want skipped, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCredentials_OverrideRefsBeforeSave(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ov-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("ou")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ov-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("op")},
+	}
+	// Settings CR has NO nvidia refs; the override supplies them.
+	c := newSettingsFakeClient(t, sampleCR(), userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryFn
+	defer func() { probeRegistryFn = orig }()
+	got := struct{ user, pass, host string }{}
+	probeRegistryFn = func(_ context.Context, host, user, pass string) credcheck.Result {
+		got.user, got.pass, got.host = user, pass, host
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
+	}
+
+	body := `{"targets":["nvidia"],"overrides":{"nvidia":{"userSecretRef":{"name":"ov-user","key":"username"},"tokenSecretRef":{"name":"ov-token","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got.user != "ou" || got.pass != "op" || got.host != "nvcr.io" {
+		t.Fatalf("probe got %+v want ou/op/nvcr.io", got)
+	}
+}
+
+func TestValidateCredentials_GitAuthClassification(t *testing.T) {
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: "https://git.example.com/repo.git", Branch: "main"},
+		},
+	}
+	c := newSettingsFakeClient(t, cr)
+	h := newSettingsHandler(c, ns)
+
+	orig := gitCheckAuthFn
+	defer func() { gitCheckAuthFn = orig }()
+	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error {
+		return transport.ErrAuthenticationRequired
+	}
+
+	body := `{"targets":["gitops"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusFailed {
+		t.Fatalf("want failed (auth), got %+v", resp.Results)
+	}
+}
+
+func TestValidateCredentials_InvalidJSON400(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400", rec.Code)
 	}
 }
