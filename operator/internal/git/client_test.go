@@ -208,3 +208,26 @@ func TestNewFromSettings_NoRepoURL(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "repoURL")
 }
+
+func TestCheckAuth_ReachableOK(t *testing.T) {
+	remote := newTestRemote(t)
+	c := newClient(t, remote)
+
+	err := c.CheckAuth(context.Background())
+	require.NoError(t, err)
+}
+
+func TestCheckAuth_EmptyRemoteOK(t *testing.T) {
+	remote := newEmptyTestRemote(t)
+	c := newClient(t, remote)
+
+	err := c.CheckAuth(context.Background())
+	require.NoError(t, err)
+}
+
+func TestCheckAuth_UnreachableErrors(t *testing.T) {
+	c := newClient(t, "file:///nonexistent/repo/path.git")
+
+	err := c.CheckAuth(context.Background())
+	require.Error(t, err)
+}
