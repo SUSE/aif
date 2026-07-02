@@ -38,13 +38,13 @@ const helmTooltip = computed(() => {
   if (props.helmOversized || props.helmUnsupported) {
     return t(
       'suseai.wizard.target.deploymentStrategy.tooltips.HelmDisabled',
-      'Helm is unavailable for this chart because it exceeds the maximum chart size limit.'
+      'Helm requires charts under 1 MiB (Kubernetes Secret limit) and only targets the local management cluster. Use Fleet Bundle or Fleet GitOps for large charts or downstream clusters.'
     );
   }
 
   return t(
     'suseai.wizard.target.deploymentStrategy.tooltips.Helm',
-    'Directly installs the Helm chart on the local cluster only. Suitable for single-cluster deployments without ongoing Fleet-based lifecycle management.'
+    'Direct Helm install on local cluster only. Fastest option but limited to management cluster and charts under 1 MiB. Not available for downstream clusters.'
   );
 });
 
@@ -54,14 +54,14 @@ const deployTypeCards = computed(() => [
     header:  { title: { text: 'Fleet Bundle' } },
     image:   { icon: 'fleet' as any },
     content: { text: 'Create a Fleet Bundle; Fleet deploys to selected clusters' },
-    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.FleetBundle', 'Creates a Fleet HelmOp bundle resource in your cluster. Fleet continuously reconciles the desired state by managing the Helm release across your target clusters. Changes to the bundle are automatically propagated.'),
+    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.FleetBundle', 'Deploy via Fleet to any cluster (local or downstream). Bypasses chart size limits and applies changes immediately via Kubernetes API. Best for multi-cluster and large charts.'),
   },
   {
     id:      'GitOps' as AIWorkloadDeployStrategy,
     header:  { title: { text: 'Publish to Fleet Git' } },
     image:   { icon: 'git' as any },
     content: { text: 'Commit Fleet Bundle YAML to the git repo configured in Settings' },
-    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.GitOps', 'Commits a Fleet bundle definition to a configured Git repository. Fleet monitors the repository and reconciles the declared state to your target clusters. This enables full GitOps workflows with version history and auditability.'),
+    tooltip: t('suseai.wizard.target.deploymentStrategy.tooltips.GitOps', 'GitOps workflow — commits to git, Fleet auto-deploys. Best for production with version control and audit trail. Requires git repo configured. Sequential git commits, not instant.'),
   },
   {
     id:      'Helm' as AIWorkloadDeployStrategy,
