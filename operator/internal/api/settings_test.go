@@ -19,6 +19,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -448,5 +449,89 @@ func TestValidateCredentials_InvalidJSON400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", rec.Code)
+	}
+}
+
+func TestValidateCredentials_PartialOverrideFallsBack(t *testing.T) {
+	const ns = "aif-operator"
+	savedUser := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "saved-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("saved-u")},
+	}
+	savedToken := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "saved-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("saved-p")},
+	}
+	overrideUser := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "override-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("override-u")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "saved-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "saved-token", Key: "token"},
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr, savedUser, savedToken, overrideUser)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryFn
+	defer func() { probeRegistryFn = orig }()
+	got := struct{ user, pass, host string }{}
+	probeRegistryFn = func(_ context.Context, host, user, pass string) credcheck.Result {
+		got.user, got.pass, got.host = user, pass, host
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
+	}
+
+	// Override ONLY userSecretRef; tokenSecretRef must fall back to saved.
+	body := `{"targets":["nvidia"],"overrides":{"nvidia":{"userSecretRef":{"name":"override-user","key":"username"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got.user != "override-u" {
+		t.Errorf("user=%q want override-u", got.user)
+	}
+	if got.pass != "saved-p" {
+		t.Errorf("pass=%q want saved-p", got.pass)
+	}
+	if got.host != "nvcr.io" {
+		t.Errorf("host=%q want nvcr.io", got.host)
+	}
+}
+
+func TestValidateCredentials_GitNetworkError(t *testing.T) {
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: "https://git.example.com/repo.git", Branch: "main"},
+		},
+	}
+	c := newSettingsFakeClient(t, cr)
+	h := newSettingsHandler(c, ns)
+
+	orig := gitCheckAuthFn
+	defer func() { gitCheckAuthFn = orig }()
+	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error {
+		return fmt.Errorf("dial tcp: no route to host")
+	}
+
+	body := `{"targets":["gitops"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusError {
+		t.Fatalf("want status=error for network error, got %+v", resp.Results)
 	}
 }

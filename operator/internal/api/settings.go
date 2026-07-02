@@ -341,9 +341,14 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
 	res := validateResult{Target: target, Host: h.registryHost(target, s)}
 
-	userRef, tokenRef := ov.UserSecretRef, ov.TokenSecretRef
-	if userRef == nil && tokenRef == nil {
-		userRef, tokenRef = savedRegistryRefs(target, s)
+	savedUser, savedToken := savedRegistryRefs(target, s)
+	userRef := ov.UserSecretRef
+	if userRef == nil {
+		userRef = savedUser
+	}
+	tokenRef := ov.TokenSecretRef
+	if tokenRef == nil {
+		tokenRef = savedToken
 	}
 	if userRef == nil || tokenRef == nil {
 		res.Status = statusSkipped
