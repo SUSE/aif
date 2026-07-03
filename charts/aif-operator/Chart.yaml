@@ -1,4 +1,5 @@
 annotations:
+  licenses: Apache-2.0
   helm.sh/images: |
     - image: ghcr.io/suse/aif-operator:2.0.0-rc.2
       name: aif-operator
