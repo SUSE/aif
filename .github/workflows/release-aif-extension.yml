@@ -133,6 +133,15 @@ jobs:
           TAG="aif-ui-${{ needs.prepare.outputs.VERSION }}"
           yarn publish-pkgs -c -i '' -r ghcr.io -o 'suse' -t "$TAG"
 
+      - name: Rebase image onto patched BCI 15.7
+        working-directory: .
+        run: |
+          VERSION="${{ needs.prepare.outputs.VERSION }}"
+          docker build -f build/Dockerfile.ui \
+            --build-arg BASE=$IMAGE_NAME:$VERSION \
+            -t $IMAGE_NAME:$VERSION \
+            .
+
       - name: Tag and push image
         run: |
           VERSION="${{ needs.prepare.outputs.VERSION }}"

@@ -1,0 +1,26 @@
+# Rebase the built AIF UI extension onto a fresh, fully-patched BCI 15.7 base.
+# The plugin assets are static/OS-independent, so we copy them from the
+# extension image (built on 15.5 by @rancher/shell) onto a newer OS base to
+# clear OS-package CVEs that have no fix in the 15.5 repos.
+ARG BASE
+ARG OS_BASE=registry.suse.com/bci/bci-base:15.7
+FROM ${BASE} AS app
+FROM ${OS_BASE}
+RUN zypper --non-interactive --gpg-auto-import-keys refresh && \
+    zypper --non-interactive install nginx jq && \
+    zypper --non-interactive update -y && \
+    zypper --non-interactive clean --all
+COPY --from=app /etc/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --from=app /home/plugin-server/plugin-contents /home/plugin-server/plugin-contents
+RUN echo 'pluginserver:x:1000:1000::/home/pluginserver:/bin/bash' >> /etc/passwd && \
+    echo 'pluginserver:x:1000:' >> /etc/group && \
+    mkdir -p /home/pluginserver && \
+    chown -R pluginserver:pluginserver /etc/nginx/nginx.conf && \
+    chown -R pluginserver:pluginserver /home/plugin-server && \
+    chown -R pluginserver:pluginserver /var/lib/nginx && \
+    chown -R pluginserver:pluginserver /var/log/nginx && \
+    touch /run/nginx.pid && \
+    chown pluginserver:pluginserver /run/nginx.pid
+USER pluginserver
+WORKDIR /home/plugin-server/plugin-contents
+ENTRYPOINT ["nginx", "-g", "daemon off;"]
