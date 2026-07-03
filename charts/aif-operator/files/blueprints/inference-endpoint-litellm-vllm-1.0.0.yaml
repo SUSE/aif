@@ -1,0 +1,353 @@
+# =============================================================================
+# SUSE Inference Endpoint Blueprint
+# =============================================================================
+# CRD: blueprints.ai-factory.suse.com (kind: Blueprint)
+#
+# This Blueprint stitches two Helm charts into one production-ready inference
+# stack:
+#
+#   1. vllm  (vLLM production-stack)  -> hosts the actual model(s) on GPUs and
+#                                        exposes an OpenAI-compatible "router".
+#   2. litellm                        -> the single, governed front door. Every
+#                                        client talks to LiteLLM; LiteLLM decides
+#                                        who can reach which model using virtual
+#                                        keys, teams and model access groups.
+#
+# Request flow:
+#
+#   client ──(virtual key)──> LiteLLM ──> vLLM router ──> vLLM serving engine(s)
+#
+# Day-2 configuration surfaces (no redeploy of the Blueprint required):
+#   * Add / change models behind LiteLLM .... edit  spec.components[litellm]
+#                                             .values.proxy_config.model_list
+#                                             (rendered into a ConfigMap).
+#   * Add an in-cluster GPU model ........... add an entry to
+#                                             servingEngineSpec.modelSpec.
+#   * Grant access (teams, keys) ............ runtime API calls to LiteLLM
+#                                             (see README + examples/).
+#
+# Before applying, create the required Secrets (see the prerequisites in
+# spec.description for the exact kubectl commands).
+# =============================================================================
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: suse-inference-endpoint-1-0-0
+  labels:
+    ai-factory.suse.com/blueprint-name: suse-inference-endpoint
+    ai-factory.suse.com/blueprint-version: 1.0.0
+spec:
+  displayName: SUSE Inference Endpoint
+  source: SUSE
+  version: 1.0.0
+  description: |-
+    Turnkey production inference LLM gateway that fronts one or more vLLM
+    model backends behind a single OpenAI-compatible API, adding
+    authentication and RBAC (virtual keys, teams, per-key/team model access
+    control, budgets, and rate limits) plus optional prompt-injection
+    guardrails. All components run on SUSE images.
+
+    PREREQUISITES — create the following Secrets BEFORE applying this
+    Blueprint, in the SAME namespace the Blueprint installs into. Generate
+    strong random values; do not reuse the placeholders shown here.
+
+    1) LiteLLM gateway credentials — Secret "litellm-credentials"
+         PROXY_MASTER_KEY  admin "sk-..." key (full control of the LiteLLM API/UI)
+         LITELLM_SALT_KEY  encrypts provider API keys stored in the DB; must NOT
+                           change after first use or previously stored keys break
+         UI_USERNAME       login user for the LiteLLM Admin UI
+         UI_PASSWORD       login password for the LiteLLM Admin UI
+
+       kubectl create secret generic litellm-credentials \
+         --namespace <your-namespace> \
+         --from-literal=PROXY_MASTER_KEY="sk-$(openssl rand -hex 24)" \
+         --from-literal=LITELLM_SALT_KEY="sk-$(openssl rand -hex 24)" \
+         --from-literal=UI_USERNAME="admin" \
+         --from-literal=UI_PASSWORD="<choose-a-strong-password>"
+
+    2) HuggingFace token — Secret "huggingface-token"
+       Required only if any servingEngineSpec.modelSpec entry references a
+       gated/private model (e.g. meta-llama/*). Skip if all models are public.
+
+       kubectl create secret generic huggingface-token \
+         --namespace <your-namespace> \
+         --from-literal=HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxx"
+
+    Verify both exist before applying:
+       kubectl get secret litellm-credentials huggingface-token -n <your-namespace>
+  components:
+
+    # =========================================================================
+    # COMPONENT 1: vLLM production-stack (serving engine + router)
+    # =========================================================================
+    - chartName: vllm
+      chartRepo: application-collection
+      chartVersion: 0.1.10
+      values:
+        global:
+          imageRegistry: ""
+          imagePullSecrets:
+            - application-collection
+
+        # ---------------------------------------------------------------------
+        # Serving engine: the GPU pods that actually run the model.
+        # Each entry in modelSpec becomes its own deployment. Add more entries
+        # to serve more models in-cluster. All of them are auto-discovered by
+        # the router below and surfaced at the same OpenAI endpoint.
+        # ---------------------------------------------------------------------
+        servingEngineSpec:
+          enableEngine: true
+          runtimeClassName: nvidia          # GPU runtime; set "" for CPU-only test models
+          containerPort: 8000
+          servicePort: 80
+          modelSpec:
+            # --- Example model, sized for a single Tesla T4 (16GB) on a small
+            #     node (e.g. g4dn.xlarge: 4 vCPU / 16GB shared with the rest of
+            #     the stack). For bigger GPUs, scale modelURL/resources up. ---
+            - name: llama-3-2-1b             # k8s-safe name for the deployment
+              # vLLM serving image from the SUSE Application Collection.
+              # Pin an exact revision tag. NOTE: the 0.19.0-5.x builds are missing
+              # 'pydantic_extra_types' and 500 on chat completions; using the
+              # 0.13.0 line which doesn't have that gap. (Verify with the depcheck
+              # pod in the README before changing.)
+              registry: "dp.apps.rancher.io"
+              repository: "containers/vllm-openai"
+              tag: "0.13.0-5.3"
+              imagePullPolicy: "IfNotPresent"
+              # The HuggingFace model id. This exact string is what clients/
+              # LiteLLM must reference as the model name. 1B fits a T4 with room
+              # for KV cache; an 8B model in fp16 does NOT fit 16GB VRAM.
+              modelURL: "meta-llama/Llama-3.2-1B-Instruct"
+              replicaCount: 1
+              # Keep requests small: everything shares this 4 vCPU / 16GB node.
+              requestCPU: 1
+              requestMemory: "4Gi"
+              requestGPU: 1
+              # Persist downloaded weights so pod restarts don't re-download.
+              pvcStorage: "20Gi"
+              pvcAccessMode: ["ReadWriteOnce"]
+              # StorageClass for the model-cache PVC. Leave "" to use the
+              # cluster default StorageClass; set explicitly (e.g. "local-path")
+              # if your cluster has no default. A PVC with no class on a cluster
+              # without a default will hang in Pending ("unbound immediate PVC").
+              storageClass: "local-path"
+              vllmConfig:
+                # T4 is Turing (compute 7.5) -> NO bfloat16. Use fp16 ("half").
+                dtype: "half"
+                maxModelLen: 8192
+                extraArgs: ["--gpu-memory-utilization", "0.9"]
+              # HuggingFace token for gated/private models. Provided via the
+              # "huggingface-token" Secret (see spec.description). Remove if
+              # your model is public.
+              env:
+                - name: HF_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: huggingface-token
+                      key: HF_TOKEN
+
+        # ---------------------------------------------------------------------
+        # Router: OpenAI-compatible entry point in front of all serving engines.
+        # In-cluster DNS (same namespace):  http://vllm-router-service:80/v1
+        # Keep this ClusterIP-only: LiteLLM is the public front door, not this.
+        # ---------------------------------------------------------------------
+        routerSpec:
+          enableRouter: true
+          replicaCount: 1
+          routingLogic: roundrobin
+          serviceDiscovery: k8s
+          k8sServiceDiscoveryType: pod-ip
+          serviceType: ClusterIP
+          servicePort: 80
+          containerPort: 8000
+          registry: dp.apps.rancher.io
+          repository: containers/lmcache-lmstack-router
+          tag: 0.1.10-3.60
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1000Mi
+            limits:
+              memory: 1000Mi
+          autoscaling:
+            enabled: false
+            minReplicas: 1
+            maxReplicas: 3
+            targetCPUUtilizationPercentage: 80
+          # Router stays internal. No ingress here on purpose.
+          ingress:
+            enabled: false
+
+    # =========================================================================
+    # COMPONENT 2: LiteLLM (governed gateway / front door)
+    # =========================================================================
+    - chartName: litellm
+      chartRepo: suse-ai-registry
+      chartVersion: 1.81.13
+      values:
+        global:
+          imageRegistry: ""
+          imagePullSecrets:
+            - application-collection
+        image:
+          registry: registry.suse.com
+          repository: ai/containers/litellm-database
+          # Match the chart version (1.81.13).
+          tag: v1.81.13
+          pullPolicy: IfNotPresent
+        replicaCount: 1
+
+        # ---------------------------------------------------------------------
+        # Credentials. PROXY_MASTER_KEY (admin), LITELLM_SALT_KEY (encrypts
+        # model keys stored in the DB) and the UI login come from the
+        # "litellm-credentials" Secret you create out-of-band before applying
+        # (see spec.description for the kubectl command).
+        # ---------------------------------------------------------------------
+        masterkeySecretName: litellm-credentials
+        masterkeySecretKey: PROXY_MASTER_KEY
+        # envFrom this Secret so LITELLM_SALT_KEY / UI_USERNAME / UI_PASSWORD
+        # (and PROXY_MASTER_KEY) are all present as env vars.
+        environmentSecrets:
+          - litellm-credentials
+
+        # ---------------------------------------------------------------------
+        # Database: required for governance (teams, virtual keys, spend) and for
+        # store_model_in_db. Bundled Postgres for turnkey installs. For real
+        # production, point at an external/HA Postgres (db.useExisting: true).
+        # ---------------------------------------------------------------------
+        db:
+          deployStandalone: true
+          useExisting: false
+          database: litellm
+        postgresql:
+          architecture: standalone
+          auth:
+            database: litellm
+            username: litellm
+            # CHANGE ME. Internal-only credential; rotate for production.
+            password: ChangeMe-litellm-db-password
+            postgres-password: ChangeMe-litellm-db-password
+          # StorageClass for the Postgres data PVC. Leave "" to use the cluster
+          # default; set explicitly (e.g. "local-path") if there is no default,
+          # otherwise the postgresql-0 pod hangs in Pending on an unbound PVC.
+          persistence:
+            storageClass: "local-path"
+        migrationJob:
+          enabled: true
+
+        # ---------------------------------------------------------------------
+        # proxy_config -> rendered into a ConfigMap (proxyConfigMap.create).
+        # THIS IS THE MAIN DAY-2 KNOB: add/remove model endpoints here.
+        # Each model_name is what clients call; access_groups drive governance.
+        # ---------------------------------------------------------------------
+        proxyConfigMap:
+          create: true
+        proxy_config:
+          general_settings:
+            master_key: os.environ/PROXY_MASTER_KEY
+            # Persist teams/keys/models created via the API or Admin UI.
+            store_model_in_db: true
+            store_prompts_in_spend_logs: false
+
+          litellm_settings:
+            # Don't crash on provider-specific params vLLM doesn't accept.
+            drop_params: true
+            # Spend/usage is tracked in the database per key/team out of the box.
+            # Prometheus metrics export is optional: add success_callback:
+            # ["prometheus"] (and enable serviceMonitor below) only if your
+            # litellm image bundles the prometheus extra.
+
+            # --- Optional guardrail: in-memory prompt-injection detection -----
+            # OSS, config-only (no extra image/script/license). Runs a local
+            # heuristic + similarity check against a built-in list of known
+            # prompt-injection attacks on every request. Applies GLOBALLY (OSS
+            # cannot scope guardrails per key/team). Disabled by default; enable
+            # by uncommenting, and verify it triggers on your image build.
+            callbacks: ["detect_prompt_injection"]
+            prompt_injection_params:
+              heuristics_check: true
+              similarity_check: true
+              reject_as_response: true
+
+          # --- Other guardrails: NOT available via values alone ----------------
+          # Under OSS LiteLLM + SUSE-registry-only + values-only (no mounted
+          # scripts), the guardrails[] providers below do NOT work here:
+          #   * presidio / hide-secrets / llamaguard_moderations /
+          #     openai_moderations, etc.  -> require a LiteLLM ENTERPRISE license
+          #                                   (presidio also needs a non-SUSE image).
+          #   * per-key / per-team guardrail scoping (tiered dev/prod)
+          #                                -> Enterprise-only policy engine.
+          # Real content-safety (Llama Guard) would need its code baked into a
+          # custom image built FROM the SUSE LiteLLM image (see README).
+          # Keep this empty; the active guardrail is the callback above.
+          guardrails: []
+
+          # --- Model endpoints (the routing table) -----------------------------
+          # Pattern for an in-cluster vLLM model served by the router above:
+          #   model:    openai/<exact modelURL from servingEngineSpec>
+          #   api_base: http://vllm-router-service:80/v1   (same namespace)
+          #   api_key:  any non-empty value (router has no auth; LiteLLM does)
+          # access_groups: logical tiers you grant to teams/keys.
+          model_list:
+            - model_name: llama-3.2-1b
+              litellm_params:
+                model: openai/meta-llama/Llama-3.2-1B-Instruct
+                api_base: http://vllm-router-service:80/v1
+                api_key: dummy-vllm-has-no-auth
+              model_info:
+                access_groups: ["general"]
+
+            # ---- Example: a SECOND, restricted in-cluster model -------------
+            # Add a matching entry under servingEngineSpec.modelSpec to serve it.
+            # - model_name: llama-3.1-70b
+            #   litellm_params:
+            #     model: openai/meta-llama/Llama-3.1-70B-Instruct
+            #     api_base: http://vllm-router-service:80/v1
+            #     api_key: dummy-vllm-has-no-auth
+            #   model_info:
+            #     access_groups: ["restricted"]
+
+            # ---- Example: an EXTERNAL vLLM endpoint (another cluster/host) ---
+            # LiteLLM can front any OpenAI-compatible vLLM, not just the one
+            # deployed here. Just point api_base at it.
+            # - model_name: mistral-7b-edge
+            #   litellm_params:
+            #     model: openai/mistralai/Mistral-7B-Instruct-v0.3
+            #     api_base: http://vllm.edge-site.example.com/v1
+            #     api_key: os.environ/EDGE_VLLM_API_KEY
+            #   model_info:
+            #     access_groups: ["general"]
+
+        # ---------------------------------------------------------------------
+        # Service: ClusterIP by default. Expose via ingress (below) or a
+        # gateway. This is the ONLY endpoint clients should reach.
+        # ---------------------------------------------------------------------
+        service:
+          type: ClusterIP
+          port: 4000
+
+        # Turn on and configure to expose the gateway externally.
+        ingress:
+          enabled: false
+          className: nginx
+          hosts:
+            - host: inference.example.com
+              paths:
+                - path: /
+                  pathType: Prefix
+          tls: []
+
+        # Scrape LiteLLM metrics with a Prometheus Operator ServiceMonitor.
+        # Enable together with the prometheus success_callback (see litellm_settings).
+        serviceMonitor:
+          enabled: false
+          interval: 15s
+
+        autoscaling:
+          enabled: false
+          minReplicas: 1
+          maxReplicas: 5
+          targetCPUUtilizationPercentage: 80
+        resources: {}
+
