@@ -5,6 +5,13 @@ updates:
     directory: /operator
     schedule:
       interval: daily
+    commit-message:
+        prefix: chore
+    groups:
+        patch-and-minor:
+          update-types:
+            - patch
+            - minor
     open-pull-requests-limit: 12
     labels:
       - dependencies
@@ -15,6 +22,8 @@ updates:
     directory: /ui
     schedule:
       interval: daily
+    commit-message:
+        prefix: chore
     open-pull-requests-limit: 12
     labels:
       - dependencies
@@ -25,6 +34,8 @@ updates:
     directory: /build
     schedule:
       interval: daily
+    commit-message:
+        prefix: chore
     labels:
       - dependencies
       - docker
@@ -34,6 +45,8 @@ updates:
     directory: /
     schedule:
       interval: daily
+    commit-message:
+        prefix: chore
     labels:
       - dependencies
       - github-actions
