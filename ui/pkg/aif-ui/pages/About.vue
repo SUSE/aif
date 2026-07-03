@@ -61,7 +61,13 @@ export default {
             <td class="label-col text-muted">
               {{ t('suseai.pages.about.sections.versions.extension') }}
             </td>
-            <td>{{ extensionVersion }}</td>
+            <td>
+              <span v-if="extensionVersion">{{ extensionVersion }}</span>
+              <span
+                v-else
+                class="text-muted"
+              >{{ t('suseai.pages.about.sections.versions.unavailable') }}</span>
+            </td>
           </tr>
           <tr>
             <td class="label-col text-muted">
