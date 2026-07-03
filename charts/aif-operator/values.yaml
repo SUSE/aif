@@ -37,7 +37,7 @@ manager:
   image:
     registry: ghcr.io
     repository: suse/aif-operator
-    tag: "0.1.0-dev.8"
+    tag: "2.0.0-rc.1"
     pullPolicy: IfNotPresent
 
   imagePullSecrets: []
@@ -107,16 +107,16 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "0.1.0-dev.8"
+      version: "2.0.0-rc.1"
       # values are merged onto the aif-ui chart's default values. Useful for
       # overriding the UI image during development:
       #   aiExtension.source.helm.values.image.registry=ghcr.io
       #   aiExtension.source.helm.values.image.repository=suse/aif-ui
-      #   aiExtension.source.helm.values.image.tag=0.1.0-dev.4
+      #   aiExtension.source.helm.values.image.tag=2.0.0-rc.1
       values: {}
   extension:
     name: "aif-ui"
-    version: "0.1.0-dev.8"
+    version: "2.0.0-rc.1"
   cleanup:
     image:
       registry: registry.suse.com
