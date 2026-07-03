@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # Go modules for the operator
+  - package-ecosystem: gomod
+    directory: /operator
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 12
+    labels:
+      - dependencies
+      - go
+
+  # npm dependencies for the UI extension
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 12
+    labels:
+      - dependencies
+      - javascript
+
+  # Dockerfiles under build/
+  - package-ecosystem: docker
+    directory: /build
+    schedule:
+      interval: daily
+    labels:
+      - dependencies
+      - docker
+
+  # GitHub Actions workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    labels:
+      - dependencies
+      - github-actions
