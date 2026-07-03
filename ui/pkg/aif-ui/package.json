@@ -1,7 +1,7 @@
 {
   "name": "aif-ui",
   "description": "SUSE AI Factory",
-  "version": "0.1.0-dev.8",
+  "version": "2.0.0-rc.1",
   "private": false,
   "rancher": {
     "annotations": {
