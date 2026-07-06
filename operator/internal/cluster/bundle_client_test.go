@@ -234,10 +234,12 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 			// the Pod-bounce step must survive the splice intact
 			"delete pod",
 			"ImagePullBackOff",
-			// the bounce must be gated on an SA actually being patched this
-			// run, so a stable namespace never churns Pods (Pending<->Running).
-			"PATCHED=0",
-			`if [ "$PATCHED" = 1 ]; then`,
+			// the bounce is keyed on the Pod's own spec (missing a desired
+			// secret), NOT on "an SA was patched this run" — otherwise a Pod
+			// admitted before an earlier tick's patch stays stuck forever.
+			// The anti-churn property is preserved: converged Pods are skipped.
+			"for want in $DESIRED",
+			"MISSING=1",
 			// The namespace "default" SA must be in scope so subchart pods that
 			// run under it (e.g. litellm's postgresql) get the combined creds.
 			`printf 'default %s'`,
