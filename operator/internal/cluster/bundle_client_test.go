@@ -88,8 +88,19 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 		t.Fatalf("spec.targets missing: found=%v err=%v", found, err)
 	}
 	t0, _ := targets[0].(map[string]any)
-	if name, _ := t0["clusterName"].(string); name != "c-abc123" {
-		t.Errorf("target clusterName: got %v want c-abc123", name)
+	// Must target by the management-cluster-ID label, not clusterName: Fleet's
+	// clusterName matches the Fleet Cluster's generated metadata.name, so
+	// targeting the Rancher ID there matches zero clusters (Bundle Ready 0/0,
+	// nothing delivered). See ApplyPullSecretBundle for the full rationale.
+	if name, ok := t0["clusterName"].(string); ok {
+		t.Errorf("target must not use clusterName (matches Fleet Cluster metadata.name, not the Rancher ID); got clusterName=%q", name)
+	}
+	gotLabel, found, err := unstructured.NestedString(t0, "clusterSelector", "matchLabels", "management.cattle.io/cluster-name")
+	if err != nil || !found {
+		t.Fatalf("target clusterSelector.matchLabels[management.cattle.io/cluster-name] missing: found=%v err=%v; target=%#v", found, err, t0)
+	}
+	if gotLabel != "c-abc123" {
+		t.Errorf("target cluster-name label: got %q want c-abc123", gotLabel)
 	}
 
 	// Resources layout: [Namespace, pull Secret, api Secret, SA-merge bundle].
