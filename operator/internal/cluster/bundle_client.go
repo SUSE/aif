@@ -55,7 +55,10 @@ type BundleClient interface {
 
 // BundleClientOptions configures a bundleClient instance.
 type BundleClientOptions struct {
-	// ClusterID is the Rancher cluster ID Fleet targets (e.g. "c-abc123").
+	// ClusterID is the Rancher management cluster ID (e.g. "c-abc123"). The
+	// Bundle targets the downstream cluster by matching this value against the
+	// Fleet Cluster's `management.cattle.io/cluster-name` label — NOT against
+	// the Fleet Cluster's metadata.name, which is a distinct generated name.
 	// Use "local" for the operator's own cluster (the bundleClient would
 	// then deliver via fleet-local rather than fleet-default).
 	ClusterID string
@@ -201,9 +204,25 @@ func (b *bundleClient) ApplyPullSecretBundle(ctx context.Context, secrets []*cor
 
 	spec := map[string]any{
 		"resources": resources,
+		// Target the downstream cluster by the management-cluster-ID label, NOT
+		// by clusterName. Fleet's `clusterName` matches the Fleet Cluster
+		// object's metadata.name, which in Rancher is a generated name (e.g.
+		// "cluster-xxadf"), NOT the Rancher management cluster ID we hold in
+		// ClusterID ("c-abc123"). Those only coincide on some registration
+		// styles, so clusterName targeting silently matched zero clusters on
+		// clusters where they differ — the Bundle went Ready with 0/0 clusters
+		// and the pull secrets, namespace, and SA-merge Job were never delivered.
+		// The Rancher cluster ID lives on the `management.cattle.io/cluster-name`
+		// label of the Fleet Cluster, so select on that — the same mechanism the
+		// workload HelmOp uses (see ensureBlueprintHelmOp), which is why the app
+		// deployed while its pull secrets did not.
 		"targets": []any{
 			map[string]any{
-				"clusterName": b.opts.ClusterID,
+				"clusterSelector": map[string]any{
+					"matchLabels": map[string]any{
+						"management.cattle.io/cluster-name": b.opts.ClusterID,
+					},
+				},
 			},
 		},
 		// takeOwnership lets this Bundle's Helm release adopt a Namespace
