@@ -1,0 +1,52 @@
+version: 2
+updates:
+  # Go modules for the operator
+  - package-ecosystem: gomod
+    directory: /operator
+    schedule:
+      interval: daily
+    commit-message:
+        prefix: chore
+    groups:
+        patch-and-minor:
+          update-types:
+            - patch
+            - minor
+    open-pull-requests-limit: 12
+    labels:
+      - dependencies
+      - go
+
+  # npm dependencies for the UI extension
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: daily
+    commit-message:
+        prefix: chore
+    open-pull-requests-limit: 12
+    labels:
+      - dependencies
+      - javascript
+
+  # Dockerfiles under build/
+  - package-ecosystem: docker
+    directory: /build
+    schedule:
+      interval: daily
+    commit-message:
+        prefix: chore
+    labels:
+      - dependencies
+      - docker
+
+  # GitHub Actions workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    commit-message:
+        prefix: chore
+    labels:
+      - dependencies
+      - github-actions
