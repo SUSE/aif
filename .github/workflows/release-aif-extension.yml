@@ -11,24 +11,55 @@ env:
   IMAGE_NAME: ghcr.io/suse/aif-ui
 
 jobs:
-  # verify-ancestry:
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: read
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-  #       with:
-  #         fetch-depth: 0
+  verify-ancestry:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
 
-  #     - name: Verify tag is reachable from main
-  #       run: |
-  #         git fetch origin main
-  #         git merge-base --is-ancestor "${{ github.sha }}" origin/main || \
-  #           { echo "::error::Tag must point to a commit reachable from origin/main"; exit 1; }
+      - name: Verify tag is reachable from main or a matching release branch
+        env:
+          TAG_PREFIX: aif-ui-
+        run: |
+          git fetch --quiet origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/release-*:refs/remotes/origin/release-*' \
+            '+refs/heads/release/*:refs/remotes/origin/release/*'
+          sha="${{ github.sha }}"
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#"$TAG_PREFIX"}"
+
+          # main is the primary line and may cut any version.
+          if git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
+            echo "Tag is reachable from main"
+            exit 0
+          fi
+
+          # Otherwise the commit must live on a release branch whose version
+          # prefixes the tag (e.g. release-2.0 -> 2.0.*, release/2.2607 -> 2.2607.*).
+          for ref in $(git for-each-ref --format='%(refname)' \
+                'refs/remotes/origin/release-*' 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "$sha" "$ref"; then
+              branch="${ref#refs/remotes/origin/}"
+              branch_version="${branch#release-}"
+              branch_version="${branch_version#release/}"
+              if [[ "$version" == "$branch_version".* ]]; then
+                echo "Tag $tag is reachable from $branch and matches its version line"
+                exit 0
+              fi
+              echo "Reachable from $branch but version '$version' != ${branch_version}.* — checking other branches"
+            fi
+          done
+
+          echo "::error::Tag version '$version' is not reachable from origin/main or a release branch matching its major/minor line"
+          exit 1
 
   prepare:
-    # needs: verify-ancestry
+    needs: verify-ancestry
     runs-on: ubuntu-latest
     outputs:
       VERSION: ${{ steps.tags.outputs.VERSION }}
