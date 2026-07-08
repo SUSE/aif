@@ -41,6 +41,8 @@ export interface BlueprintList {
 
 export const BLUEPRINT_NAME_LABEL    = 'ai-factory.suse.com/blueprint-name';
 export const BLUEPRINT_VERSION_LABEL = 'ai-factory.suse.com/blueprint-version';
+export const BLUEPRINT_SOURCE_LABEL   = 'ai-factory.suse.com/source';
+export const BLUEPRINT_SOURCE_BUNDLED = 'bundled';
 
 export const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/;
 
