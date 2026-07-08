@@ -24,6 +24,11 @@ import (
 const (
 	BlueprintNameLabel    = "ai-factory.suse.com/blueprint-name"
 	BlueprintVersionLabel = "ai-factory.suse.com/blueprint-version"
+
+	// BlueprintSourceLabel marks where a blueprint came from. The Helm chart
+	// stamps BlueprintSourceBundled on blueprints shipped with the product.
+	BlueprintSourceLabel   = "ai-factory.suse.com/source"
+	BlueprintSourceBundled = "bundled"
 )
 
 // ComponentVendor selects the secret-injection profile for a Blueprint

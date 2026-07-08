@@ -27,6 +27,7 @@ const (
 	ErrCodeNotFound     = "NOT_FOUND"
 	ErrCodeInvalidInput = "INVALID_INPUT"
 	ErrCodeConflict     = "CONFLICT"
+	ErrCodeForbidden    = "FORBIDDEN"
 	ErrCodeInternal     = "INTERNAL_ERROR"
 )
 
@@ -34,6 +35,7 @@ var (
 	ErrNotFound     = errors.New("not found")
 	ErrInvalidInput = errors.New("invalid input")
 	ErrConflict     = errors.New("conflict")
+	ErrForbidden    = errors.New("forbidden")
 )
 
 // APIError is the structured JSON error envelope returned by all endpoints.
@@ -69,6 +71,8 @@ func writeError(w http.ResponseWriter, status int, err error) {
 		code = ErrCodeInvalidInput
 	case errors.Is(err, ErrConflict):
 		code = ErrCodeConflict
+	case errors.Is(err, ErrForbidden):
+		code = ErrCodeForbidden
 	}
 	writeJSON(w, status, &APIError{Code: code, Message: err.Error()})
 }

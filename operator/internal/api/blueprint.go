@@ -142,9 +142,24 @@ func (h *BlueprintHandler) getBlueprint(w http.ResponseWriter, r *http.Request) 
 
 func (h *BlueprintHandler) deleteBlueprint(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	bp := &aiplatformv1alpha1.Blueprint{}
-	bp.Name = name
-	if err := h.client.Delete(r.Context(), bp); err != nil {
+
+	var bp aiplatformv1alpha1.Blueprint
+	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name}, &bp); err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, fmt.Errorf("%w: blueprint %q not found", ErrNotFound, name))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if bp.Labels[aiplatformv1alpha1.BlueprintSourceLabel] == aiplatformv1alpha1.BlueprintSourceBundled {
+		writeError(w, http.StatusForbidden, fmt.Errorf(
+			"%w: blueprint %q is bundled with the product and cannot be deleted", ErrForbidden, name))
+		return
+	}
+
+	if err := h.client.Delete(r.Context(), &bp); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, fmt.Errorf("%w: blueprint %q not found", ErrNotFound, name))
 			return
