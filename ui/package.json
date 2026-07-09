@@ -13,8 +13,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
-    "@types/js-yaml": "^4.0.9",
-    "husky": "^9.0.0"
+    "@types/js-yaml": "^4.0.9"
   },
   "resolutions": {
     "@types/node": "~20.10.0",
@@ -27,7 +26,6 @@
     "build-pkg": "VUE_APP_EXTENSION_VERSION=$(node -p \"require('./package.json').version\") ./node_modules/@rancher/shell/scripts/build-pkg.sh",
     "serve-pkgs": "./node_modules/@rancher/shell/scripts/serve-pkgs",
     "publish-pkgs": "./node_modules/@rancher/shell/scripts/extension/publish",
-    "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name",
-    "prepare": "husky"
+    "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name"
   }
 }

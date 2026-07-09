@@ -15,8 +15,7 @@
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
     "lint": "npx eslint --max-warnings 2000 --ext .js,.ts,.vue .",
-    "commitlint": "commitlint --edit",
-    "prepare": "husky"
+    "commitlint": "commitlint --edit"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -32,7 +31,6 @@
     "@vue/cli-plugin-typescript": "~5.0.0",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-promise": "^7.1.0",
-    "husky": "^9.1.7",
     "vue-tsc": "^2.0.29"
   },
   "browserslist": [
