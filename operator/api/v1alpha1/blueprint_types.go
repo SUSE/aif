@@ -25,8 +25,9 @@ const (
 	BlueprintNameLabel    = "ai-factory.suse.com/blueprint-name"
 	BlueprintVersionLabel = "ai-factory.suse.com/blueprint-version"
 
-	// BlueprintSourceLabel marks where a blueprint came from. The Helm chart
-	// stamps BlueprintSourceBundled on blueprints shipped with the product.
+	// BlueprintSourceLabel is a provenance marker: the Helm chart stamps
+	// BlueprintSourceBundled on blueprints shipped with the product. This is
+	// distinct from spec.source (the BlueprintOrigin vendor enum SUSE/Nvidia/Custom).
 	BlueprintSourceLabel   = "ai-factory.suse.com/source"
 	BlueprintSourceBundled = "bundled"
 )
