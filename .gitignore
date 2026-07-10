@@ -2,8 +2,8 @@
 .shell
 
 # compiled output
-/dist
-/dist-pkg
+dist/
+dist-pkg/
 /tmp
 /out-tsc
 

@@ -353,7 +353,7 @@ import { listAIWorkloads } from '../utils/operator-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
-import type { Blueprint } from '../types/blueprint-types';
+import { type Blueprint, BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 
 export default defineComponent({
@@ -380,6 +380,10 @@ export default defineComponent({
     // ── Helpers ────────────────────────────────────────────────────────────────
     function isDeprecated(bp: Blueprint): boolean {
       return bp.spec.deprecated === true;
+    }
+
+    function isBundled(bp: Blueprint): boolean {
+      return bp.metadata.labels?.[BLUEPRINT_SOURCE_LABEL] === BLUEPRINT_SOURCE_BUNDLED;
     }
 
     function visibleVersionsFor(versions: Blueprint[]): Blueprint[] {
@@ -684,9 +688,14 @@ export default defineComponent({
         actions.push(
           { action: 'edit',      label: 'Edit',      enabled: true },
           { action: 'deprecate', label: isSelectedDeprecated(family, versions) ? 'Undeprecate' : 'Deprecate', enabled: true },
-          { divider: true, label: '', enabled: true },
-          { action: 'delete',    label: 'Delete',    enabled: true },
         );
+        // Bundled blueprints ship with the product and must not be deleted from the GUI.
+        if (!isBundled(selectedVersion(family, versions))) {
+          actions.push(
+            { divider: true, label: '', enabled: true },
+            { action: 'delete', label: 'Delete', enabled: true },
+          );
+        }
       }
       return actions;
     }

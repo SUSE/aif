@@ -24,6 +24,12 @@ import (
 const (
 	BlueprintNameLabel    = "ai-factory.suse.com/blueprint-name"
 	BlueprintVersionLabel = "ai-factory.suse.com/blueprint-version"
+
+	// BlueprintSourceLabel is a provenance marker: the Helm chart stamps
+	// BlueprintSourceBundled on blueprints shipped with the product. This is
+	// distinct from spec.source (the BlueprintOrigin vendor enum SUSE/Nvidia/Custom).
+	BlueprintSourceLabel   = "ai-factory.suse.com/source"
+	BlueprintSourceBundled = "bundled"
 )
 
 // ComponentVendor selects the secret-injection profile for a Blueprint
