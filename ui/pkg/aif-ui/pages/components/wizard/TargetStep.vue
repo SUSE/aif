@@ -161,11 +161,19 @@ function onCardClick(id: AIWorkloadDeployStrategy) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
+  // Stretch every cell to the tallest card in the row so all boxes match height.
+  align-items: stretch;
 }
 
 .deploy-type-card-wrapper {
   display: flex;
   flex-direction: column;
+
+  // The grid stretches this wrapper to the row height; make the card fill it so
+  // shorter descriptions (e.g. Helm) don't render a smaller box than its siblings.
+  :deep(.item-card) {
+    height: 100%;
+  }
 }
 
 .card-disabled {
