@@ -1,0 +1,222 @@
+name: Release Prepare
+
+# Manually bump the AIF version across all version files and open a review PR.
+# This is step 1 of the release flow; release-publish (verify + tag) is separate.
+#
+# Version model: semver X.Y.Z with optional -rc.N / -dev.N suffix. operator and
+# ui are versioned in lockstep — every version file moves to the same version.
+#
+# Branch model:
+#   -dev.N   -> target must be main
+#   -rc.N    -> target must be an existing release-X.Y branch
+#   no suffix -> target must be an existing release-X.Y branch
+# Release branches are cut manually; this workflow never creates them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 2.0.1-rc.1 (semver, optional -rc.N / -dev.N)"
+        required: true
+        type: string
+      target:
+        description: "Branch to open the PR against: main or an existing release-X.Y"
+        required: true
+        type: string
+        default: main
+      component:
+        description: "Component this release publishes (recorded for the publish step)"
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - operator
+          - ui
+
+concurrency:
+  group: release-prepare-${{ inputs.target }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      VERSION: ${{ inputs.version }}
+      TARGET: ${{ inputs.target }}
+      COMPONENT: ${{ inputs.component }}
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.target }}
+          fetch-depth: 0
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+
+          # R1 — semver format with optional -rc.N / -dev.N suffix
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(rc|dev)\.[0-9]+)?$ ]]; then
+            echo "::error::version '$VERSION' is not valid semver (X.Y.Z with optional -rc.N / -dev.N)"
+            exit 1
+          fi
+
+          # R5 — target must be main or a release-* branch
+          if [[ "$TARGET" != "main" && ! "$TARGET" =~ ^release-.+ ]]; then
+            echo "::error::target '$TARGET' must be 'main' or a 'release-*' branch"
+            exit 1
+          fi
+
+          # Determine release kind from the suffix
+          if [[ "$VERSION" == *-dev.* ]]; then
+            kind=dev
+          elif [[ "$VERSION" == *-rc.* ]]; then
+            kind=rc
+          else
+            kind=prod
+          fi
+
+          # R3 — suffix <-> branch
+          if [[ "$kind" == "dev" && "$TARGET" != "main" ]]; then
+            echo "::error::dev versions (-dev.N) must target main, not '$TARGET'"
+            exit 1
+          fi
+          if [[ "$kind" != "dev" && "$TARGET" == "main" ]]; then
+            echo "::error::$kind versions must target a release-X.Y branch, not main"
+            exit 1
+          fi
+
+          # R4 — line <-> branch (release-X.Y accepts only X.Y.*)
+          if [[ "$TARGET" =~ ^release-.+ ]]; then
+            line="${TARGET#release-}"
+            if [[ "$VERSION" != "$line".* ]]; then
+              echo "::error::version '$VERSION' does not match release branch line '$line' (expected $line.*)"
+              exit 1
+            fi
+          fi
+
+          # R2 — must actually change the version
+          current="$(cat operator/VERSION)"
+          if [[ "$VERSION" == "$current" ]]; then
+            echo "::error::version '$VERSION' equals the current version; nothing to bump"
+            exit 1
+          fi
+
+          # R6 — a matching release tag must not already exist (per component)
+          git fetch --tags --quiet origin
+          case "$COMPONENT" in
+            operator) tags=("aif-operator-$VERSION") ;;
+            ui)       tags=("aif-ui-$VERSION") ;;
+            both)     tags=("aif-operator-$VERSION" "aif-ui-$VERSION") ;;
+          esac
+          for t in "${tags[@]}"; do
+            if git rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+              echo "::error::tag $t already exists; choose a new version"
+              exit 1
+            fi
+          done
+
+          echo "Validated: version=$VERSION kind=$kind target=$TARGET component=$COMPONENT (from $current)"
+
+      - name: Bump version files
+        run: |
+          set -euo pipefail
+
+          # Capture the current version BEFORE overwriting it (needed for the
+          # surgical values.yaml edits below).
+          OLD="$(cat operator/VERSION)"
+          old_re="${OLD//./\\.}"
+
+          # operator source of truth
+          printf '%s\n' "$VERSION" > operator/VERSION
+
+          # operator chart (yq keeps a clean diff — Chart.yaml has no blank lines)
+          yq -i '
+            .version = strenv(VERSION) |
+            .appVersion = strenv(VERSION) |
+            .annotations."helm.sh/images" = "- image: ghcr.io/suse/aif-operator:" + strenv(VERSION) + "\n  name: aif-operator\n"
+          ' charts/aif-operator/Chart.yaml
+
+          # operator values: own image tag + lockstep aif-ui/extension version refs.
+          # Use sed, not yq — yq strips blank lines and re-indents this file, which
+          # we commit. These anchored patterns match only the manager image tag
+          # (cleanup tag is "1.35") and the two version: "OLD" fields; the commented
+          # image.tag=OLD example uses '=' not ': "' and is left untouched.
+          sed -i -E "s|^([[:space:]]*tag: \")${old_re}(\")|\1${VERSION}\2|" charts/aif-operator/values.yaml
+          sed -i -E "s|^([[:space:]]*version: \")${old_re}(\")|\1${VERSION}\2|" charts/aif-operator/values.yaml
+
+          # ui chart
+          yq -i '
+            .version = strenv(VERSION) |
+            .appVersion = strenv(VERSION) |
+            .annotations."helm.sh/images" = "- image: ghcr.io/suse/aif-ui:" + strenv(VERSION) + "\n  name: aif-ui\n"
+          ' charts/aif-ui/Chart.yaml
+
+          # ui packages (root version + package-lock root entries only)
+          bump_json() {
+            local file="$1"; shift
+            jq --arg v "$VERSION" "$@" "$file" > "$file.tmp"
+            mv "$file.tmp" "$file"
+          }
+          bump_json ui/package.json '.version = $v'
+          bump_json ui/package-lock.json '.version = $v | .packages[""].version = $v'
+          bump_json ui/pkg/aif-ui/package.json '.version = $v'
+          bump_json ui/pkg/aif-ui/package-lock.json '.version = $v | .packages[""].version = $v'
+
+          echo "Changed files:"
+          git status --porcelain
+
+      - name: Commit and open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          branch="chore/release-$VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Bot-owned, deterministic branch: reset and force-update so re-runs
+          # refresh the same PR in place instead of colliding on a stale branch.
+          git checkout -B "$branch"
+          git add \
+            operator/VERSION \
+            charts/aif-operator/Chart.yaml \
+            charts/aif-operator/values.yaml \
+            charts/aif-ui/Chart.yaml \
+            ui/package.json \
+            ui/package-lock.json \
+            ui/pkg/aif-ui/package.json \
+            ui/pkg/aif-ui/package-lock.json
+          git commit -m "chore: release $VERSION"
+          git push --force origin "$branch"
+
+          # If a PR is already open for this branch, the push above refreshed it.
+          if url="$(gh pr view "$branch" --json url --jq .url 2>/dev/null)"; then
+            echo "PR already open, updated in place: $url"
+            echo "Release PR (updated): $url" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Otherwise open it. gh pr create fails if the org blocks Actions from
+          # creating PRs; fall back to emitting the compare URL so the run still
+          # succeeds and a human can open the PR with one click.
+          body="$(printf '## Release %s\n\n- **Version:** %s\n- **Component:** %s\n- **Target:** %s\n\nAutomated version bump by the release-prepare workflow. Review and merge to make the version official; then run release-publish to tag.\n' "$VERSION" "$VERSION" "$COMPONENT" "$TARGET")"
+          if url="$(gh pr create --base "$TARGET" --head "$branch" --title "chore: release $VERSION" --body "$body" 2>/dev/null)"; then
+            echo "Opened PR: $url"
+            echo "Release PR: $url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${TARGET}...${branch}?expand=1"
+            echo "::warning::Could not auto-create the PR (Actions may be blocked from creating PRs). Open it here: $compare"
+            {
+              echo "### Release PR not auto-created"
+              echo "GitHub Actions is not permitted to create PRs in this repo, so open it manually:"
+              echo ""
+              echo "[Open the release PR for $VERSION]($compare)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
