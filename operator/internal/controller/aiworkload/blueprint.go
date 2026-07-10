@@ -166,7 +166,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// blueprint component override the workload-level TargetNamespace. The
 	// injector and the HelmOp's defaultNamespace below both consume this.
 	ns := componentNamespace(w, c)
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -266,11 +266,18 @@ func ngcAPISecretData(token string) map[string][]byte {
 // it writes. A no-op Apply (e.g., missing credentials) is acceptable; Helm will
 // surface the resulting ImagePullBackOff downstream.
 type secretInjector interface {
-	// Apply writes any dockerconfigjson Secret(s) it needs through cc, sets
-	// value-path references in vals, and returns the names of Secrets it
-	// wrote (used by reconcilePullSecrets downstream to attach them to
-	// ServiceAccounts).
-	Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) (createdSecretNames []string, err error)
+	// Apply sets value-path references in vals and returns the names of the
+	// Secrets the operator will deliver (used by reconcilePullSecrets/
+	// deliverPullSecrets to attach them to ServiceAccounts and ship them to
+	// every target cluster).
+	//
+	// writeLocal gates the local-cluster side effects only: when true, the
+	// Secret (and its namespace) are persisted on the operator's own cluster
+	// through cc. When false — a downstream-only workload — nothing is written
+	// locally; deliverPullSecrets ships the Secret + namespace to the target
+	// cluster via a Fleet Bundle instead. The returned names and the vals
+	// mutation happen regardless of writeLocal (bug 862).
+	Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any, writeLocal bool) (createdSecretNames []string, err error)
 }
 
 // suseInjector preserves the historical combined-secret behavior: one
@@ -278,8 +285,8 @@ type secretInjector interface {
 // imagePullSecrets and global.imagePullSecrets.
 type suseInjector struct{ r *AIWorkloadReconciler }
 
-func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
-	name, err := s.r.ensureCombinedPullSecret(ctx, cc, targetNamespace, repoInfo)
+func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any, writeLocal bool) ([]string, error) {
+	name, err := s.r.ensureCombinedPullSecret(ctx, cc, targetNamespace, repoInfo, writeLocal)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "could not create image pull secret", "namespace", targetNamespace)
 		return nil, nil
@@ -309,7 +316,7 @@ func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNames
 // covers the surveyed NIM chart families.
 type nvidiaInjector struct{ r *AIWorkloadReconciler }
 
-func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any) ([]string, error) {
+func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any, writeLocal bool) ([]string, error) {
 	l := log.FromContext(ctx)
 
 	dockerCfg, err := n.r.buildNGCDockerConfig(ctx)
@@ -333,22 +340,34 @@ func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNam
 		return nil, nil
 	}
 
-	pullSecret := &corev1.Secret{}
-	pullSecret.Name = nvidiaImagePullSecretName
-	pullSecret.Namespace = targetNamespace
-	pullSecret.Type = corev1.SecretTypeDockerConfigJson
-	pullSecret.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
-	if err := cc.ApplySecret(ctx, pullSecret); err != nil {
-		return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
-	}
+	// Persist the ngc-secret / ngc-api Secrets onto the operator's own cluster
+	// only when the workload targets it. For a downstream-only workload
+	// deliverPullSecrets rebuilds and ships them (and their namespace) to the
+	// target cluster via a Fleet Bundle; writing them locally would leave an
+	// orphan namespace on the management cluster (bug 862). The returned names
+	// and the vals mutation below happen regardless so the chart references the
+	// secrets and the delivery is recorded.
+	if writeLocal {
+		if err := n.r.ensureNamespace(ctx, targetNamespace); err != nil {
+			return nil, err
+		}
+		pullSecret := &corev1.Secret{}
+		pullSecret.Name = nvidiaImagePullSecretName
+		pullSecret.Namespace = targetNamespace
+		pullSecret.Type = corev1.SecretTypeDockerConfigJson
+		pullSecret.Data = map[string][]byte{corev1.DockerConfigJsonKey: dockerCfg}
+		if err := cc.ApplySecret(ctx, pullSecret); err != nil {
+			return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaImagePullSecretName, err)
+		}
 
-	apiSecret := &corev1.Secret{}
-	apiSecret.Name = nvidiaAPISecretName
-	apiSecret.Namespace = targetNamespace
-	apiSecret.Type = corev1.SecretTypeOpaque
-	apiSecret.Data = ngcAPISecretData(token)
-	if err := cc.ApplySecret(ctx, apiSecret); err != nil {
-		return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
+		apiSecret := &corev1.Secret{}
+		apiSecret.Name = nvidiaAPISecretName
+		apiSecret.Namespace = targetNamespace
+		apiSecret.Type = corev1.SecretTypeOpaque
+		apiSecret.Data = ngcAPISecretData(token)
+		if err := cc.ApplySecret(ctx, apiSecret); err != nil {
+			return nil, fmt.Errorf("apply %s/%s: %w", targetNamespace, nvidiaAPISecretName, err)
+		}
 	}
 
 	injectNvidiaPullSecretRefs(vals)
@@ -419,7 +438,7 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 // chartRepo, ApplicationCollection, and SUSERegistry from Settings. This ensures subchart
 // images pulled from a different registry than the parent chart are also authenticated.
 // Returns the secret name, or "" if no credentials are available.
-func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo) (string, error) {
+func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, writeLocal bool) (string, error) {
 	auths := map[string]any{}
 
 	// Component's own chartRepo credentials. The Settings-derived registries
@@ -438,6 +457,16 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc 
 
 	if len(auths) == 0 {
 		return "", nil
+	}
+
+	// Persist the secret onto the operator's own cluster only when the workload
+	// targets it. For a downstream-only workload deliverPullSecrets rebuilds and
+	// ships the secret (and its namespace) to the target cluster via a Fleet
+	// Bundle; writing it locally would leave an orphan namespace on the
+	// management cluster (bug 862). The name is still returned so the caller can
+	// wire imagePullSecrets into the chart values and record the delivery.
+	if !writeLocal {
+		return combinedPullSecretName, nil
 	}
 
 	dockerCfg, err := json.Marshal(map[string]any{"auths": auths})
@@ -691,7 +720,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		_ = json.Unmarshal(c.Values.Raw, &vals)
 	}
 	ns := componentNamespace(w, c)
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
