@@ -1,16 +1,4 @@
-name: Release Prepare
-
-# Manually bump the AIF version across all version files and open a review PR.
-# This is step 1 of the release flow; release-publish (verify + tag) is separate.
-#
-# Version model: semver X.Y.Z with optional -rc.N / -dev.N suffix. operator and
-# ui are versioned in lockstep — every version file moves to the same version.
-#
-# Branch model:
-#   -dev.N   -> target must be main
-#   -rc.N    -> target must be an existing release-X.Y branch
-#   no suffix -> target must be an existing release-X.Y branch
-# Release branches are cut manually; this workflow never creates them.
+name: Release Prepare [Version Bump]
 
 on:
   workflow_dispatch:
