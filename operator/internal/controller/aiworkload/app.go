@@ -83,7 +83,7 @@ func (r *AIWorkloadReconciler) reconcileAppPullSecrets(
 
 	// vals is intentionally discarded — see function comment.
 	vals := map[string]any{}
-	created, err := r.injectorFor(src.Vendor).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals)
+	created, err := r.injectorFor(src.Vendor).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return fmt.Errorf("inject pull secrets for App workload %s/%s (vendor=%q): %w",
 			w.Namespace, w.Name, src.Vendor, err)

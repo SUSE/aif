@@ -87,6 +87,83 @@ func TestEnsureNamespace(t *testing.T) {
 	})
 }
 
+// TestEnsureCombinedPullSecret_LocalWriteGate covers bug 862: the injector
+// must only persist the combined pull secret (and create its namespace) on the
+// operator's own cluster when the workload actually targets it. For a
+// downstream-only workload the secret + namespace are delivered to the target
+// cluster by deliverPullSecrets via a Fleet Bundle, so writing them locally
+// leaves an orphan namespace on the management (Rancher Manager) cluster.
+//
+// The returned secret name must be non-empty regardless, so the caller can wire
+// imagePullSecrets into the chart values and record the delivery.
+func TestEnsureCombinedPullSecret_LocalWriteGate(t *testing.T) {
+	const opNS = "aif-operator"
+	const targetNS = "blueprint-ns"
+
+	scheme := kruntime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+
+	// A chart-repo basic-auth secret so ensureCombinedPullSecret assembles a
+	// non-empty auths map and reaches the write path (no Settings creds needed).
+	repoSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "repo-auth", Namespace: opNS},
+		Data:       map[string][]byte{"username": []byte("u"), "password": []byte("p")},
+	}
+	repoInfo := clusterRepoInfo{
+		URL:            "https://charts.example.com",
+		ClientSecret:   "repo-auth",
+		ClientSecretNS: opNS,
+	}
+
+	newR := func() *AIWorkloadReconciler {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repoSecret).Build()
+		return &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+	}
+
+	t.Run("downstream-only: returns name but writes nothing locally", func(t *testing.T) {
+		r := newR()
+		name, err := r.ensureCombinedPullSecret(context.Background(), r.localCC(), targetNS, repoInfo, false)
+		if err != nil {
+			t.Fatalf("ensureCombinedPullSecret: %v", err)
+		}
+		if name != combinedPullSecretName {
+			t.Errorf("name: got %q want %q", name, combinedPullSecretName)
+		}
+		ns := &corev1.Namespace{}
+		if err := r.Get(context.Background(), types.NamespacedName{Name: targetNS}, ns); err == nil {
+			t.Errorf("namespace %q must NOT be created locally for a downstream-only workload", targetNS)
+		}
+		sec := &corev1.Secret{}
+		if err := r.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: combinedPullSecretName}, sec); err == nil {
+			t.Errorf("secret %q must NOT be written locally for a downstream-only workload", combinedPullSecretName)
+		}
+	})
+
+	t.Run("local target: creates namespace and writes secret", func(t *testing.T) {
+		r := newR()
+		name, err := r.ensureCombinedPullSecret(context.Background(), r.localCC(), targetNS, repoInfo, true)
+		if err != nil {
+			t.Fatalf("ensureCombinedPullSecret: %v", err)
+		}
+		if name != combinedPullSecretName {
+			t.Errorf("name: got %q want %q", name, combinedPullSecretName)
+		}
+		ns := &corev1.Namespace{}
+		if err := r.Get(context.Background(), types.NamespacedName{Name: targetNS}, ns); err != nil {
+			t.Errorf("namespace %q must be created locally for a local-targeted workload: %v", targetNS, err)
+		}
+		sec := &corev1.Secret{}
+		if err := r.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: combinedPullSecretName}, sec); err != nil {
+			t.Errorf("secret %q must be written locally for a local-targeted workload: %v", combinedPullSecretName, err)
+		}
+	})
+}
+
 // TestEnsureBlueprintHelmOp_UsesDefaultNamespace verifies the HelmOp created
 // by ensureBlueprintHelmOp uses spec.defaultNamespace (Fleet's DEFAULTER) rather
 // than spec.namespace (Fleet's FORCER that rejects cluster-scoped resources).
