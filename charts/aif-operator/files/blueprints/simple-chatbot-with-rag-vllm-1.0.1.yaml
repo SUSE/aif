@@ -3,11 +3,10 @@ kind: Blueprint
 metadata:
   labels:
     ai-factory.suse.com/blueprint-name: simple-chatbot-with-rag-vllm
-    ai-factory.suse.com/blueprint-version: 1.0.0
-  name: simple-chatbot-with-rag-vllm-1-0-0
+    ai-factory.suse.com/blueprint-version: 1.0.1
+  name: simple-chatbot-with-rag-vllm-1-0-1
 spec:
   source: SUSE
-  deprecated: true
   components:
   - chartName: vllm
     chartRepo: application-collection
@@ -136,10 +135,10 @@ spec:
           registry: dp.apps.rancher.io
           repository: containers/vllm-openai
           replicaCount: 1
-          requestCPU: 6
+          requestCPU: 2
           requestGPU: 1
-          requestMemory: 16Gi
-          tag: 0.19.0
+          requestMemory: 12Gi
+          tag: 0.19.0-5.29
         readinessProbe:
           failureThreshold: 3
           httpGet:
@@ -223,7 +222,7 @@ spec:
         pullPolicy: IfNotPresent
         registry: dp.apps.rancher.io
         repository: containers/open-webui
-        tag: 0.6.41-14.20
+        tag: 0.6.41-15.2
         useSlim: false
       imagePullSecrets: []
       ingress:
@@ -999,4 +998,4 @@ spec:
     point a DNS record (or /etc/hosts entry) for the host "suse-open-webui"
     at the cluster's ingress controller to reach it. The hostname can also be patched after deployment.
   displayName: Simple Chatbot with RAG (vLLM and Milvus)
-  version: 1.0.0
+  version: 1.0.1
