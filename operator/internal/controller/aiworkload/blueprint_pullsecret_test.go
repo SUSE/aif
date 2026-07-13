@@ -308,6 +308,66 @@ func TestNvidiaInjector_CreatesBothSecrets(t *testing.T) {
 	}
 }
 
+// TestNvidiaInjector_LocalWriteGate mirrors TestEnsureCombinedPullSecret_LocalWriteGate
+// for the nvidia vendor: with writeLocal=false the injector must return both secret
+// names (so the chart references them and delivery is recorded) yet write neither the
+// target namespace nor the ngc-secret/ngc-api Secrets onto the operator's cluster —
+// the downstream-only orphan-namespace regression from bug 862.
+func TestNvidiaInjector_LocalWriteGate(t *testing.T) {
+	t.Run("downstream-only: returns names but writes nothing locally", func(t *testing.T) {
+		c, r := buildNvidiaInjectorFixture(t)
+		inj := &nvidiaInjector{r: r}
+
+		vals := map[string]any{}
+		names, err := inj.Apply(context.Background(), r.localCC(), "rag", clusterRepoInfo{}, vals, false)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(names) != 2 || names[0] != nvidiaImagePullSecretName || names[1] != nvidiaAPISecretName {
+			t.Errorf("names = %#v, want [%q, %q]", names, nvidiaImagePullSecretName, nvidiaAPISecretName)
+		}
+
+		ns := &corev1.Namespace{}
+		if err := c.Get(context.Background(), types.NamespacedName{Name: "rag"}, ns); err == nil {
+			t.Errorf("namespace %q must NOT be created locally for a downstream-only workload", "rag")
+		}
+		pull := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "rag", Name: nvidiaImagePullSecretName}, pull); err == nil {
+			t.Errorf("%s must NOT be written locally for a downstream-only workload", nvidiaImagePullSecretName)
+		}
+		api := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "rag", Name: nvidiaAPISecretName}, api); err == nil {
+			t.Errorf("%s must NOT be written locally for a downstream-only workload", nvidiaAPISecretName)
+		}
+	})
+
+	t.Run("local target: creates namespace and writes both secrets", func(t *testing.T) {
+		c, r := buildNvidiaInjectorFixture(t)
+		inj := &nvidiaInjector{r: r}
+
+		names, err := inj.Apply(context.Background(), r.localCC(), "rag", clusterRepoInfo{}, map[string]any{}, true)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(names) != 2 || names[0] != nvidiaImagePullSecretName || names[1] != nvidiaAPISecretName {
+			t.Errorf("names = %#v, want [%q, %q]", names, nvidiaImagePullSecretName, nvidiaAPISecretName)
+		}
+
+		ns := &corev1.Namespace{}
+		if err := c.Get(context.Background(), types.NamespacedName{Name: "rag"}, ns); err != nil {
+			t.Errorf("namespace %q must be created locally for a local-targeted workload: %v", "rag", err)
+		}
+		pull := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "rag", Name: nvidiaImagePullSecretName}, pull); err != nil {
+			t.Errorf("%s must be written locally for a local-targeted workload: %v", nvidiaImagePullSecretName, err)
+		}
+		api := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "rag", Name: nvidiaAPISecretName}, api); err != nil {
+			t.Errorf("%s must be written locally for a local-targeted workload: %v", nvidiaAPISecretName, err)
+		}
+	})
+}
+
 func TestNvidiaInjector_HostOverride(t *testing.T) {
 	const opNS = "suse-ai-operator"
 	const targetNS = "rag"
