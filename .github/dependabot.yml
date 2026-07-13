@@ -19,7 +19,7 @@ updates:
     ignore:
       - dependency-name: "k8s.io/*"
         versions:
-          - ">= 1.36.0"
+          - ">= 0.36.0"
 
   # npm dependencies for the UI extension
   - package-ecosystem: npm
