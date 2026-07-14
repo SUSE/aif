@@ -19,21 +19,30 @@
     <div class="form-group">
       <NamespaceAutocomplete
         :value="localNs"
-        :label="t('suseai.wizard.form.namespace', 'Namespace')"
+        :label="t('suseai.wizard.form.installNamespace', 'Default Namespace')"
         :options="namespaceOptions"
         :required="true"
         :loading="loadingNamespaces"
         @update:value="onNamespaceChange"
+      />
+      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', 'Default namespace for components that don\'t pin their own.') }}</small>
+      <Banner
+        v-if="fixedNamespaceCount > 0"
+        color="info"
+        class="mt-10"
+        :label="fixedNamespaceWarning"
       />
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, getCurrentInstance } from 'vue';
+import { ref, computed, onMounted, getCurrentInstance } from 'vue';
+import { Banner } from '@components/Banner';
 import { useT } from '../../../composables/useT';
 import NamespaceAutocomplete from './NamespaceAutocomplete.vue';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
+import type { BlueprintComponent } from '../../../types/blueprint-types';
 
 interface Props {
   displayName:    string;
@@ -41,6 +50,7 @@ interface Props {
   componentCount: number;
   workloadName:   string;
   namespace:      string;
+  components:     BlueprintComponent[];
 }
 interface Emits {
   (e: 'update:workloadName', v: string): void;
@@ -58,6 +68,19 @@ const localName         = ref(props.workloadName);
 const localNs           = ref(props.namespace);
 const namespaceOptions  = ref<Array<{ label: string; value: string }>>([]);
 const loadingNamespaces = ref(false);
+
+// Components with their own BlueprintComponent.targetNamespace ignore the
+// wizard namespace entirely — surface that here so the user isn't surprised
+// when resources land elsewhere (the Review step lists the exact targets).
+const fixedNamespaceCount = computed(
+  () => (props.components || []).filter((c) => !!c.targetNamespace).length,
+);
+const fixedNamespaceWarning = computed(
+  () => store?.getters['i18n/t']?.(
+    'suseai.wizard.form.installNamespaceFixedWarning',
+    { count: fixedNamespaceCount.value },
+  ) || `${ fixedNamespaceCount.value } component(s) deploy to their own fixed namespaces and will ignore this value.`,
+);
 
 onMounted(async () => {
   loadingNamespaces.value = true;
@@ -96,4 +119,5 @@ function onNamespaceChange(v: string) {
   background: var(--input-bg); color: var(--body-text); font-size: 14px;
 }
 .text-muted { color: var(--muted); font-size: 12px; }
+.mt-10 { margin-top: 10px; }
 </style>
