@@ -28,7 +28,10 @@ export interface AppCollectionItem {
   last_updated_at?: string;
   packaging_format?: PackagingFormat;
   repository_url?: string;
-  library?: 'suse-ai' | 'nvidia';
+  // 'suse-ai' and 'nvidia' are the built-in libraries; a remote catalog may define
+  // its own library values, which the UI groups dynamically. (string & {}) keeps
+  // autocomplete for the built-ins while allowing arbitrary strings.
+  library?: 'suse-ai' | 'nvidia' | (string & {});
 }
 
 function normalizeLogoUrl(logo?: string): string | undefined {
