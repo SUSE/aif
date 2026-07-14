@@ -1,6 +1,14 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
+# Dockerfile for the operator image. It lives under build/ at the repo root; the
+# build context is this operator/ directory (matches the release workflow).
+DOCKERFILE ?= ../build/Dockerfile.operator
+
+# Version/commit stamped into the image via build-args (mirror the `build` target).
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo unknown)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -118,7 +126,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build -f $(DOCKERFILE) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -133,13 +141,11 @@ docker-push: ## Push docker image with the manager.
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
+	# $(DOCKERFILE) already declares `FROM --platform=$$BUILDPLATFORM`, so no Dockerfile.cross rewrite is needed.
 	- $(CONTAINER_TOOL) buildx create --name aif-operator-builder
 	$(CONTAINER_TOOL) buildx use aif-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --tag ${IMG} -f $(DOCKERFILE) .
 	- $(CONTAINER_TOOL) buildx rm aif-operator-builder
-	rm Dockerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
