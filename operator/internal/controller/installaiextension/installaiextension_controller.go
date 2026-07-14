@@ -95,25 +95,49 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if ext.Status.Phase == "" || ext.Status.Phase == v1alpha1.InstallAIExtensionPhasePending {
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseInstalling
-		if err := r.Status().Update(ctx, &ext); err != nil {
-			logger.Error(err, "failed to flush initial status")
-			return ctrl.Result{}, err
-		}
-	}
+	// Snapshot the object before mutating status so we can persist status with a
+	// resourceVersion-free merge patch. reconcile() sets Phase=Installing itself,
+	// so the single terminal write below is enough — no early status flush needed.
+	original := ext.DeepCopy()
 
 	result, reconcileErr := r.reconcile(ctx, &ext)
 
 	if reconcileErr == nil && ext.Status.Phase == v1alpha1.InstallAIExtensionPhaseInstalled {
 		ext.Status.ObservedGeneration = ext.Generation
 	}
-	if err := r.Status().Update(ctx, &ext); err != nil {
+	if err := r.persistStatus(ctx, &ext, original); err != nil {
 		logger.Error(err, "failed to update status")
 		return ctrl.Result{}, err
 	}
 
 	return result, reconcileErr
+}
+
+// persistStatus writes the object's status via a merge patch. MergeFrom (as
+// opposed to MergeFromWithOptimisticLock) omits the resourceVersion precondition,
+// so a status write cannot fail with an "object has been modified" (409) conflict
+// when the informer cache lagged the server between our Get and this write. This
+// is safe because the operator is the sole writer of InstallAIExtension status;
+// the /status subresource endpoint also ignores any non-status fields that appear
+// in the patch body.
+//
+// Design note — why this differs from SettingsReconciler.updateStatus, which
+// uses retry.RetryOnConflict: that pattern fits a surgical few-field status
+// update (it re-reads and re-applies only LastApplied/ObservedGeneration, so
+// concurrent changes to other fields survive). This controller instead computes
+// and owns the *entire* status each reconcile, so a resourceVersion-free merge
+// patch is the better fit here: it cannot 409, needs no extra read or retry
+// loop, avoids per-reconcile resourceVersion churn (an unchanged status yields a
+// no-op patch), and — because a merge patch only sends the fields that changed —
+// still preserves any concurrent writer's changes to fields it did not touch.
+// Revisit (e.g. switch to RetryOnConflict) if a second writer of this status is
+// ever introduced.
+func (r *InstallAIExtensionReconciler) persistStatus(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	base *v1alpha1.InstallAIExtension,
+) error {
+	return r.Status().Patch(ctx, ext, client.MergeFrom(base))
 }
 
 func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alpha1.InstallAIExtension) (ctrl.Result, error) {
@@ -282,7 +306,9 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 			if err := r.Update(ctx, ext); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
+			// RequeueAfter (not Requeue) so the next reconcile's cached Get does
+			// not race this write's propagation into the informer cache.
+			return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 		} else if time.Since(waitingSince) > r.ReadinessTimeout {
 			msg := fmt.Sprintf("Deployment not ready after %s: %s", r.ReadinessTimeout, deployStatus.Message)
 			setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
@@ -295,12 +321,16 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 	}
 
+	// Deployment is ready: clear the waiting marker and continue in the same pass
+	// rather than requeuing, so install completes immediately once readiness is
+	// reached. Continuing inline also avoids the cache-propagation race — there is
+	// no follow-up reconcile whose cached Get could still observe the stale marker,
+	// and no further main-resource write happens this pass (only the status patch).
 	if r.getWaitingSince(ext) != (time.Time{}) {
 		r.clearWaitingSince(ext)
 		if err := r.Update(ctx, ext); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
