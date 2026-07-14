@@ -132,6 +132,16 @@ type ImageRewriteSettings struct {
 	Rules []ImageRewriteRule `json:"rules,omitempty"`
 }
 
+// AppCatalogSettings configures the static application catalog served to the UI.
+type AppCatalogSettings struct {
+	// RemoteURL is an optional URL to a remote catalog JSON document. When set,
+	// the operator fetches this (and only this) URL on behalf of the UI. When
+	// empty, the UI uses its bundled default catalog. Must be an http(s) URL that
+	// resolves to a public address; internal/private destinations are rejected.
+	// +optional
+	RemoteURL string `json:"remoteUrl,omitempty"`
+}
+
 // SettingsSpec defines the desired state of Settings.
 type SettingsSpec struct {
 	// Fleet configures Fleet GitOps integration.
@@ -155,6 +165,9 @@ type SettingsSpec struct {
 	// ImageRewrite controls Helm-values prefix substitution at deploy time.
 	// +optional
 	ImageRewrite ImageRewriteSettings `json:"imageRewrite,omitempty"`
+	// AppCatalog configures the static application catalog.
+	// +optional
+	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`
 }
 
 // SettingsStatus defines the observed state of Settings.

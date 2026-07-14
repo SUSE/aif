@@ -102,6 +102,27 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	s.Namespace = h.namespace
 	s.Spec = body.Spec
 
+	// The request spec is applied verbatim under a single field owner, so zero-value
+	// fields overwrite configured values (intentional — the Settings page round-trips
+	// every field it owns, e.g. clearing fleet/registry). appCatalog.remoteUrl is the
+	// exception: it is managed out-of-band (chart value / kubectl), so a save that
+	// omits it must not drop it — preserve the existing value when the request omits one.
+	if s.Spec.AppCatalog.RemoteURL == "" {
+		var existing aiplatformv1alpha1.Settings
+		err := h.client.Get(r.Context(), types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &existing)
+		switch {
+		case err == nil:
+			s.Spec.AppCatalog = existing.Spec.AppCatalog
+		case k8serrors.IsNotFound(err):
+			// First-ever save: nothing to preserve.
+		default:
+			// Fail rather than risk silently wiping a configured remoteUrl on a
+			// transient read error (the apply would overwrite it with an empty value).
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
 	if err := h.client.Patch(
 		r.Context(), s, client.Apply,
 		client.ForceOwnership,

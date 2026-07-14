@@ -30,11 +30,13 @@ import (
 	"github.com/SUSE/aif-operator/internal/git"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func newSettingsScheme(t *testing.T) *kruntime.Scheme {
@@ -188,6 +190,124 @@ func TestSettingsPut_EmptySpec_200(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// PUT that omits appCatalog must NOT drop a previously configured remoteUrl:
+// appCatalog is managed out-of-band, so the handler merges it from the existing
+// spec into the object it applies. We intercept the Patch to assert on exactly
+// what is applied — the fake client's apply does not reproduce real server-side
+// field-ownership removal, so asserting on the stored object alone would not
+// distinguish fixed from unfixed.
+func TestSettingsPut_PreservesAppCatalog(t *testing.T) {
+	cr := sampleCR()
+	cr.Spec.AppCatalog.RemoteURL = "https://catalog.example.com/catalog.json"
+
+	var applied *aiplatformv1alpha1.Settings
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(cr).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if s, ok := obj.(*aiplatformv1alpha1.Settings); ok {
+					applied = s.DeepCopy()
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	// A typical Settings-page save that touches only its own fields.
+	body := `{"spec":{"fleet":{"repoURL":"https://git.example.com","branch":"main"}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if applied == nil {
+		t.Fatal("Patch was not called")
+	}
+	if applied.Spec.AppCatalog.RemoteURL != "https://catalog.example.com/catalog.json" {
+		t.Errorf("applied appCatalog.remoteUrl=%q want it merged from existing", applied.Spec.AppCatalog.RemoteURL)
+	}
+	if applied.Spec.Fleet.RepoURL != "https://git.example.com" {
+		t.Errorf("applied fleet.repoURL=%q want https://git.example.com", applied.Spec.Fleet.RepoURL)
+	}
+}
+
+// PUT that explicitly sets appCatalog.remoteUrl still updates it.
+func TestSettingsPut_SetsAppCatalog(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	body := `{"spec":{"appCatalog":{"remoteUrl":"https://new.example.com/c.json"}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	if stored.Spec.AppCatalog.RemoteURL != "https://new.example.com/c.json" {
+		t.Errorf("appCatalog.remoteUrl=%q want https://new.example.com/c.json", stored.Spec.AppCatalog.RemoteURL)
+	}
+}
+
+// A transient (non-NotFound) error while reading the existing CR must fail the
+// request rather than proceed — proceeding would apply an empty appCatalog and
+// silently wipe a configured remoteUrl.
+func TestSettingsPut_PreserveGetError_500(t *testing.T) {
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*aiplatformv1alpha1.Settings); ok {
+					return apierrors.NewServiceUnavailable("transient")
+				}
+				return cl.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	// Body omits appCatalog, so the handler reads the existing CR to preserve it.
+	body := `{"spec":{"fleet":{"repoURL":"https://git.example.com"}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d want 500; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// First-ever save (no existing Settings CR) must succeed: the appCatalog merge
+// GET returns NotFound, which is ignored, and the save proceeds.
+func TestSettingsPut_FirstSave_NoExistingCR(t *testing.T) {
+	c := newSettingsFakeClient(t) // no existing CR
+	h := newSettingsHandler(c, "aif-operator")
+
+	body := `{"spec":{"fleet":{"repoURL":"https://git.example.com"}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; first save should succeed; body=%s", rec.Code, rec.Body)
 	}
 }
 
