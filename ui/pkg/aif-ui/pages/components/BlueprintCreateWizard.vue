@@ -93,7 +93,9 @@ async function onCreate() {
       source:      props.prefill?.source ?? 'Custom',
       components:  components.value,
     };
-    await createBlueprint(spec);
+    // In edit mode props.editName is the existing family (blueprint-name label);
+    // pass it through so the new version stays grouped under the same tile.
+    await createBlueprint(spec, props.editName);
     router.push({ name: `c-cluster-${ PRODUCT }-blueprints`, params: { cluster } });
   } catch (e: any) {
     error.value = e?.message || 'Failed to create blueprint';

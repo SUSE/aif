@@ -62,7 +62,13 @@ func (h *BlueprintHandler) listBlueprints(w http.ResponseWriter, r *http.Request
 }
 
 type blueprintCreateBody struct {
-	Spec aiplatformv1alpha1.BlueprintSpec `json:"spec"`
+	// BlueprintName is the optional grouping identity (the blueprint-name label)
+	// of an existing family. The UI sends it on "save as new version" so the new
+	// version stays grouped under the original tile even when that label differs
+	// from slugify(displayName) — as it does for several bundled blueprints. When
+	// empty (a brand-new blueprint) the family is derived from the display name.
+	BlueprintName string                           `json:"blueprintName,omitempty"`
+	Spec          aiplatformv1alpha1.BlueprintSpec `json:"spec"`
 }
 
 func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Request) {
@@ -88,19 +94,30 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: version is required", ErrInvalidInput))
 		return
 	}
-	slug := slugifyBlueprintName(body.Spec.DisplayName)
-	if slug == "" {
+	// Determine the grouping family. A brand-new blueprint derives it from the
+	// display name; "save as new version" passes the original blueprint-name label
+	// explicitly so every version stays grouped under one tile even when that label
+	// differs from slugify(displayName) (the case for several bundled blueprints).
+	family := slugifyBlueprintName(body.Spec.DisplayName)
+	if body.BlueprintName != "" {
+		family = slugifyBlueprintName(body.BlueprintName)
+		if family == "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%w: blueprintName must contain at least one alphanumeric character", ErrInvalidInput))
+			return
+		}
+	}
+	if family == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: displayName must contain at least one alphanumeric character", ErrInvalidInput))
 		return
 	}
-	crName := blueprintCRName(body.Spec.DisplayName, body.Spec.Version)
+	crName := blueprintCRName(family, body.Spec.Version)
 
 	bp := &aiplatformv1alpha1.Blueprint{}
 	bp.APIVersion = "ai-factory.suse.com/v1alpha1"
 	bp.Kind = "Blueprint"
 	bp.Name = crName
 	bp.Labels = map[string]string{
-		aiplatformv1alpha1.BlueprintNameLabel:    slug,
+		aiplatformv1alpha1.BlueprintNameLabel:    family,
 		aiplatformv1alpha1.BlueprintVersionLabel: body.Spec.Version,
 	}
 	bp.Spec = body.Spec
@@ -109,7 +126,7 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, fmt.Errorf(
 				"%w: blueprint with normalized name %q and version %q already exists — choose a different name or version",
-				ErrConflict, slug, body.Spec.Version,
+				ErrConflict, family, body.Spec.Version,
 			))
 			return
 		}
@@ -170,20 +187,24 @@ func (h *BlueprintHandler) deleteBlueprint(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// blueprintCRName derives the CR name from display name and semver version.
+// blueprintCRName derives the CR name from a family name (a display name or an
+// already-slugged blueprint-name label; slugify is idempotent) and semver version.
 // Build-metadata suffix (+...) is stripped since '+' is illegal in Kubernetes names.
 // e.g. "My AI Stack", "1.0.0" → "my-ai-stack-1-0-0"
 // e.g. "My AI Stack", "1.0.0+build.1" → "my-ai-stack-1-0-0"
-func blueprintCRName(displayName, version string) string {
+func blueprintCRName(family, version string) string {
 	// Strip build metadata (everything from '+' onward) before hyphenating.
 	v := version
 	if i := strings.IndexByte(v, '+'); i >= 0 {
 		v = v[:i]
 	}
-	return slugifyBlueprintName(displayName) + "-" + strings.ReplaceAll(v, ".", "-")
+	return slugifyBlueprintName(family) + "-" + strings.ReplaceAll(v, ".", "-")
 }
 
 // slugifyBlueprintName converts a display name to a DNS-safe slug.
+// Must stay in sync with the frontend slugifyBlueprintName in
+// ui/pkg/aif-ui/utils/blueprint-api.ts — blueprint tile grouping and CR-name
+// derivation depend on both producing identical output.
 func slugifyBlueprintName(name string) string {
 	s := strings.ToLower(name)
 	s = nonAlphanumRE.ReplaceAllString(s, "-")
