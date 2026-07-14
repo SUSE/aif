@@ -1,18 +1,18 @@
 annotations:
   licenses: Apache-2.0
   helm.sh/images: |
-    - image: ghcr.io/suse/aif-operator:2.0.1-rc.2
+    - image: ghcr.io/suse/aif-operator:2.0.1
       name: aif-operator
 apiVersion: v2
 name: aif-operator
-version: 2.0.1-rc.2
+version: 2.0.1
 description: SUSE AI Operator
 type: application
 home: https://github.com/SUSE/aif
 icon: https://raw.githubusercontent.com/SUSE/aif/main/pkg/aif-ui/assets/logo.svg
 sources:
   - https://github.com/SUSE/aif
-appVersion: 2.0.1-rc.2
+appVersion: 2.0.1
 maintainers:
   - url: https://www.suse.com/
     name: SUSE LLC
