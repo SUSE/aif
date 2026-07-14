@@ -4,7 +4,7 @@
 
     <div class="review-section">
       <div class="review-row"><span class="label">{{ t('suseai.wizard.form.workloadName', 'Instance Name') }}</span><span>{{ workloadName }}</span></div>
-      <div class="review-row"><span class="label">{{ t('suseai.wizard.form.namespace', 'Namespace') }}</span><span>{{ namespace }}</span></div>
+      <div class="review-row"><span class="label">{{ t('suseai.wizard.form.installNamespace', 'Default Namespace') }}</span><span>{{ namespace }}</span></div>
       <div class="review-row"><span class="label">{{ t('suseai.wizard.labels.blueprint', 'Blueprint') }}</span><span>{{ displayName }} v{{ version }}</span></div>
       <div class="review-row"><span class="label">{{ t('suseai.wizard.form.deploymentType', 'Deployment Type') }}</span><span>{{ deployType }}</span></div>
       <div class="review-row">

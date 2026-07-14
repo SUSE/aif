@@ -25,7 +25,7 @@
         :loading="loadingNamespaces"
         @update:value="onNamespaceChange"
       />
-      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', 'Default namespace for components that don\'t pin their own.') }}</small>
+      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', 'Default namespace for components that don\'t pin their own. Individual components may deploy to fixed namespaces — see the Review step for the full list.') }}</small>
       <Banner
         v-if="fixedNamespaceCount > 0"
         color="info"
@@ -79,7 +79,9 @@ const fixedNamespaceWarning = computed(
   () => store?.getters['i18n/t']?.(
     'suseai.wizard.form.installNamespaceFixedWarning',
     { count: fixedNamespaceCount.value },
-  ) || `${ fixedNamespaceCount.value } component(s) deploy to their own fixed namespaces and will ignore this value.`,
+  ) || (fixedNamespaceCount.value === 1
+    ? '1 component deploys to its own fixed namespace and will ignore this value.'
+    : `${ fixedNamespaceCount.value } components deploy to their own fixed namespaces and will ignore this value. It applies only to the remaining components.`),
 );
 
 onMounted(async () => {

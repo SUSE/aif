@@ -226,7 +226,7 @@
         "namespacePlaceholder": "Select or create a namespace",
         "installNamespace": "Default Namespace",
         "installNamespaceHelp": "Default namespace for components that don't pin their own. Individual components may deploy to fixed namespaces — see the Review step for the full list.",
-        "installNamespaceFixedWarning": "{count} of this blueprint's components deploy to their own fixed namespaces and will ignore this value. It applies only to the remaining components.",
+        "installNamespaceFixedWarning": "{count, plural, one {# component deploys to its own fixed namespace and will ignore this value.} other {# components deploy to their own fixed namespaces and will ignore this value. It applies only to the remaining components.}}",
         "chartName": "Chart Name",
         "chartNamePlaceholder": "e.g. ollama",
         "version": "Version",
