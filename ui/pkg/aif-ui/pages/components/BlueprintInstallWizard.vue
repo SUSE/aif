@@ -216,6 +216,7 @@ function onProgressCancel() { showProgressModal.value = false; }
             :component-count="blueprint?.spec.components.length || 0"
             :workload-name="workloadName"
             :namespace="namespace"
+            :components="blueprint?.spec.components || []"
             @update:workload-name="workloadName = $event"
             @update:namespace="namespace = $event"
           />
