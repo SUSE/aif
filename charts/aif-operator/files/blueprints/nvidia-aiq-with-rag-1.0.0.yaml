@@ -140,9 +140,15 @@ spec:
     REQUIRES: Elastic eck-operator
               see https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/install-using-helm-chart
 
-    REQUIRES: the default RAG Blueprint requires 8 GPUs — one of:
+    REQUIRES: reference sizing for the full default NVIDIA RAG Blueprint
+      is 8 GPUs — one of:
       8 x H100-80GB, 8 x B200, 8 x RTX PRO 6000, or (with Multi-Instance
       GPU) 5 x H100-80GB.
+
+      NOTE: RAG deployment is highly hardware-dependent, so treat
+      this blueprint as a starting point and adjust the values to match your
+      GPUs. It has been validated on a single-node cluster with two H200 cards,
+      using the GPU Operator with time-slicing enabled.
 
     REQUIRES: must be deployed into the "ns-aiq" namespace. A requirement for aiq.
 
@@ -173,11 +179,6 @@ spec:
     address, then open http://aiq-frontend.suse.demo in a browser. Edit the
     frontend ingress hostname in this blueprint to use your own domain.
 
-    ADDITIONAL NOTES: Deployment of RAG is heavily dependent on hardware.
-    Use this blueprint as a reference and tweak the values
-    as needed for your hardware. This blueprint has been validated
-    in a single node cluster with two H200 cards and gpu-operator configured
-    wtih timeslicing enabled.
   displayName: NVIDIA AI-Q With RAG
   version: 1.0.0
 

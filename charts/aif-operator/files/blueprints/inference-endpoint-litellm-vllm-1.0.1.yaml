@@ -32,15 +32,14 @@
 apiVersion: ai-factory.suse.com/v1alpha1
 kind: Blueprint
 metadata:
-  name: suse-inference-endpoint-1-0-0
+  name: suse-inference-endpoint-1-0-1
   labels:
     ai-factory.suse.com/blueprint-name: suse-inference-endpoint
-    ai-factory.suse.com/blueprint-version: 1.0.0
+    ai-factory.suse.com/blueprint-version: 1.0.1
 spec:
   displayName: SUSE Inference Endpoint
   source: SUSE
-  deprecated: true
-  version: 1.0.0
+  version: 1.0.1
   description: |-
     Turnkey production inference LLM gateway that fronts one or more vLLM
     model backends behind a single OpenAI-compatible API, adding
@@ -106,14 +105,9 @@ spec:
             #     node (e.g. g4dn.xlarge: 4 vCPU / 16GB shared with the rest of
             #     the stack). For bigger GPUs, scale modelURL/resources up. ---
             - name: llama-3-2-1b             # k8s-safe name for the deployment
-              # vLLM serving image from the SUSE Application Collection.
-              # Pin an exact revision tag. NOTE: the 0.19.0-5.x builds are missing
-              # 'pydantic_extra_types' and 500 on chat completions; using the
-              # 0.13.0 line which doesn't have that gap. (Verify with the depcheck
-              # pod in the README before changing.)
               registry: "dp.apps.rancher.io"
               repository: "containers/vllm-openai"
-              tag: "0.13.0-5.3"
+              tag: "0.19.0-5.29"
               imagePullPolicy: "IfNotPresent"
               # The HuggingFace model id. This exact string is what clients/
               # LiteLLM must reference as the model name. 1B fits a T4 with room
@@ -234,6 +228,10 @@ spec:
           # otherwise the postgresql-0 pod hangs in Pending on an unbound PVC.
           persistence:
             storageClass: "local-path"
+          podTemplates:
+            initContainers:
+              volume-permissions:
+                enabled: true
         migrationJob:
           enabled: true
 
