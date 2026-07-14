@@ -10,8 +10,13 @@ metadata:
     helm.sh/resource-policy: keep
 {{- if or (and $credentials.applicationCollection.username $credentials.applicationCollection.password)
           (and $credentials.nvidia.username $credentials.nvidia.password)
-          (and $credentials.suseRegistry.username $credentials.suseRegistry.password) }}
+          (and $credentials.suseRegistry.username $credentials.suseRegistry.password)
+          .Values.appCatalog.remoteUrl }}
 spec:
+{{- if .Values.appCatalog.remoteUrl }}
+  appCatalog:
+    remoteUrl: {{ .Values.appCatalog.remoteUrl | quote }}
+{{- end }}
 {{- if and $credentials.applicationCollection.username $credentials.applicationCollection.password }}
   applicationCollection:
     tokenSecretRef:

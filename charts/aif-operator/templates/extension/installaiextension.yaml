@@ -12,10 +12,19 @@ spec:
     helm:
       chartURL: {{ .Values.aiExtension.source.helm.chartURL | quote }}
       version: {{ .Values.aiExtension.source.helm.version | quote }}
-      {{- with .Values.aiExtension.source.helm.values }}
-      values:
-        {{- toYaml . | nindent 8 }}
+      {{- /* Forward the operator-level appCatalog.useStaticCatalog to the aif-ui
+             chart as a convenience alias, UNLESS the user set it explicitly under
+             aiExtension.source.helm.values. Use a presence check (hasKey), not a
+             dict merge: Sprig's merge treats false as an empty value and would let
+             the alias clobber an explicit `false`. */}}
+      {{- $extra := deepCopy (.Values.aiExtension.source.helm.values | default dict) }}
+      {{- $ac := default dict $extra.appCatalog }}
+      {{- if not (hasKey $ac "useStaticCatalog") }}
+      {{-   $_ := set $ac "useStaticCatalog" .Values.appCatalog.useStaticCatalog }}
+      {{-   $_ := set $extra "appCatalog" $ac }}
       {{- end }}
+      values:
+        {{- toYaml $extra | nindent 8 }}
     {{- end }}
   extension:
     name: {{ .Values.aiExtension.extension.name | quote }}
