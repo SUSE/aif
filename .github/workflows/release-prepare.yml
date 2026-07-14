@@ -12,15 +12,6 @@ on:
         required: true
         type: string
         default: main
-      component:
-        description: "Component this release publishes (recorded for the publish step)"
-        required: true
-        type: choice
-        default: both
-        options:
-          - both
-          - operator
-          - ui
 
 concurrency:
   group: release-prepare-${{ inputs.target }}-${{ inputs.version }}
@@ -35,7 +26,6 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       TARGET: ${{ inputs.target }}
-      COMPONENT: ${{ inputs.component }}
     steps:
       - name: Checkout target branch
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -44,6 +34,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate inputs
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -94,13 +85,10 @@ jobs:
             exit 1
           fi
 
-          # R6 — a matching release tag must not already exist (per component)
+          # R6 — matching release tags must not already exist. Versions are bumped
+          # in lockstep, so both the operator and ui tags are always checked.
           git fetch --tags --quiet origin
-          case "$COMPONENT" in
-            operator) tags=("aif-operator-$VERSION") ;;
-            ui)       tags=("aif-ui-$VERSION") ;;
-            both)     tags=("aif-operator-$VERSION" "aif-ui-$VERSION") ;;
-          esac
+          tags=("aif-operator-$VERSION" "aif-ui-$VERSION")
           for t in "${tags[@]}"; do
             if git rev-parse -q --verify "refs/tags/$t" >/dev/null; then
               echo "::error::tag $t already exists; choose a new version"
@@ -108,9 +96,10 @@ jobs:
             fi
           done
 
-          echo "Validated: version=$VERSION kind=$kind target=$TARGET component=$COMPONENT (from $current)"
+          echo "Validated: version=$VERSION kind=$kind target=$TARGET (from $current)"
 
       - name: Bump version files
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -159,6 +148,7 @@ jobs:
           git status --porcelain
 
       - name: Commit and open PR
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -185,7 +175,11 @@ jobs:
           git push --force origin "$branch"
 
           # If a PR is already open for this branch, the push above refreshed it.
-          if url="$(gh pr view "$branch" --json url --jq .url 2>/dev/null)"; then
+          # Filter on state=OPEN: gh pr view also returns closed/merged PRs for the
+          # branch, and a re-run after a closed-without-merge PR would otherwise
+          # report "updated in place" when nothing is actually open.
+          url="$(gh pr view "$branch" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)"
+          if [[ -n "$url" ]]; then
             echo "PR already open, updated in place: $url"
             echo "Release PR (updated): $url" >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -194,7 +188,7 @@ jobs:
           # Otherwise open it. gh pr create fails if the org blocks Actions from
           # creating PRs; fall back to emitting the compare URL so the run still
           # succeeds and a human can open the PR with one click.
-          body="$(printf '## Release %s\n\n- **Version:** %s\n- **Component:** %s\n- **Target:** %s\n\nAutomated version bump by the release-prepare workflow. Review and merge to make the version official; then run release-publish to tag.\n' "$VERSION" "$VERSION" "$COMPONENT" "$TARGET")"
+          body="$(printf '## Release %s\n\n- **Version:** %s\n- **Target:** %s\n\nAutomated version bump by the release-prepare workflow. Review and merge to make the version official; then run release-publish to tag.\n' "$VERSION" "$VERSION" "$TARGET")"
           if url="$(gh pr create --base "$TARGET" --head "$branch" --title "chore: release $VERSION" --body "$body" 2>/dev/null)"; then
             echo "Opened PR: $url"
             echo "Release PR: $url" >> "$GITHUB_STEP_SUMMARY"
