@@ -11,24 +11,55 @@ env:
   IMAGE_NAME: ghcr.io/suse/aif-ui
 
 jobs:
-  # verify-ancestry:
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: read
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-  #       with:
-  #         fetch-depth: 0
+  verify-ancestry:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
-  #     - name: Verify tag is reachable from main
-  #       run: |
-  #         git fetch origin main
-  #         git merge-base --is-ancestor "${{ github.sha }}" origin/main || \
-  #           { echo "::error::Tag must point to a commit reachable from origin/main"; exit 1; }
+      - name: Verify tag is reachable from main or a matching release branch
+        env:
+          TAG_PREFIX: aif-ui-
+        run: |
+          git fetch --quiet origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/release-*:refs/remotes/origin/release-*' \
+            '+refs/heads/release/*:refs/remotes/origin/release/*'
+          sha="${{ github.sha }}"
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#"$TAG_PREFIX"}"
+
+          # main is the primary line and may cut any version.
+          if git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
+            echo "Tag is reachable from main"
+            exit 0
+          fi
+
+          # Otherwise the commit must live on a release branch whose version
+          # prefixes the tag (e.g. release-2.0 -> 2.0.*, release/2.2607 -> 2.2607.*).
+          for ref in $(git for-each-ref --format='%(refname)' \
+                'refs/remotes/origin/release-*' 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "$sha" "$ref"; then
+              branch="${ref#refs/remotes/origin/}"
+              branch_version="${branch#release-}"
+              branch_version="${branch_version#release/}"
+              if [[ "$version" == "$branch_version".* ]]; then
+                echo "Tag $tag is reachable from $branch and matches its version line"
+                exit 0
+              fi
+              echo "Reachable from $branch but version '$version' != ${branch_version}.* — checking other branches"
+            fi
+          done
+
+          echo "::error::Tag version '$version' is not reachable from origin/main or a release branch matching its major/minor line"
+          exit 1
 
   prepare:
-    # needs: verify-ancestry
+    needs: verify-ancestry
     runs-on: ubuntu-latest
     outputs:
       VERSION: ${{ steps.tags.outputs.VERSION }}
@@ -102,14 +133,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '24'
           cache: yarn
@@ -160,7 +191,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
