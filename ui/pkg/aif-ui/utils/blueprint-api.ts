@@ -6,10 +6,14 @@ export function listBlueprints(): Promise<BlueprintList> {
   return operatorFetch('/api/v1/blueprints');
 }
 
-export function createBlueprint(spec: BlueprintSpec): Promise<Blueprint> {
+// createBlueprint POSTs a new blueprint. Pass blueprintName when saving a new
+// version of an existing family (its blueprint-name label) so the backend keeps
+// all versions grouped under one tile instead of re-deriving the family from the
+// display name — which would split bundled blueprints into duplicate tiles.
+export function createBlueprint(spec: BlueprintSpec, blueprintName?: string): Promise<Blueprint> {
   return operatorFetch('/api/v1/blueprints', {
     method: 'POST',
-    body:   JSON.stringify({ spec }),
+    body:   JSON.stringify(blueprintName ? { spec, blueprintName } : { spec }),
   });
 }
 
@@ -48,6 +52,9 @@ export function blueprintCRName(displayName: string, version: string): string {
   return `${ slug }-${ ver }`;
 }
 
+// Must stay in sync with the backend slugifyBlueprintName in
+// operator/internal/api/blueprint.go — blueprint tile grouping and CR-name
+// derivation depend on both producing identical output.
 export function slugifyBlueprintName(name: string): string {
   return name
     .toLowerCase()

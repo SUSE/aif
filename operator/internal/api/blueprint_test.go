@@ -255,6 +255,110 @@ func TestCreateBlueprint_EditSavingExistingVersion_Returns409(t *testing.T) {
 	}
 }
 
+func TestCreateBlueprint_SaveAsNewVersion_PreservesFamilyLabel(t *testing.T) {
+	h := newBlueprintHandler(t)
+
+	// "Save as new version" of a family whose blueprint-name label differs from
+	// slugify(displayName) — the case for several bundled blueprints (e.g.
+	// "NVIDIA AI-Q With RAG" is grouped under label "nvidia-aiq-with-rag", but
+	// slugify(displayName) would yield "nvidia-ai-q-with-rag"). The UI passes the
+	// original family label via blueprintName so every version stays grouped under
+	// a single tile instead of spawning a duplicate.
+	body := map[string]any{
+		"blueprintName": "nvidia-aiq-with-rag",
+		"spec": map[string]any{
+			"displayName": "NVIDIA AI-Q With RAG",
+			"version":     "1.0.1",
+			"components": []any{
+				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+			},
+		},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var bp aiplatformv1alpha1.Blueprint
+	if err := json.Unmarshal(w.Body.Bytes(), &bp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := bp.Labels[aiplatformv1alpha1.BlueprintNameLabel]; got != "nvidia-aiq-with-rag" {
+		t.Errorf("blueprint-name label = %q; want %q (family must be preserved, not re-derived from displayName)",
+			got, "nvidia-aiq-with-rag")
+	}
+	if bp.Name != "nvidia-aiq-with-rag-1-0-1" {
+		t.Errorf("CR name = %q; want %q", bp.Name, "nvidia-aiq-with-rag-1-0-1")
+	}
+}
+
+func TestCreateBlueprint_NoBlueprintName_DerivesFamilyFromDisplayName(t *testing.T) {
+	h := newBlueprintHandler(t)
+
+	// A brand-new blueprint (no blueprintName supplied) still derives the family
+	// label and CR name from the display name — unchanged behavior.
+	body := map[string]any{
+		"spec": map[string]any{
+			"displayName": "Fresh Stack",
+			"version":     "1.0.0",
+			"components": []any{
+				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+			},
+		},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var bp aiplatformv1alpha1.Blueprint
+	if err := json.Unmarshal(w.Body.Bytes(), &bp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := bp.Labels[aiplatformv1alpha1.BlueprintNameLabel]; got != "fresh-stack" {
+		t.Errorf("blueprint-name label = %q; want fresh-stack", got)
+	}
+	if bp.Name != "fresh-stack-1-0-0" {
+		t.Errorf("CR name = %q; want fresh-stack-1-0-0", bp.Name)
+	}
+}
+
+func TestCreateBlueprint_InvalidBlueprintName_Returns400(t *testing.T) {
+	h := newBlueprintHandler(t)
+
+	// A non-empty blueprintName with no alphanumerics slugs to "" and is rejected
+	// with a message pointing at blueprintName, even though displayName is valid.
+	body := map[string]any{
+		"blueprintName": "!!!",
+		"spec": map[string]any{
+			"displayName": "Valid Name",
+			"version":     "1.0.0",
+			"components": []any{
+				map[string]any{"chartRepo": "r", "chartName": "c", "chartVersion": "1.0.0"},
+			},
+		},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/blueprints", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "blueprintName") {
+		t.Errorf("expected error to reference blueprintName, got %s", w.Body.String())
+	}
+}
+
 func TestDeleteBlueprint_Bundled_Returns403(t *testing.T) {
 	s := kruntime.NewScheme()
 	if err := aiplatformv1alpha1.AddToScheme(s); err != nil {
