@@ -1,0 +1,55 @@
+repos:
+  # --- General hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: check-json
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+        # Helm templates use Go templating and are not valid standalone YAML.
+        exclude: ^charts/.*/templates/
+
+  # --- Secret scanning ---
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+
+  # --- Go (operator/ is a nested module) ---
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt (operator)
+        entry: bash -c 'cd operator && out=$(gofmt -l .); if [ -n "$out" ]; then echo "$out"; gofmt -w .; exit 1; fi'
+        language: system
+        files: ^operator/.*\.go$
+        pass_filenames: false
+      - id: go-vet
+        name: go vet (operator)
+        entry: bash -c 'cd operator && GOTOOLCHAIN=auto go vet ./...'
+        language: system
+        files: ^operator/.*\.go$
+        pass_filenames: false
+
+  # --- UI extension (ui/pkg/aif-ui/) ---
+  - repo: local
+    hooks:
+      - id: ui-eslint
+        name: eslint (aif-ui)
+        entry: bash -c 'cd ui/pkg/aif-ui && yarn lint'
+        language: system
+        files: ^ui/pkg/aif-ui/.*\.(js|ts|vue)$
+        pass_filenames: false
+      - id: commitlint
+        name: commitlint (aif-ui)
+        stages: [commit-msg]
+        entry: bash -c 'cd ui/pkg/aif-ui && npx --no -- commitlint --edit "$1"' --
+        language: system
+        pass_filenames: false

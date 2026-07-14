@@ -39,7 +39,7 @@ SUSE AI Factory is a Rancher UI Extension for managing SUSE AI Factory component
    - Click the 3 dots (top right) → Developer Load
    - Paste the URL from step 3, select "Persist"
    - Reload the page
-  
+
 ### Debug Mode
 
 Enable debug logging in development (from the `ui/` directory):
@@ -70,7 +70,7 @@ yarn build-pkg aif-ui --mode production
 
  ### Versioning
 - The catalog container tag is derived from the Git tag:
- 
+
 ```
 aif-ui-<version> → ghcr.io/suse/aif-ui:<version>
 ```
@@ -79,7 +79,7 @@ In the examples below, `<version>` refers to a published extension release (e.g.
 
 Available catalog image versions are published in GitHub Container Registry:
 https://github.com/SUSE/aif/pkgs/container/aif-ui
- 
+
 ### Container Structure
 ```
 /home/plugin-server
@@ -169,6 +169,36 @@ When contributing to this extension:
 5. **Code Quality**: Run `yarn lint` and ensure all pre-commit hooks pass
 6. **Feature Flags**: Use feature flags for new functionality
 7. **Manual Testing**: Ensure all functionality works across multi-cluster scenarios
+
+### Pre-commit Hooks
+
+This repository uses [pre-commit](https://pre-commit.com/) to run hygiene
+checks, secret scanning, Go formatting/vetting, and UI linting before each
+commit. Commit messages are validated by commitlint via the `commit-msg` hook.
+
+Install the framework once (see the [installation docs](https://pre-commit.com/#install)):
+
+```bash
+# e.g. with pipx
+pipx install pre-commit
+# or with pip
+pip install pre-commit
+```
+
+Then enable the hooks in your local clone:
+
+```bash
+pre-commit install                       # runs on `git commit`
+pre-commit install --hook-type commit-msg  # enables commitlint
+```
+
+The Go and UI hooks shell out to your local toolchains, so make sure `go`,
+`gofmt`, and the UI dependencies (`cd ui/pkg/aif-ui && yarn install`) are
+available. To run every hook against the whole repository on demand:
+
+```bash
+pre-commit run --all-files
+```
 
 ### Commit Message Format
 
