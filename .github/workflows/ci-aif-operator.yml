@@ -27,6 +27,16 @@ jobs:
           go-version-file: operator/go.mod
           cache-dependency-path: operator/go.sum
 
+      - name: Guard Kubernetes version (product supports 1.35 only)
+        run: |
+          v=$(go list -m -f '{{.Version}}' k8s.io/api)
+          minor=$(echo "$v" | sed -E 's/^v0\.([0-9]+)\..*/\1/')
+          echo "k8s.io/api = $v (Kubernetes 1.$minor)"
+          if [ "$minor" -ge 36 ]; then
+            echo "::error::k8s.io/api $v is Kubernetes 1.$minor; product supports 1.35 only — do not cross the 0.36 boundary (see .github/dependabot.yml)."
+            exit 1
+          fi
+
       # - name: Lint
       #   uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9
       #   with:
