@@ -203,8 +203,25 @@
         </table>
       </div>
 
+        <!-- Empty state: static catalog mode with an empty catalog (no registry config applies) -->
+        <div v-if="!loading && !items.length && isStaticMode && !error" class="empty-state-content">
+          <i class="icon icon-folder-open icon-4x text-muted" />
+          <h3>{{ t('suseai.apps.noRegistryTitle', 'No applications available') }}</h3>
+          <p class="text-muted">
+            {{ t('suseai.apps.noCatalogDescBefore', 'The application catalog is empty.') }}
+            <a
+                class="empty-state-link"
+                role="button"
+                :tabindex="loading ? -1 : 0"
+                :aria-disabled="loading || undefined"
+                @click.prevent="!loading && refresh()"
+                @keydown.enter.prevent="!loading && refresh()"
+              >{{ t('suseai.apps.refresh', 'Refresh') }}</a> {{ t('suseai.apps.noCatalogDescAfter', 'to check again, or contact your administrator if this persists.') }}
+          </p>
+        </div>
+
         <!-- Empty state: no credentials configured (Settings CR absent or has no secretRef pairs) -->
-        <div v-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
+        <div v-else-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noRegistryTitle', 'No applications available') }}</h3>
           <p class="text-muted">
@@ -269,6 +286,7 @@ export default defineComponent({
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
+    const isStaticMode = ref(true); // resolved from the operator config in loadApps; static is the default
 
     // Library grouping is data-driven: the tabs reflect the libraries actually
     // present in the loaded catalog. This keeps the bundled catalog UX unchanged
@@ -398,7 +416,8 @@ export default defineComponent({
         await loadOperatorConfig();
 
         // Static catalog mode (default): serve the bundled or remote catalog.
-        if (getUseStaticCatalog()) {
+        isStaticMode.value = getUseStaticCatalog();
+        if (isStaticMode.value) {
           // Static mode: the operator serves the catalog (bundled or remote); there is
           // no Settings-driven registry config to show. If the operator is unreachable,
           // fetchStaticCatalog() throws and the page shows an error (no local fallback,
@@ -468,6 +487,7 @@ export default defineComponent({
       filteredApps,
       settingsData,
       hasRegistryConfigured,
+      isStaticMode,
 
       // Methods
       refresh,

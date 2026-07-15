@@ -136,8 +136,9 @@ type ImageRewriteSettings struct {
 type AppCatalogSettings struct {
 	// RemoteURL is an optional URL to a remote catalog JSON document. When set,
 	// the operator fetches this (and only this) URL on behalf of the UI. When
-	// empty, the UI uses its bundled default catalog. Must be an http(s) URL that
-	// resolves to a public address; internal/private destinations are rejected.
+	// empty, the operator serves its bundled default catalog. Must be an http(s)
+	// URL that resolves to a public address; internal/private destinations are
+	// rejected.
 	// +optional
 	RemoteURL string `json:"remoteUrl,omitempty"`
 }

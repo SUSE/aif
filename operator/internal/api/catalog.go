@@ -113,7 +113,11 @@ func (h *CatalogHandler) fetchRemote(ctx context.Context, rawURL string) ([]cata
 	if err != nil {
 		return nil, err
 	}
-	return catalog.Normalize(body), nil
+	items, parsed := catalog.NormalizeReport(body)
+	if dropped := parsed - len(items); dropped > 0 {
+		log.Printf("api: remote catalog: dropped %d of %d entries (missing name/slug or unrecognized packaging_format)", dropped, parsed)
+	}
+	return items, nil
 }
 
 // fetchRemoteCatalog GETs rawURL through the SSRF-filtered client and returns its

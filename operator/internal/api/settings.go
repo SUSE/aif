@@ -107,12 +107,14 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	// every field it owns, e.g. clearing fleet/registry). appCatalog.remoteUrl is the
 	// exception: it is managed out-of-band (chart value / kubectl), so a save that
 	// omits it must not drop it — preserve the existing value when the request omits one.
+	// Preserve only RemoteURL, not the whole AppCatalog struct: any field added to
+	// AppCatalogSettings later that the Settings page does own must round-trip normally.
 	if s.Spec.AppCatalog.RemoteURL == "" {
 		var existing aiplatformv1alpha1.Settings
 		err := h.client.Get(r.Context(), types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &existing)
 		switch {
 		case err == nil:
-			s.Spec.AppCatalog = existing.Spec.AppCatalog
+			s.Spec.AppCatalog.RemoteURL = existing.Spec.AppCatalog.RemoteURL
 		case k8serrors.IsNotFound(err):
 			// First-ever save: nothing to preserve.
 		default:

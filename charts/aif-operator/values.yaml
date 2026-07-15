@@ -41,7 +41,8 @@ appCatalog:
   useStaticCatalog: true
   # remoteUrl: optional URL to a remote catalog JSON document. When set, the
   # operator fetches this URL and serves it to the UI (with a safe fallback to
-  # the UI's bundled catalog on failure). When empty, the bundled catalog is used.
+  # the operator's bundled catalog on failure). When empty, the bundled catalog
+  # is used.
   # Must be a public http(s) URL; internal/private addresses are rejected.
   remoteUrl: ""
 

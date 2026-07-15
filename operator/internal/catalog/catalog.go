@@ -63,10 +63,26 @@ func Bundled() []Item { return bundled }
 // are dropped. Entries are sorted alphabetically by name within each library.
 // Returns nil when nothing valid is found or the input is not valid JSON.
 func Normalize(raw []byte) []Item {
+	items, _ := NormalizeReport(raw)
+	return items
+}
+
+// NormalizeReport is Normalize plus the count of candidate entries parsed from the
+// raw document (before validation drops). Callers fetching admin-supplied remote
+// catalogs use `parsed - len(items)` to log how many entries were dropped, which is
+// otherwise silent and hard to debug.
+func NormalizeReport(raw []byte) (items []Item, parsed int) {
+	candidates := parse(raw)
+	return finalize(candidates), len(candidates)
+}
+
+// parse extracts candidate entries from the three accepted document shapes, before
+// any validation. Returns nil when the input is not one of the accepted shapes.
+func parse(raw []byte) []Item {
 	// Flat array form.
 	var arr []Item
 	if err := json.Unmarshal(raw, &arr); err == nil {
-		return finalize(arr)
+		return arr
 	}
 
 	// Object form: either {"items":[...]} or a library-keyed object.
@@ -79,7 +95,7 @@ func Normalize(raw []byte) []Item {
 		if err := json.Unmarshal(itemsRaw, &items); err != nil {
 			return nil
 		}
-		return finalize(items)
+		return items
 	}
 
 	var out []Item
@@ -95,7 +111,7 @@ func Normalize(raw []byte) []Item {
 			out = append(out, entries[i])
 		}
 	}
-	return finalize(out)
+	return out
 }
 
 func finalize(items []Item) []Item {
