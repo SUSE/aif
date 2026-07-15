@@ -20,6 +20,12 @@ updates:
       - dependency-name: "k8s.io/*"
         versions:
           - ">= 0.36.0"
+      - dependency-name: "sigs.k8s.io/controller-runtime"
+        versions:
+          - ">= 0.24.0"
+      - dependency-name: "helm.sh/helm/v3"
+        versions:
+          - ">= 3.21.2"
 
   # npm dependencies for the UI extension
   - package-ecosystem: npm
