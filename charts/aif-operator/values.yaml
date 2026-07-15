@@ -31,6 +31,21 @@ credentials:
     username: ""
     password: ""
 
+# Static application catalog served to the AI Factory UI.
+appCatalog:
+  # useStaticCatalog: serve the bundled/remote static catalog (true, default) or
+  # discover apps from live chart repositories at runtime (false). This is a UI
+  # setting; the chart forwards it to the aif-ui extension automatically, so set it
+  # here as a sibling of remoteUrl instead of via
+  # aiExtension.source.helm.values.appCatalog.useStaticCatalog.
+  useStaticCatalog: true
+  # remoteUrl: optional URL to a remote catalog JSON document. When set, the
+  # operator fetches this URL and serves it to the UI (with a safe fallback to
+  # the operator's bundled catalog on failure). When empty, the bundled catalog
+  # is used.
+  # Must be a public http(s) URL; internal/private addresses are rejected.
+  remoteUrl: ""
+
 manager:
   replicaCount: 1
   
@@ -148,3 +163,35 @@ aiExtension:
 # git source) without the chart re-creating its defaults.
 defaultBlueprints:
   enabled: true
+
+# CRD lifecycle. Helm installs the CRDs under crds/ on first install but never
+# upgrades them on `helm upgrade` (Helm's design). When manageWithJob is true, a
+# pre-install/pre-upgrade hook Job server-side-applies the chart's CRDs so schema
+# changes roll out on upgrade without a manual `kubectl apply`. The Job only applies
+# CRDs (never deletes them), so uninstall safety is preserved. Set to false in
+# restricted environments where the installer may not create CRD-managing RBAC, and
+# apply the CRDs out-of-band instead (kubectl apply -f crds/).
+crds:
+  manageWithJob: true
+  image:
+    registry: registry.suse.com
+    repository: suse/kubectl
+    tag: "1.35"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL

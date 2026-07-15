@@ -73,6 +73,16 @@ export function getVersion(timeoutMs = 5000): Promise<{ version: string; commit:
     .finally(() => clearTimeout(timer));
 }
 
+// Headroom over the operator's own 15s outbound fetch budget so a slow-but-
+// successful upstream isn't aborted client-side just as the operator responds.
+export function getCatalog(timeoutMs = 25000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  return operatorFetch('/api/v1/catalog', { signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 export interface ValidateOverride {
   userSecretRef?:  { name: string; key: string } | null;
   tokenSecretRef?: { name: string; key: string } | null;

@@ -9,14 +9,21 @@ const CONFIG_NAMESPACE = 'cattle-ui-plugin-system';
 const CONFIG_MAP_NAME  = 'aif-ui-config';
 
 interface OperatorCache {
-  namespace: string;
-  service:   string;
-  found:     boolean;
+  namespace:         string;
+  service:           string;
+  found:             boolean;
+  useStaticCatalog:  boolean;
 }
 
 export interface OperatorError extends Error {
   status: number;
   code:   string;
+}
+
+/** Parse a ConfigMap string value ("true"/"false") to boolean, using def when absent/empty. */
+function parseConfigBool(v: unknown, def: boolean): boolean {
+  if (v === undefined || v === null || v === '') return def;
+  return String(v).toLowerCase() === 'true';
 }
 
 let cache: OperatorCache | null = null;
@@ -74,14 +81,20 @@ async function _doLoad(): Promise<void> {
     if (res.ok) {
       const cm = await res.json();
       cache = {
-        namespace: cm?.data?.operatorNamespace || OPERATOR_NAMESPACE,
-        service:   cm?.data?.operatorService   || OPERATOR_SERVICE,
-        found:     true,
+        namespace:        cm?.data?.operatorNamespace || OPERATOR_NAMESPACE,
+        service:          cm?.data?.operatorService   || OPERATOR_SERVICE,
+        found:            true,
+        useStaticCatalog: parseConfigBool(cm?.data?.useStaticCatalog, true),
       };
       return;
     }
   } catch { /* fall through to defaults */ }
-  cache = { namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false };
+  cache = {
+    namespace:        OPERATOR_NAMESPACE,
+    service:          OPERATOR_SERVICE,
+    found:            false,
+    useStaticCatalog: true,
+  };
 }
 
 export function getOperatorNamespace(): string {
@@ -90,6 +103,10 @@ export function getOperatorNamespace(): string {
 
 export function getOperatorService(): string {
   return cache?.service ?? OPERATOR_SERVICE;
+}
+
+export function getUseStaticCatalog(): boolean {
+  return cache?.useStaticCatalog ?? true;
 }
 
 export function getOperatorBaseUrl(): string {
@@ -142,7 +159,10 @@ export function getConnectionError(): string | null {
 
 /** Return current resolved coordinates (for Settings page display). */
 export function getOperatorConfig(): OperatorCache {
-  return cache ?? { namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false };
+  return cache ?? {
+    namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false,
+    useStaticCatalog: true,
+  };
 }
 
 export function isConfigMapFound(): boolean {
@@ -203,14 +223,13 @@ export async function saveOperatorConfig(namespace: string, service: string): Pr
     apiVersion: 'v1',
     kind:       'ConfigMap',
     metadata:   { name: CONFIG_MAP_NAME, namespace: CONFIG_NAMESPACE },
-    data:       { operatorNamespace: namespace, operatorService: service },
   };
 
   const getRes = await fetch(url, { headers: { Accept: 'application/json' } });
   let res: Response;
 
   if (getRes.ok) {
-    const existing       = await getRes.json().catch(() => null);
+    const existing        = await getRes.json().catch(() => null);
     const resourceVersion = existing?.metadata?.resourceVersion;
     res = await fetch(url, {
       method:  'PUT',
@@ -218,10 +237,15 @@ export async function saveOperatorConfig(namespace: string, service: string): Pr
       body:    JSON.stringify({
         ...payload,
         metadata: { ...payload.metadata, ...(resourceVersion ? { resourceVersion } : {}) },
+        data:     { ...(existing?.data || {}), operatorNamespace: namespace, operatorService: service },
       }),
     });
   } else if (getRes.status === 404) {
-    res = await fetch(configMapCollectionUrl(), { method: 'POST', headers, body: JSON.stringify(payload) });
+    res = await fetch(configMapCollectionUrl(), {
+      method: 'POST',
+      headers,
+      body:   JSON.stringify({ ...payload, data: { operatorNamespace: namespace, operatorService: service } }),
+    });
   } else {
     res = getRes;
   }

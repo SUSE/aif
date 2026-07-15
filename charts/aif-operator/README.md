@@ -34,15 +34,21 @@ kubectl get crd clusterrepos.catalog.cattle.io
 This chart ships CRDs in the standard Helm crds/ directory.
 
 **How It Works**
-- CRDs are installed automatically by Helm on first install
-- CRDs are not upgraded automatically on `helm upgrade` (Helm default behavior)
-- CRDs must be updated manually if the schema changes
-- CRDs are not deleted automatically on `helm uninstall` (Helm default behavior)
+- CRDs are installed automatically by Helm on first install (from `crds/`).
+- Helm never upgrades CRDs on `helm upgrade`. To roll out schema changes
+  automatically, this chart runs a `pre-install`/`pre-upgrade` hook Job
+  (`crds.manageWithJob`, enabled by default) that **server-side-applies** the
+  chart's CRDs before the release's resources are created. No manual step needed.
+- The hook Job only applies CRDs — it never deletes them — so `helm uninstall`
+  still leaves CRDs (and your custom resources) intact.
 
-**Manual CRD Installation**
-If CRDs are not installed automatically (for example, in restricted environments or using --skip-crds in helm install), you can apply them manually:
+**Restricted environments**
+Set `crds.manageWithJob=false` if the installer may not create the cluster-scoped
+RBAC the hook Job needs, then apply the CRDs out-of-band:
 
-`kubectl apply -f crds/installaiextension.yaml`
+```bash
+kubectl apply -f crds/
+```
 
 ## Installing the Chart
 

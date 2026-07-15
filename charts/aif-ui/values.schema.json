@@ -190,6 +190,17 @@
           "description": "Service name of the SUSE AI operator"
         }
       }
+    },
+    "appCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "useStaticCatalog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Serve the bundled static catalog (true) or discover apps from live chart repositories at runtime (false)"
+        }
+      }
     }
   }
 }

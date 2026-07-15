@@ -20,7 +20,7 @@
             />
           </div>
 
-          <div class="filter-group">
+          <div v-if="repositoryOptions.length > 1" class="filter-group">
             <label for="repository-filter" class="sr-only">Filter by repository</label>
             <select
               id="repository-filter"
@@ -203,8 +203,25 @@
         </table>
       </div>
 
+        <!-- Empty state: static catalog mode with an empty catalog (no registry config applies) -->
+        <div v-if="!loading && !items.length && isStaticMode && !error" class="empty-state-content">
+          <i class="icon icon-folder-open icon-4x text-muted" />
+          <h3>{{ t('suseai.apps.noRegistryTitle', 'No applications available') }}</h3>
+          <p class="text-muted">
+            {{ t('suseai.apps.noCatalogDescBefore', 'The application catalog is empty.') }}
+            <a
+                class="empty-state-link"
+                role="button"
+                :tabindex="loading ? -1 : 0"
+                :aria-disabled="loading || undefined"
+                @click.prevent="!loading && refresh()"
+                @keydown.enter.prevent="!loading && refresh()"
+              >{{ t('suseai.apps.refresh', 'Refresh') }}</a> {{ t('suseai.apps.noCatalogDescAfter', 'to check again, or contact your administrator if this persists.') }}
+          </p>
+        </div>
+
         <!-- Empty state: no credentials configured (Settings CR absent or has no secretRef pairs) -->
-        <div v-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
+        <div v-else-if="!loading && !items.length && !hasRegistryConfigured && !error" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>{{ t('suseai.apps.noRegistryTitle', 'No applications available') }}</h3>
           <p class="text-muted">
@@ -243,11 +260,13 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, computed, getCurrentInstance, onMounted, ref } from 'vue';
+import { defineComponent, computed, getCurrentInstance, onMounted, ref, watch } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
+import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
+import { fetchStaticCatalog } from '../services/static-catalog';
 
 export default defineComponent({
   name: 'SuseAIApps',
@@ -267,11 +286,61 @@ export default defineComponent({
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
+    const isStaticMode = ref(true); // resolved from the operator config in loadApps; static is the default
 
-    const repositoryOptions = computed(() => [
-      { label: 'SUSE AI Library', value: 'suse-ai' },
-      { label: 'NVIDIA AI Library', value: 'nvidia' },
-    ]);
+    // Library grouping is data-driven: the tabs reflect the libraries actually
+    // present in the loaded catalog. This keeps the bundled catalog UX unchanged
+    // (suse-ai + nvidia) while ensuring a custom remote catalog — with its own
+    // library values, or none — is never hidden behind the two hard-coded tabs.
+    const OTHER_LIBRARY = 'other';
+    const LIBRARY_LABELS: Record<string, string> = {
+      'suse-ai':      'SUSE AI Library',
+      'nvidia':       'NVIDIA AI Library',
+      [OTHER_LIBRARY]: 'Other',
+    };
+    const PREFERRED_ORDER = ['suse-ai', 'nvidia'];
+
+    const libraryOf = (app: AppCollectionItem): string => app.library || OTHER_LIBRARY;
+
+    const humanizeLibrary = (v: string): string =>
+      v.split(/[-_]/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || v;
+
+    // Distinct libraries present, ordered: known first (suse-ai, nvidia), then
+    // custom values alphabetically, then the "other" bucket last.
+    const presentLibraries = computed<string[]>(() => {
+      const set = new Set<string>();
+      for (const app of items.value) set.add(libraryOf(app));
+      const known  = PREFERRED_ORDER.filter(l => set.has(l));
+      const custom = Array.from(set).filter(l => !PREFERRED_ORDER.includes(l) && l !== OTHER_LIBRARY).sort();
+      const other  = set.has(OTHER_LIBRARY) ? [OTHER_LIBRARY] : [];
+      return [...known, ...custom, ...other];
+    });
+
+    const repositoryOptions = computed(() => {
+      const opts = presentLibraries.value.map(l => ({
+        value: l,
+        label: LIBRARY_LABELS[l] || humanizeLibrary(l),
+      }));
+      // An "All libraries" option is only meaningful when more than one exists.
+      // Its empty value makes filteredApps show everything.
+      if (presentLibraries.value.length > 1) {
+        opts.unshift({ value: '', label: 'All libraries' });
+      }
+      return opts;
+    });
+
+    // Keep the selected library valid as the catalog loads/changes: if the current
+    // selection isn't an available option, snap to suse-ai (preserving the default
+    // bundled-catalog behavior) or the first present library. This is what prevents
+    // a non-empty custom catalog from rendering "No applications found".
+    const ensureValidSelectedRepo = () => {
+      if (!items.value.length) return;
+      const validValues = repositoryOptions.value.map(o => o.value);
+      if (validValues.includes(selectedRepo.value)) return;
+      const libs = presentLibraries.value;
+      selectedRepo.value = libs.includes('suse-ai') ? 'suse-ai' : (libs[0] ?? '');
+    };
+    watch(items, ensureValidSelectedRepo);
 
     const hasRegistryConfigured = computed(() => {
       const spec = settingsData.value?.spec;
@@ -286,10 +355,11 @@ export default defineComponent({
     const filteredApps = computed(() => {
       let arr = items.value.slice();
 
-      // Filter by the selected library ('suse-ai' | 'nvidia'). A falsy value
-      // (e.g. a future "All libraries" option) intentionally shows everything.
+      // Filter by the selected library. A falsy value ("All libraries")
+      // intentionally shows everything. Items with no/unknown library match the
+      // "other" bucket via libraryOf().
       if (selectedRepo.value) {
-        arr = arr.filter((app: AppCollectionItem) => app.library === selectedRepo.value);
+        arr = arr.filter((app: AppCollectionItem) => libraryOf(app) === selectedRepo.value);
       }
 
       if (search.value) {
@@ -343,6 +413,21 @@ export default defineComponent({
 
     const loadApps = async () => {
       try {
+        await loadOperatorConfig();
+
+        // Static catalog mode (default): serve the bundled or remote catalog.
+        isStaticMode.value = getUseStaticCatalog();
+        if (isStaticMode.value) {
+          // Static mode: the operator serves the catalog (bundled or remote); there is
+          // no Settings-driven registry config to show. If the operator is unreachable,
+          // fetchStaticCatalog() throws and the page shows an error (no local fallback,
+          // since the bundled catalog now lives in the operator).
+          settingsData.value = null;
+          items.value = await fetchStaticCatalog();
+          return;
+        }
+
+        // Dynamic mode: discover apps from live chart repositories (unchanged).
         const settings = await fetchSettingsOrNull();
         settingsData.value = settings;
         const [suseApps, nvidiaApps] = await Promise.all([
@@ -402,6 +487,7 @@ export default defineComponent({
       filteredApps,
       settingsData,
       hasRegistryConfigured,
+      isStaticMode,
 
       // Methods
       refresh,

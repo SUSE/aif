@@ -1,0 +1,78 @@
+{{- if .Values.crds.manageWithJob }}
+# ConfigMap carrying the chart's CRD manifests, consumed by the CRD-apply Job.
+# Rendered from crds/ (~45 KiB total, well under the ConfigMap size limit).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-crds
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+data:
+{{- range $path, $_ := .Files.Glob "crds/*.yaml" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+---
+# Applies (server-side) the chart's CRDs before the release's resources are created,
+# so schema changes roll out on `helm upgrade` (which otherwise never touches CRDs).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-crd-apply
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: {{ include "aif-operator.fullname" . }}-crd-apply
+      restartPolicy: Never
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.crds.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: crds
+          configMap:
+            name: {{ include "aif-operator.fullname" . }}-crds
+        - name: tmp-dir
+          emptyDir: {}
+      containers:
+        - name: crd-apply
+          image: "{{ with (coalesce .Values.global.imageRegistry .Values.crds.image.registry) }}{{ . }}/{{ end }}{{ .Values.crds.image.repository }}:{{ .Values.crds.image.tag }}"
+          imagePullPolicy: {{ .Values.crds.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.crds.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.crds.resources | nindent 12 }}
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: crds
+              mountPath: /crds
+              readOnly: true
+            - name: tmp-dir
+              mountPath: /tmp
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "Applying AI Factory CRDs (server-side)..."
+              # Server-side apply avoids the client-side last-applied annotation size
+              # limit (CRDs are large) and cleanly takes field ownership on upgrade.
+              kubectl apply --server-side --force-conflicts --cache-dir=/tmp/.kube-cache -f /crds/
+              echo "CRDs applied."
+{{- end }}

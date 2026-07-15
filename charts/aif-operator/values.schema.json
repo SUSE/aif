@@ -133,6 +133,45 @@
       "properties": {
         "enabled": { "type": "boolean", "default": true }
       }
+    },
+    "appCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "useStaticCatalog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Serve the bundled/remote static catalog (true) or discover apps from live chart repositories (false). Forwarded to the aif-ui extension."
+        },
+        "remoteUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional public http(s) URL to a remote catalog JSON document, fetched by the operator. Empty uses the bundled catalog."
+        }
+      }
+    },
+    "crds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "manageWithJob": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply/upgrade CRDs via a pre-install/pre-upgrade hook Job (server-side apply). The Job never deletes CRDs."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string", "default": "registry.suse.com" },
+            "repository": { "type": "string", "default": "suse/kubectl" },
+            "tag": { "type": "string", "default": "1.35" },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "default": "IfNotPresent" }
+          }
+        },
+        "resources": { "type": "object" },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" }
+      }
     }
   }
 }
