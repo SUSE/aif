@@ -257,6 +257,44 @@ func TestGetRegistryCredentials_Nvidia(t *testing.T) {
 	}
 }
 
+// A credential supplied only as a well-known secret (no Settings spec refs) is
+// resolved via EffectiveRefs and reported as configured — the pre-flight relies
+// on this to match what the operator can actually create.
+func TestGetRegistryCredentials_DiscoversWellKnownSecret(t *testing.T) {
+	const ns = "aif-operator"
+
+	// "appco" is a well-known application-collection secret name.
+	acSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("u"), "password": []byte("p")},
+	}
+	// Settings CR exists but has NO applicationCollection refs.
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+	}
+
+	c := newSettingsFakeClient(t, cr, acSecret)
+	h := newSettingsHandler(c, ns)
+
+	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body RegistryCredentials
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body.ApplicationCollection == nil {
+		t.Fatalf("expected application-collection creds discovered from well-known secret, got nil")
+	}
+	if body.ApplicationCollection.Username != "u" || body.ApplicationCollection.Password != "p" {
+		t.Errorf("unexpected discovered creds: %+v", body.ApplicationCollection)
+	}
+}
+
 func TestGetRegistryCredentials_AppCollectionHostFromOCIURL(t *testing.T) {
 	const ns = "suse-ai-system"
 
