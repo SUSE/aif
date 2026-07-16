@@ -64,7 +64,10 @@ const (
 
 // AppSource contains chart information for App-sourced workloads.
 type AppSource struct {
-	// ChartRepo is the Rancher ClusterRepo name.
+	// ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
+	// ClusterRepos are supported; for git-backed repos the operator resolves the
+	// repo's basic-auth credentials for image pulls (the App's HelmOp itself is
+	// written by the UI).
 	// +kubebuilder:validation:MinLength=1
 	ChartRepo string `json:"chartRepo"`
 	// ChartName is the Helm chart name.

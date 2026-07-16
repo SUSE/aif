@@ -103,7 +103,11 @@ spec:
                         minLength: 1
                         type: string
                       chartRepo:
-                        description: ChartRepo is the Rancher ClusterRepo name.
+                        description: |-
+                          ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
+                          ClusterRepos are supported; for git-backed repos the operator resolves the
+                          repo's basic-auth credentials for image pulls (the App's HelmOp itself is
+                          written by the UI).
                         minLength: 1
                         type: string
                       chartVersion:
