@@ -45,10 +45,22 @@ import (
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
 var nonAlphanumBPRE = regexp.MustCompile(`[^a-z0-9]+`)
 
+// repoKind classifies how a Rancher ClusterRepo serves its charts.
+type repoKind string
+
+const (
+	repoKindHTTP repoKind = "http"
+	repoKindOCI  repoKind = "oci"
+	repoKindGit  repoKind = "git"
+)
+
 type clusterRepoInfo struct {
-	URL            string
-	ClientSecret   string // name of the basic-auth secret; empty if unauthenticated
-	ClientSecretNS string // namespace of the basic-auth secret (typically cattle-system)
+	Kind           repoKind // how the repo serves charts (http/oci/git)
+	URL            string   // http/oci repos only
+	GitRepo        string   // git repos only
+	GitBranch      string   // git repos only
+	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
+	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -876,20 +888,39 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	if err := r.Get(ctx, types.NamespacedName{Name: repoName}, cr); err != nil {
 		return clusterRepoInfo{}, fmt.Errorf("get ClusterRepo %q: %w", repoName, err)
 	}
-	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
-	if url == "" {
-		url, _, _ = unstructured.NestedString(cr.Object, "spec", "ociRepo")
-	}
-	if url == "" {
-		return clusterRepoInfo{}, fmt.Errorf("ClusterRepo %q has no url or ociRepo in spec", repoName)
-	}
 	// spec.clientSecret is an object {name, namespace}, not a plain string.
 	clientSecretName, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "name")
 	clientSecretNS, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
 	if clientSecretNS == "" {
 		clientSecretNS = "cattle-system"
 	}
-	return clusterRepoInfo{URL: url, ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}, nil
+	info := clusterRepoInfo{ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
+
+	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
+	if url == "" {
+		url, _, _ = unstructured.NestedString(cr.Object, "spec", "ociRepo")
+	}
+	if url != "" {
+		info.URL = url
+		info.Kind = repoKindHTTP
+		if strings.HasPrefix(url, "oci://") {
+			info.Kind = repoKindOCI
+		}
+		return info, nil
+	}
+
+	// Git-backed ClusterRepos (spec.gitRepo + spec.gitBranch) have no url/ociRepo.
+	// Rancher clones and indexes them; the operator resolves the chart via the
+	// Rancher catalog API and republishes it as a self-contained Fleet Bundle.
+	gitRepo, _, _ := unstructured.NestedString(cr.Object, "spec", "gitRepo")
+	if gitRepo != "" {
+		info.Kind = repoKindGit
+		info.GitRepo = gitRepo
+		info.GitBranch, _, _ = unstructured.NestedString(cr.Object, "spec", "gitBranch")
+		return info, nil
+	}
+
+	return clusterRepoInfo{}, fmt.Errorf("ClusterRepo %q has no url, ociRepo, or gitRepo in spec", repoName)
 }
 
 func bpCRName(familyName, version string) string {
