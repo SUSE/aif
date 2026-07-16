@@ -29,8 +29,19 @@ jobs:
 
       - name: Guard Kubernetes version (product supports 1.35 only)
         run: |
+          # k8s.io/api is the canonical proxy for the whole k8s.io/* cohort — they
+          # are released in lockstep (all v0.<k8s-minor>.<patch>), so checking one
+          # is sufficient to detect a 1.36 boundary crossing.
           v=$(go list -m -f '{{.Version}}' k8s.io/api)
           minor=$(echo "$v" | sed -E 's/^v0\.([0-9]+)\..*/\1/')
+          # Fail closed: if the version isn't the expected v0.<minor>.<patch>
+          # (a pseudo-version, or a future v1.x), we can't reason about it — the
+          # numeric test below would error inside the `if` and be silently treated
+          # as false, letting the dep through. Refuse to pass on anything we can't parse.
+          if ! [[ "$minor" =~ ^[0-9]+$ ]]; then
+            echo "::error::cannot parse k8s.io/api version $v as v0.<minor>.<patch>; refusing to pass the Kubernetes version guard."
+            exit 1
+          fi
           echo "k8s.io/api = $v (Kubernetes 1.$minor)"
           if [ "$minor" -ge 36 ]; then
             echo "::error::k8s.io/api $v is Kubernetes 1.$minor; product supports 1.35 only — do not cross the 0.36 boundary (see .github/dependabot.yml)."
