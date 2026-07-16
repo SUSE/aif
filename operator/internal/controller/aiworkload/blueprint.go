@@ -133,6 +133,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
+	// Git-backed ClusterRepos have no HTTP/OCI URL a HelmOp could pull from; the
+	// operator fetches the chart from Rancher and deploys it as an embedded Fleet
+	// Bundle instead.
+	if repoInfo.Kind == repoKindGit {
+		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, false)
+	}
+
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
 		"version": c.ChartVersion,
@@ -187,19 +194,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["values"] = vals
 	}
 
-	localTargets := make([]any, 0)
-	downstreamTargets := make([]any, 0)
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
-		} else {
-			downstreamTargets = append(downstreamTargets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
 
 	for _, pair := range []struct {
 		ns      string
@@ -694,6 +689,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
+	// Git-backed ClusterRepos: publish an embedded-chart Fleet Bundle git file
+	// rather than a HelmOp (which cannot pull from git).
+	if repoInfo.Kind == repoKindGit {
+		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, true)
+	}
+
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
 		"version": c.ChartVersion,
@@ -741,28 +742,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		helmSpec["values"] = vals
 	}
 
-	targets := make([]any, 0)
-	isLocalOnly := true
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			targets = append(targets, map[string]any{"clusterName": "local"})
-		} else {
-			isLocalOnly = false
-			targets = append(targets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
-	if len(w.Spec.TargetClusters) == 0 {
-		isLocalOnly = false
-	}
-
-	fleetNS := "fleet-default"
-	if isLocalOnly {
-		fleetNS = "fleet-local"
-	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	targets := append(append([]any{}, localTargets...), downstreamTargets...)
+	fleetNS := gitOpsFleetNamespace(w)
 
 	helmOpSpec := map[string]any{
 		// defaultNamespace (not namespace): targets the release namespace without

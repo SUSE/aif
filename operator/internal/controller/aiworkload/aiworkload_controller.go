@@ -58,6 +58,11 @@ type AIWorkloadReconciler struct {
 	Scheme            *runtime.Scheme
 	RestConfig        *rest.Config
 	OperatorNamespace string
+	// CatalogClient fetches chart tgz from git-backed ClusterRepos via Rancher's
+	// Steve catalog API. Nil when git-backed repos are unconfigured; git-backed
+	// components then fail with a clear "not configured" error and http/oci
+	// components are unaffected.
+	CatalogClient RancherCatalogClient
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete

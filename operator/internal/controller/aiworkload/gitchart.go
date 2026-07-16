@@ -19,9 +19,11 @@ package aiworkload
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
@@ -87,4 +89,109 @@ func buildGitChartBundle(bundleName, namespace string, tgz []byte,
 	}}
 	_ = unstructured.SetNestedSlice(b.Object, resources, "spec", "resources")
 	return b, nil
+}
+
+// splitWorkloadTargets returns Fleet target selectors split by workspace:
+// local-cluster targets (deployed via fleet-local) and downstream targets
+// (deployed via fleet-default). Shared by the HelmOp, GitOps, and git-backed
+// Bundle paths so all three agree on target shape.
+func splitWorkloadTargets(w *aiplatformv1alpha1.AIWorkload) (local, downstream []any) {
+	local = make([]any, 0)
+	downstream = make([]any, 0)
+	for _, id := range w.Spec.TargetClusters {
+		if id == "local" {
+			local = append(local, map[string]any{"clusterName": "local"})
+		} else {
+			downstream = append(downstream, map[string]any{
+				"clusterSelector": map[string]any{
+					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
+				},
+			})
+		}
+	}
+	return local, downstream
+}
+
+// gitOpsFleetNamespace mirrors the GitOps path's fleet-local vs fleet-default
+// choice: fleet-local only when every target is the local cluster and at least
+// one target is set; otherwise fleet-default.
+func gitOpsFleetNamespace(w *aiplatformv1alpha1.AIWorkload) string {
+	for _, id := range w.Spec.TargetClusters {
+		if id != "local" {
+			return "fleet-default"
+		}
+	}
+	if len(w.Spec.TargetClusters) == 0 {
+		return "fleet-default"
+	}
+	return "fleet-local"
+}
+
+// ensureBlueprintGitChartBundle fetches a git-backed ClusterRepo's chart from
+// Rancher and applies (gitOps=false) or git-publishes (gitOps=true) a
+// self-contained Fleet Bundle carrying the chart. It reuses the same value and
+// pull-secret injection and per-workspace target split as the HelmOp path.
+func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
+	ctx context.Context,
+	w *aiplatformv1alpha1.AIWorkload,
+	c aiplatformv1alpha1.BlueprintComponent,
+	bundleName string,
+	repoInfo clusterRepoInfo,
+	gitOps bool,
+) error {
+	if r.CatalogClient == nil {
+		return fmt.Errorf("git-backed ClusterRepo %q requires the Rancher catalog client, which is not configured", c.ChartRepo)
+	}
+	tgz, err := r.CatalogClient.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
+	if err != nil {
+		return fmt.Errorf("fetch chart %s@%s from git repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
+	}
+
+	vals := map[string]any{}
+	if c.Values != nil {
+		_ = json.Unmarshal(c.Values.Raw, &vals)
+	}
+	ns := componentNamespace(w, c)
+	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	if err != nil {
+		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+	}
+	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
+
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
+
+	if gitOps {
+		allTargets := append(append([]any{}, localTargets...), downstreamTargets...)
+		b, err := buildGitChartBundle(bundleName, ns, tgz, c, vals, allTargets)
+		if err != nil {
+			return err
+		}
+		b.SetNamespace(gitOpsFleetNamespace(w))
+		yamlBytes, err := json.MarshalIndent(b.Object, "", "  ")
+		if err != nil {
+			return err
+		}
+		return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
+	}
+
+	for _, pair := range []struct {
+		ns      string
+		targets []any
+	}{
+		{"fleet-local", localTargets},
+		{"fleet-default", downstreamTargets},
+	} {
+		if len(pair.targets) == 0 {
+			continue
+		}
+		b, err := buildGitChartBundle(bundleName, ns, tgz, c, vals, pair.targets)
+		if err != nil {
+			return err
+		}
+		b.SetNamespace(pair.ns)
+		if err := r.Patch(ctx, b, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator")); err != nil {
+			return fmt.Errorf("patch Bundle %s/%s: %w", pair.ns, bundleName, err)
+		}
+	}
+	return nil
 }
