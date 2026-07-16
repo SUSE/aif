@@ -217,10 +217,18 @@ func (c *helmClient) GetRelease(ctx context.Context, name string) (*ReleaseInfo,
 }
 
 func releaseNeedsUpgrade(info *ReleaseInfo, spec ReleaseSpec) bool {
-	if info.Version != spec.Version {
+	if versionDrift(info, spec) {
 		return true
 	}
 	return !valuesEqual(info.Values, spec.Values)
+}
+
+// versionDrift reports whether an installed release's chart version differs from
+// the requested version. It is the single version-difference predicate shared by
+// releaseNeedsUpgrade (which upgrades on it) and the drift log in EnsureRelease
+// (observability), so the decision and the log can't fall out of sync.
+func versionDrift(info *ReleaseInfo, spec ReleaseSpec) bool {
+	return info != nil && info.Version != spec.Version
 }
 
 func valuesEqual(a, b map[string]interface{}) bool {
@@ -259,6 +267,11 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	if info == nil {
 		log.Info("Helm release not found, installing")
 		return c.install(ctx, cfg, spec)
+	}
+
+	if versionDrift(info, spec) {
+		log.Info("installed Helm release version differs from requested version",
+			"requestedVersion", spec.Version, "installedVersion", info.Version)
 	}
 
 	if !releaseNeedsUpgrade(info, spec) {

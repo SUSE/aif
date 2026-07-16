@@ -86,3 +86,45 @@ func TestReleaseNeedsUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionDrift(t *testing.T) {
+	tests := []struct {
+		name string
+		info *ReleaseInfo
+		spec ReleaseSpec
+		want bool
+	}{
+		{
+			name: "no installed release is not a drift",
+			info: nil,
+			spec: ReleaseSpec{Version: "1.0.0"},
+			want: false,
+		},
+		{
+			name: "matching version is not a drift",
+			info: &ReleaseInfo{Version: "1.0.0"},
+			spec: ReleaseSpec{Version: "1.0.0"},
+			want: false,
+		},
+		{
+			name: "differing pinned version is a drift",
+			info: &ReleaseInfo{Version: "1.0.0"},
+			spec: ReleaseSpec{Version: "1.1.0"},
+			want: true,
+		},
+		{
+			name: "empty requested version differs from installed (matches releaseNeedsUpgrade)",
+			info: &ReleaseInfo{Version: "1.0.0"},
+			spec: ReleaseSpec{Version: ""},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := versionDrift(tt.info, tt.spec); got != tt.want {
+				t.Errorf("versionDrift() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
