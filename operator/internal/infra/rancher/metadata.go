@@ -50,13 +50,28 @@ func buildExtensionMetadata(
 
 	logging.Debug(log).Info("Resolving extension metadata from Helm index")
 
-	index, err := getOrFetchIndex(ctx, indexCache, repoURL)
+	index, cached, err := getOrFetchIndex(ctx, indexCache, repoURL)
 	if err != nil {
 		log.Error(err, "Failed to load Helm index")
 		return nil, err
 	}
 
 	annotations, err := helm.FindAnnotations(index, extensionName, version)
+	if err != nil && cached {
+		// The cached index predates a just-upgraded extension, so it lacks the
+		// requested version. Invalidate it and refetch once — the chart server is
+		// now serving the new index — instead of failing for the whole cache TTL.
+		logging.Debug(log).Info("Requested version not in cached index; refetching",
+			"repoURL", repoURL)
+		indexCache.Delete(helm.IndexCacheKey{RepoURL: repoURL})
+
+		index, _, err = getOrFetchIndex(ctx, indexCache, repoURL)
+		if err != nil {
+			log.Error(err, "Failed to reload Helm index")
+			return nil, err
+		}
+		annotations, err = helm.FindAnnotations(index, extensionName, version)
+	}
 	if err != nil {
 		log.Error(err, "Failed to find chart annotations in index.yaml")
 		return nil, err
@@ -81,23 +96,26 @@ func buildExtensionMetadata(
 	return maps.Clone(final), nil
 }
 
+// getOrFetchIndex returns the repo index and whether it came from the cache.
+// The cached flag lets callers decide whether a failed lookup is worth a
+// cache-invalidating refetch (a freshly-fetched index won't be helped by one).
 func getOrFetchIndex(
 	ctx context.Context,
 	cache *helm.IndexCache,
 	repoURL string,
-) (*helm.IndexFile, error) {
+) (*helm.IndexFile, bool, error) {
 
 	key := helm.IndexCacheKey{RepoURL: repoURL}
 
 	if entry, ok := cache.Get(key); ok {
-		return entry.Index, nil
+		return entry.Index, true, nil
 	}
 
 	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
 
 	index, err := helm.FetchIndex(indexURL)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	cache.Set(key, &helm.IndexCacheEntry{
@@ -105,7 +123,7 @@ func getOrFetchIndex(
 		FetchedAt: time.Now(),
 	})
 
-	return index, nil
+	return index, false, nil
 }
 
 func filterSupportedMetadata(
