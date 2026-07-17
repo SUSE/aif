@@ -23,6 +23,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,16 +117,18 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	}
 
 	// Step 3: ensure HelmOps or git files exist for each component bundle.
+	expectedDigests := map[string]string{}
 	for i, c := range bp.Spec.Components {
 		if i >= len(w.Spec.FleetBundleNames) {
 			break
 		}
+		var digest string
 		var err error
 		switch w.Spec.DeployStrategy {
 		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-			err = r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i])
+			digest, err = r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i])
 		case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-			err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
+			digest, err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
 		}
 		if err != nil {
 			if stderrors.Is(err, errCatalogClientNotConfigured) {
@@ -183,14 +186,49 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 			return ctrl.Result{}, err
 		}
+		for _, k := range desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, []aiplatformv1alpha1.BlueprintComponent{c}, w.Spec.DeployStrategy) {
+			expectedDigests[k.Namespace+"/"+k.Name] = digest
+		}
 	}
+	w.Status.ObservedGeneration = w.Generation
 
-	// Step 4: aggregate status across all component bundles.
-	if err := r.mirrorBlueprintStatus(ctx, w); err != nil {
+	// Step 4: cleanup stale HelmOps, then build component matrix, set phase, and certify.
+	keys := desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, bp.Spec.Components, w.Spec.DeployStrategy)
+	if err := r.cleanupStaleHelmOps(ctx, w, keys); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Prune baselines to match current desired HelmOp UIDs.
+	desiredUIDs := r.collectDesiredHelmOpUIDs(ctx, keys)
+	w.Status.RenderBaselines = pruneRenderBaselines(w.Status.RenderBaselines, desiredUIDs)
+	cells, err := r.buildComponentMatrix(ctx, w, keys, expectedDigests)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !equalComponentStatuses(w.Status.ComponentStatuses, cells) {
+		w.Status.ComponentStatuses = cells
+	}
+	w.Status.Phase = guardPhaseTransition(phaseFromCells(cells), w.Status.Phase, w.CreationTimestamp.Time)
+	if err := r.certifyDeployedSource(ctx, w, keys, expectedDigests); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Reconcile completed without error: clear any prior Ready=False (e.g. a
+	// transient ClusterRepoNotReady) so the condition recovers alongside the
+	// phase. Phase reflects rollout state; Ready reflects reconcile success.
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
 	return ctrl.Result{}, nil
+}
+
+// retryEpochValue reads the durable retry-epoch counter (default 0). Every desired HelmOp is
+// rendered with spec.forceSyncGeneration = this value so completing a retry never resets it.
+func (r *AIWorkloadReconciler) retryEpochValue(w *aiplatformv1alpha1.AIWorkload) int64 {
+	if w.Annotations == nil {
+		return 0
+	}
+	n, err := strconv.ParseInt(w.Annotations[retryEpochAnnotation], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
@@ -199,10 +237,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	w *aiplatformv1alpha1.AIWorkload,
 	c aiplatformv1alpha1.BlueprintComponent,
 	bundleName string,
-) error {
+) (string, error) {
 	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
 	if err != nil {
-		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
+		return "", fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
 	// Git-backed ClusterRepos have no HTTP/OCI URL a HelmOp could pull from; the
@@ -260,12 +298,26 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
-		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}
+
+	epoch := r.retryEpochValue(w)
+	helmSpec["forceSyncGeneration"] = epoch
+
+	digest := perHelmOpRenderDigest(ComponentRenderInputs{
+		ChartRepo:    c.ChartRepo,
+		ChartName:    c.ChartName,
+		ChartVersion: c.ChartVersion,
+		Namespace:    ns,
+		Vendor:       string(c.Vendor),
+		RepoURL:      repoInfo.URL,
+		Targets:      w.Spec.TargetClusters,
+		Values:       vals,
+	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
 
@@ -291,6 +343,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		ho.SetGroupVersionKind(helmOpGVK)
 		ho.SetName(bundleName)
 		ho.SetNamespace(pair.ns)
+		ho.SetLabels(map[string]string{workloadUIDLabel: string(w.UID)})
+		_ = unstructured.SetNestedStringMap(ho.Object, map[string]string{
+			renderDigestLabel: digest,
+			workloadUIDLabel:  string(w.UID),
+		}, "spec", "labels")
 		// defaultNamespace (not namespace): targets the release namespace without
 		// forcing every resource into it. Fleet's strict `namespace` field rejects
 		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
@@ -306,10 +363,20 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 			client.ForceOwnership,
 			client.FieldOwner("aif-operator"),
 		); err != nil {
-			return fmt.Errorf("patch HelmOp %s/%s: %w", pair.ns, bundleName, err)
+			return "", fmt.Errorf("patch HelmOp %s/%s: %w", pair.ns, bundleName, err)
 		}
+
+		// Record baseline after successful Patch: the HelmOp now carries UID, generation,
+		// and the current render digest label. Upsert a baseline entry for this HelmOp.
+		w.Status.RenderBaselines = upsertRenderBaseline(w.Status.RenderBaselines, aiplatformv1alpha1.RenderBaseline{
+			HelmOpUID:           string(ho.GetUID()),
+			RenderDigest:        digest,
+			RetryEpoch:          epoch,
+			HelmOpGeneration:    ho.GetGeneration(),
+			AcceptedFingerprint: acceptedConditionFingerprint(ho),
+		})
 	}
-	return nil
+	return digest, nil
 }
 
 const (
@@ -753,18 +820,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	w *aiplatformv1alpha1.AIWorkload,
 	c aiplatformv1alpha1.BlueprintComponent,
 	bundleName string,
-) error {
-	ho, err := r.getHelmOp(ctx, bundleName)
-	if err != nil {
-		return err
-	}
-	if ho != nil {
-		return nil // already published
-	}
-
+) (string, error) {
 	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
 	if err != nil {
-		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
+		return "", fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
 	// Git-backed ClusterRepos: publish an embedded-chart Fleet Bundle git file
@@ -814,12 +873,26 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
-		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}
+
+	epoch := r.retryEpochValue(w)
+	helmSpec["forceSyncGeneration"] = epoch
+
+	digest := perHelmOpRenderDigest(ComponentRenderInputs{
+		ChartRepo:    c.ChartRepo,
+		ChartName:    c.ChartName,
+		ChartVersion: c.ChartVersion,
+		Namespace:    ns,
+		Vendor:       string(c.Vendor),
+		RepoURL:      repoInfo.URL,
+		Targets:      w.Spec.TargetClusters,
+		Values:       vals,
+	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
 	targets := append(append([]any{}, localTargets...), downstreamTargets...)
@@ -833,6 +906,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		"defaultNamespace": ns,
 		"helm":             helmSpec,
 		"targets":          targets,
+		"labels": map[string]any{
+			renderDigestLabel: digest,
+			workloadUIDLabel:  string(w.UID),
+		},
 	}
 	if repoInfo.ClientSecret != "" {
 		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
@@ -841,16 +918,34 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	helmOpObj := map[string]any{
 		"apiVersion": "fleet.cattle.io/v1alpha1",
 		"kind":       "HelmOp",
-		"metadata":   map[string]any{"name": bundleName, "namespace": fleetNS},
-		"spec":       helmOpSpec,
+		"metadata": map[string]any{
+			"name":      bundleName,
+			"namespace": fleetNS,
+			"labels": map[string]any{
+				workloadUIDLabel: string(w.UID),
+			},
+		},
+		"spec": helmOpSpec,
 	}
 
 	yamlBytes, err := json.MarshalIndent(helmOpObj, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
+	content := string(yamlBytes)
 
-	return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
+	newHash := gitManifestHash(content)
+	if w.Annotations[gitFileHashAnnotation(bundleName)] == newHash {
+		return digest, nil // unchanged — no republish
+	}
+	if err := r.publishBlueprintGitFile(ctx, w, bundleName, content); err != nil {
+		return "", err
+	}
+	metav1.SetMetaDataAnnotation(&w.ObjectMeta, gitFileHashAnnotation(bundleName), newHash)
+	if err := r.Update(ctx, w); err != nil {
+		return "", err
+	}
+	return digest, nil
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {
@@ -1145,4 +1240,234 @@ func componentReleaseName(c aiplatformv1alpha1.BlueprintComponent) string {
 		return c.ReleaseName
 	}
 	return c.ChartName
+}
+
+// buildComponentMatrix returns one sorted (component, cluster) cell per desired HelmOp key,
+// render-gated on the parent Bundle. A missing BundleDeployment for an expected cluster yields
+// a Pending cell (never absent).
+func (r *AIWorkloadReconciler) buildComponentMatrix(
+	ctx context.Context,
+	w *aiplatformv1alpha1.AIWorkload,
+	keys []HelmOpKey,
+	expectedDigests map[string]string,
+) ([]aiplatformv1alpha1.AIWorkloadComponentStatus, error) {
+	cells := []aiplatformv1alpha1.AIWorkloadComponentStatus{}
+	epoch := r.retryEpochValue(w)
+	for _, k := range keys {
+		b, err := r.getBundle(ctx, k.Namespace, k.Name)
+		if err != nil {
+			return nil, err
+		}
+		current := bundleRenderCurrent(b, expectedDigests[k.Namespace+"/"+k.Name])
+
+		bdList := &unstructured.UnstructuredList{}
+		bdList.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
+		})
+		if err := r.List(ctx, bdList, client.MatchingLabels{"fleet.cattle.io/bundle-name": k.Name}); err != nil {
+			return nil, err
+		}
+
+		// Track which expected cluster IDs have existing BundleDeployments.
+		seenClusters := make(map[string]bool)
+		for i := range bdList.Items {
+			bd := &bdList.Items[i]
+			clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
+			if clusterID == "" {
+				continue
+			}
+			seenClusters[clusterID] = true
+			phase := matrixCellPhase(bd, current)
+			msg := ""
+			if phase == aiplatformv1alpha1.AIWorkloadClusterPhaseFailed {
+				msg, _, _ = unstructured.NestedString(bd.Object, "status", "display", "message")
+			}
+			rev, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
+			cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{
+				ComponentName: k.Name, ClusterID: clusterID, Phase: phase,
+				Revision: rev, Message: truncateMessage(msg),
+			})
+		}
+
+		// Determine expected cluster IDs for this key based on namespace and TargetClusters.
+		expectedClusters := []string{}
+		if k.Namespace == "fleet-local" {
+			// fleet-local → expected = the "local" entry if present in TargetClusters
+			for _, id := range w.Spec.TargetClusters {
+				if id == "local" {
+					expectedClusters = append(expectedClusters, id)
+					break
+				}
+			}
+		} else if k.Namespace == "fleet-default" {
+			// fleet-default → expected = the non-"local" entries of TargetClusters
+			for _, id := range w.Spec.TargetClusters {
+				if id != "local" {
+					expectedClusters = append(expectedClusters, id)
+				}
+			}
+		}
+
+		// For each expected cluster not seen, check if Accepted=False is terminal.
+		// If Bundle doesn't exist AND HelmOp has terminal Accepted=False, emit Failed.
+		for _, expectedID := range expectedClusters {
+			if !seenClusters[expectedID] {
+				cellPhase := aiplatformv1alpha1.AIWorkloadClusterPhasePending
+				if b == nil {
+					// No Bundle exists: check if HelmOp has terminal Accepted=False.
+					ho, err := r.getHelmOpIn(ctx, k.Namespace, k.Name)
+					if err != nil {
+						return nil, err
+					}
+					if ho != nil {
+						// Find baseline for this HelmOp UID.
+						var baseline *aiplatformv1alpha1.RenderBaseline
+						for i := range w.Status.RenderBaselines {
+							if w.Status.RenderBaselines[i].HelmOpUID == string(ho.GetUID()) {
+								baseline = &w.Status.RenderBaselines[i]
+								break
+							}
+						}
+						digest := expectedDigests[k.Namespace+"/"+k.Name]
+						if acceptedFalseTerminal(ho, baseline, digest, epoch, ho.GetGeneration()) {
+							cellPhase = aiplatformv1alpha1.AIWorkloadClusterPhaseFailed
+						}
+					}
+				}
+				cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{
+					ComponentName: k.Name,
+					ClusterID:     expectedID,
+					Phase:         cellPhase,
+				})
+			}
+		}
+	}
+	sort.Slice(cells, func(i, j int) bool {
+		if cells[i].ComponentName != cells[j].ComponentName {
+			return cells[i].ComponentName < cells[j].ComponentName
+		}
+		return cells[i].ClusterID < cells[j].ClusterID
+	})
+	return cells, nil
+}
+
+// truncateMessage caps a Fleet message to 1 KiB for status storage.
+func truncateMessage(s string) string {
+	const max = 1024
+	if len(s) > max {
+		return s[:max]
+	}
+	return s
+}
+
+// phaseFromCells derives the top-level phase from matrix cells (reuses derivePhase semantics).
+func phaseFromCells(cells []aiplatformv1alpha1.AIWorkloadComponentStatus) aiplatformv1alpha1.AIWorkloadPhase {
+	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, len(cells))
+	for i, c := range cells {
+		statuses[i] = aiplatformv1alpha1.AIWorkloadClusterStatus{ClusterID: c.ClusterID, Phase: c.Phase}
+	}
+	return derivePhase(statuses)
+}
+
+// equalComponentStatuses compares two slices of component statuses for equality.
+func equalComponentStatuses(a, b []aiplatformv1alpha1.AIWorkloadComponentStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanupStaleHelmOps removes HelmOps/Bundles (or git files) no longer desired, discovered by
+// the workload-uid owner label so a mid-cleanup crash self-heals. (namespace,name) identities
+// throughout. Backfills the label onto still-known FleetBundleNames HelmOps before diffing.
+func (r *AIWorkloadReconciler) cleanupStaleHelmOps(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, desired []HelmOpKey) error {
+	desiredSet := map[string]bool{}
+	for _, k := range desired {
+		desiredSet[k.Namespace+"/"+k.Name] = true
+	}
+
+	// Backfill the owner label onto pre-existing HelmOps named in FleetBundleNames.
+	for _, name := range w.Spec.FleetBundleNames {
+		for _, ns := range fleetNamespaces {
+			ho, err := r.getHelmOpIn(ctx, ns, name)
+			if err != nil {
+				return err
+			}
+			if ho == nil {
+				continue
+			}
+			if ho.GetLabels()[workloadUIDLabel] == "" {
+				lbls := ho.GetLabels()
+				if lbls == nil {
+					lbls = map[string]string{}
+				}
+				lbls[workloadUIDLabel] = string(w.UID)
+				ho.SetLabels(lbls)
+				if err := r.Update(ctx, ho); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Discover actual HelmOps by owner label across both fleet namespaces.
+	for _, ns := range fleetNamespaces {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "HelmOpList"})
+		if err := r.List(ctx, list, client.InNamespace(ns), client.MatchingLabels{workloadUIDLabel: string(w.UID)}); err != nil {
+			return err
+		}
+		for i := range list.Items {
+			name := list.Items[i].GetName()
+			if desiredSet[ns+"/"+name] {
+				continue
+			}
+			switch w.Spec.DeployStrategy {
+			case aiplatformv1alpha1.AIWorkloadDeployGitOps:
+				if err := r.deleteGitFileByName(ctx, w, name); err != nil {
+					return err
+				}
+			default:
+				if err := r.deleteHelmOp(ctx, name); err != nil {
+					return err
+				}
+				if err := r.deleteBundle(ctx, name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// getHelmOpIn fetches a HelmOp in a specific namespace, returning (nil,nil) when absent.
+func (r *AIWorkloadReconciler) getHelmOpIn(ctx context.Context, ns, name string) (*unstructured.Unstructured, error) {
+	ho := &unstructured.Unstructured{}
+	ho.SetGroupVersionKind(helmOpGVK)
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, ho); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ho, nil
+}
+
+// collectDesiredHelmOpUIDs fetches the UID of each desired HelmOp key that currently exists,
+// returning a set (map[string]bool) for use with pruneRenderBaselines.
+func (r *AIWorkloadReconciler) collectDesiredHelmOpUIDs(ctx context.Context, keys []HelmOpKey) map[string]bool {
+	uids := make(map[string]bool)
+	for _, k := range keys {
+		ho, err := r.getHelmOpIn(ctx, k.Namespace, k.Name)
+		if err != nil || ho == nil {
+			continue
+		}
+		uids[string(ho.GetUID())] = true
+	}
+	return uids
 }

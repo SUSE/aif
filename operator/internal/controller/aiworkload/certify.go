@@ -2,6 +2,7 @@ package aiworkload
 
 import (
 	"context"
+	"encoding/json"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -115,4 +116,66 @@ func (r *AIWorkloadReconciler) certifyDeployedSource(
 		CertifiedAt:  metav1.Now(),
 	}
 	return nil
+}
+
+// acceptedConditionFingerprint returns a sha256 hash of the Accepted condition's
+// {status,reason,message,lastUpdateTime} fields. Returns empty string when the
+// condition is absent or the HelmOp is nil.
+func acceptedConditionFingerprint(ho *unstructured.Unstructured) string {
+	if ho == nil {
+		return ""
+	}
+	conds, _, _ := unstructured.NestedSlice(ho.Object, "status", "conditions")
+	for _, c := range conds {
+		m, ok := c.(map[string]any)
+		if !ok || m["type"] != "Accepted" {
+			continue
+		}
+		b, _ := json.Marshal([]any{m["status"], m["reason"], m["message"], m["lastUpdateTime"]})
+		return sha256Hex(b)
+	}
+	return ""
+}
+
+// acceptedConditionIsFalse reports whether the HelmOp has an Accepted condition
+// with status="False".
+func acceptedConditionIsFalse(ho *unstructured.Unstructured) bool {
+	conds, _, _ := unstructured.NestedSlice(ho.Object, "status", "conditions")
+	for _, c := range conds {
+		if m, ok := c.(map[string]any); ok && m["type"] == "Accepted" {
+			return m["status"] == "False"
+		}
+	}
+	return false
+}
+
+// acceptedFalseTerminal reports whether a HelmOp Accepted=False should terminally fail the
+// CURRENT render attempt: baseline identity (UID,digest,epoch,generation) must match AND the
+// live Accepted fingerprint must differ from the baseline (a genuine post-baseline change).
+func acceptedFalseTerminal(ho *unstructured.Unstructured, baseline *aiplatformv1alpha1.RenderBaseline, curDigest string, curEpoch, curGeneration int64) bool {
+	if ho == nil || baseline == nil {
+		return false
+	}
+	if baseline.HelmOpUID != string(ho.GetUID()) ||
+		baseline.RenderDigest != curDigest ||
+		baseline.RetryEpoch != curEpoch ||
+		baseline.HelmOpGeneration != curGeneration {
+		return false
+	}
+	if acceptedConditionFingerprint(ho) == baseline.AcceptedFingerprint {
+		return false
+	}
+	return acceptedConditionIsFalse(ho)
+}
+
+// upsertRenderBaseline updates or inserts a RenderBaseline entry for the given HelmOp UID,
+// replacing any existing entry with the same UID.
+func upsertRenderBaseline(baselines []aiplatformv1alpha1.RenderBaseline, entry aiplatformv1alpha1.RenderBaseline) []aiplatformv1alpha1.RenderBaseline {
+	for i := range baselines {
+		if baselines[i].HelmOpUID == entry.HelmOpUID {
+			baselines[i] = entry
+			return baselines
+		}
+	}
+	return append(baselines, entry)
 }

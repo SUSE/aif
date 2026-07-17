@@ -19,6 +19,7 @@ package aiworkload
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -39,6 +40,16 @@ const (
 	gitSyncAnnotation    = "ai-factory.suse.com/last-git-sync"
 	operatorSettingsName = "settings"
 )
+
+// gitManifestHash returns a stable hash of a git-published HelmOp manifest.
+func gitManifestHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+func gitFileHashAnnotation(bundleName string) string {
+	return "ai-factory.suse.com/gitfile-hash-" + bundleName
+}
 
 // getHelmOp returns the HelmOp CR with the given name from either fleet namespace,
 // or nil if not found in either.

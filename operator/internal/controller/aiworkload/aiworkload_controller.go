@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -101,6 +102,15 @@ type AIWorkloadReconciler struct {
 	// git-backed components then report a clear condition and http/oci components
 	// are unaffected.
 	CatalogClient *rancher.Holder
+	Recorder      record.EventRecorder
+}
+
+// event records a Kubernetes event, tolerating a nil Recorder (unit tests / early boot).
+func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype, reason, msgFmt string, args ...any) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(w, eventtype, reason, msgFmt, args...)
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete
@@ -119,6 +129,7 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
@@ -135,6 +146,12 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if !controllerutil.ContainsFinalizer(&w, aiWorkloadFinalizer) {
 		controllerutil.AddFinalizer(&w, aiWorkloadFinalizer)
 		return ctrl.Result{Requeue: true}, r.Update(ctx, &w)
+	}
+
+	if handled, err := r.handleTriggers(ctx, &w); err != nil {
+		return ctrl.Result{}, err
+	} else if handled {
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	result, reconcileErr := r.reconcileStatus(ctx, &w)
@@ -160,6 +177,10 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	if result.Requeue || result.RequeueAfter > 0 {
 		return result, nil
+	}
+
+	if res, err := r.reconcileOperation(ctx, &w); err != nil || res.RequeueAfter > 0 {
+		return res, err
 	}
 
 	if len(w.Status.PullSecretDeliveries) > 0 {

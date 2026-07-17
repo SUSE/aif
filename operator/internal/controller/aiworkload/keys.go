@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // HelmOpKey identifies one desired HelmOp/Bundle and how many clusters it targets.
@@ -16,7 +17,7 @@ type HelmOpKey struct {
 // blueprintBundleName is the deterministic bundle/HelmOp name for a component, a pure
 // function of (workload, chartName). Mirrors the naming used by ensureBlueprintHelmOp.
 func blueprintBundleName(workloadName, chartName string) string {
-	return truncateName(workloadName+"-"+slugifyBP(chartName), 63)
+	return naming.TruncateDNS1123Label(workloadName+"-"+naming.Slugify(chartName), 63)
 }
 
 // desiredHelmOpKeys returns the sorted set of HelmOps a blueprint workload should have.
