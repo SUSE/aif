@@ -85,3 +85,37 @@ func TestNormalize_InvalidJSON(t *testing.T) {
 		t.Fatalf("want nil for empty array, got %+v", got)
 	}
 }
+
+func TestNormalize_LabelsRoundTrip(t *testing.T) {
+	raw := []byte(`[{"name":"NIM","slug_name":"nim","library":"nvidia","labels":[{"code":"nvaie_supported","name":"NVIDIA AI Enterprise Supported"},{"code":"nv-ai-enterprise","name":"NVIDIA AI Enterprise Essentials"}]}]`)
+	got := Normalize(raw)
+	if len(got) != 1 {
+		t.Fatalf("want 1 item, got %d: %+v", len(got), got)
+	}
+	labels := got[0].Labels
+	if len(labels) != 2 {
+		t.Fatalf("want 2 labels, got %d: %+v", len(labels), labels)
+	}
+	if labels[0].Code != "nvaie_supported" || labels[0].Name != "NVIDIA AI Enterprise Supported" {
+		t.Fatalf("unexpected first label: %+v", labels[0])
+	}
+}
+
+func TestNormalize_DropsEmptyLabels(t *testing.T) {
+	raw := []byte(`[{"name":"NIM","slug_name":"nim","library":"nvidia","labels":[{"code":"","name":""},{"code":"nvaie_supported","name":"NVIDIA AI Enterprise Supported"}]}]`)
+	got := Normalize(raw)
+	if len(got) != 1 {
+		t.Fatalf("want 1 item, got %d", len(got))
+	}
+	if len(got[0].Labels) != 1 || got[0].Labels[0].Code != "nvaie_supported" {
+		t.Fatalf("empty label not dropped: %+v", got[0].Labels)
+	}
+}
+
+func TestNormalize_NoLabelsField(t *testing.T) {
+	raw := []byte(`[{"name":"Milvus","slug_name":"milvus","library":"suse-ai"}]`)
+	got := Normalize(raw)
+	if len(got) != 1 || got[0].Labels != nil {
+		t.Fatalf("want nil labels, got %+v", got[0].Labels)
+	}
+}
