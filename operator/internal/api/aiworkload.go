@@ -33,6 +33,32 @@ import (
 
 const aiWorkloadFieldOwner = "aif-operator-api"
 
+// validateAIWorkloadSpec enforces the recovery-feature invariants with friendly errors,
+// mirroring the CRD CEL rules for clients that read API responses. existing is nil on create.
+func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *aiplatformv1alpha1.AIWorkload) error {
+	isBlueprint := spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceBlueprint
+	if isBlueprint && len(spec.TargetClusters) == 0 {
+		return fmt.Errorf("%w: Blueprint workloads require at least one target cluster", ErrInvalidInput)
+	}
+	if spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps {
+		hasLocal, hasDownstream := false, false
+		for _, c := range spec.TargetClusters {
+			if c == "local" {
+				hasLocal = true
+			} else {
+				hasDownstream = true
+			}
+		}
+		if hasLocal && hasDownstream {
+			return fmt.Errorf("%w: mixed local and downstream target clusters are not supported for GitOps workloads", ErrInvalidInput)
+		}
+	}
+	if existing != nil && existing.Spec.DeployStrategy != "" && existing.Spec.DeployStrategy != spec.DeployStrategy {
+		return fmt.Errorf("%w: deployStrategy is immutable", ErrInvalidInput)
+	}
+	return nil
+}
+
 // AIWorkloadHandler serves AIWorkload CRUD endpoints.
 type AIWorkloadHandler struct {
 	client client.Client
@@ -86,6 +112,11 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	var body aiWorkloadCreateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		return
+	}
+
+	if err := validateAIWorkloadSpec(body.Spec, nil); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -163,6 +194,11 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if err := validateAIWorkloadSpec(body.Spec, existing); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 

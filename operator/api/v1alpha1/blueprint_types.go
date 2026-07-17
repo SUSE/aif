@@ -118,8 +118,10 @@ type BlueprintSpec struct {
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
-	// Components are the Helm charts included in this blueprint.
+	// Components are the Helm charts included in this blueprint. chartName is unique per blueprint.
 	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=chartName
 	Components []BlueprintComponent `json:"components"`
 }
 

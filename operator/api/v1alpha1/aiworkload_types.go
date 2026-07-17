@@ -122,6 +122,8 @@ type ComponentValueOverride struct {
 }
 
 // AIWorkloadSpec defines the desired state of AIWorkload.
+// +kubebuilder:validation:XValidation:rule="self.source.sourceType != 'Blueprint' || (has(self.targetClusters) && size(self.targetClusters) > 0)",message="Blueprint workloads require at least one target cluster"
+// +kubebuilder:validation:XValidation:rule="self.deployStrategy != 'GitOps' || !has(self.targetClusters) || size(self.targetClusters.filter(c, c == 'local')) == 0 || size(self.targetClusters.filter(c, c != 'local')) == 0",message="mixed local and downstream target clusters are not supported for GitOps workloads"
 type AIWorkloadSpec struct {
 	// DisplayName is the user-provided workload display name.
 	// +kubebuilder:validation:MinLength=1
@@ -133,10 +135,12 @@ type AIWorkloadSpec struct {
 	TargetNamespace string `json:"targetNamespace"`
 	// TargetClusters are the Rancher cluster IDs to deploy to.
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=100
 	// +optional
 	TargetClusters []string `json:"targetClusters,omitempty"`
 	// DeployStrategy is the deployment method.
 	// +kubebuilder:default=Helm
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="deployStrategy is immutable"
 	// +optional
 	DeployStrategy AIWorkloadDeployStrategy `json:"deployStrategy,omitempty"`
 	// ComponentValues holds per-component Helm value overrides.
@@ -160,6 +164,61 @@ type AIWorkloadClusterStatus struct {
 	// Message provides additional detail.
 	// +optional
 	Message string `json:"message,omitempty"`
+}
+
+// Operation type and state constants for AIWorkloadOperation.
+const (
+	OperationTypeUpgrade  = "Upgrade"
+	OperationTypeRollback = "Rollback"
+	OperationTypeRetry    = "Retry"
+
+	OperationStateInProgress = "InProgress"
+	OperationStateSucceeded  = "Succeeded"
+	OperationStateFailed     = "Failed"
+	OperationStateSuperseded = "Superseded"
+)
+
+// DeployedSourceSnapshot is the last blueprint version PROVEN deployed+healthy (certified).
+// It is the rollback target whenever it differs from the current spec version. RenderDigest is
+// the aggregate render digest at certification (integrity guard on rollback).
+type DeployedSourceSnapshot struct {
+	Version      string      `json:"version"`
+	RenderDigest string      `json:"renderDigest"`
+	CertifiedAt  metav1.Time `json:"certifiedAt"`
+}
+
+// AIWorkloadComponentStatus is one cell of the expected (component, cluster) matrix.
+type AIWorkloadComponentStatus struct {
+	ComponentName    string                 `json:"componentName"`
+	ClusterID        string                 `json:"clusterId"`
+	Phase            AIWorkloadClusterPhase `json:"phase"`
+	Revision         string                 `json:"revision,omitempty"`
+	InstalledVersion string                 `json:"installedVersion,omitempty"`
+	Message          string                 `json:"message,omitempty"`
+}
+
+// AIWorkloadOperation projects the durable metadata operation journal into status.
+// IntentDigest is a canonical hash of user-owned recovery intent (NOT metadata.generation).
+type AIWorkloadOperation struct {
+	Type           string      `json:"type"`
+	Nonce          string      `json:"nonce"`
+	TargetVersion  string      `json:"targetVersion,omitempty"`
+	ExpectedDigest string      `json:"expectedDigest,omitempty"`
+	RetryEpoch     int64       `json:"retryEpoch,omitempty"`
+	RequestedAt    metav1.Time `json:"requestedAt"`
+	IntentDigest   string      `json:"intentDigest,omitempty"`
+	State          string      `json:"state"`
+	Reason         string      `json:"reason,omitempty"`
+}
+
+// RenderBaseline records, per HelmOp UID, that a specific render attempt was proven applied —
+// used to correlate a HelmOp Accepted=False to the current attempt. Durable across restarts.
+type RenderBaseline struct {
+	HelmOpUID           string `json:"helmOpUID"`
+	RenderDigest        string `json:"renderDigest"`
+	RetryEpoch          int64  `json:"retryEpoch"`
+	HelmOpGeneration    int64  `json:"helmOpGeneration"`
+	AcceptedFingerprint string `json:"acceptedFingerprint"`
 }
 
 // PullSecretDelivery groups operator-delivered pull-secret names by the
@@ -203,6 +262,18 @@ type AIWorkloadStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// DeployedSource is the last certified (proven deployed+healthy) blueprint version.
+	// +optional
+	DeployedSource *DeployedSourceSnapshot `json:"deployedSource,omitempty"`
+	// ComponentStatuses is the per-(component, cluster) matrix, sorted by (componentName, clusterId).
+	// +optional
+	ComponentStatuses []AIWorkloadComponentStatus `json:"componentStatuses,omitempty"`
+	// ActiveOperation is the in-flight or last terminal recovery operation (projected from the journal).
+	// +optional
+	ActiveOperation *AIWorkloadOperation `json:"activeOperation,omitempty"`
+	// RenderBaselines correlates HelmOp Accepted=False to the current render attempt, keyed by HelmOpUID.
+	// +optional
+	RenderBaselines []RenderBaseline `json:"renderBaselines,omitempty"`
 }
 
 // +kubebuilder:object:root=true

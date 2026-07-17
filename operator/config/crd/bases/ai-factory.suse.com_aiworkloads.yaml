@@ -80,6 +80,9 @@ spec:
                 - FleetBundle
                 - GitOps
                 type: string
+                x-kubernetes-validations:
+                - message: deployStrategy is immutable
+                  rule: self == oldSelf
               displayName:
                 description: DisplayName is the user-provided workload display name.
                 minLength: 1
@@ -167,6 +170,7 @@ spec:
                   to.
                 items:
                   type: string
+                maxItems: 100
                 type: array
                 x-kubernetes-list-type: set
               targetNamespace:
@@ -178,9 +182,48 @@ spec:
             - source
             - targetNamespace
             type: object
+            x-kubernetes-validations:
+            - message: Blueprint workloads require at least one target cluster
+              rule: self.source.sourceType != 'Blueprint' || (has(self.targetClusters)
+                && size(self.targetClusters) > 0)
+            - message: mixed local and downstream target clusters are not supported
+                for GitOps workloads
+              rule: self.deployStrategy != 'GitOps' || !has(self.targetClusters) ||
+                size(self.targetClusters.filter(c, c == 'local')) == 0 || size(self.targetClusters.filter(c,
+                c != 'local')) == 0
           status:
             description: AIWorkloadStatus defines the observed state of AIWorkload.
             properties:
+              activeOperation:
+                description: ActiveOperation is the in-flight or last terminal recovery
+                  operation (projected from the journal).
+                properties:
+                  expectedDigest:
+                    type: string
+                  intentDigest:
+                    type: string
+                  nonce:
+                    type: string
+                  reason:
+                    type: string
+                  requestedAt:
+                    format: date-time
+                    type: string
+                  retryEpoch:
+                    format: int64
+                    type: integer
+                  state:
+                    type: string
+                  targetVersion:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - nonce
+                - requestedAt
+                - state
+                - type
+                type: object
               clusterStatuses:
                 description: ClusterStatuses tracks per-cluster deployment outcome.
                 items:
@@ -203,6 +246,37 @@ spec:
                       type: string
                   required:
                   - clusterId
+                  type: object
+                type: array
+              componentStatuses:
+                description: ComponentStatuses is the per-(component, cluster) matrix,
+                  sorted by (componentName, clusterId).
+                items:
+                  description: AIWorkloadComponentStatus is one cell of the expected
+                    (component, cluster) matrix.
+                  properties:
+                    clusterId:
+                      type: string
+                    componentName:
+                      type: string
+                    installedVersion:
+                      type: string
+                    message:
+                      type: string
+                    phase:
+                      description: AIWorkloadClusterPhase is the per-cluster deployment
+                        phase.
+                      enum:
+                      - Running
+                      - Failed
+                      - Pending
+                      type: string
+                    revision:
+                      type: string
+                  required:
+                  - clusterId
+                  - componentName
+                  - phase
                   type: object
                 type: array
               conditions:
@@ -263,6 +337,22 @@ spec:
                   - type
                   type: object
                 type: array
+              deployedSource:
+                description: DeployedSource is the last certified (proven deployed+healthy)
+                  blueprint version.
+                properties:
+                  certifiedAt:
+                    format: date-time
+                    type: string
+                  renderDigest:
+                    type: string
+                  version:
+                    type: string
+                required:
+                - certifiedAt
+                - renderDigest
+                - version
+                type: object
               observedGeneration:
                 description: ObservedGeneration is the generation observed by the
                   controller.
@@ -313,6 +403,34 @@ spec:
                   required:
                   - names
                   - namespace
+                  type: object
+                type: array
+              renderBaselines:
+                description: RenderBaselines correlates HelmOp Accepted=False to the
+                  current render attempt, keyed by HelmOpUID.
+                items:
+                  description: |-
+                    RenderBaseline records, per HelmOp UID, that a specific render attempt was proven applied —
+                    used to correlate a HelmOp Accepted=False to the current attempt. Durable across restarts.
+                  properties:
+                    acceptedFingerprint:
+                      type: string
+                    helmOpGeneration:
+                      format: int64
+                      type: integer
+                    helmOpUID:
+                      type: string
+                    renderDigest:
+                      type: string
+                    retryEpoch:
+                      format: int64
+                      type: integer
+                  required:
+                  - acceptedFingerprint
+                  - helmOpGeneration
+                  - helmOpUID
+                  - renderDigest
+                  - retryEpoch
                   type: object
                 type: array
             type: object
