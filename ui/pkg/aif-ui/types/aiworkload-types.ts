@@ -43,11 +43,43 @@ export interface AIWorkloadClusterStatus {
   message?:  string;
 }
 
+export interface DeployedSourceSnapshot {
+  version:      string;
+  renderDigest: string;
+  certifiedAt:  string;
+}
+
+export interface AIWorkloadComponentStatus {
+  componentName:     string;
+  clusterId:         string;
+  phase:             AIWorkloadClusterPhase;
+  revision?:         string;
+  installedVersion?: string;
+  message?:          string;
+}
+
+export type AIWorkloadOperationState = 'InProgress' | 'Succeeded' | 'Failed' | 'Superseded';
+
+export interface AIWorkloadOperation {
+  type:            'Upgrade' | 'Rollback' | 'Retry';
+  nonce:           string;
+  targetVersion?:  string;
+  expectedDigest?: string;
+  retryEpoch?:     number;
+  requestedAt:     string;
+  intentDigest?:   string;
+  state:           AIWorkloadOperationState;
+  reason?:         string;
+}
+
 export interface AIWorkloadStatus {
   phase?:              AIWorkloadPhase;
   clusterStatuses?:    AIWorkloadClusterStatus[];
   conditions?:         any[];
   observedGeneration?: number;
+  deployedSource?:     DeployedSourceSnapshot;
+  componentStatuses?:  AIWorkloadComponentStatus[];
+  activeOperation?:    AIWorkloadOperation;
 }
 
 export interface AIWorkload {

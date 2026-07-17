@@ -4,7 +4,7 @@ import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
-import { listAIWorkloads, updateAIWorkload } from '../utils/operator-api';
+import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
@@ -50,6 +50,8 @@ const upgradeModal = reactive({
   selectedVersion: '',
   upgrading:     false,
 });
+
+const upgradeError = ref<string | null>(null);
 
 const upgradeVersionOptions = computed(() => {
   if (!upgradeModal.workload) return [];
@@ -138,6 +140,10 @@ function workloadStatusMessage(w: AIWorkload): string {
   if (ready?.message) return ready.message;
   const clusterMsg = (w.status?.clusterStatuses || []).find((s) => s.message);
   return clusterMsg?.message || '';
+}
+
+function unhealthyComponents(w: AIWorkload) {
+  return (w.status?.componentStatuses || []).filter(c => c.phase !== 'Running');
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────────
@@ -246,28 +252,51 @@ function openUpgradeModal(w: AIWorkload) {
 
 async function executeUpgrade() {
   if (!upgradeModal.workload) return;
+  upgradeError.value = null;
   const w = upgradeModal.workload;
   upgradeModal.upgrading = true;
-  error.value = null;
   try {
-    const newSpec = {
-      ...w.spec,
-      source: {
-        ...w.spec.source,
-        blueprint: {
-          ...w.spec.source.blueprint!,
-          version: upgradeModal.selectedVersion,
-        },
-      },
-    };
-    await updateAIWorkload(w.metadata.namespace, w.metadata.name, newSpec);
+    await upgradeAIWorkload(w.metadata.namespace, w.metadata.name, upgradeModal.selectedVersion);
     upgradeModal.show = false;
     await refresh();
   } catch (e: any) {
-    error.value = e?.message || 'Failed to upgrade workload';
+    upgradeError.value = e?.message || String(e);
     upgradeModal.show = false;
   } finally {
     upgradeModal.upgrading = false;
+  }
+}
+
+function canRollback(w: AIWorkload): boolean {
+  const ds = w.status?.deployedSource;
+  return !!ds && !!w.spec.source.blueprint && ds.version !== w.spec.source.blueprint.version;
+}
+
+function canRetry(w: AIWorkload): boolean {
+  const op = w.status?.activeOperation;
+  const opInFlight = op?.state === 'InProgress';
+  if (opInFlight) return false;
+  return w.status?.phase === 'Failed' || w.status?.phase === 'Degraded' || op?.state === 'Failed';
+}
+
+async function doRollback(w: AIWorkload) {
+  upgradeError.value = null;
+  try {
+    await rollbackAIWorkload(w.metadata.namespace, w.metadata.name);
+    await refresh();
+  } catch (e: any) {
+    upgradeError.value = e?.message || String(e);
+  }
+}
+
+async function doRetry(w: AIWorkload) {
+  upgradeError.value = null;
+  try {
+    await retryAIWorkload(w.metadata.namespace, w.metadata.name);
+    await refresh();
+  } catch (e: any) {
+    // 409 (operation in flight) surfaces here.
+    upgradeError.value = e?.message || String(e);
   }
 }
 </script>
@@ -303,6 +332,8 @@ async function executeUpgrade() {
       <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
 
       <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
+
+      <Banner v-if="upgradeError" color="error" class="mb-20" @close="upgradeError = null">{{ upgradeError }}</Banner>
 
       <div class="main-content">
         <!-- Loading state -->
@@ -352,6 +383,22 @@ async function executeUpgrade() {
                     :title="workloadStatusMessage(w)"
                   >
                     {{ workloadStatusMessage(w) }}
+                  </div>
+                  <div
+                    v-if="(w.status?.phase === 'Failed' || w.status?.phase === 'Degraded') && unhealthyComponents(w).length"
+                    class="failure-detail"
+                  >
+                    <div v-for="c in unhealthyComponents(w)" :key="c.componentName + '/' + c.clusterId" class="failure-row">
+                      <span class="failure-comp">{{ c.componentName }}</span>
+                      <span class="failure-cluster">{{ c.clusterId }}</span>
+                      <span v-if="c.message" class="failure-msg" :title="c.message">{{ c.message }}</span>
+                    </div>
+                  </div>
+                  <div
+                    v-if="w.status?.activeOperation && w.status.activeOperation.state !== 'Succeeded'"
+                    class="op-detail"
+                  >
+                    {{ w.status.activeOperation.type }}: {{ w.status.activeOperation.state }}<span v-if="w.status.activeOperation.reason"> ({{ w.status.activeOperation.reason }})</span>
                   </div>
                 </td>
 
@@ -412,12 +459,34 @@ async function executeUpgrade() {
                     <button
                       v-else
                       class="btn btn-sm role-secondary"
-                      :disabled="w.status?.phase !== 'Running'"
+                      :disabled="false"
                       @click="openUpgradeModal(w)"
                       type="button"
                     >
                       <i class="icon icon-upload" />
                       Upgrade
+                    </button>
+
+                    <!-- Blueprint workload: Roll Back -->
+                    <button
+                      v-if="w.spec.source.sourceType === 'Blueprint' && canRollback(w)"
+                      class="btn btn-sm role-secondary"
+                      @click="doRollback(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-history" />
+                      Roll Back
+                    </button>
+
+                    <!-- Blueprint workload: Retry -->
+                    <button
+                      v-if="w.spec.source.sourceType === 'Blueprint' && canRetry(w)"
+                      class="btn btn-sm role-secondary"
+                      @click="doRetry(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-refresh" />
+                      Retry
                     </button>
 
                     <!-- Delete (both types) -->
@@ -492,7 +561,7 @@ async function executeUpgrade() {
           <button
             class="btn role-primary"
             @click="executeUpgrade"
-            :disabled="upgradeModal.upgrading || upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version"
+            :disabled="upgradeModal.upgrading || (upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version && upgradeModal.workload?.status?.phase === 'Running')"
             type="button"
           >
             <i v-if="upgradeModal.upgrading" class="icon icon-spinner icon-spin" />
@@ -749,4 +818,11 @@ async function executeUpgrade() {
 .state-message.is-failed {
   color: var(--error, #dc2626);
 }
+
+.failure-detail { margin-top: 4px; font-size: 12px; }
+.failure-row    { display: flex; gap: 8px; align-items: baseline; }
+.failure-comp   { font-weight: 600; }
+.failure-cluster{ opacity: 0.7; }
+.failure-msg    { opacity: 0.9; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-detail      { margin-top: 2px; font-size: 12px; opacity: 0.8; }
 </style>
