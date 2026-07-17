@@ -75,6 +75,9 @@ func (h *AIWorkloadHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
 	mux.HandleFunc("PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
 	mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.deleteAIWorkload)
+	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade", h.upgradeAIWorkload)
+	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback", h.rollbackAIWorkload)
+	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry", h.retryAIWorkload)
 }
 
 func (h *AIWorkloadHandler) listAIWorkloads(w http.ResponseWriter, r *http.Request) {
