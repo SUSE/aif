@@ -3,8 +3,8 @@ package aiworkload
 import (
 	"testing"
 
-	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	ktypes "k8s.io/apimachinery/pkg/types"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )

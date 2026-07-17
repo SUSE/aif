@@ -207,6 +207,11 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	if !equalComponentStatuses(w.Status.ComponentStatuses, cells) {
 		w.Status.ComponentStatuses = cells
 	}
+	// Derive clusterStatuses from the component matrix (aggregate per clusterId to worst phase).
+	clusterStatuses := aggregateClusterStatuses(cells)
+	if !equalClusterStatuses(w.Status.ClusterStatuses, clusterStatuses) {
+		w.Status.ClusterStatuses = clusterStatuses
+	}
 	w.Status.Phase = guardPhaseTransition(phaseFromCells(cells), w.Status.Phase, w.CreationTimestamp.Time)
 	if err := r.certifyDeployedSource(ctx, w, keys, expectedDigests); err != nil {
 		return ctrl.Result{}, err
@@ -965,42 +970,24 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 	return err
 }
 
-// mirrorBlueprintStatus aggregates BundleDeployment statuses across all component bundles.
-// Per-cluster phase is the worst phase across all components for that cluster.
-func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
+// aggregateClusterStatuses derives ClusterStatuses from the component matrix by aggregating
+// cells per clusterId to the WORST phase (reuses worstClusterPhase).
+func aggregateClusterStatuses(cells []aiplatformv1alpha1.AIWorkloadComponentStatus) []aiplatformv1alpha1.AIWorkloadClusterStatus {
 	clusterPhases := make(map[string]aiplatformv1alpha1.AIWorkloadClusterPhase)
 	clusterMessages := make(map[string]string)
 
-	for _, bundleName := range w.Spec.FleetBundleNames {
-		bdList := &unstructured.UnstructuredList{}
-		bdList.SetGroupVersionKind(schema.GroupVersionKind{
-			Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
-		})
-		if err := r.List(ctx, bdList, client.MatchingLabels{
-			"fleet.cattle.io/bundle-name": bundleName,
-		}); err != nil {
-			return err
-		}
-		for _, bd := range bdList.Items {
-			clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
-			if clusterID == "" {
-				continue
+	for _, c := range cells {
+		existing, seen := clusterPhases[c.ClusterID]
+		if !seen {
+			clusterPhases[c.ClusterID] = c.Phase
+			if c.Phase == aiplatformv1alpha1.AIWorkloadClusterPhaseFailed {
+				clusterMessages[c.ClusterID] = c.Message
 			}
-			state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
-			message, _, _ := unstructured.NestedString(bd.Object, "status", "display", "message")
-			phase := fleetStateToClusterPhase(state)
-			existing, seen := clusterPhases[clusterID]
-			if !seen {
-				clusterPhases[clusterID] = phase
-				if phase != aiplatformv1alpha1.AIWorkloadClusterPhaseRunning {
-					clusterMessages[clusterID] = message
-				}
-			} else {
-				worst := worstClusterPhase(existing, phase)
-				clusterPhases[clusterID] = worst
-				if worst != existing && message != "" {
-					clusterMessages[clusterID] = message
-				}
+		} else {
+			worst := worstClusterPhase(existing, c.Phase)
+			clusterPhases[c.ClusterID] = worst
+			if worst == aiplatformv1alpha1.AIWorkloadClusterPhaseFailed && c.Message != "" {
+				clusterMessages[c.ClusterID] = c.Message
 			}
 		}
 	}
@@ -1013,9 +1000,21 @@ func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aip
 			Message:   clusterMessages[id],
 		})
 	}
-	w.Status.ClusterStatuses = statuses
-	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
-	return nil
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ClusterID < statuses[j].ClusterID })
+	return statuses
+}
+
+// equalClusterStatuses compares two slices of cluster statuses for equality.
+func equalClusterStatuses(a, b []aiplatformv1alpha1.AIWorkloadClusterStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // worstClusterPhase returns the worse of two cluster phases: Failed > Pending > Running.
@@ -1284,7 +1283,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 			}
 			rev, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
 			cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{
-				ComponentName: k.Name, ClusterID: clusterID, Phase: phase,
+				ComponentName: k.ComponentChartName, ClusterID: clusterID, Phase: phase,
 				Revision: rev, Message: truncateMessage(msg),
 			})
 		}
@@ -1335,7 +1334,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 					}
 				}
 				cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{
-					ComponentName: k.Name,
+					ComponentName: k.ComponentChartName,
 					ClusterID:     expectedID,
 					Phase:         cellPhase,
 				})

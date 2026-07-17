@@ -162,6 +162,10 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		w.Status.ObservedGeneration = w.Generation
 	}
 
+	// Project any in-progress recovery operation onto status so its state
+	// reaches the UI as part of the single persist below.
+	r.projectOperation(&w)
+
 	// Always persist status — even when reconcile failed or asked for a
 	// requeue — so failure conditions/phase reach the UI instead of being
 	// dropped by an early return.
@@ -427,7 +431,7 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 	bdList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
 	})
-	// App-sourced workloads always have exactly one bundle; Blueprint workloads use mirrorBlueprintStatus.
+	// App-sourced workloads always have exactly one bundle; Blueprint workloads use buildComponentMatrix + aggregateClusterStatuses.
 	if err := r.List(ctx, bdList, client.MatchingLabels{
 		"fleet.cattle.io/bundle-name": w.Spec.FleetBundleNames[0],
 	}); err != nil {

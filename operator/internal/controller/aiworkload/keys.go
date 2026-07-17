@@ -9,9 +9,10 @@ import (
 
 // HelmOpKey identifies one desired HelmOp/Bundle and how many clusters it targets.
 type HelmOpKey struct {
-	Namespace        string // fleet-local | fleet-default
-	Name             string // deterministic bundle name
-	ExpectedClusters int    // clusters this HelmOp is responsible for
+	Namespace          string // fleet-local | fleet-default
+	Name               string // deterministic bundle name
+	ComponentChartName string // chart name (for componentStatuses.componentName)
+	ExpectedClusters   int    // clusters this HelmOp is responsible for
 }
 
 // blueprintBundleName is the deterministic bundle/HelmOp name for a component, a pure
@@ -48,16 +49,16 @@ func desiredHelmOpKeys(
 		switch strategy {
 		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
 			if hasLocal {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ExpectedClusters: localCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: localCount})
 			}
 			if hasDownstream {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ExpectedClusters: downstreamCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: downstreamCount})
 			}
 		case aiplatformv1alpha1.AIWorkloadDeployGitOps:
 			if hasLocal && !hasDownstream {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ExpectedClusters: localCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: localCount})
 			} else {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ExpectedClusters: downstreamCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: downstreamCount})
 			}
 		}
 	}
