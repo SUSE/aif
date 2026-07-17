@@ -579,6 +579,24 @@ func (r *AIWorkloadReconciler) helmOpToAIWorkloads(ctx context.Context, obj clie
 	return r.workloadsWithFleetBundle(ctx, obj.GetName())
 }
 
+// bundleToAIWorkloads maps a Fleet Bundle to its owning AIWorkload — first by the workload-uid
+// label (set on the generating HelmOp and copied by Fleet onto the Bundle), then by the
+// bundle-name → FleetBundleNames lookup as a fallback for pre-labeled bundles.
+func (r *AIWorkloadReconciler) bundleToAIWorkloads(ctx context.Context, obj client.Object) []reconcile.Request {
+	if uid := obj.GetLabels()[workloadUIDLabel]; uid != "" {
+		var list aiplatformv1alpha1.AIWorkloadList
+		if err := r.List(ctx, &list); err == nil {
+			for i := range list.Items {
+				if string(list.Items[i].UID) == uid {
+					return []reconcile.Request{{NamespacedName: types.NamespacedName{
+						Name: list.Items[i].Name, Namespace: list.Items[i].Namespace}}}
+				}
+			}
+		}
+	}
+	return r.workloadsWithFleetBundle(ctx, obj.GetName())
+}
+
 func (r *AIWorkloadReconciler) workloadsWithFleetBundle(ctx context.Context, bundleName string) []reconcile.Request {
 	var list aiplatformv1alpha1.AIWorkloadList
 	if err := r.List(ctx, &list); err != nil {
@@ -691,6 +709,9 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	bd := &unstructured.Unstructured{}
 	bd.SetGroupVersionKind(bundleDeploymentGVK)
 
+	bundle := &unstructured.Unstructured{}
+	bundle.SetGroupVersionKind(bundleGVK)
+
 	helmOp := &unstructured.Unstructured{}
 	helmOp.SetGroupVersionKind(helmOpGVK)
 
@@ -732,6 +753,7 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&aiplatformv1alpha1.AIWorkload{}).
 		Watches(bd, handler.EnqueueRequestsFromMapFunc(r.bundleDeploymentToAIWorkloads)).
 		Watches(helmOp, handler.EnqueueRequestsFromMapFunc(r.helmOpToAIWorkloads)).
+		Watches(bundle, handler.EnqueueRequestsFromMapFunc(r.bundleToAIWorkloads)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.helmSecretToAIWorkloads),
 			builder.WithPredicates(isHelmSecret)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),
