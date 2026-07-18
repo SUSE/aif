@@ -311,7 +311,6 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	}
 
 	epoch := r.retryEpochValue(w)
-	helmSpec["forceSyncGeneration"] = epoch
 
 	digest := perHelmOpRenderDigest(ComponentRenderInputs{
 		ChartRepo:    c.ChartRepo,
@@ -350,7 +349,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		ho.SetNamespace(pair.ns)
 		ho.SetLabels(map[string]string{workloadUIDLabel: string(w.UID)})
 		_ = unstructured.SetNestedStringMap(ho.Object, map[string]string{
-			renderDigestLabel: digest,
+			renderDigestLabel: renderDigestLabelValue(digest),
 			workloadUIDLabel:  string(w.UID),
 		}, "spec", "labels")
 		// defaultNamespace (not namespace): targets the release namespace without
@@ -359,6 +358,10 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// operator/CRD-bearing charts.
 		_ = unstructured.SetNestedField(ho.Object, ns, "spec", "defaultNamespace")
 		_ = unstructured.SetNestedField(ho.Object, helmSpec, "spec", "helm")
+		// forceSyncGeneration lives at the HelmOp spec top level (HelmOpSpec embeds
+		// BundleSpec→BundleDeploymentOptions inline), NOT under spec.helm — Fleet's HelmOp
+		// schema declares spec.forceSyncGeneration and rejects spec.helm.forceSyncGeneration.
+		_ = unstructured.SetNestedField(ho.Object, epoch, "spec", "forceSyncGeneration")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
 		if repoInfo.ClientSecret != "" {
 			_ = unstructured.SetNestedField(ho.Object, repoInfo.ClientSecret, "spec", "helmSecretName")
@@ -886,7 +889,6 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	epoch := r.retryEpochValue(w)
-	helmSpec["forceSyncGeneration"] = epoch
 
 	digest := perHelmOpRenderDigest(ComponentRenderInputs{
 		ChartRepo:    c.ChartRepo,
@@ -911,8 +913,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		"defaultNamespace": ns,
 		"helm":             helmSpec,
 		"targets":          targets,
+		// forceSyncGeneration lives at the HelmOp spec top level (not under spec.helm) —
+		// Fleet's HelmOp schema declares spec.forceSyncGeneration.
+		"forceSyncGeneration": epoch,
 		"labels": map[string]any{
-			renderDigestLabel: digest,
+			renderDigestLabel: renderDigestLabelValue(digest),
 			workloadUIDLabel:  string(w.UID),
 		},
 	}

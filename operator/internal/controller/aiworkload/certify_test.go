@@ -113,7 +113,7 @@ func TestCertifyDeployedSource(t *testing.T) {
 	b.SetGroupVersionKind(bundleGVK)
 	b.SetName(keys[0].Name)
 	b.SetNamespace("fleet-local")
-	b.SetLabels(map[string]string{renderDigestLabel: "sha256:d"})
+	b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue("sha256:d")})
 	b.SetGeneration(1)
 
 	// Set status fields to simulate a NOT fully rolled out bundle

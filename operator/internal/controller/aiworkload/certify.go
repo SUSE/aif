@@ -18,7 +18,7 @@ func bundleRenderCurrent(b *unstructured.Unstructured, expectedDigest string) bo
 	if b == nil {
 		return false
 	}
-	if b.GetLabels()[renderDigestLabel] != expectedDigest {
+	if b.GetLabels()[renderDigestLabel] != renderDigestLabelValue(expectedDigest) {
 		return false
 	}
 	observed, _, _ := unstructured.NestedInt64(b.Object, "status", "observedGeneration")

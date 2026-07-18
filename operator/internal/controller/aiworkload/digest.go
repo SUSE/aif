@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"sort"
+	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
@@ -12,6 +13,20 @@ import (
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// renderDigestLabelValue converts a digest ("sha256:<hex>") into a valid Kubernetes label
+// value: label values must be <=63 chars and match [A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?
+// — so the "sha256:" prefix (contains ':') is stripped and the hex is truncated. This is the
+// form stamped on HelmOp.spec.labels (which Fleet copies to the generated Bundle's
+// metadata.labels) and the form bundleRenderCurrent compares against. Truncated hex keeps
+// ample collision resistance for the handful of components in a workload.
+func renderDigestLabelValue(d string) string {
+	d = strings.TrimPrefix(d, "sha256:")
+	if len(d) > 63 {
+		d = d[:63]
+	}
+	return d
 }
 
 // sortedCopy returns a sorted copy of a string slice (leaves input untouched).

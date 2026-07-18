@@ -63,7 +63,7 @@ func TestBuildComponentMatrix(t *testing.T) {
 	b.SetGroupVersionKind(bundleGVK)
 	b.SetName(name)
 	b.SetNamespace("fleet-local")
-	b.SetLabels(map[string]string{renderDigestLabel: "sha256:old"})
+	b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue("sha256:old")})
 
 	// A BundleDeployment reporting ErrApplied on the old content.
 	bdObj := &unstructured.Unstructured{Object: map[string]any{}}
@@ -127,7 +127,7 @@ func TestBuildComponentMatrix_MissingBDIsPending(t *testing.T) {
 	b.SetGroupVersionKind(bundleGVK)
 	b.SetName(name)
 	b.SetNamespace("fleet-default")
-	b.SetLabels(map[string]string{renderDigestLabel: "sha256:current"})
+	b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue("sha256:current")})
 
 	// Create a workload targeting two downstream clusters: "c-alpha" and "c-beta".
 	w := &aiplatformv1alpha1.AIWorkload{
