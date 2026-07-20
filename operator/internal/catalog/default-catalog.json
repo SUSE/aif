@@ -214,10 +214,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/mit",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -300,10 +296,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -342,10 +334,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         },
         {
           "code": "omniverse_supported",
@@ -472,10 +460,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -503,10 +487,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -652,10 +632,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -674,10 +650,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -695,10 +667,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -730,10 +698,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -760,10 +724,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -776,10 +736,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -798,10 +754,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -818,10 +770,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -855,10 +803,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -876,10 +820,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -899,10 +839,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/baidu",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -920,10 +856,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -961,10 +893,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -982,10 +910,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1005,10 +929,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1026,10 +946,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1049,10 +965,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1071,10 +983,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1092,10 +1000,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1133,10 +1037,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1154,10 +1054,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1177,10 +1073,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1198,10 +1090,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1239,10 +1127,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1260,10 +1144,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1283,10 +1163,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1304,10 +1180,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1327,10 +1199,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1349,10 +1217,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1370,10 +1234,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1406,10 +1266,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1426,10 +1282,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1448,10 +1300,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1468,10 +1316,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1490,10 +1334,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
         {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
-        {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
         },
@@ -1510,10 +1350,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1545,10 +1381,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1573,10 +1405,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         },
         {
           "code": "omniverse_supported",
@@ -1605,10 +1433,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1635,10 +1459,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1663,10 +1483,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         },
         {
           "code": "omniverse_supported",
@@ -1723,10 +1539,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1751,10 +1563,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         },
         {
           "code": "omniverse_supported",
@@ -1782,10 +1590,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1799,10 +1603,6 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [
-        {
-          "code": "nim-dev",
-          "name": "Nim Dev"
-        },
         {
           "code": "nv-ai-enterprise",
           "name": "NVIDIA AI Enterprise Essentials"
@@ -1869,10 +1669,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1897,10 +1693,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         },
         {
           "code": "omniverse_supported",
@@ -1929,10 +1721,6 @@
           "name": "NVIDIA Omniverse"
         },
         {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
-        },
-        {
           "code": "omniverse_supported",
           "name": "NVIDIA Omniverse Enterprise Supported"
         }
@@ -1953,10 +1741,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         }
       ]
     },
@@ -1979,10 +1763,6 @@
         {
           "code": "omniverse",
           "name": "NVIDIA Omniverse"
-        },
-        {
-          "code": "omniverse-dev",
-          "name": "Omniverse Dev"
         },
         {
           "code": "omniverse_supported",

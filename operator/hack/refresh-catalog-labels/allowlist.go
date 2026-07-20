@@ -24,5 +24,9 @@ func programDisplayNames() map[string]string {
 // (e.g. internal, developer-only, or early-access entitlements). Add codes here
 // to keep them off the tiles.
 func hiddenPrograms() map[string]bool {
-	return map[string]bool{}
+	return map[string]bool{
+		// Developer / early-access entitlements — not user-facing "Supported" programs.
+		"nim-dev":       true,
+		"omniverse-dev": true,
+	}
 }

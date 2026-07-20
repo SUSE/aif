@@ -35,7 +35,13 @@
           </div>
 
           <div v-if="availableLabels.length" class="filter-group">
-            <select v-model="selectedLabel" class="form-control" aria-label="Filter applications by program">
+            <label for="program-filter" class="sr-only">Filter by program</label>
+            <select
+              id="program-filter"
+              v-model="selectedLabel"
+              class="form-control"
+              aria-label="Filter applications by program"
+            >
               <option value="">{{ t('suseai.apps.allLabels', 'All programs') }}</option>
               <option v-for="l in availableLabels" :key="l.code" :value="l.code">
                 {{ l.name }}

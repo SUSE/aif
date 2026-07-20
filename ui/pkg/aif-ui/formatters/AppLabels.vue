@@ -50,10 +50,14 @@ export default defineComponent({
   },
 
   setup(props) {
+    // Single source of truth for the "…Supported" rule, used by both the sort
+    // order and the badge color so they can't drift.
+    const isSupported = (code: string) => code.endsWith('_supported');
+
     // Green "…Supported" badges first; stable sort keeps original order otherwise.
     const ordered = computed(() =>
       [...props.labels].sort(
-        (a, b) => Number(b.code.endsWith('_supported')) - Number(a.code.endsWith('_supported'))
+        (a, b) => Number(isSupported(b.code)) - Number(isSupported(a.code))
       )
     );
 
@@ -65,7 +69,7 @@ export default defineComponent({
     // "…Supported" programs get the success (green) treatment (as NGC highlights
     // supported software); other program labels use info (blue).
     const labelBadgeClass = (code: string) =>
-      code.endsWith('_supported') ? 'bg-success' : 'bg-info';
+      isSupported(code) ? 'bg-success' : 'bg-info';
 
     // The popover opens left-aligned and grows right; on an app near the right
     // edge that runs off-screen, so flip it to right-aligned when it would
