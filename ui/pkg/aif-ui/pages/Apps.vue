@@ -34,6 +34,15 @@
             </select>
           </div>
 
+          <div v-if="availableLabels.length" class="filter-group">
+            <select v-model="selectedLabel" class="form-control" aria-label="Filter applications by program">
+              <option value="">{{ t('suseai.apps.allLabels', 'All programs') }}</option>
+              <option v-for="l in availableLabels" :key="l.code" :value="l.code">
+                {{ l.name }}
+              </option>
+            </select>
+          </div>
+
           <div class="view-controls" role="group" aria-label="View mode selection">
             <button
               :class="['btn', 'btn-sm', viewMode === 'tiles' ? 'role-primary' : 'role-secondary']"
@@ -121,6 +130,7 @@
                   <span v-if="app.packaging_format" class="tile-meta-item">
                     {{ formatPackagingType(app.packaging_format) }}
                   </span>
+                  <AppLabels :labels="app.labels" />
                 </div>
               </div>
               <div class="tile-actions">
@@ -180,10 +190,11 @@
                   <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="table-logo" />
                   <div class="name-info">
                     <div class="app-name">{{ app.name }}</div>
-                    <div v-if="app.packaging_format" class="app-meta">
-                      <span class="badge-state badge-sm" :class="getBadgeClass(app.packaging_format)">
+                    <div v-if="app.packaging_format || (app.labels && app.labels.length)" class="app-meta">
+                      <span v-if="app.packaging_format" class="list-pkg">
                         {{ formatPackagingType(app.packaging_format) }}
                       </span>
+                      <AppLabels :labels="app.labels" />
                     </div>
                   </div>
                 </div>
@@ -264,12 +275,15 @@ import { defineComponent, computed, getCurrentInstance, onMounted, ref, watch } 
 import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
+import AppLabels from '../formatters/AppLabels.vue';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { fetchStaticCatalog } from '../services/static-catalog';
 
 export default defineComponent({
   name: 'SuseAIApps',
+
+  components: { AppLabels },
 
   setup() {
     const vm = getCurrentInstance();
@@ -283,6 +297,7 @@ export default defineComponent({
     const error = ref<string | null>(null);
     const search = ref('');
     const selectedRepo = ref('suse-ai');
+    const selectedLabel = ref(''); // '' = all labels
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
@@ -316,6 +331,20 @@ export default defineComponent({
       return [...known, ...custom, ...other];
     });
 
+    // Distinct labels present in the selected library, for the label filter. Keyed by
+    // code; first display name wins.
+    const availableLabels = computed(() => {
+      const byCode = new Map<string, string>();
+      for (const app of items.value) {
+        if (selectedRepo.value && libraryOf(app) !== selectedRepo.value) continue;
+        for (const l of app.labels ?? []) {
+          if (!byCode.has(l.code)) byCode.set(l.code, l.name);
+        }
+      }
+      return Array.from(byCode, ([code, name]) => ({ code, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    });
+
     const repositoryOptions = computed(() => {
       const opts = presentLibraries.value.map(l => ({
         value: l,
@@ -342,6 +371,14 @@ export default defineComponent({
     };
     watch(items, ensureValidSelectedRepo);
 
+    // Clear the label filter when it's no longer among the available labels (e.g. after
+    // switching library).
+    watch([availableLabels, selectedRepo], () => {
+      if (selectedLabel.value && !availableLabels.value.some(l => l.code === selectedLabel.value)) {
+        selectedLabel.value = '';
+      }
+    });
+
     const hasRegistryConfigured = computed(() => {
       const spec = settingsData.value?.spec;
       if (!spec) return false;
@@ -362,6 +399,12 @@ export default defineComponent({
         arr = arr.filter((app: AppCollectionItem) => libraryOf(app) === selectedRepo.value);
       }
 
+      if (selectedLabel.value) {
+        arr = arr.filter((app: AppCollectionItem) =>
+          (app.labels ?? []).some(l => l.code === selectedLabel.value)
+        );
+      }
+
       if (search.value) {
         const searchLower = search.value.toLowerCase();
         arr = arr.filter((app: AppCollectionItem) =>
@@ -375,10 +418,6 @@ export default defineComponent({
     });
 
     // Methods
-    const getBadgeClass = (format: string) => {
-      return format === 'HELM_CHART' ? 'bg-success' : 'bg-info';
-    };
-
     const formatPackagingType = (format: string) => {
       return format === 'HELM_CHART' ? 'Helm' : 'Container';
     };
@@ -481,6 +520,8 @@ export default defineComponent({
       error,
       search,
       selectedRepo,
+      selectedLabel,
+      availableLabels,
       repositoryOptions,
       viewMode,
       items,
@@ -492,7 +533,6 @@ export default defineComponent({
       // Methods
       refresh,
       onTileClick,
-      getBadgeClass,
       formatPackagingType,
       logoFor,
       onImgError,
@@ -737,7 +777,7 @@ export default defineComponent({
 // Tiles view - fluid grid similar to Rancher catalog tiles
 .tiles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 20px;
   align-items: stretch;
 
@@ -959,7 +999,19 @@ export default defineComponent({
 
       .app-meta {
         display: flex;
-        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+
+        // Packaging format rendered as plain text (matches the tiles' meta text),
+        // not a chip.
+        .list-pkg {
+          display: inline-flex;
+          align-items: center;
+          font-weight: 500;
+          font-size: 12px;
+          color: var(--muted);
+        }
       }
     }
   }
@@ -974,38 +1026,6 @@ export default defineComponent({
     color: var(--body-text);
     font-size: 14px;
     line-height: 1.5;
-  }
-}
-
-.badge-state {
-  display: inline-block;
-  padding: 4px 10px;
-  font-size: 11px;
-  border-radius: 16px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border: none;
-
-  &.badge-sm {
-    padding: 3px 8px;
-    font-size: 10px;
-    border-radius: 12px;
-  }
-
-  &.bg-success {
-    background: var(--success-banner-bg, #dcfce7);
-    color: var(--success, #166534);
-  }
-
-  &.bg-info {
-    background: var(--info-banner-bg, #dbeafe);
-    color: var(--info, #1d4ed8);
-  }
-
-  &.bg-warning {
-    background: var(--warning-banner-bg, #fef3c7);
-    color: var(--warning, #d97706);
   }
 }
 
