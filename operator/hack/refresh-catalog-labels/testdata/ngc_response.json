@@ -1,0 +1,51 @@
+{
+  "resultTotal": 2,
+  "results": [
+    {
+      "groupValue": "HELM_CHART",
+      "resources": [
+        {
+          "resourceType": "HELM_CHART",
+          "resourceId": "nim/nvidia/nvidia-nim-llama-nemotron-embed-vl-1b-v2",
+          "name": "nvidia-nim-llama-nemotron-embed-vl-1b-v2",
+          "displayName": "NVIDIA NIM for Text Embedding",
+          "labels": [
+            {
+              "key": "general",
+              "values": ["NSPECT-9HRY-OUPZ", "NVIDIA NIM", "NVIDIA AI Enterprise Supported"],
+              "unresolvedValues": ["NSPECT-9HRY-OUPZ", "nimmcro_nvidia_nim", "nvaie_supported"]
+            },
+            {
+              "key": "publisher",
+              "values": ["NVIDIA"],
+              "unresolvedValues": ["NVIDIA"]
+            },
+            {
+              "key": "productNames",
+              "values": ["nv-ai-enterprise"],
+              "unresolvedValues": ["nv-ai-enterprise"]
+            }
+          ]
+        },
+        {
+          "resourceType": "HELM_CHART",
+          "resourceId": "nvidia/blueprint/nvidia-blueprint-rag",
+          "name": "nvidia-blueprint-rag",
+          "displayName": "NVIDIA Blueprint RAG",
+          "labels": [
+            {
+              "key": "general",
+              "values": ["NIM", "Blueprint"],
+              "unresolvedValues": ["NIM", "Blueprint"]
+            },
+            {
+              "key": "publisher",
+              "values": ["NVIDIA"],
+              "unresolvedValues": ["NVIDIA"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
