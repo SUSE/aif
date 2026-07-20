@@ -70,7 +70,7 @@ func TestBuildComponentMatrix(t *testing.T) {
 	bdObj.SetGroupVersionKind(bundleDeploymentGVK)
 	bdObj.SetName(name + "-local")
 	bdObj.SetNamespace("fleet-local")
-	bdObj.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/cluster": "local"})
+	bdObj.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/bundle-namespace": "fleet-local", "fleet.cattle.io/cluster": "local"})
 	_ = unstructured.SetNestedField(bdObj.Object, "s1", "spec", "deploymentID")
 
 	cl := fakeClient(b, bdObj)
@@ -141,7 +141,7 @@ func TestBuildComponentMatrix_MissingBDIsPending(t *testing.T) {
 	bdObj.SetGroupVersionKind(bundleDeploymentGVK)
 	bdObj.SetName(name + "-c-alpha")
 	bdObj.SetNamespace("fleet-default")
-	bdObj.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/cluster": "c-alpha"})
+	bdObj.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/bundle-namespace": "fleet-default", "fleet.cattle.io/cluster": "c-alpha"})
 	_ = unstructured.SetNestedField(bdObj.Object, "s1", "spec", "deploymentID")
 
 	cl := fakeClient(b, bdObj, w)

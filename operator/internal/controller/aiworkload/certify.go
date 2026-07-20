@@ -168,12 +168,21 @@ func acceptedFalseTerminal(ho *unstructured.Unstructured, baseline *aiplatformv1
 	return acceptedConditionIsFalse(ho)
 }
 
-// upsertRenderBaseline updates or inserts a RenderBaseline entry for the given HelmOp UID,
-// replacing any existing entry with the same UID.
+// upsertRenderBaseline inserts a RenderBaseline for a HelmOp UID, or replaces the existing entry
+// ONLY when the render attempt identity (digest, retry epoch, or HelmOp generation) has changed.
+// When the identity is unchanged, the existing entry — including its AcceptedFingerprint captured
+// at first observation of this attempt — is preserved untouched. This is essential: re-recording
+// the current fingerprint every reconcile would make acceptedFalseTerminal's "fingerprint differs
+// from baseline" check permanently false, so a Fleet-driven Accepted=False rejection would never
+// terminally fail the attempt and the cell would stay Pending forever.
 func upsertRenderBaseline(baselines []aiplatformv1alpha1.RenderBaseline, entry aiplatformv1alpha1.RenderBaseline) []aiplatformv1alpha1.RenderBaseline {
 	for i := range baselines {
 		if baselines[i].HelmOpUID == entry.HelmOpUID {
-			baselines[i] = entry
+			if baselines[i].RenderDigest != entry.RenderDigest ||
+				baselines[i].RetryEpoch != entry.RetryEpoch ||
+				baselines[i].HelmOpGeneration != entry.HelmOpGeneration {
+				baselines[i] = entry
+			}
 			return baselines
 		}
 	}

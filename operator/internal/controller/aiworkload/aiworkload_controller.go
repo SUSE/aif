@@ -393,15 +393,25 @@ func (r *AIWorkloadReconciler) reconcileFleetStatus(ctx context.Context, w *aipl
 // deleteHelmOp deletes the HelmOp from whichever fleet workspace namespace it lives in.
 // It attempts every namespace and joins any non-NotFound errors, so a failure in one
 // namespace does not skip cleanup in the others.
+// deleteHelmOpIn deletes a single HelmOp identified by (namespace, name). Use this for stale-item
+// cleanup, where deleting the same name from the OTHER fleet namespace would tear down a still-
+// desired deployment (a mixed workload shares one bundle name across fleet-local/fleet-default).
+func (r *AIWorkloadReconciler) deleteHelmOpIn(ctx context.Context, ns, name string) error {
+	ho := &unstructured.Unstructured{}
+	ho.SetGroupVersionKind(helmOpGVK)
+	ho.SetName(name)
+	ho.SetNamespace(ns)
+	if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete HelmOp %s/%s: %w", ns, name, err)
+	}
+	return nil
+}
+
 func (r *AIWorkloadReconciler) deleteHelmOp(ctx context.Context, name string) error {
 	var errs []error
 	for _, ns := range fleetNamespaces {
-		ho := &unstructured.Unstructured{}
-		ho.SetGroupVersionKind(helmOpGVK)
-		ho.SetName(name)
-		ho.SetNamespace(ns)
-		if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("delete HelmOp %s/%s: %w", ns, name, err))
+		if err := r.deleteHelmOpIn(ctx, ns, name); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return stderrors.Join(errs...)
@@ -412,15 +422,24 @@ func (r *AIWorkloadReconciler) deleteHelmOp(ctx context.Context, name string) er
 // ownerReference — so deleting the HelmOp does not garbage-collect it, and Fleet's
 // own cleanup is racy. We delete the Bundle directly so teardown is deterministic;
 // the Bundle's finalizer then prunes the BundleDeployment and deployed resources.
+// deleteBundleIn deletes a single Fleet Bundle identified by (namespace, name). See deleteHelmOpIn
+// for why stale-item cleanup must be namespace-scoped rather than deleting from both namespaces.
+func (r *AIWorkloadReconciler) deleteBundleIn(ctx context.Context, ns, name string) error {
+	b := &unstructured.Unstructured{}
+	b.SetGroupVersionKind(bundleGVK)
+	b.SetName(name)
+	b.SetNamespace(ns)
+	if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete Bundle %s/%s: %w", ns, name, err)
+	}
+	return nil
+}
+
 func (r *AIWorkloadReconciler) deleteBundle(ctx context.Context, name string) error {
 	var errs []error
 	for _, ns := range fleetNamespaces {
-		b := &unstructured.Unstructured{}
-		b.SetGroupVersionKind(bundleGVK)
-		b.SetName(name)
-		b.SetNamespace(ns)
-		if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("delete Bundle %s/%s: %w", ns, name, err))
+		if err := r.deleteBundleIn(ctx, ns, name); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return stderrors.Join(errs...)

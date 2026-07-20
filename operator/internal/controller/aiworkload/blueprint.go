@@ -117,18 +117,19 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	}
 
 	// Step 3: ensure HelmOps or git files exist for each component bundle.
+	// The bundle name is a pure function of (workload, component chart name) — computed here and
+	// by desiredHelmOpKeys/cleanup/certification alike — so a version change that adds, removes,
+	// renames, or reorders components never desynchronizes the render names from the desired set
+	// (the stale FleetBundleNames[i] index is intentionally NOT used for rendering).
 	expectedDigests := map[string]string{}
-	for i, c := range bp.Spec.Components {
-		if i >= len(w.Spec.FleetBundleNames) {
-			break
-		}
+	for _, c := range bp.Spec.Components {
 		var digest string
 		var err error
 		switch w.Spec.DeployStrategy {
 		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-			digest, err = r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i])
+			digest, err = r.ensureBlueprintHelmOp(ctx, w, c, blueprintBundleName(w.Name, c.ChartName))
 		case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-			digest, err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
+			digest, err = r.ensureBlueprintGitFile(ctx, w, c, blueprintBundleName(w.Name, c.ChartName))
 		}
 		if err != nil {
 			if stderrors.Is(err, errCatalogClientNotConfigured) {
@@ -188,6 +189,26 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		}
 		for _, k := range desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, []aiplatformv1alpha1.BlueprintComponent{c}, w.Spec.DeployStrategy) {
 			expectedDigests[k.Namespace+"/"+k.Name] = digest
+			// GitOps HelmOps are created asynchronously by Fleet's GitRepo controller,
+			// so record a render baseline once the HelmOp appears (the FleetBundle path
+			// records it inside ensureBlueprintHelmOp) so acceptedFalseTerminal can
+			// detect a post-baseline Accepted=False rejection without waiting for the
+			// operation deadline.
+			if w.Spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps {
+				ho, err := r.getHelmOpIn(ctx, k.Namespace, k.Name)
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+				if ho != nil {
+					w.Status.RenderBaselines = upsertRenderBaseline(w.Status.RenderBaselines, aiplatformv1alpha1.RenderBaseline{
+						HelmOpUID:           string(ho.GetUID()),
+						RenderDigest:        digest,
+						RetryEpoch:          r.retryEpochValue(w),
+						HelmOpGeneration:    ho.GetGeneration(),
+						AcceptedFingerprint: acceptedConditionFingerprint(ho),
+					})
+				}
+			}
 		}
 	}
 	w.Status.ObservedGeneration = w.Generation
@@ -1268,7 +1289,14 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 		bdList.SetGroupVersionKind(schema.GroupVersionKind{
 			Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
 		})
-		if err := r.List(ctx, bdList, client.MatchingLabels{"fleet.cattle.io/bundle-name": k.Name}); err != nil {
+		// Scope by BOTH bundle-name and bundle-namespace: a mixed local+downstream workload has
+		// the same bundle name in fleet-local and fleet-default, so name alone would match the
+		// other parent's BundleDeployments — producing duplicate (component,cluster) cells and
+		// cross-parent render gating.
+		if err := r.List(ctx, bdList, client.MatchingLabels{
+			"fleet.cattle.io/bundle-name":      k.Name,
+			"fleet.cattle.io/bundle-namespace": k.Namespace,
+		}); err != nil {
 			return nil, err
 		}
 
@@ -1437,10 +1465,12 @@ func (r *AIWorkloadReconciler) cleanupStaleHelmOps(ctx context.Context, w *aipla
 					return err
 				}
 			default:
-				if err := r.deleteHelmOp(ctx, name); err != nil {
+				// Delete only this (ns, name) — NOT the same name in the other fleet namespace,
+				// which for a mixed local+downstream workload is a still-desired deployment.
+				if err := r.deleteHelmOpIn(ctx, ns, name); err != nil {
 					return err
 				}
-				if err := r.deleteBundle(ctx, name); err != nil {
+				if err := r.deleteBundleIn(ctx, ns, name); err != nil {
 					return err
 				}
 			}

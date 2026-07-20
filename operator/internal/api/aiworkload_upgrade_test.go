@@ -74,6 +74,43 @@ func TestUpgradeEndpointRejectsMissingTarget(t *testing.T) {
 	}
 }
 
+func appWL(name string) *aiplatformv1alpha1.AIWorkload {
+	return &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			DisplayName: name, TargetNamespace: "ai",
+			DeployStrategy: aiplatformv1alpha1.AIWorkloadDeployFleetBundle, TargetClusters: []string{"local"},
+			Source: aiplatformv1alpha1.AIWorkloadSource{
+				SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
+				App:        &aiplatformv1alpha1.AppSource{ChartName: "some-chart"},
+			},
+		},
+	}
+}
+
+// TestRecoveryEndpointsRejectAppSource guards the fix that rejects recovery operations on
+// App-sourced workloads at the edge (they would otherwise sit InProgress until timeout).
+func TestRecoveryEndpointsRejectAppSource(t *testing.T) {
+	cases := []struct {
+		path string
+		body string
+	}{
+		{"/api/v1/namespaces/default/aiworkloads/appwl/upgrade", `{"targetVersion":"2.0.0"}`},
+		{"/api/v1/namespaces/default/aiworkloads/appwl/rollback", ``},
+		{"/api/v1/namespaces/default/aiworkloads/appwl/retry", ``},
+	}
+	for _, tc := range cases {
+		h, _ := handlerWithWorkload(t, appWL("appwl"))
+		req := httptest.NewRequest("POST", tc.path, bytes.NewReader([]byte(tc.body)))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: want 400 for App source, got %d: %s", tc.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestUpgradeEndpoint404(t *testing.T) {
 	h, _ := handlerWithWorkload(t, blueprintWL("exists"))
 	req := httptest.NewRequest("POST", "/api/v1/namespaces/default/aiworkloads/missing/upgrade", bytes.NewReader([]byte(`{"targetVersion":"2.0.0"}`)))

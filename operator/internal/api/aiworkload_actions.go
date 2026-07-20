@@ -61,6 +61,13 @@ func (h *AIWorkloadHandler) setRequestAnnotation(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, err)
 		return nil
 	}
+	// Recovery operations (upgrade/rollback/retry) are Blueprint-only: startVersionOp cannot change
+	// an App source and App reconcile never populates deployedSource, so an accepted App-sourced
+	// operation would sit InProgress until timeout. Reject it at the edge instead.
+	if wl.Spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: recovery operations are only supported for Blueprint-sourced workloads", ErrInvalidInput))
+		return nil
+	}
 	base := wl.DeepCopy()
 	if wl.Annotations == nil {
 		wl.Annotations = map[string]string{}

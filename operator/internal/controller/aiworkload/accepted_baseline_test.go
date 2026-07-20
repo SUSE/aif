@@ -45,3 +45,29 @@ func TestAcceptedFalseTerminal(t *testing.T) {
 		t.Fatal("missing baseline must not be terminal")
 	}
 }
+
+// TestUpsertRenderBaseline_PreservesFingerprintOnUnchangedIdentity guards the fix for the bug
+// where re-recording the baseline every reconcile overwrote the first-observed AcceptedFingerprint
+// with the current (rejected) one, making acceptedFalseTerminal permanently false.
+func TestUpsertRenderBaseline_PreservesFingerprintOnUnchangedIdentity(t *testing.T) {
+	orig := aiplatformv1alpha1.RenderBaseline{HelmOpUID: "uid1", RenderDigest: "d", RetryEpoch: 2, HelmOpGeneration: 4, AcceptedFingerprint: "fp-at-first-observe"}
+	bl := upsertRenderBaseline(nil, orig)
+
+	// Same attempt identity, but a NEW (Fleet-driven Accepted=False) fingerprint → must be ignored.
+	bl = upsertRenderBaseline(bl, aiplatformv1alpha1.RenderBaseline{HelmOpUID: "uid1", RenderDigest: "d", RetryEpoch: 2, HelmOpGeneration: 4, AcceptedFingerprint: "fp-rejected-now"})
+	if len(bl) != 1 || bl[0].AcceptedFingerprint != "fp-at-first-observe" {
+		t.Fatalf("unchanged attempt must preserve original fingerprint, got %+v", bl)
+	}
+
+	// A changed attempt identity (new generation) → baseline is replaced.
+	bl = upsertRenderBaseline(bl, aiplatformv1alpha1.RenderBaseline{HelmOpUID: "uid1", RenderDigest: "d", RetryEpoch: 2, HelmOpGeneration: 5, AcceptedFingerprint: "fp-new-attempt"})
+	if len(bl) != 1 || bl[0].HelmOpGeneration != 5 || bl[0].AcceptedFingerprint != "fp-new-attempt" {
+		t.Fatalf("changed attempt identity must replace baseline, got %+v", bl)
+	}
+
+	// A different UID appends a second entry.
+	bl = upsertRenderBaseline(bl, aiplatformv1alpha1.RenderBaseline{HelmOpUID: "uid2", RenderDigest: "d", RetryEpoch: 2, HelmOpGeneration: 1})
+	if len(bl) != 2 {
+		t.Fatalf("new UID must append, got %+v", bl)
+	}
+}
