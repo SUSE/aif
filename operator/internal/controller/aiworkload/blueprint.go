@@ -791,9 +791,11 @@ const (
 // The result is always a valid DNS-1123 label (no leading/trailing '-'), even
 // for pathological inputs.
 //
-// This need NOT match the dashboard's TS capReleaseName byte-for-byte: a single
-// install's releaseName is produced by exactly one side, and the operator looks
-// workloads up by bundle (object) name, never by releaseName.
+// PARITY IS LOAD-BEARING: the dashboard derives expected Helm release names with
+// its TS capReleaseName (ui/pkg/aif-ui/utils/helm-release.ts) and matches them
+// against the app.kubernetes.io/instance label THIS function's output produced.
+// The two impls MUST stay byte-for-byte identical (FNV-1a/base36, cap 53, 6-char
+// suffix); a divergence for names > 53 chars silently breaks pod attribution.
 func capReleaseName(name string) string {
 	if len(name) <= helmReleaseNameMax {
 		return name
