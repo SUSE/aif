@@ -38,6 +38,7 @@ import (
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/config"
+	"github.com/SUSE/aif-operator/internal/credentials"
 	helmClient "github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/infra/kubernetes"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
@@ -49,6 +50,10 @@ const (
 	readinessRequeue        = 10 * time.Second
 	uiConfigMapName         = "aif-ui-config"
 	healthCheckInterval     = 60 * time.Second
+	// resolutionRetryInterval requeues the CR after a registry auth/TLS
+	// resolution failure so it self-heals when a referenced Secret is created
+	// or corrected (the controller has no Secret watch).
+	resolutionRetryInterval = 30 * time.Second
 
 	conditionTypeReady           = "Ready"
 	conditionTypeHelmInstalled   = "HelmInstalled"
@@ -74,6 +79,7 @@ type InstallAIExtensionReconciler struct {
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -268,13 +274,47 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, err
 	}
 
-	if err := helm.EnsureRelease(ctx, helmClient.ReleaseSpec{
+	regAuth, err := credentials.ResolveHelmAuth(ctx, r.Client, config.GetOperatorNamespace(), helmSource.Auth, helmSource.ChartURL)
+	if err != nil {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"AuthResolutionFailed", fmt.Sprintf("registry auth resolution failed: %v", err), ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{RequeueAfter: resolutionRetryInterval}, nil
+	}
+
+	tlsCfg, err := credentials.ResolveHelmTLS(ctx, r.Client, config.GetOperatorNamespace(), helmSource.TLS)
+	if err != nil {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"TLSResolutionFailed", fmt.Sprintf("registry TLS resolution failed: %v", err), ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{RequeueAfter: resolutionRetryInterval}, nil
+	}
+	if helmSource.TLS != nil && helmSource.TLS.InsecureSkipVerify {
+		logger.Info("WARNING: insecureSkipVerify is enabled for the extension chart registry; TLS certificate verification is disabled")
+	}
+	if helmSource.PlainHTTP {
+		logger.Info("WARNING: plainHTTP is enabled for the extension chart registry; registry credentials are sent unencrypted over HTTP")
+	}
+
+	releaseSpec := helmClient.ReleaseSpec{
 		Name:      releaseName,
 		Namespace: namespace,
 		ChartRef:  helmSource.ChartURL,
 		Version:   helmSource.Version,
 		Values:    values,
-	}); err != nil {
+	}
+	if regAuth != nil {
+		releaseSpec.RegistryAuth = &helmClient.RegistryAuth{
+			Username: regAuth.Username,
+			Password: regAuth.Password,
+		}
+	}
+	if tlsCfg != nil {
+		releaseSpec.TLSConfig = tlsCfg
+	}
+	releaseSpec.PlainHTTP = helmSource.PlainHTTP
+
+	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
 		setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionFalse,
 			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err), ext.Generation)
 		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
