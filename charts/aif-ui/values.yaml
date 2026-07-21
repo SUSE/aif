@@ -1,5 +1,16 @@
 replicaCount: 1
 
+#
+# Typically aif-ui chart is embedded and deployed by aif-operator.
+# However, aif-ui chart can be deployed standalone, separately from
+# aif-operator by setting ".Values.aiExtension.enabled" to "false" when
+# deploying aif-operator chart.
+#
+# To deploy aif-ui chart separately, you must set enable standalone deploy
+# by setting the value to "true".
+#
+standalone: false
+
 global:
   imageRegistry: ""
   imagePullSecrets: []
