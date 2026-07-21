@@ -20,13 +20,16 @@ export function getRegistryCredentials(timeoutMs = 30000): Promise<RegistryCrede
     .finally(() => clearTimeout(timer));
 }
 
+// createAIWorkload stores the AIWorkload CR in the operator's workload namespace.
+// The CR's location is server-owned; the deployment target is carried by
+// spec.targetNamespace. The response's metadata.namespace is the CR's real
+// namespace and should be used for subsequent update/delete calls.
 export function createAIWorkload(
-  namespace: string,
-  name:      string,
-  spec:      AIWorkloadSpec,
-  status?:   AIWorkloadStatus,
+  name:    string,
+  spec:    AIWorkloadSpec,
+  status?: AIWorkloadStatus,
 ): Promise<AIWorkload> {
-  return operatorFetch(`/api/v1/namespaces/${ encodeURIComponent(namespace) }/aiworkloads`, {
+  return operatorFetch('/api/v1/aiworkloads', {
     method: 'POST',
     body:   JSON.stringify({ metadata: { name }, spec, status }),
   });

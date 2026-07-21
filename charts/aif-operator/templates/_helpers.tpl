@@ -73,6 +73,16 @@ cattle-ui-plugin-system
 {{- end -}}
 
 {{/*
+Namespace on the control cluster where AIWorkload CRs are stored. Intentionally
+separate from the operator release namespace so workload records keep independent
+RBAC and quota boundaries. A workload's deployment target is carried by
+Spec.TargetNamespace, not by where its CR lives.
+*/}}
+{{- define "aif-operator.workloadNamespace" -}}
+{{- .Values.workloadNamespace | default "aif-workloads" -}}
+{{- end -}}
+
+{{/*
 Return the proper Docker Image Registry Secret Names
 */}}
 {{- define "aif-operator.imagePullSecrets" -}}

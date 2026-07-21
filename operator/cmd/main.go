@@ -256,7 +256,7 @@ func main() {
 	// Start the operator HTTP API server.
 	mux := http.NewServeMux()
 	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(mux)
-	api.NewAIWorkloadHandler(mgr.GetClient()).Register(mux)
+	api.NewAIWorkloadHandler(mgr.GetClient(), config.GetWorkloadNamespace()).Register(mux)
 	api.NewBlueprintHandler(mgr.GetClient()).Register(mux)
 	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(mux)
 	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(mux)

@@ -86,6 +86,11 @@ const namespaceOptions = ref<{label: string, value: string}[]>([]);
 const showProgressModal = ref(false);
 const installProgress = ref<ClusterInstallProgress[]>([]);
 const managedFleetBundleNames = ref<string[]>([]);
+// The AIWorkload CR's real control-cluster namespace (manage mode). This is where
+// the CR is stored (e.g. the workload namespace), which is distinct from the
+// deployment target (form.value.namespace / spec.targetNamespace). Used to address
+// the CR for updates. Falls back to form.value.namespace when the CR isn't found.
+const manageCrNamespace = ref<string>('');
 
 const PKEY = `${props.mode}.${props.slug}`;
 const TTL = 1000 * 60 * 60;
@@ -394,10 +399,26 @@ async function initializeManageMode() {
 async function loadAIWorkloadDetails() {
   try {
     const { items } = await listAIWorkloads();
-    const workload = items.find(
-      w => w.metadata.name === form.value.release && w.metadata.namespace === form.value.namespace
-    );
+    const targetCluster = form.value.clusters[0];
+    // Resolve the CR by name (AIWorkloads list passes the CR name) or by its
+    // Helm release + target cluster (App Instances passes the release name).
+    // The CR namespace is no longer assumed to equal the deployment namespace,
+    // so it is not part of the match.
+    const workload =
+      items.find(w => w.metadata.name === form.value.release) ||
+      items.find(w =>
+        w.spec.source?.app?.release === form.value.release &&
+        (!targetCluster || w.spec.targetClusters?.includes(targetCluster))
+      );
     if (!workload) return;
+
+    // Capture the CR's real namespace for update calls, and set the displayed
+    // namespace to the actual deployment target (spec.targetNamespace), which may
+    // differ from where the CR is stored.
+    manageCrNamespace.value = workload.metadata.namespace;
+    if (workload.spec.targetNamespace) {
+      form.value.namespace = workload.spec.targetNamespace;
+    }
 
     // Sync chart identity fields from the AIWorkload CR.
     const app = workload.spec.source.app;
@@ -1116,9 +1137,12 @@ async function recordAIWorkload(
     };
 
     if (isManageMode.value) {
-      await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+      // Address the CR by its real namespace (where it is stored), not the
+      // deployment target. Fall back to the deployment namespace for CRs created
+      // before workload-namespace consolidation and not yet resolved.
+      await updateAIWorkload(manageCrNamespace.value || form.value.namespace, crName, spec, { phase, clusterStatuses });
     } else {
-      await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+      await createAIWorkload(crName, spec, { phase, clusterStatuses });
     }
   } catch (e) {
     console.warn('[SUSE-AI] Failed to record AIWorkload CR (non-fatal):', e);

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "aif-operator.workloadNamespace" . }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    # Preserve stored AIWorkload CRs across chart uninstall.
+    helm.sh/resource-policy: keep
