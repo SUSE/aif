@@ -25,6 +25,8 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -44,6 +46,25 @@ import (
 )
 
 const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
+
+const (
+	conditionTypeReady        = "Ready"
+	reasonClusterRepoNotReady = "ClusterRepoNotReady"
+	reasonReconciled          = "Reconciled"
+)
+
+// setCondition upserts a status condition on the AIWorkload, mirroring the
+// InstallAIExtension controller's helper. meta.SetStatusCondition handles
+// LastTransitionTime and de-duplication.
+func setCondition(conditions *[]metav1.Condition, condType string, status metav1.ConditionStatus, reason, message string, generation int64) {
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: generation,
+	})
+}
 
 var (
 	bundleDeploymentGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment"}
@@ -94,18 +115,29 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, r.Update(ctx, &w)
 	}
 
-	result, err := r.reconcileStatus(ctx, &w)
-	if err != nil {
-		return ctrl.Result{}, err
+	result, reconcileErr := r.reconcileStatus(ctx, &w)
+
+	// Advance ObservedGeneration only when reconciliation reached a terminal
+	// (non-requeue, non-error) state for this generation.
+	if reconcileErr == nil && !result.Requeue && result.RequeueAfter == 0 {
+		w.Status.ObservedGeneration = w.Generation
+	}
+
+	// Always persist status — even when reconcile failed or asked for a
+	// requeue — so failure conditions/phase reach the UI instead of being
+	// dropped by an early return.
+	if err := r.Status().Update(ctx, &w); err != nil {
+		// The object may have been deleted by reconcileGitOpsStatus (HelmOp gone path).
+		if reconcileErr != nil {
+			return ctrl.Result{}, reconcileErr
+		}
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if reconcileErr != nil {
+		return ctrl.Result{}, reconcileErr
 	}
 	if result.Requeue || result.RequeueAfter > 0 {
 		return result, nil
-	}
-
-	w.Status.ObservedGeneration = w.Generation
-	if err := r.Status().Update(ctx, &w); err != nil {
-		// The object may have been deleted by reconcileGitOpsStatus (HelmOp gone path).
-		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	if len(w.Status.PullSecretDeliveries) > 0 {
