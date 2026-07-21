@@ -16,6 +16,9 @@ import ClusterChips from '../formatters/ClusterChips.vue';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
 import { useT } from '../composables/useT';
+import WorkloadPodStatus from '../components/WorkloadPodStatus.vue';
+import { fetchWorkloadPodStatus } from '../services/workload-pods';
+import type { WorkloadPodStatusMap } from '../types/workload-pods-types';
 
 const t       = useT();
 const vm      = getCurrentInstance()!.proxy as any;
@@ -33,6 +36,47 @@ const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
 const clusters   = ref<ClusterInfo[]>([]);
 
+// Pod-level status, keyed by `${namespace}/${name}`, for workloads that aren't Running.
+const podStatus = ref<WorkloadPodStatusMap>({});
+
+function wlKey(w: AIWorkload): string {
+  return `${ w.metadata.namespace }/${ w.metadata.name }`;
+}
+
+// Trigger: only workloads not fully Running, or with an operation in progress.
+function needsPodStatus(w: AIWorkload): boolean {
+  return w.status?.phase !== 'Running' || w.status?.activeOperation?.state === 'InProgress';
+}
+
+// Every namespace a workload deploys into: the workload targetNamespace plus any
+// per-component namespace pins from the Blueprint (which override the workload one).
+// Falls back to just the workload namespace when the Blueprint can't be resolved.
+function workloadNamespaces(w: AIWorkload): string[] {
+  const base = w.spec.targetNamespace;
+  const set = new Set<string>();
+  if (base) set.add(base);
+  if (w.spec.source.sourceType === 'Blueprint' && w.spec.source.blueprint) {
+    const family = groupBlueprintsByFamily(blueprints.value).get(w.spec.source.blueprint.name);
+    const bp = family?.find(b => b.spec.version === w.spec.source.blueprint!.version);
+    for (const c of bp?.spec.components || []) {
+      set.add(c.targetNamespace || base);
+    }
+  }
+  return [...set].filter(Boolean);
+}
+
+async function refreshPodStatus() {
+  const targets = workloads.value.filter(needsPodStatus);
+  const results = await Promise.allSettled(
+    targets.map(async w => ({ key: wlKey(w), clusters: await fetchWorkloadPodStatus(vm.$store, w, workloadNamespaces(w)) })),
+  );
+  const next: WorkloadPodStatusMap = {};
+  for (const r of results) {
+    if (r.status === 'fulfilled') next[r.value.key] = r.value.clusters;
+  }
+  podStatus.value = next; // healthy workloads drop out automatically
+}
+
 // ── Delete modal ───────────────────────────────────────────────────────────────
 const deleteModal = reactive({
   show:      false,
@@ -49,6 +93,13 @@ const upgradeModal = reactive({
   workload:      null as AIWorkload | null,
   selectedVersion: '',
   upgrading:     false,
+});
+
+// ── Rollback confirmation modal ─────────────────────────────────────────────────
+const rollbackModal = reactive({
+  show:     false,
+  workload: null as AIWorkload | null,
+  rolling:  false,
 });
 
 const upgradeError = ref<string | null>(null);
@@ -165,6 +216,7 @@ async function refresh() {
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
     clusters.value   = clResult;
+    void refreshPodStatus();
   } catch (e: any) {
     error.value = e?.message || 'Failed to load workloads';
   } finally {
@@ -185,6 +237,7 @@ async function silentRefresh() {
   try {
     const wlResult = await listAIWorkloads();
     workloads.value = wlResult.items || [];
+    void refreshPodStatus();
   } catch {
     // silently ignore — user can use the Refresh button if needed
   }
@@ -279,13 +332,26 @@ function canRetry(w: AIWorkload): boolean {
   return w.status?.phase === 'Failed' || w.status?.phase === 'Degraded' || op?.state === 'Failed';
 }
 
-async function doRollback(w: AIWorkload) {
+function openRollbackModal(w: AIWorkload) {
+  rollbackModal.workload = w;
+  rollbackModal.rolling  = false;
+  rollbackModal.show     = true;
+}
+
+async function confirmRollback() {
+  if (!rollbackModal.workload) return;
+  const w = rollbackModal.workload;
   upgradeError.value = null;
+  rollbackModal.rolling = true;
   try {
     await rollbackAIWorkload(w.metadata.namespace, w.metadata.name);
+    rollbackModal.show = false;
     await refresh();
   } catch (e: any) {
+    rollbackModal.show = false;
     upgradeError.value = e?.message || String(e);
+  } finally {
+    rollbackModal.rolling = false;
   }
 }
 
@@ -400,6 +466,7 @@ async function doRetry(w: AIWorkload) {
                   >
                     {{ w.status.activeOperation.type }}: {{ w.status.activeOperation.state }}<span v-if="w.status.activeOperation.reason"> ({{ w.status.activeOperation.reason }})</span>
                   </div>
+                  <WorkloadPodStatus :clusters="podStatus[wlKey(w)] || []" />
                 </td>
 
                 <!-- Name -->
@@ -471,7 +538,7 @@ async function doRetry(w: AIWorkload) {
                     <button
                       v-if="w.spec.source.sourceType === 'Blueprint' && canRollback(w)"
                       class="btn btn-sm role-secondary"
-                      @click="doRollback(w)"
+                      @click="openRollbackModal(w)"
                       type="button"
                     >
                       <i class="icon icon-history" />
@@ -566,6 +633,45 @@ async function doRetry(w: AIWorkload) {
           >
             <i v-if="upgradeModal.upgrading" class="icon icon-spinner icon-spin" />
             Upgrade
+          </button>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- Blueprint rollback confirmation modal -->
+    <AppModal v-if="rollbackModal.show" :click-to-close="true" :width="480" @close="rollbackModal.show = false">
+      <div class="modal-body">
+        <h3>Roll Back Blueprint Workload</h3>
+        <p>
+          <strong>{{ rollbackModal.workload?.spec.displayName || rollbackModal.workload?.metadata.name }}</strong>
+          in namespace <code>{{ rollbackModal.workload?.metadata.namespace }}</code>
+        </p>
+
+        <div class="field-row">
+          <label class="field-label">Current version</label>
+          <span class="field-value">v{{ rollbackModal.workload?.spec.source.blueprint?.version }}</span>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label">Roll back to</label>
+          <span class="field-value">v{{ rollbackModal.workload?.status?.deployedSource?.version }}</span>
+        </div>
+
+        <p class="text-muted modal-warning">
+          The workload will be redeployed at the last certified version
+          (v{{ rollbackModal.workload?.status?.deployedSource?.version }}).
+        </p>
+
+        <div class="modal-buttons">
+          <button class="btn role-secondary" @click="rollbackModal.show = false" type="button">Cancel</button>
+          <button
+            class="btn role-primary"
+            @click="confirmRollback"
+            :disabled="rollbackModal.rolling"
+            type="button"
+          >
+            <i v-if="rollbackModal.rolling" class="icon icon-spinner icon-spin" />
+            Roll Back
           </button>
         </div>
       </div>
