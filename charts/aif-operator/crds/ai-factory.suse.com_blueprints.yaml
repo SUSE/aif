@@ -61,7 +61,11 @@ spec:
                       minLength: 1
                       type: string
                     chartRepo:
-                      description: ChartRepo is the Rancher ClusterRepo name.
+                      description: |-
+                        ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
+                        ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
+                        fetches the chart from Rancher's catalog and deploys it as a self-contained
+                        Fleet Bundle; such charts must compress to under ~1MiB.
                       minLength: 1
                       type: string
                     chartVersion:

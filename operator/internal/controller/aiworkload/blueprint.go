@@ -45,10 +45,22 @@ import (
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
 var nonAlphanumBPRE = regexp.MustCompile(`[^a-z0-9]+`)
 
+// repoKind classifies how a Rancher ClusterRepo serves its charts.
+type repoKind string
+
+const (
+	repoKindHTTP repoKind = "http"
+	repoKindOCI  repoKind = "oci"
+	repoKindGit  repoKind = "git"
+)
+
 type clusterRepoInfo struct {
-	URL            string
-	ClientSecret   string // name of the basic-auth secret; empty if unauthenticated
-	ClientSecretNS string // namespace of the basic-auth secret (typically cattle-system)
+	Kind           repoKind // how the repo serves charts (http/oci/git)
+	URL            string   // http/oci repos only
+	GitRepo        string   // git repos only
+	GitBranch      string   // git repos only
+	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
+	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -121,6 +133,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
+	// Git-backed ClusterRepos have no HTTP/OCI URL a HelmOp could pull from; the
+	// operator fetches the chart from Rancher and deploys it as an embedded Fleet
+	// Bundle instead.
+	if repoInfo.Kind == repoKindGit {
+		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, false)
+	}
+
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
 		"version": c.ChartVersion,
@@ -175,19 +194,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["values"] = vals
 	}
 
-	localTargets := make([]any, 0)
-	downstreamTargets := make([]any, 0)
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
-		} else {
-			downstreamTargets = append(downstreamTargets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
 
 	for _, pair := range []struct {
 		ns      string
@@ -682,6 +689,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
+	// Git-backed ClusterRepos: publish an embedded-chart Fleet Bundle git file
+	// rather than a HelmOp (which cannot pull from git).
+	if repoInfo.Kind == repoKindGit {
+		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, true)
+	}
+
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
 		"version": c.ChartVersion,
@@ -729,28 +742,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		helmSpec["values"] = vals
 	}
 
-	targets := make([]any, 0)
-	isLocalOnly := true
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			targets = append(targets, map[string]any{"clusterName": "local"})
-		} else {
-			isLocalOnly = false
-			targets = append(targets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
-	if len(w.Spec.TargetClusters) == 0 {
-		isLocalOnly = false
-	}
-
-	fleetNS := "fleet-default"
-	if isLocalOnly {
-		fleetNS = "fleet-local"
-	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	targets := append(append([]any{}, localTargets...), downstreamTargets...)
+	fleetNS := gitOpsFleetNamespace(w)
 
 	helmOpSpec := map[string]any{
 		// defaultNamespace (not namespace): targets the release namespace without
@@ -876,20 +870,39 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	if err := r.Get(ctx, types.NamespacedName{Name: repoName}, cr); err != nil {
 		return clusterRepoInfo{}, fmt.Errorf("get ClusterRepo %q: %w", repoName, err)
 	}
-	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
-	if url == "" {
-		url, _, _ = unstructured.NestedString(cr.Object, "spec", "ociRepo")
-	}
-	if url == "" {
-		return clusterRepoInfo{}, fmt.Errorf("ClusterRepo %q has no url or ociRepo in spec", repoName)
-	}
 	// spec.clientSecret is an object {name, namespace}, not a plain string.
 	clientSecretName, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "name")
 	clientSecretNS, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
 	if clientSecretNS == "" {
 		clientSecretNS = "cattle-system"
 	}
-	return clusterRepoInfo{URL: url, ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}, nil
+	info := clusterRepoInfo{ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
+
+	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
+	if url == "" {
+		url, _, _ = unstructured.NestedString(cr.Object, "spec", "ociRepo")
+	}
+	if url != "" {
+		info.URL = url
+		info.Kind = repoKindHTTP
+		if strings.HasPrefix(url, "oci://") {
+			info.Kind = repoKindOCI
+		}
+		return info, nil
+	}
+
+	// Git-backed ClusterRepos (spec.gitRepo + spec.gitBranch) have no url/ociRepo.
+	// Rancher clones and indexes them; the operator resolves the chart via the
+	// Rancher catalog API and republishes it as a self-contained Fleet Bundle.
+	gitRepo, _, _ := unstructured.NestedString(cr.Object, "spec", "gitRepo")
+	if gitRepo != "" {
+		info.Kind = repoKindGit
+		info.GitRepo = gitRepo
+		info.GitBranch, _, _ = unstructured.NestedString(cr.Object, "spec", "gitBranch")
+		return info, nil
+	}
+
+	return clusterRepoInfo{}, fmt.Errorf("ClusterRepo %q has no url, ociRepo, or gitRepo in spec", repoName)
 }
 
 func bpCRName(familyName, version string) string {

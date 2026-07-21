@@ -24,6 +24,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -47,6 +49,7 @@ import (
 	aiworkloadctrl "github.com/SUSE/aif-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/aif-operator/internal/controller/installaiextension"
 	settingsctrl "github.com/SUSE/aif-operator/internal/controller/settings"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -66,6 +69,45 @@ func init() {
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// buildCatalogClient constructs the Rancher Steve catalog client used to fetch
+// charts from git-backed ClusterRepos. Configuration is via env vars set on the
+// operator Deployment (Helm chart): RANCHER_CATALOG_URL (default the in-cluster
+// Rancher service), RANCHER_CATALOG_TOKEN (falls back to the operator's
+// ServiceAccount token), RANCHER_CATALOG_CA_FILE, and RANCHER_CATALOG_INSECURE.
+// Returns nil when no token is available; git-backed components then fail with a
+// clear "not configured" error while http/oci components are unaffected.
+func buildCatalogClient(logger logr.Logger) aiworkloadctrl.RancherCatalogClient {
+	baseURL := os.Getenv("RANCHER_CATALOG_URL")
+	if baseURL == "" {
+		baseURL = rancher.DefaultBaseURL
+	}
+	token := os.Getenv("RANCHER_CATALOG_TOKEN")
+	if token == "" {
+		t, err := rancher.ServiceAccountToken()
+		if err != nil {
+			logger.Info("Rancher catalog client disabled: no token available; git-backed ClusterRepos will not be installable", "error", err.Error())
+			return nil
+		}
+		token = t
+	}
+	var caPEM []byte
+	if f := os.Getenv("RANCHER_CATALOG_CA_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			logger.Error(err, "reading Rancher CA file; git-backed ClusterRepos will not be installable", "file", f)
+			return nil
+		}
+		caPEM = b
+	}
+	insecure := os.Getenv("RANCHER_CATALOG_INSECURE") == "true"
+	c, err := rancher.NewCatalogClient(baseURL, token, caPEM, insecure)
+	if err != nil {
+		logger.Error(err, "building Rancher catalog client; git-backed ClusterRepos will not be installable")
+		return nil
+	}
+	return c
 }
 
 // nolint:gocyclo
@@ -238,6 +280,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		RestConfig:        mgr.GetConfig(),
 		OperatorNamespace: operatorNamespace,
+		CatalogClient:     buildCatalogClient(setupLog),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
 		os.Exit(1)
