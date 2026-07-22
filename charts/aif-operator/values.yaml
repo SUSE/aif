@@ -48,7 +48,7 @@ appCatalog:
 
 manager:
   replicaCount: 1
-  
+
   image:
     registry: ghcr.io
     repository: suse/aif-operator
@@ -129,6 +129,22 @@ aiExtension:
       #   aiExtension.source.helm.values.image.repository=suse/aif-ui
       #   aiExtension.source.helm.values.image.tag=2.0.0
       values: {}
+      # --- Private / authenticated registry for the chart pull (all optional) ---
+      # Secrets are read from the operator's namespace. See the InstallAIExtension CRD
+      # and operator/samples/installaiextension-authenticated*.yaml for the full schema.
+      # auth:                          # set exactly one of basic | token | dockerConfig
+      #   basic:
+      #     userSecretRef:  { name: registry-creds, key: username }
+      #     tokenSecretRef: { name: registry-creds, key: password }
+      #   # token:
+      #   #   tokenSecretRef: { name: registry-creds, key: token }
+      #   # dockerConfig:
+      #   #   secretRef: { name: registry-dockercfg }    # kubernetes.io/dockerconfigjson
+      # tls:
+      #   caSecretRef: { name: registry-ca, key: ca.crt }
+      #   # clientTLSSecretRef: { name: registry-mtls }  # kubernetes.io/tls (mTLS)
+      #   # insecureSkipVerify: true                     # test only
+      # plainHTTP: false               # OCI over http:// (do NOT combine with tls)
   extension:
     name: "aif-ui"
     version: "2.0.0"

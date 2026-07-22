@@ -96,7 +96,10 @@
               "properties": {
                 "chartURL": { "type": "string" },
                 "version": { "type": "string" },
-                "values": { "type": "object", "additionalProperties": true, "default": {} }
+                "values": { "type": "object", "additionalProperties": true, "default": {} },
+                "auth": { "type": "object", "additionalProperties": true, "description": "Registry auth for the chart pull (basic|token|dockerConfig); see the InstallAIExtension CRD for the full schema." },
+                "tls": { "type": "object", "additionalProperties": true, "description": "Registry TLS trust for the chart pull (caSecretRef|clientTLSSecretRef|insecureSkipVerify)." },
+                "plainHTTP": { "type": "boolean", "default": false, "description": "Pull an OCI chart over plain HTTP (OCI only; mutually exclusive with tls)." }
               }
             }
           }
