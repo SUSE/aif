@@ -1,0 +1,17 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: InstallAIExtension
+metadata:
+  name: aif-ui
+spec:
+  source:
+    kind: Helm
+    helm:
+      chartURL: oci://registry.example.com/charts/aif-ui-server
+      version: 1.0.0
+      auth:
+        basic:
+          userSecretRef: { name: aif-ui-registry, key: username }
+          tokenSecretRef: { name: aif-ui-registry, key: password }
+  extension:
+    name: aif-ui
+    version: 1.0.0

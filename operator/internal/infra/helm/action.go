@@ -44,14 +44,13 @@ func (c *helmClient) install(
 	install.ReleaseName = spec.Name
 	install.Namespace = spec.Namespace
 	install.Version = spec.Version
-	install.SetRegistryClient(c.registry)
 	if spec.RepoURL != "" {
 		install.RepoURL = spec.RepoURL
 	}
 
-	ch, _, err := resolveChart(&install.ChartPathOptions, c.settings, spec.ChartRef)
+	ch, err := c.loadChart(install.SetRegistryClient, &install.ChartPathOptions, spec)
 	if err != nil {
-		log.Error(err, "Failed to resolve Helm chart")
+		log.Error(err, "Failed to load Helm chart")
 		return err
 	}
 
@@ -81,7 +80,6 @@ func (c *helmClient) upgrade(
 	up := action.NewUpgrade(cfg)
 	up.Namespace = spec.Namespace
 	up.Version = spec.Version
-	up.SetRegistryClient(c.registry)
 	if spec.RepoURL != "" {
 		up.RepoURL = spec.RepoURL
 	}
@@ -90,9 +88,9 @@ func (c *helmClient) upgrade(
 	up.Atomic = false
 	up.Timeout = 10 * time.Minute
 
-	ch, _, err := resolveChart(&up.ChartPathOptions, c.settings, spec.ChartRef)
+	ch, err := c.loadChart(up.SetRegistryClient, &up.ChartPathOptions, spec)
 	if err != nil {
-		log.Error(err, "Failed to resolve Helm chart")
+		log.Error(err, "Failed to load Helm chart")
 		return err
 	}
 	_, err = up.RunWithContext(ctx, spec.Name, ch, spec.Values)
@@ -117,12 +115,11 @@ func (c *helmClient) renderUpgrade(
 	up.Wait = false
 	up.Atomic = false
 	up.Timeout = 2 * time.Minute
-	up.SetRegistryClient(c.registry)
 	if spec.RepoURL != "" {
 		up.RepoURL = spec.RepoURL
 	}
 
-	ch, _, err := resolveChart(&up.ChartPathOptions, c.settings, spec.ChartRef)
+	ch, err := c.loadChart(up.SetRegistryClient, &up.ChartPathOptions, spec)
 	if err != nil {
 		return "", err
 	}
