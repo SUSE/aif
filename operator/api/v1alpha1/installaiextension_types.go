@@ -43,6 +43,12 @@ const (
 // The controller installs the Helm chart, which creates a Deployment + Service
 // serving the extension assets. The Helm release name is derived from the last
 // path segment of ChartURL.
+//
+// The https+tls combination is served by a direct-archive download path that does
+// NOT perform repository-index resolution, so Version is not honored there; require
+// the chartURL to point straight at a .tgz archive so this limitation can't silently
+// ignore Version. Use an oci:// URL for repository/version-based pulls with TLS.
+// +kubebuilder:validation:XValidation:rule="!(self.chartURL.startsWith('https://') && has(self.tls)) || self.chartURL.endsWith('.tgz')",message="an https:// chartURL combined with tls must point directly at a chart archive ending in .tgz (repository-style https+tls does not honor version); use an oci:// chartURL for repository/version resolution"
 type HelmSource struct {
 	// ChartURL is the Helm chart repository URL (oci:// or https://).
 	// The Helm release name is derived from the last path segment of this URL.

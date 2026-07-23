@@ -266,6 +266,13 @@ spec:
                     - chartURL
                     - version
                     type: object
+                    x-kubernetes-validations:
+                    - message: an https:// chartURL combined with tls must point directly
+                        at a chart archive ending in .tgz (repository-style https+tls
+                        does not honor version); use an oci:// chartURL for repository/version
+                        resolution
+                      rule: '!(self.chartURL.startsWith(''https://'') && has(self.tls))
+                        || self.chartURL.endsWith(''.tgz'')'
                   kind:
                     description: |-
                       Kind selects the source type for the UI extension assets.
