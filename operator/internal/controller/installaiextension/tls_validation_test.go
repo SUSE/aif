@@ -54,10 +54,21 @@ var _ = Describe("HelmSource.tls CEL validation", func() {
 		Expect(k8sClient.Create(ctx, o)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, o)).To(Succeed())
 	})
-	It("accepts insecureSkipVerify only", func() {
-		o := base(&aiplatformv1alpha1.HelmTLS{InsecureSkipVerify: true})
+	It("accepts insecureSkipVerify with acknowledgeInsecure", func() {
+		o := base(&aiplatformv1alpha1.HelmTLS{InsecureSkipVerify: true, AcknowledgeInsecure: true})
 		Expect(k8sClient.Create(ctx, o)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, o)).To(Succeed())
+	})
+	It("rejects insecureSkipVerify without acknowledgeInsecure", func() {
+		err := k8sClient.Create(ctx, base(&aiplatformv1alpha1.HelmTLS{InsecureSkipVerify: true}))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("insecureSkipVerify requires acknowledgeInsecure"))
+	})
+	It("ignores acknowledgeInsecure on its own (no insecureSkipVerify)", func() {
+		// acknowledgeInsecure alone does not satisfy the "at least one" rule.
+		err := k8sClient.Create(ctx, base(&aiplatformv1alpha1.HelmTLS{AcknowledgeInsecure: true}))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("at least one of caSecretRef"))
 	})
 	It("accepts clientTLSSecretRef only", func() {
 		o := base(&aiplatformv1alpha1.HelmTLS{
@@ -72,7 +83,7 @@ var _ = Describe("HelmSource.tls CEL validation", func() {
 		Expect(err.Error()).To(ContainSubstring("at least one of caSecretRef"))
 	})
 	It("rejects insecureSkipVerify + caSecretRef together", func() {
-		err := k8sClient.Create(ctx, base(&aiplatformv1alpha1.HelmTLS{InsecureSkipVerify: true, CASecretRef: ca}))
+		err := k8sClient.Create(ctx, base(&aiplatformv1alpha1.HelmTLS{InsecureSkipVerify: true, AcknowledgeInsecure: true, CASecretRef: ca}))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("caSecretRef must not be set when insecureSkipVerify is true"))
 	})

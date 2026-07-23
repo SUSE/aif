@@ -117,15 +117,25 @@ type LocalSecretRef struct {
 // HelmTLS configures TLS trust for pulling the chart from a private registry.
 // +kubebuilder:validation:XValidation:rule="has(self.caSecretRef) || (has(self.insecureSkipVerify) && self.insecureSkipVerify) || has(self.clientTLSSecretRef)",message="tls must set at least one of caSecretRef, insecureSkipVerify, or clientTLSSecretRef"
 // +kubebuilder:validation:XValidation:rule="!((has(self.insecureSkipVerify) && self.insecureSkipVerify) && has(self.caSecretRef))",message="caSecretRef must not be set when insecureSkipVerify is true"
+// +kubebuilder:validation:XValidation:rule="!(has(self.insecureSkipVerify) && self.insecureSkipVerify) || (has(self.acknowledgeInsecure) && self.acknowledgeInsecure)",message="insecureSkipVerify requires acknowledgeInsecure to be set to true"
 type HelmTLS struct {
 	// CASecretRef references a PEM CA bundle used to verify the registry certificate.
 	// +optional
 	CASecretRef *SecretKeyRef `json:"caSecretRef,omitempty"`
 
 	// InsecureSkipVerify disables registry TLS certificate verification.
-	// DANGEROUS: use only for testing; prefer caSecretRef.
+	// DANGEROUS: use only for testing; prefer caSecretRef. Requires
+	// acknowledgeInsecure=true, and the operator must be deployed with insecure
+	// registry TLS enabled (manager.allowInsecureRegistryTLS).
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+
+	// AcknowledgeInsecure is a required safety gate for insecureSkipVerify: it must
+	// be set to true whenever insecureSkipVerify is true. This makes disabling TLS
+	// verification an explicit, auditable choice rather than a single-field accident.
+	// It has no effect on its own.
+	// +optional
+	AcknowledgeInsecure bool `json:"acknowledgeInsecure,omitempty"`
 
 	// ClientTLSSecretRef references a kubernetes.io/tls secret (tls.crt, tls.key)
 	// for mutual TLS.

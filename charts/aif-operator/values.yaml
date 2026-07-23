@@ -60,6 +60,13 @@ manager:
   args:
     - --leader-elect
 
+  # allowInsecureRegistryTLS gates the InstallAIExtension
+  # spec.source.helm.tls.insecureSkipVerify option, which disables registry TLS
+  # certificate verification for the extension chart pull. Leave false in
+  # production; set to true only for testing/eval against a registry with an
+  # untrusted certificate. A CR must ALSO set tls.acknowledgeInsecure=true.
+  allowInsecureRegistryTLS: false
+
   env: []
 
   podAnnotations: {}
@@ -143,7 +150,8 @@ aiExtension:
       # tls:
       #   caSecretRef: { name: registry-ca, key: ca.crt }
       #   # clientTLSSecretRef: { name: registry-mtls }  # kubernetes.io/tls (mTLS)
-      #   # insecureSkipVerify: true                     # test only
+      #   # insecureSkipVerify: true                     # test only; also requires
+      #   # acknowledgeInsecure: true                    #   manager.allowInsecureRegistryTLS=true
   extension:
     name: "aif-ui"
     version: "2.0.0"

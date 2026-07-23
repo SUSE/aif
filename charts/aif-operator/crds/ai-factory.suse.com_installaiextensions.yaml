@@ -199,6 +199,13 @@ spec:
                           TLS optionally configures registry TLS trust for the chart pull. Applies to
                           oci:// and https:// registries. Omit to use the operator's system trust store.
                         properties:
+                          acknowledgeInsecure:
+                            description: |-
+                              AcknowledgeInsecure is a required safety gate for insecureSkipVerify: it must
+                              be set to true whenever insecureSkipVerify is true. This makes disabling TLS
+                              verification an explicit, auditable choice rather than a single-field accident.
+                              It has no effect on its own.
+                            type: boolean
                           caSecretRef:
                             description: CASecretRef references a PEM CA bundle used
                               to verify the registry certificate.
@@ -227,7 +234,9 @@ spec:
                           insecureSkipVerify:
                             description: |-
                               InsecureSkipVerify disables registry TLS certificate verification.
-                              DANGEROUS: use only for testing; prefer caSecretRef.
+                              DANGEROUS: use only for testing; prefer caSecretRef. Requires
+                              acknowledgeInsecure=true, and the operator must be deployed with insecure
+                              registry TLS enabled (manager.allowInsecureRegistryTLS).
                             type: boolean
                         type: object
                         x-kubernetes-validations:
@@ -239,6 +248,10 @@ spec:
                             is true
                           rule: '!((has(self.insecureSkipVerify) && self.insecureSkipVerify)
                             && has(self.caSecretRef))'
+                        - message: insecureSkipVerify requires acknowledgeInsecure
+                            to be set to true
+                          rule: '!(has(self.insecureSkipVerify) && self.insecureSkipVerify)
+                            || (has(self.acknowledgeInsecure) && self.acknowledgeInsecure)'
                       values:
                         additionalProperties:
                           x-kubernetes-preserve-unknown-fields: true

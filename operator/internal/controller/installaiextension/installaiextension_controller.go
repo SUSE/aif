@@ -68,7 +68,12 @@ type InstallAIExtensionReconciler struct {
 	Scheme             *runtime.Scheme
 	ExtensionNamespace string
 	ReadinessTimeout   time.Duration
-	rancherMgr         *rancher.Manager
+	// AllowInsecureRegistryTLS gates spec.source.helm.tls.insecureSkipVerify. When
+	// false (the default), a CR requesting insecureSkipVerify is failed at reconcile
+	// instead of pulling with TLS verification disabled. Set by the platform admin
+	// at deploy time (manager.allowInsecureRegistryTLS / --allow-insecure-registry-tls).
+	AllowInsecureRegistryTLS bool
+	rancherMgr               *rancher.Manager
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions,verbs=get;list;watch;create;update;patch;delete
@@ -239,6 +244,21 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	if helmSource == nil {
 		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
 			"InvalidSpec", "source.kind is Helm but source.helm is not set", ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{}, nil
+	}
+
+	// Operator-level gate: refuse to pull with TLS verification disabled unless the
+	// platform admin explicitly enabled it at deploy time. Checked before any chart
+	// work so we fail fast and never build an insecure client. The CR's
+	// acknowledgeInsecure (CEL-enforced) only proves author intent; this flag is the
+	// authority check.
+	if helmSource.TLS != nil && helmSource.TLS.InsecureSkipVerify && !r.AllowInsecureRegistryTLS {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"InsecureTLSNotAllowed",
+			"spec.source.helm.tls.insecureSkipVerify is set but the operator was not deployed with insecure "+
+				"registry TLS enabled (manager.allowInsecureRegistryTLS / --allow-insecure-registry-tls)",
+			ext.Generation)
 		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 		return ctrl.Result{}, nil
 	}

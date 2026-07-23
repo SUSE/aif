@@ -98,6 +98,10 @@ func main() {
 	var deploymentReadinessTimeout time.Duration
 	flag.DurationVar(&deploymentReadinessTimeout, "deployment-readiness-timeout", 5*time.Minute,
 		"Maximum time to wait for Helm-deployed extension pods to become ready.")
+	var allowInsecureRegistryTLS bool
+	flag.BoolVar(&allowInsecureRegistryTLS, "allow-insecure-registry-tls", false,
+		"Allow InstallAIExtension resources to set spec.source.helm.tls.insecureSkipVerify, which disables "+
+			"registry TLS certificate verification for the chart pull. Off by default; enable only for testing/eval.")
 	var apiBindAddr string
 	flag.StringVar(&apiBindAddr, "api-bind-address", ":8080", "The address the operator API binds to.")
 	opts := zap.Options{
@@ -217,10 +221,11 @@ func main() {
 	}
 
 	if err := (&aiextensionctrl.InstallAIExtensionReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		ExtensionNamespace: config.GetExtensionNamespace(),
-		ReadinessTimeout:   deploymentReadinessTimeout,
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		ExtensionNamespace:       config.GetExtensionNamespace(),
+		ReadinessTimeout:         deploymentReadinessTimeout,
+		AllowInsecureRegistryTLS: allowInsecureRegistryTLS,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
