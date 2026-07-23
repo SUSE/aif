@@ -99,6 +99,24 @@
 
       <!-- Main content area - always present to avoid layout jumps -->
       <div class="main-content">
+        <!-- Non-fatal warning: NGC repositories present but not contributing apps -->
+        <div v-if="catalogWarnings.length" class="catalog-warning-banner" role="status">
+          <i class="icon icon-warning" aria-hidden="true"></i>
+          <div class="catalog-warning-body">
+            <strong>{{ t('suseai.apps.repoWarningTitle', 'Some NVIDIA repositories couldn\'t be loaded') }}</strong>
+            <ul>
+              <li v-for="(w, i) in catalogWarnings" :key="i">{{ w }}</li>
+            </ul>
+          </div>
+          <button
+            type="button"
+            class="btn btn-sm role-link catalog-warning-dismiss"
+            :aria-label="t('suseai.apps.dismiss', 'Dismiss')"
+            @click="dismissWarnings"
+          >
+            <i class="icon icon-close" aria-hidden="true"></i>
+          </button>
+        </div>
         <!-- Results/Loading summary - fixed position to prevent jumps -->
         <div class="results-summary" aria-live="polite">
           <div v-if="filteredApps.length" class="results-text">
@@ -282,7 +300,7 @@ import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { fetchStaticCatalog } from '../services/static-catalog';
 
@@ -306,8 +324,9 @@ export default defineComponent({
     const selectedLabel = ref(''); // '' = all labels
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
+    const catalogWarnings = ref<string[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
-    const isStaticMode = ref(true); // resolved from the operator config in loadApps; static is the default
+    const isStaticMode = ref(false); // resolved from the operator config in loadApps; dynamic is the default
 
     // Library grouping is data-driven: the tabs reflect the libraries actually
     // present in the loaded catalog. This keeps the bundled catalog UX unchanged
@@ -459,8 +478,11 @@ export default defineComponent({
     const loadApps = async () => {
       try {
         await loadOperatorConfig();
+        // Recomputed below in dynamic mode; cleared up front so no stale warnings
+        // survive a mode switch or an early error path.
+        catalogWarnings.value = [];
 
-        // Static catalog mode (default): serve the bundled or remote catalog.
+        // Static catalog mode (opt-in): serve the bundled or remote catalog.
         isStaticMode.value = getUseStaticCatalog();
         if (isStaticMode.value) {
           // Static mode: the operator serves the catalog (bundled or remote); there is
@@ -472,14 +494,19 @@ export default defineComponent({
           return;
         }
 
-        // Dynamic mode: discover apps from live chart repositories (unchanged).
+        // Dynamic mode: discover apps from live chart repositories, then overlay
+        // curated metadata (labels + detail fields). The overlay is additive and
+        // never fatal — a curated-fetch failure just leaves apps un-enriched.
         const settings = await fetchSettingsOrNull();
         settingsData.value = settings;
-        const [suseApps, nvidiaApps] = await Promise.all([
+        const [suseApps, nvidiaResult, curated] = await Promise.all([
           fetchSuseAiApps(store, settings),
           fetchNvidiaApps(store, settings),
+          fetchCuratedOverlayOrEmpty(),
         ]);
-        items.value = [...suseApps, ...nvidiaApps];
+        const discovered = [...suseApps, ...nvidiaResult.apps];
+        items.value = overlayCuratedMetadata(discovered, curated);
+        catalogWarnings.value = buildWarnings(nvidiaResult.failedRepos);
       } catch (err) {
         console.error('Failed to load apps:', err);
         throw err;
@@ -513,6 +540,10 @@ export default defineComponent({
       await $router.push(route);
     };
 
+    // In-memory dismissal for the current page view only; re-running loadApps
+    // (navigation/refresh) recomputes catalogWarnings and may re-show the banner.
+    const dismissWarnings = () => { catalogWarnings.value = []; };
+
     // Initialize
     onMounted(() => {
       refresh();
@@ -531,6 +562,7 @@ export default defineComponent({
       repositoryOptions,
       viewMode,
       items,
+      catalogWarnings,
       filteredApps,
       settingsData,
       hasRegistryConfigured,
@@ -544,6 +576,7 @@ export default defineComponent({
       onImgError,
       failedLogos,
       goToSettings,
+      dismissWarnings,
       t,
       nvidiaLogo:      require('../assets/nvidia-logo.svg') as string,
       nvidiaLogoDark: require('../assets/nvidia-logo-light.svg') as string,
@@ -1258,6 +1291,21 @@ export default defineComponent({
       text-decoration: none;
     }
   }
+}
+
+.catalog-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--warning, #d1a300);
+  border-radius: 4px;
+  background: var(--warning-banner-bg, #fff8e1);
+
+  .catalog-warning-body { flex: 1; }
+  ul { margin: 4px 0 0; padding-left: 18px; }
+  .catalog-warning-dismiss { margin-left: auto; }
 }
 </style>
 
