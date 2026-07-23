@@ -26,7 +26,9 @@ import (
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -825,4 +827,76 @@ func equalAnyStringSlice(a, b []any) bool {
 		}
 	}
 	return true
+}
+
+// TestAppPullSecrets_GatedTeamRepoWiresHelmAuth asserts that a gated team-repo
+// ClusterRepo with spec.clientSecret wires helmSecretName and syncs it into the
+// Fleet namespace(s) via ensureFleetAuthSecret. This test exercises the chart-pull
+// auth flow for team repos (R3 requirement).
+func TestAppPullSecrets_GatedTeamRepoWiresHelmAuth(t *testing.T) {
+	const opNS = "aif-operator"
+
+	scheme := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add aiplatform scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	scheme.AddKnownTypeWithName(clusterRepoGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList",
+	}, &unstructured.UnstructuredList{})
+
+	// Team-repo ClusterRepo with gated access (spec.clientSecret pointing to cattle-system/ngc-helm-auth).
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(clusterRepoGVK)
+	repo.SetName("nvidia-omniverse")
+	_ = unstructured.SetNestedField(repo.Object, "https://helm.ngc.nvidia.com/nvidia/omniverse", "spec", "url")
+	_ = unstructured.SetNestedField(repo.Object, "ngc-helm-auth", "spec", "clientSecret", "name")
+	_ = unstructured.SetNestedField(repo.Object, "cattle-system", "spec", "clientSecret", "namespace")
+
+	// The basic-auth secret that Rancher stores in cattle-system for the gated team repo.
+	helmAuthSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-helm-auth", Namespace: "cattle-system"},
+		Type:       corev1.SecretTypeBasicAuth,
+		Data: map[string][]byte{
+			"username": []byte("$oauthtoken"),
+			"password": []byte("nvapi-chart-token"),
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(repo, helmAuthSecret).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+
+	// Test 1: resolveClusterRepo populates ClientSecret and ClientSecretNS.
+	repoInfo, err := r.resolveClusterRepo(context.Background(), "nvidia-omniverse")
+	if err != nil {
+		t.Fatalf("resolveClusterRepo: %v", err)
+	}
+	if repoInfo.ClientSecret != "ngc-helm-auth" {
+		t.Errorf("ClientSecret = %q, want %q", repoInfo.ClientSecret, "ngc-helm-auth")
+	}
+	if repoInfo.ClientSecretNS != "cattle-system" {
+		t.Errorf("ClientSecretNS = %q, want %q", repoInfo.ClientSecretNS, "cattle-system")
+	}
+
+	// Test 2: ensureFleetAuthSecret copies the secret into fleet-local.
+	if err := r.ensureFleetAuthSecret(context.Background(), "fleet-local", "cattle-system", "ngc-helm-auth"); err != nil {
+		t.Fatalf("ensureFleetAuthSecret: %v", err)
+	}
+	synced := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "fleet-local", Name: "ngc-helm-auth"}, synced); err != nil {
+		t.Fatalf("expected secret to be synced to fleet-local: %v", err)
+	}
+	if synced.Type != corev1.SecretTypeBasicAuth {
+		t.Errorf("synced secret type = %v, want %v", synced.Type, corev1.SecretTypeBasicAuth)
+	}
+	if string(synced.Data["username"]) != "$oauthtoken" {
+		t.Errorf("synced username = %q, want %q", string(synced.Data["username"]), "$oauthtoken")
+	}
+	if string(synced.Data["password"]) != "nvapi-chart-token" {
+		t.Errorf("synced password = %q, want %q", string(synced.Data["password"]), "nvapi-chart-token")
+	}
 }

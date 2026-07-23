@@ -33,12 +33,12 @@ credentials:
 
 # Static application catalog served to the AI Factory UI.
 appCatalog:
-  # useStaticCatalog: serve the bundled/remote static catalog (true, default) or
-  # discover apps from live chart repositories at runtime (false). This is a UI
+  # useStaticCatalog: serve the bundled/remote static catalog (true) or
+  # discover apps from live chart repositories at runtime (false, default). This is a UI
   # setting; the chart forwards it to the aif-ui extension automatically, so set it
   # here as a sibling of remoteUrl instead of via
   # aiExtension.source.helm.values.appCatalog.useStaticCatalog.
-  useStaticCatalog: true
+  useStaticCatalog: false
   # remoteUrl: optional URL to a remote catalog JSON document. When set, the
   # operator fetches this URL and serves it to the UI (with a safe fallback to
   # the operator's bundled catalog on failure). When empty, the bundled catalog

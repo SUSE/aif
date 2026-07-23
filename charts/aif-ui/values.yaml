@@ -72,6 +72,6 @@ operator:
   service:   "aif-operator"
 
 appCatalog:
-  # useStaticCatalog: serve the bundled, pre-curated catalog (true, default) or
-  # discover apps from live chart repositories at runtime (false).
-  useStaticCatalog: true
+  # useStaticCatalog: serve the bundled, pre-curated catalog (true) or
+  # discover apps from live chart repositories at runtime (false, default).
+  useStaticCatalog: false

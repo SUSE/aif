@@ -19,10 +19,14 @@ package settings
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"github.com/SUSE/aif-operator/internal/naming"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -154,8 +158,43 @@ const (
 	fleetGitRepoNamespace = "fleet-local"
 )
 
+// teamRepoMarkerLabel marks ClusterRepos the operator creates for NGC team
+// repos, so pruning can list-and-diff them by label (blueprint.go / pullsecrets.go
+// house pattern). Applied ONLY to team repos — never to the org/AC/SR/mirror
+// repos, which keep name-list pruning.
+const (
+	teamRepoMarkerLabel = "ai-factory.suse.com/nvidia-team-repo"
+	teamRepoMarkerValue = "true"
+
+	// clusterRepoNameMax is the DNS-1123 label cap for a ClusterRepo name.
+	clusterRepoNameMax = 63
+)
+
 var fleetGitRepoGVK = schema.GroupVersionKind{
 	Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepo",
+}
+
+// teamClusterRepoName derives a deterministic, DNS-1123-valid ClusterRepo name
+// from an NGC team-repo URL (e.g. .../nvidia/omniverse → "nvidia-omniverse").
+// Errors if the URL is not an NGC URL, or if the slug collides with an org
+// ClusterRepo name (the collision space is slugs, not URLs).
+func teamClusterRepoName(ngcURL string) (string, error) {
+	if !catalog.IsNGCURL(ngcURL) {
+		return "", fmt.Errorf("not an NGC URL: %q", ngcURL)
+	}
+	parsed, err := url.Parse(strings.TrimSpace(ngcURL))
+	if err != nil {
+		return "", fmt.Errorf("parse NGC URL %q: %w", ngcURL, err)
+	}
+	name := naming.TruncateDNS1123Label(naming.Slugify(strings.TrimPrefix(parsed.Path, "/")), clusterRepoNameMax)
+	if name == "" {
+		return "", fmt.Errorf("empty slug for NGC URL %q", ngcURL)
+	}
+	switch name {
+	case credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint:
+		return "", fmt.Errorf("team slug %q collides with org repo name", name)
+	}
+	return name, nil
 }
 
 // ensureWellKnownSecretRefs discovers operator-namespace registry secrets and
@@ -528,6 +567,9 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 	// Configured NVIDIA credentials are the signal that NVIDIA is in use. Without
 	// them, tear every NVIDIA repo + mirror back down.
 	if nvUser == nil || nvToken == nil {
+		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+			return err
+		}
 		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
 	}
 
@@ -542,12 +584,21 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		if secretName == "" {
 			// Refs are set but unreadable: nothing to authenticate the private
 			// mirror with, so tear the repos down rather than create a broken one.
+			// Also prune team repos orphaned from a prior connected mode.
+			if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+				return err
+			}
 			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
 		}
 		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
 			return err
 		}
 		if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName); err != nil {
+			return err
+		}
+		// Prune team repos on the connected→air-gap switch, but PRESERVE
+		// ngc-helm-auth — the air-gap mirror still consumes it.
+		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
 			return err
 		}
 		if changed {
@@ -563,18 +614,14 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 	// version specified". Sending no credential restores public access (this also
 	// matches what the UI extension creates, so the two reconcilers agree instead
 	// of fighting over the blueprint repo's clientSecret).
-	//
-	// Because both repos are anonymous, the ngc-helm-auth mirror is unused here
-	// (HelmOp helmSecretName is derived from the repo's now-empty clientSecret, so
-	// nothing consumes it). Delete any copy left from a previous air-gap config so
-	// it can't go stale.
-	if err := r.deleteAuthSecret(ctx, credentials.AuthSecretNvidia); err != nil {
-		return err
-	}
 	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, ""); err != nil {
 		return err
 	}
-	return r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, "")
+	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, ""); err != nil {
+		return err
+	}
+	// Connected-mode NGC team repos (public anonymous, gated ngc-helm-auth).
+	return r.reconcileNGCTeamRepos(ctx, s.Namespace, nvUser, nvToken)
 }
 
 // pruneRegistryRepos deletes the given ClusterRepos and the registry's
@@ -586,4 +633,129 @@ func (r *SettingsReconciler) pruneRegistryRepos(ctx context.Context, authSecretN
 		}
 	}
 	return r.deleteAuthSecret(ctx, authSecretName)
+}
+
+// applyTeamClusterRepo applies a ClusterRepo for an NGC team repo, stamped with
+// the team marker label so pruning can find it. clientSecretName is "" for
+// public repos (anonymous). Host guard (S1): a secret is only ever attached to
+// a helm.ngc.nvidia.com URL.
+func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngcURL, clientSecretName string) error {
+	repo := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "catalog.cattle.io/v1",
+			"kind":       "ClusterRepo",
+			"metadata": map[string]any{
+				"name":   name,
+				"labels": map[string]any{teamRepoMarkerLabel: teamRepoMarkerValue},
+			},
+			"spec": map[string]any{
+				"url": ngcURL,
+			},
+		},
+	}
+	if clientSecretName != "" {
+		if !catalog.IsNGCURL(ngcURL) {
+			return fmt.Errorf("refusing to attach clientSecret to non-NGC URL %q", ngcURL)
+		}
+		_ = unstructured.SetNestedField(repo.Object, clientSecretName, "spec", "clientSecret", "name")
+		_ = unstructured.SetNestedField(repo.Object, "cattle-system", "spec", "clientSecret", "namespace")
+	}
+	return r.Patch(ctx, repo, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings"))
+}
+
+// reconcileNGCTeamRepos provisions the connected-mode NGC team-repo ClusterRepos
+// from the embedded catalog: public repos anonymously, gated repos with the
+// ngc-helm-auth clientSecret. It writes ngc-helm-auth once (capturing rotation),
+// then force-updates every gated repo when the credential changed. Finally it
+// prunes any marker-labelled repo no longer desired.
+//
+// When refs are set but unreadable (secretName == ""), public repos are still
+// created (anonymous), but gated repos are skipped and pruned rather than created
+// with a dangling clientSecret.
+func (r *SettingsReconciler) reconcileNGCTeamRepos(
+	ctx context.Context,
+	namespace string,
+	nvUser, nvToken *aiplatformv1alpha1.SecretKeyRef,
+) error {
+	teams := catalog.ClassifyNGCTeamRepos()
+
+	// Resolve ngc-helm-auth ONCE, capturing whether the credential rotated
+	// (`changed`) before the mirror is overwritten. Only needed when there is
+	// ≥1 gated repo to consume it.
+	secretName := ""
+	changed := false
+	if len(teams.Gated) > 0 {
+		var err error
+		secretName, changed, err = r.applyRegistryAuthSecret(ctx, namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
+		if err != nil {
+			return err
+		}
+	}
+
+	// ngc-helm-auth must exist on-cluster IFF ≥1 gated repo will consume it with
+	// readable creds. Delete any stale mirror when there are no gated repos, or
+	// when the credentials could not be resolved (secretName == "") — no gated
+	// repo is created in that case, so a lingering secret has no consumer.
+	if secretName == "" {
+		if err := r.deleteAuthSecret(ctx, credentials.AuthSecretNvidia); err != nil {
+			return err
+		}
+	}
+
+	keep := map[string]bool{}
+
+	// Public team repos: always anonymous.
+	for _, u := range teams.Public {
+		name, err := teamClusterRepoName(u)
+		if err != nil {
+			return err
+		}
+		if err := r.applyTeamClusterRepo(ctx, name, u, ""); err != nil {
+			return err
+		}
+		keep[name] = true
+	}
+
+	// Gated team repos: only when the auth secret resolved. Force-update every
+	// gated repo when the credential rotated.
+	if secretName != "" {
+		for _, u := range teams.Gated {
+			name, err := teamClusterRepoName(u)
+			if err != nil {
+				return err
+			}
+			if err := r.applyTeamClusterRepo(ctx, name, u, secretName); err != nil {
+				return err
+			}
+			keep[name] = true
+			if changed {
+				if err := r.forceUpdateClusterRepo(ctx, name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return r.pruneTeamRepos(ctx, keep)
+}
+
+// pruneTeamRepos deletes every marker-labelled team ClusterRepo whose name is
+// not in keep. List-and-diff by the specific team marker — never by the
+// broad managed-by label, and never touching org/AC/SR repos.
+func (r *SettingsReconciler) pruneTeamRepos(ctx context.Context, keep map[string]bool) error {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList"})
+	if err := r.List(ctx, list, client.MatchingLabels{teamRepoMarkerLabel: teamRepoMarkerValue}); err != nil {
+		return fmt.Errorf("list team ClusterRepos: %w", err)
+	}
+	for i := range list.Items {
+		name := list.Items[i].GetName()
+		if keep[name] {
+			continue
+		}
+		if err := r.deleteClusterRepo(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
