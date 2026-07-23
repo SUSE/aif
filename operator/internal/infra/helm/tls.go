@@ -44,7 +44,13 @@ func defaultTransportClone(cfg *tls.Config) *http.Transport {
 }
 
 // ociRegistryClient returns the registry client for an OCI pull, applying
-// in-memory basic auth and/or TLS. Returns c.registry when neither is set.
+// in-memory basic auth and/or TLS. Returns the shared c.registry (which may carry
+// an ambient/previously-established login) only when neither auth nor TLS is set.
+//
+// When auth or TLS is set it builds a FRESH registry.Client that starts with no
+// ambient login — any credentials must come from the auth argument. This is
+// intentional (an explicit tls/auth CR is expected to also carry the auth it needs),
+// but it means a custom-CA-only pull does not inherit a pre-existing login.
 func (c *helmClient) ociRegistryClient(auth *RegistryAuth, tlsCfg *tls.Config) (*registry.Client, error) {
 	if auth == nil && tlsCfg == nil {
 		return c.registry, nil
