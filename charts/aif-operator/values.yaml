@@ -5,6 +5,12 @@ global:
 nameOverride: ""
 fullnameOverride: ""
 
+# Namespace on the control cluster where AIWorkload CRs are stored. Kept separate
+# from the operator release namespace so workload records have independent RBAC and
+# quota boundaries. A workload's deployment target is set per-workload via
+# Spec.TargetNamespace and is unaffected by this value.
+workloadNamespace: "aif-workloads"
+
 # Credentials for SUSE Application Collection, NVIDIA NGC, and
 # SUSE Registry artifact repositories. If not specified, those
 # credentials must be created out-of-band and via Settings

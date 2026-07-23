@@ -67,6 +67,8 @@ spec:
               value: {{ include "aif-operator.fullname" . | quote }}
             - name: EXTENSION_NAMESPACE
               value: {{ include "aif-operator.extensionsNamespace" . | quote }}
+            - name: WORKLOAD_NAMESPACE
+              value: {{ include "aif-operator.workloadNamespace" . | quote }}
             - name: CHART_VERSION
               value: {{ .Chart.Version | quote }}
           {{- range .Values.manager.env }}

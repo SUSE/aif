@@ -13,10 +13,13 @@ COPY api/ api/
 COPY internal/ internal/
 
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o manager cmd/main.go
+# One-shot AIWorkload namespace migration tool (run out-of-band as a Job).
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -o migrate cmd/migrate/main.go
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/migrate .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
