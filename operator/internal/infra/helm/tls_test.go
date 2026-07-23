@@ -42,7 +42,7 @@ func TestDefaultTransportClone(t *testing.T) {
 func TestOCIRegistryClient_NoAuthNoTLSReturnsDefault(t *testing.T) {
 	def := &registry.Client{}
 	c := &helmClient{settings: cli.New(), registry: def}
-	got, err := c.ociRegistryClient(nil, nil, false)
+	got, err := c.ociRegistryClient(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestOCIRegistryClient_NoAuthNoTLSReturnsDefault(t *testing.T) {
 func TestOCIRegistryClient_WithTLSBuildsFresh(t *testing.T) {
 	def := &registry.Client{}
 	c := &helmClient{settings: cli.New(), registry: def}
-	got, err := c.ociRegistryClient(nil, &tls.Config{InsecureSkipVerify: true}, false)
+	got, err := c.ociRegistryClient(nil, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestOCIRegistryClient_WithTLSBuildsFresh(t *testing.T) {
 func TestOCIRegistryClient_WithAuthBuildsFresh(t *testing.T) {
 	def := &registry.Client{}
 	c := &helmClient{settings: cli.New(), registry: def}
-	got, err := c.ociRegistryClient(&RegistryAuth{Username: "u", Password: "p"}, nil, false)
+	got, err := c.ociRegistryClient(&RegistryAuth{Username: "u", Password: "p"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,19 +114,5 @@ func TestLoadChartHTTPSWithTLS_Handshake(t *testing.T) {
 	}
 	if isTLSErr(err) {
 		t.Fatalf("unexpected TLS error with skip-verify: %v", err)
-	}
-}
-
-func TestOCIRegistryClient_PlainHTTPBuildsFresh(t *testing.T) {
-	def := &registry.Client{}
-	c := &helmClient{settings: cli.New(), registry: def}
-	// plainHTTP alone (no auth, no tls) must still build a fresh client, not the
-	// default HTTPS client.
-	got, err := c.ociRegistryClient(nil, nil, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got == def {
-		t.Fatalf("expected a fresh client when plainHTTP is set")
 	}
 }

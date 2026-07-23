@@ -144,7 +144,6 @@ aiExtension:
       #   caSecretRef: { name: registry-ca, key: ca.crt }
       #   # clientTLSSecretRef: { name: registry-mtls }  # kubernetes.io/tls (mTLS)
       #   # insecureSkipVerify: true                     # test only
-      # plainHTTP: false               # OCI over http:// (do NOT combine with tls)
   extension:
     name: "aif-ui"
     version: "2.0.0"

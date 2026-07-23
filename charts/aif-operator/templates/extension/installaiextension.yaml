@@ -20,9 +20,6 @@ spec:
       tls:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.aiExtension.source.helm.plainHTTP }}
-      plainHTTP: true
-      {{- end }}
       {{- /* Forward the operator-level appCatalog.useStaticCatalog to the aif-ui
              chart as a convenience alias, UNLESS the user set it explicitly under
              aiExtension.source.helm.values. Use a presence check (hasKey), not a

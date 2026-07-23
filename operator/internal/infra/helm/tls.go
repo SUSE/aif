@@ -45,14 +45,11 @@ func defaultTransportClone(cfg *tls.Config) *http.Transport {
 
 // ociRegistryClient returns the registry client for an OCI pull, applying
 // in-memory basic auth and/or TLS. Returns c.registry when neither is set.
-func (c *helmClient) ociRegistryClient(auth *RegistryAuth, tlsCfg *tls.Config, plainHTTP bool) (*registry.Client, error) {
-	if auth == nil && tlsCfg == nil && !plainHTTP {
+func (c *helmClient) ociRegistryClient(auth *RegistryAuth, tlsCfg *tls.Config) (*registry.Client, error) {
+	if auth == nil && tlsCfg == nil {
 		return c.registry, nil
 	}
 	opts := []registry.ClientOption{registry.ClientOptDebug(c.settings.Debug)}
-	if plainHTTP {
-		opts = append(opts, registry.ClientOptPlainHTTP())
-	}
 	if tlsCfg != nil {
 		opts = append(opts, registry.ClientOptHTTPClient(&http.Client{Transport: defaultTransportClone(tlsCfg)}))
 	}
@@ -94,7 +91,7 @@ func (c *helmClient) loadChartHTTPSWithTLS(ref string, auth *RegistryAuth, tlsCf
 func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
 	ref := spec.ChartRef
 	if strings.HasPrefix(ref, ociSchemePrefix) {
-		reg, err := c.ociRegistryClient(spec.RegistryAuth, spec.TLSConfig, spec.PlainHTTP)
+		reg, err := c.ociRegistryClient(spec.RegistryAuth, spec.TLSConfig)
 		if err != nil {
 			return nil, err
 		}

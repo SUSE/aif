@@ -47,9 +47,6 @@ type ReleaseSpec struct {
 	RegistryAuth *RegistryAuth
 	// TLSConfig optionally supplies registry TLS trust (private CA / mTLS / skip-verify). In-memory only.
 	TLSConfig *tls.Config
-	// PlainHTTP pulls from an OCI registry over plain http:// (credentials sent
-	// in cleartext). Opt-in; OCI only.
-	PlainHTTP bool
 }
 
 // RegistryAuth carries resolved chart-pull credentials. Never logged or persisted.

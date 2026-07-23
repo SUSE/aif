@@ -292,9 +292,6 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	if helmSource.TLS != nil && helmSource.TLS.InsecureSkipVerify {
 		logger.Info("WARNING: insecureSkipVerify is enabled for the extension chart registry; TLS certificate verification is disabled")
 	}
-	if helmSource.PlainHTTP {
-		logger.Info("WARNING: plainHTTP is enabled for the extension chart registry; registry credentials are sent unencrypted over HTTP")
-	}
 
 	releaseSpec := helmClient.ReleaseSpec{
 		Name:      releaseName,
@@ -312,7 +309,6 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	if tlsCfg != nil {
 		releaseSpec.TLSConfig = tlsCfg
 	}
-	releaseSpec.PlainHTTP = helmSource.PlainHTTP
 
 	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
 		setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionFalse,

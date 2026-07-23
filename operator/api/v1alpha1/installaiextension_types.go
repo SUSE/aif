@@ -43,8 +43,6 @@ const (
 // The controller installs the Helm chart, which creates a Deployment + Service
 // serving the extension assets. The Helm release name is derived from the last
 // path segment of ChartURL.
-// +kubebuilder:validation:XValidation:rule="!(has(self.plainHTTP) && self.plainHTTP) || self.chartURL.startsWith('oci://')",message="plainHTTP is only supported for oci:// chart URLs"
-// +kubebuilder:validation:XValidation:rule="!((has(self.plainHTTP) && self.plainHTTP) && has(self.tls))",message="tls must not be set when plainHTTP is true"
 type HelmSource struct {
 	// ChartURL is the Helm chart repository URL (oci:// or https://).
 	// The Helm release name is derived from the last path segment of this URL.
@@ -69,13 +67,6 @@ type HelmSource struct {
 	// oci:// and https:// registries. Omit to use the operator's system trust store.
 	// +optional
 	TLS *HelmTLS `json:"tls,omitempty"`
-
-	// PlainHTTP allows pulling from an OCI registry served over plain http://.
-	// DANGEROUS: when auth is also set, registry credentials are sent unencrypted.
-	// Only valid for oci:// chart URLs and mutually exclusive with tls. Use tls for
-	// production registries.
-	// +optional
-	PlainHTTP bool `json:"plainHTTP,omitempty"`
 }
 
 // HelmAuth selects one registry authentication method for the chart pull.
