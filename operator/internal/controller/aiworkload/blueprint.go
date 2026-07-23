@@ -23,7 +23,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -42,11 +41,11 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
+	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 )
 
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
-var nonAlphanumBPRE = regexp.MustCompile(`[^a-z0-9]+`)
 
 // errClusterRepoNotReady marks a ClusterRepo lookup that failed because the
 // repo does not exist yet or has no usable URL — typically because its backing
@@ -84,7 +83,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	if len(w.Spec.FleetBundleNames) == 0 {
 		names := make([]string, 0, len(bp.Spec.Components))
 		for _, c := range bp.Spec.Components {
-			name := truncateName(w.Name+"-"+slugifyBP(c.ChartName), 63)
+			name := naming.TruncateDNS1123Label(w.Name+"-"+naming.Slugify(c.ChartName), 63)
 			names = append(names, name)
 		}
 		w.Spec.FleetBundleNames = names
@@ -920,39 +919,7 @@ func bpCRName(familyName, version string) string {
 	if i := strings.IndexByte(v, '+'); i >= 0 {
 		v = v[:i]
 	}
-	return slugifyBP(familyName) + "-" + strings.ReplaceAll(v, ".", "-")
-}
-
-func slugifyBP(s string) string {
-	s = strings.ToLower(s)
-	s = nonAlphanumBPRE.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	return s
-}
-
-// truncateName caps s to max characters as a VALID DNS-1123 label. A naive
-// s[:max] can cut mid-segment and leave a trailing '-' (rejected by the API
-// server, e.g. "...-system-c-") or collapse two distinct long names onto the
-// same prefix. When truncation is needed we trim any trailing '-' and append a
-// deterministic FNV-1a/base36 suffix so the result is always valid and distinct
-// inputs stay distinct. Inputs already within the limit are returned unchanged.
-// Mirrors cluster.pullSecretBundleName.
-func truncateName(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	const hashLen = 6
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(s))
-	suffix := strconv.FormatUint(uint64(h.Sum32()), 36)
-	if len(suffix) > hashLen {
-		suffix = suffix[:hashLen]
-	}
-	head := strings.TrimRight(s[:max-len(suffix)-1], "-")
-	if head == "" {
-		return suffix
-	}
-	return head + "-" + suffix
+	return naming.Slugify(familyName) + "-" + strings.ReplaceAll(v, ".", "-")
 }
 
 // injectNvidiaPullSecretRefs writes the ngc-secret reference into both common
