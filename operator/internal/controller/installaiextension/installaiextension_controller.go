@@ -73,7 +73,29 @@ type InstallAIExtensionReconciler struct {
 	// instead of pulling with TLS verification disabled. Set by the platform admin
 	// at deploy time (manager.allowInsecureRegistryTLS / --allow-insecure-registry-tls).
 	AllowInsecureRegistryTLS bool
-	rancherMgr               *rancher.Manager
+	// AllowedRegistryHosts optionally restricts which registry hosts the operator
+	// will contact (and send resolved credentials to) for a chart pull. Empty means
+	// all hosts are allowed. Set by the platform admin (manager.allowedRegistryHosts /
+	// --allowed-registry-hosts) to bound the CR-supplied chartURL and prevent
+	// credential exfiltration to an attacker-chosen registry (confused-deputy).
+	AllowedRegistryHosts []string
+	rancherMgr           *rancher.Manager
+}
+
+// registryHostAllowed reports whether the chart's registry host may be contacted.
+// An empty allowlist permits all hosts (opt-in hardening); when non-empty, host
+// must match an entry case-insensitively, compared against both the "host:port"
+// authority and the bare hostname so admins can list either form.
+func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string) bool {
+	if len(r.AllowedRegistryHosts) == 0 {
+		return true
+	}
+	for _, h := range r.AllowedRegistryHosts {
+		if strings.EqualFold(h, host) || strings.EqualFold(h, hostname) {
+			return true
+		}
+	}
+	return false
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions,verbs=get;list;watch;create;update;patch;delete
@@ -285,6 +307,20 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	if err != nil || (u.Scheme != "oci" && u.Scheme != "https") {
 		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
 			"InvalidSpec", fmt.Sprintf("unsupported chart URL: %s", helmSource.ChartURL), ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{}, nil
+	}
+
+	// Registry-host allowlist gate: bound the CR-supplied chartURL to admin-approved
+	// hosts. Checked before the Helm client is built or any auth Secret is read, so a
+	// disallowed host can never cause the operator to resolve and transmit credentials
+	// to an attacker-chosen registry (confused-deputy). Empty allowlist permits all.
+	if !r.registryHostAllowed(u.Host, u.Hostname()) {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"RegistryHostNotAllowed",
+			fmt.Sprintf("registry host %q is not permitted by the operator's registry host allowlist "+
+				"(manager.allowedRegistryHosts / --allowed-registry-hosts)", u.Host),
+			ext.Generation)
 		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 		return ctrl.Result{}, nil
 	}

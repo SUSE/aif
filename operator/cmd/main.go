@@ -22,6 +22,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -102,6 +103,10 @@ func main() {
 	flag.BoolVar(&allowInsecureRegistryTLS, "allow-insecure-registry-tls", false,
 		"Allow InstallAIExtension resources to set spec.source.helm.tls.insecureSkipVerify, which disables "+
 			"registry TLS certificate verification for the chart pull. Off by default; enable only for testing/eval.")
+	var allowedRegistryHosts string
+	flag.StringVar(&allowedRegistryHosts, "allowed-registry-hosts", "",
+		"Comma-separated allowlist of registry hosts the operator may contact (and send credentials to) for "+
+			"extension chart pulls, e.g. \"harbor.example.com,ghcr.io\". Empty (default) allows all hosts.")
 	var apiBindAddr string
 	flag.StringVar(&apiBindAddr, "api-bind-address", ":8080", "The address the operator API binds to.")
 	opts := zap.Options{
@@ -220,12 +225,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	var allowedHosts []string
+	for _, h := range strings.Split(allowedRegistryHosts, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			allowedHosts = append(allowedHosts, h)
+		}
+	}
+
 	if err := (&aiextensionctrl.InstallAIExtensionReconciler{
 		Client:                   mgr.GetClient(),
 		Scheme:                   mgr.GetScheme(),
 		ExtensionNamespace:       config.GetExtensionNamespace(),
 		ReadinessTimeout:         deploymentReadinessTimeout,
 		AllowInsecureRegistryTLS: allowInsecureRegistryTLS,
+		AllowedRegistryHosts:     allowedHosts,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)

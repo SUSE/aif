@@ -67,6 +67,16 @@ manager:
   # untrusted certificate. A CR must ALSO set tls.acknowledgeInsecure=true.
   allowInsecureRegistryTLS: false
 
+  # allowedRegistryHosts restricts which registry hosts the operator may contact
+  # (and send credentials to) when pulling the extension chart. Empty (default)
+  # allows any host. Set to your registry host(s) to bound the CR-supplied
+  # chartURL and prevent credentials from being sent to an attacker-chosen
+  # registry. Match "host" or "host:port"; e.g.:
+  #   allowedRegistryHosts:
+  #     - harbor.example.com
+  #     - ghcr.io
+  allowedRegistryHosts: []
+
   env: []
 
   podAnnotations: {}

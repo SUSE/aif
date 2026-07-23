@@ -38,6 +38,9 @@ spec:
           {{- if .Values.manager.allowInsecureRegistryTLS }}
             - --allow-insecure-registry-tls
           {{- end }}
+          {{- with .Values.manager.allowedRegistryHosts }}
+            - --allowed-registry-hosts={{ join "," . }}
+          {{- end }}
             - --api-bind-address=:{{ .Values.api.port }}
           ports:
             - name: http

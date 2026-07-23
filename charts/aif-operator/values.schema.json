@@ -53,6 +53,7 @@
         "imagePullSecrets": { "type": "array", "default": [] },
         "args": { "type": "array", "default": ["--leader-elect"] },
         "allowInsecureRegistryTLS": { "type": "boolean", "default": false, "description": "Allow InstallAIExtension tls.insecureSkipVerify (disables registry TLS verification for the chart pull). Off by default; test/eval only." },
+        "allowedRegistryHosts": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Allowlist of registry hosts the operator may contact (and send credentials to) for extension chart pulls. Empty allows all hosts." },
         "env": { "type": "array", "default": [] },
         "podAnnotations": { "type": "object", "default": {} },
         "podSecurityContext": { "type": "object" },
