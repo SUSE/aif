@@ -348,7 +348,6 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	if helmSource.TLS != nil && helmSource.TLS.InsecureSkipVerify {
 		logger.Info("WARNING: insecureSkipVerify is enabled for the extension chart registry; TLS certificate verification is disabled")
 	}
-
 	releaseSpec := helmClient.ReleaseSpec{
 		Name:      releaseName,
 		Namespace: namespace,
@@ -367,9 +366,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	}
 
 	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionFalse,
-			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeHelmInstalled,
+			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -403,9 +401,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 			return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 		} else if time.Since(waitingSince) > r.ReadinessTimeout {
 			msg := fmt.Sprintf("Deployment not ready after %s: %s", r.ReadinessTimeout, deployStatus.Message)
-			setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
-				"TimedOut", msg, ext.Generation)
-			ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+			setTerminalFailure(ext, conditionTypeDeploymentReady, "TimedOut", msg)
 			return ctrl.Result{}, nil
 		}
 		setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
@@ -447,9 +443,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Available", fmt.Sprintf("Service URL: %s", svcURL), ext.Generation)
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, svcURL); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -457,9 +452,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Created", "ClusterRepo created", ext.Generation)
 
 	if err := r.rancherMgr.EnsureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("UIPlugin failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -491,9 +485,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	}
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, ""); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -501,9 +494,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 		"Created", "ClusterRepo created for git source", ext.Generation)
 
 	if err := r.ensureUIPluginGit(ctx, ext, rawBaseURL, namespace); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("UIPlugin install failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin install failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -640,6 +632,19 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 		Message:            message,
 		ObservedGeneration: generation,
 	})
+}
+
+// setTerminalFailure records a terminal reconcile failure: it sets the specific
+// sub-condition to False and mirrors the same reason/message onto the top-level Ready
+// condition, then marks the phase Failed. Mirroring keeps Ready from showing a stale
+// success while phase is Failed (a pull/deployment/Rancher failure otherwise updated only
+// its own sub-condition). Sites that already set Ready directly do not need this.
+func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, message string) {
+	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse, reason, message, ext.Generation)
+	if condType != conditionTypeReady {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, message, ext.Generation)
+	}
+	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 }
 
 func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) {
