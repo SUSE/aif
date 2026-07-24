@@ -64,3 +64,13 @@ func (c *IndexCache) Set(key IndexCacheKey, entry *IndexCacheEntry) {
 
 	c.items[key] = entry
 }
+
+// Delete removes a cached index entry. It is a no-op if the key is absent.
+// Used to invalidate a stale index (e.g. after an extension upgrade) so the next
+// lookup refetches instead of serving the pre-upgrade index for the whole TTL.
+func (c *IndexCache) Delete(key IndexCacheKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.items, key)
+}
