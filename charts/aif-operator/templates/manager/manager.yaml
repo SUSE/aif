@@ -72,15 +72,49 @@ spec:
           {{- range .Values.manager.env }}
             - {{ toYaml . | nindent 14 | trim }}
           {{- end }}
+          {{- with .Values.rancherCatalog }}
+          {{- if .url }}
+            - name: RANCHER_CATALOG_URL
+              value: {{ .url | quote }}
+          {{- end }}
+          {{- if or .token .tokenSecret.name }}
+            - name: RANCHER_CATALOG_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .tokenSecret.name | default (printf "%s-rancher-catalog" (include "aif-operator.fullname" $)) }}
+                  key: {{ .tokenSecret.key | default "token" }}
+          {{- end }}
+          {{- if .insecureSkipVerify }}
+            - name: RANCHER_CATALOG_INSECURE
+              value: "true"
+          {{- end }}
+          {{- if .caBundle }}
+            - name: RANCHER_CATALOG_CA_FILE
+              value: /etc/rancher-catalog/ca.crt
+          {{- end }}
+          {{- end }}
           volumeMounts:
             - mountPath: /home/nonroot/.cache
               name: helm-cache
+          {{- if .Values.rancherCatalog.caBundle }}
+            - name: rancher-catalog-ca
+              mountPath: /etc/rancher-catalog
+              readOnly: true
+          {{- end }}
       {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ include "aif-operator.fullname" . }}
       terminationGracePeriodSeconds: 30
       volumes:
         - emptyDir: {}
           name: helm-cache
+        {{- if .Values.rancherCatalog.caBundle }}
+        - name: rancher-catalog-ca
+          secret:
+            secretName: {{ include "aif-operator.fullname" . }}-rancher-catalog
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
       {{- with .Values.manager.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

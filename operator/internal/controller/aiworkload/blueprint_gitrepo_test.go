@@ -2,6 +2,7 @@ package aiworkload
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -96,7 +97,11 @@ func TestEnsureBlueprintHelmOp_GitRepoNoCatalogClient(t *testing.T) {
 	w.Name = "wl"
 	w.Spec.TargetClusters = []string{"local"}
 
-	if err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent"); err == nil {
+	err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent")
+	if err == nil {
 		t.Fatal("expected error when catalog client is not configured")
+	}
+	if !stderrors.Is(err, errCatalogClientNotConfigured) {
+		t.Fatalf("expected errCatalogClientNotConfigured, got %v", err)
 	}
 }

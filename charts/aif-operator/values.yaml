@@ -31,6 +31,34 @@ credentials:
     username: ""
     password: ""
 
+# Rancher catalog integration. REQUIRED to install charts from git-backed
+# ClusterRepos (spec.gitRepo): they have no HTTP/OCI URL, so the operator fetches
+# the chart from Rancher's Steve catalog API. HTTP/OCI ClusterRepos need none of
+# this.
+rancherCatalog:
+  # url: in-cluster Rancher API endpoint.
+  url: "https://rancher.cattle-system.svc"
+  # token: a Rancher API token (format "token-xxxxx:yyyyy"). REQUIRED for
+  # git-backed repos — Rancher's Steve API rejects the operator ServiceAccount
+  # token, so there is no implicit credential. Create one in Rancher under
+  # "Account & API Keys". When set, the chart stores it in a Secret. Leave empty
+  # to reference an existing Secret via tokenSecret, or to disable git-backed
+  # repo support (git-backed components then report a clear Ready=False status).
+  token: ""
+  # tokenSecret: reference an existing Secret holding the token instead of
+  # providing `token` inline. Takes precedence over `token` when name is set.
+  tokenSecret:
+    name: ""
+    key: "token"
+  # caBundle: PEM CA certificate(s) that signed Rancher's serving certificate.
+  # Rancher's in-cluster service typically uses a private CA that system roots do
+  # not trust, so this is required for TLS verification unless insecureSkipVerify
+  # is set. When empty, system roots are used.
+  caBundle: ""
+  # insecureSkipVerify: skip TLS verification of the Rancher API. Development
+  # only — do not use in production/air-gapped installs.
+  insecureSkipVerify: false
+
 # Static application catalog served to the AI Factory UI.
 appCatalog:
   # useStaticCatalog: serve the bundled/remote static catalog (true, default) or

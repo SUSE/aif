@@ -83,14 +83,12 @@ func buildCatalogClient(logger logr.Logger) aiworkloadctrl.RancherCatalogClient 
 	if baseURL == "" {
 		baseURL = rancher.DefaultBaseURL
 	}
+	// A Rancher API token is required: Rancher's Steve catalog API rejects the
+	// operator's ServiceAccount token, so there is no usable implicit credential.
 	token := os.Getenv("RANCHER_CATALOG_TOKEN")
 	if token == "" {
-		t, err := rancher.ServiceAccountToken()
-		if err != nil {
-			logger.Info("Rancher catalog client disabled: no token available; git-backed ClusterRepos will not be installable", "error", err.Error())
-			return nil
-		}
-		token = t
+		logger.Info("Rancher catalog client disabled: RANCHER_CATALOG_TOKEN not set; git-backed ClusterRepos will not be installable (set rancherCatalog.token)")
+		return nil
 	}
 	var caPEM []byte
 	if f := os.Getenv("RANCHER_CATALOG_CA_FILE"); f != "" {

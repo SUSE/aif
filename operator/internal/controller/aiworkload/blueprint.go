@@ -63,6 +63,13 @@ const (
 // Ready=False condition and auto-requeues instead of hard-failing.
 var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 
+// errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
+// cannot be deployed because no Rancher catalog client is configured (the
+// operator has no Rancher API token). This is a static misconfiguration, so
+// reconcile surfaces it as a Ready=False condition without requeuing — it clears
+// once the chart is reconfigured (which restarts the operator).
+var errCatalogClientNotConfigured = stderrors.New("rancher catalog client not configured")
+
 type clusterRepoInfo struct {
 	Kind           repoKind // how the repo serves charts (http/oci/git)
 	URL            string   // http/oci repos only
@@ -119,6 +126,16 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
 		}
 		if err != nil {
+			if stderrors.Is(err, errCatalogClientNotConfigured) {
+				// A git-backed component needs a Rancher API token the operator
+				// wasn't given. This is a static misconfiguration: surface a clear
+				// condition + Failed phase and stop (no requeue) — it recovers when
+				// the chart is reconfigured, which restarts the operator.
+				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set rancherCatalog.token in the aif-operator chart.", c.ChartName, c.ChartRepo)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{}, nil
+			}
 			if stderrors.Is(err, errClusterRepoNotReady) {
 				// The repo the component needs is missing — usually because its
 				// registry credentials are not configured. Surface a condition +

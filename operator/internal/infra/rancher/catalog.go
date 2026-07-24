@@ -27,16 +27,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
 
 // DefaultBaseURL is the in-cluster Rancher Steve endpoint.
 const DefaultBaseURL = "https://rancher.cattle-system.svc"
-
-// serviceAccountTokenPath is where the operator's projected SA token is mounted.
-const serviceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 // maxChartDownloadBytes bounds a chart download so a misbehaving endpoint can't
 // exhaust memory. Set well above the embedded-bundle ceiling so oversized charts
@@ -103,13 +99,4 @@ func (c *CatalogClient) FetchChart(ctx context.Context, repoName, chartName, ver
 			resp.Status, chartName, version, repoName, strings.TrimSpace(string(body)))
 	}
 	return body, nil
-}
-
-// ServiceAccountToken reads the operator's projected ServiceAccount token.
-func ServiceAccountToken() (string, error) {
-	b, err := os.ReadFile(serviceAccountTokenPath)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(b)), nil
 }

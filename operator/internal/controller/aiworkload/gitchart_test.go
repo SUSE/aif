@@ -47,9 +47,9 @@ func resourceByName(res []any, name string) (map[string]any, bool) {
 
 func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	tgz := makeChartTgz(t, map[string]string{
-		"rancher-ai-agent/Chart.yaml":            "apiVersion: v2\nname: rancher-ai-agent\nversion: 109.0.1\n",
-		"rancher-ai-agent/templates/cm.yaml":     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
-		"rancher-ai-agent/values.yaml":           "replicaCount: 1\n",
+		"rancher-ai-agent/Chart.yaml":        "apiVersion: v2\nname: rancher-ai-agent\nversion: 109.0.1\n",
+		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
+		"rancher-ai-agent/values.yaml":       "replicaCount: 1\n",
 	})
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "rancher-ai-agent", ChartVersion: "109.0.1"}
 	vals := map[string]any{"replicaCount": int64(2)}

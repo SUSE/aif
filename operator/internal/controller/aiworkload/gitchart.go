@@ -197,7 +197,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	gitOps bool,
 ) error {
 	if r.CatalogClient == nil {
-		return fmt.Errorf("git-backed ClusterRepo %q requires the Rancher catalog client, which is not configured", c.ChartRepo)
+		return fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
 	}
 	tgz, err := r.CatalogClient.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
 	if err != nil {

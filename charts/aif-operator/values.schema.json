@@ -5,108 +5,274 @@
     "global": {
       "type": "object",
       "properties": {
-        "imageRegistry": { "type": "string", "default": "" },
-        "imagePullSecrets": { "type": "array", "default": [] }
+        "imageRegistry": {
+          "type": "string",
+          "default": ""
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "default": []
+        }
       }
     },
-    "nameOverride": { "type": "string", "default": "" },
-    "fullnameOverride": { "type": "string", "default": "" },
+    "nameOverride": {
+      "type": "string",
+      "default": ""
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "default": ""
+    },
     "credentials": {
       "type": "object",
       "properties": {
         "applicationCollection": {
           "type": "object",
           "properties": {
-            "username": { "type": "string", "default": "" },
-            "password": { "type": "string", "default": "" }
+            "username": {
+              "type": "string",
+              "default": ""
+            },
+            "password": {
+              "type": "string",
+              "default": ""
+            }
           }
         },
         "nvidia": {
           "type": "object",
           "properties": {
-            "username": { "type": "string", "default": "" },
-            "password": { "type": "string", "default": "" }
+            "username": {
+              "type": "string",
+              "default": ""
+            },
+            "password": {
+              "type": "string",
+              "default": ""
+            }
           }
         },
         "suseRegistry": {
           "type": "object",
           "properties": {
-            "username": { "type": "string", "default": "" },
-            "password": { "type": "string", "default": "" }
+            "username": {
+              "type": "string",
+              "default": ""
+            },
+            "password": {
+              "type": "string",
+              "default": ""
+            }
           }
+        }
+      }
+    },
+    "rancherCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "default": "https://rancher.cattle-system.svc",
+          "description": "In-cluster Rancher API endpoint used to fetch charts from git-backed ClusterRepos."
+        },
+        "token": {
+          "type": "string",
+          "default": "",
+          "description": "Rancher API token (token-xxxxx:yyyyy). Required for git-backed ClusterRepos; Rancher's Steve API rejects the operator ServiceAccount token."
+        },
+        "tokenSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "default": "",
+              "description": "Existing Secret holding the Rancher API token. Takes precedence over token."
+            },
+            "key": {
+              "type": "string",
+              "default": "token",
+              "description": "Key within tokenSecret.name holding the token."
+            }
+          }
+        },
+        "caBundle": {
+          "type": "string",
+          "default": "",
+          "description": "PEM CA cert(s) that signed Rancher's serving certificate. Empty uses system roots."
+        },
+        "insecureSkipVerify": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip TLS verification of the Rancher API. Development only."
         }
       }
     },
     "manager": {
       "type": "object",
       "properties": {
-        "replicaCount": { "type": "integer", "default": 1, "minimum": 0 },
+        "replicaCount": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 0
+        },
         "image": {
           "type": "object",
           "properties": {
-            "registry": { "type": "string", "default": "ghcr.io" },
-            "repository": { "type": "string", "default": "suse/aif-operator" },
-            "tag": { "type": "string", "default": "" },
-            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "default": "IfNotPresent" }
+            "registry": {
+              "type": "string",
+              "default": "ghcr.io"
+            },
+            "repository": {
+              "type": "string",
+              "default": "suse/aif-operator"
+            },
+            "tag": {
+              "type": "string",
+              "default": ""
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            }
           }
         },
-        "imagePullSecrets": { "type": "array", "default": [] },
-        "args": { "type": "array", "default": ["--leader-elect"] },
-        "env": { "type": "array", "default": [] },
-        "podAnnotations": { "type": "object", "default": {} },
-        "podSecurityContext": { "type": "object" },
-        "securityContext": { "type": "object" },
-        "resources": { "type": "object" },
-        "probes": { "type": "object" },
-        "nodeSelector": { "type": "object", "default": {} },
-        "tolerations": { "type": "array", "items": { "type": "object" }, "default": [] },
-        "affinity": { "type": "object", "default": {} }
+        "imagePullSecrets": {
+          "type": "array",
+          "default": []
+        },
+        "args": {
+          "type": "array",
+          "default": [
+            "--leader-elect"
+          ]
+        },
+        "env": {
+          "type": "array",
+          "default": []
+        },
+        "podAnnotations": {
+          "type": "object",
+          "default": {}
+        },
+        "podSecurityContext": {
+          "type": "object"
+        },
+        "securityContext": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "probes": {
+          "type": "object"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "default": {}
+        },
+        "tolerations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        },
+        "affinity": {
+          "type": "object",
+          "default": {}
+        }
       }
     },
     "rbacHelpers": {
       "type": "object",
       "properties": {
-        "enable": { "type": "boolean", "default": false }
+        "enable": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "metrics": {
       "type": "object",
       "properties": {
-        "enable": { "type": "boolean", "default": true },
-        "port": { "type": "integer", "default": 8443 }
+        "enable": {
+          "type": "boolean",
+          "default": true
+        },
+        "port": {
+          "type": "integer",
+          "default": 8443
+        }
       }
     },
     "api": {
       "type": "object",
       "properties": {
-        "port": { "type": "integer", "default": 8080 }
+        "port": {
+          "type": "integer",
+          "default": 8080
+        }
       }
     },
     "aiExtension": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean", "default": true },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
         "source": {
           "type": "object",
           "properties": {
-            "kind": { "type": "string", "enum": ["Helm"], "default": "Helm" },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "Helm"
+              ],
+              "default": "Helm"
+            },
             "helm": {
               "type": "object",
-              "required": ["chartURL", "version"],
+              "required": [
+                "chartURL",
+                "version"
+              ],
               "properties": {
-                "chartURL": { "type": "string" },
-                "version": { "type": "string" },
-                "values": { "type": "object", "additionalProperties": true, "default": {} }
+                "chartURL": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "values": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "default": {}
+                }
               }
             }
           }
         },
         "extension": {
           "type": "object",
-          "required": ["name", "version"],
+          "required": [
+            "name",
+            "version"
+          ],
           "properties": {
-            "name": { "type": "string" },
-            "version": { "type": "string" }
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
           }
         },
         "cleanup": {
@@ -115,15 +281,38 @@
             "image": {
               "type": "object",
               "properties": {
-                "registry": { "type": "string", "default": "registry.suse.com" },
-                "repository": { "type": "string", "default": "suse/kubectl" },
-                "tag": { "type": "string", "default": "1.35" },
-                "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "default": "IfNotPresent" }
+                "registry": {
+                  "type": "string",
+                  "default": "registry.suse.com"
+                },
+                "repository": {
+                  "type": "string",
+                  "default": "suse/kubectl"
+                },
+                "tag": {
+                  "type": "string",
+                  "default": "1.35"
+                },
+                "pullPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ],
+                  "default": "IfNotPresent"
+                }
               }
             },
-            "resources": { "type": "object" },
-            "podSecurityContext": { "type": "object" },
-            "securityContext": { "type": "object" }
+            "resources": {
+              "type": "object"
+            },
+            "podSecurityContext": {
+              "type": "object"
+            },
+            "securityContext": {
+              "type": "object"
+            }
           }
         }
       }
@@ -131,7 +320,10 @@
     "defaultBlueprints": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean", "default": true }
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
       }
     },
     "appCatalog": {
@@ -162,15 +354,38 @@
         "image": {
           "type": "object",
           "properties": {
-            "registry": { "type": "string", "default": "registry.suse.com" },
-            "repository": { "type": "string", "default": "suse/kubectl" },
-            "tag": { "type": "string", "default": "1.35" },
-            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "default": "IfNotPresent" }
+            "registry": {
+              "type": "string",
+              "default": "registry.suse.com"
+            },
+            "repository": {
+              "type": "string",
+              "default": "suse/kubectl"
+            },
+            "tag": {
+              "type": "string",
+              "default": "1.35"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            }
           }
         },
-        "resources": { "type": "object" },
-        "podSecurityContext": { "type": "object" },
-        "securityContext": { "type": "object" }
+        "resources": {
+          "type": "object"
+        },
+        "podSecurityContext": {
+          "type": "object"
+        },
+        "securityContext": {
+          "type": "object"
+        }
       }
     }
   }
