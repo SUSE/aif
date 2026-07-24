@@ -17,10 +17,17 @@ limitations under the License.
 package aiworkload
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"path"
+	"strings"
+	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,16 +44,21 @@ type RancherCatalogClient interface {
 	FetchChart(ctx context.Context, repoName, chartName, version string) ([]byte, error)
 }
 
-// maxFleetBundleChartBytes caps the embedded chart size. Fleet stores bundle
-// resources in the Bundle/BundleDeployment objects, which are subject to an
-// etcd-backed size limit; oversized content is rejected downstream, so we fail
-// early with an actionable message instead.
+// maxFleetBundleChartBytes caps the fetched chart archive size. Fleet stores the
+// unpacked chart files in the Bundle/BundleDeployment objects, which are subject
+// to an etcd-backed size limit; we guard on the (compressed) archive size — a
+// close proxy for the gzipped bundle Fleet ultimately stores — and fail early
+// with an actionable message instead of letting the API server reject it.
 const maxFleetBundleChartBytes = 1 << 20 // 1 MiB
 
-// buildGitChartBundle assembles a self-contained Fleet Bundle that carries the
-// chart tgz as a base64 resource, with a helm spec mirroring the one produced
+// buildGitChartBundle assembles a self-contained Fleet Bundle from a fetched
+// chart archive. Fleet does NOT unpack a .tgz supplied as a single bundle
+// resource — doing so yields a silent empty release — so the archive is expanded
+// into one bundle resource per chart file (path-preserving) with spec.helm.chart
+// pointing at the chart's root directory. The helm spec mirrors the one produced
 // for HelmOps (releaseName/takeOwnership/disablePreProcess/values) so a
-// git-backed component installs identically to an http/oci one.
+// git-backed component installs identically to an http/oci one. The chart version
+// is pinned by the fetched archive itself, so spec.helm.version is omitted.
 func buildGitChartBundle(bundleName, namespace string, tgz []byte,
 	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any) (*unstructured.Unstructured, error) {
 	if len(tgz) > maxFleetBundleChartBytes {
@@ -55,10 +67,14 @@ func buildGitChartBundle(bundleName, namespace string, tgz []byte,
 			c.ChartName, len(tgz), maxFleetBundleChartBytes)
 	}
 
+	resources, chartDir, err := chartTgzToBundleResources(tgz)
+	if err != nil {
+		return nil, fmt.Errorf("unpack chart %q: %w", c.ChartName, err)
+	}
+
 	helm := map[string]any{
-		// chart points at the embedded tgz resource below (relative path).
-		"chart":   "chart.tgz",
-		"version": c.ChartVersion,
+		// chart points at the unpacked chart directory carried in resources below.
+		"chart": chartDir,
 		// releaseName uses the chart name (not bundleName) so chart sub-resources
 		// templated as `{{ .Release.Name }}-foo` fit under the 63-char DNS-label
 		// limit — see ensureBlueprintHelmOp for the full rationale.
@@ -82,13 +98,54 @@ func buildGitChartBundle(bundleName, namespace string, tgz []byte,
 		targets = []any{}
 	}
 	_ = unstructured.SetNestedSlice(b.Object, targets, "spec", "targets")
-	resources := []any{map[string]any{
-		"name":     "chart.tgz",
-		"content":  base64.StdEncoding.EncodeToString(tgz),
-		"encoding": "base64",
-	}}
 	_ = unstructured.SetNestedSlice(b.Object, resources, "spec", "resources")
 	return b, nil
+}
+
+// chartTgzToBundleResources expands a Helm chart .tgz into Fleet bundle
+// resources — one entry per regular file, preserving the archive paths — and
+// returns the chart's top-level directory name for spec.helm.chart. UTF-8 files
+// are stored inline; binary files (e.g. icons) are base64-encoded.
+func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, err error) {
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return nil, "", fmt.Errorf("gzip: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("tar: %w", err)
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		name := path.Clean(h.Name)
+		if i := strings.IndexByte(name, '/'); i > 0 && chartDir == "" {
+			chartDir = name[:i]
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, "", fmt.Errorf("read %s: %w", name, err)
+		}
+		res := map[string]any{"name": name}
+		if utf8.Valid(data) {
+			res["content"] = string(data)
+		} else {
+			res["content"] = base64.StdEncoding.EncodeToString(data)
+			res["encoding"] = "base64"
+		}
+		resources = append(resources, res)
+	}
+	if chartDir == "" || len(resources) == 0 {
+		return nil, "", fmt.Errorf("no chart directory found in archive")
+	}
+	return resources, chartDir, nil
 }
 
 // splitWorkloadTargets returns Fleet target selectors split by workspace:

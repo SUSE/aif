@@ -46,8 +46,12 @@ func TestEnsureBlueprintHelmOp_GitRepoEmitsBundle(t *testing.T) {
 	repo := repoObj("rancher-charts", map[string]any{
 		"gitRepo": "https://git.rancher.io/charts", "gitBranch": "release-v2.14",
 	})
+	tgz := makeChartTgz(t, map[string]string{
+		"rancher-ai-agent/Chart.yaml":        "apiVersion: v2\nname: rancher-ai-agent\nversion: 109.0.1\n",
+		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
+	})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: fakeCatalog{tgz: []byte("tgz")}}
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: fakeCatalog{tgz: tgz}}
 
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"
@@ -63,13 +67,15 @@ func TestEnsureBlueprintHelmOp_GitRepoEmitsBundle(t *testing.T) {
 	if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "fleet-local", Name: "wl-agent"}, b); err != nil {
 		t.Fatalf("expected Bundle in fleet-local: %v", err)
 	}
+	// helm.chart points at the unpacked chart directory, and the chart files are
+	// carried as individual bundle resources.
 	chart, _, _ := unstructured.NestedString(b.Object, "spec", "helm", "chart")
-	if chart != "chart.tgz" {
+	if chart != "rancher-ai-agent" {
 		t.Fatalf("helm.chart = %q", chart)
 	}
 	res, _, _ := unstructured.NestedSlice(b.Object, "spec", "resources")
-	if len(res) != 1 {
-		t.Fatalf("want embedded chart resource, got %d", len(res))
+	if _, ok := resourceByName(res, "rancher-ai-agent/Chart.yaml"); !ok {
+		t.Fatalf("expected unpacked Chart.yaml resource, got %d resources", len(res))
 	}
 
 	// No HelmOp should exist for a git-backed component.
