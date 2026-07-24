@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 type fakeCatalog struct {
@@ -52,7 +53,9 @@ func TestEnsureBlueprintHelmOp_GitRepoEmitsBundle(t *testing.T) {
 		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
 	})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: fakeCatalog{tgz: tgz}}
+	holder := rancher.NewHolder()
+	holder.Set(fakeCatalog{tgz: tgz})
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: holder}
 
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"

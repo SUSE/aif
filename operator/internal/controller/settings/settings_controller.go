@@ -23,6 +23,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +44,10 @@ type SettingsReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
 	OperatorNamespace string
+	// CatalogHolder receives the Rancher catalog client this controller builds
+	// from Settings.Spec.RancherCatalog. The AIWorkload reconciler reads it to
+	// fetch charts from git-backed ClusterRepos. Nil disables that wiring.
+	CatalogHolder *rancher.Holder
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch;create;update;patch;delete
@@ -74,6 +79,11 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
+	// Best-effort: rebuild the Rancher catalog client from the current config.
+	// Never fails the reconcile — a missing/invalid token just disables
+	// git-backed ClusterRepo support (surfaced on the affected AIWorkloads).
+	r.reconcileRancherCatalogClient(ctx, &s)
+
 	if err := r.updateStatus(ctx, req.NamespacedName); err != nil {
 		l.Error(err, "failed to update settings status")
 		return ctrl.Result{}, err
@@ -100,6 +110,66 @@ func (r *SettingsReconciler) updateStatus(ctx context.Context, key types.Namespa
 		s.Status.ObservedGeneration = s.Generation
 		return r.Status().Update(ctx, &s)
 	})
+}
+
+// reconcileRancherCatalogClient (re)builds the Rancher catalog client from
+// Settings.Spec.RancherCatalog and swaps it into the shared holder that the
+// AIWorkload reconciler reads. Best-effort: any resolution problem disables the
+// client (holder set to nil) rather than failing the Settings reconcile.
+func (r *SettingsReconciler) reconcileRancherCatalogClient(ctx context.Context, s *aiplatformv1alpha1.Settings) {
+	if r.CatalogHolder == nil {
+		return
+	}
+	l := log.FromContext(ctx)
+	rc := s.Spec.RancherCatalog
+
+	if rc.TokenSecretRef == nil {
+		r.CatalogHolder.Set(nil)
+		return
+	}
+	token, err := r.readSecretKey(ctx, s.Namespace, rc.TokenSecretRef)
+	if err != nil || token == "" {
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		l.Info("Rancher catalog client disabled: token secret unavailable; git-backed ClusterRepos will not be installable",
+			"secret", rc.TokenSecretRef.Name, "error", msg)
+		r.CatalogHolder.Set(nil)
+		return
+	}
+
+	var caPEM []byte
+	if rc.CABundleSecretRef != nil {
+		ca, err := r.readSecretKey(ctx, s.Namespace, rc.CABundleSecretRef)
+		if err != nil {
+			l.Error(err, "Rancher catalog CA secret unavailable; proceeding without a custom CA", "secret", rc.CABundleSecretRef.Name)
+		} else {
+			caPEM = []byte(ca)
+		}
+	}
+
+	url := rc.URL
+	if url == "" {
+		url = rancher.DefaultBaseURL
+	}
+	client, err := rancher.NewCatalogClient(url, token, caPEM, rc.InsecureSkipVerify)
+	if err != nil {
+		l.Error(err, "failed to build Rancher catalog client")
+		r.CatalogHolder.Set(nil)
+		return
+	}
+	r.CatalogHolder.Set(client)
+	l.Info("Rancher catalog client configured", "url", url, "insecureSkipVerify", rc.InsecureSkipVerify, "customCA", len(caPEM) > 0)
+}
+
+// readSecretKey returns the value of key in the named Secret in ns.
+func (r *SettingsReconciler) readSecretKey(ctx context.Context, ns string, ref *aiplatformv1alpha1.SecretKeyRef) (string, error) {
+	var sec corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, &sec); err != nil {
+		return "", err
+	}
+	return string(sec.Data[ref.Key]), nil
 }
 
 // SetupWithManager registers the controller with the Manager.

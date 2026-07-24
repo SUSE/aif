@@ -198,6 +198,55 @@ spec:
                     - name
                     type: object
                 type: object
+              rancherCatalog:
+                description: |-
+                  RancherCatalog configures access to Rancher's catalog API, used to fetch
+                  charts from git-backed ClusterRepos.
+                properties:
+                  caBundleSecretRef:
+                    description: |-
+                      CABundleSecretRef references a Secret holding the PEM CA certificate(s)
+                      that signed Rancher's serving certificate. When unset, system roots are
+                      used (unless InsecureSkipVerify is set).
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  insecureSkipVerify:
+                    description: |-
+                      InsecureSkipVerify skips TLS verification of the Rancher API. Development
+                      only — do not use in production/air-gapped installs.
+                    type: boolean
+                  tokenSecretRef:
+                    description: |-
+                      TokenSecretRef references a Secret (in the operator namespace) holding a
+                      Rancher API token. Required for git-backed ClusterRepos — Rancher's Steve
+                      API rejects the operator ServiceAccount token. When unset, git-backed
+                      ClusterRepos are not installable.
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  url:
+                    description: |-
+                      URL is the in-cluster Rancher API endpoint. Defaults to
+                      https://rancher.cattle-system.svc when empty.
+                    type: string
+                type: object
               registryEndpoints:
                 description: RegistryEndpoints overrides upstream registry defaults
                   for air-gap deployments.

@@ -169,6 +169,38 @@ type SettingsSpec struct {
 	// AppCatalog configures the static application catalog.
 	// +optional
 	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`
+	// RancherCatalog configures access to Rancher's catalog API, used to fetch
+	// charts from git-backed ClusterRepos.
+	// +optional
+	RancherCatalog RancherCatalogSettings `json:"rancherCatalog,omitempty"`
+}
+
+// RancherCatalogSettings configures the Rancher Steve catalog client used to
+// fetch charts from git-backed ClusterRepos (spec.gitRepo), which have no
+// HTTP/OCI URL a Fleet HelmOp could pull from. HTTP/OCI ClusterRepos need none
+// of this. The Settings controller rebuilds the catalog client whenever these
+// fields (or the referenced Secrets) change, so updates take effect without
+// restarting the operator.
+type RancherCatalogSettings struct {
+	// URL is the in-cluster Rancher API endpoint. Defaults to
+	// https://rancher.cattle-system.svc when empty.
+	// +optional
+	URL string `json:"url,omitempty"`
+	// TokenSecretRef references a Secret (in the operator namespace) holding a
+	// Rancher API token. Required for git-backed ClusterRepos — Rancher's Steve
+	// API rejects the operator ServiceAccount token. When unset, git-backed
+	// ClusterRepos are not installable.
+	// +optional
+	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+	// CABundleSecretRef references a Secret holding the PEM CA certificate(s)
+	// that signed Rancher's serving certificate. When unset, system roots are
+	// used (unless InsecureSkipVerify is set).
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
+	// InsecureSkipVerify skips TLS verification of the Rancher API. Development
+	// only — do not use in production/air-gapped installs.
+	// +optional
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 }
 
 // SettingsStatus defines the observed state of Settings.

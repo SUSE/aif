@@ -43,6 +43,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
@@ -79,11 +80,13 @@ type AIWorkloadReconciler struct {
 	Scheme            *runtime.Scheme
 	RestConfig        *rest.Config
 	OperatorNamespace string
-	// CatalogClient fetches chart tgz from git-backed ClusterRepos via Rancher's
-	// Steve catalog API. Nil when git-backed repos are unconfigured; git-backed
-	// components then fail with a clear "not configured" error and http/oci
-	// components are unaffected.
-	CatalogClient RancherCatalogClient
+	// CatalogClient holds the current Rancher catalog client used to fetch charts
+	// from git-backed ClusterRepos. The Settings controller rebuilds and swaps
+	// the client into this holder when the rancherCatalog config changes. A nil
+	// holder or an empty holder means git-backed repos are unconfigured;
+	// git-backed components then report a clear condition and http/oci components
+	// are unaffected.
+	CatalogClient *rancher.Holder
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete

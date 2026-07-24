@@ -24,8 +24,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/go-logr/logr"
-
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -69,43 +67,6 @@ func init() {
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
-}
-
-// buildCatalogClient constructs the Rancher Steve catalog client used to fetch
-// charts from git-backed ClusterRepos. Configuration is via env vars set on the
-// operator Deployment (Helm chart): RANCHER_CATALOG_URL (default the in-cluster
-// Rancher service), RANCHER_CATALOG_TOKEN (falls back to the operator's
-// ServiceAccount token), RANCHER_CATALOG_CA_FILE, and RANCHER_CATALOG_INSECURE.
-// Returns nil when no token is available; git-backed components then fail with a
-// clear "not configured" error while http/oci components are unaffected.
-func buildCatalogClient(logger logr.Logger) aiworkloadctrl.RancherCatalogClient {
-	baseURL := os.Getenv("RANCHER_CATALOG_URL")
-	if baseURL == "" {
-		baseURL = rancher.DefaultBaseURL
-	}
-	// A Rancher API token is required: Rancher's Steve catalog API rejects the
-	// operator's ServiceAccount token, so there is no usable implicit credential.
-	token := os.Getenv("RANCHER_CATALOG_TOKEN")
-	if token == "" {
-		logger.Info("Rancher catalog client disabled: RANCHER_CATALOG_TOKEN not set; git-backed ClusterRepos will not be installable (set rancherCatalog.token)")
-		return nil
-	}
-	var caPEM []byte
-	if f := os.Getenv("RANCHER_CATALOG_CA_FILE"); f != "" {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			logger.Error(err, "reading Rancher CA file; git-backed ClusterRepos will not be installable", "file", f)
-			return nil
-		}
-		caPEM = b
-	}
-	insecure := os.Getenv("RANCHER_CATALOG_INSECURE") == "true"
-	c, err := rancher.NewCatalogClient(baseURL, token, caPEM, insecure)
-	if err != nil {
-		logger.Error(err, "building Rancher catalog client; git-backed ClusterRepos will not be installable")
-		return nil
-	}
-	return c
 }
 
 // nolint:gocyclo
@@ -265,10 +226,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
 	}
+	// Shared holder: the Settings controller builds the Rancher catalog client
+	// from Settings.Spec.RancherCatalog and swaps it in here; the AIWorkload
+	// reconciler reads it to fetch charts from git-backed ClusterRepos.
+	catalogHolder := rancher.NewHolder()
+
 	if err := (&settingsctrl.SettingsReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
+		CatalogHolder:     catalogHolder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Settings")
 		os.Exit(1)
@@ -278,7 +245,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		RestConfig:        mgr.GetConfig(),
 		OperatorNamespace: operatorNamespace,
-		CatalogClient:     buildCatalogClient(setupLog),
+		CatalogClient:     catalogHolder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
 		os.Exit(1)

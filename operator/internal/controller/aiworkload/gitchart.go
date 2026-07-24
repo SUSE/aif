@@ -33,16 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
-
-// RancherCatalogClient fetches a chart .tgz from a Rancher ClusterRepo via the
-// Steve catalog API. Only git-backed ClusterRepos need it: they have no
-// url/ociRepo a Fleet HelmOp could pull from, so the operator resolves the chart
-// from Rancher (which has already cloned and indexed the git repo) and embeds it
-// in a self-contained Fleet Bundle.
-type RancherCatalogClient interface {
-	FetchChart(ctx context.Context, repoName, chartName, version string) ([]byte, error)
-}
 
 // maxFleetBundleChartBytes caps the fetched chart archive size. Fleet stores the
 // unpacked chart files in the Bundle/BundleDeployment objects, which are subject
@@ -196,10 +188,14 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	repoInfo clusterRepoInfo,
 	gitOps bool,
 ) error {
-	if r.CatalogClient == nil {
+	var fetcher rancher.ChartFetcher
+	if r.CatalogClient != nil {
+		fetcher = r.CatalogClient.Get()
+	}
+	if fetcher == nil {
 		return fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
 	}
-	tgz, err := r.CatalogClient.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
+	tgz, err := fetcher.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
 	if err != nil {
 		return fmt.Errorf("fetch chart %s@%s from git repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
 	}

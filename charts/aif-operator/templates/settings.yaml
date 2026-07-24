@@ -1,4 +1,6 @@
 {{- $credentials := index .Values "credentials" -}}
+{{- $rc := .Values.rancherCatalog -}}
+{{- $rcSecret := $rc.tokenSecret.name | default (printf "%s-rancher-catalog" (include "aif-operator.fullname" .)) -}}
 apiVersion: ai-factory.suse.com/v1alpha1
 kind: Settings
 metadata:
@@ -11,11 +13,29 @@ metadata:
 {{- if or (and $credentials.applicationCollection.username $credentials.applicationCollection.password)
           (and $credentials.nvidia.username $credentials.nvidia.password)
           (and $credentials.suseRegistry.username $credentials.suseRegistry.password)
-          .Values.appCatalog.remoteUrl }}
+          .Values.appCatalog.remoteUrl
+          $rc.token $rc.tokenSecret.name }}
 spec:
 {{- if .Values.appCatalog.remoteUrl }}
   appCatalog:
     remoteUrl: {{ .Values.appCatalog.remoteUrl | quote }}
+{{- end }}
+{{- if or $rc.token $rc.tokenSecret.name }}
+  rancherCatalog:
+    {{- if $rc.url }}
+    url: {{ $rc.url | quote }}
+    {{- end }}
+    tokenSecretRef:
+      name: {{ $rcSecret }}
+      key: {{ $rc.tokenSecret.key | default "token" }}
+    {{- if $rc.caBundle }}
+    caBundleSecretRef:
+      name: {{ include "aif-operator.fullname" . }}-rancher-catalog
+      key: ca.crt
+    {{- end }}
+    {{- if $rc.insecureSkipVerify }}
+    insecureSkipVerify: true
+    {{- end }}
 {{- end }}
 {{- if and $credentials.applicationCollection.username $credentials.applicationCollection.password }}
   applicationCollection:
