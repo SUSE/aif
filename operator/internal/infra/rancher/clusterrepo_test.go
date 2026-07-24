@@ -54,6 +54,18 @@ func newHelmExtension(name, version string) *v1alpha1.InstallAIExtension {
 	}
 }
 
+func newGitExtension(name, version, repo, branch string) *v1alpha1.InstallAIExtension {
+	return &v1alpha1.InstallAIExtension{
+		Spec: v1alpha1.InstallAIExtensionSpec{
+			Extension: v1alpha1.ExtensionConfig{Name: name, Version: version},
+			Source: v1alpha1.ExtensionSource{
+				Kind: v1alpha1.ExtensionSourceKindGit,
+				Git:  &v1alpha1.GitSource{Repo: repo, Branch: branch},
+			},
+		},
+	}
+}
+
 func getClusterRepo(t *testing.T, c client.Client, name string) *unstructured.Unstructured {
 	t.Helper()
 	repo := &unstructured.Unstructured{}
@@ -152,5 +164,38 @@ func TestEnsureClusterRepo_BumpsForceUpdateOnVersionChange(t *testing.T) {
 	}
 	if got := repo.GetAnnotations()[annotationSyncedVersion]; got != "2.0.0" {
 		t.Fatalf("expected synced-version annotation %q, got %q", "2.0.0", got)
+	}
+}
+
+// The Git source path must set spec.gitRepo/gitBranch (not spec.url) and, like the
+// Helm path, stamp forceUpdate + record the synced version on first ensure. This
+// guards the version-refresh fix's "covers Helm and Git sources" claim.
+func TestEnsureClusterRepo_GitSourceSetsRepoAndForceUpdate(t *testing.T) {
+	scheme := newClusterRepoTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	m := NewManager(c)
+
+	ext := newGitExtension("my-plugin", "1.0.0", "https://github.com/acme/ext", "gh-pages")
+	// Git sources are ensured with an empty service URL.
+	if err := m.EnsureClusterRepo(context.Background(), ext, ""); err != nil {
+		t.Fatalf("EnsureClusterRepo: %v", err)
+	}
+
+	repo := getClusterRepo(t, c, "my-plugin")
+
+	if gitRepo, _, _ := unstructured.NestedString(repo.Object, "spec", "gitRepo"); gitRepo != "https://github.com/acme/ext" {
+		t.Fatalf("expected spec.gitRepo set, got %q", gitRepo)
+	}
+	if gitBranch, _, _ := unstructured.NestedString(repo.Object, "spec", "gitBranch"); gitBranch != "gh-pages" {
+		t.Fatalf("expected spec.gitBranch set, got %q", gitBranch)
+	}
+	if url, found, _ := unstructured.NestedString(repo.Object, "spec", "url"); found {
+		t.Fatalf("expected spec.url unset for git source, got %q", url)
+	}
+	if fu := forceUpdateValue(t, repo); fu == "" {
+		t.Fatalf("expected spec.forceUpdate to be set, got empty")
+	}
+	if got := repo.GetAnnotations()[annotationSyncedVersion]; got != "1.0.0" {
+		t.Fatalf("expected synced-version annotation %q, got %q", "1.0.0", got)
 	}
 }

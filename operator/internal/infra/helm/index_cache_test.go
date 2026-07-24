@@ -30,11 +30,21 @@ func TestIndexCache_Delete(t *testing.T) {
 		t.Fatalf("expected entry present after Set")
 	}
 
+	// A second, unrelated entry to prove Delete is targeted, not a flush.
+	other := IndexCacheKey{RepoURL: "http://example.test/other"}
+	c.Set(other, &IndexCacheEntry{Index: &IndexFile{}, FetchedAt: time.Now()})
+
 	c.Delete(key)
 	if _, ok := c.Get(key); ok {
 		t.Fatalf("expected entry gone after Delete")
 	}
+	if _, ok := c.Get(other); !ok {
+		t.Fatalf("expected unrelated entry to survive Delete of another key")
+	}
 
-	// Deleting a missing key must be a no-op, not a panic.
+	// Deleting a missing key must be a no-op (not a panic) and must not evict others.
 	c.Delete(IndexCacheKey{RepoURL: "http://example.test/absent"})
+	if _, ok := c.Get(other); !ok {
+		t.Fatalf("expected unrelated entry to survive Delete of an absent key")
+	}
 }

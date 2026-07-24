@@ -57,11 +57,21 @@ func buildExtensionMetadata(
 	}
 
 	annotations, err := helm.FindAnnotations(index, extensionName, version)
+	// A lookup miss (chart or version not found) on a *cached* index is worth one
+	// refetch: the cached index may predate a just-published upgrade, or the server
+	// may have briefly served an incomplete index that we cached — a fresh fetch
+	// recovers both, instead of failing for the whole cache TTL. FindAnnotations only
+	// ever reports these in-memory misses; a registry that is *down* fails earlier in
+	// getOrFetchIndex (both here and inside the refetch), where the error is returned
+	// and the reconcile simply retries next cycle.
+	//
+	// Tradeoff: a genuinely absent chart/version (e.g. a misconfigured name) will
+	// delete+refetch every reconcile, so the cache gives it no shielding. Deliberate
+	// and bounded — self-healing a real upgrade/transient bad index matters more than
+	// shielding a rare, visible misconfiguration, and the ready path requeues only at
+	// healthCheckInterval (~60s) with no ClusterRepo watch driving a hot loop.
 	if err != nil && cached {
-		// The cached index predates a just-upgraded extension, so it lacks the
-		// requested version. Invalidate it and refetch once — the chart server is
-		// now serving the new index — instead of failing for the whole cache TTL.
-		logging.Debug(log).Info("Requested version not in cached index; refetching",
+		logging.Debug(log).Info("Requested chart/version not in cached index; refetching",
 			"repoURL", repoURL)
 		indexCache.Delete(helm.IndexCacheKey{RepoURL: repoURL})
 

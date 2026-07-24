@@ -101,6 +101,17 @@ func (m *Manager) EnsureClusterRepo(
 // button does — without this, an upgraded chart behind an unchanged service URL
 // (or git branch) leaves Rancher serving a stale cached index.
 //
+// It gates on the caller-supplied Extension.Version, not Source.Helm.Version:
+// index/UIPlugin resolution keys on Extension.Version (see uiplugin.go and
+// helm.FindAnnotations), so a chart-only version bump that leaves Extension.Version
+// unchanged intentionally does not force a refresh.
+//
+// SettingsReconciler stamps spec.forceUpdate on its (registry-credential)
+// ClusterRepos via a separate merge patch, kept out of its SSA-managed field set
+// (see settings_controller.go). Setting it inside CreateOrUpdate here is safe because
+// EnsureClusterRepo manages disjoint, extension-named ClusterRepos and never uses
+// server-side apply, so there is no field-ownership conflict.
+//
 // The timestamp is RFC3339 in UTC (trailing "Z"). A value missing the timezone
 // makes cattle-cluster-agent fail to parse the field and crash-loop, so the
 // format matters.

@@ -91,3 +91,39 @@ func TestBuildExtensionMetadata_CacheHitDoesNotRefetch(t *testing.T) {
 		t.Fatalf("expected exactly 1 index fetch across cache hits, got %d", hits)
 	}
 }
+
+// A cached index that is missing the requested CHART (e.g. the server briefly served
+// an incomplete index that got cached) must also refetch-on-miss and recover — not
+// stay stuck on the stale cached index for the whole TTL. This mirrors the version
+// case and guards the "chart or version miss refetches" behavior.
+func TestBuildExtensionMetadata_RefetchesWhenCachedIndexMissesChart(t *testing.T) {
+	served := indexYAML("1.0.0")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, served)
+	}))
+	defer srv.Close()
+
+	cache := helm.NewIndexCache()
+	ctx := context.Background()
+
+	// 1) prime the cache with an index that lacks "other-ext".
+	if _, err := buildExtensionMetadata(ctx, cache, srv.URL, "aif-ui", "1.0.0", nil); err != nil {
+		t.Fatalf("prime cache: %v", err)
+	}
+
+	// 2) the server now also advertises "other-ext"; the cache still holds the old index.
+	served = indexYAML("1.0.0") + `  other-ext:
+    - version: 1.0.0
+      annotations:
+        catalog.cattle.io/display-name: Other Ext
+`
+
+	// 3) resolving other-ext must refetch-on-miss (chart absent from cache) and succeed.
+	meta, err := buildExtensionMetadata(ctx, cache, srv.URL, "other-ext", "1.0.0", nil)
+	if err != nil {
+		t.Fatalf("resolve other-ext should refetch and succeed, got: %v", err)
+	}
+	if meta[KeyDisplayName] != "Other Ext" {
+		t.Fatalf("expected resolved display-name for other-ext, got: %v", meta)
+	}
+}
