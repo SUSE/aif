@@ -1,0 +1,19 @@
+{{- if .Values.standalone }}
+apiVersion: catalog.cattle.io/v1
+kind: UIPlugin
+metadata:
+  name: {{ include "aif-ui.fullname" . }}
+  labels:
+    {{- include "aif-ui.labels" . | nindent 4 }}
+spec:
+  plugin:
+    endpoint: http://{{ include "aif-ui.fullname" . }}-svc.{{ .Release.Namespace }}:{{ .Values.service.port }}/plugin/aif-ui-{{ .Chart.AppVersion }}
+    metadata:
+      catalog.cattle.io/display-name: SUSE AI Factory
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    name: aif-ui
+    noAuth: false
+    noCache: false
+    version: {{ .Chart.AppVersion | quote }}
+{{- end }}

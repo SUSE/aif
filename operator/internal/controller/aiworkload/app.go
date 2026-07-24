@@ -18,9 +18,9 @@ package aiworkload
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -72,7 +72,7 @@ func (r *AIWorkloadReconciler) reconcileAppPullSecrets(
 	// problems.
 	repoInfo, err := r.resolveClusterRepo(ctx, src.ChartRepo)
 	if err != nil {
-		if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		if stderrors.Is(err, errClusterRepoNotReady) || meta.IsNoMatchError(err) {
 			log.FromContext(ctx).Info("App pull-secret injection skipped: ClusterRepo not available",
 				"chartRepo", src.ChartRepo, "reason", err.Error())
 			return nil

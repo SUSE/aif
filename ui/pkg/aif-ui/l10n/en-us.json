@@ -190,6 +190,7 @@
       "title": "AI/ML Applications",
       "subtitle": "Browse and install AI/ML applications",
       "search": "Search applications...",
+      "allLabels": "All programs",
       "install": "Install Application",
       "manage": "Manage Application",
       "noApps": "No applications found",

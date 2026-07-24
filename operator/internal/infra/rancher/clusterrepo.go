@@ -21,13 +21,21 @@ import (
 	"fmt"
 	urlpkg "net/url"
 	"strings"
+	"time"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	logging "github.com/SUSE/aif-operator/internal/logging"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// annotationSyncedVersion records the extension version for which the operator
+// last stamped spec.forceUpdate on the ClusterRepo. It lets EnsureClusterRepo
+// force a Rancher index re-download exactly once per version change instead of
+// on every reconcile.
+const annotationSyncedVersion = "ai-factory.suse.com/synced-version"
 
 func ClusterRepoName(extensionName string) string {
 	return extensionName
@@ -55,7 +63,9 @@ func (m *Manager) EnsureClusterRepo(
 			logging.Trace(log).Info("Setting ClusterRepo URL", "url", svcURL)
 			unstructured.RemoveNestedField(repo.Object, "spec", "gitRepo")
 			unstructured.RemoveNestedField(repo.Object, "spec", "gitBranch")
-			return unstructured.SetNestedField(repo.Object, svcURL, "spec", "url")
+			if err := unstructured.SetNestedField(repo.Object, svcURL, "spec", "url"); err != nil {
+				return err
+			}
 
 		case v1alpha1.ExtensionSourceKindGit:
 			logging.Trace(log).Info("Setting ClusterRepo git source",
@@ -66,17 +76,63 @@ func (m *Manager) EnsureClusterRepo(
 			if err := unstructured.SetNestedField(repo.Object, ext.Spec.Source.Git.Repo, "spec", "gitRepo"); err != nil {
 				return err
 			}
-			return unstructured.SetNestedField(repo.Object, ext.Spec.Source.Git.Branch, "spec", "gitBranch")
+			if err := unstructured.SetNestedField(repo.Object, ext.Spec.Source.Git.Branch, "spec", "gitBranch"); err != nil {
+				return err
+			}
 
 		default:
 			return fmt.Errorf("unsupported source kind: %s", ext.Spec.Source.Kind)
 		}
+
+		return forceIndexRefreshIfVersionChanged(log, repo, ext.Spec.Extension.Version)
 	})
 	if err != nil {
 		return err
 	}
 
 	logging.Debug(log).Info("ClusterRepo ensured")
+	return nil
+}
+
+// forceIndexRefreshIfVersionChanged stamps spec.forceUpdate with the current
+// time whenever the served extension version differs from the one recorded in
+// the synced-version annotation. Rancher re-downloads the repo index when
+// forceUpdate is newer than its last download, which is what the UI "Refresh"
+// button does — without this, an upgraded chart behind an unchanged service URL
+// (or git branch) leaves Rancher serving a stale cached index.
+//
+// It gates on the caller-supplied Extension.Version, not Source.Helm.Version:
+// index/UIPlugin resolution keys on Extension.Version (see uiplugin.go and
+// helm.FindAnnotations), so a chart-only version bump that leaves Extension.Version
+// unchanged intentionally does not force a refresh.
+//
+// SettingsReconciler stamps spec.forceUpdate on its (registry-credential)
+// ClusterRepos via a separate merge patch, kept out of its SSA-managed field set
+// (see settings_controller.go). Setting it inside CreateOrUpdate here is safe because
+// EnsureClusterRepo manages disjoint, extension-named ClusterRepos and never uses
+// server-side apply, so there is no field-ownership conflict.
+//
+// The timestamp is RFC3339 in UTC (trailing "Z"). A value missing the timezone
+// makes cattle-cluster-agent fail to parse the field and crash-loop, so the
+// format matters.
+func forceIndexRefreshIfVersionChanged(log logr.Logger, repo *unstructured.Unstructured, version string) error {
+	anns := repo.GetAnnotations()
+	if anns == nil {
+		anns = map[string]string{}
+	}
+	if anns[annotationSyncedVersion] == version {
+		return nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	logging.Debug(log).Info("Forcing ClusterRepo index refresh",
+		"version", version, "forceUpdate", now)
+	if err := unstructured.SetNestedField(repo.Object, now, "spec", "forceUpdate"); err != nil {
+		return err
+	}
+
+	anns[annotationSyncedVersion] = version
+	repo.SetAnnotations(anns)
 	return nil
 }
 

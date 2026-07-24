@@ -1,0 +1,16 @@
+{
+  "nvidia": [
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-llama-nemotron-embed-vl-1b-v2",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia"
+    },
+    {
+      "name": "NVIDIA Blueprint RAG",
+      "slug_name": "nvidia-blueprint-rag",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/blueprint"
+    }
+  ]
+}

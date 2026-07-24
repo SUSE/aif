@@ -15,6 +15,11 @@ export const NVIDIA_BLUEPRINT_REPO_URL = 'https://helm.ngc.nvidia.com/nvidia/blu
 
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';
 
+export interface AppLabel {
+  code: string;
+  name: string;
+}
+
 export interface AppCollectionItem {
   name: string;
   slug_name: string;
@@ -33,6 +38,9 @@ export interface AppCollectionItem {
   // keeps autocomplete for the built-ins while allowing arbitrary strings (the plain
   // `string & {}` form trips @typescript-eslint/ban-types).
   library?: 'suse-ai' | 'nvidia' | (string & Record<never, never>);
+  // NVIDIA program/support designations (from the static catalog). Absent for
+  // non-NVIDIA apps and in dynamic repo-discovery mode.
+  labels?: AppLabel[];
 }
 
 function normalizeLogoUrl(logo?: string): string | undefined {

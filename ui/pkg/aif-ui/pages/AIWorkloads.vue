@@ -123,6 +123,19 @@ function workloadSource(w: AIWorkload): string {
   return w.spec.source.blueprint?.name || '—';
 }
 
+// workloadStatusMessage returns a human-readable reason when a workload is not
+// healthy: the Ready=False condition message (set by the operator when a
+// ClusterRepo can't be resolved), falling back to the first non-empty
+// per-cluster message. Empty string when there's nothing to surface.
+function workloadStatusMessage(w: AIWorkload): string {
+  const ready = (w.status?.conditions || []).find(
+    (c: any) => c?.type === 'Ready' && c?.status === 'False',
+  );
+  if (ready?.message) return ready.message;
+  const clusterMsg = (w.status?.clusterStatuses || []).find((s) => s.message);
+  return clusterMsg?.message || '';
+}
+
 // ── Data loading ───────────────────────────────────────────────────────────────
 async function refresh() {
   loading.value = true;
@@ -326,6 +339,14 @@ async function executeUpgrade() {
                     :icon="phaseBadgeIcon(w.status?.phase)"
                     :label="w.status?.phase || 'Pending'"
                   />
+                  <div
+                    v-if="workloadStatusMessage(w)"
+                    class="state-message"
+                    :class="{ 'is-failed': w.status?.phase === 'Failed' }"
+                    :title="workloadStatusMessage(w)"
+                  >
+                    {{ workloadStatusMessage(w) }}
+                  </div>
                 </td>
 
                 <!-- Name -->
@@ -705,4 +726,21 @@ async function executeUpgrade() {
 }
 
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.state-message {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only show the reason in error red once the workload has actually failed;
+   during the initial grace window the phase is still Pending and the message
+   is a hedged "not available yet", so keep it muted. */
+.state-message.is-failed {
+  color: var(--error, #dc2626);
+}
 </style>

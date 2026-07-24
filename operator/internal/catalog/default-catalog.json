@@ -204,6 +204,1571 @@
       "last_updated_at": "2026-06-30T00:00:00Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/blueprint"
+    },
+    {
+      "name": "Boltz2 NIM",
+      "slug_name": "boltz2-nim",
+      "description": "Helm Chart for Boltz2 NIM",
+      "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/boltz2.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/mit",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "cluster-installer-helm",
+      "slug_name": "cluster-installer-helm",
+      "description": "Run:ai cluster-installer-helm helm chart",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "nvidia-runai-selfhosted",
+          "name": "NVIDIA Run:ai (Self-Hosted)"
+        }
+      ]
+    },
+    {
+      "name": "control-plane",
+      "slug_name": "control-plane",
+      "description": "Run:ai control-plane helm chart",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "nvidia-runai-selfhosted",
+          "name": "NVIDIA Run:ai (Self-Hosted)"
+        }
+      ]
+    },
+    {
+      "name": "cuOpt",
+      "slug_name": "cuopt",
+      "description": "A Helm chart for deploying the Nvidia cuOpt Server",
+      "logo_url": "https://assets.ngc.nvidia.com/products/catalog/images/cuopt.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/cuopt",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Derived Data Cache",
+      "slug_name": "ddcs",
+      "description": "Derived Data Cache is a shared cache service that is designed to work with our RTX Renderer",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DGX Cloud Admission Controller",
+      "slug_name": "dgxc-admission-controller",
+      "description": "Multi-node training admission controller for DGX Cloud",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Discovery Service Chart",
+      "slug_name": "discovery-service",
+      "description": "Omniverse Storage APIs - Discovery Service Chart.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DOCA Argus",
+      "slug_name": "doca-argus",
+      "description": "A Helm chart for deploying DOCA Argus service that utilizes Bluefield DPU for real-time, hardware-level memory forensics, ensuring robust, integrated security for AI workloads and microservices without impacting performance or requiring host agents.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DOCA Firefly",
+      "slug_name": "doca-firefly",
+      "description": "A Helm chart for deploying DOCA Firefly service that provides time synchronization services leveraging the hardware acceleration of the NVIDIA DPUs.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DOCA HBN",
+      "slug_name": "doca-hbn",
+      "description": "Host based networking (HBN) is a DOCA Service that runs on NVIDIA's DPU. It orchestrates network connectivity of dynamically created VMs/Containers on cloud servers. HBN service is a BGP router that supports EVPN extension to enable multi-tenant cloud.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DOCA Telemetry Service",
+      "slug_name": "doca-telemetry",
+      "description": "helm chart to start the latest DOCA Telemetry Service container.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DPF DPU Networking",
+      "slug_name": "dpu-networking",
+      "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart is deployed by the DPF Operator and is responsible for setting up networking related components required on the DPU.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DPF Storage",
+      "slug_name": "dpf-storage",
+      "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of the DPF Storage Subsystem.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "DPU (DPF) Operator",
+      "slug_name": "dpf-operator",
+      "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of DPF.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Envoy Auth Extension",
+      "slug_name": "envoy-auth-extension",
+      "description": "Auth extension used with Envoy and the Omniverse Storage APIs.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "GPU Operator",
+      "slug_name": "gpu-operator",
+      "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
+      "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Helm Chart for NVIDIA NIM for Multimodal Safety",
+      "slug_name": "multimodal-safety-nim",
+      "description": "Helm Chart for NVIDIA NIM for Multimodal Safety",
+      "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/ai-generated-image-detection.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Customizer",
+      "slug_name": "nemo-customizer",
+      "description": "Model customization service for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Data Store",
+      "slug_name": "nemo-datastore",
+      "description": "Data storage component for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Deployment Management",
+      "slug_name": "nemo-deployment-management",
+      "description": "Deployment management service for NeMo models",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Entity Store",
+      "slug_name": "nemo-entity-store",
+      "description": "Entity management component for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Evaluator",
+      "slug_name": "nemo-evaluator",
+      "description": "Model evaluation service for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Guardrails",
+      "slug_name": "nemo-guardrails",
+      "description": "Safety checks and moderation for LLM applications",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Microservices Helm Chart",
+      "slug_name": "nemo-microservices-helm-chart",
+      "description": "Deploy NeMo microservices as a platform",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo NIM Proxy",
+      "slug_name": "nemo-nim-proxy",
+      "description": "Proxy service for NIM microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Operator",
+      "slug_name": "nemo-operator",
+      "description": "Kubernetes operator for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Retriever Graphic Elements v1",
+      "slug_name": "nvidia-nim-nemotron-graphic-elements-v1",
+      "description": "Helm Chart for NeMo Retriever Graphic Elements v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Retriever Page Elements v3",
+      "slug_name": "nvidia-nim-nemotron-page-elements-v3",
+      "description": "Helm Chart for NeMo Retriever Page Elements v3",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NeMo Retriever Table Structure v1",
+      "slug_name": "nvidia-nim-nemotron-table-structure-v1",
+      "description": "Helm Chart for NeMo Retriever Table Structure v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Notification Aggregation Service Chart",
+      "slug_name": "event-aggregation-service",
+      "description": "Omniverse Storage APIs Notification Aggregation service.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Notification Consumer Service Chart",
+      "slug_name": "event-consumer-service",
+      "description": "Omniverse Storage API Notification Consumer Chart.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Active Speaker Detection ST 2110 NIM",
+      "slug_name": "nvidia-active-speaker-detection-h4m-service",
+      "description": "Helm charts to deploy Active Speaker Detection NIM- receives video/audios, runs Active Speaker Detection inference, outputs ancillary data and optionally video.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Active Speaker Detection ST 2110 Operator",
+      "slug_name": "nvidia-active-speaker-detection-h4m-operator",
+      "description": "Helm charts to deploy Kubernetes operator and NvidiaActiveSpeakerDetectionMediaFunction Custom Resource Definition.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Active Speaker Detection ST 2110 Sample",
+      "slug_name": "nvidia-active-speaker-detection-h4m-sample",
+      "description": "Umbrella Helm chart for NVIDIA Active Speaker Detection(sender, receiver, nvidia-active-speaker-detection-h4m-service).",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Network Operator",
+      "slug_name": "network-operator",
+      "description": "NVIDIA Network Operator Helm Chart provides an easy way to install, configure and manage the lifecycle of NVIDIA Mellanox network operator.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-Network-Operator.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Embedding",
+      "slug_name": "nvidia-nim-llama-nemotron-embed-1b-v2",
+      "description": "Helm Chart for NVIDIA NIM for Embedding - llama-nemotron-embed-1b-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Image OCR",
+      "slug_name": "nvidia-nim-nemotron-ocr-v2",
+      "description": "NVIDIA NIM for Image OCR",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Image OCR",
+      "slug_name": "nvidia-nim-paddleocr",
+      "description": "Helm Chart for NVIDIA NIM for Image OCR - paddleocr",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/baidu",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Image OCR",
+      "slug_name": "nvidia-nim-nemoretriever-ocr-v1",
+      "description": "Helm Chart for NVIDIA NIM for Image OCR - nemoretriever-ocr-v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for LLMs",
+      "slug_name": "nim-llm",
+      "description": "Helm Chart for NVIDIA NIM for LLMs",
+      "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Multimodal Reranking",
+      "slug_name": "nvidia-nim-llama-nemotron-rerank-vl-1b-v2",
+      "description": "Helm Chart for NVIDIA NIM for VLM Reranking",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Nemotron 3 Embed 1B",
+      "slug_name": "nvidia-nim-nemotron-3-embed-1b",
+      "description": "NVIDIA NIM for Nemotron 3 Embed 1B",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Nemotron Object Detection",
+      "slug_name": "nvidia-nim-nemotron-object-detection",
+      "description": "NVIDIA NIM for Nemotron Object Detection",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Object Detection",
+      "slug_name": "nvidia-nim-nemoretriever-table-structure-v1",
+      "description": "Helm Chart for NVIDIA NIM for Object Detection - nemoretriever-table-structure-v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Object Detection",
+      "slug_name": "nvidia-nim-nemoretriever-page-elements-v2",
+      "description": "Helm Chart for NVIDIA NIM for Object Detection - nemoretriever-page-elements-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Object Detection",
+      "slug_name": "nvidia-nim-nemoretriever-graphic-elements-v1",
+      "description": "Helm Chart for NVIDIA NIM for Object Detection - nemoretriever-graphic-elements-v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Object Detection",
+      "slug_name": "nvidia-nim-nemoretriever-page-elements-v3",
+      "description": "Helm Chart for NVIDIA NIM for Object Detection - nemoretriever-page-elements-v3",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "text-embedding-nim",
+      "description": "Helm Chart for NeMo Retriever Text Embedding NIM",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-llama-32-nv-embedqa-1b-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Embedding - llama-3.2-nv-embedqa-1b-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-llama-32-nemoretriever-300m-embed-v1",
+      "description": "Helm Chart for NVIDIA NIM for Text Embedding - llama-3.2-nemoretriever-300m-embed-v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-llama-nemotron-embed-300m-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Embedding - llama-nemotron-embed-300m-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-nv-embedqa-e5-v5",
+      "description": "Helm Chart for NVIDIA NIM for Text Embedding - nv-embedqa-e5-v5",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-llama-nemotron-embed-vl-1b-v2",
+      "description": "Helm Chart for NVIDIA NIM for Multimodal Embedding - llama-nemotron-embed-vl-1b-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Embedding",
+      "slug_name": "nvidia-nim-llama-32-nemoretriever-300m-embed-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Embedding - llama-3.2-nemoretriever-300m-embed-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Ranking",
+      "slug_name": "text-reranking-nim",
+      "description": "Helm Chart for NeMo Retriever Text Ranking NIM",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Reranking",
+      "slug_name": "nvidia-nim-llama-32-nv-rerankqa-1b-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Reranking - llama-3.2-nv-rerankqa-1b-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Reranking",
+      "slug_name": "nvidia-nim-llama-nemotron-rerank-1b-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Reranking - llama-nemotron-rerank-1b-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Reranking",
+      "slug_name": "nvidia-nim-llama-32-nemoretriever-500m-rerank-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Reranking - llama-3.2-nemoretriever-500m-rerank-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM for Text Reranking",
+      "slug_name": "nvidia-nim-llama-nemotron-rerank-500m-v2",
+      "description": "Helm Chart for NVIDIA NIM for Text Reranking - llama-nemotron-rerank-500m-v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM nemotron-ocr-v1",
+      "slug_name": "nvidia-nim-nemotron-ocr-v1",
+      "description": "Helm Chart for NIM nemotron-ocr-v1",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA NIM Operator",
+      "slug_name": "k8s-nim-operator",
+      "description": "Helm chart for NIM Operator for deployment and maintenance of NVIDIA NIMs and NeMo microservices in a Kubernetes environment",
+      "logo_url": "https://assets.ngc.nvidia.com/products/catalog/logos/NIMOperator.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Studio Voice ST 2110 NIM",
+      "slug_name": "nvidia-studio-voice-h4m-service",
+      "description": "Helm chart to deploy Studio Voice NIM service on H4M platform",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Studio Voice ST 2110 Operator",
+      "slug_name": "nvidia-studio-voice-h4m-operator",
+      "description": "Kubernetes operator for NVIDIA Studio Voice H4M Media Function",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Studio Voice ST 2110 Sample",
+      "slug_name": "nvidia-studio-voice-h4m-sample",
+      "description": "An end-to-end sample on a Holoscan for Media cluster, including the Studio Voice NIM service and sample client components, as a single Helm release.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Video Super Resolution ST 2110 NIM",
+      "slug_name": "nvidia-vsr-nim-h4m-service",
+      "description": "Helm chart to deploy the standalone Video Super Resolution SMPTE ST 2110 NIM service on Holoscan for Media.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Video Super Resolution ST 2110 Operator",
+      "slug_name": "nvidia-vsr-nim-h4m-operator",
+      "description": "Helm chart to deploy the Video Super Resolution SMPTE ST 2110 Kubernetes operator and CRD.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "NVIDIA Video Super Resolution ST 2110 Sample",
+      "slug_name": "nvidia-vsr-nim-h4m-sample",
+      "description": "End-to-end sample deployment with sender, Video Super Resolution SMPTE ST 2110 NIM service, and receiver.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Omniverse Kit App Streaming - Applications and Profiles Service",
+      "slug_name": "kit-appstreaming-applications",
+      "description": "Helm chart to initialize a Kit application store",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Omniverse Kit App Streaming - AWS NLB Manager",
+      "slug_name": "kit-appstreaming-aws-nlb",
+      "description": "Helm chart to create and manage targetgroups and listeners on AWS Network load balancers",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Omniverse Kit App Streaming - Kit App Streaming Session",
+      "slug_name": "kit-appstreaming-session",
+      "description": "Helm chart to instantiate an Omniverse Kit App Streaming Session",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Omniverse Kit App Streaming - Resource Management Control Plane",
+      "slug_name": "kit-appstreaming-rmcp",
+      "description": "Helm chart to create the Resource Management Control Plane",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Omniverse Kit App Streaming - Session Manager",
+      "slug_name": "kit-appstreaming-manager",
+      "description": "Helm chart to create and manage Omniverse streaming sessions",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "OVN for DPF VPC - Helm Chart",
+      "slug_name": "ovn-chart",
+      "description": "This Helm Chart deploys the OVN for DPF VPC",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "OVN VPC System for DPF - Helm Chart",
+      "slug_name": "dpf-vpc-ovn",
+      "description": "OVN VPC System Helm chart",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Permissions Service Chart",
+      "slug_name": "permission-service",
+      "description": "Omniverse Storage APIs Permissions Service Chart.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Permissions UI",
+      "slug_name": "permission-ui",
+      "description": "Omniverse Storage APIs - Permissions UI for service level permission control.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "rabbitmq",
+      "slug_name": "rabbitmq",
+      "description": "Redist of RabbitMQ.",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Riva NIM",
+      "slug_name": "riva-nim",
+      "description": "Riva NIM Helm Chart",
+      "logo_url": "https://assets.ngc.nvidia.com/products/catalog/images/parakeet-ctc-riva.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Riva Speech Skills",
+      "slug_name": "riva-api",
+      "description": "Riva Speech Skills Helm Chart",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-Riva.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/riva",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "runai-cluster",
+      "slug_name": "runai-cluster",
+      "description": "Run:ai runai-cluster helm chart",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "nvidia-runai-saas",
+          "name": "NVIDIA Run:ai (SaaS)"
+        },
+        {
+          "code": "nvidia-runai-selfhosted",
+          "name": "NVIDIA Run:ai (Self-Hosted)"
+        }
+      ]
+    },
+    {
+      "name": "Storage APIs Integration Tests",
+      "slug_name": "storage-api-integration-tests",
+      "description": "Integration test suite for validating Storage APIs service stack",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "Storage Navigator Chart",
+      "slug_name": "storage-navigator",
+      "description": "Omniverse Storage APIs - Storage Navigator file browser UI.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "storage-service",
+      "slug_name": "storage-service",
+      "description": "Helm chart for deploying storage service for Sensor RTX.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
+    },
+    {
+      "name": "USD Code",
+      "slug_name": "usdcode",
+      "description": "USD Code Deployment",
+      "logo_url": "https://docs.omniverse.nvidia.com/services/latest/_images/usdcode-hero.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse-usdcode",
+      "labels": [
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        }
+      ]
+    },
+    {
+      "name": "USD Content Cache",
+      "slug_name": "usd-content-cache",
+      "description": "USD Content Cache is an NGINX based shared file caching service for use with Omniverse.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "nv-ai-enterprise",
+          "name": "NVIDIA AI Enterprise Essentials"
+        },
+        {
+          "code": "nvaie_supported",
+          "name": "NVIDIA AI Enterprise Supported"
+        },
+        {
+          "code": "omniverse",
+          "name": "NVIDIA Omniverse"
+        },
+        {
+          "code": "omniverse_supported",
+          "name": "NVIDIA Omniverse Enterprise Supported"
+        }
+      ]
     }
   ]
 }

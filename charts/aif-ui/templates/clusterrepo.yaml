@@ -1,0 +1,11 @@
+{{- if .Values.standalone }}
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: {{ include "aif-ui.fullname" . }}
+  labels:
+    {{- include "aif-ui.labels" . | nindent 4 }}
+spec:
+  url: http://{{ include "aif-ui.fullname" . }}-svc.{{ .Release.Namespace }}:{{ .Values.service.port }}
+{{- end }}
+

@@ -20,14 +20,17 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"hash/fnv"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -54,6 +57,12 @@ const (
 	repoKindGit  repoKind = "git"
 )
 
+// errClusterRepoNotReady marks a ClusterRepo lookup that failed because the
+// repo does not exist yet or has no usable URL — typically because its backing
+// registry credentials are not configured. Reconcile surfaces this as a
+// Ready=False condition and auto-requeues instead of hard-failing.
+var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
+
 type clusterRepoInfo struct {
 	Kind           repoKind // how the repo serves charts (http/oci/git)
 	URL            string   // http/oci repos only
@@ -75,6 +84,8 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	var bp aiplatformv1alpha1.Blueprint
 	if err := r.Get(ctx, types.NamespacedName{Name: crName}, &bp); err != nil {
 		if errors.IsNotFound(err) {
+			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "BlueprintNotFound",
+				fmt.Sprintf("Blueprint %q was not found.", crName), w.Generation)
 			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 			return ctrl.Result{}, nil
 		}
@@ -96,29 +107,38 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	}
 
 	// Step 3: ensure HelmOps or git files exist for each component bundle.
-	switch w.Spec.DeployStrategy {
-	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-		for i, c := range bp.Spec.Components {
-			if i >= len(w.Spec.FleetBundleNames) {
-				break
-			}
-			if err := r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i]); err != nil {
-				return ctrl.Result{}, err
-			}
+	for i, c := range bp.Spec.Components {
+		if i >= len(w.Spec.FleetBundleNames) {
+			break
 		}
-	case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-		for i, c := range bp.Spec.Components {
-			if i >= len(w.Spec.FleetBundleNames) {
-				break
+		var err error
+		switch w.Spec.DeployStrategy {
+		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
+			err = r.ensureBlueprintHelmOp(ctx, w, c, w.Spec.FleetBundleNames[i])
+		case aiplatformv1alpha1.AIWorkloadDeployGitOps:
+			err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
+		}
+		if err != nil {
+			if stderrors.Is(err, errClusterRepoNotReady) {
+				// The repo the component needs is missing — usually because its
+				// registry credentials are not configured. Surface a condition +
+				// Failed phase (subject to the initial grace window) and requeue
+				// so the workload recovers once the repo appears.
+				msg := fmt.Sprintf("Repository %q is not available yet. If this persists, verify its credentials in Settings.", c.ChartRepo)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonClusterRepoNotReady, msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
-			if err := r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i]); err != nil {
-				return ctrl.Result{}, err
-			}
+			return ctrl.Result{}, err
 		}
 	}
 
 	// Step 4: aggregate status across all component bundles.
-	return ctrl.Result{}, r.mirrorBlueprintStatus(ctx, w)
+	if err := r.mirrorBlueprintStatus(ctx, w); err != nil {
+		return ctrl.Result{}, err
+	}
+	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
+	return ctrl.Result{}, nil
 }
 
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
@@ -868,6 +888,9 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	cr := &unstructured.Unstructured{}
 	cr.SetGroupVersionKind(clusterRepoGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: repoName}, cr); err != nil {
+		if errors.IsNotFound(err) {
+			return clusterRepoInfo{}, fmt.Errorf("%w: get ClusterRepo %q: %v", errClusterRepoNotReady, repoName, err)
+		}
 		return clusterRepoInfo{}, fmt.Errorf("get ClusterRepo %q: %w", repoName, err)
 	}
 	// spec.clientSecret is an object {name, namespace}, not a plain string.
@@ -902,7 +925,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		return info, nil
 	}
 
-	return clusterRepoInfo{}, fmt.Errorf("ClusterRepo %q has no url, ociRepo, or gitRepo in spec", repoName)
+	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", errClusterRepoNotReady, repoName)
 }
 
 func bpCRName(familyName, version string) string {

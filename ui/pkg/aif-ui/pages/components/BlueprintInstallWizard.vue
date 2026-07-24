@@ -8,7 +8,8 @@ import TargetStep                    from './wizard/TargetStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, listAIWorkloads } from '../../utils/operator-api';
+import { createAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
 import { crNameForCluster } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import type { Blueprint } from '../../types/blueprint-types';
@@ -48,11 +49,22 @@ watch(fleetGitConfigured, (configured) => {
 const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
+const missingCreds = ref<RequiredCredential[]>([]);
+const CRED_LABELS: Record<RequiredCredential, string> = {
+  applicationCollection: 'Application Collection',
+  suseRegistry:          'SUSE Registry',
+  nvidia:                'NVIDIA',
+};
+
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),     ready: true },
   { label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),    ready: workloadName.value.trim() !== '' && namespace.value !== '' },
   { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 },
 ]);
+
+const missingCredsLabel = computed(() =>
+  missingCreds.value.map((c) => CRED_LABELS[c]).join(', '),
+);
 
 onMounted(async () => {
   try {
@@ -61,6 +73,21 @@ onMounted(async () => {
     const slug = slugifyBlueprintName(props.blueprintName);
     workloadName.value = slug;
     namespace.value    = `${ slug }-system`;
+
+    try {
+      // Resolve credentials the operator's way (spec refs + well-known secrets)
+      // so the pre-flight matches what the operator can actually create.
+      const registryCreds = await getRegistryCredentials();
+      missingCreds.value = missingCredentialsForBlueprint(
+        blueprint.value?.spec.components || [],
+        registryCreds,
+      );
+    } catch (e) {
+      // If credentials can't be read, don't block — the operator status is the
+      // backstop. Log for diagnosis.
+      console.warn('[SUSE-AI] Pre-flight credential check skipped (credentials unavailable):', e);
+      missingCreds.value = [];
+    }
   } catch (e: any) {
     error.value = e?.message || 'Failed to load blueprint';
   } finally {
@@ -84,6 +111,11 @@ const DNS_LABEL = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
 
 async function onInstall() {
   if (!blueprint.value) return;
+
+  if (missingCreds.value.length > 0) {
+    error.value = `Missing credentials for: ${ missingCreds.value.map((c) => CRED_LABELS[c]).join(', ') }. Configure them in Settings before installing.`;
+    return;
+  }
 
   if (!DNS_LABEL.test(workloadName.value)) {
     error.value = 'Deployment name must be lowercase alphanumeric and hyphens only, 1–63 characters, and must start and end with a letter or digit.';
@@ -230,17 +262,28 @@ function onProgressCancel() { showProgressModal.value = false; }
             @update:clusters="clusters = $event"
             @update:deploy-type="deployType = $event"
           />
-          <BlueprintInstallReviewStep
-            v-else-if="currentStep === 2"
-            :workload-name="workloadName"
-            :namespace="namespace"
-            :display-name="blueprint?.spec.displayName || ''"
-            :version="props.blueprintVersion"
-            :component-count="blueprint?.spec.components.length || 0"
-            :deploy-type="deployType"
-            :clusters="clusters"
-            :components="blueprint?.spec.components || []"
-          />
+          <div v-else-if="currentStep === 2">
+            <Banner
+              v-if="missingCreds.length"
+              color="error"
+              class="mb-20"
+            >
+              This blueprint needs credentials that aren't configured: {{ missingCredsLabel }}. Configure them in
+              <router-link :to="{ name: `c-cluster-${ PRODUCT }-settings`, params: { cluster } }">
+                Settings
+              </router-link>, then return to install.
+            </Banner>
+            <BlueprintInstallReviewStep
+              :workload-name="workloadName"
+              :namespace="namespace"
+              :display-name="blueprint?.spec.displayName || ''"
+              :version="props.blueprintVersion"
+              :component-count="blueprint?.spec.components.length || 0"
+              :deploy-type="deployType"
+              :clusters="clusters"
+              :components="blueprint?.spec.components || []"
+            />
+          </div>
         </div>
       </div>
 
@@ -259,7 +302,7 @@ function onProgressCancel() { showProgressModal.value = false; }
         <button
           v-else
           class="btn role-primary"
-          :disabled="submitting || clusters.length === 0"
+          :disabled="submitting || clusters.length === 0 || missingCreds.length > 0"
           @click="onInstall"
         >
           <i v-if="submitting" class="icon icon-spinner icon-spin mr-5" />

@@ -29,21 +29,29 @@ import (
 //go:embed default-catalog.json
 var bundledJSON []byte
 
+// Label is an NVIDIA program/support designation for a catalog entry (e.g. the
+// NGC code "nvaie_supported" with its display name). NVIDIA-only for now.
+type Label struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
 // Item is a single application catalog entry (mirrors the UI's AppCollectionItem).
 type Item struct {
-	Name              string `json:"name"`
-	SlugName          string `json:"slug_name"`
-	Description       string `json:"description,omitempty"`
-	ProjectURL        string `json:"project_url,omitempty"`
-	DocumentationURL  string `json:"documentation_url,omitempty"`
-	ReferenceGuideURL string `json:"reference_guide_url,omitempty"`
-	SourceCodeURL     string `json:"source_code_url,omitempty"`
-	LogoURL           string `json:"logo_url,omitempty"`
-	ChangelogURL      string `json:"changelog_url,omitempty"`
-	LastUpdatedAt     string `json:"last_updated_at,omitempty"`
-	PackagingFormat   string `json:"packaging_format,omitempty"`
-	RepositoryURL     string `json:"repository_url,omitempty"`
-	Library           string `json:"library,omitempty"`
+	Name              string  `json:"name"`
+	SlugName          string  `json:"slug_name"`
+	Description       string  `json:"description,omitempty"`
+	ProjectURL        string  `json:"project_url,omitempty"`
+	DocumentationURL  string  `json:"documentation_url,omitempty"`
+	ReferenceGuideURL string  `json:"reference_guide_url,omitempty"`
+	SourceCodeURL     string  `json:"source_code_url,omitempty"`
+	LogoURL           string  `json:"logo_url,omitempty"`
+	ChangelogURL      string  `json:"changelog_url,omitempty"`
+	LastUpdatedAt     string  `json:"last_updated_at,omitempty"`
+	PackagingFormat   string  `json:"packaging_format,omitempty"`
+	RepositoryURL     string  `json:"repository_url,omitempty"`
+	Library           string  `json:"library,omitempty"`
+	Labels            []Label `json:"labels,omitempty"`
 }
 
 // bundled is normalized once at startup from the embedded default catalog.
@@ -123,6 +131,7 @@ func finalize(items []Item) []Item {
 		if it.PackagingFormat != "" && it.PackagingFormat != "HELM_CHART" && it.PackagingFormat != "CONTAINER" {
 			continue
 		}
+		it.Labels = cleanLabels(it.Labels)
 		out = append(out, it)
 	}
 	// Alphabetical (case-insensitive) by name within each library.
@@ -133,6 +142,22 @@ func finalize(items []Item) []Item {
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// cleanLabels drops labels that carry neither a code nor a name; returns nil when
+// none remain so the JSON `omitempty` tag keeps absent labels absent.
+func cleanLabels(labels []Label) []Label {
+	out := make([]Label, 0, len(labels))
+	for _, l := range labels {
+		if l.Code == "" && l.Name == "" {
+			continue
+		}
+		out = append(out, l)
+	}
 	if len(out) == 0 {
 		return nil
 	}

@@ -8,6 +8,11 @@
       "default": 1,
       "minimum": 0
     },
+    "standalone": {
+      "type": "boolean",
+      "default": false,
+      "description": "Deploy aif-ui standalone (renders ClusterRepo + UIPlugin) instead of embedded in aif-operator"
+    },
     "global": {
       "type": "object",
       "properties": {
