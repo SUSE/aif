@@ -50,13 +50,40 @@ func buildExtensionMetadata(
 
 	logging.Debug(log).Info("Resolving extension metadata from Helm index")
 
-	index, err := getOrFetchIndex(ctx, indexCache, repoURL)
+	index, cached, err := getOrFetchIndex(ctx, indexCache, repoURL)
 	if err != nil {
 		log.Error(err, "Failed to load Helm index")
 		return nil, err
 	}
 
 	annotations, err := helm.FindAnnotations(index, extensionName, version)
+	// A lookup miss (chart or version not found) on a *cached* index is worth one
+	// refetch: the cached index may predate a just-published upgrade, or the server
+	// may have briefly served an incomplete index that we cached — a fresh fetch
+	// recovers both, instead of serving the stale cache for the rest of its TTL.
+	// FindAnnotations only reports these in-memory misses; an unreachable registry
+	// fails earlier in getOrFetchIndex.
+	//
+	// Scope: this recovers a stale/incomplete cache on the *next reconcile that runs*.
+	// It does not make a persistent miss self-converge — a resolution failure ends the
+	// reconcile with Phase=Failed and no RequeueAfter, so the next attempt comes from a
+	// spec change or the informer resync, not a fixed short interval. The common
+	// upgrade ordering (the server already serves the new version at reconcile time)
+	// converges in that single pass; a version published only *after* the reconcile is
+	// not picked up until something re-triggers one. Making that self-driving would
+	// need a bounded requeue on the failure paths, deliberately left out of scope here.
+	if err != nil && cached {
+		logging.Debug(log).Info("Requested chart/version not in cached index; refetching",
+			"repoURL", repoURL)
+		indexCache.Delete(helm.IndexCacheKey{RepoURL: repoURL})
+
+		index, _, err = getOrFetchIndex(ctx, indexCache, repoURL)
+		if err != nil {
+			log.Error(err, "Failed to reload Helm index")
+			return nil, err
+		}
+		annotations, err = helm.FindAnnotations(index, extensionName, version)
+	}
 	if err != nil {
 		log.Error(err, "Failed to find chart annotations in index.yaml")
 		return nil, err
@@ -81,23 +108,26 @@ func buildExtensionMetadata(
 	return maps.Clone(final), nil
 }
 
+// getOrFetchIndex returns the repo index and whether it came from the cache.
+// The cached flag lets callers decide whether a failed lookup is worth a
+// cache-invalidating refetch (a freshly-fetched index won't be helped by one).
 func getOrFetchIndex(
 	ctx context.Context,
 	cache *helm.IndexCache,
 	repoURL string,
-) (*helm.IndexFile, error) {
+) (*helm.IndexFile, bool, error) {
 
 	key := helm.IndexCacheKey{RepoURL: repoURL}
 
 	if entry, ok := cache.Get(key); ok {
-		return entry.Index, nil
+		return entry.Index, true, nil
 	}
 
 	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
 
 	index, err := helm.FetchIndex(indexURL)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	cache.Set(key, &helm.IndexCacheEntry{
@@ -105,7 +135,7 @@ func getOrFetchIndex(
 		FetchedAt: time.Now(),
 	})
 
-	return index, nil
+	return index, false, nil
 }
 
 func filterSupportedMetadata(
