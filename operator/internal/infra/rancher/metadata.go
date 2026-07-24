@@ -60,16 +60,18 @@ func buildExtensionMetadata(
 	// A lookup miss (chart or version not found) on a *cached* index is worth one
 	// refetch: the cached index may predate a just-published upgrade, or the server
 	// may have briefly served an incomplete index that we cached — a fresh fetch
-	// recovers both, instead of failing for the whole cache TTL. FindAnnotations only
-	// ever reports these in-memory misses; a registry that is *down* fails earlier in
-	// getOrFetchIndex (both here and inside the refetch), where the error is returned
-	// and the reconcile simply retries next cycle.
+	// recovers both, instead of serving the stale cache for the rest of its TTL.
+	// FindAnnotations only reports these in-memory misses; an unreachable registry
+	// fails earlier in getOrFetchIndex.
 	//
-	// Tradeoff: a genuinely absent chart/version (e.g. a misconfigured name) will
-	// delete+refetch every reconcile, so the cache gives it no shielding. Deliberate
-	// and bounded — self-healing a real upgrade/transient bad index matters more than
-	// shielding a rare, visible misconfiguration, and the ready path requeues only at
-	// healthCheckInterval (~60s) with no ClusterRepo watch driving a hot loop.
+	// Scope: this recovers a stale/incomplete cache on the *next reconcile that runs*.
+	// It does not make a persistent miss self-converge — a resolution failure ends the
+	// reconcile with Phase=Failed and no RequeueAfter, so the next attempt comes from a
+	// spec change or the informer resync, not a fixed short interval. The common
+	// upgrade ordering (the server already serves the new version at reconcile time)
+	// converges in that single pass; a version published only *after* the reconcile is
+	// not picked up until something re-triggers one. Making that self-driving would
+	// need a bounded requeue on the failure paths, deliberately left out of scope here.
 	if err != nil && cached {
 		logging.Debug(log).Info("Requested chart/version not in cached index; refetching",
 			"repoURL", repoURL)
