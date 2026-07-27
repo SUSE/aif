@@ -231,6 +231,11 @@ func main() {
 			allowedHosts = append(allowedHosts, h)
 		}
 	}
+	if len(allowedHosts) == 0 {
+		setupLog.Info("WARNING: --allowed-registry-hosts is empty (allow-all): InstallAIExtension " +
+			"chart pulls, including credentialed ones, are not restricted to specific registry hosts. " +
+			"Set --allowed-registry-hosts / manager.allowedRegistryHosts to bound them.")
+	}
 
 	if err := (&aiextensionctrl.InstallAIExtensionReconciler{
 		Client:                   mgr.GetClient(),
