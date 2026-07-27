@@ -65,9 +65,10 @@ var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 
 // errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
 // cannot be deployed because no Rancher catalog client is configured (the
-// operator has no Rancher API token). This is a static misconfiguration, so
-// reconcile surfaces it as a Ready=False condition without requeuing — it clears
-// once the chart is reconfigured (which restarts the operator).
+// operator has no Rancher API token). The catalog config is editable at runtime
+// via Settings, so reconcile surfaces this as a Ready=False condition and
+// requeues: it clears as soon as the token is supplied (the AIWorkload
+// controller also watches Settings, so recovery is usually immediate).
 var errCatalogClientNotConfigured = stderrors.New("rancher catalog client not configured")
 
 type clusterRepoInfo struct {
@@ -128,13 +129,15 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		if err != nil {
 			if stderrors.Is(err, errCatalogClientNotConfigured) {
 				// A git-backed component needs a Rancher API token the operator
-				// wasn't given. This is a static misconfiguration: surface a clear
-				// condition + Failed phase and stop (no requeue) — it recovers when
-				// the chart is reconfigured, which restarts the operator.
+				// wasn't given. The catalog config is editable at runtime via
+				// Settings, so surface a clear condition + Failed phase and requeue:
+				// the AIWorkload controller watches Settings and re-enqueues on the
+				// change, and this RequeueAfter is a race-safe net in case the
+				// holder is rebuilt after our watch fires.
 				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set rancherCatalog.token in the aif-operator chart.", c.ChartName, c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{}, nil
+				return ctrl.Result{RequeueAfter: time.Minute}, nil
 			}
 			if stderrors.Is(err, errClusterRepoNotReady) {
 				// The repo the component needs is missing — usually because its
@@ -488,11 +491,16 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc 
 	// Component's own chartRepo credentials. The Settings-derived registries
 	// are appended below; for the local path this gives the most complete
 	// coverage (chart-pull host + every image host the chart may reference).
-	if repoInfo.ClientSecret != "" {
-		src := &corev1.Secret{}
-		if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
-			if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
-				auths[registryurl.Host(repoInfo.URL)] = dockerAuthEntry(u, p)
+	// Git repos are skipped: their clientSecret is git-clone auth, not an
+	// image-registry credential, and their URL is empty — Host("") would key it
+	// under a bogus "" host in the dockerconfigjson.
+	if repoInfo.ClientSecret != "" && repoInfo.Kind != repoKindGit {
+		if host := registryurl.Host(repoInfo.URL); host != "" {
+			src := &corev1.Secret{}
+			if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
+				if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
+					auths[host] = dockerAuthEntry(u, p)
+				}
 			}
 		}
 	}

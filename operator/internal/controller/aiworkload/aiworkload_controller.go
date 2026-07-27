@@ -534,6 +534,31 @@ func (r *AIWorkloadReconciler) credentialSecretToAIWorkloads(ctx context.Context
 	return r.allAIWorkloadRequests(ctx)
 }
 
+// settingsToAIWorkloads re-enqueues every blueprint-sourced AIWorkload when
+// Settings changes. The Settings controller rebuilds the Rancher catalog client
+// (CatalogClient holder) from Settings.Spec.RancherCatalog at runtime; without
+// this watch, a git-backed workload that failed with CatalogClientNotConfigured
+// before the token was set would stay Failed until the next informer resync.
+// Only blueprint-sourced workloads can consume git-backed ClusterRepos, so
+// helm/app workloads are skipped; reconcile is idempotent so re-enqueuing the
+// rest is safe.
+func (r *AIWorkloadReconciler) settingsToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	var list aiplatformv1alpha1.AIWorkloadList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range list.Items {
+		if list.Items[i].Spec.Source.Blueprint == nil {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: list.Items[i].Name, Namespace: list.Items[i].Namespace},
+		})
+	}
+	return reqs
+}
+
 func (r *AIWorkloadReconciler) allAIWorkloadRequests(ctx context.Context) []reconcile.Request {
 	var list aiplatformv1alpha1.AIWorkloadList
 	if err := r.List(ctx, &list); err != nil {
@@ -579,5 +604,6 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(isHelmSecret)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),
 			builder.WithPredicates(isCredentialSecret)).
+		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads)).
 		Complete(r)
 }

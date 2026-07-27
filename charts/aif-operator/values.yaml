@@ -44,6 +44,9 @@ rancherCatalog:
   # "Account & API Keys". When set, the chart stores it in a Secret. Leave empty
   # to reference an existing Secret via tokenSecret, or to disable git-backed
   # repo support (git-backed components then report a clear Ready=False status).
+  # NOTE: an inline token is persisted in a chart-managed Secret AND in Helm's
+  # release history/metadata (standard Helm behavior). Since this is a Rancher API
+  # token, prefer tokenSecret below to keep it out of release history.
   token: ""
   # tokenSecret: reference an existing Secret holding the token instead of
   # providing `token` inline. Takes precedence over `token` when name is set.

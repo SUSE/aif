@@ -20,6 +20,14 @@ spec:
   appCatalog:
     remoteUrl: {{ .Values.appCatalog.remoteUrl | quote }}
 {{- end }}
+{{- /*
+  rancherCatalog is emitted only when a token is supplied (inline or via an
+  existing secret). A git-backed ClusterRepo always needs a Rancher API token,
+  so a rancherCatalog.caBundle set on its own has nothing to authenticate and is
+  intentionally ignored here — set rancherCatalog.token (or .tokenSecret) too.
+  Note: secrets.yaml still creates the -rancher-catalog Secret for a caBundle-only
+  config, which is then an unreferenced orphan.
+*/ -}}
 {{- if or $rc.token $rc.tokenSecret.name }}
   rancherCatalog:
     {{- if $rc.url }}

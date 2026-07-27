@@ -43,6 +43,13 @@ import (
 // with an actionable message instead of letting the API server reject it.
 const maxFleetBundleChartBytes = 1 << 20 // 1 MiB
 
+// maxUncompressedChartBytes bounds the total decompressed size read out of the
+// chart archive. The compressed input is already capped at maxFleetBundleChartBytes,
+// but a ~1 MiB gzip can expand to ~1 GB (a decompression bomb); this cap keeps
+// extraction from ballooning operator memory even though the trust boundary is an
+// admin-configured, Rancher-mirrored git repo (defense-in-depth).
+const maxUncompressedChartBytes = 20 << 20 // 20 MiB
+
 // buildGitChartBundle assembles a self-contained Fleet Bundle from a fetched
 // chart archive. Fleet does NOT unpack a .tgz supplied as a single bundle
 // resource — doing so yields a silent empty release — so the archive is expanded
@@ -106,6 +113,7 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
+	var total int64
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -118,12 +126,25 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 			continue
 		}
 		name := path.Clean(h.Name)
+		// Reject entries that escape the chart root. path.Clean leaves a leading
+		// ../ intact and keeps absolute paths absolute, so a crafted archive could
+		// otherwise write a bundle resource outside the chart directory.
+		if name == ".." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
+			return nil, "", fmt.Errorf("archive entry %q escapes the chart root", h.Name)
+		}
 		if i := strings.IndexByte(name, '/'); i > 0 && chartDir == "" {
 			chartDir = name[:i]
 		}
-		data, err := io.ReadAll(tr)
+		// Bound the total decompressed size to guard against a decompression bomb.
+		// LimitReader caps this entry at the remaining budget +1 so an overrun is
+		// detectable without allocating past the cap.
+		data, err := io.ReadAll(io.LimitReader(tr, maxUncompressedChartBytes-total+1))
 		if err != nil {
 			return nil, "", fmt.Errorf("read %s: %w", name, err)
+		}
+		total += int64(len(data))
+		if total > maxUncompressedChartBytes {
+			return nil, "", fmt.Errorf("chart archive exceeds the uncompressed limit of %d bytes", maxUncompressedChartBytes)
 		}
 		res := map[string]any{"name": name}
 		if utf8.Valid(data) {

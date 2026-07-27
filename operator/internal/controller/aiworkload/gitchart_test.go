@@ -117,3 +117,37 @@ func TestBuildGitChartBundle_RejectsNonChartArchive(t *testing.T) {
 		t.Fatal("expected unpack error for non-archive bytes")
 	}
 }
+
+func TestChartTgzToBundleResources_RejectsPathTraversal(t *testing.T) {
+	cases := map[string]string{
+		"parent-relative": "../evil/x.yaml",
+		"absolute":        "/etc/passwd",
+	}
+	for name, entry := range cases {
+		t.Run(name, func(t *testing.T) {
+			tgz := makeChartTgz(t, map[string]string{
+				"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
+				entry:              "pwned",
+			})
+			if _, _, err := chartTgzToBundleResources(tgz); err == nil {
+				t.Fatalf("expected traversal error for entry %q", entry)
+			}
+		})
+	}
+}
+
+func TestChartTgzToBundleResources_RejectsDecompressionBomb(t *testing.T) {
+	// A highly-compressible file that expands past the uncompressed cap but whose
+	// gzip stays well under the compressed cap — the shape of a decompression bomb.
+	bomb := make([]byte, maxUncompressedChartBytes+1)
+	tgz := makeChartTgz(t, map[string]string{
+		"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
+		"chart/big.txt":    string(bomb),
+	})
+	if len(tgz) > maxFleetBundleChartBytes {
+		t.Fatalf("test archive is not sufficiently compressible: %d bytes", len(tgz))
+	}
+	if _, _, err := chartTgzToBundleResources(tgz); err == nil {
+		t.Fatal("expected uncompressed-size-limit error")
+	}
+}
