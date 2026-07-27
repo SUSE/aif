@@ -2,10 +2,54 @@ package rancher
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestCheckAuth_Classification(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		wantErr    bool
+		wantUnauth bool
+	}{
+		{"ok", http.StatusOK, false, false},
+		{"unauthorized", http.StatusUnauthorized, true, true},
+		{"forbidden", http.StatusForbidden, true, true},
+		{"server error", http.StatusInternalServerError, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotAuth string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotAuth = r.Header.Get("Authorization")
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer srv.Close()
+
+			c, err := NewCatalogClient(srv.URL, "tok-123", nil, false)
+			if err != nil {
+				t.Fatalf("NewCatalogClient: %v", err)
+			}
+			err = c.CheckAuth(context.Background())
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("CheckAuth err=%v wantErr=%v", err, tc.wantErr)
+			}
+			if tc.wantUnauth != errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("errors.Is(ErrUnauthorized)=%v want %v (err=%v)", errors.Is(err, ErrUnauthorized), tc.wantUnauth, err)
+			}
+			if gotPath != "/v1/catalog.cattle.io.clusterrepos" {
+				t.Errorf("path = %q", gotPath)
+			}
+			if gotAuth != "Bearer tok-123" {
+				t.Errorf("auth = %q", gotAuth)
+			}
+		})
+	}
+}
 
 func TestFetchChart_BuildsRequestAndReturnsBody(t *testing.T) {
 	var gotPath, gotQuery, gotAuth string

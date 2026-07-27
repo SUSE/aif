@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,11 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrUnauthorized indicates the Rancher Steve catalog API rejected the token
+// (HTTP 401/403) — a credential problem, distinct from the endpoint being
+// unreachable. Callers use errors.Is to classify a failed CheckAuth.
+var ErrUnauthorized = errors.New("rancher catalog API rejected the token")
 
 // DefaultBaseURL is the in-cluster Rancher Steve endpoint.
 const DefaultBaseURL = "https://rancher.cattle-system.svc"
@@ -70,6 +76,38 @@ func NewCatalogClient(baseURL, token string, caPEM []byte, insecure bool) (*Cata
 			Transport: &http.Transport{TLSClientConfig: tlsCfg},
 		},
 	}, nil
+}
+
+// CheckAuth verifies the client can authenticate to the Rancher Steve catalog
+// API by listing ClusterRepos. It returns nil on success, ErrUnauthorized when
+// the token is rejected (401/403), or a wrapped error for any other failure
+// (unreachable endpoint, TLS problem, unexpected status). Used by the Settings
+// API to validate a Rancher catalog token before it is saved.
+func (c *CatalogClient) CheckAuth(ctx context.Context) error {
+	u := fmt.Sprintf("%s/v1/catalog.cattle.io.clusterrepos?limit=1", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request Rancher catalog: %w", err)
+	}
+	defer resp.Body.Close()
+	// Drain a bounded amount so the keep-alive connection can be reused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("%w (%s)", ErrUnauthorized, resp.Status)
+	default:
+		return fmt.Errorf("rancher catalog returned %s", resp.Status)
+	}
 }
 
 // FetchChart downloads the chart archive for (repoName, chartName, version) via

@@ -28,6 +28,7 @@ import (
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credcheck"
 	"github.com/SUSE/aif-operator/internal/git"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -151,6 +152,48 @@ func TestSettingsPut_200(t *testing.T) {
 	}
 	if stored.Spec.Fleet.RepoURL != "https://git.example.com" {
 		t.Errorf("stored fleet.repoURL=%q want https://git.example.com", stored.Spec.Fleet.RepoURL)
+	}
+}
+
+// PUT round-trips the rancherCatalog block so the Settings UI can configure the
+// Rancher API token that git-backed ClusterRepos require. The handler applies the
+// spec verbatim, so exercising the full struct (url, tokenSecretRef, caBundleSecretRef,
+// insecureSkipVerify) locks the JSON contract the UI depends on and guards against a
+// DisallowUnknownFields regression if a field tag drifts.
+func TestSettingsPut_RoundTripsRancherCatalog(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	body := `{"spec":{"rancherCatalog":{` +
+		`"url":"https://rancher.cattle-system.svc",` +
+		`"tokenSecretRef":{"name":"rancher-catalog-token","key":"token"},` +
+		`"caBundleSecretRef":{"name":"rancher-catalog-ca","key":"ca.crt"},` +
+		`"insecureSkipVerify":true}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	rc := stored.Spec.RancherCatalog
+	if rc.URL != "https://rancher.cattle-system.svc" {
+		t.Errorf("rancherCatalog.url=%q want https://rancher.cattle-system.svc", rc.URL)
+	}
+	if rc.TokenSecretRef == nil || rc.TokenSecretRef.Name != "rancher-catalog-token" || rc.TokenSecretRef.Key != "token" {
+		t.Errorf("rancherCatalog.tokenSecretRef=%+v want {rancher-catalog-token token}", rc.TokenSecretRef)
+	}
+	if rc.CABundleSecretRef == nil || rc.CABundleSecretRef.Name != "rancher-catalog-ca" || rc.CABundleSecretRef.Key != "ca.crt" {
+		t.Errorf("rancherCatalog.caBundleSecretRef=%+v want {rancher-catalog-ca ca.crt}", rc.CABundleSecretRef)
+	}
+	if !rc.InsecureSkipVerify {
+		t.Errorf("rancherCatalog.insecureSkipVerify=false want true")
 	}
 }
 
@@ -563,6 +606,120 @@ func TestValidateCredentials_OverrideRefsBeforeSave(t *testing.T) {
 
 	if got.user != "ou" || got.pass != "op" || got.host != "nvcr.io" {
 		t.Fatalf("probe got %+v want ou/op/nvcr.io", got)
+	}
+}
+
+func TestValidateCredentials_RancherCatalogOKFromSaved(t *testing.T) {
+	const ns = "aif-operator"
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("token-abc:xyz")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RancherCatalog: aiplatformv1alpha1.RancherCatalogSettings{
+				URL:            "https://rancher.example.svc",
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "rc-token", Key: "token"},
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := rancherCatalogCheckAuth
+	defer func() { rancherCatalogCheckAuth = orig }()
+	called := false
+	rancherCatalogCheckAuth = func(_ *rancher.CatalogClient, _ context.Context) error {
+		called = true
+		return nil
+	}
+
+	body := `{"targets":["rancherCatalog"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !called {
+		t.Fatal("expected CheckAuth to be invoked")
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Target != "rancherCatalog" || resp.Results[0].Status != statusOK {
+		t.Fatalf("unexpected results: %+v", resp.Results)
+	}
+	if resp.Results[0].Host != "rancher.example.svc" {
+		t.Errorf("host=%q want rancher.example.svc", resp.Results[0].Host)
+	}
+}
+
+// A rejected token (ErrUnauthorized) must classify as "failed" (bad credential),
+// not "error" (endpoint unreachable) — the UI shows a different message for each.
+func TestValidateCredentials_RancherCatalogUnauthorized(t *testing.T) {
+	const ns = "aif-operator"
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("bad")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RancherCatalog: aiplatformv1alpha1.RancherCatalogSettings{
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "rc-token", Key: "token"},
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := rancherCatalogCheckAuth
+	defer func() { rancherCatalogCheckAuth = orig }()
+	rancherCatalogCheckAuth = func(_ *rancher.CatalogClient, _ context.Context) error {
+		return fmt.Errorf("%w (401 Unauthorized)", rancher.ErrUnauthorized)
+	}
+
+	body := `{"targets":["rancherCatalog"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusFailed {
+		t.Fatalf("want failed, got %+v", resp.Results)
+	}
+}
+
+// With no token configured and none supplied, the probe is skipped — a form
+// still being filled in is "not configured", not an auth failure.
+func TestValidateCredentials_RancherCatalogSkippedWhenUnconfigured(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	orig := rancherCatalogCheckAuth
+	defer func() { rancherCatalogCheckAuth = orig }()
+	rancherCatalogCheckAuth = func(_ *rancher.CatalogClient, _ context.Context) error {
+		t.Fatal("CheckAuth must not be called when nothing is configured")
+		return nil
+	}
+
+	body := `{"targets":["rancherCatalog"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusSkipped {
+		t.Fatalf("want skipped, got %+v", resp.Results)
 	}
 }
 
