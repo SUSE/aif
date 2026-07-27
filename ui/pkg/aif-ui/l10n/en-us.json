@@ -117,6 +117,27 @@
               "keyNameLabel": "Secret Key"
             }
           },
+          "rancherCatalog": {
+            "title": "Rancher Catalog",
+            "description": "Required to install charts from git-backed ClusterRepos. These have no HTTP/OCI URL, so the operator fetches the chart from Rancher's catalog API using a Rancher API token (format \"token-xxxxx:yyyyy\"). Create one in Rancher under \"Account & API Keys\", store it in a Secret in the operator namespace, then reference that Secret below. HTTP/OCI ClusterRepos need none of this.",
+            "tokenSecretRef": {
+              "label": "API Token Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "url": {
+              "label": "Rancher API URL",
+              "placeholder": "https://rancher.cattle-system.svc"
+            },
+            "caBundleSecretRef": {
+              "label": "CA Bundle Secret (optional)",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "insecureSkipVerify": {
+              "label": "Skip TLS verification (development only)"
+            }
+          },
           "advanced": {
             "title": "Advanced",
             "warning": "Advanced settings for air-gapped or custom deployments only. Modify with care.",

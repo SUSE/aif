@@ -18,6 +18,7 @@ function createEmptySpec() {
     applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
     nvidia:                { userSecretRef: null, tokenSecretRef: null },
+    rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
     registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '', nvidia: '' },
     catalogDiscovery:      { applicationCollectionMode: 'api' },
     imageRewrite:          { enabled: false, rules: [] },
@@ -77,17 +78,19 @@ export default {
       operatorManaged:        false,
       operatorForbidden:      false,
       expanded:          {
-        fleet:         false,
-        appCollection: true,
-        suseRegistry:  false,
-        nvidia:        false,
-        advanced:      false,
+        fleet:          false,
+        appCollection:  true,
+        suseRegistry:   false,
+        nvidia:         false,
+        rancherCatalog: false,
+        advanced:       false,
       },
       testResults: {
         applicationCollection: null,
         suseRegistry:          null,
         nvidia:                null,
         gitops:                null,
+        rancherCatalog:        null,
       },
     };
   },
@@ -173,6 +176,14 @@ export default {
           tokenSecretRef: crdSpec.nvidia.tokenSecretRef || null,
         };
       }
+      if (crdSpec.rancherCatalog) {
+        s.rancherCatalog = {
+          url:                crdSpec.rancherCatalog.url || '',
+          tokenSecretRef:     crdSpec.rancherCatalog.tokenSecretRef || null,
+          caBundleSecretRef:  crdSpec.rancherCatalog.caBundleSecretRef || null,
+          insecureSkipVerify: !!crdSpec.rancherCatalog.insecureSkipVerify,
+        };
+      }
       if (crdSpec.registryEndpoints) {
         s.registryEndpoints = { ...s.registryEndpoints, ...crdSpec.registryEndpoints };
       }
@@ -224,6 +235,16 @@ export default {
         out.nvidia = {};
         if (nv.userSecretRef?.name) out.nvidia.userSecretRef = nv.userSecretRef;
         if (nv.tokenSecretRef?.name) out.nvidia.tokenSecretRef = nv.tokenSecretRef;
+      }
+
+      const rc = spec.rancherCatalog;
+
+      if (rc.url || rc.tokenSecretRef?.name || rc.caBundleSecretRef?.name || rc.insecureSkipVerify) {
+        out.rancherCatalog = {};
+        if (rc.url) out.rancherCatalog.url = rc.url;
+        if (rc.tokenSecretRef?.name) out.rancherCatalog.tokenSecretRef = rc.tokenSecretRef;
+        if (rc.caBundleSecretRef?.name) out.rancherCatalog.caBundleSecretRef = rc.caBundleSecretRef;
+        if (rc.insecureSkipVerify) out.rancherCatalog.insecureSkipVerify = true;
       }
 
       const re = spec.registryEndpoints;
@@ -408,6 +429,11 @@ export default {
     canTest(target) {
       if (target === 'gitops') {
         return !!this.spec.fleet.repoURL && this.spec.fleet.authType !== 'ssh';
+      }
+      // rancherCatalog authenticates with a single API token (no username), so it
+      // only needs a complete token secret ref.
+      if (target === 'rancherCatalog') {
+        return this.secretRefComplete(this.spec.rancherCatalog.tokenSecretRef);
       }
       const sec = this.spec[target];
       return this.secretRefComplete(sec?.userSecretRef) && this.secretRefComplete(sec?.tokenSecretRef);
@@ -794,6 +820,100 @@ export default {
                 :class="testResultClass('gitops')"
                 class="ml-10"
               >{{ testResultText('gitops') }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rancher Catalog -->
+      <div id="rancherCatalog" class="box mt-10">
+        <div
+          class="accordion-header"
+          role="button"
+          tabindex="0"
+          @click="toggle('rancherCatalog')"
+          @keydown.space.enter.prevent="toggle('rancherCatalog')"
+        >
+          <i :class="expanded.rancherCatalog ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+          <h2>{{ t('suseai.pages.settings.sections.rancherCatalog.title') }}</h2>
+        </div>
+
+        <div
+          v-if="expanded.rancherCatalog"
+          class="mt-15"
+        >
+          <p class="text-muted mb-15">
+            {{ t('suseai.pages.settings.sections.rancherCatalog.description') }}
+          </p>
+
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.rancherCatalog.tokenSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.rancherCatalog.tokenSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.rancherCatalog.tokenSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.rancherCatalog.tokenSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.rancherCatalog.tokenSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.rancherCatalog.url"
+                :label="t('suseai.pages.settings.sections.rancherCatalog.url.label')"
+                :placeholder="t('suseai.pages.settings.sections.rancherCatalog.url.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.rancherCatalog.caBundleSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.rancherCatalog.caBundleSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.rancherCatalog.caBundleSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.rancherCatalog.caBundleSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.rancherCatalog.caBundleSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
+          <div class="row mb-10">
+            <div class="col span-12">
+              <Checkbox
+                v-model:value="spec.rancherCatalog.insecureSkipVerify"
+                :label="t('suseai.pages.settings.sections.rancherCatalog.insecureSkipVerify.label')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
+          <div class="row mt-10">
+            <div class="col span-12">
+              <AsyncButton
+                mode="edit"
+                :action-label="t('suseai.pages.settings.test.button')"
+                :disabled="!canTest('rancherCatalog')"
+                @click="cb => runTest('rancherCatalog', { tokenSecretRef: spec.rancherCatalog.tokenSecretRef, caBundleSecretRef: spec.rancherCatalog.caBundleSecretRef, url: spec.rancherCatalog.url, insecureSkipVerify: spec.rancherCatalog.insecureSkipVerify }, cb)"
+              />
+              <span
+                v-if="testResults.rancherCatalog"
+                :class="testResultClass('rancherCatalog')"
+                class="ml-10"
+              >{{ testResultText('rancherCatalog') }}</span>
             </div>
           </div>
         </div>
