@@ -64,12 +64,12 @@ rancherCatalog:
 
 # Static application catalog served to the AI Factory UI.
 appCatalog:
-  # useStaticCatalog: serve the bundled/remote static catalog (true, default) or
-  # discover apps from live chart repositories at runtime (false). This is a UI
+  # useStaticCatalog: serve the bundled/remote static catalog (true) or
+  # discover apps from live chart repositories at runtime (false, default). This is a UI
   # setting; the chart forwards it to the aif-ui extension automatically, so set it
   # here as a sibling of remoteUrl instead of via
   # aiExtension.source.helm.values.appCatalog.useStaticCatalog.
-  useStaticCatalog: true
+  useStaticCatalog: false
   # remoteUrl: optional URL to a remote catalog JSON document. When set, the
   # operator fetches this URL and serves it to the UI (with a safe fallback to
   # the operator's bundled catalog on failure). When empty, the bundled catalog
@@ -79,7 +79,7 @@ appCatalog:
 
 manager:
   replicaCount: 1
-  
+
   image:
     registry: ghcr.io
     repository: suse/aif-operator
@@ -90,6 +90,23 @@ manager:
 
   args:
     - --leader-elect
+
+  # allowInsecureRegistryTLS gates the InstallAIExtension
+  # spec.source.helm.tls.insecureSkipVerify option, which disables registry TLS
+  # certificate verification for the extension chart pull. Leave false in
+  # production; set to true only for testing/eval against a registry with an
+  # untrusted certificate. A CR must ALSO set tls.acknowledgeInsecure=true.
+  allowInsecureRegistryTLS: false
+
+  # allowedRegistryHosts restricts which registry hosts the operator may contact
+  # (and send credentials to) when pulling the extension chart. Empty (default)
+  # allows any host. Set to your registry host(s) to bound the CR-supplied
+  # chartURL and prevent credentials from being sent to an attacker-chosen
+  # registry. Match "host" or "host:port"; e.g.:
+  #   allowedRegistryHosts:
+  #     - harbor.example.com
+  #     - ghcr.io
+  allowedRegistryHosts: []
 
   env: []
 
@@ -160,6 +177,22 @@ aiExtension:
       #   aiExtension.source.helm.values.image.repository=suse/aif-ui
       #   aiExtension.source.helm.values.image.tag=2.0.0
       values: {}
+      # --- Private / authenticated registry for the chart pull (all optional) ---
+      # Secrets are read from the operator's namespace. See the InstallAIExtension CRD
+      # and operator/samples/installaiextension-authenticated*.yaml for the full schema.
+      # auth:                          # set exactly one of basic | token | dockerConfig
+      #   basic:
+      #     userSecretRef:  { name: registry-creds, key: username }
+      #     tokenSecretRef: { name: registry-creds, key: password }
+      #   # token:
+      #   #   tokenSecretRef: { name: registry-creds, key: token }
+      #   # dockerConfig:
+      #   #   secretRef: { name: registry-dockercfg }    # kubernetes.io/dockerconfigjson
+      # tls:
+      #   caSecretRef: { name: registry-ca, key: ca.crt }
+      #   # clientTLSSecretRef: { name: registry-mtls }  # kubernetes.io/tls (mTLS)
+      #   # insecureSkipVerify: true                     # test only; also requires
+      #   # acknowledgeInsecure: true                    #   manager.allowInsecureRegistryTLS=true
   extension:
     name: "aif-ui"
     version: "2.0.0"

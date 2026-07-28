@@ -38,6 +38,7 @@ import (
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/config"
+	"github.com/SUSE/aif-operator/internal/credentials"
 	helmClient "github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/infra/kubernetes"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
@@ -49,6 +50,10 @@ const (
 	readinessRequeue        = 10 * time.Second
 	uiConfigMapName         = "aif-ui-config"
 	healthCheckInterval     = 60 * time.Second
+	// resolutionRetryInterval requeues the CR after a registry auth/TLS
+	// resolution failure so it self-heals when a referenced Secret is created
+	// or corrected (the controller has no Secret watch).
+	resolutionRetryInterval = 30 * time.Second
 
 	conditionTypeReady           = "Ready"
 	conditionTypeHelmInstalled   = "HelmInstalled"
@@ -63,7 +68,34 @@ type InstallAIExtensionReconciler struct {
 	Scheme             *runtime.Scheme
 	ExtensionNamespace string
 	ReadinessTimeout   time.Duration
-	rancherMgr         *rancher.Manager
+	// AllowInsecureRegistryTLS gates spec.source.helm.tls.insecureSkipVerify. When
+	// false (the default), a CR requesting insecureSkipVerify is failed at reconcile
+	// instead of pulling with TLS verification disabled. Set by the platform admin
+	// at deploy time (manager.allowInsecureRegistryTLS / --allow-insecure-registry-tls).
+	AllowInsecureRegistryTLS bool
+	// AllowedRegistryHosts optionally restricts which registry hosts the operator
+	// will contact (and send resolved credentials to) for a chart pull. Empty means
+	// all hosts are allowed. Set by the platform admin (manager.allowedRegistryHosts /
+	// --allowed-registry-hosts) to bound the CR-supplied chartURL and prevent
+	// credential exfiltration to an attacker-chosen registry (confused-deputy).
+	AllowedRegistryHosts []string
+	rancherMgr           *rancher.Manager
+}
+
+// registryHostAllowed reports whether the chart's registry host may be contacted.
+// An empty allowlist permits all hosts (opt-in hardening); when non-empty, host
+// must match an entry case-insensitively, compared against both the "host:port"
+// authority and the bare hostname so admins can list either form.
+func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string) bool {
+	if len(r.AllowedRegistryHosts) == 0 {
+		return true
+	}
+	for _, h := range r.AllowedRegistryHosts {
+		if strings.EqualFold(h, host) || strings.EqualFold(h, hostname) {
+			return true
+		}
+	}
+	return false
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions,verbs=get;list;watch;create;update;patch;delete
@@ -74,6 +106,7 @@ type InstallAIExtensionReconciler struct {
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -237,6 +270,21 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, nil
 	}
 
+	// Operator-level gate: refuse to pull with TLS verification disabled unless the
+	// platform admin explicitly enabled it at deploy time. Checked before any chart
+	// work so we fail fast and never build an insecure client. The CR's
+	// acknowledgeInsecure (CEL-enforced) only proves author intent; this flag is the
+	// authority check.
+	if helmSource.TLS != nil && helmSource.TLS.InsecureSkipVerify && !r.AllowInsecureRegistryTLS {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"InsecureTLSNotAllowed",
+			"spec.source.helm.tls.insecureSkipVerify is set but the operator was not deployed with insecure "+
+				"registry TLS enabled (manager.allowInsecureRegistryTLS / --allow-insecure-registry-tls)",
+			ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{}, nil
+	}
+
 	releaseName := deriveReleaseName(helmSource.ChartURL)
 
 	if ext.Status.HelmReleaseName != "" && ext.Status.HelmReleaseName != releaseName {
@@ -263,21 +311,63 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, nil
 	}
 
+	// Registry-host allowlist gate: bound the CR-supplied chartURL to admin-approved
+	// hosts. Checked before the Helm client is built or any auth Secret is read, so a
+	// disallowed host can never cause the operator to resolve and transmit credentials
+	// to an attacker-chosen registry (confused-deputy). Empty allowlist permits all.
+	if !r.registryHostAllowed(u.Host, u.Hostname()) {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"RegistryHostNotAllowed",
+			fmt.Sprintf("registry host %q is not permitted by the operator's registry host allowlist "+
+				"(manager.allowedRegistryHosts / --allowed-registry-hosts)", u.Host),
+			ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{}, nil
+	}
+
 	helm, err := newHelmClientForNamespace(namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := helm.EnsureRelease(ctx, helmClient.ReleaseSpec{
+	regAuth, err := credentials.ResolveHelmAuth(ctx, r.Client, config.GetOperatorNamespace(), helmSource.Auth, helmSource.ChartURL)
+	if err != nil {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"AuthResolutionFailed", fmt.Sprintf("registry auth resolution failed: %v", err), ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{RequeueAfter: resolutionRetryInterval}, nil
+	}
+
+	tlsCfg, err := credentials.ResolveHelmTLS(ctx, r.Client, config.GetOperatorNamespace(), helmSource.TLS)
+	if err != nil {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"TLSResolutionFailed", fmt.Sprintf("registry TLS resolution failed: %v", err), ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{RequeueAfter: resolutionRetryInterval}, nil
+	}
+	if helmSource.TLS != nil && helmSource.TLS.InsecureSkipVerify {
+		logger.Info("WARNING: insecureSkipVerify is enabled for the extension chart registry; TLS certificate verification is disabled")
+	}
+	releaseSpec := helmClient.ReleaseSpec{
 		Name:      releaseName,
 		Namespace: namespace,
 		ChartRef:  helmSource.ChartURL,
 		Version:   helmSource.Version,
 		Values:    values,
-	}); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionFalse,
-			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+	}
+	if regAuth != nil {
+		releaseSpec.RegistryAuth = &helmClient.RegistryAuth{
+			Username: regAuth.Username,
+			Password: regAuth.Password,
+		}
+	}
+	if tlsCfg != nil {
+		releaseSpec.TLSConfig = tlsCfg
+	}
+
+	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
+		setTerminalFailure(ext, conditionTypeHelmInstalled,
+			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -311,9 +401,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 			return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 		} else if time.Since(waitingSince) > r.ReadinessTimeout {
 			msg := fmt.Sprintf("Deployment not ready after %s: %s", r.ReadinessTimeout, deployStatus.Message)
-			setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
-				"TimedOut", msg, ext.Generation)
-			ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+			setTerminalFailure(ext, conditionTypeDeploymentReady, "TimedOut", msg)
 			return ctrl.Result{}, nil
 		}
 		setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
@@ -355,9 +443,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Available", fmt.Sprintf("Service URL: %s", svcURL), ext.Generation)
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, svcURL); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -365,9 +452,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Created", "ClusterRepo created", ext.Generation)
 
 	if err := r.rancherMgr.EnsureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("UIPlugin failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -399,9 +485,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	}
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, ""); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -409,9 +494,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 		"Created", "ClusterRepo created for git source", ext.Generation)
 
 	if err := r.ensureUIPluginGit(ctx, ext, rawBaseURL, namespace); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionFalse,
-			"Failed", fmt.Sprintf("UIPlugin install failed: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		setTerminalFailure(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin install failed: %v", err))
 		return ctrl.Result{}, nil
 	}
 
@@ -548,6 +632,19 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 		Message:            message,
 		ObservedGeneration: generation,
 	})
+}
+
+// setTerminalFailure records a terminal reconcile failure: it sets the specific
+// sub-condition to False and mirrors the same reason/message onto the top-level Ready
+// condition, then marks the phase Failed. Mirroring keeps Ready from showing a stale
+// success while phase is Failed (a pull/deployment/Rancher failure otherwise updated only
+// its own sub-condition). Sites that already set Ready directly do not need this.
+func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, message string) {
+	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse, reason, message, ext.Generation)
+	if condType != conditionTypeReady {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, message, ext.Generation)
+	}
+	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 }
 
 func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) {

@@ -21,9 +21,6 @@ import (
 	"crypto/md5" //nolint:gosec // Fleet uses MD5 only to derive deterministic Helm release-name suffixes.
 	"encoding/hex"
 	"fmt"
-	"hash/fnv"
-	"strconv"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,6 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
+
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // bundleGVK is the Fleet Bundle CR GVK we emit.
@@ -290,21 +289,5 @@ func pullSecretBundleName(owner, clusterID, namespace string) string {
 	if namespace != "" {
 		base = base + "-" + namespace
 	}
-	if len(base) <= 63 {
-		return base
-	}
-	// 63 - 1 (separator) - 6 (hash) = 56 chars of head text.
-	const max = 63
-	const hashLen = 6
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(base))
-	suffix := strconv.FormatUint(uint64(h.Sum32()), 36)
-	if len(suffix) > hashLen {
-		suffix = suffix[:hashLen]
-	}
-	head := strings.TrimRight(base[:max-len(suffix)-1], "-")
-	if head == "" {
-		return suffix
-	}
-	return head + "-" + suffix
+	return naming.TruncateDNS1123Label(base, 63)
 }

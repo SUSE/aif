@@ -1,0 +1,119 @@
+metadata:
+  name: suse-ai-factory
+  # TODO: we need to update this version as part of the release process
+  version: 2.0.1
+  creationDate: "2026-07-15"
+corePlatform:
+  image: registry.suse.com/elemental/rke2/rke2-manifest:1.35.6-42.1
+components:
+  systemd:
+    extensions:
+      # NOTE (fdegir): Longhorn/SUSE Storage can't be installed without open-iscsi
+      # package so we have to use the only version that has sysext image
+      - name: "suse-storage"
+        image: "registry.suse.com/elemental/longhorn:4.111-4.79"
+  helm:
+    charts:
+      - chart: "gpu-operator"
+        version: "v26.3.1"
+        namespace: "gpu-operator"
+        repository: "nvidia"
+        values:
+          driver:
+            repository: "registry.suse.com/third-party/nvidia"
+            usePrecompiled: true
+            version: "595"
+          cdi:
+            nriPluginEnabled: true
+      # Rancher prime docs recommend cert-manager
+      # https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/quick-start/deploy-rancher/helm-cli.html#_install_rancher_with_helm
+      - chart: "cert-manager"
+        version: "v1.21.0"
+        namespace: "cert-manager"
+        repository: "jetstack"
+        values:
+          crds:
+            enabled: true
+      # Latest Rancher version as of today
+      - chart: "rancher"
+        version: "2.14.3"
+        namespace: "cattle-system"
+        repository: "rancher-prime"
+        dependsOn:
+          - name: "cert-manager"
+            type: "helm"
+        values:
+          replicas: 1
+          postDelete:
+            enabled: false
+          global:
+            cattle:
+              systemDefaultRegistry: registry.rancher.com
+            psp:
+              enabled: "false"
+      # Local path provisioner
+      # NOTE: this should be used for a single-node demo purposes only as it
+      # is using storage on local host. DO NOT use this in a multi-node
+      # production environment. Also, DO NOT use this in conjunction with
+      # suse-storage (Longhorn) as both are configured as default storage class.
+      # For a multi-node deployment, use suse-storage.
+      - chart: "local-path-provisioner"
+        version: "0.0.36"
+        namespace: "local-path-provisioner"
+        repository: "application-collection"
+        values:
+          global:
+            imagePullSecrets:
+              - name: "application-collection"
+            storageClass:
+              defaultClass: true
+      # SUSE Storage
+      # NOTE: DO NOT use this in conjunctin with local-path-provisioner as the both
+      # are configured as default storage class.
+      - chart: "suse-storage"
+        version: "1.11.3"
+        namespace: "longhorn-system"
+        repository: "application-collection"
+        values: 
+          global:
+            imagePullSecrets:
+              - name: "application-collection"
+        dependsOn:
+          - name: "suse-storage"
+            type: "sysext"
+      # SUSE AI Factory
+      - chart: "aif-operator"
+        version: "2.0.1"
+        namespace: "aif-operator"
+        # will be application-collection when we finalize things
+        repository: "ghcr"
+        values:
+          aiExtension:
+            enabled: false
+        dependsOn:
+          - name: "rancher"
+            type: "helm"
+      - chart: "aif-ui" 
+        version: "2.0.1"
+        namespace: "cattle-ui-plugin-system"
+        # will be application-collection when we finalize things
+        repository: "ghcr"
+        dependsOn:
+          - name: "aif-operator"
+            type: "helm"
+    repositories:
+      # NOTE (fdegir): Repo is required for cert-manager
+      - name: "jetstack"
+        url: "https://charts.jetstack.io"
+      # NOTE (fdegir): Repo is required for suse-storage
+      - name: "application-collection"
+        url: "oci://dp.apps.rancher.io/charts"
+      # NOTE (fdegir): Repo is required for rancher
+      - name: "rancher-prime"
+        url: "https://charts.rancher.com/server-charts/prime"
+      # NVIDIA repo for GPU Operator
+      - name: "nvidia"
+        url: "https://helm.ngc.nvidia.com/nvidia"
+      # GitHub repo for SUSE AIF
+      - name: "ghcr"
+        url: "oci://ghcr.io/suse/chart"

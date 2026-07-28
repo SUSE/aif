@@ -143,51 +143,19 @@
             }
           }
         },
-        "imagePullSecrets": {
-          "type": "array",
-          "default": []
-        },
-        "args": {
-          "type": "array",
-          "default": [
-            "--leader-elect"
-          ]
-        },
-        "env": {
-          "type": "array",
-          "default": []
-        },
-        "podAnnotations": {
-          "type": "object",
-          "default": {}
-        },
-        "podSecurityContext": {
-          "type": "object"
-        },
-        "securityContext": {
-          "type": "object"
-        },
-        "resources": {
-          "type": "object"
-        },
-        "probes": {
-          "type": "object"
-        },
-        "nodeSelector": {
-          "type": "object",
-          "default": {}
-        },
-        "tolerations": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          },
-          "default": []
-        },
-        "affinity": {
-          "type": "object",
-          "default": {}
-        }
+        "imagePullSecrets": { "type": "array", "default": [] },
+        "args": { "type": "array", "default": ["--leader-elect"] },
+        "allowInsecureRegistryTLS": { "type": "boolean", "default": false, "description": "Allow InstallAIExtension tls.insecureSkipVerify (disables registry TLS verification for the chart pull). Off by default; test/eval only." },
+        "allowedRegistryHosts": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Allowlist of registry hosts the operator may contact (and send credentials to) for extension chart pulls. Empty allows all hosts." },
+        "env": { "type": "array", "default": [] },
+        "podAnnotations": { "type": "object", "default": {} },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "resources": { "type": "object" },
+        "probes": { "type": "object" },
+        "nodeSelector": { "type": "object", "default": {} },
+        "tolerations": { "type": "array", "items": { "type": "object" }, "default": [] },
+        "affinity": { "type": "object", "default": {} }
       }
     },
     "rbacHelpers": {
@@ -245,17 +213,11 @@
                 "version"
               ],
               "properties": {
-                "chartURL": {
-                  "type": "string"
-                },
-                "version": {
-                  "type": "string"
-                },
-                "values": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "default": {}
-                }
+                "chartURL": { "type": "string" },
+                "version": { "type": "string" },
+                "values": { "type": "object", "additionalProperties": true, "default": {} },
+                "auth": { "type": "object", "additionalProperties": true, "description": "Registry auth for the chart pull (basic|token|dockerConfig); see the InstallAIExtension CRD for the full schema." },
+                "tls": { "type": "object", "additionalProperties": true, "description": "Registry TLS trust for the chart pull (caSecretRef|clientTLSSecretRef|insecureSkipVerify)." }
               }
             }
           }

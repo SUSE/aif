@@ -84,7 +84,7 @@ async function _doLoad(): Promise<void> {
         namespace:        cm?.data?.operatorNamespace || OPERATOR_NAMESPACE,
         service:          cm?.data?.operatorService   || OPERATOR_SERVICE,
         found:            true,
-        useStaticCatalog: parseConfigBool(cm?.data?.useStaticCatalog, true),
+        useStaticCatalog: parseConfigBool(cm?.data?.useStaticCatalog, false),
       };
       return;
     }
@@ -93,7 +93,7 @@ async function _doLoad(): Promise<void> {
     namespace:        OPERATOR_NAMESPACE,
     service:          OPERATOR_SERVICE,
     found:            false,
-    useStaticCatalog: true,
+    useStaticCatalog: false,
   };
 }
 
@@ -106,7 +106,7 @@ export function getOperatorService(): string {
 }
 
 export function getUseStaticCatalog(): boolean {
-  return cache?.useStaticCatalog ?? true;
+  return cache?.useStaticCatalog ?? false;
 }
 
 export function getOperatorBaseUrl(): string {
@@ -161,7 +161,7 @@ export function getConnectionError(): string | null {
 export function getOperatorConfig(): OperatorCache {
   return cache ?? {
     namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false,
-    useStaticCatalog: true,
+    useStaticCatalog: false,
   };
 }
 

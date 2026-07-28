@@ -6,8 +6,9 @@ import { getCatalog } from '../utils/operator-api';
  *
  * The operator owns the static catalog end to end: it returns the admin-configured
  * remote catalog when set, otherwise its bundled default — already normalized,
- * validated, and library-stamped. This is used only in static mode; dynamic mode
- * discovers apps from chart repositories in the UI and does not call this.
+ * validated, and library-stamped. Static mode uses this as the whole app list;
+ * dynamic mode still calls it (via fetchCuratedOverlayOrEmpty) to overlay curated
+ * metadata onto the apps it discovers from chart repositories.
  *
  * Errors propagate so the Apps page can show an error state — there is no UI-side
  * fallback, because the bundled catalog now lives in the operator.
