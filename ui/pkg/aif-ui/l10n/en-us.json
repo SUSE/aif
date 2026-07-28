@@ -195,6 +195,8 @@
       "manage": "Manage Application",
       "noApps": "No applications found",
       "loading": "Loading applications and discovering installations...",
+      "repoWarningTitle": "Some NVIDIA repositories couldn't be loaded",
+      "dismiss": "Dismiss",
       "status": {
         "available": "Available",
         "installing": "Installing...",

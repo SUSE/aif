@@ -19,6 +19,8 @@ package aiworkload
 import (
 	"strings"
 	"testing"
+
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 func TestTruncateName(t *testing.T) {
@@ -27,7 +29,7 @@ func TestTruncateName(t *testing.T) {
 	// Names within the limit are returned verbatim.
 	t.Run("passthrough when within limit", func(t *testing.T) {
 		const short = "suse-gen-ai-minimal-c-skg6s-opentelemetry-operator"
-		if got := truncateName(short, max); got != short {
+		if got := naming.TruncateDNS1123Label(short, max); got != short {
 			t.Errorf("expected unchanged %q, got %q", short, got)
 		}
 	})
@@ -37,21 +39,21 @@ func TestTruncateName(t *testing.T) {
 	// the API server rejects as an invalid DNS-1123 label.
 	t.Run("over-long name is capped to a valid label", func(t *testing.T) {
 		long := "suse-ai-opentelemetry-operator-opentelemetry-operator-system-c-skg6s"
-		assertValidLabel(t, truncateName(long, max), max)
+		assertValidLabel(t, naming.TruncateDNS1123Label(long, max), max)
 	})
 
 	// A cut that lands exactly on a '-' must not produce a trailing '-'.
 	t.Run("cut on a dash does not leave a trailing dash", func(t *testing.T) {
 		in := strings.Repeat("a", 55) + "-" + strings.Repeat("b", 30)
-		assertValidLabel(t, truncateName(in, max), max)
+		assertValidLabel(t, naming.TruncateDNS1123Label(in, max), max)
 	})
 
 	// Distinct over-long inputs sharing a long prefix must not collide.
 	t.Run("distinct long inputs do not collide", func(t *testing.T) {
 		a := strings.Repeat("a", 60) + "-one"
 		b := strings.Repeat("a", 60) + "-two"
-		if truncateName(a, max) == truncateName(b, max) {
-			t.Errorf("expected distinct outputs, both -> %q", truncateName(a, max))
+		if naming.TruncateDNS1123Label(a, max) == naming.TruncateDNS1123Label(b, max) {
+			t.Errorf("expected distinct outputs, both -> %q", naming.TruncateDNS1123Label(a, max))
 		}
 	})
 
@@ -62,7 +64,7 @@ func TestTruncateName(t *testing.T) {
 			strings.Repeat("a", 200),
 			strings.Repeat("a", 50) + strings.Repeat("-", 30),
 		} {
-			assertValidLabel(t, truncateName(in, max), max)
+			assertValidLabel(t, naming.TruncateDNS1123Label(in, max), max)
 		}
 	})
 }

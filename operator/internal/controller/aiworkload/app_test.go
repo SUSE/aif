@@ -298,3 +298,91 @@ func TestReconcileAppPullSecrets_MissingClusterRepo_NoOp(t *testing.T) {
 		t.Errorf("expected no deliveries, got %v", w.Status.PullSecretDeliveries)
 	}
 }
+
+// TestAppPullSecrets_TeamRepoNvidiaVendor asserts that an App workload with
+// vendor: nvidia whose source.app.chartRepo resolves to a team-repo ClusterRepo
+// (name nvidia-omniverse, url https://helm.ngc.nvidia.com/nvidia/omniverse)
+// lands both ngc-secret and ngc-api on the target-namespace delivery bucket.
+func TestAppPullSecrets_TeamRepoNvidiaVendor(t *testing.T) {
+	const opNS = "aif-operator"
+	const targetNS = "omniverse-app"
+
+	scheme := newAppTestScheme(t)
+
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: opNS},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+			},
+		},
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: opNS},
+		Data:       map[string][]byte{"username": []byte("$oauthtoken")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: opNS},
+		Data:       map[string][]byte{"token": []byte("nvapi-team-repo")},
+	}
+	// Team-repo ClusterRepo pointing at NVIDIA Omniverse helm charts.
+	repo := newAppTestClusterRepo("nvidia-omniverse", "https://helm.ngc.nvidia.com/nvidia/omniverse")
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(settings, userSecret, tokenSecret).
+		WithObjects(repo).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "omni-wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: targetNS,
+			Source: aiplatformv1alpha1.AIWorkloadSource{
+				SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
+				App: &aiplatformv1alpha1.AppSource{
+					ChartRepo:    "nvidia-omniverse",
+					ChartName:    "isaac-sim",
+					ChartVersion: "1.0.0",
+					Release:      "sim",
+					Vendor:       aiplatformv1alpha1.ComponentVendorNvidia,
+				},
+			},
+		},
+	}
+
+	if err := r.reconcileAppPullSecrets(context.Background(), w); err != nil {
+		t.Fatalf("reconcileAppPullSecrets: %v", err)
+	}
+
+	// Status must list both NVIDIA secret names (ngc-secret + ngc-api), scoped to targetNS.
+	have := map[string]bool{}
+	for _, d := range w.Status.PullSecretDeliveries {
+		if d.Namespace != targetNS {
+			t.Errorf("PullSecretDeliveries unexpected namespace %q", d.Namespace)
+			continue
+		}
+		for _, n := range d.Names {
+			have[n] = true
+		}
+	}
+	for _, want := range []string{nvidiaImagePullSecretName, nvidiaAPISecretName} {
+		if !have[want] {
+			t.Errorf("PullSecretDeliveries missing %q in %s; got %+v", want, targetNS, w.Status.PullSecretDeliveries)
+		}
+	}
+
+	// Both Secrets must materialize on the local cluster in targetNS.
+	pull := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: nvidiaImagePullSecretName}, pull); err != nil {
+		t.Errorf("ngc-secret missing in %s: %v", targetNS, err)
+	} else if pull.Type != corev1.SecretTypeDockerConfigJson {
+		t.Errorf("ngc-secret type = %v, want %v", pull.Type, corev1.SecretTypeDockerConfigJson)
+	}
+	api := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: nvidiaAPISecretName}, api); err != nil {
+		t.Errorf("ngc-api missing in %s: %v", targetNS, err)
+	} else if api.Type != corev1.SecretTypeOpaque {
+		t.Errorf("ngc-api type = %v, want %v", api.Type, corev1.SecretTypeOpaque)
+	}
+}
