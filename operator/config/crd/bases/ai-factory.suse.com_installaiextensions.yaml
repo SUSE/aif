@@ -102,6 +102,91 @@ spec:
                   helm:
                     description: Helm is populated when Kind=Helm.
                     properties:
+                      auth:
+                        description: |-
+                          Auth optionally supplies credentials to pull the chart from an
+                          authenticated registry. Omit for anonymous/public registries.
+                        properties:
+                          basic:
+                            description: Basic authenticates with a username + token/password
+                              pair.
+                            properties:
+                              tokenSecretRef:
+                                description: TokenSecretRef references the token/password
+                                  secret key.
+                                properties:
+                                  key:
+                                    description: Key is the key within the Secret.
+                                    type: string
+                                  name:
+                                    description: Name is the Secret name.
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                              userSecretRef:
+                                description: UserSecretRef references the username
+                                  secret key.
+                                properties:
+                                  key:
+                                    description: Key is the key within the Secret.
+                                    type: string
+                                  name:
+                                    description: Name is the Secret name.
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                            required:
+                            - tokenSecretRef
+                            - userSecretRef
+                            type: object
+                          dockerConfig:
+                            description: DockerConfig authenticates using a kubernetes.io/dockerconfigjson
+                              Secret.
+                            properties:
+                              secretRef:
+                                description: SecretRef references the dockerconfigjson
+                                  Secret by name.
+                                properties:
+                                  name:
+                                    description: Name is the Secret name.
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                            required:
+                            - secretRef
+                            type: object
+                          token:
+                            description: Token authenticates with a token only; the
+                              username defaults to "$oauthtoken".
+                            properties:
+                              tokenSecretRef:
+                                description: TokenSecretRef references the token secret
+                                  key.
+                                properties:
+                                  key:
+                                    description: Key is the key within the Secret.
+                                    type: string
+                                  name:
+                                    description: Name is the Secret name.
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                            required:
+                            - tokenSecretRef
+                            type: object
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of basic, token, or dockerConfig must
+                            be set
+                          rule: '[has(self.basic), has(self.token), has(self.dockerConfig)].filter(x,
+                            x).size() == 1'
                       chartURL:
                         description: |-
                           ChartURL is the Helm chart repository URL (oci:// or https://).
@@ -109,6 +194,64 @@ spec:
                         minLength: 1
                         pattern: ^(oci://|https://).+
                         type: string
+                      tls:
+                        description: |-
+                          TLS optionally configures registry TLS trust for the chart pull. Applies to
+                          oci:// and https:// registries. Omit to use the operator's system trust store.
+                        properties:
+                          acknowledgeInsecure:
+                            description: |-
+                              AcknowledgeInsecure is a required safety gate for insecureSkipVerify: it must
+                              be set to true whenever insecureSkipVerify is true. This makes disabling TLS
+                              verification an explicit, auditable choice rather than a single-field accident.
+                              It has no effect on its own.
+                            type: boolean
+                          caSecretRef:
+                            description: CASecretRef references a PEM CA bundle used
+                              to verify the registry certificate.
+                            properties:
+                              key:
+                                description: Key is the key within the Secret.
+                                type: string
+                              name:
+                                description: Name is the Secret name.
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          clientTLSSecretRef:
+                            description: |-
+                              ClientTLSSecretRef references a kubernetes.io/tls secret (tls.crt, tls.key)
+                              for mutual TLS.
+                            properties:
+                              name:
+                                description: Name is the Secret name.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          insecureSkipVerify:
+                            description: |-
+                              InsecureSkipVerify disables registry TLS certificate verification.
+                              DANGEROUS: use only for testing; prefer caSecretRef. Requires
+                              acknowledgeInsecure=true, and the operator must be deployed with insecure
+                              registry TLS enabled (manager.allowInsecureRegistryTLS).
+                            type: boolean
+                        type: object
+                        x-kubernetes-validations:
+                        - message: tls must set at least one of caSecretRef, insecureSkipVerify,
+                            or clientTLSSecretRef
+                          rule: has(self.caSecretRef) || (has(self.insecureSkipVerify)
+                            && self.insecureSkipVerify) || has(self.clientTLSSecretRef)
+                        - message: caSecretRef must not be set when insecureSkipVerify
+                            is true
+                          rule: '!((has(self.insecureSkipVerify) && self.insecureSkipVerify)
+                            && has(self.caSecretRef))'
+                        - message: insecureSkipVerify requires acknowledgeInsecure
+                            to be set to true
+                          rule: '!(has(self.insecureSkipVerify) && self.insecureSkipVerify)
+                            || (has(self.acknowledgeInsecure) && self.acknowledgeInsecure)'
                       values:
                         additionalProperties:
                           x-kubernetes-preserve-unknown-fields: true
@@ -123,6 +266,13 @@ spec:
                     - chartURL
                     - version
                     type: object
+                    x-kubernetes-validations:
+                    - message: an https:// chartURL combined with tls must point directly
+                        at a chart archive ending in .tgz (repository-style https+tls
+                        does not honor version); use an oci:// chartURL for repository/version
+                        resolution
+                      rule: '!(self.chartURL.startsWith(''https://'') && has(self.tls))
+                        || self.chartURL.endsWith(''.tgz'')'
                   kind:
                     description: |-
                       Kind selects the source type for the UI extension assets.

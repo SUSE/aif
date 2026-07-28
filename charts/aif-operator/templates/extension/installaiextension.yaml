@@ -12,6 +12,14 @@ spec:
     helm:
       chartURL: {{ .Values.aiExtension.source.helm.chartURL | quote }}
       version: {{ .Values.aiExtension.source.helm.version | quote }}
+      {{- with .Values.aiExtension.source.helm.auth }}
+      auth:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.aiExtension.source.helm.tls }}
+      tls:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- /* Forward the operator-level appCatalog.useStaticCatalog to the aif-ui
              chart as a convenience alias, UNLESS the user set it explicitly under
              aiExtension.source.helm.values. Use a presence check (hasKey), not a

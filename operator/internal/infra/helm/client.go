@@ -18,6 +18,7 @@ package helm
 
 import (
 	"context"
+	"crypto/tls"
 )
 
 type ReleaseStatus string
@@ -42,6 +43,16 @@ type ReleaseSpec struct {
 	RepoURL   string
 	Version   string
 	Values    map[string]interface{}
+	// RegistryAuth optionally authenticates the chart pull. In-memory only.
+	RegistryAuth *RegistryAuth
+	// TLSConfig optionally supplies registry TLS trust (private CA / mTLS / skip-verify). In-memory only.
+	TLSConfig *tls.Config
+}
+
+// RegistryAuth carries resolved chart-pull credentials. Never logged or persisted.
+type RegistryAuth struct {
+	Username string
+	Password string
 }
 
 type HelmClient interface {

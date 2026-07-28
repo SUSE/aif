@@ -43,6 +43,12 @@ const (
 // The controller installs the Helm chart, which creates a Deployment + Service
 // serving the extension assets. The Helm release name is derived from the last
 // path segment of ChartURL.
+//
+// The https+tls combination is served by a direct-archive download path that does
+// NOT perform repository-index resolution, so Version is not honored there; require
+// the chartURL to point straight at a .tgz archive so this limitation can't silently
+// ignore Version. Use an oci:// URL for repository/version-based pulls with TLS.
+// +kubebuilder:validation:XValidation:rule="!(self.chartURL.startsWith('https://') && has(self.tls)) || self.chartURL.endsWith('.tgz')",message="an https:// chartURL combined with tls must point directly at a chart archive ending in .tgz (repository-style https+tls does not honor version); use an oci:// chartURL for repository/version resolution"
 type HelmSource struct {
 	// ChartURL is the Helm chart repository URL (oci:// or https://).
 	// The Helm release name is derived from the last path segment of this URL.
@@ -57,6 +63,90 @@ type HelmSource struct {
 	// Values are optional Helm values overrides passed to the chart installation.
 	// +optional
 	Values map[string]apixv1.JSON `json:"values,omitempty"`
+
+	// Auth optionally supplies credentials to pull the chart from an
+	// authenticated registry. Omit for anonymous/public registries.
+	// +optional
+	Auth *HelmAuth `json:"auth,omitempty"`
+
+	// TLS optionally configures registry TLS trust for the chart pull. Applies to
+	// oci:// and https:// registries. Omit to use the operator's system trust store.
+	// +optional
+	TLS *HelmTLS `json:"tls,omitempty"`
+}
+
+// HelmAuth selects one registry authentication method for the chart pull.
+// It is an implicit union (VolumeSource-style): set exactly one of the blocks.
+// +kubebuilder:validation:XValidation:rule="[has(self.basic), has(self.token), has(self.dockerConfig)].filter(x, x).size() == 1",message="exactly one of basic, token, or dockerConfig must be set"
+type HelmAuth struct {
+	// Basic authenticates with a username + token/password pair.
+	// +optional
+	Basic *BasicAuth `json:"basic,omitempty"`
+
+	// Token authenticates with a token only; the username defaults to "$oauthtoken".
+	// +optional
+	Token *TokenAuth `json:"token,omitempty"`
+
+	// DockerConfig authenticates using a kubernetes.io/dockerconfigjson Secret.
+	// +optional
+	DockerConfig *DockerConfigAuth `json:"dockerConfig,omitempty"`
+}
+
+// BasicAuth references the username and token/password secret keys.
+type BasicAuth struct {
+	// UserSecretRef references the username secret key.
+	UserSecretRef SecretKeyRef `json:"userSecretRef"`
+	// TokenSecretRef references the token/password secret key.
+	TokenSecretRef SecretKeyRef `json:"tokenSecretRef"`
+}
+
+// TokenAuth references only a token secret key; username defaults to "$oauthtoken".
+type TokenAuth struct {
+	// TokenSecretRef references the token secret key.
+	TokenSecretRef SecretKeyRef `json:"tokenSecretRef"`
+}
+
+// DockerConfigAuth references a whole kubernetes.io/dockerconfigjson Secret by name.
+// The controller reads its ".dockerconfigjson" key and selects the entry matching
+// the chart's registry host.
+type DockerConfigAuth struct {
+	// SecretRef references the dockerconfigjson Secret by name.
+	SecretRef LocalSecretRef `json:"secretRef"`
+}
+
+// LocalSecretRef references a Secret by name only (used for whole-Secret types).
+type LocalSecretRef struct {
+	// Name is the Secret name.
+	Name string `json:"name"`
+}
+
+// HelmTLS configures TLS trust for pulling the chart from a private registry.
+// +kubebuilder:validation:XValidation:rule="has(self.caSecretRef) || (has(self.insecureSkipVerify) && self.insecureSkipVerify) || has(self.clientTLSSecretRef)",message="tls must set at least one of caSecretRef, insecureSkipVerify, or clientTLSSecretRef"
+// +kubebuilder:validation:XValidation:rule="!((has(self.insecureSkipVerify) && self.insecureSkipVerify) && has(self.caSecretRef))",message="caSecretRef must not be set when insecureSkipVerify is true"
+// +kubebuilder:validation:XValidation:rule="!(has(self.insecureSkipVerify) && self.insecureSkipVerify) || (has(self.acknowledgeInsecure) && self.acknowledgeInsecure)",message="insecureSkipVerify requires acknowledgeInsecure to be set to true"
+type HelmTLS struct {
+	// CASecretRef references a PEM CA bundle used to verify the registry certificate.
+	// +optional
+	CASecretRef *SecretKeyRef `json:"caSecretRef,omitempty"`
+
+	// InsecureSkipVerify disables registry TLS certificate verification.
+	// DANGEROUS: use only for testing; prefer caSecretRef. Requires
+	// acknowledgeInsecure=true, and the operator must be deployed with insecure
+	// registry TLS enabled (manager.allowInsecureRegistryTLS).
+	// +optional
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+
+	// AcknowledgeInsecure is a required safety gate for insecureSkipVerify: it must
+	// be set to true whenever insecureSkipVerify is true. This makes disabling TLS
+	// verification an explicit, auditable choice rather than a single-field accident.
+	// It has no effect on its own.
+	// +optional
+	AcknowledgeInsecure bool `json:"acknowledgeInsecure,omitempty"`
+
+	// ClientTLSSecretRef references a kubernetes.io/tls secret (tls.crt, tls.key)
+	// for mutual TLS.
+	// +optional
+	ClientTLSSecretRef *LocalSecretRef `json:"clientTLSSecretRef,omitempty"`
 }
 
 // GitSource configures the git-based extension serving model.
