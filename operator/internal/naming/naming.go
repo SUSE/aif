@@ -15,11 +15,10 @@ limitations under the License.
 */
 
 // Package naming is the single home for DNS-1123 slug/truncate helpers used to
-// derive Kubernetes object names. This logic was previously duplicated verbatim
-// across three packages — internal/cluster (pullSecretBundleName), internal/
-// controller/aiworkload (slugifyBP/truncateName), and internal/controller/
-// settings (slugifyRepoPath/truncateRepoName). It now lives here so a single
-// change keeps every derived name consistent.
+// derive Kubernetes object names. This logic was previously duplicated across
+// internal/cluster (pullSecretBundleName) and internal/controller/aiworkload
+// (slugifyBP/truncateName). It now lives here so a single change keeps every
+// derived name consistent.
 package naming
 
 import (

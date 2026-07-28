@@ -832,7 +832,7 @@ func equalAnyStringSlice(a, b []any) bool {
 // TestAppPullSecrets_GatedTeamRepoWiresHelmAuth asserts that a gated team-repo
 // ClusterRepo with spec.clientSecret wires helmSecretName and syncs it into the
 // Fleet namespace(s) via ensureFleetAuthSecret. This test exercises the chart-pull
-// auth flow for team repos (R3 requirement).
+// auth flow for gated team repos.
 func TestAppPullSecrets_GatedTeamRepoWiresHelmAuth(t *testing.T) {
 	const opNS = "aif-operator"
 

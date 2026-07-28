@@ -72,6 +72,7 @@ func TestIsNGCURL(t *testing.T) {
 	cases := map[string]bool{
 		"https://helm.ngc.nvidia.com/nvidia/omniverse": true,
 		"https://helm.ngc.nvidia.com/nim/nvidia/":      true,
+		"http://helm.ngc.nvidia.com/nvidia/omniverse":  false, // S1: never over plaintext http
 		"oci://registry.internal/nvidia":               false,
 		"oci://dp.apps.rancher.io/charts":              false,
 		"not a url":                                    false,

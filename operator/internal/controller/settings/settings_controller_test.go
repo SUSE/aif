@@ -407,11 +407,15 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 	}
 
 	// The org and blueprint repos are still ANONYMOUS in connected mode, but
-	// ngc-helm-auth now EXISTS in cattle-system because the bundled catalog has
-	// gated team repos (intentional behavior change from Task 4).
-	var nvAuth corev1.Secret
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &nvAuth); err != nil {
-		t.Errorf("expected ngc-helm-auth in cattle-system (gated team repos need it): %v", err)
+	// ngc-helm-auth now EXISTS because the bundled catalog has gated team repos.
+	// applyRegistryAuthSecret mirrors it into every namespace in
+	// authSecretNamespaces, so assert its presence in all three (a future change
+	// to that list must not silently drop a copy).
+	for _, authNS := range []string{"cattle-system", "fleet-local", "fleet-default"} {
+		var nvAuth corev1.Secret
+		if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &nvAuth); err != nil {
+			t.Errorf("expected ngc-helm-auth in %s (gated team repos need it): %v", authNS, err)
+		}
 	}
 
 	// The public NGC charts catalog must also be ANONYMOUS (no clientSecret).
@@ -642,8 +646,8 @@ func TestSettingsController_CreatesNGCTeamRepos(t *testing.T) {
 	}
 }
 
-// A (orphan prune): a team ClusterRepo whose URL is no longer in the catalog is
-// deleted on reconcile. Seed a bogus marker-labelled repo; it must be pruned.
+// A team ClusterRepo whose URL is no longer in the catalog is deleted on
+// reconcile. Seed a bogus marker-labelled repo; it must be pruned.
 func TestSettingsController_PrunesOrphanTeamRepo(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
@@ -673,7 +677,7 @@ func TestSettingsController_PrunesOrphanTeamRepo(t *testing.T) {
 	}
 }
 
-// B (air-gap): switching to air-gap deletes team repos but PRESERVES ngc-helm-auth
+// Switching to air-gap deletes team repos but PRESERVES ngc-helm-auth
 // (the mirror still consumes it).
 func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
 	s := newScheme(t)
@@ -714,8 +718,8 @@ func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
 	}
 }
 
-// D-unchanged: connected mode with NGC creds unchanged → gated repos NOT force-updated.
-// MUST FAIL before FIX 1 (proves the churn bug exists) and PASS after.
+// Connected mode with NGC creds unchanged → gated repos are NOT force-updated
+// (regression guard against ClusterRepo churn on every reconcile).
 func TestSettingsController_NoForceUpdateOnUnchangedNGCCredential(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
@@ -754,17 +758,16 @@ func TestSettingsController_NoForceUpdateOnUnchangedNGCCredential(t *testing.T) 
 	}
 
 	// After reconcile, nvidia-cuopt's spec.forceUpdate must NOT be set (no churn
-	// when the credential matches the existing mirror). This assertion FAILS before
-	// FIX 1 and PASSES after.
+	// when the credential matches the existing mirror).
 	got := getClusterRepo(t, c, "nvidia-cuopt")
 	if fu, found, _ := unstructured.NestedString(got.Object, "spec", "forceUpdate"); found && fu != "" {
 		t.Errorf("expected no forceUpdate when NGC creds unchanged, got %q (proves churn bug)", fu)
 	}
 }
 
-// C-unreadable-creds: connected mode where nvidia refs are set in Settings.spec
-// but the referenced secret is absent/unreadable → public team repo created
-// anonymously, gated team repo NOT created, no ngc-helm-auth written.
+// Connected mode where nvidia refs are set in Settings.spec but the referenced
+// secret is absent/unreadable → public team repo created anonymously, gated team
+// repo NOT created, no ngc-helm-auth written.
 func TestSettingsController_UnreadableNGCCredsCreatesPublicReposOnly(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)

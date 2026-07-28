@@ -10,9 +10,13 @@ import { fetchStaticCatalog } from './static-catalog';
 export const APP_COLLECTION_REPO_URL = 'oci://dp.apps.rancher.io/charts';
 export const SUSE_REGISTRY_REPO_URL  = 'oci://registry.suse.com/ai/charts';
 
+// The single NGC Helm registry host. A repo is classified 'nvidia' iff its URL
+// host equals this (see getLibraryFromRepoUrl); mirror of the operator's NGCHost.
+export const NGC_HOST = 'helm.ngc.nvidia.com';
+
 // NVIDIA NGC Helm repositories (HTTPS, public charts). Images are gated behind nvcr.io.
-export const NVIDIA_REPO_URL           = 'https://helm.ngc.nvidia.com/nvidia';
-export const NVIDIA_BLUEPRINT_REPO_URL = 'https://helm.ngc.nvidia.com/nvidia/blueprint';
+export const NVIDIA_REPO_URL           = `https://${NGC_HOST}/nvidia`;
+export const NVIDIA_BLUEPRINT_REPO_URL = `https://${NGC_HOST}/nvidia/blueprint`;
 
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';
 
@@ -93,8 +97,9 @@ export async function findRepositoryByUrl($store: any, targetUrl: string): Promi
  * ClusterRepo URL (spec.url / spec.ociRepo), never the catalog repository_url.
  * In air-gap the live URL is the private mirror (oci://…), whose host is never
  * helm.ngc.nvidia.com, so it correctly stays 'suse' and uses the combined
- * injector that already carries nvcr.io auth. Every AppWizard.vue call site
- * (583, 906, 994, 1092, 1316, 1448, 1518) passes the live URL — keep it that way.
+ * injector that already carries nvcr.io auth. Contract: every caller MUST pass the
+ * live ClusterRepo URL (spec.url / spec.ociRepo), never a catalog repository_url —
+ * passing the catalog URL in air-gap would misclassify the repo as 'nvidia'.
  */
 export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | undefined {
   // Normalize URL by removing trailing slashes and lowercasing for comparison.
@@ -103,7 +108,7 @@ export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | u
 
   // NVIDIA: any helm.ngc.nvidia.com host (org or team repo).
   try {
-    if (new URL(normalized).host === 'helm.ngc.nvidia.com') {
+    if (new URL(normalized).host === NGC_HOST) {
       return 'nvidia';
     }
   } catch { /* unparseable as a URL — fall through to the SUSE checks. (An oci:// mirror parses fine but its host != helm.ngc.nvidia.com, so it also falls through here.) */ }
@@ -265,7 +270,9 @@ const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloade
 
 /** A ClusterRepo is ready when its index has been downloaded/indexed. Shared by
  *  fetchClusterRepositories and fetchNvidiaClusterRepos so the predicate cannot
- *  drift. (Confirm the condition-type set against a live cluster — see Task 0.) */
+ *  drift. The three condition types cover OCI repos (OCIDownloaded), HTTP repos
+ *  (Downloaded), and Fleet-followed repos (FollowerDownloaded); indexConfigMapName
+ *  is the fallback for older Rancher that set no ready condition. */
 export function isRepoReady(repo: any): boolean {
   const conditions = repo?.status?.conditions || [];
   const hasDownloaded = conditions.some(
