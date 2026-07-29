@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -36,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -596,6 +598,26 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return obj.GetNamespace() == r.OperatorNamespace && credentials.IsWellKnownSecret(obj.GetName())
 	})
 
+	// Settings carries far more than the catalog config, and every field of it
+	// is edited from the UI. Without this filter each unrelated edit (and each
+	// status write the Settings controller itself makes) re-enqueues every
+	// blueprint workload, which for git-backed components means re-downloading
+	// their charts from Rancher. Only spec.rancherCatalog can change the
+	// outcome of a git-chart reconcile, so that is all we react to.
+	catalogSettingsChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldS, ok1 := e.ObjectOld.(*aiplatformv1alpha1.Settings)
+			newS, ok2 := e.ObjectNew.(*aiplatformv1alpha1.Settings)
+			if !ok1 || !ok2 {
+				return true
+			}
+			return !reflect.DeepEqual(oldS.Spec.RancherCatalog, newS.Spec.RancherCatalog)
+		},
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiplatformv1alpha1.AIWorkload{}).
 		Watches(bd, handler.EnqueueRequestsFromMapFunc(r.bundleDeploymentToAIWorkloads)).
@@ -604,6 +626,7 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(isHelmSecret)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),
 			builder.WithPredicates(isCredentialSecret)).
-		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads)).
+		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads),
+			builder.WithPredicates(catalogSettingsChanged)).
 		Complete(r)
 }

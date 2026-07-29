@@ -55,12 +55,15 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	vals := map[string]any{"replicaCount": int64(2)}
 	targets := []any{map[string]any{"clusterName": "local"}}
 
-	b, err := buildGitChartBundle("wl-agent", "cattle-ai-agent-system", tgz, c, vals, targets)
+	b, err := buildGitChartBundle("wl-agent", "cattle-ai-agent-system", "fp-1", tgz, c, vals, targets)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if b.GroupVersionKind() != bundleGVK {
 		t.Fatalf("wrong gvk: %v", b.GroupVersionKind())
+	}
+	if got := b.GetAnnotations()[chartFingerprintAnnotation]; got != "fp-1" {
+		t.Fatalf("fingerprint annotation = %q, want %q", got, "fp-1")
 	}
 	// helm.chart must point at the chart's top-level directory (not a tgz).
 	chart, _, _ := unstructured.NestedString(b.Object, "spec", "helm", "chart")
@@ -94,7 +97,7 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 func TestBuildGitChartBundle_NoValuesOmitsKey(t *testing.T) {
 	tgz := makeChartTgz(t, map[string]string{"x/Chart.yaml": "apiVersion: v2\nname: x\nversion: 1.0.0\n"})
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "x", ChartVersion: "1.0.0"}
-	b, err := buildGitChartBundle("wl-x", "ns", tgz, c, map[string]any{}, nil)
+	b, err := buildGitChartBundle("wl-x", "ns", "", tgz, c, map[string]any{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,17 +106,17 @@ func TestBuildGitChartBundle_NoValuesOmitsKey(t *testing.T) {
 	}
 }
 
-func TestBuildGitChartBundle_RejectsOversizedChart(t *testing.T) {
-	tgz := make([]byte, maxFleetBundleChartBytes+1)
+func TestBuildGitChartBundle_RejectsOversizedArchive(t *testing.T) {
+	tgz := make([]byte, maxChartArchiveBytes+1)
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "huge", ChartVersion: "1.0.0"}
-	if _, err := buildGitChartBundle("wl-huge", "ns", tgz, c, nil, nil); err == nil {
+	if _, err := buildGitChartBundle("wl-huge", "ns", "", tgz, c, nil, nil); err == nil {
 		t.Fatal("expected size-limit error")
 	}
 }
 
 func TestBuildGitChartBundle_RejectsNonChartArchive(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "bad", ChartVersion: "1.0.0"}
-	if _, err := buildGitChartBundle("wl-bad", "ns", []byte("not a gzip"), c, nil, nil); err == nil {
+	if _, err := buildGitChartBundle("wl-bad", "ns", "", []byte("not a gzip"), c, nil, nil); err == nil {
 		t.Fatal("expected unpack error for non-archive bytes")
 	}
 }
@@ -136,18 +139,63 @@ func TestChartTgzToBundleResources_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
-func TestChartTgzToBundleResources_RejectsDecompressionBomb(t *testing.T) {
-	// A highly-compressible file that expands past the uncompressed cap but whose
-	// gzip stays well under the compressed cap — the shape of a decompression bomb.
-	bomb := make([]byte, maxUncompressedChartBytes+1)
+// The cap that matters is on the UNPACKED payload, because that is what the API
+// server stores: a Bundle is a plain CR with no compression. A chart can sit far
+// below the archive cap and still blow past it once expanded — that is the shape
+// of both a decompression bomb and of real charts like rancher-monitoring
+// (490 KiB compressed, ~3.9 MiB as bundle resources).
+func TestChartTgzToBundleResources_RejectsChartThatExpandsPastPayloadCap(t *testing.T) {
+	big := make([]byte, maxBundleResourcesBytes+1) // all-zero bytes: compresses to ~nothing
 	tgz := makeChartTgz(t, map[string]string{
 		"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
-		"chart/big.txt":    string(bomb),
+		"chart/big.txt":    string(big),
 	})
-	if len(tgz) > maxFleetBundleChartBytes {
+	if len(tgz) > maxChartArchiveBytes {
 		t.Fatalf("test archive is not sufficiently compressible: %d bytes", len(tgz))
 	}
 	if _, _, err := chartTgzToBundleResources(tgz); err == nil {
-		t.Fatal("expected uncompressed-size-limit error")
+		t.Fatal("expected payload-size-limit error")
+	}
+}
+
+// Binary files are base64-encoded into the Bundle, inflating them by 4/3. The
+// cap has to be charged against the encoded form, so a binary blob at ~80% of
+// the cap must be rejected even though its raw size fits.
+func TestChartTgzToBundleResources_ChargesBase64InflatedSize(t *testing.T) {
+	raw := make([]byte, maxBundleResourcesBytes*8/10)
+	for i := range raw {
+		raw[i] = 0xff // invalid UTF-8 → stored as base64
+	}
+	tgz := makeChartTgz(t, map[string]string{
+		"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
+		"chart/blob.bin":   string(raw),
+	})
+	if _, _, err := chartTgzToBundleResources(tgz); err == nil {
+		t.Fatal("expected payload-size-limit error for base64-inflated binary file")
+	}
+}
+
+func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
+	c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "rancher-charts", ChartName: "x", ChartVersion: "1.0.0"}
+	targets := []any{map[string]any{"clusterName": "local"}}
+	base := gitChartFingerprint(c, "ns", map[string]any{"a": 1}, targets)
+	if base == "" {
+		t.Fatal("fingerprint should not be empty for hashable inputs")
+	}
+	if got := gitChartFingerprint(c, "ns", map[string]any{"a": 1}, targets); got != base {
+		t.Fatal("fingerprint is not stable across identical inputs")
+	}
+
+	bumped := c
+	bumped.ChartVersion = "1.0.1"
+	for name, got := range map[string]string{
+		"version":   gitChartFingerprint(bumped, "ns", map[string]any{"a": 1}, targets),
+		"namespace": gitChartFingerprint(c, "other-ns", map[string]any{"a": 1}, targets),
+		"values":    gitChartFingerprint(c, "ns", map[string]any{"a": 2}, targets),
+		"targets":   gitChartFingerprint(c, "ns", map[string]any{"a": 1}, []any{map[string]any{"clusterName": "downstream"}}),
+	} {
+		if got == base {
+			t.Errorf("fingerprint unchanged when %s changed", name)
+		}
 	}
 }

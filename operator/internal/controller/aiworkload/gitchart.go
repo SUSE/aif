@@ -21,7 +21,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,25 +32,35 @@ import (
 	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
-// maxFleetBundleChartBytes caps the fetched chart archive size. Fleet stores the
-// unpacked chart files in the Bundle/BundleDeployment objects, which are subject
-// to an etcd-backed size limit; we guard on the (compressed) archive size — a
-// close proxy for the gzipped bundle Fleet ultimately stores — and fail early
-// with an actionable message instead of letting the API server reject it.
-const maxFleetBundleChartBytes = 1 << 20 // 1 MiB
+// maxBundleResourcesBytes caps the size of the payload we put in the Bundle's
+// spec.resources — the chart files UNPACKED, with binary files base64-inflated.
+// That payload, not the archive, is what the API server has to store: a Bundle is
+// a plain CR, so it is subject to the ~1.5 MiB etcd object limit with no
+// compression. Compression ratios on Helm charts are ~10x, so the compressed
+// archive is a badly misleading proxy: rancher-monitoring is 490 KiB as a .tgz
+// but ~3.9 MiB as bundle resources. Measuring the archive would let such a chart
+// pass this check and then fail at the API server with an opaque
+// "request entity too large". Budget 1 MiB and leave the remainder of the object
+// limit for targets, values, managedFields and Fleet's own status.
+const maxBundleResourcesBytes = 1 << 20 // 1 MiB
 
-// maxUncompressedChartBytes bounds the total decompressed size read out of the
-// chart archive. The compressed input is already capped at maxFleetBundleChartBytes,
-// but a ~1 MiB gzip can expand to ~1 GB (a decompression bomb); this cap keeps
-// extraction from ballooning operator memory even though the trust boundary is an
-// admin-configured, Rancher-mirrored git repo (defense-in-depth).
-const maxUncompressedChartBytes = 20 << 20 // 20 MiB
+// maxChartArchiveBytes is a cheap pre-unpack rejection. Nothing above this can
+// possibly fit in maxBundleResourcesBytes once expanded, so we skip the work —
+// and it bounds how much a malicious archive can make us decompress before the
+// payload cap kicks in during extraction.
+const maxChartArchiveBytes = 4 << 20 // 4 MiB
+
+// chartFingerprintAnnotation records what the Bundle was built from, so a
+// reconcile can tell an up-to-date Bundle from a stale one without downloading
+// the chart again. See gitChartFingerprint.
+const chartFingerprintAnnotation = "ai-factory.suse.com/git-chart-fingerprint"
 
 // buildGitChartBundle assembles a self-contained Fleet Bundle from a fetched
 // chart archive. Fleet does NOT unpack a .tgz supplied as a single bundle
@@ -58,12 +70,12 @@ const maxUncompressedChartBytes = 20 << 20 // 20 MiB
 // for HelmOps (releaseName/takeOwnership/disablePreProcess/values) so a
 // git-backed component installs identically to an http/oci one. The chart version
 // is pinned by the fetched archive itself, so spec.helm.version is omitted.
-func buildGitChartBundle(bundleName, namespace string, tgz []byte,
+func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any) (*unstructured.Unstructured, error) {
-	if len(tgz) > maxFleetBundleChartBytes {
+	if len(tgz) > maxChartArchiveBytes {
 		return nil, fmt.Errorf(
-			"chart %q (%d bytes) exceeds the Fleet bundle limit of %d bytes; host it via an OCI or HTTP ClusterRepo instead",
-			c.ChartName, len(tgz), maxFleetBundleChartBytes)
+			"chart %q archive is %d bytes, over the %d-byte limit for a git-backed repo; host it via an OCI or HTTP ClusterRepo instead",
+			c.ChartName, len(tgz), maxChartArchiveBytes)
 	}
 
 	resources, chartDir, err := chartTgzToBundleResources(tgz)
@@ -91,6 +103,9 @@ func buildGitChartBundle(bundleName, namespace string, tgz []byte,
 	b := &unstructured.Unstructured{}
 	b.SetGroupVersionKind(bundleGVK)
 	b.SetName(bundleName)
+	if fingerprint != "" {
+		b.SetAnnotations(map[string]string{chartFingerprintAnnotation: fingerprint})
+	}
 	_ = unstructured.SetNestedField(b.Object, namespace, "spec", "defaultNamespace")
 	_ = unstructured.SetNestedField(b.Object, helm, "spec", "helm")
 	if targets == nil {
@@ -135,23 +150,30 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 		if i := strings.IndexByte(name, '/'); i > 0 && chartDir == "" {
 			chartDir = name[:i]
 		}
-		// Bound the total decompressed size to guard against a decompression bomb.
-		// LimitReader caps this entry at the remaining budget +1 so an overrun is
-		// detectable without allocating past the cap.
-		data, err := io.ReadAll(io.LimitReader(tr, maxUncompressedChartBytes-total+1))
+		// Read at most the remaining payload budget +1, so an overrun is detectable
+		// without allocating past the cap. This doubles as the decompression-bomb
+		// guard: a bomb blows the budget on its first entry and is rejected here.
+		data, err := io.ReadAll(io.LimitReader(tr, maxBundleResourcesBytes-total+1))
 		if err != nil {
 			return nil, "", fmt.Errorf("read %s: %w", name, err)
-		}
-		total += int64(len(data))
-		if total > maxUncompressedChartBytes {
-			return nil, "", fmt.Errorf("chart archive exceeds the uncompressed limit of %d bytes", maxUncompressedChartBytes)
 		}
 		res := map[string]any{"name": name}
 		if utf8.Valid(data) {
 			res["content"] = string(data)
+			total += int64(len(data))
 		} else {
-			res["content"] = base64.StdEncoding.EncodeToString(data)
+			// Binary files are base64-encoded, which inflates them 4/3 in the
+			// stored object — charge the encoded size, not the raw size.
+			enc := base64.StdEncoding.EncodeToString(data)
+			res["content"] = enc
 			res["encoding"] = "base64"
+			total += int64(len(enc))
+		}
+		total += int64(len(name))
+		if total > maxBundleResourcesBytes {
+			return nil, "", fmt.Errorf(
+				"unpacked chart exceeds the %d-byte Fleet bundle payload limit; host it via an OCI or HTTP ClusterRepo instead",
+				maxBundleResourcesBytes)
 		}
 		resources = append(resources, res)
 	}
@@ -216,11 +238,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	if fetcher == nil {
 		return fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
 	}
-	tgz, err := fetcher.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
-	if err != nil {
-		return fmt.Errorf("fetch chart %s@%s from git repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
-	}
 
+	// Resolve values and inject pull secrets BEFORE deciding whether to re-fetch:
+	// the injector mutates vals (it appends imagePullSecrets), so the fingerprint
+	// has to be taken after it runs, and secret delivery must happen on every
+	// reconcile regardless of whether the chart itself changed.
 	vals := map[string]any{}
 	if c.Values != nil {
 		_ = json.Unmarshal(c.Values.Raw, &vals)
@@ -233,10 +255,15 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	fingerprint := gitChartFingerprint(c, ns, vals, localTargets, downstreamTargets)
 
 	if gitOps {
 		allTargets := append(append([]any{}, localTargets...), downstreamTargets...)
-		b, err := buildGitChartBundle(bundleName, ns, tgz, c, vals, allTargets)
+		tgz, err := fetchGitChart(ctx, fetcher, c)
+		if err != nil {
+			return err
+		}
+		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, allTargets)
 		if err != nil {
 			return err
 		}
@@ -248,17 +275,41 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
 	}
 
-	for _, pair := range []struct {
+	pairs := []struct {
 		ns      string
 		targets []any
 	}{
 		{"fleet-local", localTargets},
 		{"fleet-default", downstreamTargets},
-	} {
+	}
+
+	// Skip the chart download entirely when every Bundle we would write is
+	// already at this fingerprint. Without this the operator re-downloads the
+	// chart from Rancher on every reconcile, and a healthy workload reconciles
+	// continuously as its BundleDeployment status churns.
+	upToDate := true
+	for _, pair := range pairs {
 		if len(pair.targets) == 0 {
 			continue
 		}
-		b, err := buildGitChartBundle(bundleName, ns, tgz, c, vals, pair.targets)
+		if !r.gitChartBundleMatches(ctx, pair.ns, bundleName, fingerprint) {
+			upToDate = false
+			break
+		}
+	}
+	if upToDate {
+		return nil
+	}
+
+	tgz, err := fetchGitChart(ctx, fetcher, c)
+	if err != nil {
+		return err
+	}
+	for _, pair := range pairs {
+		if len(pair.targets) == 0 {
+			continue
+		}
+		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
 		if err != nil {
 			return err
 		}
@@ -268,4 +319,47 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		}
 	}
 	return nil
+}
+
+func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatformv1alpha1.BlueprintComponent) ([]byte, error) {
+	tgz, err := fetcher.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
+	if err != nil {
+		return nil, fmt.Errorf("fetch chart %s@%s from git repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
+	}
+	return tgz, nil
+}
+
+// gitChartBundleMatches reports whether the Bundle in ns already carries this
+// fingerprint. Any read error (including NotFound) means "rebuild it".
+func (r *AIWorkloadReconciler) gitChartBundleMatches(ctx context.Context, ns, bundleName, fingerprint string) bool {
+	b := &unstructured.Unstructured{}
+	b.SetGroupVersionKind(bundleGVK)
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: bundleName}, b); err != nil {
+		return false
+	}
+	return b.GetAnnotations()[chartFingerprintAnnotation] == fingerprint
+}
+
+// gitChartFingerprint identifies everything that feeds the generated Bundle
+// apart from the chart archive itself, which is pinned by (repo, name, version).
+// A change in any of these means the Bundle must be rebuilt — and the chart
+// re-fetched, since the archive is the one input we cannot diff without it.
+func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns string, vals map[string]any, targetSets ...[]any) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, ns)
+	// json.Marshal sorts map keys, so equivalent values hash equally.
+	valsJSON, err := json.Marshal(vals)
+	if err != nil {
+		// Unhashable values: return a sentinel that never matches, so we rebuild.
+		return ""
+	}
+	h.Write(valsJSON)
+	for _, ts := range targetSets {
+		tsJSON, err := json.Marshal(ts)
+		if err != nil {
+			return ""
+		}
+		h.Write(tsJSON)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

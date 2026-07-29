@@ -190,7 +190,7 @@ func (r *SettingsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 			return r.allSettingsRequests(ctx)
 		})).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.enqueueSettingsForRegistrySecret)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.enqueueSettingsForSecret)).
 		Complete(r)
 }
 
@@ -208,11 +208,18 @@ func (r *SettingsReconciler) allSettingsRequests(ctx context.Context) []reconcil
 	return reqs
 }
 
-func (r *SettingsReconciler) enqueueSettingsForRegistrySecret(_ context.Context, obj client.Object) []reconcile.Request {
+// enqueueSettingsForSecret reconciles Settings when a Secret it depends on
+// changes. Two families qualify: the well-known registry credential secrets
+// (which feed the ClusterRepo mirrors), and the Secrets referenced by
+// spec.rancherCatalog. The latter matter because the catalog client is built
+// once per reconcile and parked in the holder — rotating a token in place
+// changes no Settings field, so without this the operator would keep using the
+// revoked token until the next informer resync.
+func (r *SettingsReconciler) enqueueSettingsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	if obj.GetNamespace() != r.OperatorNamespace {
 		return nil
 	}
-	if !credentials.IsWellKnownSecret(obj.GetName()) {
+	if !credentials.IsWellKnownSecret(obj.GetName()) && !r.isRancherCatalogSecret(ctx, obj.GetName()) {
 		return nil
 	}
 	return []reconcile.Request{{
@@ -221,6 +228,21 @@ func (r *SettingsReconciler) enqueueSettingsForRegistrySecret(_ context.Context,
 			Namespace: r.OperatorNamespace,
 		},
 	}}
+}
+
+// isRancherCatalogSecret reports whether name is referenced by
+// Settings.spec.rancherCatalog (token or CA bundle).
+func (r *SettingsReconciler) isRancherCatalogSecret(ctx context.Context, name string) bool {
+	var s aiplatformv1alpha1.Settings
+	key := types.NamespacedName{Name: credentials.SettingsName, Namespace: r.OperatorNamespace}
+	if err := r.Get(ctx, key, &s); err != nil {
+		return false
+	}
+	rc := s.Spec.RancherCatalog
+	if rc.TokenSecretRef != nil && rc.TokenSecretRef.Name == name {
+		return true
+	}
+	return rc.CABundleSecretRef != nil && rc.CABundleSecretRef.Name == name
 }
 
 const (
