@@ -54,9 +54,12 @@ rancherCatalog:
     name: ""
     key: "token"
   # caBundle: PEM CA certificate(s) that signed Rancher's serving certificate.
-  # Rancher's in-cluster service typically uses a private CA that system roots do
-  # not trust, so this is required for TLS verification unless insecureSkipVerify
-  # is set. When empty, system roots are used.
+  # Normally leave this empty: when unset, the operator reads the CA from
+  # cattle-system/tls-rancher-internal-ca, which is the CA that signs Rancher's
+  # in-cluster serving certificate. Set it only to pin a different CA — note that
+  # the `cacerts` Setting is the ingress/public CA, a DIFFERENT certificate, and
+  # using it here produces an x509 failure. When set but unreadable, the operator
+  # falls back to system roots rather than to discovery.
   caBundle: ""
   # insecureSkipVerify: skip TLS verification of the Rancher API. Development
   # only — do not use in production/air-gapped installs.

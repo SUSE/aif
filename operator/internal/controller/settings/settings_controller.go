@@ -18,6 +18,7 @@ package settings
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -143,15 +144,7 @@ func (r *SettingsReconciler) reconcileRancherCatalogClient(ctx context.Context, 
 		return
 	}
 
-	var caPEM []byte
-	if rc.CABundleSecretRef != nil {
-		ca, err := r.readSecretKey(ctx, s.Namespace, rc.CABundleSecretRef)
-		if err != nil {
-			l.Error(err, "Rancher catalog CA secret unavailable; proceeding without a custom CA", "secret", rc.CABundleSecretRef.Name)
-		} else {
-			caPEM = []byte(ca)
-		}
-	}
+	caPEM, caSource := r.resolveCABundle(ctx, s)
 
 	url := rc.URL
 	if url == "" {
@@ -164,7 +157,44 @@ func (r *SettingsReconciler) reconcileRancherCatalogClient(ctx context.Context, 
 		return
 	}
 	r.CatalogHolder.Set(client)
-	l.Info("Rancher catalog client configured", "url", url, "insecureSkipVerify", rc.InsecureSkipVerify, "customCA", len(caPEM) > 0)
+	l.Info("Rancher catalog client configured", "url", url, "insecureSkipVerify", rc.InsecureSkipVerify, "customCA", len(caPEM) > 0, "caSource", caSource)
+}
+
+// resolveCABundle picks the CA the catalog client should trust, and reports
+// which source it came from as one of "settings", "settings-error",
+// "discovered" or "system". The source is logged so support can tell the paths
+// apart without reproducing the cluster.
+//
+// An explicit ref that cannot be read does NOT fall through to discovery. An
+// administrator who pinned a CA gets a loud failure rather than a silent
+// substitution with a different certificate.
+func (r *SettingsReconciler) resolveCABundle(ctx context.Context, s *aiplatformv1alpha1.Settings) ([]byte, string) {
+	l := log.FromContext(ctx)
+	ref := s.Spec.RancherCatalog.CABundleSecretRef
+
+	if ref != nil {
+		ca, err := r.readSecretKey(ctx, s.Namespace, ref)
+		if err != nil {
+			l.Error(err, "Rancher catalog CA secret unavailable; proceeding without a custom CA (not falling back to discovery, because a CA was explicitly configured)",
+				"secret", ref.Name)
+			return nil, "settings-error"
+		}
+		return []byte(ca), "settings"
+	}
+
+	// No CA configured: read the CA that signs Rancher's in-cluster serving
+	// certificate. The obvious alternative, the `cacerts` Setting, is a
+	// different CA and produces an x509 failure here.
+	ca, err := rancher.DiscoverInternalCA(ctx, r.Client)
+	switch {
+	case err == nil:
+		return ca, "discovered"
+	case stderrors.Is(err, rancher.ErrCANotFound):
+		l.Info("Rancher internal CA secret not found; using system roots")
+	default:
+		l.Error(err, "failed to read Rancher internal CA secret; using system roots")
+	}
+	return nil, "system"
 }
 
 // readSecretKey returns the value of key in the named Secret in ns.

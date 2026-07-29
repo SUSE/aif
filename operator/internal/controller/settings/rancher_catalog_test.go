@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
@@ -84,6 +85,93 @@ func TestEnqueueSettingsForSecret_MatchesRancherCatalogRefs(t *testing.T) {
 			reqs := r.enqueueSettingsForSecret(context.Background(), tc.secret)
 			if got := len(reqs) > 0; got != tc.wantMatch {
 				t.Fatalf("enqueued=%v, want %v (reqs=%v)", got, tc.wantMatch, reqs)
+			}
+		})
+	}
+}
+
+func newCATestReconciler(t *testing.T, objs ...client.Object) *SettingsReconciler {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = aiplatformv1alpha1.AddToScheme(scheme)
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	return &SettingsReconciler{
+		Client: cl, Scheme: scheme, OperatorNamespace: "aif", CatalogHolder: rancher.NewHolder(),
+	}
+}
+
+func TestResolveCABundle(t *testing.T) {
+	const discoveredPEM = "-----BEGIN CERTIFICATE-----\nDISCOVERED\n-----END CERTIFICATE-----\n"
+	const explicitPEM = "-----BEGIN CERTIFICATE-----\nEXPLICIT\n-----END CERTIFICATE-----\n"
+
+	internalCA := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rancher.InternalCAName,
+			Namespace: rancher.InternalCANamespace,
+		},
+		Data: map[string][]byte{
+			"tls.crt": []byte(discoveredPEM),
+			"tls.key": []byte("PRIVATE KEY MUST NOT BE USED"),
+		},
+	}
+	explicitCA := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-ca", Namespace: "aif"},
+		Data:       map[string][]byte{"ca.crt": []byte(explicitPEM)},
+	}
+
+	settings := func(caRef *aiplatformv1alpha1.SecretKeyRef) *aiplatformv1alpha1.Settings {
+		s := &aiplatformv1alpha1.Settings{
+			ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "aif"},
+		}
+		s.Spec.RancherCatalog.CABundleSecretRef = caRef
+		return s
+	}
+	ref := func(name, key string) *aiplatformv1alpha1.SecretKeyRef {
+		return &aiplatformv1alpha1.SecretKeyRef{Name: name, Key: key}
+	}
+
+	cases := []struct {
+		name       string
+		objs       []client.Object
+		caRef      *aiplatformv1alpha1.SecretKeyRef
+		wantPEM    string
+		wantSource string
+	}{
+		{
+			name: "no ref, internal CA present -> discovered",
+			objs: []client.Object{internalCA}, caRef: nil,
+			wantPEM: discoveredPEM, wantSource: "discovered",
+		},
+		{
+			name: "no ref, no internal CA -> system roots",
+			objs: nil, caRef: nil,
+			wantPEM: "", wantSource: "system",
+		},
+		{
+			name: "explicit ref wins over discovery",
+			objs: []client.Object{internalCA, explicitCA}, caRef: ref("my-ca", "ca.crt"),
+			wantPEM: explicitPEM, wantSource: "settings",
+		},
+		{
+			// The internal CA is present and discovery would succeed, but an
+			// administrator pinned a CA. Substituting a different certificate
+			// silently would be worse than failing.
+			name: "unreadable explicit ref does not fall back to discovery",
+			objs: []client.Object{internalCA}, caRef: ref("absent", "ca.crt"),
+			wantPEM: "", wantSource: "settings-error",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newCATestReconciler(t, tc.objs...)
+			pem, source := r.resolveCABundle(context.Background(), settings(tc.caRef))
+			if source != tc.wantSource {
+				t.Errorf("caSource = %q, want %q", source, tc.wantSource)
+			}
+			if string(pem) != tc.wantPEM {
+				t.Errorf("caPEM = %q, want %q", pem, tc.wantPEM)
 			}
 		})
 	}
