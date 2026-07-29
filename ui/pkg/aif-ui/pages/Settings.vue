@@ -825,7 +825,7 @@ export default {
         </div>
       </div>
 
-      <!-- Rancher Catalog -->
+      <!-- Rancher API Access -->
       <div id="rancherCatalog" class="box mt-10">
         <div
           class="accordion-header"
@@ -843,7 +843,7 @@ export default {
           class="mt-15"
         >
           <p class="text-muted mb-15">
-            {{ t('suseai.pages.settings.sections.rancherCatalog.description') }}
+            {{ t('suseai.pages.settings.sections.rancherCatalog.description', {}, true) }}
           </p>
 
           <p class="text-label mb-5">

@@ -133,7 +133,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				// the AIWorkload controller watches Settings and re-enqueues on the
 				// change, and this RequeueAfter is a race-safe net in case the
 				// holder is rebuilt after our watch fires.
-				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher Catalog in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
+				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher API Access in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: time.Minute}, nil

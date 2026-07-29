@@ -118,8 +118,8 @@
             }
           },
           "rancherCatalog": {
-            "title": "Rancher Catalog",
-            "description": "Only needed for git-backed ClusterRepos. They expose no HTTP or OCI URL, so the operator fetches their charts through the Rancher catalog API, which requires a Rancher API token (token-xxxxx:yyyyy). Create one in Rancher under Account and API Keys, store it in a Secret in the operator namespace, then reference that Secret below.",
+            "title": "Rancher API Access",
+            "description": "Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.",
             "tokenSecretRef": {
               "label": "API Token Secret",
               "secretNameLabel": "Secret Name",
