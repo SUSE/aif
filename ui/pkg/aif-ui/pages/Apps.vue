@@ -103,7 +103,7 @@
         <div v-if="catalogWarnings.length" class="catalog-warning-banner" role="status">
           <i class="icon icon-warning" aria-hidden="true"></i>
           <div class="catalog-warning-body">
-            <strong>{{ t('suseai.apps.repoWarningTitle', 'Some NVIDIA repositories couldn\'t be loaded') }}</strong>
+            <strong>{{ t('suseai.apps.repoWarningTitle', {}, true) }}</strong>
             <ul>
               <li v-for="(w, i) in catalogWarnings" :key="i">{{ w }}</li>
             </ul>

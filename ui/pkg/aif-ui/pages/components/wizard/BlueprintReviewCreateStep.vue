@@ -1,6 +1,6 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', 'Review & Save as New Version') : t('suseai.wizard.sections.reviewCreate', 'Review & Create') }}</h2>
+    <h2 class="step-title">{{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', {}, true) : t('suseai.wizard.sections.reviewCreate', {}, true) }}</h2>
 
     <div class="review-section">
       <div class="review-row">
