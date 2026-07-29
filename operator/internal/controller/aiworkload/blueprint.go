@@ -138,6 +138,17 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: time.Minute}, nil
 			}
+			if stderrors.Is(err, errChartTooLarge) {
+				// Terminal: the chart is too big for a Fleet Bundle and no amount
+				// of retrying changes that. Returning the error instead would spin
+				// the workqueue forever, re-downloading the archive from Rancher on
+				// every backoff tick, while the workload kept advertising the stale
+				// "Component bundles reconciled" message from its last good pass.
+				msg := fmt.Sprintf("Component %q cannot be deployed from git-backed repo %q: %v", c.ChartName, c.ChartRepo, err)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "ChartTooLarge", msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{}, nil
+			}
 			if stderrors.Is(err, errClusterRepoNotReady) {
 				// The repo the component needs is missing — usually because its
 				// registry credentials are not configured. Surface a condition +

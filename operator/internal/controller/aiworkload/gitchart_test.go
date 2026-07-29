@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -198,4 +200,35 @@ func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 			t.Errorf("fingerprint unchanged when %s changed", name)
 		}
 	}
+}
+
+// The size guards must be recognisable as terminal by the reconciler; a bare
+// error would be returned and retried forever, re-downloading the chart on every
+// backoff tick. Reconcile keys that decision off errChartTooLarge.
+func TestSizeGuards_WrapErrChartTooLarge(t *testing.T) {
+	t.Run("archive pre-check", func(t *testing.T) {
+		oversized := make([]byte, maxChartArchiveBytes+1)
+		_, err := buildGitChartBundle("b", "ns", "fp", oversized,
+			aiplatformv1alpha1.BlueprintComponent{ChartName: "big"}, nil, nil)
+		if !errors.Is(err, errChartTooLarge) {
+			t.Fatalf("archive guard error = %v, want it to wrap errChartTooLarge", err)
+		}
+	})
+
+	t.Run("unpacked payload cap", func(t *testing.T) {
+		// Highly compressible, so it slips past the archive pre-check and is only
+		// caught once expanded — the case the compressed-size proxy used to miss.
+		tgz := makeChartTgz(t, map[string]string{
+			"c/Chart.yaml": "apiVersion: v2\nname: c\nversion: 1.0.0\n",
+			"c/big.txt":    strings.Repeat("a", maxBundleResourcesBytes+1),
+		})
+		if len(tgz) > maxChartArchiveBytes {
+			t.Fatalf("fixture archive is %d bytes; it must stay under the pre-check to exercise the payload cap", len(tgz))
+		}
+		_, err := buildGitChartBundle("b", "ns", "fp", tgz,
+			aiplatformv1alpha1.BlueprintComponent{ChartName: "c"}, nil, nil)
+		if !errors.Is(err, errChartTooLarge) {
+			t.Fatalf("payload guard error = %v, want it to wrap errChartTooLarge", err)
+		}
+	})
 }

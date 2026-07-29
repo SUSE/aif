@@ -25,6 +25,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"path"
@@ -57,6 +58,15 @@ const maxBundleResourcesBytes = 1 << 20 // 1 MiB
 // payload cap kicks in during extraction.
 const maxChartArchiveBytes = 4 << 20 // 4 MiB
 
+// errChartTooLarge marks a git-backed component whose chart cannot fit in a
+// Fleet Bundle. Unlike a fetch or apply failure this is a property of the chart
+// itself, so retrying can never succeed: every attempt re-downloads the archive
+// from Rancher and fails identically. Reconcile turns it into a terminal
+// Ready=False condition instead of returning it, which both stops the hot retry
+// loop and replaces the stale "Component bundles reconciled" message the
+// AIWorkload would otherwise keep showing while failing.
+var errChartTooLarge = stderrors.New("chart too large for a Fleet bundle")
+
 // chartFingerprintAnnotation records what the Bundle was built from, so a
 // reconcile can tell an up-to-date Bundle from a stale one without downloading
 // the chart again. See gitChartFingerprint.
@@ -74,8 +84,8 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any) (*unstructured.Unstructured, error) {
 	if len(tgz) > maxChartArchiveBytes {
 		return nil, fmt.Errorf(
-			"chart %q archive is %d bytes, over the %d-byte limit for a git-backed repo; host it via an OCI or HTTP ClusterRepo instead",
-			c.ChartName, len(tgz), maxChartArchiveBytes)
+			"%w: chart %q archive is %d bytes, over the %d-byte limit for a git-backed repo; host it via an OCI or HTTP ClusterRepo instead",
+			errChartTooLarge, c.ChartName, len(tgz), maxChartArchiveBytes)
 	}
 
 	resources, chartDir, err := chartTgzToBundleResources(tgz)
@@ -172,8 +182,8 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 		total += int64(len(name))
 		if total > maxBundleResourcesBytes {
 			return nil, "", fmt.Errorf(
-				"unpacked chart exceeds the %d-byte Fleet bundle payload limit; host it via an OCI or HTTP ClusterRepo instead",
-				maxBundleResourcesBytes)
+				"%w: unpacked chart exceeds the %d-byte Fleet bundle payload limit; host it via an OCI or HTTP ClusterRepo instead",
+				errChartTooLarge, maxBundleResourcesBytes)
 		}
 		resources = append(resources, res)
 	}
