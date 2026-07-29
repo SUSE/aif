@@ -4,13 +4,16 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 // makeChartTgz builds a minimal Helm chart .tgz from the given files (paths
@@ -174,6 +177,25 @@ func TestChartTgzToBundleResources_ChargesBase64InflatedSize(t *testing.T) {
 	})
 	if _, _, err := chartTgzToBundleResources(tgz); err == nil {
 		t.Fatal("expected payload-size-limit error for base64-inflated binary file")
+	}
+}
+
+func TestFetchGitChart_PreservesErrUnauthorized(t *testing.T) {
+	c := aiplatformv1alpha1.BlueprintComponent{
+		ChartRepo: "rancher-charts", ChartName: "rancher-backup-crd", ChartVersion: "1.0.0",
+	}
+	inner := fmt.Errorf("%w (401 Unauthorized)", rancher.ErrUnauthorized)
+
+	_, err := fetchGitChart(context.Background(), fakeCatalog{err: inner}, c)
+	if err == nil {
+		t.Fatal("fetchGitChart returned nil error")
+	}
+	if !errors.Is(err, rancher.ErrUnauthorized) {
+		t.Fatalf("errors.Is(err, rancher.ErrUnauthorized) = false; err = %v", err)
+	}
+	// The wrap must still name the component, so the condition message is useful.
+	if !strings.Contains(err.Error(), "rancher-backup-crd") {
+		t.Fatalf("error does not name the chart: %v", err)
 	}
 }
 

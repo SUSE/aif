@@ -41,6 +41,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 )
@@ -135,6 +136,19 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				// holder is rebuilt after our watch fires.
 				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher API Access in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{RequeueAfter: time.Minute}, nil
+			}
+			if stderrors.Is(err, rancher.ErrUnauthorized) {
+				// The token exists but Rancher rejected it — typically because it
+				// expired. Rancher clamps a token's TTL to auth-token-max-ttl-minutes
+				// (90 days by default), so every configured token eventually lands
+				// here. Give it its own reason rather than folding it into the
+				// generic fetch error, so the UI can point at the fix. Requeue
+				// rather than fail terminally: re-authorizing in Settings resolves
+				// it, and the AIWorkload controller watches Settings.
+				msg := fmt.Sprintf("Rancher rejected the API token while fetching component %q from git-backed repo %q. The token may have expired — re-authorize under Settings → Rancher API Access in the AI Factory UI.", c.ChartName, c.ChartRepo)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "RancherTokenRejected", msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: time.Minute}, nil
 			}
