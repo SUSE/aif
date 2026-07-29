@@ -119,7 +119,7 @@
           },
           "rancherCatalog": {
             "title": "Rancher Catalog",
-            "description": "Required to install charts from git-backed ClusterRepos. These have no HTTP/OCI URL, so the operator fetches the chart from Rancher's catalog API using a Rancher API token (format \"token-xxxxx:yyyyy\"). Create one in Rancher under \"Account & API Keys\", store it in a Secret in the operator namespace, then reference that Secret below. HTTP/OCI ClusterRepos need none of this.",
+            "description": "Only needed for git-backed ClusterRepos. They expose no HTTP or OCI URL, so the operator fetches their charts through the Rancher catalog API, which requires a Rancher API token (token-xxxxx:yyyyy). Create one in Rancher under Account and API Keys, store it in a Secret in the operator namespace, then reference that Secret below.",
             "tokenSecretRef": {
               "label": "API Token Secret",
               "secretNameLabel": "Secret Name",
