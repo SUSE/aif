@@ -120,6 +120,14 @@
           "rancherCatalog": {
             "title": "Rancher API Access",
             "description": "Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.",
+            "authorize": "Authorize",
+            "reauthorize": "Re-authorize",
+            "authorizing": "Authorizing…",
+            "notAuthorized": "Not authorized. The operator cannot install charts from git-backed repositories until you authorize it.",
+            "authorized": "Authorized. Token expires {expires}.",
+            "authorizeFailed": "Could not create a Rancher API token: {error}",
+            "authorizeHelp": "Creates a Rancher API token as your user and stores it in a Secret in the operator namespace.",
+            "advanced": "Advanced",
             "tokenSecretRef": {
               "label": "API Token Secret",
               "secretNameLabel": "Secret Name",
@@ -130,7 +138,7 @@
               "placeholder": "https://rancher.cattle-system.svc"
             },
             "caBundleSecretRef": {
-              "label": "CA Bundle Secret (optional)",
+              "label": "CA Bundle Secret (optional — discovered automatically when empty)",
               "secretNameLabel": "Secret Name",
               "keyNameLabel": "Secret Key"
             },
