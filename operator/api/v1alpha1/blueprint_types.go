@@ -59,7 +59,10 @@ const (
 
 // BlueprintComponent defines one Helm chart in a Blueprint.
 type BlueprintComponent struct {
-	// ChartRepo is the Rancher ClusterRepo name.
+	// ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
+	// ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
+	// fetches the chart from Rancher's catalog and deploys it as a self-contained
+	// Fleet Bundle; such charts must compress to under ~1MiB.
 	// +kubebuilder:validation:MinLength=1
 	ChartRepo string `json:"chartRepo"`
 	// ChartName is the Helm chart name.

@@ -41,11 +41,21 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 )
 
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
+
+// repoKind classifies how a Rancher ClusterRepo serves its charts.
+type repoKind string
+
+const (
+	repoKindHTTP repoKind = "http"
+	repoKindOCI  repoKind = "oci"
+	repoKindGit  repoKind = "git"
+)
 
 // errClusterRepoNotReady marks a ClusterRepo lookup that failed because the
 // repo does not exist yet or has no usable URL — typically because its backing
@@ -53,10 +63,22 @@ var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version
 // Ready=False condition and auto-requeues instead of hard-failing.
 var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 
+// errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
+// cannot be deployed because no Rancher catalog client is configured (the
+// operator has no Rancher API token). The catalog config is editable at runtime
+// via Settings, so reconcile surfaces this as a Ready=False condition and
+// requeues: it clears as soon as the token is supplied (the AIWorkload
+// controller also watches Settings, so recovery is usually immediate).
+var errCatalogClientNotConfigured = stderrors.New("rancher catalog client not configured")
+
 type clusterRepoInfo struct {
-	URL            string
-	ClientSecret   string // name of the basic-auth secret; empty if unauthenticated
-	ClientSecretNS string // namespace of the basic-auth secret (typically cattle-system)
+	Kind           repoKind // how the repo serves charts (http/oci/git)
+	URL            string   // http/oci repos only
+	GitRepo        string   // git repos only
+	GitBranch      string   // git repos only
+	Commit         string   // git repos only: status.commit, the indexed revision
+	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
+	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -106,6 +128,42 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			err = r.ensureBlueprintGitFile(ctx, w, c, w.Spec.FleetBundleNames[i])
 		}
 		if err != nil {
+			if stderrors.Is(err, errCatalogClientNotConfigured) {
+				// A git-backed component needs a Rancher API token the operator
+				// wasn't given. The catalog config is editable at runtime via
+				// Settings, so surface a clear condition + Failed phase and requeue:
+				// the AIWorkload controller watches Settings and re-enqueues on the
+				// change, and this RequeueAfter is a race-safe net in case the
+				// holder is rebuilt after our watch fires.
+				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher API Access in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{RequeueAfter: time.Minute}, nil
+			}
+			if stderrors.Is(err, rancher.ErrUnauthorized) {
+				// The token exists but Rancher rejected it — typically because it
+				// expired. Rancher clamps a token's TTL to auth-token-max-ttl-minutes
+				// (90 days by default), so every configured token eventually lands
+				// here. Give it its own reason rather than folding it into the
+				// generic fetch error, so the UI can point at the fix. Requeue
+				// rather than fail terminally: re-authorizing in Settings resolves
+				// it, and the AIWorkload controller watches Settings.
+				msg := fmt.Sprintf("Rancher rejected the API token while fetching component %q from git-backed repo %q. The token may have expired — re-authorize under Settings → Rancher API Access in the AI Factory UI.", c.ChartName, c.ChartRepo)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "RancherTokenRejected", msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{RequeueAfter: time.Minute}, nil
+			}
+			if stderrors.Is(err, errChartTooLarge) {
+				// Terminal: the chart is too big for a Fleet Bundle and no amount
+				// of retrying changes that. Returning the error instead would spin
+				// the workqueue forever, re-downloading the archive from Rancher on
+				// every backoff tick, while the workload kept advertising the stale
+				// "Component bundles reconciled" message from its last good pass.
+				msg := fmt.Sprintf("Component %q cannot be deployed from git-backed repo %q: %v", c.ChartName, c.ChartRepo, err)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "ChartTooLarge", msg, w.Generation)
+				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+				return ctrl.Result{}, nil
+			}
 			if stderrors.Is(err, errClusterRepoNotReady) {
 				// The repo the component needs is missing — usually because its
 				// registry credentials are not configured. Surface a condition +
@@ -116,6 +174,13 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
+			// Anything else: the cause is unknown and may be transient, so return
+			// the error and let the workqueue back off. Set a condition first —
+			// without one the object keeps advertising the previous pass's
+			// Ready=True while it is stuck.
+			msg := fmt.Sprintf("Component %q from repo %q could not be reconciled: %v", c.ChartName, c.ChartRepo, truncateForCondition(err.Error()))
+			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "ComponentReconcileFailed", msg, w.Generation)
+			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 			return ctrl.Result{}, err
 		}
 	}
@@ -138,6 +203,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
 	if err != nil {
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
+	}
+
+	// Git-backed ClusterRepos have no HTTP/OCI URL a HelmOp could pull from; the
+	// operator fetches the chart from Rancher and deploys it as an embedded Fleet
+	// Bundle instead.
+	if repoInfo.Kind == repoKindGit {
+		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, false)
 	}
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
@@ -194,19 +266,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["values"] = vals
 	}
 
-	localTargets := make([]any, 0)
-	downstreamTargets := make([]any, 0)
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			localTargets = append(localTargets, map[string]any{"clusterName": "local"})
-		} else {
-			downstreamTargets = append(downstreamTargets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
 
 	for _, pair := range []struct {
 		ns      string
@@ -463,11 +523,16 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc 
 	// Component's own chartRepo credentials. The Settings-derived registries
 	// are appended below; for the local path this gives the most complete
 	// coverage (chart-pull host + every image host the chart may reference).
-	if repoInfo.ClientSecret != "" {
-		src := &corev1.Secret{}
-		if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
-			if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
-				auths[registryurl.Host(repoInfo.URL)] = dockerAuthEntry(u, p)
+	// Git repos are skipped: their clientSecret is git-clone auth, not an
+	// image-registry credential, and their URL is empty — Host("") would key it
+	// under a bogus "" host in the dockerconfigjson.
+	if repoInfo.ClientSecret != "" && repoInfo.Kind != repoKindGit {
+		if host := registryurl.Host(repoInfo.URL); host != "" {
+			src := &corev1.Secret{}
+			if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
+				if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
+					auths[host] = dockerAuthEntry(u, p)
+				}
 			}
 		}
 	}
@@ -701,6 +766,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
 	}
 
+	// Git-backed ClusterRepos: publish an embedded-chart Fleet Bundle git file
+	// rather than a HelmOp (which cannot pull from git).
+	if repoInfo.Kind == repoKindGit {
+		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, true)
+	}
+
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
 	helmSpec := map[string]any{
 		"version": c.ChartVersion,
@@ -748,28 +819,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		helmSpec["values"] = vals
 	}
 
-	targets := make([]any, 0)
-	isLocalOnly := true
-	for _, id := range w.Spec.TargetClusters {
-		if id == "local" {
-			targets = append(targets, map[string]any{"clusterName": "local"})
-		} else {
-			isLocalOnly = false
-			targets = append(targets, map[string]any{
-				"clusterSelector": map[string]any{
-					"matchLabels": map[string]any{"management.cattle.io/cluster-name": id},
-				},
-			})
-		}
-	}
-	if len(w.Spec.TargetClusters) == 0 {
-		isLocalOnly = false
-	}
-
-	fleetNS := "fleet-default"
-	if isLocalOnly {
-		fleetNS = "fleet-local"
-	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	targets := append(append([]any{}, localTargets...), downstreamTargets...)
+	fleetNS := gitOpsFleetNamespace(w)
 
 	helmOpSpec := map[string]any{
 		// defaultNamespace (not namespace): targets the release namespace without
@@ -898,20 +950,43 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		}
 		return clusterRepoInfo{}, fmt.Errorf("get ClusterRepo %q: %w", repoName, err)
 	}
-	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
-	if url == "" {
-		url, _, _ = unstructured.NestedString(cr.Object, "spec", "ociRepo")
-	}
-	if url == "" {
-		return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url or ociRepo in spec", errClusterRepoNotReady, repoName)
-	}
 	// spec.clientSecret is an object {name, namespace}, not a plain string.
 	clientSecretName, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "name")
 	clientSecretNS, _, _ := unstructured.NestedString(cr.Object, "spec", "clientSecret", "namespace")
 	if clientSecretNS == "" {
 		clientSecretNS = "cattle-system"
 	}
-	return clusterRepoInfo{URL: url, ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}, nil
+	info := clusterRepoInfo{ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
+
+	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
+	if url == "" {
+		url, _, _ = unstructured.NestedString(cr.Object, "spec", "ociRepo")
+	}
+	if url != "" {
+		info.URL = url
+		info.Kind = repoKindHTTP
+		if strings.HasPrefix(url, "oci://") {
+			info.Kind = repoKindOCI
+		}
+		return info, nil
+	}
+
+	// Git-backed ClusterRepos (spec.gitRepo + spec.gitBranch) have no url/ociRepo.
+	// Rancher clones and indexes them; the operator resolves the chart via the
+	// Rancher catalog API and republishes it as a self-contained Fleet Bundle.
+	gitRepo, _, _ := unstructured.NestedString(cr.Object, "spec", "gitRepo")
+	if gitRepo != "" {
+		info.Kind = repoKindGit
+		info.GitRepo = gitRepo
+		info.GitBranch, _, _ = unstructured.NestedString(cr.Object, "spec", "gitBranch")
+		// Rancher records the revision it cloned and indexed. A git-backed repo
+		// tracks a branch, so the same chart version can change underneath us;
+		// this is the only input that tells us it did.
+		info.Commit, _, _ = unstructured.NestedString(cr.Object, "status", "commit")
+		return info, nil
+	}
+
+	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", errClusterRepoNotReady, repoName)
 }
 
 func bpCRName(familyName, version string) string {

@@ -30,6 +30,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/credcheck"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	git "github.com/SUSE/aif-operator/internal/git"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
@@ -301,8 +302,9 @@ func (h *SettingsHandler) publishToGit(w http.ResponseWriter, r *http.Request) {
 
 // Function seams so tests can stub the live network checks.
 var (
-	probeRegistryFn = credcheck.ProbeRegistry
-	gitCheckAuthFn  = (*git.Client).CheckAuth
+	probeRegistryFn         = credcheck.ProbeRegistry
+	gitCheckAuthFn          = (*git.Client).CheckAuth
+	rancherCatalogCheckAuth = (*rancher.CatalogClient).CheckAuth
 )
 
 const (
@@ -312,7 +314,7 @@ const (
 	statusSkipped = "skipped"
 )
 
-var allValidateTargets = []string{"applicationCollection", "suseRegistry", "nvidia", "gitops"}
+var allValidateTargets = []string{"applicationCollection", "suseRegistry", "nvidia", "gitops", "rancherCatalog"}
 
 type validateOverride struct {
 	UserSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"userSecretRef,omitempty"`
@@ -320,6 +322,10 @@ type validateOverride struct {
 	CredSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"credSecretRef,omitempty"`
 	RepoURL        string                           `json:"repoURL,omitempty"`
 	Branch         string                           `json:"branch,omitempty"`
+	// rancherCatalog-specific overrides (TokenSecretRef above carries the token).
+	CABundleSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"caBundleSecretRef,omitempty"`
+	URL                string                           `json:"url,omitempty"`
+	InsecureSkipVerify bool                             `json:"insecureSkipVerify,omitempty"`
 }
 
 type validateCredsRequest struct {
@@ -366,6 +372,8 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 		switch target {
 		case "gitops":
 			resp.Results = append(resp.Results, h.validateGit(r.Context(), &s, ov))
+		case "rancherCatalog":
+			resp.Results = append(resp.Results, h.validateRancherCatalog(r.Context(), &s, ov))
 		case "applicationCollection", "suseRegistry", "nvidia":
 			resp.Results = append(resp.Results, h.validateRegistry(r.Context(), target, &s, ov))
 		default:
@@ -465,6 +473,97 @@ func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1
 		res.Status = statusOK
 		res.Message = "repository reachable"
 	case errors.Is(err, transport.ErrAuthenticationRequired), errors.Is(err, transport.ErrAuthorizationFailed):
+		res.Status = statusFailed
+		res.Message = err.Error()
+	default:
+		res.Status = statusError
+		res.Message = err.Error()
+	}
+	return res
+}
+
+// validateRancherCatalog probes the Rancher Steve catalog API with the
+// configured (or form-supplied) token, so the UI can confirm a Rancher API
+// token works before saving it — git-backed ClusterRepos are unusable without
+// one. Token override is all-or-nothing (like git): if the form supplies a
+// complete token ref, the whole override (token/CA/url/insecure) is used;
+// otherwise the saved rancherCatalog spec is probed.
+func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
+	res := validateResult{Target: "rancherCatalog"}
+	rc := s.Spec.RancherCatalog
+
+	tokenRef, caRef := ov.TokenSecretRef, ov.CABundleSecretRef
+	url, insecure := ov.URL, ov.InsecureSkipVerify
+	if !secretRefComplete(tokenRef) {
+		tokenRef = rc.TokenSecretRef
+		caRef = rc.CABundleSecretRef
+		url = rc.URL
+		insecure = rc.InsecureSkipVerify
+	}
+
+	// An incomplete/absent token ref is "not configured", not an auth failure —
+	// nothing is sent to Rancher.
+	if !secretRefComplete(tokenRef) {
+		res.Status = statusSkipped
+		res.Message = "not configured"
+		return res
+	}
+
+	token, err := h.readSecretKey(ctx, tokenRef)
+	if err != nil {
+		res.Status = statusError
+		res.Message = "could not read credential: " + err.Error()
+		return res
+	}
+	if token == "" {
+		res.Status = statusSkipped
+		res.Message = "not configured"
+		return res
+	}
+
+	var caPEM []byte
+	// Gate on presence, not completeness, to match resolveCABundle. A ref with an
+	// empty key is unreadable at runtime and must not be reported as ok here just
+	// because discovery happens to succeed.
+	if caRef != nil {
+		ca, err := h.readSecretKey(ctx, caRef)
+		if err != nil {
+			res.Status = statusError
+			res.Message = "could not read CA bundle: " + err.Error()
+			return res
+		}
+		caPEM = []byte(ca)
+	} else if ca, err := rancher.DiscoverInternalCA(ctx, h.client); err == nil {
+		// Mirror the runtime path in resolveCABundle: with no CA configured, the
+		// operator trusts the CA that signs Rancher's in-cluster serving
+		// certificate. Testing against system roots instead would report a bogus
+		// x509 failure for a configuration that works. A discovery failure stays
+		// silent and falls through to system roots — an off-cluster Rancher
+		// reached over a publicly trusted certificate is legitimate, and
+		// ErrCANotFound is its normal signal.
+		caPEM = ca
+	}
+
+	if url == "" {
+		url = rancher.DefaultBaseURL
+	}
+	res.Host = registryurl.Host(url)
+
+	client, err := rancher.NewCatalogClient(url, token, caPEM, insecure)
+	if err != nil {
+		res.Status = statusError
+		res.Message = err.Error()
+		return res
+	}
+
+	start := time.Now()
+	err = rancherCatalogCheckAuth(client, ctx)
+	res.LatencyMs = time.Since(start).Milliseconds()
+	switch {
+	case err == nil:
+		res.Status = statusOK
+		res.Message = "authenticated"
+	case errors.Is(err, rancher.ErrUnauthorized):
 		res.Status = statusFailed
 		res.Message = err.Error()
 	default:

@@ -57,7 +57,7 @@
               :placeholder="t('suseai.wizard.form.componentNamespacePlaceholder', 'defaults to install namespace')"
               :status="nsInvalid(comp) ? 'error' : undefined"
               :sub-label="nsInvalid(comp)
-                ? t('suseai.wizard.form.componentNamespaceInvalid', 'Must be a valid namespace: lowercase letters, digits and \'-\', starting and ending with a letter or digit (max 63 chars).')
+                ? t('suseai.wizard.form.componentNamespaceInvalid', {}, true)
                 : undefined"
               @update:value="onNamespaceChange(idx, $event)"
             />

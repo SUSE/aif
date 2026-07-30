@@ -1,6 +1,6 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ t('suseai.wizard.sections.reviewInstall', 'Review & Install') }}</h2>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.reviewInstall', {}, true) }}</h2>
 
     <div class="review-section">
       <div class="review-row"><span class="label">{{ t('suseai.wizard.form.workloadName', 'Instance Name') }}</span><span>{{ workloadName }}</span></div>

@@ -31,6 +31,45 @@ credentials:
     username: ""
     password: ""
 
+# Rancher catalog integration. REQUIRED to install charts from git-backed
+# ClusterRepos (spec.gitRepo): they have no HTTP/OCI URL, so the operator fetches
+# the chart from Rancher's Steve catalog API. HTTP/OCI ClusterRepos need none of
+# this.
+rancherCatalog:
+  # url: in-cluster Rancher API endpoint.
+  url: "https://rancher.cattle-system.svc"
+  # token: a Rancher API token (format "token-xxxxx:yyyyy"). REQUIRED for
+  # git-backed repos — Rancher's Steve API rejects the operator ServiceAccount
+  # token, so there is no implicit credential. Create one in Rancher under
+  # "Account & API Keys". When set, the chart stores it in a Secret. Leave empty
+  # to reference an existing Secret via tokenSecret, or to disable git-backed
+  # repo support (git-backed components then report a clear Ready=False status).
+  # NOTE: an inline token is persisted in a chart-managed Secret AND in Helm's
+  # release history/metadata (standard Helm behavior). Since this is a Rancher API
+  # token, prefer tokenSecret below to keep it out of release history.
+  # If you use the UI's Authorize button, leave both `token` and `tokenSecret`
+  # empty: with either set, a `helm upgrade` re-renders
+  # spec.rancherCatalog.tokenSecretRef from the chart, and Helm's three-way merge
+  # reverts the reference Authorize repointed — silently swapping a fresh token
+  # back for an expired one.
+  token: ""
+  # tokenSecret: reference an existing Secret holding the token instead of
+  # providing `token` inline. Takes precedence over `token` when name is set.
+  tokenSecret:
+    name: ""
+    key: "token"
+  # caBundle: PEM CA certificate(s) that signed Rancher's serving certificate.
+  # Normally leave this empty: when unset, the operator reads the CA from
+  # cattle-system/tls-rancher-internal-ca, which is the CA that signs Rancher's
+  # in-cluster serving certificate. Set it only to pin a different CA — note that
+  # the `cacerts` Setting is the ingress/public CA, a DIFFERENT certificate, and
+  # using it here produces an x509 failure. When set but unreadable, the operator
+  # falls back to system roots rather than to discovery.
+  caBundle: ""
+  # insecureSkipVerify: skip TLS verification of the Rancher API. Development
+  # only — do not use in production/air-gapped installs.
+  insecureSkipVerify: false
+
 # Static application catalog served to the AI Factory UI.
 appCatalog:
   # useStaticCatalog: serve the bundled/remote static catalog (true) or

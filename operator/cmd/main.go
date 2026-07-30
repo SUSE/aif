@@ -48,6 +48,7 @@ import (
 	aiworkloadctrl "github.com/SUSE/aif-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/aif-operator/internal/controller/installaiextension"
 	settingsctrl "github.com/SUSE/aif-operator/internal/controller/settings"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -248,10 +249,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
 	}
+	// Shared holder: the Settings controller builds the Rancher catalog client
+	// from Settings.Spec.RancherCatalog and swaps it in here; the AIWorkload
+	// reconciler reads it to fetch charts from git-backed ClusterRepos.
+	catalogHolder := rancher.NewHolder()
+
 	if err := (&settingsctrl.SettingsReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
+		CatalogHolder:     catalogHolder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Settings")
 		os.Exit(1)
@@ -261,6 +268,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		RestConfig:        mgr.GetConfig(),
 		OperatorNamespace: operatorNamespace,
+		CatalogClient:     catalogHolder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
 		os.Exit(1)

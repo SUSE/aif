@@ -117,6 +117,38 @@
               "keyNameLabel": "Secret Key"
             }
           },
+          "rancherCatalog": {
+            "title": "Rancher API Access",
+            "description": "Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.",
+            "authorize": "Authorize",
+            "reauthorize": "Re-authorize",
+            "authorizing": "Authorizing…",
+            "notAuthorized": "Not authorized. The operator cannot install charts from git-backed repositories until you authorize it.",
+            "authorized": "Authorized. Token expires {expires}.",
+            "authorizedNoExpiry": "Authorized. No expiry recorded for this token.",
+            "authorizeFailed": "Could not create a Rancher API token: {error}",
+            "authorizeHelp": "Creates a Rancher API token as your user, stores it in a Secret in the operator namespace, and saves this page.",
+            "tokenExpiring": "The Rancher API token expires {expires}. Re-authorize to avoid interrupting installs from git-backed repositories.",
+            "tokenExpired": "The Rancher API token expired {expires}. Charts from git-backed repositories cannot be installed until you re-authorize.",
+            "advanced": "Advanced",
+            "tokenSecretRef": {
+              "label": "API Token Secret",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "url": {
+              "label": "Rancher API URL",
+              "placeholder": "https://rancher.cattle-system.svc"
+            },
+            "caBundleSecretRef": {
+              "label": "CA Bundle Secret (optional — discovered automatically when empty)",
+              "secretNameLabel": "Secret Name",
+              "keyNameLabel": "Secret Key"
+            },
+            "insecureSkipVerify": {
+              "label": "Skip TLS verification (development only)"
+            }
+          },
           "advanced": {
             "title": "Advanced",
             "warning": "Advanced settings for air-gapped or custom deployments only. Modify with care.",

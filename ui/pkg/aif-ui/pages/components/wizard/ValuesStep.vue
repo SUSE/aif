@@ -75,7 +75,7 @@
     </div>
 
     <Banner v-if="versionDirty" color="info" class="mt-10">
-      {{ t('suseai.wizard.form.versionDirtyWarning', 'Version changed after you edited values. Click "Load defaults from chart" to apply defaults for the new version, or continue with your customizations.') }}
+      {{ t('suseai.wizard.form.versionDirtyWarning', {}, true) }}
     </Banner>
   </div>
 </template>

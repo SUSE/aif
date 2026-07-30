@@ -201,12 +201,13 @@ func TestReconcile_MissingClusterRepo_PersistsCondition(t *testing.T) {
 	}
 }
 
-func TestReconcileBlueprintStatus_ForbiddenClusterRepo_PropagatesError(t *testing.T) {
-	scheme := clusterRepoErrorScheme(t)
-	w := newBlueprintWorkload(time.Now())
-	bp := newBlueprintCR("application-collection")
+// forbiddenClusterRepoReconciler builds a reconciler whose ClusterRepo reads
+// fail with Forbidden — an error matching none of the four sentinels, so it
+// exercises the generic fall-through.
+func forbiddenClusterRepoReconciler(t *testing.T, scheme *kruntime.Scheme, objs ...client.Object) *AIWorkloadReconciler {
+	t.Helper()
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(w, bp).
+		WithObjects(objs...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 				if _, ok := obj.(*unstructured.Unstructured); ok {
@@ -219,7 +220,14 @@ func TestReconcileBlueprintStatus_ForbiddenClusterRepo_PropagatesError(t *testin
 			},
 		}).
 		Build()
-	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
+	return &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
+}
+
+func TestReconcileBlueprintStatus_ForbiddenClusterRepo_PropagatesError(t *testing.T) {
+	scheme := clusterRepoErrorScheme(t)
+	w := newBlueprintWorkload(time.Now())
+	bp := newBlueprintCR("application-collection")
+	r := forbiddenClusterRepoReconciler(t, scheme, w, bp)
 
 	result, err := r.reconcileBlueprintStatus(context.Background(), w)
 	if err == nil {
@@ -228,9 +236,64 @@ func TestReconcileBlueprintStatus_ForbiddenClusterRepo_PropagatesError(t *testin
 	if result.RequeueAfter != 0 {
 		t.Errorf("expected no requeue on non-sentinel error, got %v", result.RequeueAfter)
 	}
-	// The error should NOT have the sentinel, so no Ready condition was set.
+	// The error matches no sentinel, but the object must still say it is not
+	// ready: returning bare would leave whatever the last pass wrote in place.
 	cond := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
-	if cond != nil {
-		t.Errorf("expected no Ready condition on propagated error, got %+v", cond)
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		t.Fatalf("expected Ready=False on a propagated error, got %+v", cond)
+	}
+	if cond.Reason != "ComponentReconcileFailed" {
+		t.Errorf("reason = %q, want ComponentReconcileFailed", cond.Reason)
+	}
+	if !strings.Contains(cond.Message, "application-collection") {
+		t.Errorf("expected message to name the repo, got %q", cond.Message)
+	}
+}
+
+// A generic (non-sentinel) failure used to return bare, leaving the previous
+// pass's Ready=True / "Component bundles reconciled" on the object: the workload
+// retried forever while the UI showed it as reconciled and healthy.
+func TestReconcileBlueprintStatus_GenericError_ClearsStaleReadyTrue(t *testing.T) {
+	scheme := clusterRepoErrorScheme(t)
+	w := newBlueprintWorkload(time.Now().Add(-10 * time.Minute)) // past the grace window
+	bp := newBlueprintCR("application-collection")
+	// Seed the state a previously-healthy workload would carry.
+	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled,
+		"Component bundles reconciled", w.Generation)
+	w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseRunning
+	r := forbiddenClusterRepoReconciler(t, scheme, w, bp)
+
+	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err == nil {
+		t.Fatal("expected the generic error to be propagated")
+	}
+
+	cond := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
+	if cond == nil {
+		t.Fatalf("expected a %q condition", conditionTypeReady)
+	}
+	if cond.Status != metav1.ConditionFalse {
+		t.Fatalf("stale Ready=True survived a failed reconcile: %+v", cond)
+	}
+	if cond.Message == "Component bundles reconciled" {
+		t.Errorf("stale message survived: %q", cond.Message)
+	}
+	if w.Status.Phase != aiplatformv1alpha1.AIWorkloadPhaseFailed {
+		t.Errorf("phase = %v, want Failed", w.Status.Phase)
+	}
+}
+
+// An error can carry a whole HTML page from an ingress; the CRD caps
+// condition.message at 32768 bytes.
+func TestTruncateForCondition(t *testing.T) {
+	if got := truncateForCondition("short"); got != "short" {
+		t.Errorf("short message was altered: %q", got)
+	}
+	long := strings.Repeat("x", 64<<10)
+	got := truncateForCondition(long)
+	if len(got) >= len(long) {
+		t.Fatalf("len = %d, want it bounded well under %d", len(got), len(long))
+	}
+	if !strings.HasSuffix(got, "(truncated)") {
+		t.Errorf("truncation is not signalled in the message: %q", got[len(got)-32:])
 	}
 }

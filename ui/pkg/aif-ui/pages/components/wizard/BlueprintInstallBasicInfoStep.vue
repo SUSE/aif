@@ -25,7 +25,7 @@
         :loading="loadingNamespaces"
         @update:value="onNamespaceChange"
       />
-      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', 'Default namespace for components that don\'t pin their own. Individual components may deploy to fixed namespaces — see the Review step for the full list.') }}</small>
+      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', {}, true) }}</small>
       <Banner
         v-if="fixedNamespaceCount > 0"
         color="info"

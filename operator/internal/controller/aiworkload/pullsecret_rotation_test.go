@@ -84,3 +84,40 @@ func TestCredentialSecretToAIWorkloads_IgnoresUnrelatedSecrets(t *testing.T) {
 		}
 	}
 }
+
+// A Settings change re-enqueues blueprint-sourced AIWorkloads so a git-backed
+// workload that failed with CatalogClientNotConfigured recovers as soon as the
+// Rancher catalog token is supplied at runtime. helm/app workloads can't consume
+// git-backed ClusterRepos and are skipped.
+func TestSettingsToAIWorkloads_EnqueuesOnlyBlueprintWorkloads(t *testing.T) {
+	s := rotationScheme(t)
+	bp := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "agent-system"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			Source: aiplatformv1alpha1.AIWorkloadSource{
+				Blueprint: &aiplatformv1alpha1.BlueprintSource{Name: "rag", Version: "1.0.0"},
+			},
+		},
+	}
+	app := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "litellm", Namespace: "litellm-system"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			Source: aiplatformv1alpha1.AIWorkloadSource{
+				App: &aiplatformv1alpha1.AppSource{
+					ChartRepo: "suse", ChartName: "litellm", ChartVersion: "1.0.0", Release: "litellm",
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, app).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: s, OperatorNamespace: "aif-operator"}
+
+	settings := &aiplatformv1alpha1.Settings{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "aif-operator"}}
+	reqs := r.settingsToAIWorkloads(context.Background(), settings)
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 enqueued blueprint AIWorkload, got %d", len(reqs))
+	}
+	if reqs[0].Name != "agent" {
+		t.Errorf("expected the blueprint workload %q, got %q", "agent", reqs[0].Name)
+	}
+}

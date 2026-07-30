@@ -32,4 +32,6 @@ jobs:
 
       - run: npx eslint --ext .js,.ts,.vue pkg/aif-ui/
 
+      - run: yarn test
+
       - run: yarn build-pkg aif-ui

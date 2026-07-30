@@ -11,6 +11,11 @@ import { TIMEOUT_VALUES } from '../utils/constants';
 import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
+import {
+  mintOperatorToken, ensureTokenSecret, deleteToken, requestErrorMessage,
+  TOKEN_EXPIRES_ANNOTATION, TOKEN_NAME_ANNOTATION,
+  DEFAULT_TOKEN_SECRET_NAME, DEFAULT_TOKEN_SECRET_KEY,
+} from '../services/rancher-token';
 
 function createEmptySpec() {
   return {
@@ -18,6 +23,7 @@ function createEmptySpec() {
     applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
     nvidia:                { userSecretRef: null, tokenSecretRef: null },
+    rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
     registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '', nvidia: '' },
     catalogDiscovery:      { applicationCollectionMode: 'api' },
     imageRewrite:          { enabled: false, rules: [] },
@@ -52,10 +58,12 @@ export default {
 
       this.spec   = this.buildSpec(data.spec);
       this.loaded = true;
+      await this.loadTokenState();
     } catch (e) {
       if (e?.status === 404) {
         this.notFound = true;
         this.loaded   = true;
+        await this.loadTokenState();
       } else {
         this.fetchErrorMessage = e?.message || String(e);
         this.loaded            = true;
@@ -76,18 +84,23 @@ export default {
       operatorConfigMapFound: false,
       operatorManaged:        false,
       operatorForbidden:      false,
+      tokenState:      { expiresAt: '', tokenName: '', configured: false, loaded: false },
+      authorizeError:  '',
+      showAdvanced:    { rancherCatalog: false },
       expanded:          {
-        fleet:         false,
-        appCollection: true,
-        suseRegistry:  false,
-        nvidia:        false,
-        advanced:      false,
+        fleet:          false,
+        appCollection:  true,
+        suseRegistry:   false,
+        nvidia:         false,
+        rancherCatalog: false,
+        advanced:       false,
       },
       testResults: {
         applicationCollection: null,
         suseRegistry:          null,
         nvidia:                null,
         gitops:                null,
+        rancherCatalog:        null,
       },
     };
   },
@@ -123,6 +136,20 @@ export default {
           ? val.split(',').map((s) => s.trim()).filter(Boolean)
           : [];
       },
+    },
+
+    // 'expired' | 'expiring' | '' — drives the banner. Fourteen days of notice,
+    // because Rancher clamps token TTL to auth-token-max-ttl-minutes (90 days by
+    // default) and every token therefore reaches this point.
+    tokenExpiryStatus() {
+      const raw = this.tokenState.expiresAt;
+      if (!raw) return '';
+      const expires = new Date(raw).getTime();
+      if (Number.isNaN(expires)) return '';
+      const remainingDays = (expires - Date.now()) / 86400000;
+      if (remainingDays <= 0) return 'expired';
+      if (remainingDays <= 14) return 'expiring';
+      return '';
     },
   },
 
@@ -171,6 +198,14 @@ export default {
         s.nvidia = {
           userSecretRef:  crdSpec.nvidia.userSecretRef || null,
           tokenSecretRef: crdSpec.nvidia.tokenSecretRef || null,
+        };
+      }
+      if (crdSpec.rancherCatalog) {
+        s.rancherCatalog = {
+          url:                crdSpec.rancherCatalog.url || '',
+          tokenSecretRef:     crdSpec.rancherCatalog.tokenSecretRef || null,
+          caBundleSecretRef:  crdSpec.rancherCatalog.caBundleSecretRef || null,
+          insecureSkipVerify: !!crdSpec.rancherCatalog.insecureSkipVerify,
         };
       }
       if (crdSpec.registryEndpoints) {
@@ -224,6 +259,16 @@ export default {
         out.nvidia = {};
         if (nv.userSecretRef?.name) out.nvidia.userSecretRef = nv.userSecretRef;
         if (nv.tokenSecretRef?.name) out.nvidia.tokenSecretRef = nv.tokenSecretRef;
+      }
+
+      const rc = spec.rancherCatalog;
+
+      if (rc.url || rc.tokenSecretRef?.name || rc.caBundleSecretRef?.name || rc.insecureSkipVerify) {
+        out.rancherCatalog = {};
+        if (rc.url) out.rancherCatalog.url = rc.url;
+        if (rc.tokenSecretRef?.name) out.rancherCatalog.tokenSecretRef = rc.tokenSecretRef;
+        if (rc.caBundleSecretRef?.name) out.rancherCatalog.caBundleSecretRef = rc.caBundleSecretRef;
+        if (rc.insecureSkipVerify) out.rancherCatalog.insecureSkipVerify = true;
       }
 
       const re = spec.registryEndpoints;
@@ -366,6 +411,9 @@ export default {
       await Promise.all(tasks);
     },
 
+    // Returns whether the save reached the operator. authorizeRancher needs to
+    // know: it must not revoke the token it replaced unless the reference to the
+    // new one was actually persisted.
     async save(buttonDone) {
       try {
         this.errors = [];
@@ -391,9 +439,13 @@ export default {
             console.warn('[SUSE-AI] ClusterRepo setup failed:', e);
             this.errors = [`Settings saved, but chart repository setup failed: ${ e?.message || e }`];
           });
+
+        return true;
       } catch (e) {
         this.errors = [e?.message || String(e)];
         buttonDone(false);
+
+        return false;
       }
     },
 
@@ -408,6 +460,11 @@ export default {
     canTest(target) {
       if (target === 'gitops') {
         return !!this.spec.fleet.repoURL && this.spec.fleet.authType !== 'ssh';
+      }
+      // rancherCatalog authenticates with a single API token (no username), so it
+      // only needs a complete token secret ref.
+      if (target === 'rancherCatalog') {
+        return this.secretRefComplete(this.spec.rancherCatalog.tokenSecretRef);
       }
       const sec = this.spec[target];
       return this.secretRefComplete(sec?.userSecretRef) && this.secretRefComplete(sec?.tokenSecretRef);
@@ -441,6 +498,78 @@ export default {
       const r = this.testResults[target];
       if (!r) return '';
       return r.status === 'ok' ? 'text-success' : (r.status === 'skipped' ? 'text-muted' : 'text-error');
+    },
+
+    // Reads the expiry annotations off the token Secret so the section can show
+    // state without a second round trip. Absent Secret is not an error: it just
+    // means "not authorized yet".
+    async loadTokenState() {
+      const ref = this.spec.rancherCatalog.tokenSecretRef;
+      if (!ref?.name) {
+        this.tokenState = { expiresAt: '', tokenName: '', configured: false, loaded: true };
+        return;
+      }
+      try {
+        const sec = await this.$store.dispatch('rancher/request', {
+          url: `/k8s/clusters/local/api/v1/namespaces/${ this.settingsNamespace }/secrets/${ ref.name }`,
+        });
+        const ann = sec?.metadata?.annotations || {};
+        this.tokenState = {
+          expiresAt:   ann[TOKEN_EXPIRES_ANNOTATION] || '',
+          tokenName:   ann[TOKEN_NAME_ANNOTATION] || '',
+          configured:  true,
+          loaded:      true,
+        };
+      } catch {
+        this.tokenState = { expiresAt: '', tokenName: '', configured: false, loaded: true };
+      }
+    },
+
+    // Mints a fresh token, stores it, points Settings at it, and removes the
+    // token it replaced. Idempotent by design: pressing the button again is the
+    // remedy for both first-time setup and expiry, and leaves exactly one live
+    // token behind.
+    async authorizeRancher(buttonDone) {
+      this.authorizeError = '';
+      const previous = this.tokenState.tokenName;
+      try {
+        const minted = await mintOperatorToken(this.$store);
+        if (!minted.value) throw new Error('Rancher returned no bearer token');
+
+        await ensureTokenSecret(this.$store, this.settingsNamespace, DEFAULT_TOKEN_SECRET_NAME, minted);
+
+        // The Secret now holds this token, so it is the current one whether or not the
+        // save below succeeds. Recording it here keeps the status line honest and makes
+        // a retry delete the token it actually replaced.
+        this.tokenState = { expiresAt: minted.expiresAt, tokenName: minted.tokenName, configured: true, loaded: true };
+
+        this.spec.rancherCatalog.tokenSecretRef = {
+          name: DEFAULT_TOKEN_SECRET_NAME,
+          key:  DEFAULT_TOKEN_SECRET_KEY,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        const saved = await this.save(() => {});
+
+        if (!saved) {
+          throw new Error(this.errors[0] || 'Saving Settings failed');
+        }
+        // save() replaces this.spec from the operator's response. An operator
+        // whose Settings CRD predates rancherCatalog prunes the field, so confirm
+        // the reference survived the round trip before revoking anything.
+        if (this.spec.rancherCatalog?.tokenSecretRef?.name !== DEFAULT_TOKEN_SECRET_NAME) {
+          throw new Error('The operator did not store the token reference; check that it is up to date');
+        }
+
+        // Only after the new token is committed, so a failure above never leaves
+        // the operator with no working credential.
+        if (previous && previous !== minted.tokenName) {
+          await deleteToken(this.$store, previous);
+        }
+        buttonDone(true);
+      } catch (e) {
+        this.authorizeError = requestErrorMessage(e);
+        buttonDone(false);
+      }
     },
   },
 };
@@ -794,6 +923,155 @@ export default {
                 :class="testResultClass('gitops')"
                 class="ml-10"
               >{{ testResultText('gitops') }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rancher API Access -->
+      <div id="rancherCatalog" class="box mt-10">
+        <div
+          class="accordion-header"
+          role="button"
+          tabindex="0"
+          @click="toggle('rancherCatalog')"
+          @keydown.space.enter.prevent="toggle('rancherCatalog')"
+        >
+          <i :class="expanded.rancherCatalog ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+          <h2>{{ t('suseai.pages.settings.sections.rancherCatalog.title') }}</h2>
+        </div>
+
+        <div
+          v-if="expanded.rancherCatalog"
+          class="mt-15"
+        >
+          <p class="text-muted mb-15">
+            {{ t('suseai.pages.settings.sections.rancherCatalog.description', {}, true) }}
+          </p>
+
+          <Banner
+            v-if="tokenExpiryStatus"
+            :color="tokenExpiryStatus === 'expired' ? 'error' : 'warning'"
+            :label="tokenExpiryStatus === 'expired'
+              ? t('suseai.pages.settings.sections.rancherCatalog.tokenExpired', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true)
+              : t('suseai.pages.settings.sections.rancherCatalog.tokenExpiring', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true)"
+          />
+
+          <div class="row mb-10">
+            <div class="col span-12">
+              <span v-if="tokenState.loaded && tokenState.configured && !tokenExpiryStatus && tokenState.expiresAt" class="text-success">
+                {{ t('suseai.pages.settings.sections.rancherCatalog.authorized', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true) }}
+              </span>
+              <span v-else-if="tokenState.loaded && tokenState.configured && !tokenExpiryStatus && !tokenState.expiresAt" class="text-success">
+                {{ t('suseai.pages.settings.sections.rancherCatalog.authorizedNoExpiry', {}, true) }}
+              </span>
+              <span v-else-if="tokenState.loaded && !tokenState.configured" class="text-warning">
+                {{ t('suseai.pages.settings.sections.rancherCatalog.notAuthorized', {}, true) }}
+              </span>
+            </div>
+          </div>
+
+          <div class="row mb-10">
+            <div class="col span-12">
+              <AsyncButton
+                :mode="tokenState.configured ? 'edit' : 'apply'"
+                :action-label="tokenState.configured
+                  ? t('suseai.pages.settings.sections.rancherCatalog.reauthorize', {}, true)
+                  : t('suseai.pages.settings.sections.rancherCatalog.authorize', {}, true)"
+                :waiting-label="t('suseai.pages.settings.sections.rancherCatalog.authorizing', {}, true)"
+                @click="authorizeRancher"
+              />
+              <p class="text-muted mt-5">
+                {{ t('suseai.pages.settings.sections.rancherCatalog.authorizeHelp', {}, true) }}
+              </p>
+            </div>
+          </div>
+
+          <Banner
+            v-if="authorizeError"
+            color="error"
+            :label="t('suseai.pages.settings.sections.rancherCatalog.authorizeFailed', { error: authorizeError }, true)"
+          />
+
+          <div class="row mb-10">
+            <div class="col span-12">
+              <a
+                href="#"
+                @click.prevent="showAdvanced.rancherCatalog = !showAdvanced.rancherCatalog"
+              >{{ t('suseai.pages.settings.sections.rancherCatalog.advanced', {}, true) }}</a>
+            </div>
+          </div>
+
+          <template v-if="showAdvanced.rancherCatalog">
+            <p class="text-label mb-5">
+              {{ t('suseai.pages.settings.sections.rancherCatalog.tokenSecretRef.label') }}
+            </p>
+            <div class="row mb-15">
+              <div class="col span-8">
+                <SecretSelector
+                  :value="toSelectorValue(spec.rancherCatalog.tokenSecretRef)"
+                  :namespace="settingsNamespace"
+                  :show-key-selector="true"
+                  :secret-name-label="t('suseai.pages.settings.sections.rancherCatalog.tokenSecretRef.secretNameLabel')"
+                  :key-name-label="t('suseai.pages.settings.sections.rancherCatalog.tokenSecretRef.keyNameLabel')"
+                  :mode="mode"
+                  @update:value="spec.rancherCatalog.tokenSecretRef = fromSelectorValue($event)"
+                />
+              </div>
+            </div>
+
+            <div class="row mb-15">
+              <div class="col span-8">
+                <LabeledInput
+                  v-model:value="spec.rancherCatalog.url"
+                  :label="t('suseai.pages.settings.sections.rancherCatalog.url.label')"
+                  :placeholder="t('suseai.pages.settings.sections.rancherCatalog.url.placeholder')"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+
+            <p class="text-label mb-5">
+              {{ t('suseai.pages.settings.sections.rancherCatalog.caBundleSecretRef.label') }}
+            </p>
+            <div class="row mb-15">
+              <div class="col span-8">
+                <SecretSelector
+                  :value="toSelectorValue(spec.rancherCatalog.caBundleSecretRef)"
+                  :namespace="settingsNamespace"
+                  :show-key-selector="true"
+                  :secret-name-label="t('suseai.pages.settings.sections.rancherCatalog.caBundleSecretRef.secretNameLabel')"
+                  :key-name-label="t('suseai.pages.settings.sections.rancherCatalog.caBundleSecretRef.keyNameLabel')"
+                  :mode="mode"
+                  @update:value="spec.rancherCatalog.caBundleSecretRef = fromSelectorValue($event)"
+                />
+              </div>
+            </div>
+
+            <div class="row mb-10">
+              <div class="col span-12">
+                <Checkbox
+                  v-model:value="spec.rancherCatalog.insecureSkipVerify"
+                  :label="t('suseai.pages.settings.sections.rancherCatalog.insecureSkipVerify.label')"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+          </template>
+
+          <div class="row mt-10">
+            <div class="col span-12">
+              <AsyncButton
+                mode="edit"
+                :action-label="t('suseai.pages.settings.test.button')"
+                :disabled="!canTest('rancherCatalog')"
+                @click="cb => runTest('rancherCatalog', { tokenSecretRef: spec.rancherCatalog.tokenSecretRef, caBundleSecretRef: spec.rancherCatalog.caBundleSecretRef, url: spec.rancherCatalog.url, insecureSkipVerify: spec.rancherCatalog.insecureSkipVerify }, cb)"
+              />
+              <span
+                v-if="testResults.rancherCatalog"
+                :class="testResultClass('rancherCatalog')"
+                class="ml-10"
+              >{{ testResultText('rancherCatalog') }}</span>
             </div>
           </div>
         </div>

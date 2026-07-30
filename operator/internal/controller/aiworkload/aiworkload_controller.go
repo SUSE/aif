@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -36,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -43,6 +45,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
@@ -66,6 +69,17 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 	})
 }
 
+// truncateForCondition bounds a message so it cannot overflow the CRD's
+// 32768-byte condition.message cap or flood the log. Fetch errors can carry a
+// whole HTML error page from an ingress or service mesh.
+func truncateForCondition(s string) string {
+	const max = 1024
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "… (truncated)"
+}
+
 var (
 	bundleDeploymentGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment"}
 	bundleGVK           = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
@@ -79,6 +93,13 @@ type AIWorkloadReconciler struct {
 	Scheme            *runtime.Scheme
 	RestConfig        *rest.Config
 	OperatorNamespace string
+	// CatalogClient holds the current Rancher catalog client used to fetch charts
+	// from git-backed ClusterRepos. The Settings controller rebuilds and swaps
+	// the client into this holder when the rancherCatalog config changes. A nil
+	// holder or an empty holder means git-backed repos are unconfigured;
+	// git-backed components then report a clear condition and http/oci components
+	// are unaffected.
+	CatalogClient *rancher.Holder
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete
@@ -526,6 +547,31 @@ func (r *AIWorkloadReconciler) credentialSecretToAIWorkloads(ctx context.Context
 	return r.allAIWorkloadRequests(ctx)
 }
 
+// settingsToAIWorkloads re-enqueues every blueprint-sourced AIWorkload when
+// Settings changes. The Settings controller rebuilds the Rancher catalog client
+// (CatalogClient holder) from Settings.Spec.RancherCatalog at runtime; without
+// this watch, a git-backed workload that failed with CatalogClientNotConfigured
+// before the token was set would stay Failed until the next informer resync.
+// Only blueprint-sourced workloads can consume git-backed ClusterRepos, so
+// helm/app workloads are skipped; reconcile is idempotent so re-enqueuing the
+// rest is safe.
+func (r *AIWorkloadReconciler) settingsToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	var list aiplatformv1alpha1.AIWorkloadList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range list.Items {
+		if list.Items[i].Spec.Source.Blueprint == nil {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: list.Items[i].Name, Namespace: list.Items[i].Namespace},
+		})
+	}
+	return reqs
+}
+
 func (r *AIWorkloadReconciler) allAIWorkloadRequests(ctx context.Context) []reconcile.Request {
 	var list aiplatformv1alpha1.AIWorkloadList
 	if err := r.List(ctx, &list); err != nil {
@@ -563,6 +609,26 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return obj.GetNamespace() == r.OperatorNamespace && credentials.IsWellKnownSecret(obj.GetName())
 	})
 
+	// Settings carries far more than the catalog config, and every field of it
+	// is edited from the UI. Without this filter each unrelated edit (and each
+	// status write the Settings controller itself makes) re-enqueues every
+	// blueprint workload, which for git-backed components means re-downloading
+	// their charts from Rancher. Only spec.rancherCatalog can change the
+	// outcome of a git-chart reconcile, so that is all we react to.
+	catalogSettingsChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldS, ok1 := e.ObjectOld.(*aiplatformv1alpha1.Settings)
+			newS, ok2 := e.ObjectNew.(*aiplatformv1alpha1.Settings)
+			if !ok1 || !ok2 {
+				return true
+			}
+			return !reflect.DeepEqual(oldS.Spec.RancherCatalog, newS.Spec.RancherCatalog)
+		},
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiplatformv1alpha1.AIWorkload{}).
 		Watches(bd, handler.EnqueueRequestsFromMapFunc(r.bundleDeploymentToAIWorkloads)).
@@ -571,5 +637,7 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(isHelmSecret)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),
 			builder.WithPredicates(isCredentialSecret)).
+		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads),
+			builder.WithPredicates(catalogSettingsChanged)).
 		Complete(r)
 }
