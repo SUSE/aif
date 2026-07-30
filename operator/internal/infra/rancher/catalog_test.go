@@ -103,6 +103,54 @@ func TestFetchChart_Non200IsError(t *testing.T) {
 	}
 }
 
+// FetchChart is the path a git-backed component actually takes, so it — not just
+// CheckAuth — has to produce ErrUnauthorized on a rejected token. The AIWorkload
+// controller keys its RancherTokenRejected condition off errors.Is(ErrUnauthorized);
+// without the sentinel here an expired token surfaced as the generic
+// ComponentReconcileFailed, which tells the user nothing about re-authorizing.
+// The controller-side test fakes the sentinel, so only this test covers the
+// producer.
+func TestFetchChart_Classification(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		wantUnauth bool
+	}{
+		{"unauthorized", http.StatusUnauthorized, true},
+		{"forbidden", http.StatusForbidden, true},
+		{"not found", http.StatusNotFound, false},
+		{"server error", http.StatusInternalServerError, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(`{"type":"error","status":"401","message":"Unauthorized 401: must authenticate"}`))
+			}))
+			defer srv.Close()
+
+			c, err := NewCatalogClient(srv.URL, "tok-123", nil, false)
+			if err != nil {
+				t.Fatalf("NewCatalogClient: %v", err)
+			}
+			_, err = c.FetchChart(context.Background(), "rancher-charts", "rancher-backup-crd", "108.0.6+up9.0.6")
+			if err == nil {
+				t.Fatal("expected an error on non-200")
+			}
+			if got := errors.Is(err, ErrUnauthorized); got != tc.wantUnauth {
+				t.Fatalf("errors.Is(ErrUnauthorized) = %v, want %v (err=%v)", got, tc.wantUnauth, err)
+			}
+			// The chart coordinates stay in the message either way — they are what
+			// makes the condition actionable.
+			for _, want := range []string{"rancher-backup-crd", "108.0.6+up9.0.6", "rancher-charts"} {
+				if !contains(err.Error(), want) {
+					t.Errorf("error %q dropped %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
 // An ingress or service mesh can answer with a large HTML error page. The body
 // is only bounded by maxChartDownloadBytes (64 MiB), so quoting it whole put
 // megabytes into a log line on every backoff tick — and, now that the generic

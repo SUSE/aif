@@ -133,6 +133,15 @@ func (c *CatalogClient) FetchChart(ctx context.Context, repoName, chartName, ver
 		return nil, fmt.Errorf("read chart body: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// A rejected token has to carry ErrUnauthorized, the same as CheckAuth:
+		// this is the path a git-backed component takes on every reconcile, and
+		// the AIWorkload controller keys its RancherTokenRejected condition — the
+		// one that tells the user to re-authorize — off errors.Is against it.
+		// Every other status stays generic and retryable.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("%w: rancher catalog returned %s for chart %s@%s in repo %q: %s",
+				ErrUnauthorized, resp.Status, chartName, version, repoName, errorBodyExcerpt(body))
+		}
 		return nil, fmt.Errorf("rancher catalog returned %s for chart %s@%s in repo %q: %s",
 			resp.Status, chartName, version, repoName, errorBodyExcerpt(body))
 	}
