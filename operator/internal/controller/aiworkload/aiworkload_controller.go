@@ -69,6 +69,17 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 	})
 }
 
+// truncateForCondition bounds a message so it cannot overflow the CRD's
+// 32768-byte condition.message cap or flood the log. Fetch errors can carry a
+// whole HTML error page from an ingress or service mesh.
+func truncateForCondition(s string) string {
+	const max = 1024
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "… (truncated)"
+}
+
 var (
 	bundleDeploymentGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment"}
 	bundleGVK           = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}

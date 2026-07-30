@@ -174,6 +174,13 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
+			// Anything else: the cause is unknown and may be transient, so return
+			// the error and let the workqueue back off. Set a condition first —
+			// without one the object keeps advertising the previous pass's
+			// Ready=True while it is stuck.
+			msg := fmt.Sprintf("Component %q from repo %q could not be reconciled: %v", c.ChartName, c.ChartRepo, truncateForCondition(err.Error()))
+			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "ComponentReconcileFailed", msg, w.Generation)
+			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 			return ctrl.Result{}, err
 		}
 	}
