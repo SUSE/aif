@@ -941,10 +941,10 @@ export default {
 
           <div class="row mb-10">
             <div class="col span-12">
-              <span v-if="tokenState.loaded && tokenState.expiresAt" class="text-success">
+              <span v-if="tokenState.loaded && tokenState.expiresAt && !tokenExpiryStatus" class="text-success">
                 {{ t('suseai.pages.settings.sections.rancherCatalog.authorized', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true) }}
               </span>
-              <span v-else-if="tokenState.loaded" class="text-warning">
+              <span v-else-if="tokenState.loaded && !tokenState.expiresAt" class="text-warning">
                 {{ t('suseai.pages.settings.sections.rancherCatalog.notAuthorized', {}, true) }}
               </span>
             </div>
