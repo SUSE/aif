@@ -12,7 +12,7 @@ import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperat
 import { ensureClusterRepo } from '../services/rancher-apps';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 import {
-  mintOperatorToken, ensureTokenSecret, deleteToken,
+  mintOperatorToken, ensureTokenSecret, deleteToken, requestErrorMessage,
   TOKEN_EXPIRES_ANNOTATION, TOKEN_NAME_ANNOTATION,
   DEFAULT_TOKEN_SECRET_NAME, DEFAULT_TOKEN_SECRET_KEY,
 } from '../services/rancher-token';
@@ -411,6 +411,9 @@ export default {
       await Promise.all(tasks);
     },
 
+    // Returns whether the save reached the operator. authorizeRancher needs to
+    // know: it must not revoke the token it replaced unless the reference to the
+    // new one was actually persisted.
     async save(buttonDone) {
       try {
         this.errors = [];
@@ -436,9 +439,13 @@ export default {
             console.warn('[SUSE-AI] ClusterRepo setup failed:', e);
             this.errors = [`Settings saved, but chart repository setup failed: ${ e?.message || e }`];
           });
+
+        return true;
       } catch (e) {
         this.errors = [e?.message || String(e)];
         buttonDone(false);
+
+        return false;
       }
     },
 
@@ -541,7 +548,17 @@ export default {
           key:  DEFAULT_TOKEN_SECRET_KEY,
         };
         // eslint-disable-next-line @typescript-eslint/no-empty-function
-        await this.save(() => {});
+        const saved = await this.save(() => {});
+
+        if (!saved) {
+          throw new Error(this.errors[0] || 'Saving Settings failed');
+        }
+        // save() replaces this.spec from the operator's response. An operator
+        // whose Settings CRD predates rancherCatalog prunes the field, so confirm
+        // the reference survived the round trip before revoking anything.
+        if (this.spec.rancherCatalog?.tokenSecretRef?.name !== DEFAULT_TOKEN_SECRET_NAME) {
+          throw new Error('The operator did not store the token reference; check that it is up to date');
+        }
 
         // Only after the new token is committed, so a failure above never leaves
         // the operator with no working credential.
@@ -550,7 +567,7 @@ export default {
         }
         buttonDone(true);
       } catch (e) {
-        this.authorizeError = e?.message || String(e);
+        this.authorizeError = requestErrorMessage(e);
         buttonDone(false);
       }
     },
