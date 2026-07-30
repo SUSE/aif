@@ -160,11 +160,10 @@ export async function deleteToken(store: any, tokenName: string): Promise<void> 
       await store.dispatch('rancher/request', {
         url: `${ LEGACY_TOKENS_URL }/${ tokenName }`, method: 'DELETE',
       });
-    } catch (inner) {
+    } catch {
       // Best-effort by contract: a token we cannot revoke is a leak, not a failure of
       // the authorization the caller asked for. Reporting it would tell the user that
       // minting failed when it succeeded.
-      if (isNotFound(inner)) return;
     }
   }
 }
