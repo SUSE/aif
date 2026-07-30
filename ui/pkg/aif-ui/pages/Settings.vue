@@ -84,7 +84,7 @@ export default {
       operatorConfigMapFound: false,
       operatorManaged:        false,
       operatorForbidden:      false,
-      tokenState:      { expiresAt: '', tokenName: '', loaded: false },
+      tokenState:      { expiresAt: '', tokenName: '', configured: false, loaded: false },
       authorizeError:  '',
       showAdvanced:    { rancherCatalog: false },
       expanded:          {
@@ -499,7 +499,7 @@ export default {
     async loadTokenState() {
       const ref = this.spec.rancherCatalog.tokenSecretRef;
       if (!ref?.name) {
-        this.tokenState = { expiresAt: '', tokenName: '', loaded: true };
+        this.tokenState = { expiresAt: '', tokenName: '', configured: false, loaded: true };
         return;
       }
       try {
@@ -508,12 +508,13 @@ export default {
         });
         const ann = sec?.metadata?.annotations || {};
         this.tokenState = {
-          expiresAt: ann[TOKEN_EXPIRES_ANNOTATION] || '',
-          tokenName: ann[TOKEN_NAME_ANNOTATION] || '',
-          loaded:    true,
+          expiresAt:   ann[TOKEN_EXPIRES_ANNOTATION] || '',
+          tokenName:   ann[TOKEN_NAME_ANNOTATION] || '',
+          configured:  true,
+          loaded:      true,
         };
       } catch {
-        this.tokenState = { expiresAt: '', tokenName: '', loaded: true };
+        this.tokenState = { expiresAt: '', tokenName: '', configured: false, loaded: true };
       }
     },
 
@@ -533,7 +534,7 @@ export default {
         // The Secret now holds this token, so it is the current one whether or not the
         // save below succeeds. Recording it here keeps the status line honest and makes
         // a retry delete the token it actually replaced.
-        this.tokenState = { expiresAt: minted.expiresAt, tokenName: minted.tokenName, loaded: true };
+        this.tokenState = { expiresAt: minted.expiresAt, tokenName: minted.tokenName, configured: true, loaded: true };
 
         this.spec.rancherCatalog.tokenSecretRef = {
           name: DEFAULT_TOKEN_SECRET_NAME,
@@ -941,10 +942,13 @@ export default {
 
           <div class="row mb-10">
             <div class="col span-12">
-              <span v-if="tokenState.loaded && tokenState.expiresAt && !tokenExpiryStatus" class="text-success">
+              <span v-if="tokenState.loaded && tokenState.configured && !tokenExpiryStatus && tokenState.expiresAt" class="text-success">
                 {{ t('suseai.pages.settings.sections.rancherCatalog.authorized', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true) }}
               </span>
-              <span v-else-if="tokenState.loaded && !tokenState.expiresAt" class="text-warning">
+              <span v-else-if="tokenState.loaded && tokenState.configured && !tokenExpiryStatus && !tokenState.expiresAt" class="text-success">
+                {{ t('suseai.pages.settings.sections.rancherCatalog.authorizedNoExpiry', {}, true) }}
+              </span>
+              <span v-else-if="tokenState.loaded && !tokenState.configured" class="text-warning">
                 {{ t('suseai.pages.settings.sections.rancherCatalog.notAuthorized', {}, true) }}
               </span>
             </div>
@@ -953,8 +957,8 @@ export default {
           <div class="row mb-10">
             <div class="col span-12">
               <AsyncButton
-                :mode="tokenState.expiresAt ? 'edit' : 'apply'"
-                :action-label="tokenState.expiresAt
+                :mode="tokenState.configured ? 'edit' : 'apply'"
+                :action-label="tokenState.configured
                   ? t('suseai.pages.settings.sections.rancherCatalog.reauthorize', {}, true)
                   : t('suseai.pages.settings.sections.rancherCatalog.authorize', {}, true)"
                 :waiting-label="t('suseai.pages.settings.sections.rancherCatalog.authorizing', {}, true)"
