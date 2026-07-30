@@ -504,7 +504,7 @@ export default {
       }
       try {
         const sec = await this.$store.dispatch('rancher/request', {
-          url: `/api/v1/namespaces/${ this.settingsNamespace }/secrets/${ ref.name }`,
+          url: `/k8s/clusters/local/api/v1/namespaces/${ this.settingsNamespace }/secrets/${ ref.name }`,
         });
         const ann = sec?.metadata?.annotations || {};
         this.tokenState = {

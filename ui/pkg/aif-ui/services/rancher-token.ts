@@ -107,7 +107,7 @@ export async function ensureTokenSecret(
     data: { [DEFAULT_TOKEN_SECRET_KEY]: btoa(minted.value) },
   };
 
-  const collection = `/api/v1/namespaces/${ namespace }/secrets`;
+  const collection = `/k8s/clusters/local/api/v1/namespaces/${ namespace }/secrets`;
   try {
     await store.dispatch('rancher/request', { url: `${ collection }/${ name }` });
   } catch (e) {
