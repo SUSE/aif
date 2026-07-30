@@ -530,6 +530,15 @@ func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatf
 			return res
 		}
 		caPEM = []byte(ca)
+	} else if ca, err := rancher.DiscoverInternalCA(ctx, h.client); err == nil {
+		// Mirror the runtime path in resolveCABundle: with no CA configured, the
+		// operator trusts the CA that signs Rancher's in-cluster serving
+		// certificate. Testing against system roots instead would report a bogus
+		// x509 failure for a configuration that works. A discovery failure stays
+		// silent and falls through to system roots — an off-cluster Rancher
+		// reached over a publicly trusted certificate is legitimate, and
+		// ErrCANotFound is its normal signal.
+		caPEM = ca
 	}
 
 	if url == "" {

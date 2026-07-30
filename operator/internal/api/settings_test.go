@@ -18,12 +18,22 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credcheck"
@@ -721,6 +731,144 @@ func TestValidateCredentials_RancherCatalogSkippedWhenUnconfigured(t *testing.T)
 	if len(resp.Results) != 1 || resp.Results[0].Status != statusSkipped {
 		t.Fatalf("want skipped, got %+v", resp.Results)
 	}
+}
+
+// mintRancherTLS returns a self-signed CA and a 127.0.0.1 server certificate
+// signed by it — the shape of Rancher's in-cluster serving certificate, which
+// no system root chains to.
+func mintRancherTLS(t *testing.T) (caPEM []byte, serverCert tls.Certificate) {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "tls-rancher-internal-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate leaf key: %v", err)
+	}
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "rancher.cattle-system.svc"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create leaf cert: %v", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}
+}
+
+// The Test button must succeed on exactly the configuration the UI's Authorize
+// button creates: a token Secret and NO caBundleSecretRef. The runtime path
+// (settings controller resolveCABundle) discovers the CA that signs Rancher's
+// in-cluster serving certificate; the validate path must do the same, or it
+// reports a bogus "x509: certificate signed by unknown authority" for an
+// install that actually works.
+//
+// This test drives the real TLS handshake — rancherCatalogCheckAuth is NOT
+// stubbed — against a server whose certificate is signed by a CA that is not in
+// the system roots. It can only pass if the discovered PEM reaches the client.
+func TestValidateCredentials_RancherCatalogDiscoversInternalCA(t *testing.T) {
+	const ns = "aif-operator"
+	caPEM, serverCert := mintRancherTLS(t)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{serverCert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	defer srv.Close()
+
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("token-abc:xyz")},
+	}
+	internalCA := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rancher.InternalCAName,
+			Namespace: rancher.InternalCANamespace,
+		},
+		Data: map[string][]byte{rancher.InternalCAKey: caPEM},
+	}
+	newCR := func() *aiplatformv1alpha1.Settings {
+		return &aiplatformv1alpha1.Settings{
+			ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+			Spec: aiplatformv1alpha1.SettingsSpec{
+				RancherCatalog: aiplatformv1alpha1.RancherCatalogSettings{
+					URL:            srv.URL,
+					TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "rc-token", Key: "token"},
+					// No CABundleSecretRef: the default Authorize creates.
+				},
+			},
+		}
+	}
+
+	probe := func(t *testing.T, objs ...client.Object) validateResult {
+		t.Helper()
+		h := newSettingsHandler(newSettingsFakeClient(t, objs...), ns)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials",
+			strings.NewReader(`{"targets":["rancherCatalog"]}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+		}
+		var resp validateCredsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(resp.Results) != 1 {
+			t.Fatalf("want 1 result, got %+v", resp.Results)
+		}
+		return resp.Results[0]
+	}
+
+	t.Run("internal CA present -> handshake succeeds", func(t *testing.T) {
+		got := probe(t, newCR(), tokenSecret, internalCA)
+		if got.Status != statusOK {
+			t.Fatalf("status=%q message=%q; want %q — the discovered CA did not reach the catalog client",
+				got.Status, got.Message, statusOK)
+		}
+	})
+
+	// The negative half proves the positive half is discriminating: without the
+	// Secret there is nothing to discover, the client falls back to system roots,
+	// and the same server is correctly rejected.
+	t.Run("no internal CA -> falls back to system roots and fails", func(t *testing.T) {
+		got := probe(t, newCR(), tokenSecret)
+		if got.Status != statusError {
+			t.Fatalf("status=%q message=%q; want %q", got.Status, got.Message, statusError)
+		}
+		if !strings.Contains(got.Message, "certificate signed by unknown authority") {
+			t.Fatalf("message=%q; want an x509 trust failure", got.Message)
+		}
+	})
 }
 
 func TestValidateCredentials_GitAuthClassification(t *testing.T) {
