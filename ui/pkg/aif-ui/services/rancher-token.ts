@@ -20,9 +20,27 @@ export interface MintedToken {
   tokenName: string;
 }
 
+// rancher/request rejects with the parsed response body, not an axios error:
+// see @rancher/shell/plugins/steve/actions.js. A Kubernetes failure carries the
+// code under `code` and puts the string "Failure" in `status`; a plain-text body
+// arrives as { data: '…' }; Norman reports its status as a string. `_status` is
+// non-enumerable and set on every rejection, so it is the reliable one.
+function httpStatus(e: any): number | undefined {
+  const raw = e?._status ?? e?.code ?? e?.status ?? e?.statusCode ?? e?.response?.status;
+  const n = typeof raw === 'string' ? parseInt(raw, 10) : raw;
+  return Number.isFinite(n) ? n : undefined;
+}
+
 function isNotFound(e: any): boolean {
-  const status = e?.status ?? e?.statusCode ?? e?.response?.status;
-  return status === 404 || status === 405;
+  const s = httpStatus(e);
+  return s === 404 || s === 405;
+}
+
+// The rejected value is a response body, so the useful text is in different
+// places depending on what the server returned.
+export function requestErrorMessage(e: any): string {
+  return e?.message || e?.data?.message ||
+    (typeof e?.data === 'string' ? e.data : '') || String(e);
 }
 
 async function currentPrincipalId(store: any): Promise<string> {
@@ -37,6 +55,9 @@ async function currentPrincipalId(store: any): Promise<string> {
 // auth-token-max-ttl-minutes, 90 days by default. The returned expiresAt is read
 // from the response rather than computed, so a cluster with a different cap is
 // reported correctly.
+//
+// Name and GenerateName in metadata are not respected by ext.cattle.io/v1 Tokens;
+// the token is always named token-xxxxx. spec.description is what identifies it.
 export async function mintOperatorToken(store: any): Promise<MintedToken> {
   const principalId = await currentPrincipalId(store);
 
@@ -48,7 +69,6 @@ export async function mintOperatorToken(store: any): Promise<MintedToken> {
       data:    {
         apiVersion: 'ext.cattle.io/v1',
         kind:       'Token',
-        metadata:   { generateName: 'aif-operator-' },
         spec:       {
           description:   TOKEN_DESCRIPTION,
           ttl:           0,
@@ -141,7 +161,10 @@ export async function deleteToken(store: any, tokenName: string): Promise<void> 
         url: `${ LEGACY_TOKENS_URL }/${ tokenName }`, method: 'DELETE',
       });
     } catch (inner) {
-      if (!isNotFound(inner)) throw inner;
+      // Best-effort by contract: a token we cannot revoke is a leak, not a failure of
+      // the authorization the caller asked for. Reporting it would tell the user that
+      // minting failed when it succeeded.
+      if (isNotFound(inner)) return;
     }
   }
 }
