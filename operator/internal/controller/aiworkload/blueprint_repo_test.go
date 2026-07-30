@@ -69,6 +69,38 @@ func TestResolveClusterRepo_GitBranch(t *testing.T) {
 	}
 }
 
+// A git-backed repo tracks a branch, so the same chart version can change
+// underneath us. status.commit is the only input that reveals it, and the chart
+// fingerprint depends on it — see gitChartFingerprint.
+func TestResolveClusterRepo_GitCommit(t *testing.T) {
+	repo := repoObj("repo", map[string]any{
+		"gitRepo": "https://git.rancher.io/charts", "gitBranch": "release-v2.14",
+	})
+	_ = unstructured.SetNestedField(repo.Object, "0b3e1f2c4d5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c", "status", "commit")
+
+	r := newRepoReconciler(repo)
+	got, err := r.resolveClusterRepo(context.Background(), "repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Commit != "0b3e1f2c4d5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c" {
+		t.Fatalf("Commit = %q, want the ClusterRepo's status.commit", got.Commit)
+	}
+}
+
+// A url-backed ClusterRepo carries no status.commit, and a published version is
+// immutable there, so the field must stay empty rather than pick up noise.
+func TestResolveClusterRepo_HTTPHasNoCommit(t *testing.T) {
+	r := newRepoReconciler(repoObj("repo", map[string]any{"url": "https://charts.example.com"}))
+	got, err := r.resolveClusterRepo(context.Background(), "repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Commit != "" {
+		t.Fatalf("Commit = %q, want empty for a url-backed repo", got.Commit)
+	}
+}
+
 func TestResolveClusterRepo_NoSource(t *testing.T) {
 	r := newRepoReconciler(repoObj("repo", map[string]any{}))
 	if _, err := r.resolveClusterRepo(context.Background(), "repo"); err == nil {

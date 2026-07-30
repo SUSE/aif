@@ -76,6 +76,7 @@ type clusterRepoInfo struct {
 	URL            string   // http/oci repos only
 	GitRepo        string   // git repos only
 	GitBranch      string   // git repos only
+	Commit         string   // git repos only: status.commit, the indexed revision
 	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
 	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
 }
@@ -971,6 +972,10 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		info.Kind = repoKindGit
 		info.GitRepo = gitRepo
 		info.GitBranch, _, _ = unstructured.NestedString(cr.Object, "spec", "gitBranch")
+		// Rancher records the revision it cloned and indexed. A git-backed repo
+		// tracks a branch, so the same chart version can change underneath us;
+		// this is the only input that tells us it did.
+		info.Commit, _, _ = unstructured.NestedString(cr.Object, "status", "commit")
 		return info, nil
 	}
 

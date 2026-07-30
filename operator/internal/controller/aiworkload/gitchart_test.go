@@ -202,21 +202,26 @@ func TestFetchGitChart_PreservesErrUnauthorized(t *testing.T) {
 func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "rancher-charts", ChartName: "x", ChartVersion: "1.0.0"}
 	targets := []any{map[string]any{"clusterName": "local"}}
-	base := gitChartFingerprint(c, "ns", map[string]any{"a": 1}, targets)
+	base := gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, targets)
 	if base == "" {
 		t.Fatal("fingerprint should not be empty for hashable inputs")
 	}
-	if got := gitChartFingerprint(c, "ns", map[string]any{"a": 1}, targets); got != base {
+	if got := gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, targets); got != base {
 		t.Fatal("fingerprint is not stable across identical inputs")
 	}
 
 	bumped := c
 	bumped.ChartVersion = "1.0.1"
 	for name, got := range map[string]string{
-		"version":   gitChartFingerprint(bumped, "ns", map[string]any{"a": 1}, targets),
-		"namespace": gitChartFingerprint(c, "other-ns", map[string]any{"a": 1}, targets),
-		"values":    gitChartFingerprint(c, "ns", map[string]any{"a": 2}, targets),
-		"targets":   gitChartFingerprint(c, "ns", map[string]any{"a": 1}, []any{map[string]any{"clusterName": "downstream"}}),
+		"version":   gitChartFingerprint(bumped, "ns", "commit-aaa", map[string]any{"a": 1}, targets),
+		"namespace": gitChartFingerprint(c, "other-ns", "commit-aaa", map[string]any{"a": 1}, targets),
+		"values":    gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 2}, targets),
+		"targets":   gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, []any{map[string]any{"clusterName": "downstream"}}),
+		// The reason this input exists: a git-backed repo tracks a branch, so a
+		// developer can re-push a corrected chart at the SAME version. Only the
+		// repo's indexed commit distinguishes the two, and without it the Bundle
+		// is judged up to date and the chart is never re-fetched.
+		"repo commit": gitChartFingerprint(c, "ns", "commit-bbb", map[string]any{"a": 1}, targets),
 	} {
 		if got == base {
 			t.Errorf("fingerprint unchanged when %s changed", name)
