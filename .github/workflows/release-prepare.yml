@@ -34,6 +34,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate inputs
+        id: validate
         shell: bash
         run: |
           set -euo pipefail
@@ -98,6 +99,10 @@ jobs:
 
           echo "Validated: version=$VERSION kind=$kind target=$TARGET (from $current)"
 
+          # Publish the release kind as a step output so later steps can gate
+          # prod-only work (e.g. the release manifest bump) without recomputing it.
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
       - name: Bump version files
         shell: bash
         run: |
@@ -147,10 +152,32 @@ jobs:
           echo "Changed files:"
           git status --porcelain
 
+      - name: Bump release manifest
+        # Prod releases only — dev/rc runs skip this step entirely, leaving the
+        # manifest untouched. Runs on the same runner as the version bump, so the
+        # edit persists into the commit step below.
+        if: steps.validate.outputs.kind == 'prod'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The SUSE AI Factory release version and the aif-operator/aif-ui chart
+          # entries move in lockstep with the operator version. yq targets the
+          # fields by path so it is robust to value drift; other chart versions
+          # in the manifest are left alone.
+          yq -i '
+            .metadata.version = strenv(VERSION) |
+            (.components.helm.charts[] | select(.chart == "aif-operator" or .chart == "aif-ui")).version = strenv(VERSION)
+          ' uc-release-manifest/release_manifest.yaml
+
+          echo "Bumped release manifest to $VERSION"
+          git status --porcelain uc-release-manifest/release_manifest.yaml
+
       - name: Commit and open PR
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIND: ${{ steps.validate.outputs.kind }}
         run: |
           set -euo pipefail
 
@@ -162,15 +189,22 @@ jobs:
           # Bot-owned, deterministic branch: reset and force-update so re-runs
           # refresh the same PR in place instead of colliding on a stale branch.
           git checkout -B "$branch"
-          git add \
-            operator/VERSION \
-            charts/aif-operator/Chart.yaml \
-            charts/aif-operator/values.yaml \
-            charts/aif-ui/Chart.yaml \
-            ui/package.json \
-            ui/package-lock.json \
-            ui/pkg/aif-ui/package.json \
+          files=(
+            operator/VERSION
+            charts/aif-operator/Chart.yaml
+            charts/aif-operator/values.yaml
+            charts/aif-ui/Chart.yaml
+            ui/package.json
+            ui/package-lock.json
+            ui/pkg/aif-ui/package.json
             ui/pkg/aif-ui/package-lock.json
+          )
+          # The release manifest is bumped for prod releases only (see Bump step),
+          # so only stage it then — on dev/rc runs the file is unchanged.
+          if [[ "$KIND" == "prod" ]]; then
+            files+=(uc-release-manifest/release_manifest.yaml)
+          fi
+          git add "${files[@]}"
           git commit -m "chore: release $VERSION"
           git push --force origin "$branch"
 
