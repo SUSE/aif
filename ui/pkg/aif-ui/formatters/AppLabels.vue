@@ -3,7 +3,7 @@
     <span
       class="badge-state badge-sm tile-label"
       :class="labelBadgeClass(ordered[0].code)"
-      :title="`NVIDIA program: ${ordered[0].name}`"
+      :title="ordered[0].name"
     >
       {{ ordered[0].name }}
     </span>
@@ -35,10 +35,11 @@
 import { defineComponent, computed } from 'vue';
 import type { PropType } from 'vue';
 import type { AppLabel } from '../services/app-collection';
+import { isSupportedCode } from '../services/app-collection';
 
-// Renders NVIDIA program/support labels for an app: the first badge inline, the
-// rest collapsed into a "+N" chip whose hover/focus popover lists them all. Used
-// by both the tile grid and the list view on the Apps page.
+// Renders an app's support/program labels: the first badge inline, the rest
+// collapsed into a "+N" chip whose hover/focus popover lists them all. Used by
+// both the tile grid and the list view on the Apps page.
 export default defineComponent({
   name: 'AppLabels',
 
@@ -50,26 +51,26 @@ export default defineComponent({
   },
 
   setup(props) {
-    // Single source of truth for the "…Supported" rule, used by both the sort
-    // order and the badge color so they can't drift.
-    const isSupported = (code: string) => code.endsWith('_supported');
+    // "Supported" detection is shared with the Apps page sort order via
+    // isSupportedCode (services/app-collection) so the badge color and the sort
+    // order can't drift.
 
-    // Green "…Supported" badges first; stable sort keeps original order otherwise.
+    // Green "Supported" badges first; stable sort keeps original order otherwise.
     const ordered = computed(() =>
       [...props.labels].sort(
-        (a, b) => Number(isSupported(b.code)) - Number(isSupported(a.code))
+        (a, b) => Number(isSupportedCode(b.code)) - Number(isSupportedCode(a.code))
       )
     );
 
     const moreLabel = computed(() => {
       const n = ordered.value.length - 1;
-      return `Show ${n} more NVIDIA program${n === 1 ? '' : 's'}`;
+      return `Show ${n} more label${n === 1 ? '' : 's'}`;
     });
 
-    // "…Supported" programs get the success (green) treatment (as NGC highlights
-    // supported software); other program labels use info (blue).
+    // "Supported" labels get the success (green) treatment (as NGC highlights
+    // supported software); other labels use info (blue).
     const labelBadgeClass = (code: string) =>
-      isSupported(code) ? 'bg-success' : 'bg-info';
+      isSupportedCode(code) ? 'bg-success' : 'bg-info';
 
     // The popover opens left-aligned and grows right; on an app near the right
     // edge that runs off-screen, so flip it to right-aligned when it would

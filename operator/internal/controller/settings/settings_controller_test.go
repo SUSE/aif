@@ -406,15 +406,16 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 		t.Errorf("nvidia-blueprints ClusterRepo must be anonymous, got clientSecret = %q", nvSecret)
 	}
 
-	// The org and blueprint repos are still ANONYMOUS in connected mode, but
-	// ngc-helm-auth now EXISTS because the bundled catalog has gated team repos.
-	// applyRegistryAuthSecret mirrors it into every namespace in
-	// authSecretNamespaces, so assert its presence in all three (a future change
-	// to that list must not silently drop a copy).
+	// The bundled catalog references only the two org repos, so there are no gated
+	// team repos to consume ngc-helm-auth — the connected-mode reconcile must NOT
+	// write it in any namespace. Regression guard: if a gated team repo is ever
+	// re-added to the catalog, this expectation (and the dormant-feature tests)
+	// must be revisited.
 	for _, authNS := range []string{"cattle-system", "fleet-local", "fleet-default"} {
 		var nvAuth corev1.Secret
-		if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &nvAuth); err != nil {
-			t.Errorf("expected ngc-helm-auth in %s (gated team repos need it): %v", authNS, err)
+		err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &nvAuth)
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("expected no ngc-helm-auth in %s (no gated team repos in catalog), got err=%v", authNS, err)
 		}
 	}
 
@@ -500,63 +501,6 @@ func TestSettingsController_ForceUpdatesClusterRepoOnCredentialChange(t *testing
 	}
 }
 
-// A rotated NGC credential must force-update EVERY gated team repo, not just the
-// first — otherwise a rotation half-applies and the un-nudged gated repos keep
-// serving Rancher's cached (often 401) auth until its ~1h periodic retry. Seed
-// two pre-existing gated team ClusterRepos (nvidia-cuopt AND nvidia-riva) with an
-// OLD-cred cattle-system mirror and a rotated well-known secret, then assert both
-// carry spec.forceUpdate after reconcile.
-func TestSettingsController_RotationForceUpdatesAllGatedTeamRepos(t *testing.T) {
-	s := newScheme(t)
-	registerClusterRepoTypes(s)
-	const ns = "aif-operator"
-
-	cr := &aiplatformv1alpha1.Settings{
-		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
-		Spec:       aiplatformv1alpha1.SettingsSpec{},
-	}
-	// Well-known nvidia source secret carrying the NEW (rotated) token.
-	src := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "nvidia", Namespace: ns},
-		Data:       map[string][]byte{"user": []byte("$oauthtoken"), "token": []byte("new-token")},
-	}
-	// Pre-existing cattle-system ngc-helm-auth mirror still holding the OLD token.
-	mirror := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"},
-		Type:       corev1.SecretTypeBasicAuth,
-		Data:       map[string][]byte{"username": []byte("$oauthtoken"), "password": []byte("old-token")},
-	}
-	// Two pre-existing gated team ClusterRepos from the bundled catalog.
-	newGatedRepo := func(name, url string) *unstructured.Unstructured {
-		u := &unstructured.Unstructured{}
-		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-		u.SetName(name)
-		u.SetLabels(map[string]string{"ai-factory.suse.com/nvidia-team-repo": "true"})
-		_ = unstructured.SetNestedField(u.Object, url, "spec", "url")
-		return u
-	}
-	cuopt := newGatedRepo("nvidia-cuopt", "https://helm.ngc.nvidia.com/nvidia/cuopt")
-	riva := newGatedRepo("nvidia-riva", "https://helm.ngc.nvidia.com/nvidia/riva")
-
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, src, mirror, cuopt, riva).
-		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
-
-	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
-	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
-	}); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
-	// BOTH gated repos must be force-updated after the rotation.
-	for _, name := range []string{"nvidia-cuopt", "nvidia-riva"} {
-		got := getClusterRepo(t, c, name)
-		if fu, _, _ := unstructured.NestedString(got.Object, "spec", "forceUpdate"); fu == "" {
-			t.Errorf("expected spec.forceUpdate set on %s after rotation, got empty", name)
-		}
-	}
-}
-
 // When the mirror already matches the source credentials (no rotation), the
 // operator must NOT bump forceUpdate — otherwise every reconcile would churn
 // the ClusterRepo into a re-download.
@@ -595,9 +539,12 @@ func TestSettingsController_NoForceUpdateWhenCredentialsUnchanged(t *testing.T) 
 	}
 }
 
-// Connected mode creates public team repos anonymously and gated team repos
-// with ngc-helm-auth. (Steady state for the team sets.)
-func TestSettingsController_CreatesNGCTeamRepos(t *testing.T) {
+// The bundled catalog references only the two org repos (/nvidia and
+// /nvidia/blueprint), so connected-mode reconcile must provision NO NGC team
+// repos and NO ngc-helm-auth — the team-repo feature is dormant until a team
+// repo is re-added to the catalog. The org and blueprint repos are still created
+// anonymously. Regression guard for the org-only catalog.
+func TestSettingsController_OrgOnlyCatalogProvisionsNoTeamRepos(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
 	const ns = "aif-operator"
@@ -618,31 +565,28 @@ func TestSettingsController_CreatesNGCTeamRepos(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	// A public team repo: anonymous, marker present.
-	pub := getClusterRepo(t, c, "nvidia-omniverse")
-	if secret, found, _ := unstructured.NestedString(pub.Object, "spec", "clientSecret", "name"); found && secret != "" {
-		t.Errorf("public team repo must be anonymous, got clientSecret %q", secret)
-	}
-	if pub.GetLabels()["ai-factory.suse.com/nvidia-team-repo"] != "true" {
-		t.Errorf("public team repo missing team marker label")
-	}
-	if url, _, _ := unstructured.NestedString(pub.Object, "spec", "url"); url != "https://helm.ngc.nvidia.com/nvidia/omniverse" {
-		t.Errorf("public team repo url = %q", url)
+	// The org and blueprint repos ARE created, anonymously.
+	for _, name := range []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint} {
+		repo := getClusterRepo(t, c, name)
+		if secret, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && secret != "" {
+			t.Errorf("org repo %s must be anonymous, got clientSecret %q", name, secret)
+		}
 	}
 
-	// A gated team repo: ngc-helm-auth clientSecret, marker present.
-	gat := getClusterRepo(t, c, "nvidia-cuopt")
-	if secret, _, _ := unstructured.NestedString(gat.Object, "spec", "clientSecret", "name"); secret != credentials.AuthSecretNvidia {
-		t.Errorf("gated team repo clientSecret = %q, want %q", secret, credentials.AuthSecretNvidia)
-	}
-	if gat.GetLabels()["ai-factory.suse.com/nvidia-team-repo"] != "true" {
-		t.Errorf("gated team repo missing team marker label")
+	// No team repos are provisioned (formerly nvidia-omniverse public,
+	// nvidia-cuopt gated — both sourced from repos no longer in the catalog).
+	for _, name := range []string{"nvidia-omniverse", "nvidia-cuopt"} {
+		got := &unstructured.Unstructured{}
+		got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+		if err := c.Get(context.Background(), types.NamespacedName{Name: name}, got); !apierrors.IsNotFound(err) {
+			t.Errorf("expected no team repo %s from org-only catalog, got err=%v", name, err)
+		}
 	}
 
-	// ngc-helm-auth must exist in cattle-system (≥1 gated repo).
+	// No ngc-helm-auth written (no gated repo consumes it).
 	var authSec corev1.Secret
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); err != nil {
-		t.Fatalf("expected ngc-helm-auth in cattle-system: %v", err)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); !apierrors.IsNotFound(err) {
+		t.Errorf("expected no ngc-helm-auth from org-only catalog, got err=%v", err)
 	}
 }
 
@@ -715,108 +659,5 @@ func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); err != nil {
 		t.Errorf("air-gap must preserve ngc-helm-auth: %v", err)
-	}
-}
-
-// Connected mode with NGC creds unchanged → gated repos are NOT force-updated
-// (regression guard against ClusterRepo churn on every reconcile).
-func TestSettingsController_NoForceUpdateOnUnchangedNGCCredential(t *testing.T) {
-	s := newScheme(t)
-	registerClusterRepoTypes(s)
-	const ns = "aif-operator"
-
-	cr := &aiplatformv1alpha1.Settings{
-		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
-		Spec:       aiplatformv1alpha1.SettingsSpec{},
-	}
-	// Well-known source secret.
-	src := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "nvidia", Namespace: ns},
-		Data:       map[string][]byte{"user": []byte("$oauthtoken"), "token": []byte("same-token")},
-	}
-	// Pre-existing cattle-system mirror ALREADY matching the source (no rotation).
-	mirror := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"},
-		Type:       corev1.SecretTypeBasicAuth,
-		Data:       map[string][]byte{"username": []byte("$oauthtoken"), "password": []byte("same-token")},
-	}
-	// Pre-existing gated team ClusterRepo (nvidia-cuopt from the bundled catalog).
-	teamRepo := &unstructured.Unstructured{}
-	teamRepo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	teamRepo.SetName("nvidia-cuopt")
-	teamRepo.SetLabels(map[string]string{"ai-factory.suse.com/nvidia-team-repo": "true"})
-	_ = unstructured.SetNestedField(teamRepo.Object, "https://helm.ngc.nvidia.com/nvidia/cuopt", "spec", "url")
-
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, src, mirror, teamRepo).
-		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
-
-	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
-	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
-	}); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
-	// After reconcile, nvidia-cuopt's spec.forceUpdate must NOT be set (no churn
-	// when the credential matches the existing mirror).
-	got := getClusterRepo(t, c, "nvidia-cuopt")
-	if fu, found, _ := unstructured.NestedString(got.Object, "spec", "forceUpdate"); found && fu != "" {
-		t.Errorf("expected no forceUpdate when NGC creds unchanged, got %q (proves churn bug)", fu)
-	}
-}
-
-// Connected mode where nvidia refs are set in Settings.spec but the referenced
-// secret is absent/unreadable → public team repo created anonymously, gated team
-// repo NOT created, no ngc-helm-auth written.
-func TestSettingsController_UnreadableNGCCredsCreatesPublicReposOnly(t *testing.T) {
-	s := newScheme(t)
-	registerClusterRepoTypes(s)
-	const ns = "aif-operator"
-
-	// Settings with nvidia refs pointing to a non-existent secret (unreadable).
-	cr := &aiplatformv1alpha1.Settings{
-		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
-		Spec: aiplatformv1alpha1.SettingsSpec{
-			Nvidia: aiplatformv1alpha1.NvidiaSettings{
-				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "missing-nvidia", Key: "user"},
-				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "missing-nvidia", Key: "token"},
-			},
-		},
-	}
-	// No secret exists, so applyRegistryAuthSecret yields secretName == "".
-
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
-		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
-
-	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
-	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
-	}); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
-	// Public team repo (nvidia-omniverse) IS created anonymously.
-	pub := getClusterRepo(t, c, "nvidia-omniverse")
-	if secret, found, _ := unstructured.NestedString(pub.Object, "spec", "clientSecret", "name"); found && secret != "" {
-		t.Errorf("public team repo must be anonymous when creds unreadable, got clientSecret %q", secret)
-	}
-
-	// Gated team repo (nvidia-cuopt) is NOT created (or has no clientSecret).
-	gat := &unstructured.Unstructured{}
-	gat.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	err := c.Get(context.Background(), types.NamespacedName{Name: "nvidia-cuopt"}, gat)
-	if err == nil {
-		if secret, found, _ := unstructured.NestedString(gat.Object, "spec", "clientSecret", "name"); found && secret != "" {
-			t.Errorf("gated team repo must not have clientSecret when creds unreadable, got %q", secret)
-		}
-	}
-	// Alternatively, it might not be created at all (also acceptable — gated repo
-	// pruned when secretName == "").
-
-	// No ngc-helm-auth written in cattle-system.
-	var authSec corev1.Secret
-	err = c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec)
-	if err == nil {
-		t.Error("expected no ngc-helm-auth when creds unreadable, but it exists")
 	}
 }

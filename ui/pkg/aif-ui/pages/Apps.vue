@@ -34,17 +34,16 @@
             </select>
           </div>
 
-          <div v-if="availableLabels.length" class="filter-group">
-            <label for="program-filter" class="sr-only">Filter by program</label>
+          <div class="filter-group">
+            <label for="sort-filter" class="sr-only">Sort applications</label>
             <select
-              id="program-filter"
-              v-model="selectedLabel"
+              id="sort-filter"
+              v-model="sortBy"
               class="form-control"
-              aria-label="Filter applications by program"
+              aria-label="Sort applications"
             >
-              <option value="">{{ t('suseai.apps.allLabels', 'All programs') }}</option>
-              <option v-for="l in availableLabels" :key="l.code" :value="l.code">
-                {{ l.name }}
+              <option v-for="option in sortOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
               </option>
             </select>
           </div>
@@ -300,7 +299,7 @@ import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { fetchStaticCatalog } from '../services/static-catalog';
 
@@ -320,8 +319,8 @@ export default defineComponent({
     const loading = ref(true);
     const error = ref<string | null>(null);
     const search = ref('');
-    const selectedRepo = ref('suse-ai');
-    const selectedLabel = ref(''); // '' = all labels
+    const selectedRepo = ref(''); // '' = All libraries (default)
+    const sortBy = ref('supported'); // default: supported apps first
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
     const catalogWarnings = ref<string[]>([]);
@@ -356,20 +355,6 @@ export default defineComponent({
       return [...known, ...custom, ...other];
     });
 
-    // Distinct labels present in the selected library, for the label filter. Keyed by
-    // code; first display name wins.
-    const availableLabels = computed(() => {
-      const byCode = new Map<string, string>();
-      for (const app of items.value) {
-        if (selectedRepo.value && libraryOf(app) !== selectedRepo.value) continue;
-        for (const l of app.labels ?? []) {
-          if (!byCode.has(l.code)) byCode.set(l.code, l.name);
-        }
-      }
-      return Array.from(byCode, ([code, name]) => ({ code, name }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-    });
-
     const repositoryOptions = computed(() => {
       const opts = presentLibraries.value.map(l => ({
         value: l,
@@ -384,9 +369,11 @@ export default defineComponent({
     });
 
     // Keep the selected library valid as the catalog loads/changes: if the current
-    // selection isn't an available option, snap to suse-ai (preserving the default
-    // bundled-catalog behavior) or the first present library. This is what prevents
-    // a non-empty custom catalog from rendering "No applications found".
+    // selection isn't an available option, fall back. The default '' ("All
+    // libraries") stays valid whenever more than one library is present; it only
+    // becomes invalid when a single library exists, in which case we snap to that
+    // library (suse-ai preferred). This prevents a non-empty catalog from rendering
+    // "No applications found".
     const ensureValidSelectedRepo = () => {
       if (!items.value.length) return;
       const validValues = repositoryOptions.value.map(o => o.value);
@@ -395,14 +382,6 @@ export default defineComponent({
       selectedRepo.value = libs.includes('suse-ai') ? 'suse-ai' : (libs[0] ?? '');
     };
     watch(items, ensureValidSelectedRepo);
-
-    // Clear the label filter when it's no longer among the available labels (e.g. after
-    // switching library).
-    watch([availableLabels, selectedRepo], () => {
-      if (selectedLabel.value && !availableLabels.value.some(l => l.code === selectedLabel.value)) {
-        selectedLabel.value = '';
-      }
-    });
 
     const hasRegistryConfigured = computed(() => {
       const spec = settingsData.value?.spec;
@@ -414,6 +393,13 @@ export default defineComponent({
       );
     });
 
+    // "Supported" detection lives in services/app-collection (isAppSupported) so the
+    // sort order here and AppLabels' badge rule stay in sync.
+
+    // Case-insensitive name comparison, shared by both sort modes.
+    const collator = new Intl.Collator(undefined, { sensitivity: 'base' });
+    const byName = (a: AppCollectionItem, b: AppCollectionItem) => collator.compare(a.name, b.name);
+
     const filteredApps = computed(() => {
       let arr = items.value.slice();
 
@@ -424,12 +410,6 @@ export default defineComponent({
         arr = arr.filter((app: AppCollectionItem) => libraryOf(app) === selectedRepo.value);
       }
 
-      if (selectedLabel.value) {
-        arr = arr.filter((app: AppCollectionItem) =>
-          (app.labels ?? []).some(l => l.code === selectedLabel.value)
-        );
-      }
-
       if (search.value) {
         const searchLower = search.value.toLowerCase();
         arr = arr.filter((app: AppCollectionItem) =>
@@ -437,6 +417,17 @@ export default defineComponent({
           app.description?.toLowerCase().includes(searchLower) ||
           app.slug_name.toLowerCase().includes(searchLower)
         );
+      }
+
+      // Sort. "supported" groups supported apps first, then alphabetical within each
+      // group; "alphabetical" is a straight name sort.
+      if (sortBy.value === 'alphabetical') {
+        arr.sort(byName);
+      } else {
+        arr.sort((a, b) => {
+          const d = Number(isAppSupported(b)) - Number(isAppSupported(a));
+          return d !== 0 ? d : byName(a, b);
+        });
       }
 
       return arr;
@@ -551,14 +542,19 @@ export default defineComponent({
 
     const t = useT();
 
+    const sortOptions = computed(() => [
+      { label: t('suseai.apps.sortSupported', 'Supported first'), value: 'supported' },
+      { label: t('suseai.common.sort.nameAsc', 'Name (A → Z)'), value: 'alphabetical' },
+    ]);
+
     return {
       // State
       loading,
       error,
       search,
       selectedRepo,
-      selectedLabel,
-      availableLabels,
+      sortBy,
+      sortOptions,
       repositoryOptions,
       viewMode,
       items,

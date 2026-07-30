@@ -4,67 +4,20 @@ import (
 	"testing"
 )
 
-func TestClassifyNGCTeamRepos_SplitsPublicAndGated(t *testing.T) {
+// The bundled catalog now references only the two org repos
+// (/nvidia and /nvidia/blueprint), which are excluded from team classification.
+// So classifying it must yield no team repos at all — the connected-mode
+// team-repo provisioning is dormant until a team repo is re-added to the catalog.
+// The split logic itself (public vs gated vs excluded, fail-safe) is covered by
+// TestClassifyNGCTeamRepos_UnclassifiedURLLandsInPublic with synthetic items.
+func TestClassifyNGCTeamRepos_BundledCatalogHasNoTeamRepos(t *testing.T) {
 	got := ClassifyNGCTeamRepos()
 
-	// Public team repos present in the bundled catalog (org repos excluded).
-	wantPublic := map[string]bool{
-		"https://helm.ngc.nvidia.com/nvidia/doca":               true,
-		"https://helm.ngc.nvidia.com/nvidia/nemo-microservices": true,
-		"https://helm.ngc.nvidia.com/nvidia/omniverse":          true,
+	if len(got.Public) != 0 {
+		t.Errorf("expected no Public team repos from bundled catalog, got %v", got.Public)
 	}
-	// Gated team repos present in the bundled catalog.
-	wantGated := map[string]bool{
-		"https://helm.ngc.nvidia.com/nim/baidu":                true,
-		"https://helm.ngc.nvidia.com/nim/mit":                  true,
-		"https://helm.ngc.nvidia.com/nim/nvidia":               true,
-		"https://helm.ngc.nvidia.com/nvidia/cuopt":             true,
-		"https://helm.ngc.nvidia.com/nvidia/omniverse-usdcode": true,
-		"https://helm.ngc.nvidia.com/nvidia/riva":              true,
-		"https://helm.ngc.nvidia.com/nvidia/runai":             true,
-	}
-
-	pub := toSet(got.Public)
-	gat := toSet(got.Gated)
-
-	for u := range wantPublic {
-		if !pub[u] {
-			t.Errorf("expected %q in Public, got Public=%v", u, got.Public)
-		}
-	}
-	for u := range wantGated {
-		if !gat[u] {
-			t.Errorf("expected %q in Gated, got Gated=%v", u, got.Gated)
-		}
-	}
-
-	// Org repos must never appear in either team set.
-	for _, org := range []string{
-		"https://helm.ngc.nvidia.com/nvidia",
-		"https://helm.ngc.nvidia.com/nvidia/blueprint",
-	} {
-		if pub[org] || gat[org] {
-			t.Errorf("org repo %q must be excluded from team sets", org)
-		}
-	}
-
-	// Excluded (invalid-index) repos must never appear.
-	for _, ex := range []string{
-		"https://helm.ngc.nvidia.com/nim",
-		"https://helm.ngc.nvidia.com/nim/snowflake",
-		"https://helm.ngc.nvidia.com/eevaigoeixww/animation",
-		"https://helm.ngc.nvidia.com/eevaigoeixww/conversational-ai",
-	} {
-		if pub[ex] || gat[ex] {
-			t.Errorf("excluded repo %q must not be provisioned", ex)
-		}
-	}
-
-	// No URL appears in both sets.
-	for _, u := range got.Gated {
-		if pub[u] {
-			t.Errorf("%q classified as both Public and Gated", u)
-		}
+	if len(got.Gated) != 0 {
+		t.Errorf("expected no Gated team repos from bundled catalog, got %v", got.Gated)
 	}
 }
 

@@ -43,9 +43,22 @@ export interface AppCollectionItem {
   // keeps autocomplete for the built-ins while allowing arbitrary strings (the plain
   // `string & {}` form trips @typescript-eslint/ban-types).
   library?: 'suse-ai' | 'nvidia' | (string & Record<never, never>);
-  // NVIDIA program/support designations (from the static catalog). Absent for
-  // non-NVIDIA apps and in dynamic repo-discovery mode.
+  // Program/support designations (from the static catalog). Absent in dynamic
+  // repo-discovery mode.
   labels?: AppLabel[];
+}
+
+// Single source of truth for the "supported" rule, shared by the Apps page sort
+// order (Apps.vue) and the badge color/ordering (AppLabels.vue) so the two can't
+// drift. The catalog uses the bare `supported` code; the legacy
+// `<program>_supported` convention is also honored.
+export function isSupportedCode(code: string): boolean {
+  return code === 'supported' || code.endsWith('_supported');
+}
+
+// True when any of an app's labels marks it as supported.
+export function isAppSupported(app: Pick<AppCollectionItem, 'labels'>): boolean {
+  return (app.labels ?? []).some(l => isSupportedCode(l.code));
 }
 
 export interface FailedRepo {

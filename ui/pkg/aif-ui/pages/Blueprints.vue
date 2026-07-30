@@ -21,16 +21,16 @@
             class="sort-select form-control-sm"
           >
             <option value="name-asc">
-              Name (A → Z)
+              {{ t('suseai.common.sort.nameAsc', 'Name (A → Z)') }}
             </option>
             <option value="name-desc">
-              Name (Z → A)
+              {{ t('suseai.common.sort.nameDesc', 'Name (Z → A)') }}
             </option>
             <option value="newest">
-              Newest first
+              {{ t('suseai.common.sort.newest', 'Newest first') }}
             </option>
             <option value="oldest">
-              Oldest first
+              {{ t('suseai.common.sort.oldest', 'Oldest first') }}
             </option>
           </select>
 
@@ -355,6 +355,7 @@ import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import { type Blueprint, BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
+import { useT } from '../composables/useT';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
@@ -364,6 +365,7 @@ export default defineComponent({
     const $router   = vm.$router;
     const $route    = vm.$route;
     const cluster   = ($route?.params?.cluster as string) || '_';
+    const t         = useT();
 
     const loading         = ref(true);
     const error           = ref<string | null>(null);
@@ -766,6 +768,7 @@ export default defineComponent({
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
       detailPanel, detailPanelVersions, detailPanelSource, openDetail, closeDetail,
+      t,
     };
   },
 });

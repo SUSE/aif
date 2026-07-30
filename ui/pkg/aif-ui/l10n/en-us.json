@@ -222,7 +222,7 @@
       "title": "AI/ML Applications",
       "subtitle": "Browse and install AI/ML applications",
       "search": "Search applications...",
-      "allLabels": "All programs",
+      "sortSupported": "Supported first",
       "install": "Install Application",
       "manage": "Manage Application",
       "noApps": "No applications found",
@@ -330,6 +330,14 @@
       }
     },
     "common": {
+      "sort": {
+        "nameAsc": "Name (A → Z)",
+        "nameDesc": "Name (Z → A)",
+        "newest": "Newest first",
+        "oldest": "Oldest first",
+        "statusHealthy": "Status (healthy first)",
+        "source": "Source (App, Blueprint)"
+      },
       "actions": {
         "save": "Save",
         "cancel": "Cancel",

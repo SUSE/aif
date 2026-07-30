@@ -14,7 +14,9 @@ import { PRODUCT } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
+import { useT } from '../composables/useT';
 
+const t       = useT();
 const vm      = getCurrentInstance()!.proxy as any;
 const router  = vm.$router;
 const route   = vm.$route;
@@ -281,10 +283,10 @@ async function executeUpgrade() {
             />
           </div>
           <select v-model="sortBy" class="sort-select form-control-sm" aria-label="Sort workloads">
-            <option value="name-asc">Name (A → Z)</option>
-            <option value="name-desc">Name (Z → A)</option>
-            <option value="status">Status (healthy first)</option>
-            <option value="source">Source (App, Blueprint)</option>
+            <option value="name-asc">{{ t('suseai.common.sort.nameAsc', 'Name (A → Z)') }}</option>
+            <option value="name-desc">{{ t('suseai.common.sort.nameDesc', 'Name (Z → A)') }}</option>
+            <option value="status">{{ t('suseai.common.sort.statusHealthy', 'Status (healthy first)') }}</option>
+            <option value="source">{{ t('suseai.common.sort.source', 'Source (App, Blueprint)') }}</option>
           </select>
           <button class="btn role-secondary ml-auto" @click="refresh" :disabled="loading" type="button">
             <i v-if="loading" class="icon icon-spinner icon-spin" />
