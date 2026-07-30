@@ -127,6 +127,8 @@
             "authorized": "Authorized. Token expires {expires}.",
             "authorizeFailed": "Could not create a Rancher API token: {error}",
             "authorizeHelp": "Creates a Rancher API token as your user and stores it in a Secret in the operator namespace.",
+            "tokenExpiring": "The Rancher API token expires {expires}. Re-authorize to avoid interrupting installs from git-backed repositories.",
+            "tokenExpired": "The Rancher API token expired {expires}. Charts from git-backed repositories cannot be installed until you re-authorize.",
             "advanced": "Advanced",
             "tokenSecretRef": {
               "label": "API Token Secret",

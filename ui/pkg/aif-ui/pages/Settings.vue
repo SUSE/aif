@@ -137,6 +137,20 @@ export default {
           : [];
       },
     },
+
+    // 'expired' | 'expiring' | '' — drives the banner. Fourteen days of notice,
+    // because Rancher clamps token TTL to auth-token-max-ttl-minutes (90 days by
+    // default) and every token therefore reaches this point.
+    tokenExpiryStatus() {
+      const raw = this.tokenState.expiresAt;
+      if (!raw) return '';
+      const expires = new Date(raw).getTime();
+      if (Number.isNaN(expires)) return '';
+      const remainingDays = (expires - Date.now()) / 86400000;
+      if (remainingDays <= 0) return 'expired';
+      if (remainingDays <= 14) return 'expiring';
+      return '';
+    },
   },
 
   watch: {
@@ -916,6 +930,14 @@ export default {
           <p class="text-muted mb-15">
             {{ t('suseai.pages.settings.sections.rancherCatalog.description', {}, true) }}
           </p>
+
+          <Banner
+            v-if="tokenExpiryStatus"
+            :color="tokenExpiryStatus === 'expired' ? 'error' : 'warning'"
+            :label="tokenExpiryStatus === 'expired'
+              ? t('suseai.pages.settings.sections.rancherCatalog.tokenExpired', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true)
+              : t('suseai.pages.settings.sections.rancherCatalog.tokenExpiring', { expires: new Date(tokenState.expiresAt).toLocaleDateString() }, true)"
+          />
 
           <div class="row mb-10">
             <div class="col span-12">
