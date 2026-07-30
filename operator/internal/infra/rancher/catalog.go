@@ -134,7 +134,25 @@ func (c *CatalogClient) FetchChart(ctx context.Context, repoName, chartName, ver
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("rancher catalog returned %s for chart %s@%s in repo %q: %s",
-			resp.Status, chartName, version, repoName, strings.TrimSpace(string(body)))
+			resp.Status, chartName, version, repoName, errorBodyExcerpt(body))
 	}
 	return body, nil
+}
+
+// maxErrorBodyBytes bounds how much of a non-200 response body is quoted back in
+// an error message. The body itself is only bounded by maxChartDownloadBytes
+// (64 MiB), and an ingress or service mesh answering with a large HTML error
+// page would otherwise put megabytes into a log line on every backoff tick — and
+// into an AIWorkload status condition, which the CRD caps at 32768 bytes.
+const maxErrorBodyBytes = 1 << 10 // 1 KiB
+
+// errorBodyExcerpt trims a response body to something safe to interpolate into
+// an error message. The full-size limit still applies to the success path, where
+// the body is the chart archive.
+func errorBodyExcerpt(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) <= maxErrorBodyBytes {
+		return s
+	}
+	return s[:maxErrorBodyBytes] + "… (truncated)"
 }

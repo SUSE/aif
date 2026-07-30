@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,39 @@ func TestFetchChart_Non200IsError(t *testing.T) {
 	}
 	if _, err := c.FetchChart(context.Background(), "repo", "chart", "1.0.0"); err == nil {
 		t.Fatal("expected error on non-200")
+	}
+}
+
+// An ingress or service mesh can answer with a large HTML error page. The body
+// is only bounded by maxChartDownloadBytes (64 MiB), so quoting it whole put
+// megabytes into a log line on every backoff tick — and, now that the generic
+// component-failure path sets a condition, into an AIWorkload status condition
+// the CRD caps at 32768 bytes.
+func TestFetchChart_Non200ErrorBodyIsBounded(t *testing.T) {
+	const bodySize = 4 << 20 // 4 MiB
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(strings.Repeat("A", bodySize)))
+	}))
+	defer srv.Close()
+
+	c, err := NewCatalogClient(srv.URL, "", nil, false)
+	if err != nil {
+		t.Fatalf("NewCatalogClient: %v", err)
+	}
+	_, err = c.FetchChart(context.Background(), "repo", "chart", "1.0.0")
+	if err == nil {
+		t.Fatal("expected error on non-200")
+	}
+	// Generous ceiling: the excerpt cap plus the surrounding message, nowhere
+	// near the 4 MiB body.
+	if len(err.Error()) > maxErrorBodyBytes+512 {
+		t.Fatalf("error message is %d bytes; want it bounded near the %d-byte excerpt cap",
+			len(err.Error()), maxErrorBodyBytes)
+	}
+	// The status must survive the truncation — it is the diagnostic that matters.
+	if !contains(err.Error(), "502") {
+		t.Errorf("error dropped the HTTP status: %q", err.Error())
 	}
 }
 
