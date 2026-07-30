@@ -36,17 +36,28 @@ const aiWorkloadFieldOwner = "aif-operator-api"
 // AIWorkloadHandler serves AIWorkload CRUD endpoints.
 type AIWorkloadHandler struct {
 	client client.Client
+	// workloadNamespace is the single control-cluster namespace where new
+	// AIWorkload CRs are stored, regardless of the workload's deployment target
+	// (which is carried by Spec.TargetNamespace).
+	workloadNamespace string
 }
 
-// NewAIWorkloadHandler constructs an AIWorkloadHandler.
-func NewAIWorkloadHandler(c client.Client) *AIWorkloadHandler {
-	return &AIWorkloadHandler{client: c}
+// NewAIWorkloadHandler constructs an AIWorkloadHandler. workloadNamespace is the
+// namespace new AIWorkload CRs are created into (see config.GetWorkloadNamespace).
+func NewAIWorkloadHandler(c client.Client, workloadNamespace string) *AIWorkloadHandler {
+	return &AIWorkloadHandler{client: c, workloadNamespace: workloadNamespace}
 }
 
 // Register wires the handler's routes onto the mux.
 func (h *AIWorkloadHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/aiworkloads", h.listAIWorkloads)
+	// Create ignores any namespace in the path: the CR is always stored in the
+	// configured workload namespace. Both routes are kept so existing clients
+	// that still POST to the namespaced path continue to work.
+	mux.HandleFunc("POST /api/v1/aiworkloads", h.createAIWorkload)
 	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
+	// Update/delete address a CR by its real namespace (from list metadata), so
+	// they keep working for CRs that predate the workload-namespace consolidation.
 	mux.HandleFunc("PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
 	mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.deleteAIWorkload)
 }
@@ -72,11 +83,10 @@ type aiWorkloadCreateBody struct {
 }
 
 func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
-	if namespace == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: namespace is required", ErrInvalidInput))
-		return
-	}
+	// The CR always lands in the configured workload namespace; any namespace in
+	// the request path is ignored. The workload's deployment target is carried by
+	// Spec.TargetNamespace, independent of where the CR is stored.
+	namespace := h.workloadNamespace
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		writeError(w, http.StatusUnsupportedMediaType, fmt.Errorf("%w: Content-Type must be application/json", ErrInvalidInput))
@@ -89,7 +99,9 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Ensure the target namespace exists before creating the namespaced AIWorkload CR.
+	// Defensively ensure the workload namespace exists before creating the CR.
+	// It is normally created by the operator chart; this covers upgrades and
+	// custom WORKLOAD_NAMESPACE values.
 	ns := &corev1.Namespace{}
 	ns.APIVersion = "v1"
 	ns.Kind = "Namespace"

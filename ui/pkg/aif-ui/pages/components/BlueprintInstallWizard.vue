@@ -165,7 +165,6 @@ async function onInstall() {
   // and retry the wizard for just those.
   const results = await Promise.allSettled(targets.map((t) =>
     createAIWorkload(
-      namespace.value,
       t.crName,
       {
         displayName:     blueprint.value!.spec.displayName,
