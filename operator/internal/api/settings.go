@@ -522,7 +522,10 @@ func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatf
 	}
 
 	var caPEM []byte
-	if secretRefComplete(caRef) {
+	// Gate on presence, not completeness, to match resolveCABundle. A ref with an
+	// empty key is unreadable at runtime and must not be reported as ok here just
+	// because discovery happens to succeed.
+	if caRef != nil {
 		ca, err := h.readSecretKey(ctx, caRef)
 		if err != nil {
 			res.Status = statusError
