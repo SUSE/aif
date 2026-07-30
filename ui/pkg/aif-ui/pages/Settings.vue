@@ -63,6 +63,7 @@ export default {
       if (e?.status === 404) {
         this.notFound = true;
         this.loaded   = true;
+        await this.loadTokenState();
       } else {
         this.fetchErrorMessage = e?.message || String(e);
         this.loaded            = true;
@@ -515,14 +516,17 @@ export default {
 
         await ensureTokenSecret(this.$store, this.settingsNamespace, DEFAULT_TOKEN_SECRET_NAME, minted);
 
+        // The Secret now holds this token, so it is the current one whether or not the
+        // save below succeeds. Recording it here keeps the status line honest and makes
+        // a retry delete the token it actually replaced.
+        this.tokenState = { expiresAt: minted.expiresAt, tokenName: minted.tokenName, loaded: true };
+
         this.spec.rancherCatalog.tokenSecretRef = {
           name: DEFAULT_TOKEN_SECRET_NAME,
           key:  DEFAULT_TOKEN_SECRET_KEY,
         };
         // eslint-disable-next-line @typescript-eslint/no-empty-function
         await this.save(() => {});
-
-        this.tokenState = { expiresAt: minted.expiresAt, tokenName: minted.tokenName, loaded: true };
 
         // Only after the new token is committed, so a failure above never leaves
         // the operator with no working credential.
