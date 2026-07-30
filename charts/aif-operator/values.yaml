@@ -47,6 +47,11 @@ rancherCatalog:
   # NOTE: an inline token is persisted in a chart-managed Secret AND in Helm's
   # release history/metadata (standard Helm behavior). Since this is a Rancher API
   # token, prefer tokenSecret below to keep it out of release history.
+  # If you use the UI's Authorize button, leave both `token` and `tokenSecret`
+  # empty: with either set, a `helm upgrade` re-renders
+  # spec.rancherCatalog.tokenSecretRef from the chart, and Helm's three-way merge
+  # reverts the reference Authorize repointed — silently swapping a fresh token
+  # back for an expired one.
   token: ""
   # tokenSecret: reference an existing Secret holding the token instead of
   # providing `token` inline. Takes precedence over `token` when name is set.

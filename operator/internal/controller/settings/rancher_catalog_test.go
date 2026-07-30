@@ -161,6 +161,23 @@ func TestResolveCABundle(t *testing.T) {
 			objs: []client.Object{internalCA}, caRef: ref("absent", "ca.crt"),
 			wantPEM: "", wantSource: "settings-error",
 		},
+		{
+			// readSecretKey returns ("", nil) for a Secret that exists but lacks
+			// the key. Reporting "settings" would log caSource=settings
+			// customCA=false — reading as "your configured CA is in use" when
+			// nothing was loaded.
+			name: "present ref, missing key -> settings-error, not settings",
+			objs: []client.Object{internalCA, explicitCA}, caRef: ref("my-ca", "wrong-key"),
+			wantPEM: "", wantSource: "settings-error",
+		},
+		{
+			name: "present ref, empty value -> settings-error",
+			objs: []client.Object{internalCA, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "blank-ca", Namespace: "aif"},
+				Data:       map[string][]byte{"ca.crt": {}},
+			}}, caRef: ref("blank-ca", "ca.crt"),
+			wantPEM: "", wantSource: "settings-error",
+		},
 	}
 
 	for _, tc := range cases {

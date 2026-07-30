@@ -179,6 +179,15 @@ func (r *SettingsReconciler) resolveCABundle(ctx context.Context, s *aiplatformv
 				"secret", ref.Name)
 			return nil, "settings-error"
 		}
+		// readSecretKey returns ("", nil) for a Secret that exists but lacks the
+		// key, so an empty value is an unreadable ref, not a configured one.
+		// Reporting "settings" here would log caSource=settings customCA=false —
+		// which reads as "your configured CA is in use" when nothing was loaded.
+		if ca == "" {
+			l.Info("Rancher catalog CA secret has no usable value; proceeding without a custom CA (not falling back to discovery, because a CA was explicitly configured)",
+				"secret", ref.Name, "key", ref.Key)
+			return nil, "settings-error"
+		}
 		return []byte(ca), "settings"
 	}
 
