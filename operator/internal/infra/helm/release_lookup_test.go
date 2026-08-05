@@ -18,6 +18,7 @@ package helm
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -35,24 +36,64 @@ const (
 // newTestConfig returns an action.Configuration backed by Helm's in-memory
 // storage driver, seeded with the supplied revisions.
 //
-// The memory driver returns query results sorted ascending by revision, which is
-// the same "oldest first" ordering the real Secret driver produces (release
-// Secrets are named sh.helm.release.v1.<name>.v<N>, and the API server lists by
-// name, so .v1 sorts ahead of .v2). That makes these tests a faithful stand-in
-// for the cluster behaviour without needing one.
+// The memory driver sorts query results numerically by revision (records.Less),
+// which is NOT what a real cluster does. That is fine for tests that do not
+// depend on query order; anything that does must use newNameOrderedTestConfig.
 func newTestConfig(t *testing.T, rels ...*release.Release) *action.Configuration {
 	t.Helper()
 
 	mem := driver.NewMemory()
 	mem.SetNamespace(testNamespace)
-	store := storage.Init(mem)
+	return seedConfig(t, mem, rels...)
+}
 
+// nameOrderedDriver reproduces the query order a real cluster returns.
+//
+// Helm stores each revision as a Secret named sh.helm.release.v1.<release>.v<N>,
+// and the Secret driver's Query is a List, so the API server returns them sorted
+// lexicographically BY NAME: .v1, .v10, .v11, .v2. The memory driver sorts
+// numerically by revision instead, so a test built on it cannot tell "sorts
+// correctly" apart from "was handed an already-sorted slice" — precisely the
+// confusion that let this bug through in the first place.
+type nameOrderedDriver struct {
+	*driver.Memory
+}
+
+func (d *nameOrderedDriver) Query(labels map[string]string) ([]*release.Release, error) {
+	rels, err := d.Memory.Query(labels)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(rels, func(i, j int) bool {
+		return secretName(rels[i]) < secretName(rels[j])
+	})
+	return rels, nil
+}
+
+// secretName mirrors the release Secret naming the Secret driver uses (makeKey).
+func secretName(rel *release.Release) string {
+	return fmt.Sprintf("sh.helm.release.v1.%s.v%d", rel.Name, rel.Version)
+}
+
+// newNameOrderedTestConfig seeds storage that hands back revisions in the Secret
+// driver's lexicographic-by-name order rather than sorted by revision.
+func newNameOrderedTestConfig(t *testing.T, rels ...*release.Release) *action.Configuration {
+	t.Helper()
+
+	mem := driver.NewMemory()
+	mem.SetNamespace(testNamespace)
+	return seedConfig(t, &nameOrderedDriver{Memory: mem}, rels...)
+}
+
+func seedConfig(t *testing.T, d driver.Driver, rels ...*release.Release) *action.Configuration {
+	t.Helper()
+
+	store := storage.Init(d)
 	for _, rel := range rels {
 		if err := store.Create(rel); err != nil {
 			t.Fatalf("seeding revision %d: %v", rel.Version, err)
 		}
 	}
-
 	return &action.Configuration{Releases: store}
 }
 
@@ -94,6 +135,10 @@ func TestLastReleaseReturnsNewestRevisionAfterDowngrade(t *testing.T) {
 
 // Release Secrets sort lexicographically, so .v10 and .v11 precede .v2. Guards
 // against a fix that only works while revision counts stay in single digits.
+//
+// Uses the name-ordered driver: on the memory driver's numeric ordering this
+// assertion would hold even for code that just takes the last element of the
+// query result, so it would not pin anything.
 func TestLastReleaseWithDoubleDigitRevisions(t *testing.T) {
 	rels := make([]*release.Release, 0, 11)
 	for i := 1; i <= 11; i++ {
@@ -104,13 +149,48 @@ func TestLastReleaseWithDoubleDigitRevisions(t *testing.T) {
 		rels = append(rels, testRelease(i, fmt.Sprintf("2.0.%d", i), status))
 	}
 
-	info, err := lastRelease(newTestConfig(t, rels...), testRelName)
+	cfg := newNameOrderedTestConfig(t, rels...)
+
+	// Pin the premise: if storage ever starts handing back revision-sorted
+	// results, the rest of this test silently stops proving anything.
+	raw, err := cfg.Releases.History(testRelName)
+	if err != nil {
+		t.Fatalf("History() error = %v", err)
+	}
+	gotOrder := make([]int, 0, len(raw))
+	for _, rel := range raw {
+		gotOrder = append(gotOrder, rel.Version)
+	}
+	wantOrder := []int{1, 10, 11, 2, 3, 4, 5, 6, 7, 8, 9}
+	if fmt.Sprint(gotOrder) != fmt.Sprint(wantOrder) {
+		t.Fatalf("query order = %v, want lexicographic %v", gotOrder, wantOrder)
+	}
+
+	info, err := lastRelease(cfg, testRelName)
 	if err != nil {
 		t.Fatalf("lastRelease() error = %v", err)
 	}
 	if info.Revision != 11 || info.Version != "2.0.11" {
 		t.Errorf("lastRelease() = revision %d version %q, want revision 11 version \"2.0.11\"",
 			info.Revision, info.Version)
+	}
+}
+
+// The head of the query result is revision 1, not the newest — the exact trap the
+// old GetRelease fell into. Pins it independently of any single lookup helper.
+func TestDeployedReleaseWithNameOrderedStorage(t *testing.T) {
+	cfg := newNameOrderedTestConfig(t,
+		testRelease(1, "2.0.1", release.StatusSuperseded),
+		testRelease(2, "2.0.0", release.StatusDeployed),
+	)
+
+	deployed, err := deployedRelease(cfg, testRelName)
+	if err != nil {
+		t.Fatalf("deployedRelease() error = %v", err)
+	}
+	if deployed.Revision != 2 || deployed.Version != "2.0.0" {
+		t.Errorf("deployedRelease() = revision %d version %q, want revision 2 version \"2.0.0\"",
+			deployed.Revision, deployed.Version)
 	}
 }
 
