@@ -20,6 +20,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+
+	"helm.sh/helm/v3/pkg/release"
 )
 
 // ErrReleasePending is returned when a release is stuck mid-operation. Helm
@@ -41,13 +43,12 @@ const (
 // IsPending reports whether an operation is still in flight on the release.
 // Helm's own upgrade path rejects these states, so callers should back off
 // rather than layer another operation on top.
+//
+// Delegated rather than reimplemented: the set of pending states belongs to Helm,
+// and a local copy would answer false for any state a future version adds —
+// sending the operator into an upgrade Helm is going to reject anyway.
 func (s ReleaseStatus) IsPending() bool {
-	switch s {
-	case StatusPendingInstall, StatusPendingUpgrade, StatusPendingRollback:
-		return true
-	default:
-		return false
-	}
+	return release.Status(s).IsPending()
 }
 
 type ReleaseInfo struct {
