@@ -54,6 +54,11 @@ const (
 	// resolution failure so it self-heals when a referenced Secret is created
 	// or corrected (the controller has no Secret watch).
 	resolutionRetryInterval = 30 * time.Second
+	// pendingReleaseRequeue requeues the CR while a Helm operation is still in
+	// flight. Deliberately slower than readinessRequeue: an upgrade waits on pod
+	// readiness for up to 10 minutes (helm upgrade Timeout), so polling every few
+	// seconds only adds API reads without converging any sooner.
+	pendingReleaseRequeue = 30 * time.Second
 
 	conditionTypeReady           = "Ready"
 	conditionTypeHelmInstalled   = "HelmInstalled"
@@ -366,6 +371,16 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	}
 
 	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
+		// A pending release is a timing state, not a verdict: Helm marks a release
+		// pending for the whole duration of an install/upgrade, and leaves it that
+		// way if the operator restarts mid-operation. Requeue instead of failing
+		// terminally, so an in-flight operation is simply waited out and a wedged
+		// one recovers as soon as it is rolled back or uninstalled.
+		if stderrors.Is(err, helmClient.ErrReleasePending) {
+			setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionFalse,
+				"ReleasePending", fmt.Sprintf("Waiting for in-flight Helm operation: %v", err), ext.Generation)
+			return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, nil
+		}
 		setTerminalFailure(ext, conditionTypeHelmInstalled,
 			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err))
 		return ctrl.Result{}, nil
@@ -375,7 +390,9 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Installed", fmt.Sprintf("Helm release %s installed", releaseName), ext.Generation)
 	ext.Status.HelmReleaseName = releaseName
 
-	releaseInfo, err := helm.GetRelease(ctx, releaseName)
+	// LastRelease, not DeployedRelease: the status field mirrors what Helm last
+	// recorded, the same revision `helm history` reports at the top.
+	releaseInfo, err := helm.LastRelease(ctx, releaseName)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -516,7 +533,10 @@ func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
 		return err
 	}
 
-	info, err := helm.GetRelease(ctx, ext.Spec.Extension.Name)
+	// DeployedRelease, not LastRelease: this is a skip-if-unchanged check, so it
+	// must compare against the revision the cluster is actually running. A failed
+	// revision carrying the requested version would otherwise suppress the retry.
+	info, err := helm.DeployedRelease(ctx, ext.Spec.Extension.Name)
 	if err != nil {
 		return fmt.Errorf("failed to check UIPlugin release %q: %w", ext.Spec.Extension.Name, err)
 	}
