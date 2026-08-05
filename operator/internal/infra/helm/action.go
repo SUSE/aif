@@ -261,6 +261,77 @@ func (c *helmClient) DeployedRelease(ctx context.Context, name string) (*Release
 	return deployedRelease(cfg, name)
 }
 
+// releaseAction is the operation EnsureRelease selects from storage state alone,
+// before any chart is pulled.
+type releaseAction int
+
+const (
+	actionInstall releaseAction = iota
+	actionUpgrade
+	actionSkip
+	actionPending
+)
+
+func (a releaseAction) String() string {
+	switch a {
+	case actionInstall:
+		return "install"
+	case actionUpgrade:
+		return "upgrade"
+	case actionSkip:
+		return "skip"
+	case actionPending:
+		return "pending"
+	default:
+		return "unknown"
+	}
+}
+
+// decideRelease picks the operation for a release from what storage reports.
+//
+// This is a pure function because it is where the bug lived. Not in either lookup
+// — both are correct in isolation — but in which lookup fed which comparison.
+// `last` answers "what did Helm most recently attempt"; `deployed` answers "what
+// is actually running". Measuring drift against `last` makes a failed or
+// superseded revision look applied, so the retry is skipped and the release never
+// converges. Keeping that choice in one testable place is what stops the two from
+// being swapped back.
+//
+// deployedFn is called lazily: install and pending are decided from `last` alone,
+// and neither should pay for a storage read it cannot use. The returned
+// ReleaseInfo is the deployed revision when one was consulted, nil otherwise.
+func decideRelease(
+	last *ReleaseInfo,
+	deployedFn func() (*ReleaseInfo, error),
+	spec ReleaseSpec,
+) (releaseAction, *ReleaseInfo, error) {
+	if last == nil {
+		return actionInstall, nil, nil
+	}
+
+	// Helm rejects an upgrade over a release that is mid-operation, so stop here
+	// rather than letting the upgrade fail opaquely further down.
+	if last.Status.IsPending() {
+		return actionPending, nil, nil
+	}
+
+	deployed, err := deployedFn()
+	if err != nil {
+		return actionUpgrade, nil, err
+	}
+	// A revision exists but nothing ever deployed — a first install that failed.
+	// Retry as an upgrade: Helm's prepareUpgrade falls back to the last revision
+	// when it is failed or superseded.
+	if deployed == nil {
+		return actionUpgrade, nil, nil
+	}
+
+	if !releaseNeedsUpgrade(deployed, spec) {
+		return actionSkip, deployed, nil
+	}
+	return actionUpgrade, deployed, nil
+}
+
 func releaseNeedsUpgrade(info *ReleaseInfo, spec ReleaseSpec) bool {
 	if versionDrift(info, spec) {
 		return true
@@ -309,28 +380,33 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	if err != nil {
 		return err
 	}
-	if last == nil {
-		log.Info("Helm release not found, installing")
-		return c.install(ctx, cfg, spec)
+
+	decision, deployed, err := decideRelease(last, func() (*ReleaseInfo, error) {
+		return deployedRelease(cfg, spec.Name)
+	}, spec)
+	if err != nil {
+		return err
 	}
 
-	// Helm rejects an upgrade over a release that is mid-operation, so surface
-	// that as its own error instead of letting the upgrade fail opaquely.
-	if last.Status.IsPending() {
+	switch decision {
+	case actionInstall:
+		log.Info("Helm release not found, installing")
+		return c.install(ctx, cfg, spec)
+
+	case actionPending:
 		log.Info("Helm release has a pending operation, skipping upgrade",
 			"status", string(last.Status), "revision", last.Revision)
 		return fmt.Errorf("%w: release %q is %s at revision %d",
 			ErrReleasePending, spec.Name, last.Status, last.Revision)
+
+	// Skipping here is a fast path only. The authoritative check is the manifest
+	// diff below; this exists purely to avoid pulling a chart when neither the
+	// version nor the values can have changed anything.
+	case actionSkip:
+		log.Info("Helm release version and values unchanged, skipping upgrade")
+		return nil
 	}
 
-	// Drift is measured against what is deployed, never against the last
-	// revision. A failed upgrade leaves a newer revision carrying the requested
-	// version while the cluster still runs the previous one; comparing against
-	// it would make the retry look unnecessary and skip it forever.
-	deployed, err := deployedRelease(cfg, spec.Name)
-	if err != nil {
-		return err
-	}
 	if deployed == nil {
 		log.Info("Helm release has no deployed revision, upgrading",
 			"lastRevision", last.Revision, "lastStatus", string(last.Status))
@@ -340,13 +416,6 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	if versionDrift(deployed, spec) {
 		log.Info("deployed Helm release version differs from requested version",
 			"requestedVersion", spec.Version, "deployedVersion", deployed.Version)
-	}
-
-	// Fast path only. The authoritative check is the manifest diff below; this
-	// exists purely to skip a chart pull when nothing can possibly have changed.
-	if !releaseNeedsUpgrade(deployed, spec) {
-		log.Info("Helm release version and values unchanged, skipping upgrade")
-		return nil
 	}
 
 	// An error here leaves current empty, which forces the diff below to report a
