@@ -371,15 +371,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	}
 
 	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
-		// A pending release is a timing state, not a verdict: Helm marks a release
-		// pending for the whole duration of an install/upgrade, and leaves it that
-		// way if the operator restarts mid-operation. Requeue instead of failing
-		// terminally, so an in-flight operation is simply waited out and a wedged
-		// one recovers as soon as it is rolled back or uninstalled.
-		if stderrors.Is(err, helmClient.ErrReleasePending) {
-			setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionFalse,
-				"ReleasePending", fmt.Sprintf("Waiting for in-flight Helm operation: %v", err), ext.Generation)
-			return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, nil
+		if result, handled := handlePendingRelease(ext, conditionTypeHelmInstalled, err); handled {
+			return result, nil
 		}
 		setTerminalFailure(ext, conditionTypeHelmInstalled,
 			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err))
@@ -511,6 +504,9 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 		"Created", "ClusterRepo created for git source", ext.Generation)
 
 	if err := r.ensureUIPluginGit(ctx, ext, rawBaseURL, namespace); err != nil {
+		if result, handled := handlePendingRelease(ext, conditionTypeUIPlugin, err); handled {
+			return result, nil
+		}
 		setTerminalFailure(ext, conditionTypeUIPlugin,
 			"Failed", fmt.Sprintf("UIPlugin install failed: %v", err))
 		return ctrl.Result{}, nil
@@ -665,6 +661,33 @@ func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, message, ext.Generation)
 	}
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+}
+
+// handlePendingRelease turns an in-flight Helm operation into a requeue, and
+// reports whether it took ownership of the error. Callers fall through to their
+// own terminal handling when it returns false.
+//
+// A pending release is a timing state, not a verdict: Helm marks a release
+// pending for the whole duration of an install or upgrade, and leaves it that way
+// if the operator restarts mid-operation. Failing terminally on it would give up
+// on an operation that is still running.
+//
+// Shared by both source kinds deliberately. Every path that calls EnsureRelease
+// can see this error, and handling it in only one of them means the same cluster
+// state produces a requeue or a terminal failure depending on how the extension
+// happens to be sourced.
+func handlePendingRelease(
+	ext *v1alpha1.InstallAIExtension,
+	condType string,
+	err error,
+) (ctrl.Result, bool) {
+	if !stderrors.Is(err, helmClient.ErrReleasePending) {
+		return ctrl.Result{}, false
+	}
+
+	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
+		"ReleasePending", fmt.Sprintf("Waiting for in-flight Helm operation: %v", err), ext.Generation)
+	return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true
 }
 
 func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) {
