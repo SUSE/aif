@@ -80,9 +80,10 @@ type RegistryAuth struct {
 type HelmClient interface {
 	EnsureRelease(ctx context.Context, spec ReleaseSpec) error
 	DeleteRelease(ctx context.Context, name string) error
-	// LastRelease returns the newest revision, whatever its status — the same
-	// thing `helm history` shows at the top. Use it to report what Helm last
-	// attempted. Returns (nil, nil) if the release was never installed.
+	// LastRelease returns the newest revision, whatever its status — the highest
+	// revision number, which `helm history` prints as its bottom row. Use it to
+	// report what Helm last attempted. Returns (nil, nil) if the release was never
+	// installed.
 	LastRelease(ctx context.Context, name string) (*ReleaseInfo, error)
 	// DeployedRelease returns the newest revision that actually reached the
 	// cluster, skipping failed and pending revisions above it. Use it to decide

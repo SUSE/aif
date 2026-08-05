@@ -214,8 +214,12 @@ func releaseInfoFrom(rel *release.Release) *ReleaseInfo {
 // action ignores its Max field and hands back the driver's raw query order,
 // which for the Secret driver is the API server's name ordering
 // (sh.helm.release.v1.<name>.v1 sorts first). Taking the head of that slice
-// yields the OLDEST revision, not the newest. Storage.Last sorts by revision,
-// which is what `helm history` and action.Get already rely on.
+// yields the OLDEST revision, not the newest.
+//
+// The helm CLI never trips over this because it sorts the result itself before
+// printing (cmd/helm/history.go), which is why the defect is invisible upstream
+// and worth naming here. Storage.Last does that sort for us, and is the same
+// call action.Get relies on.
 func lastRelease(cfg *action.Configuration, name string) (*ReleaseInfo, error) {
 	rel, err := cfg.Releases.Last(name)
 	if err != nil {

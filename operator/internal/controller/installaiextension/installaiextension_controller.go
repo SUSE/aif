@@ -391,7 +391,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	ext.Status.HelmReleaseName = releaseName
 
 	// LastRelease, not DeployedRelease: the status field mirrors what Helm last
-	// recorded, the same revision `helm history` reports at the top.
+	// recorded, which is the highest revision number rather than the running one.
 	releaseInfo, err := helm.LastRelease(ctx, releaseName)
 	if err != nil {
 		return ctrl.Result{}, err
