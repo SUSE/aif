@@ -58,6 +58,28 @@ func TestHandlePendingRelease_RequeuesInsteadOfFailing(t *testing.T) {
 	}
 }
 
+// A CR that already reached Installed carries Ready=True. Leaving it that way
+// while an upgrade is stuck reports the extension as healthy when it is not.
+func TestHandlePendingRelease_ClearsStaleReady(t *testing.T) {
+	ext := &v1alpha1.InstallAIExtension{}
+	ext.Generation = 4
+	setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionTrue,
+		"Installed", "extension installed", 3)
+
+	err := fmt.Errorf("%w: release is pending-upgrade", helmClient.ErrReleasePending)
+	if _, handled := handlePendingRelease(ext, conditionTypeHelmInstalled, err); !handled {
+		t.Fatal("handled = false, want true")
+	}
+
+	rd := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
+	if rd == nil || rd.Status != metav1.ConditionFalse || rd.Reason != "ReleasePending" {
+		t.Fatalf("Ready condition = %+v, want False/ReleasePending", rd)
+	}
+	if rd.ObservedGeneration != 4 {
+		t.Errorf("Ready observedGeneration = %d, want 4", rd.ObservedGeneration)
+	}
+}
+
 // Both source kinds reach EnsureRelease, so both must get the same treatment for
 // the same cluster state. The git path previously failed terminally here.
 func TestHandlePendingRelease_AppliesToBothSourceKinds(t *testing.T) {

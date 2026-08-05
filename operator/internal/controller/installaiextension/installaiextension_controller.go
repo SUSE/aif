@@ -685,8 +685,15 @@ func handlePendingRelease(
 		return ctrl.Result{}, false
 	}
 
+	msg := fmt.Sprintf("Waiting for in-flight Helm operation: %v", err)
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
-		"ReleasePending", fmt.Sprintf("Waiting for in-flight Helm operation: %v", err), ext.Generation)
+		"ReleasePending", msg, ext.Generation)
+	// Ready is mirrored for the same reason setTerminalFailure mirrors it: this is
+	// not a terminal failure, so that helper does not apply, but a CR that already
+	// reached Installed would otherwise keep advertising Ready=True while its
+	// upgrade sits wedged.
+	setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+		"ReleasePending", msg, ext.Generation)
 	return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true
 }
 
