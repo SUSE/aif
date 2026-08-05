@@ -59,6 +59,13 @@ const (
 	// readiness for up to 10 minutes (helm upgrade Timeout), so polling every few
 	// seconds only adds API reads without converging any sooner.
 	pendingReleaseRequeue = 30 * time.Second
+	// pendingReleaseTimeout bounds that requeue. Helm marks a release pending for
+	// the duration of an operation, but a process killed mid-upgrade leaves the
+	// marker behind with nothing to clear it, and no amount of requeuing will
+	// resolve that — only `helm rollback` or `helm uninstall` will. Longer than
+	// helm's own 10-minute upgrade Timeout so a legitimately slow upgrade is never
+	// the thing that trips it.
+	pendingReleaseTimeout = 15 * time.Minute
 
 	conditionTypeReady           = "Ready"
 	conditionTypeHelmInstalled   = "HelmInstalled"
@@ -370,12 +377,17 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		releaseSpec.TLSConfig = tlsCfg
 	}
 
-	if err := helm.EnsureRelease(ctx, releaseSpec); err != nil {
-		if result, handled := handlePendingRelease(ext, conditionTypeHelmInstalled, err); handled {
-			return result, nil
-		}
+	ensureErr := helm.EnsureRelease(ctx, releaseSpec)
+	result, handled, err := r.handlePendingRelease(ctx, ext, conditionTypeHelmInstalled, ensureErr)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if handled {
+		return result, nil
+	}
+	if ensureErr != nil {
 		setTerminalFailure(ext, conditionTypeHelmInstalled,
-			"InstallFailed", fmt.Sprintf("Helm install failed: %v", err))
+			"InstallFailed", fmt.Sprintf("Helm install failed: %v", ensureErr))
 		return ctrl.Result{}, nil
 	}
 
@@ -400,9 +412,9 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 	}
 	if !deployStatus.Ready {
-		waitingSince := r.getWaitingSince(ext)
+		waitingSince := r.getWaitingSince(ext, annotationWaitingSince)
 		if waitingSince.IsZero() {
-			r.setWaitingSince(ext)
+			r.setWaitingSince(ext, annotationWaitingSince)
 			if err := r.Update(ctx, ext); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -424,8 +436,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	// reached. Continuing inline also avoids the cache-propagation race — there is
 	// no follow-up reconcile whose cached Get could still observe the stale marker,
 	// and no further main-resource write happens this pass (only the status patch).
-	if r.getWaitingSince(ext) != (time.Time{}) {
-		r.clearWaitingSince(ext)
+	if r.getWaitingSince(ext, annotationWaitingSince) != (time.Time{}) {
+		r.clearWaitingSince(ext, annotationWaitingSince)
 		if err := r.Update(ctx, ext); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -503,12 +515,17 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
 		"Created", "ClusterRepo created for git source", ext.Generation)
 
-	if err := r.ensureUIPluginGit(ctx, ext, rawBaseURL, namespace); err != nil {
-		if result, handled := handlePendingRelease(ext, conditionTypeUIPlugin, err); handled {
-			return result, nil
-		}
+	pluginErr := r.ensureUIPluginGit(ctx, ext, rawBaseURL, namespace)
+	result, handled, err := r.handlePendingRelease(ctx, ext, conditionTypeUIPlugin, pluginErr)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if handled {
+		return result, nil
+	}
+	if pluginErr != nil {
 		setTerminalFailure(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin install failed: %v", err))
+			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr))
 		return ctrl.Result{}, nil
 	}
 
@@ -663,26 +680,52 @@ func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 }
 
-// handlePendingRelease turns an in-flight Helm operation into a requeue, and
-// reports whether it took ownership of the error. Callers fall through to their
-// own terminal handling when it returns false.
+// handlePendingRelease turns an in-flight Helm operation into a bounded requeue,
+// and reports whether it took ownership of the outcome. Callers pass the
+// EnsureRelease error verbatim — including nil — and fall through to their own
+// handling when it returns false.
 //
 // A pending release is a timing state, not a verdict: Helm marks a release
-// pending for the whole duration of an install or upgrade, and leaves it that way
-// if the operator restarts mid-operation. Failing terminally on it would give up
-// on an operation that is still running.
+// pending for the whole duration of an install or upgrade. Failing terminally on
+// it would give up on an operation that is still running. But the marker also
+// survives a process killed mid-upgrade, and nothing in the reconcile loop can
+// clear that — so the wait is timed, and past pendingReleaseTimeout the CR fails
+// terminally with the manual step named rather than requeuing forever.
 //
 // Shared by both source kinds deliberately. Every path that calls EnsureRelease
 // can see this error, and handling it in only one of them means the same cluster
 // state produces a requeue or a terminal failure depending on how the extension
 // happens to be sourced.
-func handlePendingRelease(
+func (r *InstallAIExtensionReconciler) handlePendingRelease(
+	ctx context.Context,
 	ext *v1alpha1.InstallAIExtension,
 	condType string,
 	err error,
-) (ctrl.Result, bool) {
+) (ctrl.Result, bool, error) {
 	if !stderrors.Is(err, helmClient.ErrReleasePending) {
-		return ctrl.Result{}, false
+		// The release either settled or failed for some other reason. Either way the
+		// wait is over, so drop the marker — left behind, it would make the next
+		// pending release inherit this window and time out on its first observation.
+		return ctrl.Result{}, false, r.clearReleasePending(ctx, ext)
+	}
+
+	pendingSince := r.getWaitingSince(ext, annotationReleasePendingSince)
+	if pendingSince.IsZero() {
+		r.setWaitingSince(ext, annotationReleasePendingSince)
+		if uerr := r.Update(ctx, ext); uerr != nil {
+			return ctrl.Result{}, true, uerr
+		}
+		// RequeueAfter (not Requeue) so the next reconcile's cached Get does not
+		// race this write's propagation into the informer cache.
+		return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true, nil
+	}
+
+	if time.Since(pendingSince) > pendingReleaseTimeout {
+		setTerminalFailure(ext, condType, "ReleasePendingTimedOut", fmt.Sprintf(
+			"Helm release still mid-operation after %s; a pending release cannot be "+
+				"upgraded over, so resolve it with `helm rollback` or `helm uninstall`: %v",
+			pendingReleaseTimeout, err))
+		return ctrl.Result{}, true, nil
 	}
 
 	msg := fmt.Sprintf("Waiting for in-flight Helm operation: %v", err)
@@ -694,7 +737,20 @@ func handlePendingRelease(
 	// upgrade sits wedged.
 	setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
 		"ReleasePending", msg, ext.Generation)
-	return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true
+	return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true, nil
+}
+
+// clearReleasePending drops the pending-wait marker, writing only when one is
+// actually set so the common path costs no API call.
+func (r *InstallAIExtensionReconciler) clearReleasePending(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+) error {
+	if r.getWaitingSince(ext, annotationReleasePendingSince).IsZero() {
+		return nil
+	}
+	r.clearWaitingSince(ext, annotationReleasePendingSince)
+	return r.Update(ctx, ext)
 }
 
 func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) {
@@ -703,13 +759,21 @@ func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) 
 	return helmClient.New(settings)
 }
 
-const annotationWaitingSince = "ai-factory.suse.com/waiting-since"
+const (
+	annotationWaitingSince = "ai-factory.suse.com/waiting-since"
+	// annotationReleasePendingSince times the wait on an in-flight Helm operation.
+	// A separate key from annotationWaitingSince on purpose: that one belongs to
+	// the deployment readiness wait, and the two can be live in the same reconcile
+	// pass, so sharing a key would let either clear or inherit the other's start
+	// time and time out against the wrong clock.
+	annotationReleasePendingSince = "ai-factory.suse.com/release-pending-since"
+)
 
-func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIExtension) time.Time {
+func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIExtension, key string) time.Time {
 	if ext.Annotations == nil {
 		return time.Time{}
 	}
-	ts, ok := ext.Annotations[annotationWaitingSince]
+	ts, ok := ext.Annotations[key]
 	if !ok {
 		return time.Time{}
 	}
@@ -720,16 +784,16 @@ func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIEx
 	return t
 }
 
-func (r *InstallAIExtensionReconciler) setWaitingSince(ext *v1alpha1.InstallAIExtension) {
+func (r *InstallAIExtensionReconciler) setWaitingSince(ext *v1alpha1.InstallAIExtension, key string) {
 	if ext.Annotations == nil {
 		ext.Annotations = make(map[string]string)
 	}
-	ext.Annotations[annotationWaitingSince] = time.Now().Format(time.RFC3339)
+	ext.Annotations[key] = time.Now().Format(time.RFC3339)
 }
 
-func (r *InstallAIExtensionReconciler) clearWaitingSince(ext *v1alpha1.InstallAIExtension) {
+func (r *InstallAIExtensionReconciler) clearWaitingSince(ext *v1alpha1.InstallAIExtension, key string) {
 	if ext.Annotations != nil {
-		delete(ext.Annotations, annotationWaitingSince)
+		delete(ext.Annotations, key)
 	}
 }
 

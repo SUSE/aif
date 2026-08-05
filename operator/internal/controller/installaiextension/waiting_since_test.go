@@ -37,13 +37,13 @@ func TestWaitingSince_SetThenClearRoundTrips(t *testing.T) {
 	ext := &v1alpha1.InstallAIExtension{}
 
 	// No annotation yet -> zero.
-	if got := r.getWaitingSince(ext); !got.IsZero() {
+	if got := r.getWaitingSince(ext, annotationWaitingSince); !got.IsZero() {
 		t.Fatalf("expected zero time before set, got %v", got)
 	}
 
 	// Set stamps ~now (RFC3339, second precision).
-	r.setWaitingSince(ext)
-	got := r.getWaitingSince(ext)
+	r.setWaitingSince(ext, annotationWaitingSince)
+	got := r.getWaitingSince(ext, annotationWaitingSince)
 	if got.IsZero() {
 		t.Fatalf("expected non-zero time after setWaitingSince")
 	}
@@ -53,8 +53,8 @@ func TestWaitingSince_SetThenClearRoundTrips(t *testing.T) {
 
 	// Clear zeroes it and removes the annotation entirely (so a later not-ready
 	// episode starts a fresh timeout window).
-	r.clearWaitingSince(ext)
-	if got := r.getWaitingSince(ext); !got.IsZero() {
+	r.clearWaitingSince(ext, annotationWaitingSince)
+	if got := r.getWaitingSince(ext, annotationWaitingSince); !got.IsZero() {
 		t.Fatalf("expected zero time after clearWaitingSince, got %v", got)
 	}
 	if _, present := ext.Annotations[annotationWaitingSince]; present {
@@ -71,14 +71,14 @@ func TestWaitingSince_InvalidOrMissingReturnsZero(t *testing.T) {
 			Annotations: map[string]string{annotationWaitingSince: "not-a-timestamp"},
 		},
 	}
-	if got := r.getWaitingSince(bad); !got.IsZero() {
+	if got := r.getWaitingSince(bad, annotationWaitingSince); !got.IsZero() {
 		t.Fatalf("expected zero time for invalid timestamp, got %v", got)
 	}
 
 	// Nil annotations must not panic and returns zero; clear on nil is a no-op.
 	empty := &v1alpha1.InstallAIExtension{}
-	if got := r.getWaitingSince(empty); !got.IsZero() {
+	if got := r.getWaitingSince(empty, annotationWaitingSince); !got.IsZero() {
 		t.Fatalf("expected zero time for nil annotations, got %v", got)
 	}
-	r.clearWaitingSince(empty) // must not panic
+	r.clearWaitingSince(empty, annotationWaitingSince) // must not panic
 }
