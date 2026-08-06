@@ -92,6 +92,17 @@ type InstallAIExtensionReconciler struct {
 	// credential exfiltration to an attacker-chosen registry (confused-deputy).
 	AllowedRegistryHosts []string
 	rancherMgr           *rancher.Manager
+	// helmClientFor builds the Helm client for a namespace. A field rather than a
+	// direct call so tests can drive the reconcile paths end to end against a stub
+	// release backend; nil means newHelmClientForNamespace.
+	helmClientFor func(namespace string) (helmClient.HelmClient, error)
+}
+
+func (r *InstallAIExtensionReconciler) helmFor(namespace string) (helmClient.HelmClient, error) {
+	if r.helmClientFor != nil {
+		return r.helmClientFor(namespace)
+	}
+	return newHelmClientForNamespace(namespace)
 }
 
 // registryHostAllowed reports whether the chart's registry host may be contacted.
@@ -301,7 +312,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 
 	if ext.Status.HelmReleaseName != "" && ext.Status.HelmReleaseName != releaseName {
 		logger.Info("chart URL changed, uninstalling old release", "old", ext.Status.HelmReleaseName, "new", releaseName)
-		helm, err := newHelmClientForNamespace(namespace)
+		helm, err := r.helmFor(namespace)
 		if err == nil {
 			_ = helm.DeleteRelease(ctx, ext.Status.HelmReleaseName)
 		}
@@ -337,7 +348,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, nil
 	}
 
-	helm, err := newHelmClientForNamespace(namespace)
+	helm, err := r.helmFor(namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -541,7 +552,7 @@ func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
 	repoURL string,
 	namespace string,
 ) error {
-	helm, err := newHelmClientForNamespace(namespace)
+	helm, err := r.helmFor(namespace)
 	if err != nil {
 		return err
 	}
@@ -590,7 +601,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 		}
 
 		if oldSource == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
-			helm, err := newHelmClientForNamespace(namespace)
+			helm, err := r.helmFor(namespace)
 			if err == nil {
 				if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
 					errs = append(errs, err)
@@ -600,7 +611,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 			ext.Status.HelmReleaseRevision = 0
 		}
 		if oldSource == v1alpha1.ExtensionSourceKindGit {
-			helm, err := newHelmClientForNamespace(namespace)
+			helm, err := r.helmFor(namespace)
 			if err == nil {
 				_ = helm.DeleteRelease(ctx, oldName)
 			}
@@ -623,7 +634,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 		}
 
 		if oldSource == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
-			helm, err := newHelmClientForNamespace(namespace)
+			helm, err := r.helmFor(namespace)
 			if err == nil {
 				if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
 					errs = append(errs, err)
@@ -638,7 +649,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 		}
 
 		if oldSource == v1alpha1.ExtensionSourceKindGit {
-			helm, err := newHelmClientForNamespace(namespace)
+			helm, err := r.helmFor(namespace)
 			if err == nil {
 				_ = helm.DeleteRelease(ctx, name)
 			}
