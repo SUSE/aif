@@ -560,17 +560,13 @@ func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
 		return err
 	}
 
-	// DeployedRelease, not LastRelease: this is a skip-if-unchanged check, so it
-	// must compare against the revision the cluster is actually running. A failed
-	// revision carrying the requested version would otherwise suppress the retry.
-	info, err := helm.DeployedRelease(ctx, ext.Spec.Extension.Name)
-	if err != nil {
-		return fmt.Errorf("failed to check UIPlugin release %q: %w", ext.Spec.Extension.Name, err)
-	}
-	if info != nil && info.Version == ext.Spec.Extension.Version {
-		return nil
-	}
-
+	// No skip-if-unchanged check here. EnsureRelease already makes that decision
+	// against the deployed revision, and it makes it on more than the version — it
+	// also reports an in-flight operation the caller has to wait out. Re-deciding
+	// it up front short-circuited past that: a release wedged at the version the
+	// spec asks for returned success on this path while the Helm path requeued for
+	// the identical cluster state. The duplicate check also cost an extra release
+	// lookup on every pass that did go on to upgrade.
 	return helm.EnsureRelease(ctx, helmClient.ReleaseSpec{
 		Name:      ext.Spec.Extension.Name,
 		Namespace: namespace,
