@@ -1,0 +1,20 @@
+name: Test GitLab Connectivity                                                                                                                              
+                                                                                                                                                              
+  on:
+    workflow_dispatch:
+
+  jobs:
+    test-connectivity:
+      runs-on: ubuntu-latest
+      steps:
+        - name: Test connection to gitlab.suse.de
+          run: |
+            echo "Testing connectivity to gitlab.suse.de..."
+            HTTP_CODE=$(curl -sk --max-time 15 -o /dev/null -w "%{http_code}" https://gitlab.suse.de 2>/dev/null)
+            echo "HTTP Status: ${HTTP_CODE}"
+            if echo "$HTTP_CODE" | grep -qE "^[2-4][0-9][0-9]"; then
+              echo "✅ gitlab.suse.de is reachable from GitHub Actions"
+            else
+              echo "❌ gitlab.suse.de is NOT reachable from GitHub Actions"
+              exit 1
+            fi
