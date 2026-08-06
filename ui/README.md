@@ -1,6 +1,6 @@
-# SUSE AI Factory
+# SUSE AI Factory Rancher UI extension
 
-SUSE AI Factory is a Rancher UI extension that provides a unified interface for managing AI applications in Rancher-managed clusters.
+SUSE AI Factory Rancher UI extension provides a unified interface for managing AI applications in Rancher-managed clusters.
 
 > **Note:** This extension requires an active [SUSE AI Factory](https://www.suse.com/products/ai/) subscription to access the application catalog.
 
