@@ -322,7 +322,7 @@ func teamClusterRepoName(ngcURL string) (string, error) {
 		return "", fmt.Errorf("empty slug for NGC URL %q", ngcURL)
 	}
 	switch name {
-	case credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint:
+	case credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaRunAI, credentials.ClusterRepoNvidiaBlueprint:
 		return "", fmt.Errorf("team slug %q collides with org repo name", name)
 	}
 	return name, nil
@@ -693,7 +693,7 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		nvURL = s.Spec.RegistryEndpoints.Nvidia
 	}
 
-	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
+	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaRunAI, credentials.ClusterRepoNvidiaBlueprint}
 
 	// Configured NVIDIA credentials are the signal that NVIDIA is in use. Without
 	// them, tear every NVIDIA repo + mirror back down.
@@ -706,8 +706,8 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 
 	if nvURL != "" {
 		// Air-gap: a single gated OCI repo at a private mirror, which genuinely
-		// needs auth. Prune the public blueprint repo in case we are switching
-		// modes.
+		// needs auth. Prune the public blueprint repo and run:ai repo in case
+		// we are switching modes.
 		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
 		if err != nil {
 			return err
@@ -722,6 +722,9 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
 		}
 		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
+			return err
+		}
+		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaRunAI); err != nil {
 			return err
 		}
 		if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName); err != nil {
@@ -751,6 +754,12 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, ""); err != nil {
 		return err
 	}
+
+	// Connected: run:ai repo is protected, which requires clientSecret.
+	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaRunAI, credentials.DefaultNvidiaRunAIURL, credentials.AuthSecretNvidia); err != nil {
+		return err
+	}
+
 	// Connected-mode NGC team repos (public anonymous, gated ngc-helm-auth).
 	return r.reconcileNGCTeamRepos(ctx, s.Namespace, nvUser, nvToken)
 }

@@ -492,6 +492,14 @@
       "description": "DeepStream intelligent video analytics Helm chart for Jetson devices with JetPack 5.x.",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
+    },
+    {
+      "name": "Run:ai",
+      "slug_name": "nvidia-runai",
+      "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle.",
+      "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai"
     }
   ]
 }
