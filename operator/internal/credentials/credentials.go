@@ -39,7 +39,6 @@ const (
 	DefaultApplicationCollectionURL = "oci://dp.apps.rancher.io/charts"
 	DefaultSUSERegistryURL          = "oci://registry.suse.com/ai/charts"
 	DefaultNvidiaChartsURL          = "https://helm.ngc.nvidia.com/nvidia"
-	DefaultNvidiaRunAIURL           = "https://helm.ngc.nvidia.com/nvidia/runai"
 	DefaultNvidiaBlueprintURL       = "https://helm.ngc.nvidia.com/nvidia/blueprint"
 )
 
@@ -48,7 +47,6 @@ const (
 	ClusterRepoApplicationCollection = "application-collection"
 	ClusterRepoSUSERegistry          = "suse-ai-registry"
 	ClusterRepoNvidia                = "nvidia"
-	ClusterRepoNvidiaRunAI           = "nvidia-runai"
 	ClusterRepoNvidiaBlueprint       = "nvidia-blueprints"
 )
 

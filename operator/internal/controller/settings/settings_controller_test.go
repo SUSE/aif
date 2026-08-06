@@ -395,7 +395,7 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 	}
 
 	// NVIDIA run:ai repo requires authentication so clientSecret is needed
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoNvidiaRunAI}, repo); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "nvidia-runai"}, repo); err != nil {
 		t.Fatalf("expected nvidia-runai ClusterRepo: %v", err)
 	}
 	secretName, _, _ = unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
@@ -415,17 +415,12 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 		t.Errorf("nvidia-blueprints ClusterRepo must be anonymous, got clientSecret = %q", nvSecret)
 	}
 
-	// The bundled catalog references only the two org repos, so there are no gated
-	// team repos to consume ngc-helm-auth — the connected-mode reconcile must NOT
-	// write it in any namespace. Regression guard: if a gated team repo is ever
-	// re-added to the catalog, this expectation (and the dormant-feature tests)
-	// must be revisited.
-	for _, authNS := range []string{"cattle-system", "fleet-local", "fleet-default"} {
-		var nvAuth corev1.Secret
-		err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &nvAuth)
-		if !apierrors.IsNotFound(err) {
-			t.Errorf("expected no ngc-helm-auth in %s (no gated team repos in catalog), got err=%v", authNS, err)
-		}
+	// The gated runai ClusterRepo (asserted above) consumes ngc-helm-auth, so the
+	// mirror must exist in cattle-system — the mandatory namespace the ClusterRepo
+	// authenticates from.
+	var nvAuth corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &nvAuth); err != nil {
+		t.Errorf("expected ngc-helm-auth in cattle-system (gated runai team repo consumes it), got err=%v", err)
 	}
 
 	// The public NGC charts catalog must also be ANONYMOUS (no clientSecret).
@@ -548,13 +543,12 @@ func TestSettingsController_NoForceUpdateWhenCredentialsUnchanged(t *testing.T) 
 	}
 }
 
-// The bundled catalog references three org repos (/nvidia, /nvidia/runai, and
-// /nvidia/blueprint), so connected-mode reconcile must provision NO NGC team
-// repos and no ngc-helm-auth — the team-repo feature is dormant until a team
-// repo is re-added to the catalog. The org and blueprint repos are still created
-// anonymously, while the runai repo is created with clientSecret.
-// Regression guard for the org-only catalog.
-func TestSettingsController_OrgOnlyCatalogProvisionsNoTeamRepos(t *testing.T) {
+// The bundled catalog references the org repos (/nvidia and /nvidia/blueprint,
+// created anonymously) plus the gated /nvidia/runai team repo. Connected-mode
+// reconcile must provision the nvidia-runai ClusterRepo WITH the ngc-helm-auth
+// clientSecret, write ngc-helm-auth, and provision no other team repos. Regression
+// guard for gated team-repo provisioning from the bundled catalog.
+func TestSettingsController_ProvisionsGatedRunaiTeamRepo(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
 	const ns = "aif-operator"
@@ -583,26 +577,25 @@ func TestSettingsController_OrgOnlyCatalogProvisionsNoTeamRepos(t *testing.T) {
 		}
 	}
 
-	// Ensure runai repo is created with clientSecret
-	repo := getClusterRepo(t, c, credentials.ClusterRepoNvidiaRunAI)
-	if secret, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && secret == "" {
-		t.Errorf("org repo %s requires authentication, clientSecret not found", credentials.ClusterRepoNvidiaRunAI)
+	// The gated runai team repo IS provisioned, WITH the ngc-helm-auth clientSecret.
+	runaiRepo := getClusterRepo(t, c, "nvidia-runai")
+	if runaiSecret, _, _ := unstructured.NestedString(runaiRepo.Object, "spec", "clientSecret", "name"); runaiSecret != credentials.AuthSecretNvidia {
+		t.Errorf("nvidia-runai ClusterRepo clientSecret = %q, want %q", runaiSecret, credentials.AuthSecretNvidia)
 	}
 
-	// No team repos are provisioned (formerly nvidia-omniverse public,
-	// nvidia-cuopt gated — both sourced from repos no longer in the catalog).
+	// No other team repos are provisioned (these repos are not in the catalog).
 	for _, name := range []string{"nvidia-omniverse", "nvidia-cuopt"} {
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
 		if err := c.Get(context.Background(), types.NamespacedName{Name: name}, got); !apierrors.IsNotFound(err) {
-			t.Errorf("expected no team repo %s from org-only catalog, got err=%v", name, err)
+			t.Errorf("expected no team repo %s from bundled catalog, got err=%v", name, err)
 		}
 	}
 
-	// Ensure ngc-helm-auth is written (runai repo consumes it).
+	// ngc-helm-auth IS written (the gated runai repo consumes it).
 	var authSec corev1.Secret
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); apierrors.IsNotFound(err) {
-		t.Errorf("expected ngc-helm-auth from org-only catalog, got err=%v", err)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); err != nil {
+		t.Errorf("expected ngc-helm-auth in cattle-system (gated runai repo consumes it), got err=%v", err)
 	}
 }
 
