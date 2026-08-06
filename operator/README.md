@@ -1,16 +1,18 @@
-# SUSE AI Operator
-The SUSE AI Extension Operator installs and manages Rancher UI extension for SUSE AI using a declarative Kubernetes Custom Resource (CR). It acts as a bridge between Helm-based extension packaging and Rancher UIPlugin resources, handling lifecycle, validation, retries, and cleanup in a Kubernetes-native way.
+# SUSE AI Factory Operator
+The SUSE AI Factory Operator is responsible for managing the lifecycles of SUSE AI Factory Rancher UI extension, as well the lifecycles of AI applications.
+
 
 ## Purpose
 This operator exists to:
-- Install SUSE AI Rancher UI extensions safely and declaratively.
+- Install SUSE AI Factory Rancher UI extensions safely and declaratively.
 - Prevent conflicts with operator-unmanaged Helm resources.
 - Manage Helm releases, ClusterRepos, and UIPlugins.
+- Manage the lifecycle of AI applications.
 
 ## Getting Started
 
 ### Prerequisites
-- go v1.24.0+
+- go v1.26.0+
 - docker v17.03+
 - kubectl v1.11.3+
 - Access to a Kubernetes v1.11.3+ cluster
