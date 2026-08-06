@@ -426,7 +426,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		waitingSince := r.getWaitingSince(ext, annotationWaitingSince)
 		if waitingSince.IsZero() {
 			r.setWaitingSince(ext, annotationWaitingSince)
-			if err := r.Update(ctx, ext); err != nil {
+			if err := r.updateAnnotations(ctx, ext); err != nil {
 				return ctrl.Result{}, err
 			}
 			// RequeueAfter (not Requeue) so the next reconcile's cached Get does
@@ -449,7 +449,10 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	// and no further main-resource write happens this pass (only the status patch).
 	if r.getWaitingSince(ext, annotationWaitingSince) != (time.Time{}) {
 		r.clearWaitingSince(ext, annotationWaitingSince)
-		if err := r.Update(ctx, ext); err != nil {
+		// updateAnnotations, not Update: HelmReleaseName and HelmReleaseRevision were
+		// set earlier in this pass and a bare Update would drop both before
+		// persistStatus ever sees them.
+		if err := r.updateAnnotations(ctx, ext); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -721,17 +724,18 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 	}
 
 	pendingSince := r.getWaitingSince(ext, annotationReleasePendingSince)
-	if pendingSince.IsZero() {
+	switch {
+	case pendingSince.IsZero():
 		r.setWaitingSince(ext, annotationReleasePendingSince)
-		if uerr := r.Update(ctx, ext); uerr != nil {
+		if uerr := r.updateAnnotations(ctx, ext); uerr != nil {
 			return ctrl.Result{}, true, uerr
 		}
-		// RequeueAfter (not Requeue) so the next reconcile's cached Get does not
-		// race this write's propagation into the informer cache.
-		return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true, nil
-	}
+		// Fall through to the conditions below rather than returning here: the
+		// first observation is the one an automated gate is most likely to read,
+		// right after a spec change, and leaving it uncondition-ed advertises the
+		// previous pass's success for a whole requeue interval.
 
-	if time.Since(pendingSince) > pendingReleaseTimeout {
+	case time.Since(pendingSince) > pendingReleaseTimeout:
 		setTerminalFailure(ext, condType, "ReleasePendingTimedOut", fmt.Sprintf(
 			"Helm release still mid-operation after %s; a pending release cannot be "+
 				"upgraded over, so resolve it with `helm rollback` or `helm uninstall`: %v",
@@ -748,6 +752,8 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 	// upgrade sits wedged.
 	setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
 		"ReleasePending", msg, ext.Generation)
+	// RequeueAfter (not Requeue) so the next reconcile's cached Get does not race
+	// the annotation write's propagation into the informer cache.
 	return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true, nil
 }
 
@@ -761,7 +767,32 @@ func (r *InstallAIExtensionReconciler) clearReleasePending(
 		return nil
 	}
 	r.clearWaitingSince(ext, annotationReleasePendingSince)
-	return r.Update(ctx, ext)
+	return r.updateAnnotations(ctx, ext)
+}
+
+// updateAnnotations persists ext's metadata without rolling back the status this
+// reconcile pass has already accumulated.
+//
+// The CRD has a status subresource, so the API server strips status from an
+// Update of the main resource and echoes the *stored* copy back in the response
+// body — which controller-runtime's typed client decodes straight into ext
+// (typed_client.go: Body(obj)...Do(ctx).Into(obj)). Every condition, phase and
+// status field set before the write is silently reverted, and persistStatus then
+// computes its patch from the reverted values. Worse, a pass that had already set
+// Phase=Installing gets Installed back, which is the gate Reconcile uses to stamp
+// ObservedGeneration — so the CR reports a generation as applied when it was not.
+//
+// Snapshotting keeps an annotation write what it reads as: metadata only. The
+// copy is deep because the response is decoded into ext's existing Conditions
+// backing array, so a shallow save would hand back overwritten elements.
+func (r *InstallAIExtensionReconciler) updateAnnotations(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+) error {
+	status := ext.Status.DeepCopy()
+	err := r.Update(ctx, ext)
+	ext.Status = *status
+	return err
 }
 
 func newHelmClientForNamespace(namespace string) (helmClient.HelmClient, error) {
