@@ -133,8 +133,8 @@ func TestApplyLabels(t *testing.T) {
 	if !strings.Contains(string(out), "nvaie_supported") {
 		t.Fatalf("labels not written into catalog: %s", out)
 	}
-	// The blueprint entry has no match and must be reported.
-	if len(unmatched) != 1 || unmatched[0] != "nvidia-blueprint-rag" {
-		t.Fatalf("want [nvidia-blueprint-rag] unmatched, got %v", unmatched)
+	// The blueprint and runai entries have no match and must be reported.
+	if len(unmatched) != 2 || unmatched[0] != "nvidia-blueprint-rag" || unmatched[1] != "nvidia-runai" {
+		t.Fatalf("want [nvidia-blueprint-rag nvidia-runai] unmatched, got %v", unmatched)
 	}
 }

@@ -1,5 +1,5 @@
 import yaml from 'js-yaml';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from './app-collection';
+import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_RUNAI_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from './app-collection';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
 function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
@@ -855,6 +855,7 @@ function clusterRepoNameFromUrl(repoUrl: string): string {
     [APP_COLLECTION_REPO_URL]:    'application-collection',
     [SUSE_REGISTRY_REPO_URL]:     'suse-ai-registry',
     [NVIDIA_REPO_URL]:            'nvidia',
+    [NVIDIA_RUNAI_REPO_URL]:      'nvidia-runai',
     [NVIDIA_BLUEPRINT_REPO_URL]:  'nvidia-blueprints',
   };
   return KNOWN[repoUrl] ?? repoUrl
