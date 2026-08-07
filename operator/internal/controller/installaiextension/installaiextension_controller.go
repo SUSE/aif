@@ -716,7 +716,21 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 		// The release either settled or failed for some other reason. Either way the
 		// wait is over, so drop the marker — left behind, it would make the next
 		// pending release inherit this window and time out on its first observation.
-		return ctrl.Result{}, false, r.clearReleasePending(ctx, ext)
+		cerr := r.clearReleasePending(ctx, ext)
+		if cerr == nil {
+			return ctrl.Result{}, false, nil
+		}
+		if err == nil {
+			return ctrl.Result{}, false, cerr
+		}
+		// err is a real install failure, and the caller answers a nil error here by
+		// recording it on the CR. Returning cerr instead would swap that diagnosis
+		// for an unrelated write conflict, so the CR would say nothing about why the
+		// install failed and the operator would retry blind. The clear is reattempted
+		// every pass, so dropping this one costs only a delayed marker removal.
+		log.FromContext(ctx).Error(cerr, "could not clear the release-pending marker",
+			"releaseError", err)
+		return ctrl.Result{}, false, nil
 	}
 
 	pendingSince := r.getWaitingSince(ext, annotationReleasePendingSince)

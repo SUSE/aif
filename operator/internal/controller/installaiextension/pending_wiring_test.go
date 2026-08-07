@@ -29,6 +29,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	helmClient "github.com/SUSE/aif-operator/internal/infra/helm"
@@ -43,6 +44,19 @@ const wiringNamespace = "cattle-ui-plugin-system"
 // worth guarding — the two paths handled the same cluster state differently
 // before, and nothing structural stops them diverging again.
 func wiringReconciler(t *testing.T, ext *v1alpha1.InstallAIExtension, stub *stubHelmClient) *InstallAIExtensionReconciler {
+	t.Helper()
+	return wiringReconcilerWith(t, ext, stub, interceptor.Funcs{})
+}
+
+// wiringReconcilerWith is the same, with hooks on the client so a test can make a
+// specific call fail — the annotation write in particular, which is the only way
+// to reach the paths that decide what happens when persisting metadata fails.
+func wiringReconcilerWith(
+	t *testing.T,
+	ext *v1alpha1.InstallAIExtension,
+	stub *stubHelmClient,
+	funcs interceptor.Funcs,
+) *InstallAIExtensionReconciler {
 	t.Helper()
 
 	scheme := kruntime.NewScheme()
@@ -60,6 +74,7 @@ func wiringReconciler(t *testing.T, ext *v1alpha1.InstallAIExtension, stub *stub
 		WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.InstallAIExtension{}).
 		WithObjects(ext.DeepCopy()).
+		WithInterceptorFuncs(funcs).
 		Build()
 
 	// Update is optimistic-concurrency checked, so ext has to carry the stored
