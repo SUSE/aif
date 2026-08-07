@@ -23,9 +23,12 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	helmClient "github.com/SUSE/aif-operator/internal/infra/helm"
 )
 
@@ -67,6 +70,73 @@ func TestHandlePendingRelease_KeepsTheInstallErrorWhenClearingTheMarkerFails(t *
 	if !containsAll(cond.Message, installErr.Error()) {
 		t.Errorf("HelmInstalled message = %q, want it to name the install failure %q",
 			cond.Message, installErr)
+	}
+}
+
+// The marker is only ever cleared inside handlePendingRelease, and a reconcile
+// has several ways to return before it gets there. This drives the whole loop so
+// the coverage is "a pass that ended somewhere else leaves no marker behind",
+// not "one particular early return remembers to clean up".
+func TestReconcile_ClearsTheMarkerWhenThePassNeverReachedTheRelease(t *testing.T) {
+	ext := helmExtension()
+	ext.Finalizers = []string{finalizerName}
+	markPendingSince(ext, time.Minute)
+
+	r := wiringReconciler(t, ext, pendingStub())
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ext)}
+
+	// CheckCRDs dials the in-cluster API config, which does not exist under `go
+	// test`, so the pass fails the Rancher preflight and returns above the Helm
+	// call — the same shape as a real cluster missing the CRDs.
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile error = %v, want nil", err)
+	}
+
+	var stored v1alpha1.InstallAIExtension
+	if err := r.Get(context.Background(), req.NamespacedName, &stored); err != nil {
+		t.Fatalf("get stored object: %v", err)
+	}
+	ready := meta.FindStatusCondition(stored.Status.Conditions, conditionTypeReady)
+	if ready == nil || inReleasePendingWait(&stored) {
+		t.Fatalf("Ready = %+v, want a verdict other than a pending wait; the fixture did not "+
+			"return early and so proves nothing", ready)
+	}
+	if _, ok := stored.Annotations[annotationReleasePendingSince]; ok {
+		t.Errorf("marker survived a pass that reached %q; once it outlives pendingReleaseTimeout "+
+			"the next genuine wait inherits this window and fails on its first observation", ready.Reason)
+	}
+}
+
+// The marker's lifetime is decided from the Ready reason, so what counts as
+// "still waiting" is worth stating outright: a wait that has exhausted keeps its
+// marker, because clearing it would restart the 15-minute clock and leave the CR
+// flapping between Failed and waiting forever.
+func TestInReleasePendingWait(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   bool
+	}{
+		{reason: reasonReleasePending, want: true},
+		{reason: reasonReleasePendingTimedOut, want: true},
+		{reason: "CRDsMissing", want: false},
+		{reason: "InvalidSpec", want: false},
+		{reason: "Installed", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			ext := helmExtension()
+			setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+				tt.reason, "", ext.Generation)
+
+			if got := inReleasePendingWait(ext); got != tt.want {
+				t.Errorf("inReleasePendingWait(%s) = %v, want %v", tt.reason, got, tt.want)
+			}
+		})
+	}
+
+	if inReleasePendingWait(helmExtension()) {
+		t.Error("a pass that set no Ready condition is not a pending wait")
 	}
 }
 

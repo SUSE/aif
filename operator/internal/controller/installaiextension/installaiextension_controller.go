@@ -67,6 +67,12 @@ const (
 	// the thing that trips it.
 	pendingReleaseTimeout = 15 * time.Minute
 
+	// reasonReleasePending and reasonReleasePendingTimedOut are the two verdicts
+	// that mean a pending-release wait is still the CR's state. Reconcile keys the
+	// marker's lifetime off them, so they are named rather than inline.
+	reasonReleasePending         = "ReleasePending"
+	reasonReleasePendingTimedOut = "ReleasePendingTimedOut"
+
 	conditionTypeReady           = "Ready"
 	conditionTypeHelmInstalled   = "HelmInstalled"
 	conditionTypeDeploymentReady = "DeploymentReady"
@@ -157,6 +163,25 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 	original := ext.DeepCopy()
 
 	result, reconcileErr := r.reconcile(ctx, &ext)
+
+	// The marker times a wait on an in-flight Helm operation, so it must not
+	// outlive that wait. handlePendingRelease is the only thing that clears it, and
+	// every path returning above the Helm call — missing Rancher CRDs, a rejected
+	// chart URL, an unresolvable auth Secret, a failed ClusterRepo — never reaches
+	// it. Once such a failure lasts longer than pendingReleaseTimeout, the next
+	// genuine pending release inherits the stale window and fails terminally on its
+	// first observation, reporting an upgrade that just started as stuck for 15
+	// minutes.
+	//
+	// A timed-out wait keeps its marker on purpose: it really did exhaust, and
+	// clearing it would restart the clock and flap the CR between Failed and
+	// waiting forever. A pass that returned an error is left alone too — it reached
+	// no verdict about the release.
+	if reconcileErr == nil && !inReleasePendingWait(&ext) {
+		if err := r.clearReleasePending(ctx, &ext); err != nil {
+			logger.Error(err, "failed to clear a stale release-pending marker")
+		}
+	}
 
 	if reconcileErr == nil && ext.Status.Phase == v1alpha1.InstallAIExtensionPhaseInstalled {
 		ext.Status.ObservedGeneration = ext.Generation
@@ -746,7 +771,7 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 		// previous pass's success for a whole requeue interval.
 
 	case time.Since(pendingSince) > pendingReleaseTimeout:
-		setTerminalFailure(ext, condType, "ReleasePendingTimedOut", fmt.Sprintf(
+		setTerminalFailure(ext, condType, reasonReleasePendingTimedOut, fmt.Sprintf(
 			"Helm release still mid-operation after %s; a pending release cannot be "+
 				"upgraded over, so resolve it with `helm rollback` or `helm uninstall`: %v",
 			pendingReleaseTimeout, err))
@@ -755,16 +780,28 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 
 	msg := fmt.Sprintf("Waiting for in-flight Helm operation: %v", err)
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
-		"ReleasePending", msg, ext.Generation)
+		reasonReleasePending, msg, ext.Generation)
 	// Ready is mirrored for the same reason setTerminalFailure mirrors it: this is
 	// not a terminal failure, so that helper does not apply, but a CR that already
 	// reached Installed would otherwise keep advertising Ready=True while its
 	// upgrade sits wedged.
 	setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
-		"ReleasePending", msg, ext.Generation)
+		reasonReleasePending, msg, ext.Generation)
 	// RequeueAfter (not Requeue) so the next reconcile's cached Get does not race
 	// the annotation write's propagation into the informer cache.
 	return ctrl.Result{RequeueAfter: pendingReleaseRequeue}, true, nil
+}
+
+// inReleasePendingWait reports whether this pass concluded that a Helm operation
+// is still in flight, or has been for too long. It reads the Ready condition
+// because the operator recomputes the whole status every pass, so the reason
+// there is this pass's verdict rather than a leftover from the last one.
+func inReleasePendingWait(ext *v1alpha1.InstallAIExtension) bool {
+	cond := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
+	if cond == nil {
+		return false
+	}
+	return cond.Reason == reasonReleasePending || cond.Reason == reasonReleasePendingTimedOut
 }
 
 // clearReleasePending drops the pending-wait marker, writing only when one is
