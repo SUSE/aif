@@ -107,6 +107,33 @@ func TestReconcile_ClearsTheMarkerWhenThePassNeverReachedTheRelease(t *testing.T
 	}
 }
 
+// The marker lives in an annotation, so anyone with edit access on the CR can
+// set it — and a value in the future turns the bound off entirely rather than
+// tightening it. The wait has to re-anchor itself instead of requeuing forever.
+func TestReconcileHelmSource_ReAnchorsAFutureDatedMarker(t *testing.T) {
+	ext := helmExtension()
+	markPendingSince(ext, -time.Hour) // dated an hour ahead
+
+	r := wiringReconciler(t, ext, pendingStub())
+
+	if _, err := r.reconcileHelmSource(context.Background(), ext, wiringNamespace); err != nil {
+		t.Fatalf("reconcile error = %v, want nil", err)
+	}
+
+	stamp := ext.Annotations[annotationReleasePendingSince]
+	if stamp == "" {
+		t.Fatal("no pending marker recorded, so the wait is unbounded")
+	}
+	since, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		t.Fatalf("parse marker %q: %v", stamp, err)
+	}
+	if since.After(time.Now()) {
+		t.Errorf("marker = %v, still ahead of now; time.Since stays negative, so the wait "+
+			"never exceeds pendingReleaseTimeout and the operator requeues on it forever", since)
+	}
+}
+
 // The marker's lifetime is decided from the Ready reason, so what counts as
 // "still waiting" is worth stating outright: a wait that has exhausted keeps its
 // marker, because clearing it would restart the 15-minute clock and leave the CR

@@ -870,6 +870,15 @@ func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIEx
 	if err != nil {
 		return time.Time{}
 	}
+	// Annotations are writable by anyone with edit access on the CR, and both
+	// callers measure elapsed time as time.Since(start). A start in the future
+	// makes that negative, so the wait never exceeds its bound and the operator
+	// requeues on it forever — a timeout switched off by a field edit. Treated the
+	// same as an unparseable value: no usable start time, so the caller stamps a
+	// fresh one and the wait is bounded again from now.
+	if t.After(time.Now()) {
+		return time.Time{}
+	}
 	return t
 }
 

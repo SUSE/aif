@@ -75,6 +75,20 @@ func TestWaitingSince_InvalidOrMissingReturnsZero(t *testing.T) {
 		t.Fatalf("expected zero time for invalid timestamp, got %v", got)
 	}
 
+	// A start time in the future is just as unusable: both callers measure with
+	// time.Since, which goes negative, so the wait can never exceed its bound.
+	// Zero instead, and the caller re-stamps from now.
+	for _, key := range []string{annotationWaitingSince, annotationReleasePendingSince} {
+		future := &v1alpha1.InstallAIExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{key: time.Now().Add(time.Hour).Format(time.RFC3339)},
+			},
+		}
+		if got := r.getWaitingSince(future, key); !got.IsZero() {
+			t.Errorf("%s: expected zero time for a future timestamp, got %v", key, got)
+		}
+	}
+
 	// Nil annotations must not panic and returns zero; clear on nil is a no-op.
 	empty := &v1alpha1.InstallAIExtension{}
 	if got := r.getWaitingSince(empty, annotationWaitingSince); !got.IsZero() {
