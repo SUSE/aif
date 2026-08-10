@@ -1,0 +1,25 @@
+name: Test URL Connectivity
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check URL
+        run: | 
+          curl -v --fail --connect-timeout 10 --max-time 30 https://gitlab.suse.de
+
+      - name: Test connection to gitlab.suse.de
+        run: |
+            echo "Testing connectivity to gitlab.suse.de..."
+            HTTP_CODE=$(curl -sk --max-time 15 -o /dev/null -w "%{http_code}" https://gitlab.suse.de 2>/dev/null)
+            echo "HTTP Status: ${HTTP_CODE}"
+            if echo "$HTTP_CODE" | grep -qE "^[2-4][0-9][0-9]"; then
+              echo "✅ gitlab.suse.de is reachable from GitHub Actions"
+            else
+              echo "❌ gitlab.suse.de is NOT reachable from GitHub Actions"
+              exit 1
+            fi
