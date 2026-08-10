@@ -8,9 +8,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check URL
-        run: | 
-          curl -v --fail --connect-timeout 10 --max-time 30 https://gitlab.suse.de
+      - name: Check DNS
+        run: |
+          echo "DNS configuration:"
+          cat /etc/resolv.conf
+      
+          echo "DNS lookup:"
+          getent hosts gitlab.suse.de || true
+      
+          echo "DNS servers:"
+          nslookup gitlab.suse.de || true
+          
+      # - name: Check URL
+      #   run: | 
+      #     curl -v --fail --connect-timeout 10 --max-time 30 https://gitlab.suse.de
 
       - name: Test connection to gitlab.suse.de
         run: |
