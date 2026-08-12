@@ -31,6 +31,10 @@ type helmClient struct {
 	settings *cli.EnvSettings
 	registry *registry.Client
 	locks    sync.Map
+	// converged memoizes "this spec needs no upgrade" verdicts by release name.
+	// See convergenceHolds for why re-deriving them is what pulled the chart on
+	// a loop.
+	converged sync.Map
 
 	// Test seams, nil in production. Between them they cover everything
 	// EnsureRelease needs from outside the process — a cluster and a registry —

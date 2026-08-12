@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/SUSE/aif-operator/internal/logging"
+	"github.com/go-logr/logr"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
@@ -106,11 +107,16 @@ func (c *helmClient) upgrade(
 	return nil
 }
 
+// renderUpgrade dry-runs the upgrade and returns the manifest it would apply,
+// along with the pulled chart's own version. The caller needs that version to
+// tell a release that is genuinely up-to-date apart from a cosmetic version
+// mismatch: Helm records the chart's version, not the requested one, so the two
+// disagreeing means no upgrade will ever reconcile them.
 func (c *helmClient) renderUpgrade(
 	ctx context.Context,
 	cfg *action.Configuration,
 	spec ReleaseSpec,
-) (string, error) {
+) (manifest string, chartVersion string, err error) {
 	up := action.NewUpgrade(cfg)
 	up.Namespace = spec.Namespace
 	up.Version = spec.Version
@@ -124,15 +130,18 @@ func (c *helmClient) renderUpgrade(
 
 	ch, err := c.loadChart(up.SetRegistryClient, &up.ChartPathOptions, spec)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	rel, err := up.RunWithContext(ctx, spec.Name, ch, spec.Values)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return rel.Manifest, nil
+	if ch.Metadata != nil {
+		chartVersion = ch.Metadata.Version
+	}
+	return rel.Manifest, chartVersion, nil
 }
 
 // deployedManifest returns the manifest of the revision actually running in the
@@ -170,6 +179,13 @@ func (c *helmClient) DeleteRelease(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+
+	// Dropped up front, not on the success path: a release that is being removed
+	// must not leave a verdict behind for a later release of the same name to
+	// match against, and the uninstall below returns early when Helm has already
+	// forgotten the release.
+	c.dropConvergence(name)
+	releaseUnconverged.DeleteLabelValues(name)
 
 	uninstall := action.NewUninstall(cfg)
 	uninstall.DeletionPropagation = "foreground"
@@ -418,18 +434,61 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 			"requestedVersion", spec.Version, "deployedVersion", deployed.Version)
 	}
 
+	// The manifest diff below is the only thing that can clear this disagreement,
+	// and it costs a chart pull to compute. Once it has been computed for this
+	// exact spec against this exact revision, its answer cannot change, so asking
+	// again buys nothing and pulls the chart every reconcile.
+	if c.convergenceHolds(spec, deployed) {
+		log.Info("Helm release already verified up-to-date for this spec, skipping upgrade",
+			"revision", deployed.Revision, "requestedVersion", spec.Version)
+		return nil
+	}
+
 	// An error here leaves current empty, which forces the diff below to report a
 	// change — erring towards attempting the upgrade rather than skipping it.
 	current, _ := deployedManifest(cfg, spec.Name)
-	rendered, err := c.renderUpgrade(ctx, cfg, spec)
+	rendered, chartVersion, err := c.renderUpgrade(ctx, cfg, spec)
 	if err != nil {
 		return err
 	}
 
 	if !diffManifests(current, rendered) {
+		// Up-to-date, yet something in the spec still disagrees with storage or
+		// this code would have taken the actionSkip fast path. Whatever it is, no
+		// upgrade can resolve it, so record the verdict and report the cause
+		// rather than rediscovering both on the next pass.
+		c.latchConvergence(spec, deployed)
+		reportUnconverged(log, spec, deployed, chartVersion)
 		log.Info("Helm release is up-to-date, skipping upgrade")
 		return nil
 	}
 	log.Info("Detected Helm manifest changes, upgrading")
 	return c.upgrade(ctx, cfg, spec)
+}
+
+// reportUnconverged names why a release that needs no upgrade still does not
+// compare equal to its spec, and raises a gauge for as long as that is true.
+//
+// Left unreported this is genuinely invisible: the release is healthy, the logs
+// say "up-to-date", and the only outward sign used to be chart pulls on a loop —
+// which the latch has just removed.
+func reportUnconverged(log logr.Logger, spec ReleaseSpec, deployed *ReleaseInfo, chartVersion string) {
+	switch {
+	case chartVersion != "" && chartVersion != spec.Version:
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		log.Info("Chart version does not match the requested version; "+
+			"the release is up-to-date but will never compare equal to its spec. "+
+			"Align the chart's Chart.yaml version with the tag the CR pins.",
+			"requestedVersion", spec.Version, "chartVersion", chartVersion)
+
+	case !valuesEqual(deployed.Values, spec.Values):
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		log.Info("Requested values differ from the stored release values but change "+
+			"nothing the chart renders; the release is up-to-date. "+
+			"Check for values keys this chart does not use.",
+			"requestedVersion", spec.Version)
+
+	default:
+		releaseUnconverged.WithLabelValues(spec.Name).Set(0)
+	}
 }

@@ -80,6 +80,24 @@ func pullRegistry(spec ReleaseSpec) string {
 	return registryUnknown
 }
 
+// releaseUnconverged flags a release whose stored version or values disagree
+// with the requested spec even though rendering the chart proves nothing needs
+// to change.
+//
+// This is the state the convergence latch silences, and silencing it without
+// reporting it would trade a visible symptom (a climbing pull count) for an
+// invisible one. It is a misconfiguration — most often a chart whose Chart.yaml
+// version does not match the tag the CR pins — and it wants fixing at the
+// source, not papering over. 1 while the disagreement stands, 0 once a render
+// finds spec and storage in agreement.
+var releaseUnconverged = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "aif_helm_release_unconverged",
+		Help: "1 when a Helm release's stored version or values disagree with the requested spec despite the chart rendering no change.",
+	},
+	[]string{"release"},
+)
+
 func init() {
-	ctrlmetrics.Registry.MustRegister(chartPullsTotal)
+	ctrlmetrics.Registry.MustRegister(chartPullsTotal, releaseUnconverged)
 }
