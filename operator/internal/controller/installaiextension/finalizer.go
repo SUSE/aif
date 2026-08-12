@@ -97,7 +97,10 @@ func (r *InstallAIExtensionReconciler) cleanup(
 
 	if ext.Status.HelmReleaseName != "" {
 		logger.Info("uninstalling Helm release", "release", ext.Status.HelmReleaseName)
-		helm, err := newHelmClientForNamespace(namespace)
+		// helmFor, not a fresh client: DeleteRelease drops the release's
+		// convergence verdict, and it has to drop it on the client that holds it.
+		// A throwaway would clear its own empty map and leave the real one behind.
+		helm, err := r.helmFor(namespace)
 		if err == nil {
 			if err := helm.DeleteRelease(ctx, ext.Status.HelmReleaseName); err != nil {
 				errs = append(errs, err)
@@ -114,7 +117,7 @@ func (r *InstallAIExtensionReconciler) cleanup(
 				continue
 			}
 			logger.Info("uninstalling UIPlugin Helm release", "release", name)
-			helm, err := newHelmClientForNamespace(namespace)
+			helm, err := r.helmFor(namespace)
 			if err == nil {
 				if err := helm.DeleteRelease(ctx, name); err != nil {
 					errs = append(errs, err)

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	urlpkg "net/url"
@@ -106,13 +107,50 @@ type InstallAIExtensionReconciler struct {
 	// direct call so tests can drive the reconcile paths end to end against a stub
 	// release backend; nil means newHelmClientForNamespace.
 	helmClientFor func(namespace string) (helmClient.HelmClient, error)
+	// helmClients memoizes those clients by namespace. See helmFor.
+	helmClients sync.Map
 }
 
+// helmFor returns the Helm client for a namespace, building it once and reusing
+// it for the life of the process.
+//
+// The reuse is load-bearing, not an optimization. The client carries the
+// convergence latch and the downloaded-chart cache, both of which exist to stop
+// the operator re-deriving the same verdict on every pass. Both live on the
+// client, so handing each reconcile a freshly built one throws them away before
+// the next pass can read them: the latch is written, the client is dropped, and
+// the following reconcile pulls the chart again to rediscover what the last one
+// already knew. That is the exact loop this work set out to remove, so building
+// per call silently undoes it while every unit test — each of which holds one
+// client across its passes — still passes.
+//
+// Keyed by namespace because the client's cli.EnvSettings is namespace-scoped.
+//
+// The helmClientFor seam is consulted through the same cache rather than ahead
+// of it. Short-circuiting on the seam is what let this go unnoticed: it made the
+// production path the only uncached one, so no end-to-end controller test could
+// reach the behaviour that was broken.
 func (r *InstallAIExtensionReconciler) helmFor(namespace string) (helmClient.HelmClient, error) {
-	if r.helmClientFor != nil {
-		return r.helmClientFor(namespace)
+	if existing, ok := r.helmClients.Load(namespace); ok {
+		return existing.(helmClient.HelmClient), nil
 	}
-	return newHelmClientForNamespace(namespace)
+
+	build := newHelmClientForNamespace
+	if r.helmClientFor != nil {
+		build = r.helmClientFor
+	}
+	built, err := build(namespace)
+	if err != nil {
+		// Deliberately not cached: a client that failed to build must be retried
+		// on the next pass, not remembered as a permanent failure.
+		return nil, err
+	}
+
+	// LoadOrStore, not Store: two reconciles for different extensions in one
+	// namespace can race here, and the loser must adopt the winner's client
+	// rather than install a second one whose latch starts empty.
+	actual, _ := r.helmClients.LoadOrStore(namespace, built)
+	return actual.(helmClient.HelmClient), nil
 }
 
 // registryHostAllowed reports whether the chart's registry host may be contacted.
