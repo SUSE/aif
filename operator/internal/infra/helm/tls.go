@@ -92,9 +92,52 @@ func (c *helmClient) loadChartHTTPSWithTLS(ref string, auth *RegistryAuth, tlsCf
 	return ch, nil
 }
 
-// loadChart resolves and loads the chart for spec, applying auth and TLS across
-// OCI and HTTPS. setRegistry sets the registry client on the calling action.
+// chartFetcher fetches the chart for a release spec.
+type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error)
+
+// loadChart is the single point every Helm-SDK chart fetch passes through —
+// install, upgrade, and the dry-run render that gates the upgrade — so it is
+// where the pull counter belongs. Counting here counts the extension chart's
+// registry traffic exactly, without any of the three callers having to know
+// they are being counted.
+//
+// Helm-SDK, not every byte the operator pulls: repository index fetches go out
+// through helm.FetchIndex, and a git-backed blueprint chart is downloaded from
+// the Rancher catalog API by rancher.ChartFetcher. Neither is counted here.
+// Both are in-cluster, so neither shows up as registry egress, which is what
+// this counter exists to track.
 func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
+	// Counted before the attempt, not after a success: a pull that fails still
+	// cost a round trip to the registry, and a failing pull retried on every
+	// reconcile is precisely the pattern this metric exists to expose.
+	chartPullsTotal.WithLabelValues(pullRegistry(spec), spec.ChartRef, spec.Version).Inc()
+
+	return c.fetchChart(setRegistry, opts, spec)
+}
+
+// fetchChart performs the fetch loadChart has just counted. The seam exists so
+// that a test can drive EnsureRelease end to end and assert how many times the
+// operator would have reached the registry, without any pull leaving the
+// process — a count no assertion on release state can recover, because the
+// over-pull produced a correct result every time.
+func (c *helmClient) fetchChart(
+	setRegistry func(*registry.Client),
+	opts *action.ChartPathOptions,
+	spec ReleaseSpec,
+) (*chart.Chart, error) {
+	if c.fetchChartFn != nil {
+		return c.fetchChartFn(setRegistry, opts, spec)
+	}
+	return c.pullChart(setRegistry, opts, spec)
+}
+
+// pullChart resolves and loads the chart for spec, applying auth and TLS across
+// OCI and HTTPS. setRegistry sets the registry client on the calling action.
+func (c *helmClient) pullChart(
+	setRegistry func(*registry.Client),
+	opts *action.ChartPathOptions,
+	spec ReleaseSpec,
+) (*chart.Chart, error) {
 	ref := spec.ChartRef
 	if strings.HasPrefix(ref, ociSchemePrefix) {
 		reg, err := c.ociRegistryClient(spec.RegistryAuth, spec.TLSConfig)
