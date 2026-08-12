@@ -80,6 +80,22 @@ func pullRegistry(spec ReleaseSpec) string {
 	return registryUnknown
 }
 
+// chartCacheHitsTotal counts chart loads served from an already-downloaded
+// artifact instead of from the registry.
+//
+// It is the denominator chartPullsTotal needs to be read honestly. A flat pull
+// count could mean the operator has settled or that the cache is hiding traffic
+// that would otherwise be visible; only the two together say which. Reported
+// against the same labels, including the registry a hit means the operator did
+// not have to reach, so the ratio can be taken per chart or per host.
+var chartCacheHitsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "aif_helm_chart_cache_hits_total",
+		Help: "Number of Helm chart loads served from a previously downloaded artifact, by the registry host the load avoided, chart reference and requested version.",
+	},
+	[]string{"registry", "chart", "version"},
+)
+
 // releaseUnconverged flags a release whose stored version or values disagree
 // with the requested spec even though rendering the chart proves nothing needs
 // to change.
@@ -99,5 +115,5 @@ var releaseUnconverged = prometheus.NewGaugeVec(
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(chartPullsTotal, releaseUnconverged)
+	ctrlmetrics.Registry.MustRegister(chartPullsTotal, chartCacheHitsTotal, releaseUnconverged)
 }

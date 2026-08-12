@@ -36,14 +36,27 @@ func resolveChart(
 		return nil, "", err
 	}
 
-	ch, err := loader.Load(chartPath)
+	ch, err := loadLocalChart(chartPath)
 	if err != nil {
 		return nil, "", err
 	}
 
-	if err := action.CheckDependencies(ch, ch.Metadata.Dependencies); err != nil {
-		return nil, "", fmt.Errorf("missing dependencies: %w", err)
+	return ch, chartPath, nil
+}
+
+// loadLocalChart parses a chart from a path on disk and checks its dependencies.
+// Shared by resolveChart, which loads the artifact LocateChart has just written,
+// and by the chart cache, which loads that same artifact again on a later pass
+// instead of downloading it a second time.
+func loadLocalChart(path string) (*chart.Chart, error) {
+	ch, err := loader.Load(path)
+	if err != nil {
+		return nil, err
 	}
 
-	return ch, chartPath, nil
+	if err := action.CheckDependencies(ch, ch.Metadata.Dependencies); err != nil {
+		return nil, fmt.Errorf("missing dependencies: %w", err)
+	}
+
+	return ch, nil
 }

@@ -92,14 +92,16 @@ func (c *helmClient) loadChartHTTPSWithTLS(ref string, auth *RegistryAuth, tlsCf
 	return ch, nil
 }
 
-// chartFetcher fetches the chart for a release spec.
-type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error)
+// chartFetcher fetches the chart for a release spec. It returns the chart along
+// with the path of the local artifact the fetch wrote, or "" when the fetch
+// produced the chart without leaving one — which means there is nothing to reuse.
+type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, string, error)
 
 // loadChart is the single point every Helm-SDK chart fetch passes through —
 // install, upgrade, and the dry-run render that gates the upgrade — so it is
-// where the pull counter belongs. Counting here counts the extension chart's
-// registry traffic exactly, without any of the three callers having to know
-// they are being counted.
+// where both the pull counter and the chart cache belong. Counting here counts
+// the extension chart's registry traffic exactly, and caching here covers all
+// three callers without any of them knowing about it.
 //
 // Helm-SDK, not every byte the operator pulls: repository index fetches go out
 // through helm.FetchIndex, and a git-backed blueprint chart is downloaded from
@@ -107,24 +109,39 @@ type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPat
 // Both are in-cluster, so neither shows up as registry egress, which is what
 // this counter exists to track.
 func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
+	host := pullRegistry(spec)
+
+	key, cacheable := chartCacheKey(spec)
+	if cacheable {
+		if ch, ok := c.cachedChart(key); ok {
+			// The registry client the OCI path would have installed on the action
+			// is only ever read by LocateChart, which a hit skips, so there is
+			// nothing to set up here.
+			chartCacheHitsTotal.WithLabelValues(host, spec.ChartRef, spec.Version).Inc()
+			return ch, nil
+		}
+	}
+
 	// Counted before the attempt, not after a success: a pull that fails still
 	// cost a round trip to the registry, and a failing pull retried on every
 	// reconcile is precisely the pattern this metric exists to expose.
-	chartPullsTotal.WithLabelValues(pullRegistry(spec), spec.ChartRef, spec.Version).Inc()
+	chartPullsTotal.WithLabelValues(host, spec.ChartRef, spec.Version).Inc()
 
-	return c.fetchChart(setRegistry, opts, spec)
+	ch, path, err := c.fetchChart(setRegistry, opts, spec)
+	if err != nil {
+		return nil, err
+	}
+	if cacheable {
+		c.cacheChart(key, path)
+	}
+	return ch, nil
 }
 
-// fetchChart performs the fetch loadChart has just counted. The seam exists so
-// that a test can drive EnsureRelease end to end and assert how many times the
-// operator would have reached the registry, without any pull leaving the
-// process — a count no assertion on release state can recover, because the
-// over-pull produced a correct result every time.
 func (c *helmClient) fetchChart(
 	setRegistry func(*registry.Client),
 	opts *action.ChartPathOptions,
 	spec ReleaseSpec,
-) (*chart.Chart, error) {
+) (*chart.Chart, string, error) {
 	if c.fetchChartFn != nil {
 		return c.fetchChartFn(setRegistry, opts, spec)
 	}
@@ -137,26 +154,26 @@ func (c *helmClient) pullChart(
 	setRegistry func(*registry.Client),
 	opts *action.ChartPathOptions,
 	spec ReleaseSpec,
-) (*chart.Chart, error) {
+) (*chart.Chart, string, error) {
 	ref := spec.ChartRef
 	if strings.HasPrefix(ref, ociSchemePrefix) {
 		reg, err := c.ociRegistryClient(spec.RegistryAuth, spec.TLSConfig)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		setRegistry(reg)
-		ch, _, err := resolveChart(opts, c.settings, ref)
-		return ch, err
+		return resolveChart(opts, c.settings, ref)
 	}
-	// HTTPS with in-memory TLS: bypass file-based ChartPathOptions.
+	// HTTPS with in-memory TLS: bypass file-based ChartPathOptions. This one
+	// never touches disk, so it has no artifact to hand back.
 	if spec.TLSConfig != nil {
-		return c.loadChartHTTPSWithTLS(ref, spec.RegistryAuth, spec.TLSConfig)
+		ch, err := c.loadChartHTTPSWithTLS(ref, spec.RegistryAuth, spec.TLSConfig)
+		return ch, "", err
 	}
 	// HTTPS without TLS: existing path; basic auth via ChartPathOptions.
 	if spec.RegistryAuth != nil {
 		opts.Username = spec.RegistryAuth.Username
 		opts.Password = spec.RegistryAuth.Password
 	}
-	ch, _, err := resolveChart(opts, c.settings, ref)
-	return ch, err
+	return resolveChart(opts, c.settings, ref)
 }

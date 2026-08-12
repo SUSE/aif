@@ -34,7 +34,7 @@ import (
 const (
 	testChartRef = "oci://ghcr.io/suse/chart/aif-ui"
 	// testRegistry is the host testChartRef resolves to, which is what the
-	// counter is labelled with.
+	// counters are labelled with.
 	testRegistry = "ghcr.io"
 )
 
@@ -42,6 +42,9 @@ const (
 // every call. It stands in for the registry so a test can assert on how many
 // times the operator would have reached out to it.
 type pullCounter struct {
+	// dir stands in for settings.RepositoryCache: where a pull leaves the
+	// artifact it downloaded.
+	dir      string
 	pulls    int
 	versions []string
 	// chartVersion is the version recorded in the served chart's Chart.yaml.
@@ -50,18 +53,32 @@ type pullCounter struct {
 	chartVersion string
 }
 
+// fetch mirrors what a real pull does, including the part the chart cache
+// depends on: the chart handed back is the one parsed off the artifact just
+// written, not the in-memory value it was built from. A cache hit re-parses that
+// same file, so hits and misses have to produce identical charts, and they only
+// do if a miss goes through the file too.
 func (p *pullCounter) fetch(
 	_ func(*registry.Client),
 	_ *action.ChartPathOptions,
 	spec ReleaseSpec,
-) (*chart.Chart, error) {
+) (*chart.Chart, string, error) {
 	p.pulls++
 	p.versions = append(p.versions, spec.Version)
 	served := p.chartVersion
 	if served == "" {
 		served = spec.Version
 	}
-	return testChart(served), nil
+
+	path, err := chartutil.Save(testChart(served), p.dir)
+	if err != nil {
+		return nil, "", err
+	}
+	ch, err := loadLocalChart(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return ch, path, nil
 }
 
 // testChart renders both the chart version and a value, so that a change to
@@ -105,7 +122,7 @@ func newCountingClient(t *testing.T, rels ...*release.Release) (*helmClient, *pu
 	cfg.Capabilities = chartutil.DefaultCapabilities
 	cfg.Log = func(format string, v ...interface{}) {}
 
-	counter := &pullCounter{}
+	counter := &pullCounter{dir: t.TempDir()}
 	c := &helmClient{
 		settings: cli.New(),
 		actionConfigFn: func(context.Context, string) (*action.Configuration, error) {
@@ -199,6 +216,37 @@ func TestEnsureReleasePullsWhenDeployedVersionDiffers(t *testing.T) {
 		if v != "2.0.1" {
 			t.Errorf("pulled version %q, want the requested 2.0.1", v)
 		}
+	}
+}
+
+// An upgrade renders the candidate manifest for the diff and then applies it,
+// and both steps need the chart. They must share one download: the two are
+// microseconds apart and asking the registry twice for the same tag is the one
+// piece of repeated traffic the convergence latch cannot remove, because both
+// pulls belong to the same reconcile.
+func TestEnsureReleaseUpgradePullsOnce(t *testing.T) {
+	c, counter := newCountingClient(t)
+	ctx := context.Background()
+	values := map[string]interface{}{"replicas": float64(2)}
+
+	if err := c.EnsureRelease(ctx, testSpec("2.1.0", values)); err != nil {
+		t.Fatalf("EnsureRelease() install error = %v", err)
+	}
+	counter.pulls = 0
+
+	if err := c.EnsureRelease(ctx, testSpec("2.1.1", values)); err != nil {
+		t.Fatalf("EnsureRelease() upgrade error = %v", err)
+	}
+	if counter.pulls != 1 {
+		t.Errorf("upgrade pulled %d times, want 1 shared by the render and the upgrade", counter.pulls)
+	}
+
+	// And having upgraded, it settles.
+	if err := c.EnsureRelease(ctx, testSpec("2.1.1", values)); err != nil {
+		t.Fatalf("EnsureRelease() post-upgrade error = %v", err)
+	}
+	if counter.pulls != 1 {
+		t.Errorf("post-upgrade pass pulled again, total %d, want 1", counter.pulls)
 	}
 }
 

@@ -22,6 +22,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/registry"
 )
 
 const (
@@ -35,6 +37,25 @@ const (
 	// this value, so the release can never compare equal to the spec.
 	mismatchedChartVersion = "2.1.0-build.7"
 )
+
+// noChartCache makes every fetch advertise no reusable artifact, the way the
+// in-memory TLS pull path does, which leaves the chart cache empty.
+//
+// The tests below count pulls to detect whether a render happened at all, and
+// that is the one thing the cache is built to hide: with it in play they would
+// report a flat pull count whether the latch held or not. Two mechanisms remove
+// the same traffic for different reasons and each needs measuring on its own —
+// the cache has its own tests, in chart_cache_test.go.
+func noChartCache(c *helmClient, counter *pullCounter) {
+	c.fetchChartFn = func(
+		setRegistry func(*registry.Client),
+		opts *action.ChartPathOptions,
+		spec ReleaseSpec,
+	) (*chart.Chart, string, error) {
+		ch, _, err := counter.fetch(setRegistry, opts, spec)
+		return ch, "", err
+	}
+}
 
 func configOf(t *testing.T, c *helmClient) *action.Configuration {
 	t.Helper()
@@ -55,6 +76,7 @@ func configOf(t *testing.T, c *helmClient) *action.Configuration {
 // next pass repeats it. Once per health check, for the life of the CR.
 func TestChartVersionMismatchPullsOnceNotEveryPass(t *testing.T) {
 	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
 	counter.chartVersion = mismatchedChartVersion
 	spec := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
 	ctx := context.Background()
@@ -85,6 +107,7 @@ func TestChartVersionMismatchPullsOnceNotEveryPass(t *testing.T) {
 // written the values into storage is skipped, so storage keeps disagreeing.
 func TestUnusedValuesKeyPullsOnceNotEveryPass(t *testing.T) {
 	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
 	ctx := context.Background()
 
 	installed := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
@@ -149,6 +172,7 @@ func TestConvergenceLatchInvalidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, counter := newCountingClient(t)
+			noChartCache(c, counter)
 			counter.chartVersion = mismatchedChartVersion // forces the latch to engage
 			ctx := context.Background()
 
@@ -184,6 +208,7 @@ func TestConvergenceLatchInvalidation(t *testing.T) {
 // the old one and says nothing about the new one.
 func TestConvergenceLatchInvalidatedByANewDeployedRevision(t *testing.T) {
 	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
 	counter.chartVersion = mismatchedChartVersion
 	spec := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
 	ctx := context.Background()
