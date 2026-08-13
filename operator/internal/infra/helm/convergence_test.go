@@ -324,6 +324,61 @@ func TestUnconvergedGaugeReportsAChartVersionMismatch(t *testing.T) {
 	}
 }
 
+// The third way a release stays unconverged, and the one neither named cause
+// covers: the chart now pulled matches the CR, but it renders exactly what is
+// already deployed, so no upgrade runs and storage keeps the older version it
+// was deployed from. A version-only chart bump leaves this behind.
+//
+// The pass that renders must agree with the passes that follow it. The latch
+// reports 1 for this release on every later pass, so a 0 here would make the one
+// pass able to explain the cause the only one denying there is one — the gauge
+// contradicting itself, which is worse than either answer alone.
+func TestUnconvergedGaugeReportsAStoredVersionNoUpgradeCanUpdate(t *testing.T) {
+	releaseUnconverged.Reset()
+	t.Cleanup(releaseUnconverged.Reset)
+
+	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
+	spec := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
+	ctx := context.Background()
+
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+
+	// Rewrite the stored version, keeping the manifest. That is the state a
+	// version-only bump produces: the deployed manifest is already what 2.1.0
+	// renders, but storage still records the version it was installed from.
+	cfg := configOf(t, c)
+	stored, err := cfg.Releases.Deployed(testRelName)
+	if err != nil {
+		t.Fatalf("Deployed() error = %v", err)
+	}
+	stored.Chart.Metadata.Version = "2.0.0"
+	if err := cfg.Releases.Update(stored); err != nil {
+		t.Fatalf("rewriting the stored version: %v", err)
+	}
+
+	// The pass that renders and reaches reportUnconverged.
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("render pass error = %v", err)
+	}
+	rendered := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName))
+	if rendered != 1 {
+		t.Errorf("after the render pass: aif_helm_release_unconverged = %v, want 1", rendered)
+	}
+
+	// The pass that takes the latch, which has always reported 1.
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("latch pass error = %v", err)
+	}
+	latched := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName))
+	if latched != rendered {
+		t.Errorf("the gauge contradicts itself: %v on the render pass, %v on the latch pass",
+			rendered, latched)
+	}
+}
+
 // A healthy release must never raise the gauge, or it is noise rather than a
 // signal. This one takes the actionSkip fast path and never renders at all.
 func TestUnconvergedGaugeStaysDownForAHealthyRelease(t *testing.T) {

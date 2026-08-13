@@ -516,7 +516,27 @@ func reportUnconverged(log logr.Logger, spec ReleaseSpec, deployed *ReleaseInfo,
 			"keysOnlyInRequest", onlyRequested)
 
 	default:
-		releaseUnconverged.WithLabelValues(spec.Name).Set(0)
+		// Neither named cause applies, yet the release still did not take the
+		// actionSkip fast path, so something disagrees. What is left is a stored
+		// version the requested chart cannot update: the chart now pulled matches
+		// the CR, but it renders exactly what is already deployed, so no upgrade
+		// runs and storage keeps the version it was originally deployed from.
+		// A version-only chart bump leaves precisely this behind.
+		//
+		// Raised, not lowered. This function is reached only on a disagreement,
+		// so reporting convergence here would be wrong on its own terms — and it
+		// would also contradict the latch path, which reports 1 for this same
+		// release on every pass after this one. Lowering it would make the one
+		// pass that can explain the cause the only one that denies there is one.
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		log.Info("Stored release version differs from the requested version, and the "+
+			"requested chart renders no change, so no upgrade will run to update "+
+			"the record. The release is already running what the CR asks for; only "+
+			"the version Helm stored lags behind, and it will keep lagging. Force "+
+			"a new revision if the recorded version has to match.",
+			"requestedVersion", spec.Version,
+			"deployedVersion", deployed.Version,
+			"chartVersion", chartVersion)
 	}
 }
 
