@@ -53,16 +53,24 @@ type pullCounter struct {
 	chartVersion string
 }
 
-// fetch mirrors what a real pull does, including the part the chart cache
-// depends on: the chart handed back is the one parsed off the artifact just
-// written, not the in-memory value it was built from. A cache hit re-parses that
-// same file, so hits and misses have to produce identical charts, and they only
-// do if a miss goes through the file too.
+// fetch mirrors what a real pull does, including the two parts the chart cache
+// depends on.
+//
+// The chart handed back is the one parsed off the artifact just written, not the
+// in-memory value it was built from. A cache hit re-parses the same bytes, so
+// hits and misses have to produce identical charts, and they only do if a miss
+// goes through the archive too.
+//
+// And the artifact is written under a name taken from the chart and its version,
+// which is what Helm does — DownloadTo names a download filepath.Base of the
+// resolved URL, dropping the registry and the org path — so two references to one
+// chart land on one file and the second pull overwrites the first. Serving those
+// two different bytes is the only way a test can tell which pull a hit came from.
 func (p *pullCounter) fetch(
 	_ func(*registry.Client),
 	_ *action.ChartPathOptions,
 	spec ReleaseSpec,
-) (*chart.Chart, string, error) {
+) (*chart.Chart, []byte, error) {
 	p.pulls++
 	p.versions = append(p.versions, spec.Version)
 	served := p.chartVersion
@@ -70,16 +78,21 @@ func (p *pullCounter) fetch(
 		served = spec.Version
 	}
 
-	path, err := chartutil.Save(testChart(served), p.dir)
+	pulled := testChart(served)
+	pulled.Metadata.Annotations = map[string]string{pulledFromAnnotation: spec.ChartRef}
+
+	path, err := chartutil.Save(pulled, p.dir)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
-	ch, err := loadLocalChart(path)
-	if err != nil {
-		return nil, "", err
-	}
-	return ch, path, nil
+	return loadLocalChart(path)
 }
+
+// pulledFromAnnotation records, in the served chart, the reference the pull that
+// produced it asked for. Two registries can serve genuinely different charts
+// under one name and version — an origin and a stale mirror, most obviously — and
+// nothing else about the bytes says which one answered.
+const pulledFromAnnotation = "test.aif/pulled-from"
 
 // testChart renders both the chart version and a value, so that a change to
 // either moves the stored manifest — the signal EnsureRelease's diff gate reads.

@@ -34,13 +34,27 @@ import (
 // there is little reason to hold artifacts longer and one reason not to, below.
 const chartCacheTTL = 10 * time.Minute
 
-// cachedChart is a chart already downloaded to disk, and when.
+// cachedChart is a chart archive already downloaded, and when.
 type cachedChart struct {
-	// path is the local artifact the pull wrote, under settings.RepositoryCache.
-	// The operator's deployment mounts an emptyDir over that directory, so the
-	// artifacts live exactly as long as the process that cached them.
-	path string
-	at   time.Time
+	// archive is the .tgz the pull returned, held here rather than as a path into
+	// the directory the pull wrote it to.
+	//
+	// That directory is not a place a key can point at and expect to find its own
+	// chart. Helm names a download from the chart's name and version alone —
+	// DownloadTo takes filepath.Base of the resolved URL, and for OCI rewrites it
+	// to <name>-<tag>.tgz — so the registry host and the org path are dropped, and
+	// it writes with AtomicWriteFile, which replaces whatever is already there.
+	// Two keys that differ only in where the chart is pulled from therefore name
+	// one file, and the second pull becomes what the first key serves for the rest
+	// of its life: an origin swapped for a mirror, or either swapped for whatever
+	// a re-pointed CR fetched a moment ago. Keeping the bytes is what makes a hit
+	// answer with the chart pulled under its own key and nothing else.
+	//
+	// A chart archive is tens to hundreds of kilobytes and every write prunes what
+	// has expired, so what is resident is bounded by the distinct charts one
+	// operator pulls inside chartCacheTTL — one or two, in practice.
+	archive []byte
+	at      time.Time
 }
 
 // chartCacheKey identifies a chart artifact by everything that decides which
@@ -53,7 +67,10 @@ type cachedChart struct {
 // be served a chart pulled on behalf of one whose credentials do. That is narrow
 // in a single-tenant operator, but it applies to precisely the private charts
 // where it would matter, and the traffic worth removing — a public registry
-// pulled once a minute — is unauthenticated anyway.
+// pulled once a minute — is unauthenticated anyway. The decline is only worth
+// anything because a hit answers from bytes this cache kept: a shared download
+// directory, which an authenticated pull writes into as well, would hand the
+// private chart over by another route. See cachedChart.
 //
 // A chart re-pushed under a tag already in use is why this cache expires at all
 // rather than living as long as the process. Nothing in the key changes when it
@@ -67,19 +84,20 @@ func chartCacheKey(spec ReleaseSpec) (string, bool) {
 	return strings.Join([]string{spec.ChartRef, spec.RepoURL, spec.Version}, "\x00"), true
 }
 
-// cachedChart returns a chart parsed from a previously downloaded artifact.
+// cachedChart returns a chart parsed from a previously downloaded archive.
 //
-// Every caller gets its own *chart.Chart. That is the reason to cache the
-// artifact rather than the loaded chart: Helm mutates the chart it is handed.
+// Every caller gets its own *chart.Chart. That is the reason to cache the archive
+// rather than the loaded chart: Helm mutates the chart it is handed.
 // chartutil.ProcessDependenciesWithMerge, which runs on every install and
 // upgrade, replaces Chart.Values wholesale and rewrites dependency entries in
 // place when they carry an alias. Handing one pointer to the dry-run render and
 // then to the upgrade would give the upgrade a chart the render had already
-// rewritten. Re-parsing a local file costs nothing next to a registry round trip.
+// rewritten. Re-parsing bytes already in hand costs nothing next to a registry
+// round trip.
 //
 // A miss is always safe — it costs the pull that would have happened anyway — so
-// an artifact that has been evicted from the cache directory, or that no longer
-// loads, is dropped and reported as a miss rather than raised as an error.
+// an archive that no longer parses is dropped and reported as a miss rather than
+// raised as an error.
 func (c *helmClient) cachedChart(key string) (*chart.Chart, bool) {
 	entry, ok := c.charts.Load(key)
 	if !ok {
@@ -92,7 +110,7 @@ func (c *helmClient) cachedChart(key string) (*chart.Chart, bool) {
 		return nil, false
 	}
 
-	ch, err := loadLocalChart(cached.path)
+	ch, err := loadArchive(cached.archive)
 	if err != nil {
 		c.charts.Delete(key)
 		return nil, false
@@ -100,12 +118,12 @@ func (c *helmClient) cachedChart(key string) (*chart.Chart, bool) {
 	return ch, true
 }
 
-// cacheChart records the artifact a pull wrote, and prunes expired entries on
+// cacheChart records the archive a pull returned, and prunes expired entries on
 // the way through. Nothing else removes them: the map is keyed by chart
 // reference and version, so it only grows as a cluster re-pins its charts, but
 // "slowly" is not "never".
-func (c *helmClient) cacheChart(key, path string) {
-	if path == "" {
+func (c *helmClient) cacheChart(key string, archive []byte) {
+	if len(archive) == 0 {
 		return
 	}
 
@@ -116,5 +134,5 @@ func (c *helmClient) cacheChart(key, path string) {
 		return true
 	})
 
-	c.charts.Store(key, cachedChart{path: path, at: time.Now()})
+	c.charts.Store(key, cachedChart{archive: archive, at: time.Now()})
 }

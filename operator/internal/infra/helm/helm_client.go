@@ -35,8 +35,8 @@ type helmClient struct {
 	// See convergenceHolds for why re-deriving them is what pulled the chart on
 	// a loop.
 	converged sync.Map
-	// charts maps chartCacheKey to the local artifact a pull already downloaded,
-	// so the render and the upgrade of one reconcile share a single fetch.
+	// charts maps chartCacheKey to the archive a pull already downloaded, so the
+	// render and the upgrade of one reconcile share a single fetch.
 	charts sync.Map
 
 	// Test seams, nil in production. Between them they cover everything

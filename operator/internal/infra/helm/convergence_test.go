@@ -52,9 +52,9 @@ func noChartCache(c *helmClient, counter *pullCounter) {
 		setRegistry func(*registry.Client),
 		opts *action.ChartPathOptions,
 		spec ReleaseSpec,
-	) (*chart.Chart, string, error) {
+	) (*chart.Chart, []byte, error) {
 		ch, _, err := counter.fetch(setRegistry, opts, spec)
-		return ch, "", err
+		return ch, nil, err
 	}
 }
 

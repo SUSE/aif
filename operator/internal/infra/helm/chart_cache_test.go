@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -143,33 +144,77 @@ func TestChartCacheExpires(t *testing.T) {
 	}
 }
 
-// The cache directory is an emptyDir the operator does not own exclusively, and
-// a missing artifact is not an error condition — it is a cache miss, which costs
-// exactly the pull that would have happened without a cache at all.
-func TestChartCacheFallsBackWhenTheArtifactIsGone(t *testing.T) {
+// The defect this cache had to begin with: it held a path into the directory
+// pulls download to, and Helm names a download from the chart's name and version
+// alone. Registry host and org path are dropped, and the write replaces whatever
+// is already there. So an origin and a mirror of one chart are two cache keys
+// over one file, and the mirror's pull became what the origin's key served —
+// silently, for as long as the entry lived.
+//
+// A key must answer with the chart pulled under it. Nothing else.
+func TestChartCacheDoesNotServeAnotherReferencesChart(t *testing.T) {
+	c, counter := newCountingClient(t)
+
+	origin := testSpec("2.1.0", nil)
+	mirror := testSpec("2.1.0", nil)
+	mirror.ChartRef = "oci://mirror.corp.internal/suse/chart/aif-ui"
+
+	loadChartOnce(t, c, origin)
+	// Same chart, same version, different registry: one more file at the very
+	// path the origin's pull wrote to.
+	loadChartOnce(t, c, mirror)
+	if counter.pulls != 2 {
+		t.Fatalf("pulled %d times for two distinct references, want 2", counter.pulls)
+	}
+
+	ch, err := c.loadChart(noRegistry, &action.ChartPathOptions{}, origin)
+	if err != nil {
+		t.Fatalf("loadChart() error = %v", err)
+	}
+	if counter.pulls != 2 {
+		t.Fatalf("pulled %d times, want 2; the load under test was not a cache hit", counter.pulls)
+	}
+
+	if got := ch.Metadata.Annotations[pulledFromAnnotation]; got != origin.ChartRef {
+		t.Errorf("a hit on %q served the chart pulled from %q; the cache is keyed on the "+
+			"reference but answers from a file that is not", origin.ChartRef, got)
+	}
+}
+
+// Holding the archive rather than a path into that directory is what buys the
+// property above, and it costs nothing to confirm that the directory no longer
+// has a say. The operator does not own it exclusively — it is an emptyDir Helm
+// writes every download into — so a hit that still depended on it would be a hit
+// anything sharing the mount could change the answer to.
+func TestChartCacheDoesNotDependOnTheDownloadDirectory(t *testing.T) {
 	c, counter := newCountingClient(t)
 	spec := testSpec("2.1.0", nil)
 
 	loadChartOnce(t, c, spec)
 
-	key, ok := chartCacheKey(spec)
-	if !ok {
-		t.Fatal("chartCacheKey() reported this spec uncacheable")
+	entries, err := os.ReadDir(counter.dir)
+	if err != nil {
+		t.Fatalf("reading the download directory: %v", err)
 	}
-	entry, ok := c.charts.Load(key)
-	if !ok {
-		t.Fatal("the install cached nothing")
+	if len(entries) == 0 {
+		t.Fatal("the pull left nothing on disk, so removing it proves nothing")
 	}
-	if err := os.Remove(entry.(cachedChart).path); err != nil {
-		t.Fatalf("removing the artifact: %v", err)
+	for _, e := range entries {
+		if err := os.Remove(filepath.Join(counter.dir, e.Name())); err != nil {
+			t.Fatalf("removing %s: %v", e.Name(), err)
+		}
 	}
 
-	loadChartOnce(t, c, spec)
-	if counter.pulls != 2 {
-		t.Errorf("pulled %d times, want 2; a vanished artifact was reported as a hit", counter.pulls)
+	ch, err := c.loadChart(noRegistry, &action.ChartPathOptions{}, spec)
+	if err != nil {
+		t.Fatalf("loadChart() after clearing the directory: %v", err)
 	}
-	if _, stillCached := c.charts.Load(key); !stillCached {
-		t.Error("the re-pull did not repopulate the cache")
+	if counter.pulls != 1 {
+		t.Errorf("pulled %d times, want 1; the cache went back to the registry because a "+
+			"file it does not own had gone", counter.pulls)
+	}
+	if ch.Metadata.Version != "2.1.0" {
+		t.Errorf("cached chart version = %q, want 2.1.0", ch.Metadata.Version)
 	}
 }
 
@@ -257,18 +302,22 @@ func TestChartCacheDeclinesCredentialedPulls(t *testing.T) {
 	}
 }
 
-// A fetch that leaves nothing on disk — the in-memory TLS path — has no artifact
-// to reuse, and must not be recorded as though it did.
-func TestChartCacheIgnoresAFetchWithNoArtifact(t *testing.T) {
+// A fetch that offers no archive — the in-memory TLS path — has nothing to reuse,
+// and must not be recorded as though it did.
+func TestChartCacheIgnoresAFetchWithNoArchive(t *testing.T) {
 	c, _ := newCountingClient(t)
 	key, ok := chartCacheKey(testSpec("2.1.0", nil))
 	if !ok {
 		t.Fatal("chartCacheKey() reported this spec uncacheable")
 	}
 
-	c.cacheChart(key, "")
-	if _, cached := c.charts.Load(key); cached {
-		t.Error("cached an entry with no artifact behind it")
+	for name, archive := range map[string][]byte{"nil": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			c.cacheChart(key, archive)
+			if _, cached := c.charts.Load(key); cached {
+				t.Error("cached an entry with no archive behind it")
+			}
+		})
 	}
 }
 
