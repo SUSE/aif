@@ -22,10 +22,16 @@ import (
 )
 
 // convergedAt records that a spec was proven to need no upgrade, and against
-// which deployed revision that was proven.
+// which deployed release that was proven.
 type convergedAt struct {
 	revision int
 	spec     string
+	// deployed fingerprints the stored release the verdict was proven against.
+	// The revision number alone does not identify it: uninstalling a release and
+	// installing another under the same name starts again at revision 1, so
+	// without this a verdict would go on suppressing upgrades for a release it
+	// had never seen.
+	deployed string
 }
 
 // EnsureRelease reaches the manifest diff only when the stored release disagrees
@@ -57,11 +63,13 @@ type convergedAt struct {
 //     clear it by upgrading either: the dry-run render is given the same
 //     copied-forward values, which is why the manifest comes out identical.
 //
-// The latch memoizes the verdict instead of re-deriving it. It is keyed on the
-// deployed revision, so anything that changes the release — an upgrade, a
-// rollback, a human running helm by hand — invalidates it, and on a fingerprint
-// of everything in the spec that can change what the chart renders, so any edit
-// to the CR does too.
+// The latch memoizes the verdict instead of re-deriving it. It is keyed on three
+// things, each closing off a way the verdict could outlive what it was proven
+// against: the deployed revision, so an upgrade or a rollback invalidates it; a
+// fingerprint of the stored release, so a release uninstalled and reinstalled
+// under the same name does too — which the revision alone misses, because a
+// reinstall starts again at revision 1; and a fingerprint of everything in the
+// spec that can change what the chart renders, so any edit to the CR does too.
 //
 // This does not weaken drift detection, which is worth stating because it looks
 // like it should. The diff being memoized compares the rendered manifest against
@@ -86,8 +94,15 @@ func (c *helmClient) convergenceHolds(spec ReleaseSpec, deployed *ReleaseInfo) b
 	if !ok {
 		return false
 	}
+	stored, ok := deployedFingerprint(deployed)
+	if !ok {
+		return false
+	}
 	at, ok := entry.(convergedAt)
-	return ok && at.revision == deployed.Revision && at.spec == fingerprint
+	return ok &&
+		at.revision == deployed.Revision &&
+		at.spec == fingerprint &&
+		at.deployed == stored
 }
 
 func (c *helmClient) latchConvergence(spec ReleaseSpec, deployed *ReleaseInfo) {
@@ -98,7 +113,15 @@ func (c *helmClient) latchConvergence(spec ReleaseSpec, deployed *ReleaseInfo) {
 	if !ok {
 		return
 	}
-	c.converged.Store(spec.Name, convergedAt{revision: deployed.Revision, spec: fingerprint})
+	stored, ok := deployedFingerprint(deployed)
+	if !ok {
+		return
+	}
+	c.converged.Store(spec.Name, convergedAt{
+		revision: deployed.Revision,
+		spec:     fingerprint,
+		deployed: stored,
+	})
 }
 
 func (c *helmClient) dropConvergence(name string) {
@@ -119,6 +142,28 @@ func specFingerprint(spec ReleaseSpec) (string, bool) {
 		return "", false
 	}
 	return strings.Join([]string{spec.ChartRef, spec.RepoURL, spec.Version, values}, "\x00"), true
+}
+
+// deployedFingerprint identifies the stored release a verdict was proven
+// against, so that a release replaced out of band is not mistaken for the one
+// the operator verified.
+//
+// Chart name, chart version and stored values, because those are exactly what
+// the memoized diff concluded something about: that this chart, at this version,
+// with these values, renders what is already running. Not the stored manifest,
+// which would be the most direct thing to compare but costs a second read of
+// release storage on every reconcile — the very kind of per-pass work the latch
+// exists to remove.
+//
+// Returns false for the same reason specFingerprint does, and callers treat it
+// the same way: no fingerprint means no latch, which costs a render rather than
+// risking a skipped upgrade.
+func deployedFingerprint(deployed *ReleaseInfo) (string, bool) {
+	values, ok := valuesFingerprint(deployed.Values)
+	if !ok {
+		return "", false
+	}
+	return strings.Join([]string{deployed.ChartName, deployed.Version, values}, "\x00"), true
 }
 
 // valuesFingerprint mirrors valuesEqual's comparison — json.Marshal sorts map

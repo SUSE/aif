@@ -244,6 +244,63 @@ func TestConvergenceLatchInvalidatedByANewDeployedRevision(t *testing.T) {
 	}
 }
 
+// The one way a release is replaced without its revision moving: helm uninstall
+// followed by helm install starts again at revision 1. A latch keyed on the
+// revision alone matches, so the operator goes on skipping upgrades for a
+// release it never verified — and this is exactly the case where it must not,
+// because the chart now deployed is not the one the CR asks for. Before the
+// latch existed the render would have caught it on the next pass, so this is a
+// regression the latch could introduce rather than a pre-existing gap.
+func TestConvergenceLatchInvalidatedByAReinstallAtTheSameRevision(t *testing.T) {
+	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
+	counter.chartVersion = mismatchedChartVersion
+	spec := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
+	ctx := context.Background()
+
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	for range 2 {
+		if err := c.EnsureRelease(ctx, spec); err != nil {
+			t.Fatalf("latching pass error = %v", err)
+		}
+	}
+	latched := counter.pulls
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("post-latch error = %v", err)
+	}
+	if counter.pulls != latched {
+		t.Fatalf("the latch is not holding, so this test proves nothing")
+	}
+
+	// Someone uninstalls the release and installs a different chart under the
+	// same name. Storage is back to a single revision 1, as it was when the
+	// verdict was proven.
+	cfg := configOf(t, c)
+	current, err := cfg.Releases.Deployed(testRelName)
+	if err != nil {
+		t.Fatalf("Deployed() error = %v", err)
+	}
+	if _, err := cfg.Releases.Delete(testRelName, current.Version); err != nil {
+		t.Fatalf("uninstalling: %v", err)
+	}
+	replacement := testRelease(current.Version, mismatchedChartVersion, "deployed")
+	replacement.Chart.Metadata.Name = "a-completely-different-chart"
+	replacement.Manifest = "totally different"
+	replacement.Config = spec.Values
+	if err := cfg.Releases.Create(replacement); err != nil {
+		t.Fatalf("seeding the reinstalled release: %v", err)
+	}
+
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("post-reinstall error = %v", err)
+	}
+	if counter.pulls == latched {
+		t.Error("the reinstalled release was not re-verified; a verdict proven against the old release is suppressing the upgrade that would restore the requested chart")
+	}
+}
+
 // Silencing the pull loop must not silence the cause. The gauge is the only
 // outward sign left once the chart stops being pulled every minute.
 func TestUnconvergedGaugeReportsAChartVersionMismatch(t *testing.T) {
