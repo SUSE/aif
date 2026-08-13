@@ -99,19 +99,30 @@ func pullRegistry(spec ReleaseSpec) string {
 // behind it — outliving the rotation of the secret it came from by however long
 // retention runs.
 //
+// The query goes with it. A presigned archive URL — Azure SAS, S3, GCS — carries
+// its authorization there rather than in userinfo, and the CRD permits one on
+// exactly this path: the pattern only requires an oci:// or https:// prefix, and
+// the rule demanding a .tgz suffix applies solely when tls is set. Such a URL is
+// a bearer credential in its entirety, so a signature reaching the label is the
+// same disclosure as a password reaching it, with the added effect that rotating
+// the signature mints a new time series and unbounds the cardinality this label
+// is documented to keep.
+//
 // A reference that does not parse cannot be shown to be free of one, so it is
 // reported as chartUnknown rather than passed through. Nothing that parses is
 // rewritten: a bare chart name from a git source, and the ordinary URLs that make
-// up every other pull, are all returned exactly as they arrived.
+// up every other pull, are all returned exactly as they arrived — byte-identical,
+// so the label still joins across this counter and chartCacheHitsTotal.
 func pullChart(spec ReleaseSpec) string {
 	u, err := url.Parse(spec.ChartRef)
 	if err != nil {
 		return chartUnknown
 	}
-	if u.User == nil {
+	if u.User == nil && u.RawQuery == "" {
 		return spec.ChartRef
 	}
 	u.User = nil
+	u.RawQuery = ""
 	return u.String()
 }
 

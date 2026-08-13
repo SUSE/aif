@@ -121,6 +121,24 @@ func TestPullChartKeepsTheReferenceAndDropsCredentials(t *testing.T) {
 		ref:  "oci://ghp_deadbeef@ghcr.io/suse/chart/aif-ui",
 		want: "oci://ghcr.io/suse/chart/aif-ui",
 	}, {
+		// A presigned URL holds its authorization in the query, and the whole URL
+		// is the bearer token. The CRD allows one here: the .tgz rule that would
+		// otherwise shape this reference only applies when tls is set.
+		name: "presigned archive url",
+		ref:  "https://sa.blob.core.windows.net/charts/aif-ui-2.1.0.tgz?sv=2021-08-06&sig=abc%2Fdef",
+		want: "https://sa.blob.core.windows.net/charts/aif-ui-2.1.0.tgz",
+	}, {
+		// Both at once: stripping either alone still leaves a credential behind.
+		name: "userinfo and a query",
+		ref:  "https://robot:hunter2@charts.example.com/aif-ui-2.1.0.tgz?token=leaky",
+		want: "https://charts.example.com/aif-ui-2.1.0.tgz",
+	}, {
+		// The query is dropped whatever it holds. Nothing here can tell a
+		// signature from a harmless parameter, and guessing wrong is one-way.
+		name: "oci reference with a query",
+		ref:  "oci://ghcr.io/suse/chart/aif-ui?ref=main",
+		want: "oci://ghcr.io/suse/chart/aif-ui",
+	}, {
 		// Unparseable, so it cannot be shown to carry no credential. Attribution
 		// is the thing worth losing here.
 		name: "not a reference this can vouch for",
@@ -138,7 +156,9 @@ func TestPullChartKeepsTheReferenceAndDropsCredentials(t *testing.T) {
 }
 
 // The unit tests above prove the mapping; this proves the counter carries the
-// redacted label rather than the raw reference it was handed.
+// redacted label rather than the raw reference it was handed. The reference
+// carries a credential in both places it can hold one, so neither redaction can
+// be dropped without this failing.
 func TestChartPullsTotalNeverCarriesACredential(t *testing.T) {
 	chartPullsTotal.Reset()
 	t.Cleanup(chartPullsTotal.Reset)
@@ -147,7 +167,7 @@ func TestChartPullsTotalNeverCarriesACredential(t *testing.T) {
 	spec := ReleaseSpec{
 		Name:      testRelName,
 		Namespace: testNamespace,
-		ChartRef:  "https://robot:hunter2@charts.example.com/aif-ui-2.1.0.tgz",
+		ChartRef:  "https://robot:hunter2@charts.example.com/aif-ui-2.1.0.tgz?sig=abc%2Fdef",
 		Version:   "2.1.0",
 	}
 
