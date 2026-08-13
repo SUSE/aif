@@ -288,6 +288,128 @@ func TestUnconvergedGaugeStaysDownForAHealthyRelease(t *testing.T) {
 	}
 }
 
+// A gauge that only rises is an alert nobody can clear: it goes on reporting a
+// misconfiguration for as long as the process lives, however promptly someone
+// fixes it. Nothing else can lower this one — a converged release returns from
+// the actionSkip fast path long before reaching the render that raised it.
+func TestUnconvergedGaugeFallsBackToZeroOnceTheCauseIsRemoved(t *testing.T) {
+	releaseUnconverged.Reset()
+	t.Cleanup(releaseUnconverged.Reset)
+
+	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
+	ctx := context.Background()
+
+	installed := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
+	if err := c.EnsureRelease(ctx, installed); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+
+	withUnused := testSpec("2.1.0", map[string]interface{}{
+		"replicas":      float64(1),
+		"unusedByChart": "x",
+	})
+	if err := c.EnsureRelease(ctx, withUnused); err != nil {
+		t.Fatalf("unconverged pass error = %v", err)
+	}
+	if got := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName)); got != 1 {
+		t.Fatalf("aif_helm_release_unconverged = %v while the values disagree, want 1", got)
+	}
+
+	// The CR is corrected to match what storage already holds.
+	if err := c.EnsureRelease(ctx, installed); err != nil {
+		t.Fatalf("converged pass error = %v", err)
+	}
+	if got := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName)); got != 0 {
+		t.Errorf("aif_helm_release_unconverged = %v after the disagreement was "+
+			"removed, want 0; the gauge cannot be cleared once raised", got)
+	}
+}
+
+// Re-entering a disagreement the latch has already ruled on must still report
+// it. The latch memoizes the verdict, not the disagreement: the release is as
+// unconverged on the tenth pass as on the first, and the pass that skips the
+// render is the only one left to say so.
+//
+// Observed on a live cluster, where a release spent four minutes unconverged
+// while the gauge read 0 — a silent false negative, strictly worse than the
+// stale 1 that prompted this work.
+func TestUnconvergedGaugeRisesAgainWhenTheLatchHits(t *testing.T) {
+	releaseUnconverged.Reset()
+	t.Cleanup(releaseUnconverged.Reset)
+
+	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
+	ctx := context.Background()
+
+	installed := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
+	if err := c.EnsureRelease(ctx, installed); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	unconverged := testSpec("2.1.0", map[string]interface{}{
+		"replicas":      float64(1),
+		"unusedByChart": "x",
+	})
+
+	// First encounter: rendered, reported, and latched.
+	if err := c.EnsureRelease(ctx, unconverged); err != nil {
+		t.Fatalf("first unconverged pass error = %v", err)
+	}
+	if got := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName)); got != 1 {
+		t.Fatalf("gauge = %v on the first disagreement, want 1", got)
+	}
+	rendersAfterFirst := counter.pulls
+
+	// Corrected, so the gauge drops.
+	if err := c.EnsureRelease(ctx, installed); err != nil {
+		t.Fatalf("corrected pass error = %v", err)
+	}
+	if got := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName)); got != 0 {
+		t.Fatalf("gauge = %v once corrected, want 0", got)
+	}
+
+	// Re-entered. Same spec, same revision, so the latch answers without a
+	// render — and that is exactly the path that used to report nothing.
+	if err := c.EnsureRelease(ctx, unconverged); err != nil {
+		t.Fatalf("second unconverged pass error = %v", err)
+	}
+	if got := counter.pulls; got != rendersAfterFirst {
+		t.Errorf("%d extra pull(s) on the re-entry; the latch was expected to answer "+
+			"without rendering, so this test is no longer covering the latch path",
+			got-rendersAfterFirst)
+	}
+	if got := testutil.ToFloat64(releaseUnconverged.WithLabelValues(testRelName)); got != 1 {
+		t.Errorf("gauge = %v on a re-entered disagreement, want 1; a latched release "+
+			"reports converged while it is not", got)
+	}
+}
+
+// The log line is the only thing that turns the gauge into something actionable,
+// and naming the wrong keys is worse than naming none: it sends whoever is
+// debugging at the wrong side of the disagreement.
+func TestValuesKeyDiffNamesEachSideAlone(t *testing.T) {
+	stored := map[string]interface{}{
+		"appCatalog": map[string]interface{}{"useStaticCatalog": true},
+		"replicas":   float64(1),
+	}
+	requested := map[string]interface{}{
+		"replicas":      float64(1),
+		"unusedByChart": "x",
+		"alsoUnused":    "y",
+	}
+
+	onlyStored, onlyRequested := valuesKeyDiff(stored, requested)
+
+	if len(onlyStored) != 1 || onlyStored[0] != "appCatalog" {
+		t.Errorf("keys only in storage = %v, want [appCatalog]", onlyStored)
+	}
+	// Sorted, so the line reads the same on every pass rather than reshuffling
+	// with Go's map iteration order.
+	if len(onlyRequested) != 2 || onlyRequested[0] != "alsoUnused" || onlyRequested[1] != "unusedByChart" {
+		t.Errorf("keys only in the request = %v, want [alsoUnused unusedByChart]", onlyRequested)
+	}
+}
+
 // Left behind, a verdict would apply to whatever release next takes the name.
 func TestDeleteReleaseDropsTheConvergenceVerdict(t *testing.T) {
 	c, _ := newCountingClient(t)

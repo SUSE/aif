@@ -45,9 +45,17 @@ type convergedAt struct {
 //     chart version and its tag happen to match, so this is dormant rather than
 //     fixed — nothing enforces it, and a mismatch is invisible in the logs, which
 //     report a cheerful "up-to-date, skipping upgrade" on every pass.
-//   - The CR carries a values key the chart never references. The rendered
-//     manifest is identical, so the upgrade that would have written those values
-//     into storage is skipped, so storage keeps disagreeing.
+//   - The stored values and the requested values disagree, in either direction,
+//     in a way no upgrade removes. A key only the CR carries is one the chart
+//     never references: the rendered manifest is identical, so the upgrade that
+//     would have written it into storage is skipped, so storage keeps
+//     disagreeing. A key only storage carries survives for a different reason —
+//     Helm's reuseValues (pkg/action/upgrade.go) copies the previous release's
+//     config forward whenever the new values are empty, and this client sets
+//     none of ResetValues, ReuseValues or ResetThenReuseValues. So a CR that
+//     declares no values cannot clear one that is already stored, and cannot
+//     clear it by upgrading either: the dry-run render is given the same
+//     copied-forward values, which is why the manifest comes out identical.
 //
 // The latch memoizes the verdict instead of re-deriving it. It is keyed on the
 // deployed revision, so anything that changes the release — an upgrade, a

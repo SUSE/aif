@@ -102,10 +102,15 @@ var chartCacheHitsTotal = prometheus.NewCounterVec(
 //
 // This is the state the convergence latch silences, and silencing it without
 // reporting it would trade a visible symptom (a climbing pull count) for an
-// invisible one. It is a misconfiguration — most often a chart whose Chart.yaml
-// version does not match the tag the CR pins — and it wants fixing at the
-// source, not papering over. 1 while the disagreement stands, 0 once a render
-// finds spec and storage in agreement.
+// invisible one. It is a misconfiguration — either a chart whose Chart.yaml
+// version does not match the tag the CR pins, or values the CR and storage
+// disagree on — and it wants fixing at the source, not papering over. The
+// accompanying log line names which.
+//
+// 1 while the disagreement stands, 0 once a reconcile finds spec and storage in
+// agreement. Lowering it is the job of the actionSkip fast path in
+// EnsureRelease, because a converged release never reaches the render that
+// raised it.
 var releaseUnconverged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "aif_helm_release_unconverged",

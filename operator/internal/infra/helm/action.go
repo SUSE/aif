@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -419,6 +420,13 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	// diff below; this exists purely to avoid pulling a chart when neither the
 	// version nor the values can have changed anything.
 	case actionSkip:
+		// Reaching here is convergence: version and values both agree. It is also
+		// the only place that can observe a previously reported disagreement
+		// having been fixed, because reportUnconverged below is unreachable once
+		// the release compares equal to its spec. Without this the gauge only
+		// ever rises, and goes on reporting a misconfiguration long after
+		// someone corrected it.
+		releaseUnconverged.WithLabelValues(spec.Name).Set(0)
 		log.Info("Helm release version and values unchanged, skipping upgrade")
 		return nil
 	}
@@ -439,6 +447,19 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	// exact spec against this exact revision, its answer cannot change, so asking
 	// again buys nothing and pulls the chart every reconcile.
 	if c.convergenceHolds(spec, deployed) {
+		// Reaching here means the spec and storage still disagree — the fast path
+		// above would have returned otherwise — and that a render has already
+		// proved no upgrade resolves it. The verdict is what is memoized; the
+		// disagreement it describes is still live, so the gauge has to keep
+		// saying so. Skipping this would let a latched release report 0 while
+		// unconverged, which is a worse failure than the stale 1 it replaces: an
+		// alert that is merely late is survivable, one that is silent is not.
+		//
+		// The cause was named in full when the latch was created and is not
+		// repeated here, which is the point of the latch — at one reconcile a
+		// minute for the life of the CR, re-logging it is how the signal gets
+		// lost.
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
 		log.Info("Helm release already verified up-to-date for this spec, skipping upgrade",
 			"revision", deployed.Revision, "requestedVersion", spec.Version)
 		return nil
@@ -483,12 +504,42 @@ func reportUnconverged(log logr.Logger, spec ReleaseSpec, deployed *ReleaseInfo,
 
 	case !valuesEqual(deployed.Values, spec.Values):
 		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		onlyStored, onlyRequested := valuesKeyDiff(deployed.Values, spec.Values)
 		log.Info("Requested values differ from the stored release values but change "+
-			"nothing the chart renders; the release is up-to-date. "+
-			"Check for values keys this chart does not use.",
-			"requestedVersion", spec.Version)
+			"nothing the chart renders; the release is up-to-date and cannot "+
+			"converge on its own. Keys only in storage are ones Helm copies "+
+			"forward on every upgrade because the CR requests no values at all — "+
+			"declare them in the CR to make the two agree. Keys only in the CR "+
+			"are ones this chart never reads.",
+			"requestedVersion", spec.Version,
+			"keysOnlyInStorage", onlyStored,
+			"keysOnlyInRequest", onlyRequested)
 
 	default:
 		releaseUnconverged.WithLabelValues(spec.Name).Set(0)
 	}
+}
+
+// valuesKeyDiff names the top-level keys each side holds alone, so the log says
+// which values disagree instead of leaving the reader to run `helm get values`
+// and diff it against the CR by hand.
+//
+// Keys only, never the values under them: this is written to a log that outlives
+// any credential in it, and a key name is what identifies the misconfiguration
+// anyway. Top level only, for the same reason a deep diff would be worse to
+// read than the two sources it is summarising.
+func valuesKeyDiff(stored, requested map[string]interface{}) (onlyStored, onlyRequested []string) {
+	for key := range stored {
+		if _, ok := requested[key]; !ok {
+			onlyStored = append(onlyStored, key)
+		}
+	}
+	for key := range requested {
+		if _, ok := stored[key]; !ok {
+			onlyRequested = append(onlyRequested, key)
+		}
+	}
+	sort.Strings(onlyStored)
+	sort.Strings(onlyRequested)
+	return onlyStored, onlyRequested
 }
