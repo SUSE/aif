@@ -31,6 +31,20 @@ type helmClient struct {
 	settings *cli.EnvSettings
 	registry *registry.Client
 	locks    sync.Map
+	// converged memoizes "this spec needs no upgrade" verdicts by release name.
+	// See convergenceHolds for why re-deriving them is what pulled the chart on
+	// a loop.
+	converged sync.Map
+	// charts maps chartCacheKey to the archive a pull already downloaded, so the
+	// render and the upgrade of one reconcile share a single fetch.
+	charts sync.Map
+
+	// Test seams, nil in production. Between them they cover everything
+	// EnsureRelease needs from outside the process — a cluster and a registry —
+	// so its decision paths can be driven end to end, and the chart pulls they
+	// do or do not perform counted.
+	actionConfigFn func(ctx context.Context, namespace string) (*action.Configuration, error)
+	fetchChartFn   chartFetcher
 }
 
 func New(settings *cli.EnvSettings) (HelmClient, error) {
@@ -49,6 +63,13 @@ func New(settings *cli.EnvSettings) (HelmClient, error) {
 }
 
 func (c *helmClient) actionConfig(ctx context.Context, namespace string) (*action.Configuration, error) {
+	if c.actionConfigFn != nil {
+		return c.actionConfigFn(ctx, namespace)
+	}
+	return c.initActionConfig(ctx, namespace)
+}
+
+func (c *helmClient) initActionConfig(ctx context.Context, namespace string) (*action.Configuration, error) {
 	log := logging.FromContext(ctx, "helm")
 
 	logging.Trace(log).Info(

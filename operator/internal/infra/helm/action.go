@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/SUSE/aif-operator/internal/logging"
+	"github.com/go-logr/logr"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
@@ -106,11 +108,16 @@ func (c *helmClient) upgrade(
 	return nil
 }
 
+// renderUpgrade dry-runs the upgrade and returns the manifest it would apply,
+// along with the pulled chart's own version. The caller needs that version to
+// tell a release that is genuinely up-to-date apart from a cosmetic version
+// mismatch: Helm records the chart's version, not the requested one, so the two
+// disagreeing means no upgrade will ever reconcile them.
 func (c *helmClient) renderUpgrade(
 	ctx context.Context,
 	cfg *action.Configuration,
 	spec ReleaseSpec,
-) (string, error) {
+) (manifest string, chartVersion string, err error) {
 	up := action.NewUpgrade(cfg)
 	up.Namespace = spec.Namespace
 	up.Version = spec.Version
@@ -124,15 +131,18 @@ func (c *helmClient) renderUpgrade(
 
 	ch, err := c.loadChart(up.SetRegistryClient, &up.ChartPathOptions, spec)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	rel, err := up.RunWithContext(ctx, spec.Name, ch, spec.Values)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return rel.Manifest, nil
+	if ch.Metadata != nil {
+		chartVersion = ch.Metadata.Version
+	}
+	return rel.Manifest, chartVersion, nil
 }
 
 // deployedManifest returns the manifest of the revision actually running in the
@@ -170,6 +180,13 @@ func (c *helmClient) DeleteRelease(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+
+	// Dropped up front, not on the success path: a release that is being removed
+	// must not leave a verdict behind for a later release of the same name to
+	// match against, and the uninstall below returns early when Helm has already
+	// forgotten the release.
+	c.dropConvergence(name)
+	releaseUnconverged.DeleteLabelValues(name)
 
 	uninstall := action.NewUninstall(cfg)
 	uninstall.DeletionPropagation = "foreground"
@@ -403,6 +420,13 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	// diff below; this exists purely to avoid pulling a chart when neither the
 	// version nor the values can have changed anything.
 	case actionSkip:
+		// Reaching here is convergence: version and values both agree. It is also
+		// the only place that can observe a previously reported disagreement
+		// having been fixed, because reportUnconverged below is unreachable once
+		// the release compares equal to its spec. Without this the gauge only
+		// ever rises, and goes on reporting a misconfiguration long after
+		// someone corrected it.
+		releaseUnconverged.WithLabelValues(spec.Name).Set(0)
 		log.Info("Helm release version and values unchanged, skipping upgrade")
 		return nil
 	}
@@ -418,18 +442,125 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 			"requestedVersion", spec.Version, "deployedVersion", deployed.Version)
 	}
 
+	// The manifest diff below is the only thing that can clear this disagreement,
+	// and it costs a chart pull to compute. Once it has been computed for this
+	// exact spec against this exact stored release, asking again buys nothing
+	// until one of those changes or the verdict ages out — so without the latch
+	// it is recomputed, and the chart pulled, on every single reconcile.
+	if c.convergenceHolds(spec, deployed) {
+		// Reaching here means the spec and storage still disagree — the fast path
+		// above would have returned otherwise — and that a render has already
+		// proved no upgrade resolves it. The verdict is what is memoized; the
+		// disagreement it describes is still live, so the gauge has to keep
+		// saying so. Skipping this would let a latched release report 0 while
+		// unconverged, which is a worse failure than the stale 1 it replaces: an
+		// alert that is merely late is survivable, one that is silent is not.
+		//
+		// The cause was named in full when the latch was created and is not
+		// repeated here, which is the point of the latch — at one reconcile a
+		// minute for the life of the CR, re-logging it is how the signal gets
+		// lost.
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		log.Info("Helm release already verified up-to-date for this spec, skipping upgrade",
+			"revision", deployed.Revision, "requestedVersion", spec.Version)
+		return nil
+	}
+
 	// An error here leaves current empty, which forces the diff below to report a
 	// change — erring towards attempting the upgrade rather than skipping it.
 	current, _ := deployedManifest(cfg, spec.Name)
-	rendered, err := c.renderUpgrade(ctx, cfg, spec)
+	rendered, chartVersion, err := c.renderUpgrade(ctx, cfg, spec)
 	if err != nil {
 		return err
 	}
 
 	if !diffManifests(current, rendered) {
+		// Up-to-date, yet something in the spec still disagrees with storage or
+		// this code would have taken the actionSkip fast path. Whatever it is, no
+		// upgrade can resolve it, so record the verdict and report the cause
+		// rather than rediscovering both on the next pass.
+		c.latchConvergence(spec, deployed)
+		reportUnconverged(log, spec, deployed, chartVersion)
 		log.Info("Helm release is up-to-date, skipping upgrade")
 		return nil
 	}
 	log.Info("Detected Helm manifest changes, upgrading")
 	return c.upgrade(ctx, cfg, spec)
+}
+
+// reportUnconverged names why a release that needs no upgrade still does not
+// compare equal to its spec, and raises a gauge for as long as that is true.
+//
+// Left unreported this is genuinely invisible: the release is healthy, the logs
+// say "up-to-date", and the only outward sign used to be chart pulls on a loop —
+// which the latch has just removed.
+func reportUnconverged(log logr.Logger, spec ReleaseSpec, deployed *ReleaseInfo, chartVersion string) {
+	switch {
+	case chartVersion != "" && chartVersion != spec.Version:
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		log.Info("Chart version does not match the requested version; "+
+			"the release is up-to-date but will never compare equal to its spec. "+
+			"Align the chart's Chart.yaml version with the tag the CR pins.",
+			"requestedVersion", spec.Version, "chartVersion", chartVersion)
+
+	case !valuesEqual(deployed.Values, spec.Values):
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		onlyStored, onlyRequested := valuesKeyDiff(deployed.Values, spec.Values)
+		log.Info("Requested values differ from the stored release values but change "+
+			"nothing the chart renders; the release is up-to-date and cannot "+
+			"converge on its own. Keys only in storage are ones Helm copies "+
+			"forward on every upgrade because the CR requests no values at all — "+
+			"declare them in the CR to make the two agree. Keys only in the CR "+
+			"are ones this chart never reads.",
+			"requestedVersion", spec.Version,
+			"keysOnlyInStorage", onlyStored,
+			"keysOnlyInRequest", onlyRequested)
+
+	default:
+		// Neither named cause applies, yet the release still did not take the
+		// actionSkip fast path, so something disagrees. What is left is a stored
+		// version the requested chart cannot update: the chart now pulled matches
+		// the CR, but it renders exactly what is already deployed, so no upgrade
+		// runs and storage keeps the version it was originally deployed from.
+		// A version-only chart bump leaves precisely this behind.
+		//
+		// Raised, not lowered. This function is reached only on a disagreement,
+		// so reporting convergence here would be wrong on its own terms — and it
+		// would also contradict the latch path, which reports 1 for this same
+		// release on every pass after this one. Lowering it would make the one
+		// pass that can explain the cause the only one that denies there is one.
+		releaseUnconverged.WithLabelValues(spec.Name).Set(1)
+		log.Info("Stored release version differs from the requested version, and the "+
+			"requested chart renders no change, so no upgrade will run to update "+
+			"the record. The release is already running what the CR asks for; only "+
+			"the version Helm stored lags behind, and it will keep lagging. Force "+
+			"a new revision if the recorded version has to match.",
+			"requestedVersion", spec.Version,
+			"deployedVersion", deployed.Version,
+			"chartVersion", chartVersion)
+	}
+}
+
+// valuesKeyDiff names the top-level keys each side holds alone, so the log says
+// which values disagree instead of leaving the reader to run `helm get values`
+// and diff it against the CR by hand.
+//
+// Keys only, never the values under them: this is written to a log that outlives
+// any credential in it, and a key name is what identifies the misconfiguration
+// anyway. Top level only, for the same reason a deep diff would be worse to
+// read than the two sources it is summarising.
+func valuesKeyDiff(stored, requested map[string]interface{}) (onlyStored, onlyRequested []string) {
+	for key := range stored {
+		if _, ok := requested[key]; !ok {
+			onlyStored = append(onlyStored, key)
+		}
+	}
+	for key := range requested {
+		if _, ok := stored[key]; !ok {
+			onlyRequested = append(onlyRequested, key)
+		}
+	}
+	sort.Strings(onlyStored)
+	sort.Strings(onlyRequested)
+	return onlyStored, onlyRequested
 }

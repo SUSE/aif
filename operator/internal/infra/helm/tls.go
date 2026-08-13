@@ -17,15 +17,12 @@ limitations under the License.
 package helm
 
 import (
-	"bytes"
 	"crypto/tls"
-	"fmt"
 	"net/http"
 	"strings"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/registry"
 )
@@ -82,38 +79,93 @@ func (c *helmClient) loadChartHTTPSWithTLS(ref string, auth *RegistryAuth, tlsCf
 	if err != nil {
 		return nil, err
 	}
-	ch, err := loader.LoadArchive(bytes.NewReader(data.Bytes()))
+	return loadArchive(data.Bytes())
+}
+
+// chartFetcher fetches the chart for a release spec. It returns the chart along
+// with the archive it was parsed from, or nil when the fetch has no archive to
+// offer — which means there is nothing to reuse.
+type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, []byte, error)
+
+// loadChart is the single point every Helm-SDK chart fetch passes through —
+// install, upgrade, and the dry-run render that gates the upgrade — so it is
+// where both the pull counter and the chart cache belong. Counting here counts
+// the extension chart's registry traffic exactly, and caching here covers all
+// three callers without any of them knowing about it.
+//
+// Helm-SDK, not every byte the operator pulls: repository index fetches go out
+// through helm.FetchIndex, and a git-backed blueprint chart is downloaded from
+// the Rancher catalog API by rancher.ChartFetcher. Neither is counted here.
+// Both are in-cluster, so neither shows up as registry egress, which is what
+// this counter exists to track.
+func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
+	host, chartLabel := pullRegistry(spec), pullChart(spec)
+
+	key, cacheable := chartCacheKey(spec)
+	if cacheable {
+		if ch, ok := c.cachedChart(key); ok {
+			// The registry client the OCI path would have installed on the action
+			// is only ever read by LocateChart, which a hit skips, so there is
+			// nothing to set up here.
+			chartCacheHitsTotal.WithLabelValues(host, chartLabel, spec.Version).Inc()
+			return ch, nil
+		}
+	}
+
+	// Counted before the attempt, not after a success: a pull that fails still
+	// cost a round trip to the registry, and a failing pull retried on every
+	// reconcile is precisely the pattern this metric exists to expose.
+	chartPullsTotal.WithLabelValues(host, chartLabel, spec.Version).Inc()
+
+	ch, archive, err := c.fetchChart(setRegistry, opts, spec)
 	if err != nil {
 		return nil, err
 	}
-	if err := action.CheckDependencies(ch, ch.Metadata.Dependencies); err != nil {
-		return nil, fmt.Errorf("missing dependencies: %w", err)
+	if cacheable {
+		c.cacheChart(key, archive)
 	}
 	return ch, nil
 }
 
-// loadChart resolves and loads the chart for spec, applying auth and TLS across
+func (c *helmClient) fetchChart(
+	setRegistry func(*registry.Client),
+	opts *action.ChartPathOptions,
+	spec ReleaseSpec,
+) (*chart.Chart, []byte, error) {
+	if c.fetchChartFn != nil {
+		return c.fetchChartFn(setRegistry, opts, spec)
+	}
+	return c.pullChart(setRegistry, opts, spec)
+}
+
+// pullChart resolves and loads the chart for spec, applying auth and TLS across
 // OCI and HTTPS. setRegistry sets the registry client on the calling action.
-func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
+func (c *helmClient) pullChart(
+	setRegistry func(*registry.Client),
+	opts *action.ChartPathOptions,
+	spec ReleaseSpec,
+) (*chart.Chart, []byte, error) {
 	ref := spec.ChartRef
 	if strings.HasPrefix(ref, ociSchemePrefix) {
 		reg, err := c.ociRegistryClient(spec.RegistryAuth, spec.TLSConfig)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		setRegistry(reg)
-		ch, _, err := resolveChart(opts, c.settings, ref)
-		return ch, err
+		return resolveChart(opts, c.settings, ref)
 	}
-	// HTTPS with in-memory TLS: bypass file-based ChartPathOptions.
+	// HTTPS with in-memory TLS: bypass file-based ChartPathOptions. Nothing is
+	// offered for reuse — a spec carrying its own TLS trust is declined by
+	// chartCacheKey anyway, and handing the archive over would leave the decline
+	// as the only thing standing between a private chart and the cache.
 	if spec.TLSConfig != nil {
-		return c.loadChartHTTPSWithTLS(ref, spec.RegistryAuth, spec.TLSConfig)
+		ch, err := c.loadChartHTTPSWithTLS(ref, spec.RegistryAuth, spec.TLSConfig)
+		return ch, nil, err
 	}
 	// HTTPS without TLS: existing path; basic auth via ChartPathOptions.
 	if spec.RegistryAuth != nil {
 		opts.Username = spec.RegistryAuth.Username
 		opts.Password = spec.RegistryAuth.Password
 	}
-	ch, _, err := resolveChart(opts, c.settings, ref)
-	return ch, err
+	return resolveChart(opts, c.settings, ref)
 }

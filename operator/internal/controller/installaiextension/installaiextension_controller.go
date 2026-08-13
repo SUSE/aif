@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	urlpkg "net/url"
@@ -73,6 +74,10 @@ const (
 	reasonReleasePending         = "ReleasePending"
 	reasonReleasePendingTimedOut = "ReleasePendingTimedOut"
 
+	// reasonReadinessTimedOut is the verdict recorded when a readiness wait
+	// exceeds ReadinessTimeout, whichever check was being waited on.
+	reasonReadinessTimedOut = "TimedOut"
+
 	conditionTypeReady           = "Ready"
 	conditionTypeHelmInstalled   = "HelmInstalled"
 	conditionTypeDeploymentReady = "DeploymentReady"
@@ -102,13 +107,50 @@ type InstallAIExtensionReconciler struct {
 	// direct call so tests can drive the reconcile paths end to end against a stub
 	// release backend; nil means newHelmClientForNamespace.
 	helmClientFor func(namespace string) (helmClient.HelmClient, error)
+	// helmClients memoizes those clients by namespace. See helmFor.
+	helmClients sync.Map
 }
 
+// helmFor returns the Helm client for a namespace, building it once and reusing
+// it for the life of the process.
+//
+// The reuse is load-bearing, not an optimization. The client carries the
+// convergence latch and the downloaded-chart cache, both of which exist to stop
+// the operator re-deriving the same verdict on every pass. Both live on the
+// client, so handing each reconcile a freshly built one throws them away before
+// the next pass can read them: the latch is written, the client is dropped, and
+// the following reconcile pulls the chart again to rediscover what the last one
+// already knew. That is the exact loop this work set out to remove, so building
+// per call silently undoes it while every unit test — each of which holds one
+// client across its passes — still passes.
+//
+// Keyed by namespace because the client's cli.EnvSettings is namespace-scoped.
+//
+// The helmClientFor seam is consulted through the same cache rather than ahead
+// of it. Short-circuiting on the seam is what let this go unnoticed: it made the
+// production path the only uncached one, so no end-to-end controller test could
+// reach the behaviour that was broken.
 func (r *InstallAIExtensionReconciler) helmFor(namespace string) (helmClient.HelmClient, error) {
-	if r.helmClientFor != nil {
-		return r.helmClientFor(namespace)
+	if existing, ok := r.helmClients.Load(namespace); ok {
+		return existing.(helmClient.HelmClient), nil
 	}
-	return newHelmClientForNamespace(namespace)
+
+	build := newHelmClientForNamespace
+	if r.helmClientFor != nil {
+		build = r.helmClientFor
+	}
+	built, err := build(namespace)
+	if err != nil {
+		// Deliberately not cached: a client that failed to build must be retried
+		// on the next pass, not remembered as a permanent failure.
+		return nil, err
+	}
+
+	// LoadOrStore, not Store: two reconciles for different extensions in one
+	// namespace can race here, and the loser must adopt the winner's client
+	// rather than install a second one whose latch starts empty.
+	actual, _ := r.helmClients.LoadOrStore(namespace, built)
+	return actual.(helmClient.HelmClient), nil
 }
 
 // registryHostAllowed reports whether the chart's registry host may be contacted.
@@ -441,30 +483,17 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
 	}
 
+	// A readiness check that errors and one that reports not-ready share a clock:
+	// both mean the deployment is not usable yet, and a check flapping between the
+	// two must not keep restarting the wait.
 	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.Client, namespace, releaseName, logger)
 	if err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
-			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err), ext.Generation)
-		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
+		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
+			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err))
 	}
 	if !deployStatus.Ready {
-		waitingSince := r.getWaitingSince(ext, annotationWaitingSince)
-		if waitingSince.IsZero() {
-			r.setWaitingSince(ext, annotationWaitingSince)
-			if err := r.updateAnnotations(ctx, ext); err != nil {
-				return ctrl.Result{}, err
-			}
-			// RequeueAfter (not Requeue) so the next reconcile's cached Get does
-			// not race this write's propagation into the informer cache.
-			return ctrl.Result{RequeueAfter: readinessRequeue}, nil
-		} else if time.Since(waitingSince) > r.ReadinessTimeout {
-			msg := fmt.Sprintf("Deployment not ready after %s: %s", r.ReadinessTimeout, deployStatus.Message)
-			setTerminalFailure(ext, conditionTypeDeploymentReady, "TimedOut", msg)
-			return ctrl.Result{}, nil
-		}
-		setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionFalse,
-			"NotReady", deployStatus.Message, ext.Generation)
-		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
+		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
+			"NotReady", deployStatus.Message)
 	}
 
 	// Deployment is ready: clear the waiting marker and continue in the same pass
@@ -485,18 +514,30 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
 		"Available", deployStatus.Message, ext.Generation)
 
+	// Both Service failures share a clock for the same reason the deployment ones
+	// do: either way the Service is not yet usable, and the chart is free to
+	// create it a moment after the deployment goes ready.
 	svc, err := kubernetes.ServiceForHelmRelease(ctx, r.Client, namespace, releaseName)
 	if err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeServiceReady, metav1.ConditionFalse,
-			"ServiceFailed", fmt.Sprintf("Service not found: %v", err), ext.Generation)
-		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
+		return r.awaitReadiness(ctx, ext, annotationServiceWaitingSince, conditionTypeServiceReady,
+			"ServiceFailed", fmt.Sprintf("Service not found: %v", err))
 	}
 
 	svcName, svcNamespace, svcPort, err := installaiextension.ServiceEndpoint(svc)
 	if err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeServiceReady, metav1.ConditionFalse,
-			"ServiceFailed", fmt.Sprintf("Service endpoint error: %v", err), ext.Generation)
-		return ctrl.Result{RequeueAfter: readinessRequeue}, nil
+		return r.awaitReadiness(ctx, ext, annotationServiceWaitingSince, conditionTypeServiceReady,
+			"ServiceFailed", fmt.Sprintf("Service endpoint error: %v", err))
+	}
+
+	// Resolved: drop the marker so a later Service outage is timed from when it
+	// starts rather than inheriting this window and failing on first observation.
+	if !r.getWaitingSince(ext, annotationServiceWaitingSince).IsZero() {
+		r.clearWaitingSince(ext, annotationServiceWaitingSince)
+		// updateAnnotations, not Update: status fields set earlier in this pass
+		// must survive until persistStatus writes them.
+		if err := r.updateAnnotations(ctx, ext); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	svcURL := fmt.Sprintf("http://%s.%s:%d", svcName, svcNamespace, svcPort)
@@ -715,6 +756,56 @@ func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 }
 
+// awaitReadiness advances a bounded wait on an install step that has not
+// succeeded yet. It stamps the start time on the first observation, requeues
+// while the wait is still inside ReadinessTimeout, and records a terminal
+// failure once it is past it.
+//
+// Every not-yet-ready path in the Helm install returns through here so that none
+// of them can requeue indefinitely. An unbounded readiness requeue is not merely
+// a CR that stays un-Ready until someone notices: readinessRequeue is six times
+// faster than healthCheckInterval, and every one of those passes re-enters
+// EnsureRelease from the top. A check that never recovers therefore drives
+// reconciles — and any chart pull they decide to make — at six times the
+// intended rate, for as long as the CR exists, while reporting nothing on pass
+// 10,000 that it did not already report on pass 2.
+//
+// annotation names the clock. Two waits that are cleared at different points
+// need different keys, or the one cleared earlier resets the other's start time
+// and the timeout never fires.
+func (r *InstallAIExtensionReconciler) awaitReadiness(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	annotation string,
+	condType string,
+	reason string,
+	message string,
+) (ctrl.Result, error) {
+	waitingSince := r.getWaitingSince(ext, annotation)
+	switch {
+	case waitingSince.IsZero():
+		r.setWaitingSince(ext, annotation)
+		if err := r.updateAnnotations(ctx, ext); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Fall through to the condition below rather than returning here, for the
+		// reason handlePendingRelease gives: the first observation is the one an
+		// automated gate is most likely to read, and leaving it uncondition-ed
+		// advertises the previous pass's success for a whole requeue interval.
+
+	case time.Since(waitingSince) > r.ReadinessTimeout:
+		setTerminalFailure(ext, condType, reasonReadinessTimedOut,
+			fmt.Sprintf("%s (still not resolved after %s)", message, r.ReadinessTimeout))
+		return ctrl.Result{}, nil
+	}
+
+	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
+		reason, message, ext.Generation)
+	// RequeueAfter (not Requeue) so the next reconcile's cached Get does not race
+	// the annotation write's propagation into the informer cache.
+	return ctrl.Result{RequeueAfter: readinessRequeue}, nil
+}
+
 // handlePendingRelease turns an in-flight Helm operation into a bounded requeue,
 // and reports whether it took ownership of the outcome. Callers pass the
 // EnsureRelease error verbatim — including nil — and fall through to their own
@@ -856,6 +947,13 @@ const (
 	// pass, so sharing a key would let either clear or inherit the other's start
 	// time and time out against the wrong clock.
 	annotationReleasePendingSince = "ai-factory.suse.com/release-pending-since"
+	// annotationServiceWaitingSince times the wait on the release's Service
+	// becoming resolvable. Distinct from annotationWaitingSince for the same
+	// reason annotationReleasePendingSince is: the deployment wait is cleared the
+	// moment the deployment reports ready, which is every pass that then goes on
+	// to look for the Service. Sharing the key would reset the Service wait's
+	// start time on each of those passes, so its timeout would never fire.
+	annotationServiceWaitingSince = "ai-factory.suse.com/service-waiting-since"
 )
 
 func (r *InstallAIExtensionReconciler) getWaitingSince(ext *v1alpha1.InstallAIExtension, key string) time.Time {
