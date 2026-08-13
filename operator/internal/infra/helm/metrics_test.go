@@ -18,6 +18,7 @@ package helm
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -84,6 +85,85 @@ func TestPullRegistryDropsEmbeddedCredentials(t *testing.T) {
 
 	if got != "charts.example.com" {
 		t.Errorf("pullRegistry() = %q, want the bare host", got)
+	}
+}
+
+// The chart label carries the whole reference, so unlike the registry label it
+// gets no redaction for free from url.Host. Everything that parses has to come
+// back byte-identical, or the label stops joining across the two counters.
+func TestPullChartKeepsTheReferenceAndDropsCredentials(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{{
+		name: "oci chart url",
+		ref:  "oci://ghcr.io/suse/chart/aif-ui",
+		want: "oci://ghcr.io/suse/chart/aif-ui",
+	}, {
+		name: "https archive",
+		ref:  "https://charts.example.com/aif-ui-2.1.0.tgz",
+		want: "https://charts.example.com/aif-ui-2.1.0.tgz",
+	}, {
+		// A git source names the chart, not a URL. It must survive untouched.
+		name: "bare chart name",
+		ref:  "aif-ui",
+		want: "aif-ui",
+	}, {
+		name: "username and password",
+		ref:  "https://robot:hunter2@charts.example.com/aif-ui-2.1.0.tgz",
+		want: "https://charts.example.com/aif-ui-2.1.0.tgz",
+	}, {
+		// A token in the username position with no password is the shape most
+		// registries take, and it is the one a naive password-only redaction
+		// misses.
+		name: "token in the username position",
+		ref:  "oci://ghp_deadbeef@ghcr.io/suse/chart/aif-ui",
+		want: "oci://ghcr.io/suse/chart/aif-ui",
+	}, {
+		// Unparseable, so it cannot be shown to carry no credential. Attribution
+		// is the thing worth losing here.
+		name: "not a reference this can vouch for",
+		ref:  "oci://ghcr.io/suse/aif-ui\x7f",
+		want: chartUnknown,
+	}}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pullChart(ReleaseSpec{ChartRef: tt.ref}); got != tt.want {
+				t.Errorf("pullChart(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
+// The unit tests above prove the mapping; this proves the counter carries the
+// redacted label rather than the raw reference it was handed.
+func TestChartPullsTotalNeverCarriesACredential(t *testing.T) {
+	chartPullsTotal.Reset()
+	t.Cleanup(chartPullsTotal.Reset)
+
+	c, _ := newCountingClient(t)
+	spec := ReleaseSpec{
+		Name:      testRelName,
+		Namespace: testNamespace,
+		ChartRef:  "https://robot:hunter2@charts.example.com/aif-ui-2.1.0.tgz",
+		Version:   "2.1.0",
+	}
+
+	if err := c.EnsureRelease(context.Background(), spec); err != nil {
+		t.Fatalf("EnsureRelease() error = %v", err)
+	}
+
+	// Compared against the full exposition rather than read by label, because the
+	// leak this guards against is a label value nobody would think to look up.
+	// Any deviation, including the raw reference, fails here.
+	if err := testutil.CollectAndCompare(chartPullsTotal, strings.NewReader(`
+# HELP aif_helm_chart_pulls_total Number of Helm chart pulls that left the process for a registry, by destination registry host, chart reference and requested version.
+# TYPE aif_helm_chart_pulls_total counter
+aif_helm_chart_pulls_total{chart="https://charts.example.com/aif-ui-2.1.0.tgz",registry="charts.example.com",version="2.1.0"} 1
+`)); err != nil {
+		t.Errorf("the counter is not carrying the redacted reference: %v", err)
 	}
 }
 

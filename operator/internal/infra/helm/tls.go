@@ -109,7 +109,7 @@ type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPat
 // Both are in-cluster, so neither shows up as registry egress, which is what
 // this counter exists to track.
 func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
-	host := pullRegistry(spec)
+	host, chartLabel := pullRegistry(spec), pullChart(spec)
 
 	key, cacheable := chartCacheKey(spec)
 	if cacheable {
@@ -117,7 +117,7 @@ func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.
 			// The registry client the OCI path would have installed on the action
 			// is only ever read by LocateChart, which a hit skips, so there is
 			// nothing to set up here.
-			chartCacheHitsTotal.WithLabelValues(host, spec.ChartRef, spec.Version).Inc()
+			chartCacheHitsTotal.WithLabelValues(host, chartLabel, spec.Version).Inc()
 			return ch, nil
 		}
 	}
@@ -125,7 +125,7 @@ func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.
 	// Counted before the attempt, not after a success: a pull that fails still
 	// cost a round trip to the registry, and a failing pull retried on every
 	// reconcile is precisely the pattern this metric exists to expose.
-	chartPullsTotal.WithLabelValues(host, spec.ChartRef, spec.Version).Inc()
+	chartPullsTotal.WithLabelValues(host, chartLabel, spec.Version).Inc()
 
 	ch, path, err := c.fetchChart(setRegistry, opts, spec)
 	if err != nil {

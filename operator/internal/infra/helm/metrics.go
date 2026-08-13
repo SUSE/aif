@@ -28,6 +28,11 @@ import (
 // to a host it never reached.
 const registryUnknown = "unknown"
 
+// chartUnknown labels a pull whose chart reference could not be parsed, and so
+// could not be shown to carry no credential. Fewer pulls are attributable; none
+// carry a secret.
+const chartUnknown = "unknown"
+
 // chartPullsTotal counts chart fetches that leave the process for a registry.
 //
 // A steady-state operator should leave this flat: charts are pulled to install
@@ -70,7 +75,8 @@ var chartPullsTotal = prometheus.NewCounterVec(
 // Only the host is taken, and url.Host excludes userinfo. That is deliberate: a
 // credential embedded in a chart URL must not reach a metric, which is readable
 // by anything that can scrape the endpoint and is retained long after the
-// credential is rotated.
+// credential is rotated. See pullChart, which carries the same rule to the label
+// that carries the whole reference.
 func pullRegistry(spec ReleaseSpec) string {
 	for _, raw := range []string{spec.ChartRef, spec.RepoURL} {
 		if u, err := url.Parse(raw); err == nil && u.Host != "" {
@@ -78,6 +84,35 @@ func pullRegistry(spec ReleaseSpec) string {
 		}
 	}
 	return registryUnknown
+}
+
+// pullChart reports the chart a pull is for, with any embedded credential
+// removed.
+//
+// The registry label gets this for free, because url.Host excludes userinfo.
+// This label does not: it carries the whole reference, which is the point — it
+// is what distinguishes two charts on one host — and a chart URL is a place a
+// credential can legitimately be written. The CRD constrains source.helm.chartURL
+// only to start with oci:// or https://, so https://user:token@host/chart.tgz is
+// a valid CR, and unredacted it would put that token in the time series database,
+// in every dashboard reading from it, and in whatever long-term storage sits
+// behind it — outliving the rotation of the secret it came from by however long
+// retention runs.
+//
+// A reference that does not parse cannot be shown to be free of one, so it is
+// reported as chartUnknown rather than passed through. Nothing that parses is
+// rewritten: a bare chart name from a git source, and the ordinary URLs that make
+// up every other pull, are all returned exactly as they arrived.
+func pullChart(spec ReleaseSpec) string {
+	u, err := url.Parse(spec.ChartRef)
+	if err != nil {
+		return chartUnknown
+	}
+	if u.User == nil {
+		return spec.ChartRef
+	}
+	u.User = nil
+	return u.String()
 }
 
 // chartCacheHitsTotal counts chart loads served from an already-downloaded
