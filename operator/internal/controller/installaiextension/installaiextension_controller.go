@@ -756,22 +756,6 @@ func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 }
 
-// handlePendingRelease turns an in-flight Helm operation into a bounded requeue,
-// and reports whether it took ownership of the outcome. Callers pass the
-// EnsureRelease error verbatim — including nil — and fall through to their own
-// handling when it returns false.
-//
-// A pending release is a timing state, not a verdict: Helm marks a release
-// pending for the whole duration of an install or upgrade. Failing terminally on
-// it would give up on an operation that is still running. But the marker also
-// survives a process killed mid-upgrade, and nothing in the reconcile loop can
-// clear that — so the wait is timed, and past pendingReleaseTimeout the CR fails
-// terminally with the manual step named rather than requeuing forever.
-//
-// Shared by both source kinds deliberately. Every path that calls EnsureRelease
-// can see this error, and handling it in only one of them means the same cluster
-// state produces a requeue or a terminal failure depending on how the extension
-// happens to be sourced.
 // awaitReadiness advances a bounded wait on an install step that has not
 // succeeded yet. It stamps the start time on the first observation, requeues
 // while the wait is still inside ReadinessTimeout, and records a terminal
@@ -822,6 +806,22 @@ func (r *InstallAIExtensionReconciler) awaitReadiness(
 	return ctrl.Result{RequeueAfter: readinessRequeue}, nil
 }
 
+// handlePendingRelease turns an in-flight Helm operation into a bounded requeue,
+// and reports whether it took ownership of the outcome. Callers pass the
+// EnsureRelease error verbatim — including nil — and fall through to their own
+// handling when it returns false.
+//
+// A pending release is a timing state, not a verdict: Helm marks a release
+// pending for the whole duration of an install or upgrade. Failing terminally on
+// it would give up on an operation that is still running. But the marker also
+// survives a process killed mid-upgrade, and nothing in the reconcile loop can
+// clear that — so the wait is timed, and past pendingReleaseTimeout the CR fails
+// terminally with the manual step named rather than requeuing forever.
+//
+// Shared by both source kinds deliberately. Every path that calls EnsureRelease
+// can see this error, and handling it in only one of them means the same cluster
+// state produces a requeue or a terminal failure depending on how the extension
+// happens to be sourced.
 func (r *InstallAIExtensionReconciler) handlePendingRelease(
 	ctx context.Context,
 	ext *v1alpha1.InstallAIExtension,
