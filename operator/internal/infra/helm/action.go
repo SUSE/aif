@@ -444,8 +444,9 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 
 	// The manifest diff below is the only thing that can clear this disagreement,
 	// and it costs a chart pull to compute. Once it has been computed for this
-	// exact spec against this exact revision, its answer cannot change, so asking
-	// again buys nothing and pulls the chart every reconcile.
+	// exact spec against this exact stored release, asking again buys nothing
+	// until one of those changes or the verdict ages out — so without the latch
+	// it is recomputed, and the chart pulled, on every single reconcile.
 	if c.convergenceHolds(spec, deployed) {
 		// Reaching here means the spec and storage still disagree — the fast path
 		// above would have returned otherwise — and that a render has already

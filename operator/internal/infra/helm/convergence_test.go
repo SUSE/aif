@@ -19,6 +19,7 @@ package helm
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"helm.sh/helm/v3/pkg/action"
@@ -54,6 +55,27 @@ func noChartCache(c *helmClient, counter *pullCounter) {
 	) (*chart.Chart, string, error) {
 		ch, _, err := counter.fetch(setRegistry, opts, spec)
 		return ch, "", err
+	}
+}
+
+// backdateConvergence ages every latched verdict by d, standing in for time
+// passing.
+func backdateConvergence(t *testing.T, c *helmClient, d time.Duration) {
+	t.Helper()
+
+	aged := 0
+	c.converged.Range(func(k, v interface{}) bool {
+		at, ok := v.(convergedAt)
+		if !ok {
+			return true
+		}
+		at.provenAt = at.provenAt.Add(-d)
+		c.converged.Store(k, at)
+		aged++
+		return true
+	})
+	if aged == 0 {
+		t.Fatal("nothing was latched, so ageing the latch proves nothing")
 	}
 }
 
@@ -298,6 +320,58 @@ func TestConvergenceLatchInvalidatedByAReinstallAtTheSameRevision(t *testing.T) 
 	}
 	if counter.pulls == latched {
 		t.Error("the reinstalled release was not re-verified; a verdict proven against the old release is suppressing the upgrade that would restore the requested chart")
+	}
+}
+
+// The falsifier no key can cover: a chart re-pushed under a tag already in use.
+// Storage, the CR and the requested version are all byte-identical before and
+// after, so every fingerprint the latch holds still matches and no invalidation
+// can fire. Expiry is the only thing that brings the operator back to the
+// registry, which is why the latch has to have one at all.
+func TestConvergenceLatchIsRederivedOnceTheVerdictExpires(t *testing.T) {
+	c, counter := newCountingClient(t)
+	noChartCache(c, counter)
+	counter.chartVersion = mismatchedChartVersion
+	spec := testSpec("2.1.0", map[string]interface{}{"replicas": float64(1)})
+	ctx := context.Background()
+
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	for range 2 {
+		if err := c.EnsureRelease(ctx, spec); err != nil {
+			t.Fatalf("latching pass error = %v", err)
+		}
+	}
+	latched := counter.pulls
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("post-latch error = %v", err)
+	}
+	if counter.pulls != latched {
+		t.Fatalf("the latch is not holding, so this test proves nothing")
+	}
+
+	backdateConvergence(t, c, convergenceTTL+time.Minute)
+
+	if err := c.EnsureRelease(ctx, spec); err != nil {
+		t.Fatalf("post-expiry error = %v", err)
+	}
+	if counter.pulls != latched+1 {
+		t.Fatalf("%d pulls after the verdict expired, want %d; an expired verdict is still suppressing the render that would notice a re-pushed chart",
+			counter.pulls-latched, 1)
+	}
+
+	// Re-derived, not abandoned: the fresh verdict has to latch in its turn, or
+	// expiry would put the release back to pulling on every single pass.
+	afterExpiry := counter.pulls
+	for i := range reconcileTimes {
+		if err := c.EnsureRelease(ctx, spec); err != nil {
+			t.Fatalf("pass %d after expiry error = %v", i+1, err)
+		}
+	}
+	if counter.pulls != afterExpiry {
+		t.Errorf("%d pulls across %d passes after the verdict was re-derived, want 0; the re-derived verdict did not latch",
+			counter.pulls-afterExpiry, reconcileTimes)
 	}
 }
 

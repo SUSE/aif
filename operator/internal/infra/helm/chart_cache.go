@@ -55,11 +55,11 @@ type cachedChart struct {
 // where it would matter, and the traffic worth removing — a public registry
 // pulled once a minute — is unauthenticated anyway.
 //
-// This is also why the key can ignore the TTL question for mutable tags: a chart
-// re-pushed under a tag already in use is invisible to the operator today, since
-// a release whose version and values match its spec takes decideRelease's
-// actionSkip path and never pulls at all. The cache only shortens the window in
-// paths that do pull, and only by chartCacheTTL.
+// A chart re-pushed under a tag already in use is why this cache expires at all
+// rather than living as long as the process. Nothing in the key changes when it
+// happens, so a hit cannot notice, and the window in which it cannot is exactly
+// chartCacheTTL. convergenceTTL bounds the same window on the latch, for the same
+// reason and on the same argument.
 func chartCacheKey(spec ReleaseSpec) (string, bool) {
 	if spec.RegistryAuth != nil || spec.TLSConfig != nil {
 		return "", false

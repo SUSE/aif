@@ -19,13 +19,33 @@ package helm
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
+
+// convergenceTTL bounds how long a memoized verdict is trusted before the chart
+// is pulled and the diff derived again.
+//
+// Every other thing that can falsify the verdict can also be observed: the CR is
+// read on every pass, and so is the stored release, so an edit to either shows up
+// in a fingerprint and invalidates the entry. A chart re-pushed under a tag
+// already in use is the exception. It changes what the chart renders while every
+// input the latch keys on stays byte-identical, so no invalidation can fire on
+// it. Only time can.
+//
+// Thirty minutes against a sixty-second reconcile removes twenty-nine pulls in
+// every thirty, which is essentially the whole win, and bounds the window in
+// which a re-pushed chart goes unapplied to the next half hour rather than to
+// whenever the operator next restarts.
+const convergenceTTL = 30 * time.Minute
 
 // convergedAt records that a spec was proven to need no upgrade, and against
 // which deployed release that was proven.
 type convergedAt struct {
 	revision int
 	spec     string
+	// provenAt is when the diff that produced this verdict actually ran, so the
+	// verdict can be aged out. See convergenceTTL.
+	provenAt time.Time
 	// deployed fingerprints the stored release the verdict was proven against.
 	// The revision number alone does not identify it: uninstalling a release and
 	// installing another under the same name starts again at revision 1, so
@@ -70,14 +90,24 @@ type convergedAt struct {
 // under the same name does too — which the revision alone misses, because a
 // reinstall starts again at revision 1; and a fingerprint of everything in the
 // spec that can change what the chart renders, so any edit to the CR does too.
+// It also expires, for the one falsifier no key can cover: see convergenceTTL.
 //
-// This does not weaken drift detection, which is worth stating because it looks
-// like it should. The diff being memoized compares the rendered manifest against
-// the manifest Helm *stored*, not against the live cluster, so it never detected
-// hand-edited resources to begin with. Nor does it hide a chart re-pushed under
-// the same mutable tag: that is already invisible, because a release whose
-// version and values both match the spec takes decideRelease's actionSkip path
-// and never pulls at all. The latch only engages where that fast path did not.
+// This does not weaken drift detection against the live cluster, which is worth
+// stating because it looks like it should. The diff being memoized compares the
+// rendered manifest against the manifest Helm *stored*, not against the cluster,
+// so it never detected hand-edited resources to begin with.
+//
+// It would have weakened detection of a chart re-pushed under a tag already in
+// use, and this is worth spelling out because the obvious argument that it does
+// not is wrong. That argument runs: such a re-push is already invisible, because
+// a release whose version and values match its spec takes decideRelease's
+// actionSkip path and never pulls. True of the fast path — and the latch engages
+// on precisely the complement of it. The releases that reach here are the ones
+// that did pull and render on every pass, and so were the only ones that noticed
+// when the bytes behind a tag changed. Memoizing their verdict for the life of
+// the process would have bought one pull a minute at the price of a re-pushed
+// chart that is never applied at all. The TTL is what makes that a bounded delay
+// instead.
 //
 // In-memory, so a restart costs one extra pull per release. That is the right
 // trade against persisting it: the verdict is cheap to re-derive once and stale
@@ -102,7 +132,8 @@ func (c *helmClient) convergenceHolds(spec ReleaseSpec, deployed *ReleaseInfo) b
 	return ok &&
 		at.revision == deployed.Revision &&
 		at.spec == fingerprint &&
-		at.deployed == stored
+		at.deployed == stored &&
+		time.Since(at.provenAt) <= convergenceTTL
 }
 
 func (c *helmClient) latchConvergence(spec ReleaseSpec, deployed *ReleaseInfo) {
@@ -121,6 +152,7 @@ func (c *helmClient) latchConvergence(spec ReleaseSpec, deployed *ReleaseInfo) {
 		revision: deployed.Revision,
 		spec:     fingerprint,
 		deployed: stored,
+		provenAt: time.Now(),
 	})
 }
 
