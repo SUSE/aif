@@ -266,7 +266,6 @@ func main() {
 	if err := (&aiworkloadctrl.AIWorkloadReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
-		RestConfig:        mgr.GetConfig(),
 		OperatorNamespace: operatorNamespace,
 		CatalogClient:     catalogHolder,
 	}).SetupWithManager(mgr); err != nil {
