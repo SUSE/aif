@@ -19,8 +19,7 @@
     "eslint-plugin-vue": "^9.33.0",
     "globals": "^15.15.0",
     "typescript-eslint": "^8.39.0",
-    "vitest": "^2",
-    "vue-eslint-parser": "^9.4.3"
+    "vitest": "^2"
   },
   "resolutions": {
     "@types/node": "~20.10.0",

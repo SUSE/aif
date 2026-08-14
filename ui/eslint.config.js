@@ -28,8 +28,13 @@ module.exports = tseslint.config(
   },
 
   {
+    // Explicit so a preset reorder can't silently drop .ts/.vue from coverage
+    // (base rules for those types arrive via the tseslint/vue flat presets).
+    files: ['**/*.js', '**/*.ts', '**/*.vue'],
     languageOptions: {
-      ecmaVersion: 2020,
+      // `latest` (vs. a fixed 2020) avoids logical-assignment (??=/||=/&&=) and
+      // other newer syntax parsing as a fatal error that looks like a config bug.
+      ecmaVersion: 'latest',
       sourceType:  'module',
       globals:     {
         ...globals.browser,
@@ -127,6 +132,9 @@ module.exports = tseslint.config(
       '@typescript-eslint/no-explicit-any':       'warn',
       '@typescript-eslint/no-require-imports':    'off',
       '@typescript-eslint/no-unused-expressions': 'warn',
+      // v8 moved this out of `recommended` into `strict`; the legacy v5 config had
+      // it as a warning, so restore it to preserve prior severity (32 findings).
+      '@typescript-eslint/no-non-null-assertion': 'warn',
       'array-callback-return':                 'off',
       'vue/one-component-per-file':            'off',
       'vue/no-deprecated-slot-attribute':      'off',

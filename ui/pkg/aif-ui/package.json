@@ -14,7 +14,6 @@
   "icon": "https://raw.githubusercontent.com/SUSE/aif/refs/heads/main/pkg/aif-ui/assets/logo.svg",
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
-    "lint": "npx eslint --max-warnings 2000 --ext .js,.ts,.vue .",
     "commitlint": "commitlint --edit"
   },
   "engines": {
@@ -29,8 +28,6 @@
     "@vue/cli-plugin-babel": "~5.0.0",
     "@vue/cli-service": "~5.0.0",
     "@vue/cli-plugin-typescript": "~5.0.0",
-    "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-promise": "^7.1.0",
     "vue-tsc": "^2.0.29"
   },
   "browserslist": [
