@@ -1,6 +1,0 @@
-node_modules/
-dist/
-dist-pkg/
-*.min.js
-babel.config.js
-vue.config.js

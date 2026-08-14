@@ -30,7 +30,7 @@ jobs:
 
       - run: yarn install --frozen-lockfile --ignore-engines
 
-      - run: npx eslint --ext .js,.ts,.vue pkg/aif-ui/
+      - run: yarn lint
 
       - run: yarn test
 
