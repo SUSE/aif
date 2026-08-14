@@ -494,9 +494,17 @@
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
-      "name": "Run:ai",
-      "slug_name": "nvidia-runai",
-      "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle.",
+      "name": "Run:ai (self-hosted) Control Plane",
+      "slug_name": "control-plane",
+      "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
+      "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai"
+    },
+    {
+      "name": "Run:ai (self-hosted) Cluster",
+      "slug_name": "runai-cluster",
+      "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai"
