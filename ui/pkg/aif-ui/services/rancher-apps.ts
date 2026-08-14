@@ -1173,18 +1173,25 @@ export async function ensureServiceAccountPullSecret(
 
     const orig = Array.isArray(sa.imagePullSecrets) ? sa.imagePullSecrets.slice() : [];
     const has  = orig.some((e: { name?: string }) => e?.name === secretName);
-    const next = has ? orig : [...orig, { name: secretName }];
+    if (has) return;
+
+    const patch: {
+      metadata?: { resourceVersion: string };
+      imagePullSecrets: Array<{ name: string }>;
+    } = {
+      imagePullSecrets: [...orig, { name: secretName }]
+    };
+
+    // imagePullSecrets is an atomic list on ServiceAccount, so send the complete
+    // read/merged list. resourceVersion makes that replacement conditional and
+    // prevents a concurrent ServiceAccount update from being lost.
+    if (rv) patch.metadata = { resourceVersion: rv };
 
     await $store.dispatch('rancher/request', {
-      url, method: 'PUT',
-      data: {
-        apiVersion: 'v1',
-        kind: 'ServiceAccount',
-        metadata: { name: saName, namespace, resourceVersion: rv },
-        secrets: sa.secrets,
-        automountServiceAccountToken: sa.automountServiceAccountToken,
-        imagePullSecrets: next
-      },
+      url,
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/merge-patch+json' },
+      data: patch,
       timeout: TIMEOUT_VALUES.MUTATION
     });
   } catch (e) {
