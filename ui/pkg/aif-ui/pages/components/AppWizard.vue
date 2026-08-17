@@ -29,7 +29,7 @@ import {
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
+import { fetchSuseAiApps, resolveInstallRepoName, getLibraryFromRepoUrl } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
@@ -361,11 +361,11 @@ async function findRepoForApp(slug: string): Promise<string | null> {
   if (!store) return null;
 
   try {
-    const suseAiApps = await fetchSuseAiApps(store);
+    const { apps: suseAiApps } = await fetchSuseAiApps(store);
     const staticApp = suseAiApps.find(app => app.slug_name === slug);
 
-    if (staticApp?.repository_url) {
-      const clusterRepoName = await getClusterRepoNameFromUrl(store, staticApp.repository_url);
+    if (staticApp) {
+      const clusterRepoName = await resolveInstallRepoName(store, staticApp);
       if (clusterRepoName) return clusterRepoName;
     }
 

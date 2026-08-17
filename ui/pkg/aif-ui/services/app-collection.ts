@@ -1,6 +1,6 @@
 import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
-import { getSettings } from '../utils/operator-api';
+import { getSettings, getRegistryCredentials } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { fetchStaticCatalog } from './static-catalog';
 
@@ -38,6 +38,10 @@ export interface AppCollectionItem {
   last_updated_at?: string;
   packaging_format?: PackagingFormat;
   repository_url?: string;
+  // The authoritative operator-managed ClusterRepo name this app installs from.
+  // Attached by the dynamic fetchers so install never re-resolves by URL. Absent
+  // for static-catalog items (resolved via findManagedRepoNameByUrl at install).
+  repository_name?: string;
   // 'suse-ai' and 'nvidia' are the built-in libraries; a remote catalog may define
   // its own library values, which the UI groups dynamically. `string & Record<never, never>`
   // keeps autocomplete for the built-ins while allowing arbitrary strings (the plain
@@ -67,17 +71,13 @@ export interface FailedRepo {
   message?: string;
 }
 
-export interface NvidiaClusterRepo {
-  name: string;
-  url: string;
-  ready: boolean;
-  message?: string;
-}
-
-export interface NvidiaAppsResult {
+export interface RepoAppsResult {
   apps: AppCollectionItem[];
   failedRepos: FailedRepo[];
 }
+
+// Retained alias: fetchNvidiaApps historically returned this shape.
+export type NvidiaAppsResult = RepoAppsResult;
 
 function normalizeLogoUrl(logo?: string): string | undefined {
   if (!logo) return undefined;
@@ -87,16 +87,13 @@ function normalizeLogoUrl(logo?: string): string | undefined {
 }
 
 
-/** Find repository name by URL */
-export async function findRepositoryByUrl($store: any, targetUrl: string): Promise<string | null> {
-  try {
-    const repositories = await fetchClusterRepositories($store);
-    const repo = repositories.find(r => r.url === targetUrl);
-    return repo?.name || null;
-  } catch (err) {
-    console.warn('Failed to find repository by URL:', err);
-    return null;
-  }
+/** First managed (provenance-labeled) ClusterRepo whose live URL matches. Scoped to
+ *  the managed set so an out-of-band repo at the same URL is never chosen — this is
+ *  the install-path counterpart to fetchManagedRepos' discovery scoping. */
+export async function findManagedRepoNameByUrl($store: any, targetUrl: string): Promise<string | null> {
+  const managed = await fetchManagedRepos($store);
+  const repo = managed.find(r => r.url === targetUrl);
+  return repo?.name ?? null;
 }
 
 /** Determine library type from repository URL.
@@ -135,9 +132,16 @@ export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | u
   return undefined;
 }
 
-/** Get cluster repository name from repository URL */
-export async function getClusterRepoNameFromUrl($store: any, repoUrl: string): Promise<string | null> {
-  return await findRepositoryByUrl($store, repoUrl);
+/** Resolve the ClusterRepo name to install an app from. Dynamic-mode items carry
+ *  the authoritative repository_name; static-catalog items resolve their
+ *  repository_url within the managed set. */
+export async function resolveInstallRepoName(
+  $store: any,
+  app: Pick<AppCollectionItem, 'repository_name' | 'repository_url'>,
+): Promise<string | null> {
+  if (app.repository_name) return app.repository_name;
+  if (app.repository_url) return await findManagedRepoNameByUrl($store, app.repository_url);
+  return null;
 }
 
 /**
@@ -156,92 +160,105 @@ export async function fetchSettingsOrNull(): Promise<any | null> {
 
 /**
  * Fetch apps from SUSE Application Collection and SUSE Registry, merged and sorted alphabetically.
- * Pass `settings` to reuse an already-fetched Settings object (avoids a duplicate round trip when
- * the caller also calls fetchNvidiaApps). Omit it to fetch on demand.
+ * Returns { apps, failedRepos } symmetric with fetchNvidiaApps. Loads apps only from operator-managed
+ * ClusterRepos (fixed names, via fetchManagedRepos) — never by URL, so an out-of-band ClusterRepo at
+ * a matching URL is ignored. The operator creates these repos only when the corresponding credentials
+ * are configured and prunes them otherwise, so the EXISTENCE of a managed repo — not the settings
+ * section — is the signal that the registry is in use (the operator API always serializes
+ * spec.applicationCollection / spec.suseRegistry as {}, value structs with ineffective omitempty,
+ * so section presence is not usable — the same reasoning that governs fetchNvidiaApps). Any managed
+ * repo that exists is loaded; a not-ready repo or an index fetch failure is reported via failedRepos.
+ * The `settings` parameter is accepted for call-site symmetry with fetchNvidiaApps but is not needed here.
+ * `managedRepos`, when supplied, is used instead of re-listing ClusterRepos — the caller lists once
+ * (fetchManagedRepos) and threads the same set into both fetchers.
  */
-export async function fetchSuseAiApps($store: any, settings?: any | null): Promise<AppCollectionItem[]> {
-  const s = settings !== undefined ? settings : await fetchSettingsOrNull();
-  const re = s?.spec?.registryEndpoints || {};
-  const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
-  const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
+export async function fetchSuseAiApps($store: any, _settings?: any | null, managedRepos?: ManagedRepo[]): Promise<RepoAppsResult> {
+  const all = managedRepos ?? await fetchManagedRepos($store);
+  const managed = all.filter(r => r.library === 'suse-ai');
+  const failedRepos: FailedRepo[] = [];
 
-  const repos = await fetchClusterRepositories($store);
-  const appCollectionRepo = repos.find(r => r.url === acUrl);
-  const suseRegistryRepo  = repos.find(r => r.url === srUrl);
+  // Order: application-collection first (dedup precedence), then suse-ai-registry.
+  const order = ['application-collection', 'suse-ai-registry'];
+  const ranked = managed.slice().sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
 
-  const [appCollectionApps, suseRegistryApps] = await Promise.all([
-    appCollectionRepo
-      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: acUrl, library: 'suse-ai' as const })))
-      : Promise.resolve([] as AppCollectionItem[]),
-    suseRegistryRepo
-      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: srUrl, library: 'suse-ai' as const })))
-      : Promise.resolve([] as AppCollectionItem[]),
-  ]);
+  const readyRepos = ranked.filter((r) => {
+    if (!r.ready) {
+      failedRepos.push({ url: r.url, reason: 'not-ready', message: r.message });
+      return false;
+    }
+    return true;
+  });
 
-  // App Collection takes precedence on dedup
+  const perRepo = await Promise.all(readyRepos.map(async (r) => {
+    const { apps, error } = await fetchAppsFromRepositoryResult($store, r.name);
+    return { repo: r, apps, error };
+  }));
+
   const appMap = new Map<string, AppCollectionItem>();
-  for (const app of appCollectionApps) appMap.set(app.slug_name, app);
-  for (const app of suseRegistryApps) {
-    if (!appMap.has(app.slug_name)) appMap.set(app.slug_name, app);
+  for (const { repo, apps, error } of perRepo) {
+    if (error) {
+      const e = error as any;
+      const message = e?.message || e?.data?.message || String(error);
+      failedRepos.push({ url: repo.url, reason: 'fetch-failed', message });
+      continue;
+    }
+    for (const a of apps) {
+      if (!appMap.has(a.slug_name)) {
+        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library: 'suse-ai' as const });
+      }
+    }
   }
 
-  return Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** List all enabled NGC-host (helm.ngc.nvidia.com) ClusterRepos, INCLUDING
- *  not-ready ones (unlike fetchClusterRepositories, which drops them). Used to
- *  discover NVIDIA apps and to warn about repos present but not contributing. */
-export async function fetchNvidiaClusterRepos($store: any): Promise<NvidiaClusterRepo[]> {
-  try {
-    const res = await $store.dispatch('rancher/request', { url: CLUSTERREPOS_URL, timeout: TIMEOUT_VALUES.READ });
-    const repos = res?.data?.items || res?.data || res?.items || [];
-    return repos
-      .filter((repo: any) => repo?.spec?.enabled !== false)
-      .map((repo: any) => {
-        const ready = isRepoReady(repo);
-        return {
-          name:    repo?.metadata?.name || '',
-          url:     repo?.spec?.url || repo?.spec?.gitRepo || '',
-          ready,
-          message: ready ? undefined : repoNotReadyMessage(repo),
-        } as NvidiaClusterRepo;
-      })
-      .filter((r: NvidiaClusterRepo) => r.name && getLibraryFromRepoUrl(r.url) === 'nvidia');
-  } catch (e) {
-    logger.error('Failed to fetch NVIDIA cluster repositories', e, { component: 'AppCollection' });
-    return [];
-  }
+  const appsOut = Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return { apps: appsOut, failedRepos };
 }
 
 /**
- * Fetch NVIDIA catalog apps, tagged with library 'nvidia'.
- *  - Air-gapped (registryEndpoints.nvidia set): the single mirrored OCI repo at
- *    that URL. UNCHANGED — no host discovery.
- *  - Connected (registryEndpoints.nvidia empty): every enabled NGC-host
- *    ClusterRepo (org + team, provisioned by the operator). Repos present but
- *    not-ready, or whose index fails to load, are reported in failedRepos.
+ * Fetch NVIDIA catalog apps, tagged with library 'nvidia'. Loads apps only from
+ * operator-managed ClusterRepos (fixed names + team-repo label, via
+ * fetchManagedRepos) — never by host, so an out-of-band NGC-host ClusterRepo is
+ * ignored. The operator creates these repos only when NVIDIA credentials are
+ * configured and prunes them otherwise, so the EXISTENCE of a managed repo — not
+ * the settings section — is the signal that NVIDIA is in use (the operator API
+ * always serializes spec.nvidia as {}, a value struct with ineffective omitempty,
+ * so section presence is not usable). Any managed repo that exists is loaded; a
+ * not-ready repo or an index fetch failure is reported via failedRepos. When no
+ * managed repo exists, "not created yet" is surfaced only if NVIDIA credentials
+ * effectively resolve (per the operator's /registry-credentials endpoint — which
+ * catches well-known secret names a spec check misses) so an unconfigured registry
+ * stays silent. Works the same air-gapped or connected: name-based matching is
+ * endpoint-independent, and each app's repository_url is the live repo's spec.url.
  */
-export async function fetchNvidiaApps($store: any, settings?: any | null): Promise<NvidiaAppsResult> {
-  const s = settings !== undefined ? settings : await fetchSettingsOrNull();
-  const nvUrl = s?.spec?.registryEndpoints?.nvidia;
+export async function fetchNvidiaApps($store: any, settings?: any | null, managedRepos?: ManagedRepo[]): Promise<NvidiaAppsResult> {
+  // Managed nvidia repos (fixed names + team-labeled). Sorted for deterministic
+  // first-wins dedup. No host-based discovery, so unmanaged NGC repos are excluded.
+  // `managedRepos`, when supplied, avoids re-listing ClusterRepos (the caller lists once).
+  const all = managedRepos ?? await fetchManagedRepos($store);
+  const managed = all
+    .filter(r => r.library === 'nvidia')
+    .sort((a, b) => a.url.localeCompare(b.url) || a.name.localeCompare(b.name));
 
-  // Air-gap: single mirrored repo — unchanged behavior.
-  if (nvUrl) {
-    const repos = await fetchClusterRepositories($store);
-    const repo = repos.find(r => r.url === nvUrl);
-    if (!repo) return { apps: [], failedRepos: [] };
-    const apps = (await fetchAppsFromRepository($store, repo.name))
-      .map(a => ({ ...a, repository_url: nvUrl, library: 'nvidia' as const }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    return { apps, failedRepos: [] };
-  }
-
-  // Connected: discover all NGC-host ClusterRepos. Sort by URL for deterministic
-  // first-wins dedup order.
-  const ngcRepos = (await fetchNvidiaClusterRepos($store)).sort((a, b) => a.url.localeCompare(b.url));
   const failedRepos: FailedRepo[] = [];
 
-  const readyRepos = ngcRepos.filter((r) => {
+  if (managed.length === 0) {
+    // No managed repo. Only nag when NVIDIA is effectively configured per the
+    // operator's credentials endpoint (EffectiveRefs — catches well-known secret
+    // names a spec.nvidia.tokenSecretRef check misses). Otherwise stay silent.
+    let configured = false;
+    try {
+      const creds = await getRegistryCredentials();
+      configured = Boolean(creds?.nvidia?.username);
+    } catch { /* operator unreachable — fail silent, no false banner */ }
+    if (configured) {
+      // Only now is `settings` needed — for the banner's registry-URL fallback.
+      const s = settings !== undefined ? settings : await fetchSettingsOrNull();
+      const url = s?.spec?.registryEndpoints?.nvidia || NVIDIA_REPO_URL;
+      failedRepos.push({ url, reason: 'not-ready', message: 'repository not created yet' });
+    }
+    return { apps: [], failedRepos };
+  }
+
+  const readyRepos = managed.filter((r) => {
     if (!r.ready) {
       failedRepos.push({ url: r.url, reason: 'not-ready', message: r.message });
       return false;
@@ -266,7 +283,7 @@ export async function fetchNvidiaApps($store: any, settings?: any | null): Promi
     }
     for (const a of apps) {
       if (!appMap.has(a.slug_name)) {
-        appMap.set(a.slug_name, { ...a, repository_url: repo.url, library: 'nvidia' as const });
+        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library: 'nvidia' as const });
       }
     }
   }
@@ -281,17 +298,19 @@ export const CLUSTERREPOS_URL =
 
 const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloaded'];
 
-/** A ClusterRepo is ready when its index has been downloaded/indexed. Shared by
- *  fetchClusterRepositories and fetchNvidiaClusterRepos so the predicate cannot
- *  drift. The three condition types cover OCI repos (OCIDownloaded), HTTP repos
- *  (Downloaded), and Fleet-followed repos (FollowerDownloaded); indexConfigMapName
- *  is the fallback for older Rancher that set no ready condition. */
+/** A ClusterRepo is ready when its index is actually fetchable. Called by
+ *  fetchClusterRepositories and fetchManagedRepos (which stamps the result onto
+ *  ManagedRepo.ready, consumed by fetchSuseAiApps/fetchNvidiaApps) so the predicate
+ *  cannot drift. Readiness is gated on `status.indexConfigMapName`: apps are read via
+ *  `?link=index`, which Rancher resolves *through* that ConfigMap. A repo can
+ *  briefly report a download condition True (OCIDownloaded / Downloaded /
+ *  FollowerDownloaded) before Rancher writes the index ConfigMap; fetching in that
+ *  window fails with `configmaps "" not found`. Requiring indexConfigMapName makes
+ *  readiness mean "the index can be served", which is what every caller needs — and
+ *  it also preserves the older-Rancher path that set the ConfigMap without a ready
+ *  condition. */
 export function isRepoReady(repo: any): boolean {
-  const conditions = repo?.status?.conditions || [];
-  const hasDownloaded = conditions.some(
-    (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status === 'True',
-  );
-  return hasDownloaded || !!repo?.status?.indexConfigMapName;
+  return !!repo?.status?.indexConfigMapName;
 }
 
 /** Human-readable reason a repo is not ready, from its failing download condition. */
@@ -301,6 +320,73 @@ export function repoNotReadyMessage(repo: any): string | undefined {
     (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status !== 'True' && c?.message,
   );
   return failing?.message || undefined;
+}
+
+/** Fixed ClusterRepo names the operator creates for each SUSE/NVIDIA registry.
+ *  Mirror of operator/internal/credentials/credentials.go. These names (plus the
+ *  team-repo label below) are the provenance signal for operator-managed repos. */
+export const MANAGED_REPO_NAMES: Record<string, 'suse-ai' | 'nvidia'> = {
+  'application-collection': 'suse-ai',
+  'suse-ai-registry':       'suse-ai',
+  'nvidia':                 'nvidia',
+  'nvidia-blueprints':      'nvidia',
+};
+
+/** Label the operator stamps on NVIDIA team ClusterRepos. Mirror of
+ *  settings_controller.go teamRepoMarkerLabel. Presence marks a managed nvidia
+ *  repo; the value is not significant. */
+export const NVIDIA_TEAM_REPO_LABEL = 'ai-factory.suse.com/nvidia-team-repo';
+
+/** Provenance label the operator stamps on EVERY ClusterRepo it creates. Mirror of
+ *  settings_controller.go managedRepoMarkerLabel. Presence (value exactly 'true')
+ *  is the sole signal that a ClusterRepo is operator-managed, so an out-of-band repo
+ *  at a matching URL/host is never discovered. */
+export const MANAGED_REPO_LABEL = 'ai-factory.suse.com/managed-repo';
+
+export interface ManagedRepo {
+  name: string;
+  url: string;
+  library: 'suse-ai' | 'nvidia';
+  ready: boolean;
+  message?: string;
+}
+
+/** List the operator-managed ClusterRepos (by provenance label), classified by
+ *  canonical name or team-repo label, with readiness. This is the single source of
+ *  truth for dynamic-mode discovery — it deliberately does NOT match by URL/host,
+ *  so pre-existing/unmanaged repos are excluded. Includes not-ready repos so
+ *  callers can surface them. */
+export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
+  try {
+    const res = await $store.dispatch('rancher/request', { url: CLUSTERREPOS_URL, timeout: TIMEOUT_VALUES.READ });
+    const repos = res?.data?.items || res?.data || res?.items || [];
+    const out: ManagedRepo[] = [];
+    for (const repo of repos) {
+      if (repo?.spec?.enabled === false) continue;
+      const name = repo?.metadata?.name || '';
+      if (!name) continue;
+      const labels = repo?.metadata?.labels || {};
+      // Provenance gate: only operator-stamped repos, matched exactly.
+      if (labels[MANAGED_REPO_LABEL] !== 'true') continue;
+      // Classify by canonical name (prototype-safe) or team label.
+      let library: 'suse-ai' | 'nvidia' | undefined =
+        Object.prototype.hasOwnProperty.call(MANAGED_REPO_NAMES, name) ? MANAGED_REPO_NAMES[name] : undefined;
+      if (!library && labels[NVIDIA_TEAM_REPO_LABEL] === 'true') library = 'nvidia';
+      if (!library) continue;
+      const isReady = isRepoReady(repo);
+      out.push({
+        name,
+        url:     repo?.spec?.url || repo?.spec?.gitRepo || '',
+        library,
+        ready:   isReady,
+        message: isReady ? undefined : repoNotReadyMessage(repo),
+      });
+    }
+    return out;
+  } catch (e) {
+    logger.error('Failed to fetch managed cluster repositories', e, { component: 'AppCollection' });
+    return [];
+  }
 }
 
 /** Repository information */
