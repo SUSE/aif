@@ -21,6 +21,7 @@ evidence needed for that decision on real infrastructure.
 ## Documents
 
 - [Code assessment and prioritized gaps](assessment.md)
+- [Recommended Jira backlog](jira-backlog.md)
 - [QA topology, matrix, and execution playbook](test-plan.md)
 - [Proposed official documentation structure](official-docs-plan.md)
 
