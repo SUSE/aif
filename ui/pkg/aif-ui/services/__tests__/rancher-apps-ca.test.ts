@@ -60,12 +60,13 @@ describe('ensureClusterRepo private CA', () => {
     const secretPut = store.calls.find((call) =>
       call.payload?.method === 'PUT' && call.payload?.url?.includes('/secrets/suse-ai-registry-auth')
     );
-    expect(secretPut).toBeDefined();
-    expect(secretPut.payload.data.type).toBe('kubernetes.io/basic-auth');
-    expect(secretPut.payload.data.stringData).toEqual({
-      username: 'robot$aif',
-      password: 'secret',
-      cacerts:  ca,
+    expect(secretPut?.payload.data).toMatchObject({
+      type:       'kubernetes.io/basic-auth',
+      stringData: {
+        username: 'robot$aif',
+        password: 'secret',
+        cacerts:  ca,
+      },
     });
   });
 });
