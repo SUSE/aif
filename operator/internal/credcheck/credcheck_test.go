@@ -18,6 +18,7 @@ package credcheck
 
 import (
 	"context"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,6 +45,31 @@ func TestProbe_BasicAuthOK(t *testing.T) {
 	res := probe(context.Background(), srv.Client(), "https", hostOf(t, srv.URL), "user", "pass")
 	if res.Status != StatusOK {
 		t.Fatalf("status=%q msg=%q want ok", res.Status, res.Message)
+	}
+}
+
+func TestProbeRegistryWithCA_PrivateCA(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, _ := r.BasicAuth()
+		if u == "user" && p == "pass" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	res := ProbeRegistryWithCA(context.Background(), hostOf(t, srv.URL), "user", "pass", caPEM)
+	if res.Status != StatusOK {
+		t.Fatalf("status=%q msg=%q want ok", res.Status, res.Message)
+	}
+}
+
+func TestProbeRegistryWithCA_InvalidPEM(t *testing.T) {
+	res := ProbeRegistryWithCA(context.Background(), "registry.example.test", "user", "pass", []byte("not PEM"))
+	if res.Status != StatusError || !strings.Contains(res.Message, "valid PEM") {
+		t.Fatalf("status=%q msg=%q want PEM error", res.Status, res.Message)
 	}
 }
 
