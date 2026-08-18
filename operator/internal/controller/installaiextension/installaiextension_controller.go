@@ -47,7 +47,18 @@ import (
 )
 
 const (
-	defaultReadinessTimeout = 5 * time.Minute
+	// DefaultReadinessTimeout bounds how long the controller waits for an
+	// extension's pods after applying a chart. Exported so the flag that
+	// overrides it cannot drift from it.
+	//
+	// Ten minutes, for two independent reasons. It is the tolerance Helm's own
+	// Wait used to give the rollout before the controller took the wait over, so
+	// anything shorter fails upgrades that used to succeed on a slow image pull.
+	// And it is the Deployment's default progressDeadlineSeconds, which the chart
+	// does not override: give up sooner and the CR calls a rollout dead while
+	// Kubernetes is still working on it, which — a readiness timeout being
+	// terminal — leaves the CR Failed through a rollout that then succeeds.
+	DefaultReadinessTimeout = 10 * time.Minute
 	readinessRequeue        = 10 * time.Second
 	uiConfigMapName         = "aif-ui-config"
 	healthCheckInterval     = 60 * time.Second
@@ -88,6 +99,15 @@ const (
 
 type InstallAIExtensionReconciler struct {
 	client.Client
+	// APIReader reads straight from the API server, bypassing the manager's
+	// cache. Only the deployment readiness check uses it, and it has to: that
+	// check runs in the same pass that applied the manifest, and an informer that
+	// has not yet seen the apply serves the previous revision — a self-consistent
+	// picture of a rollout that finished, which readiness cannot tell apart from
+	// the new one finishing. See deploymentReader.
+	//
+	// SetupWithManager fills this in, so nothing outside tests has to.
+	APIReader          client.Reader
 	Scheme             *runtime.Scheme
 	ExtensionNamespace string
 	ReadinessTimeout   time.Duration
@@ -486,7 +506,7 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	// A readiness check that errors and one that reports not-ready share a clock:
 	// both mean the deployment is not usable yet, and a check flapping between the
 	// two must not keep restarting the wait.
-	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.Client, namespace, releaseName, logger)
+	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.deploymentReader(), namespace, releaseName, logger)
 	if err != nil {
 		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
 			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err))
@@ -756,6 +776,21 @@ func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 }
 
+// deploymentReader returns the reader the deployment readiness check must use:
+// the uncached one whenever there is one.
+//
+// The fallback to Client exists for reconcilers built by hand in tests, which
+// never go through SetupWithManager. It is safe there because a fake client is
+// the API server — there is no second view to be stale relative to — and it is
+// unreachable in a running operator, where SetupWithManager is the only way a
+// reconciler is ever started.
+func (r *InstallAIExtensionReconciler) deploymentReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
 // awaitReadiness advances a bounded wait on an install step that has not
 // succeeded yet. It stamps the start time on the first observation, requeues
 // while the wait is still inside ReadinessTimeout, and records a terminal
@@ -995,7 +1030,10 @@ func (r *InstallAIExtensionReconciler) clearWaitingSince(ext *v1alpha1.InstallAI
 
 func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.ReadinessTimeout == 0 {
-		r.ReadinessTimeout = defaultReadinessTimeout
+		r.ReadinessTimeout = DefaultReadinessTimeout
+	}
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
 	}
 	r.rancherMgr = rancher.NewManager(r.Client)
 	return ctrl.NewControllerManagedBy(mgr).

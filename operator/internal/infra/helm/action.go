@@ -69,6 +69,54 @@ func (c *helmClient) install(
 	return nil
 }
 
+// newUpgradeAction configures the upgrade. Extracted from upgrade so the one
+// setting below that cannot be observed from outside a live cluster is pinned
+// by a test.
+//
+// Wait is off, and that is the load-bearing decision. Waiting keeps the
+// reconcile context open for the length of the rollout, and that context is the
+// manager's, cancelled the instant the pod receives SIGTERM. Upgrading the
+// bundled extension is done by `helm upgrade` on the operator's own chart,
+// which writes the new version into the CR *and* rolls the operator Deployment
+// in one operation: the outgoing pod picks up the CR change, starts this
+// upgrade, and is terminated a dozen seconds later when its replacement passes
+// its readiness probe. Helm answers a cancelled context by recording the
+// revision as `failed: context canceled`, so a routine version bump left a
+// failed revision in the history of every extension upgrade whose image was not
+// already cached on the node. Raising terminationGracePeriodSeconds does not
+// help — controller-runtime cancels at SIGTERM, not at the end of the grace
+// period — and neither does a longer Timeout, because nothing here is timing
+// out.
+//
+// Readiness is not given up, it changes owner: the controller polls
+// kubernetes.IsDeploymentReady and requeues, a wait that resumes after a
+// restart because it is held in an annotation rather than a blocked goroutine.
+// That check was hardened to `kubectl rollout status` semantics in the same
+// change, because until then it counted ready pods — and the previous
+// revision's pod is ready throughout a rollout, so it would have called the
+// upgrade done the moment the manifest was applied. Turning Wait off without
+// that is not a smaller change, it is a silent one: the CR would report
+// Installed for a version that is not serving.
+//
+// Atomic stays off with it. An upgrade cancelled at SIGTERM should be left for
+// the next reconcile to retry, not rolled back to the version the CR no longer
+// asks for.
+func newUpgradeAction(cfg *action.Configuration, spec ReleaseSpec) *action.Upgrade {
+	up := action.NewUpgrade(cfg)
+	up.Namespace = spec.Namespace
+	up.Version = spec.Version
+	if spec.RepoURL != "" {
+		up.RepoURL = spec.RepoURL
+	}
+
+	up.Wait = false
+	up.Atomic = false
+	// Still meaningful with Wait off: it bounds chart hook execution.
+	up.Timeout = 10 * time.Minute
+
+	return up
+}
+
 func (c *helmClient) upgrade(
 	ctx context.Context,
 	cfg *action.Configuration,
@@ -82,16 +130,7 @@ func (c *helmClient) upgrade(
 
 	log.Info("Upgrading Helm release")
 
-	up := action.NewUpgrade(cfg)
-	up.Namespace = spec.Namespace
-	up.Version = spec.Version
-	if spec.RepoURL != "" {
-		up.RepoURL = spec.RepoURL
-	}
-
-	up.Wait = true
-	up.Atomic = false
-	up.Timeout = 10 * time.Minute
+	up := newUpgradeAction(cfg, spec)
 
 	ch, err := c.loadChart(up.SetRegistryClient, &up.ChartPathOptions, spec)
 	if err != nil {

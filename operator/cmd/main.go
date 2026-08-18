@@ -98,7 +98,8 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	var deploymentReadinessTimeout time.Duration
-	flag.DurationVar(&deploymentReadinessTimeout, "deployment-readiness-timeout", 5*time.Minute,
+	flag.DurationVar(&deploymentReadinessTimeout, "deployment-readiness-timeout",
+		aiextensionctrl.DefaultReadinessTimeout,
 		"Maximum time to wait for Helm-deployed extension pods to become ready.")
 	var allowInsecureRegistryTLS bool
 	flag.BoolVar(&allowInsecureRegistryTLS, "allow-insecure-registry-tls", false,

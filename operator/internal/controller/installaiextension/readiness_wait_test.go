@@ -108,12 +108,25 @@ func releaseLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/instance": releaseName}
 }
 
+// readyDeployment is a Deployment that has finished rolling out its current
+// spec. Every count is set, not just ReadyReplicas: readiness means "the
+// applied revision is serving", so a status carrying a ready pod but no
+// updated replicas describes a rollout still in progress — and is not a state
+// the API server can produce in any case.
 func readyDeployment() *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: releaseName, Namespace: wiringNamespace, Labels: releaseLabels()},
-		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
-		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: releaseName, Namespace: wiringNamespace, Labels: releaseLabels(), Generation: 1,
+		},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+		Status: appsv1.DeploymentStatus{
+			ObservedGeneration: 1,
+			Replicas:           1,
+			UpdatedReplicas:    1,
+			ReadyReplicas:      1,
+			AvailableReplicas:  1,
+		},
 	}
 }
 
