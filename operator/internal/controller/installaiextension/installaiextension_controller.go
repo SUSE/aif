@@ -226,6 +226,27 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	result, reconcileErr := r.reconcile(ctx, &ext)
 
+	// Shutdown is not a verdict. This context is the manager's, cancelled the
+	// moment the pod is signalled, and every failure path below records what the
+	// pass concluded — but a pass cut off partway through concluded nothing. The
+	// eighteen failure sites cannot tell "the chart is broken" from
+	// "we were killed mid-pull", so without this the ordinary act of rolling the
+	// operator stamps Phase=Failed on a healthy extension.
+	//
+	// Placed above the writes rather than inside them so there is one rule
+	// instead of eighteen, and so the release-pending marker below is left
+	// exactly as the interrupted pass found it.
+	//
+	// The error is returned, not swallowed: the pass did not finish, and saying
+	// otherwise invites the queue to treat the CR as settled. On the way down
+	// that requeue is discarded with the queue; the next leader re-reconciles
+	// from a clean read either way.
+	if err := ctx.Err(); err != nil {
+		logger.Info("Reconcile interrupted by shutdown; leaving status untouched",
+			"reason", err)
+		return ctrl.Result{}, err
+	}
+
 	// The marker times a wait on an in-flight Helm operation, so it must not
 	// outlive that wait. handlePendingRelease is the only thing that clears it, and
 	// every path returning above the Helm call — missing Rancher CRDs, a rejected
