@@ -252,8 +252,18 @@ func TestReadinessWaitsAreBounded(t *testing.T) {
 				if err != nil {
 					t.Fatalf("reconcile error = %v", err)
 				}
-				if result.RequeueAfter != 0 {
-					t.Errorf("RequeueAfter = %v, want 0; the wait is over", result.RequeueAfter)
+				// The wait is over; the CR is not. A rollout that overran its bound can
+				// still finish, and nothing would tell the controller — so the pass
+				// drops to the health-check cadence rather than stopping. The bound's
+				// purpose survives intact: what it exists to prevent is this CR
+				// re-entering EnsureRelease every readinessRequeue forever.
+				if result.RequeueAfter != healthCheckInterval {
+					t.Errorf("RequeueAfter = %v, want %v; the wait is over",
+						result.RequeueAfter, healthCheckInterval)
+				}
+				if result.RequeueAfter <= readinessRequeue {
+					t.Errorf("RequeueAfter = %v, want slower than the %v readiness poll; "+
+						"the bound exists to stop that loop", result.RequeueAfter, readinessRequeue)
 				}
 				if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 					t.Errorf("Phase = %s, want Failed", ext.Status.Phase)
@@ -303,8 +313,17 @@ func TestServiceWaitSurvivesTheDeploymentMarkerBeingCleared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second pass error = %v", err)
 	}
-	if result.RequeueAfter != 0 {
-		t.Errorf("RequeueAfter = %v, want 0; the service wait is past its bound", result.RequeueAfter)
+	// Past its bound, so the pass drops to the health-check cadence. Had the
+	// marker been dropped and re-stamped, this would still be the readinessRequeue
+	// of a wait that had just started — which is what the assertion below rules
+	// out, and the reason 60s and 10s must not be conflated here.
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("RequeueAfter = %v, want %v; the service wait is past its bound",
+			result.RequeueAfter, healthCheckInterval)
+	}
+	if result.RequeueAfter == readinessRequeue {
+		t.Error("RequeueAfter is the readiness poll interval, so the service marker was " +
+			"cleared and re-stamped and the bound will never fire")
 	}
 	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 		t.Errorf("Phase = %s, want Failed", ext.Status.Phase)

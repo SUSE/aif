@@ -484,9 +484,8 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return result, nil
 	}
 	if ensureErr != nil {
-		setTerminalFailure(ext, conditionTypeHelmInstalled,
-			"InstallFailed", fmt.Sprintf("Helm install failed: %v", ensureErr))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeHelmInstalled,
+			"InstallFailed", fmt.Sprintf("Helm install failed: %v", ensureErr)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionTrue,
@@ -565,18 +564,16 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Available", fmt.Sprintf("Service URL: %s", svcURL), ext.Generation)
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, svcURL); err != nil {
-		setTerminalFailure(ext, conditionTypeClusterRepo,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
 		"Created", "ClusterRepo created", ext.Generation)
 
 	if err := r.rancherMgr.EnsureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		setTerminalFailure(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin failed: %v", err))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin failed: %v", err)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
@@ -607,9 +604,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	}
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, ""); err != nil {
-		setTerminalFailure(ext, conditionTypeClusterRepo,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
@@ -624,9 +620,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 		return result, nil
 	}
 	if pluginErr != nil {
-		setTerminalFailure(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
@@ -763,17 +758,42 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 	})
 }
 
-// setTerminalFailure records a terminal reconcile failure: it sets the specific
-// sub-condition to False and mirrors the same reason/message onto the top-level Ready
-// condition, then marks the phase Failed. Mirroring keeps Ready from showing a stale
-// success while phase is Failed (a pull/deployment/Rancher failure otherwise updated only
-// its own sub-condition). Sites that already set Ready directly do not need this.
-func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, message string) {
+// setFailureAndRetry records a reconcile failure the cluster may resolve on its
+// own, and returns the Result that will bring the CR back to be re-examined. It
+// sets the specific sub-condition to False and mirrors the same reason/message
+// onto the top-level Ready condition, then marks the phase Failed. Mirroring
+// keeps Ready from showing a stale success while phase is Failed (a
+// pull/deployment/Rancher failure otherwise updated only its own
+// sub-condition). Sites that already set Ready directly do not need this.
+//
+// The requeue is the point, and it is why this is no longer called
+// setTerminalFailure. Every caller is a failure with a cause outside the CR — a
+// registry that was unreachable, Rancher CRDs not installed yet, a rollout that
+// overran its bound. None of those produce an event when they clear, because
+// the controller watches InstallAIExtension and nothing else, so a zero Result
+// meant the CR stayed Failed until someone edited it or the informer resynced
+// (~10h). Phase stays Failed and the conditions still say what went wrong; the
+// CR is simply looked at again.
+//
+// healthCheckInterval, deliberately: a failed CR is re-examined no faster than
+// a healthy one. It is also six times gentler than the readinessRequeue loop
+// that already re-enters EnsureRelease while waiting, so this adds no pull rate
+// the operator did not already sustain.
+//
+// Failures that are *not* routed through here are the ones a retry cannot
+// change: an unsupported source kind, a malformed chart URL, a host the
+// allowlist rejects. Those are a pure function of the spec and the operator's
+// own flags, and a change to either already wakes the controller — through the
+// watch for a CR edit, through the restart for a flag. Requeuing them would
+// re-derive an identical answer every minute forever.
+func setFailureAndRetry(ext *v1alpha1.InstallAIExtension, condType, reason, message string) ctrl.Result {
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse, reason, message, ext.Generation)
 	if condType != conditionTypeReady {
 		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, message, ext.Generation)
 	}
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+
+	return ctrl.Result{RequeueAfter: healthCheckInterval}
 }
 
 // deploymentReader returns the reader the deployment readiness check must use:
@@ -829,9 +849,8 @@ func (r *InstallAIExtensionReconciler) awaitReadiness(
 		// advertises the previous pass's success for a whole requeue interval.
 
 	case time.Since(waitingSince) > r.ReadinessTimeout:
-		setTerminalFailure(ext, condType, reasonReadinessTimedOut,
-			fmt.Sprintf("%s (still not resolved after %s)", message, r.ReadinessTimeout))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, condType, reasonReadinessTimedOut,
+			fmt.Sprintf("%s (still not resolved after %s)", message, r.ReadinessTimeout)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
@@ -897,17 +916,16 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 		// previous pass's success for a whole requeue interval.
 
 	case time.Since(pendingSince) > pendingReleaseTimeout:
-		setTerminalFailure(ext, condType, reasonReleasePendingTimedOut, fmt.Sprintf(
+		return setFailureAndRetry(ext, condType, reasonReleasePendingTimedOut, fmt.Sprintf(
 			"Helm release still mid-operation after %s; a pending release cannot be "+
 				"upgraded over, so resolve it with `helm rollback` or `helm uninstall`: %v",
-			pendingReleaseTimeout, err))
-		return ctrl.Result{}, true, nil
+			pendingReleaseTimeout, err)), true, nil
 	}
 
 	msg := fmt.Sprintf("Waiting for in-flight Helm operation: %v", err)
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
 		reasonReleasePending, msg, ext.Generation)
-	// Ready is mirrored for the same reason setTerminalFailure mirrors it: this is
+	// Ready is mirrored for the same reason setFailureAndRetry mirrors it: this is
 	// not a terminal failure, so that helper does not apply, but a CR that already
 	// reached Installed would otherwise keep advertising Ready=True while its
 	// upgrade sits wedged.
