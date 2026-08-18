@@ -149,7 +149,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				// rather than fail terminally: re-authorizing in Settings resolves
 				// it, and the AIWorkload controller watches Settings.
 				msg := fmt.Sprintf("Rancher rejected the API token while fetching component %q from git-backed repo %q. The token may have expired — re-authorize under Settings → Rancher API Access in the AI Factory UI.", c.ChartName, c.ChartRepo)
-				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "RancherTokenRejected", msg, w.Generation)
+				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonRancherTokenRejected, msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: time.Minute}, nil
 			}

@@ -190,6 +190,78 @@ func TestNewCatalogClient_BadCA(t *testing.T) {
 	}
 }
 
+func newTestClient(t *testing.T, srv *httptest.Server) *CatalogClient {
+	t.Helper()
+	c, err := NewCatalogClient(srv.URL, "test-token", nil, true)
+	if err != nil {
+		t.Fatalf("NewCatalogClient: %v", err)
+	}
+	return c
+}
+
+func TestUninstallApp_Success(t *testing.T) {
+	var gotPath, gotQuery, gotAuth, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery, gotAuth, gotMethod = r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Method
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv).UninstallApp(context.Background(), "qdrant-system", "qdrant")
+	if err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %s, want POST", gotMethod)
+	}
+	if gotPath != "/v1/catalog.cattle.io.apps/qdrant-system/qdrant" {
+		t.Errorf("path = %s", gotPath)
+	}
+	if !strings.Contains(gotQuery, "action=uninstall") {
+		t.Errorf("query = %s, want action=uninstall", gotQuery)
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Errorf("auth = %s", gotAuth)
+	}
+}
+
+func TestUninstallApp_NotFoundIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	if err := newTestClient(t, srv).UninstallApp(context.Background(), "ns", "rel"); err != nil {
+		t.Fatalf("404 should be treated as already-gone success, got %v", err)
+	}
+}
+
+func TestUninstallApp_Unauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv).UninstallApp(context.Background(), "ns", "rel")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestUninstallApp_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv).UninstallApp(context.Background(), "ns", "rel")
+	if err == nil || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected generic error, got %v", err)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
@@ -197,4 +269,71 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestAppUninstallInProgress_Uninstalling(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":{"summary":{"state":"uninstalling","transitioning":true}}}`))
+	}))
+	defer srv.Close()
+
+	inProgress, err := newTestClient(t, srv).AppUninstallInProgress(context.Background(), "qdrant-system", "qdrant")
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if !inProgress {
+		t.Errorf("expected inProgress=true for state=uninstalling")
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %s, want GET", gotMethod)
+	}
+	if gotPath != "/v1/catalog.cattle.io.apps/qdrant-system/qdrant" {
+		t.Errorf("path = %s", gotPath)
+	}
+}
+
+func TestAppUninstallInProgress_Deployed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":{"summary":{"state":"deployed"}}}`))
+	}))
+	defer srv.Close()
+
+	inProgress, err := newTestClient(t, srv).AppUninstallInProgress(context.Background(), "ns", "rel")
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if inProgress {
+		t.Errorf("expected inProgress=false for state=deployed")
+	}
+}
+
+func TestAppUninstallInProgress_NotFoundIsNotInProgress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	inProgress, err := newTestClient(t, srv).AppUninstallInProgress(context.Background(), "ns", "rel")
+	if err != nil {
+		t.Fatalf("404 should be nil err, got %v", err)
+	}
+	if inProgress {
+		t.Errorf("404 (app gone) should report not-in-progress")
+	}
+}
+
+func TestAppUninstallInProgress_Unauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).AppUninstallInProgress(context.Background(), "ns", "rel")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
 }

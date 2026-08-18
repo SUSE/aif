@@ -24,6 +24,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -70,6 +72,10 @@ var _ = BeforeSuite(func() {
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
+
+	// Create test namespaces used by the specs
+	testNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns"}}
+	_ = k8sClient.Create(context.Background(), testNs) // ignore error if already exists
 })
 
 var _ = AfterSuite(func() {

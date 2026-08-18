@@ -43,7 +43,7 @@ repos:
     hooks:
       - id: ui-eslint
         name: eslint (aif-ui)
-        entry: bash -c 'cd ui/pkg/aif-ui && yarn lint'
+        entry: bash -c 'cd ui && yarn lint'
         language: system
         files: ^ui/pkg/aif-ui/.*\.(js|ts|vue)$
         pass_filenames: false

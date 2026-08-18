@@ -4,9 +4,10 @@ import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
-import { listAIWorkloads, deleteAIWorkload, updateAIWorkload } from '../utils/operator-api';
+import { listAIWorkloads, updateAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import { uninstallWorkload } from '../services/workload-uninstall';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
@@ -39,6 +40,7 @@ const deleteModal = reactive({
   namespace: '',
   display:   '',
   deleting:  false,
+  workload:  null as AIWorkload | null,
 });
 
 // ── Blueprint upgrade modal ────────────────────────────────────────────────────
@@ -198,13 +200,15 @@ function openDeleteModal(w: AIWorkload) {
   deleteModal.name      = w.metadata.name;
   deleteModal.namespace = w.metadata.namespace;
   deleteModal.display   = w.spec.displayName || w.metadata.name;
+  deleteModal.workload  = w;
   deleteModal.show      = true;
 }
 
 async function executeDelete() {
+  if (!deleteModal.workload) return;
   deleteModal.deleting = true;
   try {
-    await deleteAIWorkload(deleteModal.namespace, deleteModal.name);
+    await uninstallWorkload(vm.$store, deleteModal.workload);
     workloads.value = workloads.value.filter(
       w => !(w.metadata.name === deleteModal.name && w.metadata.namespace === deleteModal.namespace),
     );
