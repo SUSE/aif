@@ -759,10 +759,10 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 	return nil
 }
 
-// reconcileNvidiaRepos handles NVIDIA's two-mode topology: a single gated OCI
-// repo when registryEndpoints.nvidia is set (air-gap), or the public NGC charts
-// + blueprint pair otherwise. Either way it prunes every NVIDIA repo + mirror
-// when credentials are gone.
+// reconcileNvidiaRepos handles NVIDIA's two-mode topology: two stable logical
+// repos backed by one gated OCI mirror when registryEndpoints.nvidia is set
+// (air-gap), or the public NGC charts + blueprint pair otherwise. Either way it
+// prunes every NVIDIA repo + mirror when credentials are gone.
 func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	nvUser, nvToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.Nvidia.UserSecretRef,
@@ -786,9 +786,10 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 	}
 
 	if nvURL != "" {
-		// Air-gap: a single gated OCI repo at a private mirror, which genuinely
-		// needs auth. Prune the public blueprint repo in case we are switching
-		// modes.
+		// Air-gap: preserve both stable logical repo names at the gated private
+		// mirror. Bundled Blueprints reference nvidia-blueprints while Apps use
+		// nvidia; collapsing them to one ClusterRepo makes the Blueprint charts
+		// unresolvable even when both live under the same mirrored OCI path.
 		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken, s.Spec.Nvidia.CABundleSecretRef)
 		if err != nil {
 			return err
@@ -802,11 +803,10 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			}
 			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
 		}
-		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
-			return err
-		}
-		if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName); err != nil {
-			return err
+		for _, name := range allNvidiaRepos {
+			if err := r.applyClusterRepo(ctx, name, nvURL, secretName); err != nil {
+				return err
+			}
 		}
 		// Prune team repos on the connected→air-gap switch, but PRESERVE
 		// ngc-helm-auth — the air-gap mirror still consumes it.
@@ -814,7 +814,11 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			return err
 		}
 		if changed {
-			return r.forceUpdateClusterRepo(ctx, credentials.ClusterRepoNvidia)
+			for _, name := range allNvidiaRepos {
+				if err := r.forceUpdateClusterRepo(ctx, name); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}
