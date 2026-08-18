@@ -59,7 +59,13 @@ func (c *helmClient) install(
 		return err
 	}
 
-	_, err = install.RunWithContext(ctx, ch, spec.Values)
+	// Shutdown must not decide the outcome: see withShutdownGrace. Rarer here
+	// than on upgrade — an install runs once per release — but the same select
+	// in performInstallCtx resolves a cancellation into failRelease.
+	runCtx, cancelRun := withShutdownGrace(ctx, ShutdownGrace)
+	defer cancelRun()
+
+	_, err = install.RunWithContext(runCtx, ch, spec.Values)
 	if err != nil {
 		log.Error(err, "Helm install failed")
 		return err
@@ -83,10 +89,20 @@ func (c *helmClient) install(
 // its readiness probe. Helm answers a cancelled context by recording the
 // revision as `failed: context canceled`, so a routine version bump left a
 // failed revision in the history of every extension upgrade whose image was not
-// already cached on the node. Raising terminationGracePeriodSeconds does not
-// help — controller-runtime cancels at SIGTERM, not at the end of the grace
-// period — and neither does a longer Timeout, because nothing here is timing
-// out.
+// already cached on the node.
+//
+// Two non-fixes, because both were tried. A longer Timeout does nothing —
+// nothing here is timing out. Raising terminationGracePeriodSeconds on its own
+// does nothing either: controller-runtime cancels reconcile contexts at SIGTERM,
+// at the *start* of the grace period, so a wider one only buys a longer wait
+// after the cancellation that already did the damage. What uses that width is
+// withShutdownGrace, which keeps the write running past the cancellation; the
+// Pod's grace period was widened to cover it, not in place of it.
+//
+// Wait off is what keeps that grace affordable. Holding the reconcile open for
+// the rollout would leave a write in flight for minutes, far past anything a
+// shutdown can reasonably wait out; with it off the window is the apply itself,
+// seconds.
 //
 // Readiness is not given up, it changes owner: the controller polls
 // kubernetes.IsDeploymentReady and requeues, a wait that resumes after a
@@ -137,7 +153,13 @@ func (c *helmClient) upgrade(
 		log.Error(err, "Failed to load Helm chart")
 		return err
 	}
-	_, err = up.RunWithContext(ctx, spec.Name, ch, spec.Values)
+	// Shutdown must not decide the outcome: see withShutdownGrace. This is the
+	// path that produced `failed: context canceled` in the field, because an
+	// upgrade runs on every version or values change.
+	runCtx, cancelRun := withShutdownGrace(ctx, ShutdownGrace)
+	defer cancelRun()
+
+	_, err = up.RunWithContext(runCtx, spec.Name, ch, spec.Values)
 	if err != nil {
 		log.Error(err, "Helm upgrade failed")
 		return err

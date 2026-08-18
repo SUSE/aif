@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/SUSE/aif-operator/internal/infra/helm"
 )
 
 // managerGracePeriod reads the grace period the operator's own Pod is given,
@@ -101,5 +103,23 @@ func TestDrainOutlastsAReconcilePass(t *testing.T) {
 		t.Errorf("managerGracefulShutdownTimeout = %s, want >= %s; below this the drain "+
 			"cannot finish an in-flight pass and every shutdown cuts one short",
 			managerGracefulShutdownTimeout, shortestUsefulDrain)
+	}
+}
+
+// TestHelmGraceExpiresBeforeTheDrainGivesUp pins the ordering the Helm grace
+// depends on, from the side that can see both numbers.
+//
+// helm.ShutdownGrace lets a Helm write keep going after SIGTERM so a restart
+// stops being recorded as a failed release. That only helps while the manager
+// is still waiting for the reconcile worker holding it. Invert the two and the
+// helper becomes actively harmful: the drain gives up first, the process exits,
+// and the write is killed rather than cancelled — leaving the revision in the
+// pending state Helm wrote before applying, which is worse than the `failed`
+// the grace was introduced to avoid.
+func TestHelmGraceExpiresBeforeTheDrainGivesUp(t *testing.T) {
+	if helm.ShutdownGrace >= managerGracefulShutdownTimeout {
+		t.Errorf("helm.ShutdownGrace = %s, drain = %s; the grace must expire while the "+
+			"manager is still waiting, or the write is killed instead of cancelled",
+			helm.ShutdownGrace, managerGracefulShutdownTimeout)
 	}
 }

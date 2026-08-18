@@ -77,6 +77,9 @@ const (
 	// so nothing else can stop it — and a kill partway through leaves the
 	// release stuck in `uninstalling`, which is not one of the pending states
 	// Helm's IsPending covers.
+	//
+	// It also has to outlast helm.ShutdownGrace, or a Helm write that overruns
+	// is killed by the process exiting rather than cancelled cleanly.
 	managerGracefulShutdownTimeout = 30 * time.Second
 
 	// leaseReleaseBudget is what handing the leader lease back can cost, not a
