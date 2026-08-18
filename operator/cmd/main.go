@@ -63,6 +63,29 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+// The two halves of the operator's shutdown, which share the Pod's
+// terminationGracePeriodSeconds. Their sum has to fit inside it, or the kubelet
+// SIGKILLs the process partway through — see TestShutdownFitsInTheGracePeriod.
+const (
+	// managerGracefulShutdownTimeout is how long in-flight reconciles get to
+	// wind down after SIGTERM.
+	//
+	// The controller-runtime default, kept rather than trimmed to make room for
+	// the lease release: the Pod's grace period was widened instead. Trimming
+	// it would have been the cheaper change and the wrong one, because this is
+	// the only bound on an uninstall — action.Uninstall.Run takes no context,
+	// so nothing else can stop it — and a kill partway through leaves the
+	// release stuck in `uninstalling`, which is not one of the pending states
+	// Helm's IsPending covers.
+	managerGracefulShutdownTimeout = 30 * time.Second
+
+	// leaseReleaseBudget is what handing the leader lease back can cost, not a
+	// value we set. client-go bounds release by RenewDeadline, which the
+	// manager leaves at its 10s default; it is reserved here so the drain
+	// cannot be tuned as though the whole grace period were available.
+	leaseReleaseBudget = 10 * time.Second
+)
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -188,6 +211,8 @@ func main() {
 
 	operatorNamespace := config.GetOperatorNamespace()
 
+	gracefulShutdownTimeout := managerGracefulShutdownTimeout
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -210,17 +235,25 @@ func main() {
 				},
 			},
 		},
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
+		// Hand the lease back on the way out instead of letting the incoming
+		// operator wait out its ~15s expiry. That wait is dead time during every
+		// operator upgrade: the surge Pod is running and healthy and doing
+		// nothing, and any extension that needs reconciling sits untouched until
+		// it starts.
 		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		// Safe here because nothing runs after the manager stops — main returns
+		// straight into process exit, with no defers and no cleanup. The API
+		// server's shutdown goroutine below is not an exception: it is triggered
+		// by the same cancelled context and runs alongside the drain, not after
+		// it. controller-runtime is stricter still, releasing only once every
+		// runnable has stopped, so the lease cannot change hands while a
+		// reconcile is in flight.
+		//
+		// Not free, though: the release is a live API call the manager blocks
+		// on, so it has to be paid for out of the same grace period as the
+		// drain. See managerGracefulShutdownTimeout.
+		LeaderElectionReleaseOnCancel: true,
+		GracefulShutdownTimeout:       &gracefulShutdownTimeout,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
