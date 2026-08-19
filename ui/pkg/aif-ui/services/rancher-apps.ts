@@ -45,12 +45,6 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
 
-export interface ChartRef {
-  repoName: string;   // ClusterRepo metadata.name
-  chartName: string;  // Chart name within repo
-  version: string;    // SemVer
-}
-
 /* ============================== logging helpers - CLEANED UP ============================== */
 // Legacy logging functions - replaced with proper logger
 const log = (l: string, ...a: unknown[]) => {
@@ -713,79 +707,6 @@ function textFromFileEntry(v: FileEntry): string {
   return '';
 }
 // Note: Complex file fetching functions removed - now handled by ChartValuesService
-
-
-export async function fetchChartYaml(
-  $store: Dispatchable,
-  repoName: string,
-  chartName: string,
-  version: string
-): Promise<any | null> {
-  const found = await getClusterContext($store, { repoName });
-
-  if (!found) {
-    logger.warn(`ClusterRepo "${repoName}" not found in any cluster`);
-    return null;
-  }
-
-  const { baseApi } = found;
-  const repoPath = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(repoName)}`;
-  const chartParams = `chartName=${encodeURIComponent(chartName)}&version=${encodeURIComponent(version)}`;
-
-  // Try 1: ?link=files approach (gets all chart files)
-  try {
-    const response = await $store.dispatch('rancher/request', {
-      url: `${repoPath}?link=files&${chartParams}`,
-      timeout: TIMEOUT_VALUES.READ
-    });
-    const filesData = response?.data ?? response;
-
-    if (filesData && typeof filesData === 'object') {
-      for (const key of Object.keys(filesData)) {
-        if (key.toLowerCase().endsWith('chart.yaml')) {
-          const text = textFromFileEntry(filesData[key]);
-          if (text && text.includes(':')) {
-            return yaml.load(text);
-          }
-        }
-      }
-    }
-  } catch { /* continue to next method */ }
-
-  // Try 2: ?link=file approach (direct file fetch)
-  try {
-    const response = await $store.dispatch('rancher/request', {
-      url: `${repoPath}?link=file&${chartParams}&name=${encodeURIComponent('Chart.yaml')}`,
-      timeout: TIMEOUT_VALUES.READ
-    });
-    const text = textFromFileEntry(response?.data ?? response);
-
-    if (text && text.includes(':')) {
-      return yaml.load(text);
-    }
-  } catch { /* continue to next method */ }
-
-  // Try 3: ?link=chart tar.gz approach (most reliable for OCI repos)
-  try {
-    const response = await $store.dispatch('rancher/request', {
-      url: `${repoPath}?link=chart&${chartParams}`,
-      responseType: 'arraybuffer',
-      headers: { Accept: 'application/gzip, application/x-gzip, application/octet-stream' },
-      timeout: TIMEOUT_VALUES.MEDIUM
-    });
-
-    const buffer = response?.data ?? response;
-    if (buffer instanceof ArrayBuffer) {
-      const text = await extractFileFromTarGz(buffer, 'chart.yaml');
-      if (text && text.includes(':')) {
-        return yaml.load(text);
-      }
-    }
-  } catch { /* all methods failed */ }
-
-  logger.warn(`Failed to fetch Chart.yaml for ${chartName}@${version} from ${repoName}`);
-  return null;
-}
 
 export async function fetchChartDefaultValues(
   $store: Dispatchable,

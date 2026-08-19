@@ -2,7 +2,7 @@
  * Validation rules for AI/ML application installation
  */
 
-import type { ValidationResult, ValidationError, FieldValidationRule } from '../utils/validation';
+import type { ValidationResult, ValidationError } from '../utils/validation';
 import { ERROR_CODES } from '../utils/constants';
 
 export function validateReleaseName(name: string): ValidationResult {
@@ -227,27 +227,6 @@ function hasNestedKey(obj: any, key: string): boolean {
 
   return true;
 }
-
-// Export validation rules for use in forms
-export const releaseNameRule: FieldValidationRule = {
-  name: 'releaseName',
-  validate: validateReleaseName
-};
-
-export const namespaceRule: FieldValidationRule = {
-  name: 'namespace',
-  validate: validateNamespace
-};
-
-export const helmValuesRule: FieldValidationRule = {
-  name: 'helmValues',
-  validate: validateHelmValues
-};
-
-export const clusterSelectionRule: FieldValidationRule = {
-  name: 'clusterSelection',
-  validate: (value: any) => validateClusterSelection(Array.isArray(value) ? value : [])
-};
 
 // Type import for warnings
 interface ValidationWarning {

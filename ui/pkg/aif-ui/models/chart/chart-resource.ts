@@ -12,11 +12,6 @@ export interface ChartMaintainer {
   url?: string;
 }
 
-export interface ChartKeyword {
-  name: string;
-  category?: string;
-}
-
 export interface ChartVersion {
   version: string;
   appVersion?: string;
