@@ -89,6 +89,66 @@ const (
 	leaseReleaseBudget = 10 * time.Second
 )
 
+// managerOptions is the manager's configuration, lifted out of main.
+//
+// Not for tidiness. Two of these fields are the shutdown behaviour the
+// pending-release fix rests on, and neither of them fails visibly: flip
+// LeaderElectionReleaseOnCancel back to false and the operator still works,
+// just with every upgrade stalled for the lease expiry. Inside main() nothing
+// could assert on them, because main() takes over the process. Out here they
+// are an ordinary value a test can read.
+func managerOptions(
+	metrics metricsserver.Options,
+	webhookServer webhook.Server,
+	probeAddr string,
+	enableLeaderElection bool,
+) ctrl.Options {
+	gracefulShutdownTimeout := managerGracefulShutdownTimeout
+
+	return ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metrics,
+		WebhookServer:          webhookServer,
+		HealthProbeBindAddress: probeAddr,
+		LeaderElection:         enableLeaderElection,
+		LeaderElectionID:       "77d8cb24.suse.com",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				// Watch secrets across all namespaces: settings controller needs
+				// operatorNamespace secrets; aiworkload controller needs Helm
+				// release secrets (owner=helm) from any target namespace.
+				&corev1.Secret{}: {},
+				// Restrict ConfigMap watch to the extension namespace — the namespaced
+				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
+				&corev1.ConfigMap{}: {
+					Namespaces: map[string]cache.Config{
+						config.GetExtensionNamespace(): {},
+					},
+				},
+			},
+		},
+		// Hand the lease back on the way out instead of letting the incoming
+		// operator wait out its ~15s expiry. That wait is dead time during every
+		// operator upgrade: the surge Pod is running and healthy and doing
+		// nothing, and any extension that needs reconciling sits untouched until
+		// it starts.
+		//
+		// Safe here because nothing runs after the manager stops — main returns
+		// straight into process exit, with no defers and no cleanup. The API
+		// server's shutdown goroutine is not an exception: it is triggered by the
+		// same cancelled context and runs alongside the drain, not after it.
+		// controller-runtime is stricter still, releasing only once every
+		// runnable has stopped, so the lease cannot change hands while a
+		// reconcile is in flight.
+		//
+		// Not free, though: the release is a live API call the manager blocks
+		// on, so it has to be paid for out of the same grace period as the
+		// drain. See managerGracefulShutdownTimeout.
+		LeaderElectionReleaseOnCancel: true,
+		GracefulShutdownTimeout:       &gracefulShutdownTimeout,
+	}
+}
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -214,50 +274,8 @@ func main() {
 
 	operatorNamespace := config.GetOperatorNamespace()
 
-	gracefulShutdownTimeout := managerGracefulShutdownTimeout
-
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "77d8cb24.suse.com",
-		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				// Watch secrets across all namespaces: settings controller needs
-				// operatorNamespace secrets; aiworkload controller needs Helm
-				// release secrets (owner=helm) from any target namespace.
-				&corev1.Secret{}: {},
-				// Restrict ConfigMap watch to the extension namespace — the namespaced
-				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
-				&corev1.ConfigMap{}: {
-					Namespaces: map[string]cache.Config{
-						config.GetExtensionNamespace(): {},
-					},
-				},
-			},
-		},
-		// Hand the lease back on the way out instead of letting the incoming
-		// operator wait out its ~15s expiry. That wait is dead time during every
-		// operator upgrade: the surge Pod is running and healthy and doing
-		// nothing, and any extension that needs reconciling sits untouched until
-		// it starts.
-		//
-		// Safe here because nothing runs after the manager stops — main returns
-		// straight into process exit, with no defers and no cleanup. The API
-		// server's shutdown goroutine below is not an exception: it is triggered
-		// by the same cancelled context and runs alongside the drain, not after
-		// it. controller-runtime is stricter still, releasing only once every
-		// runnable has stopped, so the lease cannot change hands while a
-		// reconcile is in flight.
-		//
-		// Not free, though: the release is a live API call the manager blocks
-		// on, so it has to be paid for out of the same grace period as the
-		// drain. See managerGracefulShutdownTimeout.
-		LeaderElectionReleaseOnCancel: true,
-		GracefulShutdownTimeout:       &gracefulShutdownTimeout,
-	})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(),
+		managerOptions(metricsServerOptions, webhookServer, probeAddr, enableLeaderElection))
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
