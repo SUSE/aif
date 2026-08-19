@@ -210,7 +210,7 @@ export const HELM_CONSTANTS = {
   PART_OF_LABEL: 'app.kubernetes.io/part-of'
 } as const;
 
-// === Feature Flags (will be used by feature-flags.ts) ===
+// === Feature Flags ===
 export const FEATURE_FLAGS = {
   BULK_OPERATIONS: 'bulk-operations',
   ADVANCED_FILTERING: 'advanced-filtering',
