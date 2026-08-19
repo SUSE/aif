@@ -1,7 +1,8 @@
-{{- if .Values.crds.manageWithJob }}
+{{- if and .Values.crds.manageWithJob .Values.crds.rbac.create }}
 # RBAC for the CRD-apply hook Job. Created as pre-install/pre-upgrade hooks (with a
 # lower weight than the Job) and torn down afterwards, so the installer only holds
-# CRD-management permissions for the duration of the hook.
+# CRD-management permissions for the duration of the hook. Set crds.rbac.create=false
+# to pre-provision this RBAC out-of-band in restricted environments (see values.yaml).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -25,17 +26,32 @@ metadata:
     "helm.sh/hook-weight": "-15"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 rules:
-  # No delete: the Job only applies CRDs so uninstall never removes them (or CRs).
+  # create can't be constrained by resourceNames (the object has no name until it
+  # exists), so it stays cluster-wide. `kubectl apply -f` on explicit files does a
+  # per-object get/patch (create when absent) and never lists the collection, so
+  # no `list` grant is needed. No delete either: the Job only applies CRDs, so
+  # uninstall never removes them (or their CRs).
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - create
+  # get/update/patch (the mutating server-side-apply path) are scoped to exactly
+  # this chart's CRDs, so the hook can never mutate unrelated CRDs on the cluster.
+  # Names are derived from files/crds/ so the list stays in sync as CRDs change.
   - apiGroups:
       - apiextensions.k8s.io
     resources:
       - customresourcedefinitions
     verbs:
       - get
-      - list
-      - create
       - update
       - patch
+    resourceNames:
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+      - {{ (($.Files.Get $path) | fromYaml).metadata.name }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

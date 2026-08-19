@@ -3,6 +3,8 @@ annotations:
   helm.sh/images: |
     - image: ghcr.io/suse/aif-operator:2.2.0-dev.1
       name: aif-operator
+    - image: registry.suse.com/suse/kubectl:1.35
+      name: kubectl
 apiVersion: v2
 name: aif-operator
 version: 2.2.0-dev.1

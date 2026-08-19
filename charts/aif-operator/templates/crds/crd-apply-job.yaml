@@ -1,6 +1,9 @@
 {{- if .Values.crds.manageWithJob }}
+{{- if and (not .Values.crds.rbac.create) (not .Values.crds.serviceAccountName) }}
+{{- fail "crds.rbac.create is false but crds.serviceAccountName is empty: point crds.serviceAccountName at a pre-provisioned ServiceAccount, or set crds.rbac.create=true so the chart creates one." }}
+{{- end }}
 # ConfigMap carrying the chart's CRD manifests, consumed by the CRD-apply Job.
-# Rendered from crds/ (~45 KiB total, well under the ConfigMap size limit).
+# Rendered from files/crds/ (~57 KiB total, well under the ConfigMap size limit).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,7 +16,7 @@ metadata:
     "helm.sh/hook-weight": "-15"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 data:
-{{- range $path, $_ := .Files.Glob "crds/*.yaml" }}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
   {{ base $path }}: |
 {{ $.Files.Get $path | indent 4 }}
 {{- end }}
@@ -37,7 +40,7 @@ spec:
   ttlSecondsAfterFinished: 60
   template:
     spec:
-      serviceAccountName: {{ include "aif-operator.fullname" . }}-crd-apply
+      serviceAccountName: {{ .Values.crds.serviceAccountName | default (printf "%s-crd-apply" (include "aif-operator.fullname" .)) }}
       restartPolicy: Never
       {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
       securityContext:
@@ -73,6 +76,6 @@ spec:
               echo "Applying AI Factory CRDs (server-side)..."
               # Server-side apply avoids the client-side last-applied annotation size
               # limit (CRDs are large) and cleanly takes field ownership on upgrade.
-              kubectl apply --server-side --force-conflicts --cache-dir=/tmp/.kube-cache -f /crds/
+              kubectl apply --server-side --force-conflicts --field-manager=aif-operator-crds --cache-dir=/tmp/.kube-cache -f /crds/
               echo "CRDs applied."
 {{- end }}
