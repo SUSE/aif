@@ -82,11 +82,29 @@ const (
 	// is killed by the process exiting rather than cancelled cleanly.
 	managerGracefulShutdownTimeout = 30 * time.Second
 
-	// leaseReleaseBudget is what handing the leader lease back can cost, not a
-	// value we set. client-go bounds release by RenewDeadline, which the
-	// manager leaves at its 10s default; it is reserved here so the drain
-	// cannot be tuned as though the whole grace period were available.
+	// leaseReleaseBudget is what handing the leader lease back can cost.
+	//
+	// client-go's release() runs its lock Get and Update under a single context
+	// bounded by RenewDeadline, so this is the number that decides how much of the grace
+	// period the release can eat — and it eats the most exactly when the API
+	// server is slow, which is also when the Pod is most likely being drained.
+	//
+	// Passed to the manager as RenewDeadline rather than left at the identical
+	// default. Same value today, but agreeing by coincidence is not the same as
+	// agreeing: as a bare constant it documented an assumption about
+	// controller-runtime that nothing checked, and TestShutdownFitsInTheGracePeriod
+	// would keep passing on a stale number after upstream changed its default.
 	leaseReleaseBudget = 10 * time.Second
+
+	// leaseDuration is how long a lease survives an operator that dies without
+	// releasing it — a SIGKILL, an OOM, a node loss — and so how long the
+	// extensions go unreconciled in that case.
+	//
+	// Set here only because leaseReleaseBudget is. client-go refuses a
+	// RenewDeadline that is not shorter than the lease duration, and leaving
+	// this one implicit would mean a future widening of the release budget
+	// crashed the operator at startup instead of failing a test.
+	leaseDuration = 15 * time.Second
 )
 
 // managerOptions is the manager's configuration, lifted out of main.
@@ -104,6 +122,8 @@ func managerOptions(
 	enableLeaderElection bool,
 ) ctrl.Options {
 	gracefulShutdownTimeout := managerGracefulShutdownTimeout
+	renewDeadline := leaseReleaseBudget
+	lease := leaseDuration
 
 	return ctrl.Options{
 		Scheme:                 scheme,
@@ -146,6 +166,10 @@ func managerOptions(
 		// drain. See managerGracefulShutdownTimeout.
 		LeaderElectionReleaseOnCancel: true,
 		GracefulShutdownTimeout:       &gracefulShutdownTimeout,
+		// The other half of the shutdown budget, stated rather than inherited.
+		// See leaseReleaseBudget.
+		RenewDeadline: &renewDeadline,
+		LeaseDuration: &lease,
 	}
 }
 
