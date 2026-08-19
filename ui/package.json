@@ -11,13 +11,13 @@
     "@rancher/shell": "^3.0.13"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.2.1",
-    "@commitlint/config-conventional": "^20.0.0",
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@eslint/js": "^9.39.0",
     "@types/js-yaml": "^4.0.9",
     "eslint": "^9.39.0",
     "eslint-plugin-vue": "^9.33.0",
-    "globals": "^17.9.0",
+    "globals": "^17.11.0",
     "typescript-eslint": "^8.39.0",
     "vitest": "^2"
   },
