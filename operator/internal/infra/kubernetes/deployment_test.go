@@ -181,6 +181,38 @@ func TestIsDeploymentReadyNoDeployments(t *testing.T) {
 	if got.Ready {
 		t.Error("IsDeploymentReady() = ready with no deployments for the release, want not ready")
 	}
+	// Ready alone cannot express this case: "none exist" and "one exists and is
+	// still rolling out" are both not-ready, and only the caller knows which is a
+	// failure. The git source installs a Rancher UI-plugin chart that may contain
+	// no Deployment at all and is finished the moment Helm applies it; collapse the
+	// two and that chart waits out the readiness bound and then reports Failed.
+	if got.Found {
+		t.Error("IsDeploymentReady() = found with no deployments for the release; a chart " +
+			"that legitimately ships none is indistinguishable from one still rolling out")
+	}
+}
+
+// The other half of Found: an existing Deployment reports found whether or not
+// it is ready. Without this, hardwiring Found to false would satisfy the case
+// above while making the flag useless — every release would look like it owns no
+// workload, and the deployment-required policy would never wait for anything.
+func TestIsDeploymentReadyReportsFoundWhileRollingOut(t *testing.T) {
+	rolling := deployment(testReleaseName, 2, 2, appsv1.DeploymentStatus{
+		Replicas: 1, UpdatedReplicas: 0, ReadyReplicas: 1, AvailableReplicas: 1,
+	})
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(rolling).Build()
+
+	got, err := IsDeploymentReady(context.Background(), c, testNamespace, testReleaseName, logr.Discard())
+	if err != nil {
+		t.Fatalf("IsDeploymentReady() returned an unexpected error: %v", err)
+	}
+	if got.Ready {
+		t.Error("IsDeploymentReady() = ready mid-rollout, want not ready")
+	}
+	if !got.Found {
+		t.Error("IsDeploymentReady() = not found for a Deployment that exists; the release " +
+			"would be reported installed without ever waiting for it")
+	}
 }
 
 // TestIsDeploymentReadyAllMustBeReady covers a chart that ships more than one

@@ -561,49 +561,9 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Installed", fmt.Sprintf("Helm release %s installed", releaseName), ext.Generation)
 	ext.Status.HelmReleaseName = releaseName
 
-	// LastRelease, not DeployedRelease: the status field mirrors what Helm last
-	// recorded, which is the highest revision number rather than the running one.
-	releaseInfo, err := helm.LastRelease(ctx, releaseName)
-	if err != nil {
-		return ctrl.Result{}, err
+	if result, handled, err := r.awaitReleaseRunning(ctx, ext, namespace, releaseName, deploymentRequired); handled || err != nil {
+		return result, err
 	}
-	if releaseInfo != nil {
-		if err := r.restartReadinessClocks(ctx, ext, int32(releaseInfo.Revision)); err != nil {
-			return ctrl.Result{}, err
-		}
-		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
-	}
-
-	// A readiness check that errors and one that reports not-ready share a clock:
-	// both mean the deployment is not usable yet, and a check flapping between the
-	// two must not keep restarting the wait.
-	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.deploymentReader(), namespace, releaseName, logger)
-	if err != nil {
-		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
-			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err))
-	}
-	if !deployStatus.Ready {
-		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
-			"NotReady", deployStatus.Message)
-	}
-
-	// Deployment is ready: clear the waiting marker and continue in the same pass
-	// rather than requeuing, so install completes immediately once readiness is
-	// reached. Continuing inline also avoids the cache-propagation race — there is
-	// no follow-up reconcile whose cached Get could still observe the stale marker,
-	// and no further main-resource write happens this pass (only the status patch).
-	if r.getWaitingSince(ext, annotationWaitingSince) != (time.Time{}) {
-		r.clearWaitingSince(ext, annotationWaitingSince)
-		// updateAnnotations, not Update: HelmReleaseName and HelmReleaseRevision were
-		// set earlier in this pass and a bare Update would drop both before
-		// persistStatus ever sees them.
-		if err := r.updateAnnotations(ctx, ext); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
-		"Available", deployStatus.Message, ext.Generation)
 
 	// Both Service failures share a clock for the same reason the deployment ones
 	// do: either way the Service is not yet usable, and the chart is free to
@@ -698,6 +658,20 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 
 	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
 		"Created", "UIPlugin installed from git source", ext.Generation)
+
+	// deploymentOptional, because a Rancher UI-plugin chart is allowed to be
+	// nothing but a UIPlugin CR and this path cannot tell that chart from one whose
+	// Deployment has not appeared yet. Required here would fail every install of
+	// the former after ReadinessTimeout — strictly worse than the wait it replaces.
+	//
+	// ext.Spec.Extension.Name, not releaseName: that is what ensureUIPluginGit
+	// installs under, and Status.HelmReleaseName is deliberately left unset on this
+	// path for the finalizer's sake.
+	if result, handled, err := r.awaitReleaseRunning(
+		ctx, ext, namespace, ext.Spec.Extension.Name, deploymentOptional,
+	); handled || err != nil {
+		return result, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -881,6 +855,108 @@ func (r *InstallAIExtensionReconciler) deploymentReader() client.Reader {
 		return r.APIReader
 	}
 	return r.Client
+}
+
+// deploymentPolicy says what the absence of a Deployment means for a release.
+//
+// It is the one thing the two source kinds genuinely disagree about. The Helm
+// path installs the extension's server chart, whose entire purpose is to run a
+// Deployment: none present is a broken chart, and reporting Installed would be
+// a lie. The Git path installs a Rancher UI-plugin chart, which is allowed to
+// contain nothing but a UIPlugin CR and a ClusterRepo — hold that to the same
+// rule and a correct extension never leaves Installing.
+type deploymentPolicy bool
+
+const (
+	deploymentRequired deploymentPolicy = true
+	deploymentOptional deploymentPolicy = false
+)
+
+// awaitReleaseRunning turns "Helm applied the release" into "the release is
+// running", and reports whether it took ownership of the outcome.
+//
+// This is the guarantee that used to come from Helm's own up.Wait. Turning Wait
+// off is what stopped a SIGTERM mid-rollout from cancelling the reconcile
+// context and resolving into failRelease — but Wait was also the only thing
+// checking that the workload came up, so switching it off without a replacement
+// swaps a release wrongly marked failed for one wrongly marked Installed.
+//
+// Shared by both source kinds deliberately. The replacement was written into
+// the Helm path only, which left the Git path applying a chart and declaring
+// UIPluginReady=True in the next statement: an upgrade to a broken image tag
+// reported Installed and stayed there. Nothing structural stopped the two
+// diverging, so the wait lives in one place and each caller states its policy.
+func (r *InstallAIExtensionReconciler) awaitReleaseRunning(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	namespace string,
+	releaseName string,
+	policy deploymentPolicy,
+) (ctrl.Result, bool, error) {
+	logger := log.FromContext(ctx)
+
+	helm, err := r.helmFor(namespace)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+
+	// LastRelease, not DeployedRelease: the status field mirrors what Helm last
+	// recorded, which is the highest revision number rather than the running one.
+	releaseInfo, err := helm.LastRelease(ctx, releaseName)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+	if releaseInfo != nil {
+		if err := r.restartReadinessClocks(ctx, ext, int32(releaseInfo.Revision)); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
+	}
+
+	// A readiness check that errors and one that reports not-ready share a clock:
+	// both mean the deployment is not usable yet, and a check flapping between the
+	// two must not keep restarting the wait.
+	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.deploymentReader(), namespace, releaseName, logger)
+	if err != nil {
+		result, awaitErr := r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
+			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err))
+		return result, true, awaitErr
+	}
+
+	// Nothing to wait on, under a policy that permits it. Distinguished from
+	// not-ready rather than folded into it: a chart with no workload is finished
+	// the moment Helm applies it, and timing it out after ReadinessTimeout would
+	// fail an extension that is working exactly as designed.
+	waiting := !deployStatus.Ready && (deployStatus.Found || policy == deploymentRequired)
+	if waiting {
+		result, awaitErr := r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
+			"NotReady", deployStatus.Message)
+		return result, true, awaitErr
+	}
+
+	// Ready: clear the waiting marker and continue in the same pass rather than
+	// requeuing, so install completes immediately once readiness is reached.
+	// Continuing inline also avoids the cache-propagation race — there is no
+	// follow-up reconcile whose cached Get could still observe the stale marker,
+	// and no further main-resource write happens this pass (only the status patch).
+	if r.getWaitingSince(ext, annotationWaitingSince) != (time.Time{}) {
+		r.clearWaitingSince(ext, annotationWaitingSince)
+		// updateAnnotations, not Update: HelmReleaseName and HelmReleaseRevision were
+		// set earlier in this pass and a bare Update would drop both before
+		// persistStatus ever sees them.
+		if err := r.updateAnnotations(ctx, ext); err != nil {
+			return ctrl.Result{}, true, err
+		}
+	}
+
+	message := deployStatus.Message
+	if !deployStatus.Found {
+		message = "Release has no deployment to wait for"
+	}
+	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
+		"Available", message, ext.Generation)
+
+	return ctrl.Result{}, false, nil
 }
 
 // restartReadinessClocks drops the readiness markers when the release moves to

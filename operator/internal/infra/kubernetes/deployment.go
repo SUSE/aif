@@ -26,7 +26,16 @@ import (
 )
 
 type DeploymentStatus struct {
-	Ready   bool
+	Ready bool
+	// Found reports whether the release owns any Deployment at all.
+	//
+	// Separate from Ready because "we looked and there were none" is different
+	// information from "one exists and has not finished rolling out", and only
+	// the caller knows which of those is a failure. A chart whose whole purpose
+	// is to run a server is broken without a Deployment; a Rancher UI-plugin
+	// chart can legitimately contain nothing but a UIPlugin CR, and holding it
+	// un-Ready would mean it never installs.
+	Found   bool
 	Message string
 }
 
@@ -59,6 +68,7 @@ func IsDeploymentReady(
 	if len(list.Items) == 0 {
 		return DeploymentStatus{
 			Ready:   false,
+			Found:   false,
 			Message: "No deployments found for release " + releaseName,
 		}, nil
 	}
@@ -76,6 +86,7 @@ func IsDeploymentReady(
 			)
 			return DeploymentStatus{
 				Ready:   false,
+				Found:   true,
 				Message: "Deployment " + d.Name + " not ready: " + reason,
 			}, nil
 		}
@@ -83,6 +94,7 @@ func IsDeploymentReady(
 
 	return DeploymentStatus{
 		Ready:   true,
+		Found:   true,
 		Message: "All deployments ready",
 	}, nil
 }
