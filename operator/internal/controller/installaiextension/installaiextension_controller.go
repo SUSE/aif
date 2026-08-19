@@ -302,8 +302,14 @@ func (r *InstallAIExtensionReconciler) reconcileRequest(
 	// operator stamps Phase=Failed on a healthy extension.
 	//
 	// Placed above the writes rather than inside them so there is one rule
-	// instead of eighteen, and so the release-pending marker below is left
-	// exactly as the interrupted pass found it.
+	// instead of eighteen, and so the stale-marker cleanup below cannot conclude
+	// the wait is over on the strength of a pass that concluded nothing.
+	//
+	// It does not put a marker back. handlePendingRelease writes that annotation
+	// through its own Update, well above this point, so an interrupted pass can
+	// have committed one already. That is the right way round: the marker times a
+	// wait that really did start, and the next pass either finds the release
+	// still pending and keeps the window or finds it settled and clears it.
 	//
 	// This guard's job is only to stop the write; how a cancelled pass is
 	// reported back to controller-runtime is Reconcile's, at the boundary, where

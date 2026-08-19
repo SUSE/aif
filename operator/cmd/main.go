@@ -157,9 +157,13 @@ func managerOptions(
 		// straight into process exit, with no defers and no cleanup. The API
 		// server's shutdown goroutine is not an exception: it is triggered by the
 		// same cancelled context and runs alongside the drain, not after it.
-		// controller-runtime is stricter still, releasing only once every
-		// runnable has stopped, so the lease cannot change hands while a
-		// reconcile is in flight.
+		// controller-runtime orders the release after the drain — the
+		// leader-election cancel is a defer in engageStopProcedure, so it runs
+		// once the runnable groups have stopped. Ordered, not guaranteed: that
+		// wait is itself bounded by GracefulShutdownTimeout, and when it expires
+		// the release goes ahead with whatever is still in flight still in
+		// flight. What keeps the ordering true in practice is the Helm grace
+		// being well inside the drain, not this option; see helm.ShutdownGrace.
 		//
 		// Not free, though: the release is a live API call the manager blocks
 		// on, so it has to be paid for out of the same grace period as the

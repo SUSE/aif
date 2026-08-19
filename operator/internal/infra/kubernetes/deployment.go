@@ -116,6 +116,14 @@ func IsDeploymentReady(
 // definition every operator already reasons about — and reaching for a
 // different one here would mean this function and `kubectl rollout status`
 // could disagree about the same Deployment.
+//
+// One of kubectl's is missing, so they can still disagree. Ahead of the four,
+// kubectl reads the Progressing condition and fails outright on
+// ProgressDeadlineExceeded; this only ever answers "not yet", so a rollout the
+// deployment controller has already given up on is waited out here until
+// DefaultReadinessTimeout rather than reported as the failure it is. Both end
+// in a retryable failure, so the difference is how long a wedged rollout takes
+// to surface, not whether it does — closing it is its own change.
 func rolloutIncomplete(d *appsv1.Deployment) string {
 	// Until the deployment controller acts on the new spec, every count below
 	// still describes the revision being replaced. Checked first: without it the

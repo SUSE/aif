@@ -30,6 +30,17 @@ import (
 // manager's drain, which must still be waiting when this expires — see
 // withShutdownGrace, and cmd.TestHelmGraceExpiresBeforeTheDrainGivesUp for the
 // assertion, which lives there because only cmd can see both numbers.
+//
+// The drain is only above it on the shutdown paths that have one, and a *lost*
+// lease is not one. controller-runtime's OnStoppedLeading sets
+// gracefulShutdownTimeout to zero before pushing "leader election lost" onto
+// the manager's error channel, so there is no drain at all: the process exits
+// with the write still running, which is the killed-mid-write, release-left-
+// pending case this grace exists to avoid, reached by another road. Nothing
+// here can close that — by then another operator may already hold the lease,
+// and waiting would put two writers on one release. It takes losing the lease
+// to reach, which is an API-server partition or a stalled process rather than
+// an ordinary rollout.
 const ShutdownGrace = 10 * time.Second
 
 // withShutdownGrace derives a context that shutdown no longer cancels outright,
