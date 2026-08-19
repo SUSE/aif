@@ -108,15 +108,6 @@ export interface HelmSecret {
   };
 }
 
-export interface HelmConfigMap {
-  metadata: {
-    name: string;
-    namespace: string;
-    labels?: Record<string, string>;
-    annotations?: Record<string, string>;
-  };
-  data: Record<string, string>;
-}
 
 export interface HelmReleaseInfo {
   release?: string;
@@ -183,13 +174,6 @@ export interface RegistrySecret {
   };
 }
 
-export interface DockerConfig {
-  auths: Record<string, {
-    auth: string;
-    username?: string;
-    password?: string;
-  }>;
-}
 
 // === Repository Types ===
 export interface RepositoryIndex {
@@ -247,13 +231,6 @@ export interface RancherError {
 }
 
 // === Request Types ===
-export interface RancherRequestConfig {
-  url: string;
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-  data?: any;
-  headers?: Record<string, string>;
-  responseType?: 'json' | 'text' | 'arraybuffer';
-}
 
 // === API Response Types ===
 export interface ListResponse<T extends { id?: string } | { metadata?: { name?: string } }> {
@@ -261,12 +238,6 @@ export interface ListResponse<T extends { id?: string } | { metadata?: { name?: 
   data?: T[] | T;
 }
 
-export interface ResourceResponse<T extends { id?: string } | { metadata?: { name?: string } }> {
-  data?: T;
-  metadata?: {
-    resourceVersion?: string;
-  };
-}
 
 // === Installation Types ===
 export interface InstallationPayload {
@@ -303,9 +274,6 @@ export function isRancherError(error: any): error is RancherError {
   return error && (typeof error.status === 'number' || typeof error.code === 'number');
 }
 
-export function isClusterResource(obj: any): obj is ClusterResource {
-  return obj && obj.metadata && typeof obj.metadata.name === 'string';
-}
 
 export function isHelmSecret(obj: any): obj is HelmSecret {
   return obj &&
@@ -314,76 +282,5 @@ export function isHelmSecret(obj: any): obj is HelmSecret {
          obj.type === 'helm.sh/release.v1';
 }
 
-export function isAppCRD(obj: any): obj is AppCRD {
-  return obj &&
-         obj.metadata &&
-         typeof obj.metadata.name === 'string' &&
-         obj.spec;
-}
 
 // === Runtime Validation Functions ===
-export function validateClusterInfo(obj: unknown): ClusterInfo | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const cluster = obj as any;
-
-  if (typeof cluster.id !== 'string' || typeof cluster.name !== 'string') {
-    return null;
-  }
-
-  return {
-    id: cluster.id,
-    name: cluster.name,
-    ready: typeof cluster.ready === 'boolean' ? cluster.ready : true
-  };
-}
-
-export function validateAppCollectionItem(obj: unknown): boolean {
-  if (!obj || typeof obj !== 'object') return false;
-  const app = obj as any;
-
-  return typeof app.name === 'string' &&
-         typeof app.slug_name === 'string' &&
-         (app.packaging_format === 'HELM_CHART' || app.packaging_format === 'CONTAINER' || !app.packaging_format);
-}
-
-export function validateListResponse<T extends { id?: string } | { metadata?: { name?: string } }>(obj: unknown, itemValidator: (item: unknown) => boolean): ListResponse<T> | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const response = obj as any;
-
-  // Check if it has items array
-  if (response.items && Array.isArray(response.items)) {
-    const validItems = response.items.filter(itemValidator);
-    return { items: validItems as T[] };
-  }
-
-  // Check if it has data array
-  if (response.data && Array.isArray(response.data)) {
-    const validItems = response.data.filter(itemValidator);
-    return { data: validItems as T[] };
-  }
-
-  // Check if data is a single item
-  if (response.data && itemValidator(response.data)) {
-    return { data: response.data as T };
-  }
-
-  return null;
-}
-
-export function validateHelmSecret(obj: unknown): HelmSecret | null {
-  if (!isHelmSecret(obj)) return null;
-
-  const secret = obj as any;
-  if (!secret.metadata?.name || !secret.metadata?.namespace) return null;
-
-  return {
-    metadata: {
-      name: secret.metadata.name,
-      namespace: secret.metadata.namespace,
-      labels: secret.metadata.labels || {},
-      annotations: secret.metadata.annotations || {}
-    },
-    type: secret.type,
-    data: secret.data || {}
-  };
-}

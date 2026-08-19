@@ -33,21 +33,6 @@ export type InstallationStatus =
 
 // === App Core Interfaces ===
 
-export interface AppMetadata {
-  name: string;
-  displayName?: string;
-  description?: string;
-  version?: string;
-  appVersion?: string;
-  icon?: string;
-  home?: string;
-  sources?: string[];
-  keywords?: string[];
-  category?: string;
-  maintainers?: AppMaintainer[];
-  annotations?: Record<string, string>;
-  labels?: Record<string, string>;
-}
 
 export interface AppMaintainer {
   name: string;
@@ -68,20 +53,6 @@ export interface AppRepository {
   };
 }
 
-export interface AppVersionInfo {
-  version: string;
-  appVersion?: string;
-  description?: string;
-  created: string;
-  digest?: string;
-  deprecated?: boolean;
-  urls: string[];
-  dependencies?: AppDependency[];
-  maintainers?: AppMaintainer[];
-  sources?: string[];
-  keywords?: string[];
-  annotations?: Record<string, string>;
-}
 
 export interface AppDependency {
   name: string;
@@ -197,49 +168,9 @@ export interface UpgradeOptions extends Omit<InstallOptions, 'createNamespace'> 
   maxHistory?: number;
 }
 
-export interface UninstallOptions {
-  clusterId: string;
-  namespace: string;
-  releaseName: string;
-  keepHistory?: boolean;
-  dryRun?: boolean;
-  timeout?: number;
-  cascade?: 'background' | 'foreground' | 'orphan';
-}
 
-export interface RollbackOptions {
-  clusterId: string;
-  namespace: string;
-  releaseName: string;
-  revision?: number;
-  dryRun?: boolean;
-  wait?: boolean;
-  timeout?: number;
-  cleanupOnFail?: boolean;
-  force?: boolean;
-  recreatePods?: boolean;
-}
 
 // === App Statistics and Analytics ===
-
-export interface AppStats {
-  totalInstallations: number;
-  activeInstallations: number;
-  failedInstallations: number;
-  clusters: string[];
-  namespaces: string[];
-  lastInstalled?: string;
-  lastUpgraded?: string;
-  averageInstallTime?: number; // in seconds
-  successRate: number; // 0-1
-  popularityScore: number; // 0-100
-  downloadCount?: number;
-  rating?: {
-    average: number;
-    count: number;
-    distribution: Record<number, number>; // rating -> count
-  };
-}
 
 export interface AppHealth {
   overall: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
@@ -300,25 +231,7 @@ export interface AppSortOptions {
   };
 }
 
-export interface AppQueryOptions {
-  filter?: AppFilter;
-  sort?: AppSortOptions;
-  pagination?: {
-    page: number;
-    limit: number;
-  };
-  include?: ('installations' | 'stats' | 'health' | 'versions')[];
-}
 
-export interface AppQueryResult {
-  apps: AppSummary[];
-  total: number;
-  page: number;
-  limit: number;
-  hasMore: boolean;
-  filters: AppFilter;
-  sort: AppSortOptions;
-}
 
 // === App Summary and List Types ===
 
@@ -403,10 +316,6 @@ export interface AppAction {
   execute: (options?: any) => Promise<void>;
 }
 
-export interface AppBulkAction extends AppAction {
-  bulk: true;
-  execute: (apps: AppSummary[], options?: any) => Promise<void>;
-}
 
 export interface AppContextMenuAction extends AppAction {
   separator?: boolean;
@@ -415,59 +324,8 @@ export interface AppContextMenuAction extends AppAction {
 
 // === App Configuration and Settings ===
 
-export interface AppConfiguration {
-  defaultNamespace: string;
-  defaultTimeout: number;
-  autoCreateNamespace: boolean;
-  skipCRDs: boolean;
-  atomic: boolean;
-  cleanupOnFail: boolean;
-  maxHistory: number;
-  dryRunFirst: boolean;
-  notifications: {
-    onInstall: boolean;
-    onUpgrade: boolean;
-    onUninstall: boolean;
-    onFailure: boolean;
-  };
-  healthCheck: {
-    enabled: boolean;
-    interval: number; // in minutes
-    timeout: number; // in seconds
-  };
-}
-
-export interface AppPreferences {
-  defaultView: 'grid' | 'list' | 'table';
-  itemsPerPage: number;
-  showDescriptions: boolean;
-  showIcons: boolean;
-  showStats: boolean;
-  showHealth: boolean;
-  groupBy: 'none' | 'category' | 'repository' | 'status' | 'cluster';
-  defaultFilters: AppFilter;
-  defaultSort: AppSortOptions;
-  autoRefreshInterval?: number; // in seconds
-}
 
 // === App Events and Notifications ===
-
-export interface AppEvent {
-  id: string;
-  type: 'install' | 'upgrade' | 'uninstall' | 'rollback' | 'health' | 'error';
-  appId: string;
-  appName: string;
-  clusterId: string;
-  clusterName?: string;
-  namespace: string;
-  releaseName: string;
-  message: string;
-  details?: Record<string, any>;
-  timestamp: string;
-  user?: string;
-  severity: 'info' | 'warning' | 'error' | 'success';
-  read: boolean;
-}
 
 export interface AppNotification {
   id: string;
@@ -531,88 +389,10 @@ export interface AppFormField {
   showWhen?: (values: Record<string, any>) => boolean;
 }
 
-export interface AppFormSchema {
-  fields: AppFormField[];
-  sections?: Array<{
-    title: string;
-    description?: string;
-    fields: string[];
-    collapsible?: boolean;
-    collapsed?: boolean;
-  }>;
-  validation?: (values: Record<string, any>) => AppValidationResult;
-}
 
 // === API Response Types ===
 
-export interface ApiResponse<T = any> {
-  data: T;
-  success: boolean;
-  message?: string;
-  errors?: string[];
-  warnings?: string[];
-  metadata?: {
-    total?: number;
-    page?: number;
-    limit?: number;
-    hasMore?: boolean;
-    requestId?: string;
-    timestamp: string;
-  };
-}
-
-export interface ApiError {
-  code: string;
-  message: string;
-  details?: any;
-  field?: string;
-  timestamp: string;
-  requestId?: string;
-}
 
 // === Utility Types ===
 
-export type AppId = string;
-export type ClusterId = string;
-export type NamespaceName = string;
-export type ReleaseName = string;
-export type AppVersionString = string;
-
-export type PartialBy<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
-export type RequiredBy<T, K extends keyof T> = T & Required<Pick<T, K>>;
-
 // === Type Guards ===
-
-export function isAppStatus(value: any): value is AppStatus {
-  return typeof value === 'string' && [
-    'available', 'installing', 'deployed', 'upgrading', 
-    'uninstalling', 'failed', 'unknown'
-  ].includes(value);
-}
-
-export function isInstallationStatus(value: any): value is InstallationStatus {
-  return typeof value === 'string' && [
-    'pending', 'installing', 'deployed', 'upgrading',
-    'uninstalling', 'failed', 'superseded', 'unknown'
-  ].includes(value);
-}
-
-export function isAppAction(value: any): value is AppAction {
-  return value && 
-    typeof value.name === 'string' &&
-    typeof value.label === 'string' &&
-    typeof value.enabled === 'boolean' &&
-    typeof value.execute === 'function';
-}
-
-export function hasInstallationInfo(app: AppSummary): app is AppSummary & { installations: AppInstallationSummary[] } {
-  return app.installations && app.installations.length > 0;
-}
-
-export function hasAppStats(app: AppSummary): app is AppSummary & { stats: AppStatsSummary } {
-  return !!app.stats;
-}
-
-export function hasAppHealth(app: AppSummary): app is AppSummary & { health: AppHealthSummary } {
-  return !!app.health;
-}

@@ -40,7 +40,6 @@ export interface BlueprintList {
 }
 
 export const BLUEPRINT_NAME_LABEL    = 'ai-factory.suse.com/blueprint-name';
-export const BLUEPRINT_VERSION_LABEL = 'ai-factory.suse.com/blueprint-version';
 // Provenance label the Helm chart stamps on product-shipped ("bundled") blueprints.
 // Distinct from spec.source (the BlueprintOrigin vendor enum SUSE/Nvidia/Custom).
 export const BLUEPRINT_SOURCE_LABEL   = 'ai-factory.suse.com/source';
