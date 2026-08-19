@@ -59,10 +59,9 @@ func TestReconcileRecordsNoVerdictDuringShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ext)})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Reconcile() error = %v, want context.Canceled: a pass cut short by shutdown "+
-			"has not finished, and reporting success would let the queue drop it", err)
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ext)}); err != nil {
+		t.Errorf("Reconcile() error = %v, want nil: see "+
+			"TestShutdownIsNotReportedAsAReconcileError", err)
 	}
 
 	var stored v1alpha1.InstallAIExtension
@@ -76,6 +75,65 @@ func TestReconcileRecordsNoVerdictDuringShutdown(t *testing.T) {
 	if len(stored.Status.Conditions) != 0 {
 		t.Errorf("conditions %+v persisted during shutdown; the pass reached no verdict",
 			stored.Status.Conditions)
+	}
+}
+
+// TestShutdownIsNotReportedAsAReconcileError covers the operator-side half of
+// the same mislabelling: not what the CR says, but what the operator's own logs
+// and metrics say about a restart.
+//
+// controller-runtime has no case for cancellation. A non-nil error means the
+// reconcile went wrong, full stop — `ERROR ... Reconciler error`,
+// controller_runtime_reconcile_errors_total, reconcile_total{result="error"}.
+// Report shutdown through that channel and every roll of the operator emits
+// errors proportional to how many CRs were mid-pass, which is indistinguishable
+// from the operator actually failing to reconcile them.
+//
+// Not a bare success either: the pass really did not settle the CR, so it
+// requeues rather than telling the queue it is done.
+func TestShutdownIsNotReportedAsAReconcileError(t *testing.T) {
+	ext := helmExtension()
+	controllerutil.AddFinalizer(ext, finalizerName)
+
+	r := readinessReconciler(t, ext, interceptor.Funcs{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ext)})
+	if err != nil {
+		t.Errorf("Reconcile() error = %v, want nil; a non-nil error here logs "+
+			"`Reconciler error` and increments reconcile_errors_total on every "+
+			"routine restart", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Errorf("Reconcile() result = %+v, want a requeue; the pass was abandoned "+
+			"partway and must not be recorded as having settled the CR", result)
+	}
+}
+
+// TestReconciliationTimeoutStillReportsAnError keeps the shutdown translation
+// from widening into "any dead context is fine".
+//
+// Controller.ReconciliationTimeout cancels the very same context this
+// controller inspects, and a pass that blows it is a genuine failure worth an
+// error and a metric. It is off by default and unset here, so nothing today
+// takes this path — which is exactly why a future edit enabling it would
+// otherwise find its timeouts silently filed as restarts. The two are
+// distinguishable only by cause, so that is what the boundary keys on.
+func TestReconciliationTimeoutStillReportsAnError(t *testing.T) {
+	ext := helmExtension()
+	controllerutil.AddFinalizer(ext, finalizerName)
+
+	r := readinessReconciler(t, ext, interceptor.Funcs{})
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ext)})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Reconcile() error = %v, want context.DeadlineExceeded: an expired "+
+			"reconcile budget is a failure, not a shutdown", err)
 	}
 }
 

@@ -199,7 +199,52 @@ func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
+// Reconcile translates shutdown out of the error channel before handing the
+// pass back to controller-runtime.
+//
+// Every reconcile runs under the manager's context, so signalling the pod
+// fails whichever call the in-flight pass happened to be making — the Get, the
+// finalizer Update, a Helm write, the cleanup on the deletion path. All of
+// those return context.Canceled, and controller-runtime treats a non-nil error
+// as a reconcile that went wrong: it logs `ERROR ... Reconciler error` and
+// increments controller_runtime_reconcile_errors_total and
+// reconcile_total{result="error"}. So the ordinary act of rolling the operator
+// posts errors to whatever watches those, on a schedule set by how many CRs
+// were mid-pass — the same mislabelling as the Phase=Failed this controller
+// already guards against, one layer up.
+//
+// Keyed on ctx.Err() rather than on the returned error: the question is not
+// what the pass reported but whether it was still allowed to run. A cancelled
+// context means it was not, so its verdict — success or failure — says nothing
+// and is dropped either way.
+//
+// Keyed on context.Canceled specifically, not on ctx.Err() != nil. Setting
+// Controller.ReconciliationTimeout (unset here, zero by default) would cancel
+// this same context with DeadlineExceeded, and that is a real failure that
+// should keep reaching the error path rather than be quietly filed as a
+// restart.
+//
+// RequeueAfter, not a bare success: the pass did not settle the CR and must not
+// be recorded as having done so. On the way down this is moot — the queue is
+// shutting down and drops the add — but it keeps the return honest for a
+// cancellation that somehow is not a shutdown, and keeps the pass out of
+// reconcile_total{result="success"}.
 func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	result, err := r.reconcileRequest(ctx, req)
+
+	if cause := ctx.Err(); stderrors.Is(cause, context.Canceled) {
+		log.FromContext(ctx).Info("Reconcile abandoned: operator is shutting down",
+			"cause", cause, "reported", err)
+		return ctrl.Result{RequeueAfter: healthCheckInterval}, nil
+	}
+
+	return result, err
+}
+
+func (r *InstallAIExtensionReconciler) reconcileRequest(
+	ctx context.Context,
+	req ctrl.Request,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	var ext v1alpha1.InstallAIExtension
@@ -237,10 +282,10 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// instead of eighteen, and so the release-pending marker below is left
 	// exactly as the interrupted pass found it.
 	//
-	// The error is returned, not swallowed: the pass did not finish, and saying
-	// otherwise invites the queue to treat the CR as settled. On the way down
-	// that requeue is discarded with the queue; the next leader re-reconciles
-	// from a clean read either way.
+	// This guard's job is only to stop the write; how a cancelled pass is
+	// reported back to controller-runtime is Reconcile's, at the boundary, where
+	// it also covers the paths that return above this one. Returning the error
+	// here says "did not finish" and lets that one decision live in one place.
 	if err := ctx.Err(); err != nil {
 		logger.Info("Reconcile interrupted by shutdown; leaving status untouched",
 			"reason", err)
