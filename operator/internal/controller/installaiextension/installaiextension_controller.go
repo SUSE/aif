@@ -360,14 +360,17 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 		return ctrl.Result{}, err
 	}
 
+	// Through setFailureAndRetry like every other recoverable failure, and this
+	// is the one most likely to be hit: install the operator before Rancher and
+	// the CRDs appear minutes later, with no event to say so. A zero Result here
+	// left the CR Failed until the informer's ~10h resync — a first impression of
+	// the operator that never recovers on its own.
 	if err := r.rancherMgr.CheckCRDs(ctx, []string{
 		"uiplugins.catalog.cattle.io",
 		"clusterrepos.catalog.cattle.io",
 	}); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
-			"CRDsMissing", fmt.Sprintf("Rancher CRDs not found: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeReady,
+			"CRDsMissing", fmt.Sprintf("Rancher CRDs not found: %v", err)), nil
 	}
 
 	switch ext.Spec.Source.Kind {

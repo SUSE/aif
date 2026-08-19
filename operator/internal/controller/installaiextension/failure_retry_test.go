@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
@@ -57,6 +58,45 @@ func TestRecoverableFailuresAreRetried(t *testing.T) {
 	if result.RequeueAfter != healthCheckInterval {
 		t.Errorf("RequeueAfter = %v, want %v; a registry that comes back produces no event, "+
 			"so nothing would ever re-check this CR", result.RequeueAfter, healthCheckInterval)
+	}
+}
+
+// TestMissingRancherCRDsAreRetried covers the recoverable failure most likely
+// to be hit in practice, and the last one that was still terminal.
+//
+// Install the operator before Rancher and `uiplugins.catalog.cattle.io` does not
+// exist yet. It appears minutes later, and nothing tells the controller: the
+// preflight is against CRDs, the watch is on InstallAIExtension. So the very
+// first reconcile of a brand-new install used to park the CR at Failed until
+// someone edited it — the worst possible first impression, and the exact bug
+// the rest of this file exists to prevent.
+func TestMissingRancherCRDsAreRetried(t *testing.T) {
+	ext := helmExtension()
+	r := readinessReconciler(t, ext, interceptor.Funcs{})
+
+	result, err := r.reconcile(context.Background(), ext)
+	if err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	// Guards the test as much as the code: CheckCRDs dials the in-cluster config,
+	// which does not exist under `go test`, so the preflight fails the same shape
+	// a cluster without Rancher does. Asserting the reason means that if it ever
+	// stops failing, the pass falls through to the Helm stub and this reports a
+	// different reason — rather than passing green on a branch it never entered.
+	ready := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
+	if ready == nil || ready.Reason != "CRDsMissing" {
+		t.Fatalf("Ready condition = %+v, want reason CRDsMissing; the pass did not reach "+
+			"the preflight branch this test covers", ready)
+	}
+
+	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
+		t.Errorf("Phase = %s, want Failed; the CRDs really are missing", ext.Status.Phase)
+	}
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("RequeueAfter = %v, want %v; Rancher installing its CRDs produces no event, "+
+			"so nothing re-checks this CR until the informer's ~10h resync",
+			result.RequeueAfter, healthCheckInterval)
 	}
 }
 
