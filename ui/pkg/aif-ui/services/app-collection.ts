@@ -16,6 +16,7 @@ export const NGC_HOST = 'helm.ngc.nvidia.com';
 
 // NVIDIA NGC Helm repositories (HTTPS, public charts). Images are gated behind nvcr.io.
 export const NVIDIA_REPO_URL           = `https://${NGC_HOST}/nvidia`;
+export const NVIDIA_RUNAI_REPO_URL     = `https://${NGC_HOST}/nvidia/runai`;
 export const NVIDIA_BLUEPRINT_REPO_URL = `https://${NGC_HOST}/nvidia/blueprint`;
 
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';

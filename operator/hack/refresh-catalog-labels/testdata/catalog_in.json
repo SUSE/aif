@@ -11,6 +11,12 @@
       "slug_name": "nvidia-blueprint-rag",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/blueprint"
+    },
+    {
+      "name": "Run:ai",
+      "slug_name": "nvidia-runai",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai"
     }
   ]
 }

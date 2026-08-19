@@ -10,7 +10,7 @@ import { getSettings, putSettings, validateCredentials } from '../utils/operator
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
+import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_RUNAI_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 import {
   mintOperatorToken, ensureTokenSecret, deleteToken, requestErrorMessage,
   TOKEN_EXPIRES_ANNOTATION, TOKEN_NAME_ANNOTATION,
@@ -404,6 +404,7 @@ export default {
       } else if (nvHasRefs) {
         tasks.push(
           ensureClusterRepo(store, NVIDIA_REPO_URL),
+          ensureClusterRepo(store, NVIDIA_RUNAI_REPO_URL),
           ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
         );
       }

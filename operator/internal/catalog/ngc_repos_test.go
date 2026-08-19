@@ -4,20 +4,20 @@ import (
 	"testing"
 )
 
-// The bundled catalog now references only the two org repos
-// (/nvidia and /nvidia/blueprint), which are excluded from team classification.
-// So classifying it must yield no team repos at all — the connected-mode
-// team-repo provisioning is dormant until a team repo is re-added to the catalog.
-// The split logic itself (public vs gated vs excluded, fail-safe) is covered by
+// The bundled catalog references the two org repos (/nvidia and /nvidia/blueprint,
+// both excluded from team classification) plus the gated /nvidia/runai team repo.
+// So classifying it yields exactly one Gated repo and no Public repos: the
+// connected-mode team-repo provisioning is active for runai. The split logic
+// itself (public vs gated vs excluded, fail-safe) is covered by
 // TestClassifyNGCTeamRepos_UnclassifiedURLLandsInPublic with synthetic items.
-func TestClassifyNGCTeamRepos_BundledCatalogHasNoTeamRepos(t *testing.T) {
+func TestClassifyNGCTeamRepos_BundledCatalogClassifiesGatedRunai(t *testing.T) {
 	got := ClassifyNGCTeamRepos()
 
 	if len(got.Public) != 0 {
 		t.Errorf("expected no Public team repos from bundled catalog, got %v", got.Public)
 	}
-	if len(got.Gated) != 0 {
-		t.Errorf("expected no Gated team repos from bundled catalog, got %v", got.Gated)
+	if len(got.Gated) != 1 || got.Gated[0] != "https://helm.ngc.nvidia.com/nvidia/runai" {
+		t.Errorf("expected exactly the gated runai repo, got %v", got.Gated)
 	}
 }
 
