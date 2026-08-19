@@ -37,19 +37,6 @@ export const SUSEAI_PRODUCT: ProductConfig = {
   docsRoute: 'https://documentation.suse.com/suse-ai-factory/latest/'
 };
 
-// === Page Definitions ===
-export const PAGE_TYPES = {
-  OVERVIEW:     'overview',
-  APPS:         'apps',
-  INSTALL:      'install',
-  MANAGE:       'manage',
-  REPOSITORIES: 'repositories',
-  BLUEPRINTS:   'blueprints',
-  WORKLOADS:    'workloads',
-  SETTINGS:     'settings',
-  ABOUT:        'about',
-} as const;
-
 // === Navigation Configuration ===
 export interface NavItem {
   name: string;
@@ -62,6 +49,19 @@ export interface NavItem {
   exact?: boolean;
   icon?: string;
 }
+
+// === Page Definitions ===
+export const PAGE_TYPES = {
+  OVERVIEW:     'overview',
+  APPS:         'apps',
+  INSTALL:      'install',
+  MANAGE:       'manage',
+  REPOSITORIES: 'repositories',
+  BLUEPRINTS:   'blueprints',
+  WORKLOADS:    'workloads',
+  SETTINGS:     'settings',
+  ABOUT:        'about',
+} as const;
 
 // === Virtual Type Configuration ===
 export interface VirtualTypeConfig {
