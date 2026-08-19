@@ -322,9 +322,6 @@ export interface AppContextMenuAction extends AppAction {
   submenu?: AppContextMenuAction[];
 }
 
-// === App Configuration and Settings ===
-
-
 // === App Events and Notifications ===
 
 export interface AppNotification {
@@ -388,6 +385,3 @@ export interface AppFormField {
   dependsOn?: string;
   showWhen?: (values: Record<string, any>) => boolean;
 }
-
-
-// === API Response Types ===

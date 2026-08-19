@@ -181,8 +181,6 @@ export const DEFAULT_VALUES = {
   MAX_CONCURRENT_OPERATIONS: 3
 } as const;
 
-// === API and Service Constants ===
-
 // === Feature Flags ===
 export const FEATURE_FLAGS = {
   BULK_OPERATIONS: 'bulk-operations',
