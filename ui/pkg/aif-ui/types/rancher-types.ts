@@ -230,8 +230,6 @@ export interface RancherError {
   data?: any;
 }
 
-// === Request Types ===
-
 // === API Response Types ===
 export interface ListResponse<T extends { id?: string } | { metadata?: { name?: string } }> {
   items?: T[];
@@ -281,6 +279,3 @@ export function isHelmSecret(obj: any): obj is HelmSecret {
          typeof obj.metadata.name === 'string' &&
          obj.type === 'helm.sh/release.v1';
 }
-
-
-// === Runtime Validation Functions ===

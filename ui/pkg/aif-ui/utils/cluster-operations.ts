@@ -393,12 +393,7 @@ export async function checkClusterHealth(
   }
 }
 
-// === Cluster Filtering and Sorting ===
-
-
-// === Bulk Operations ===
-
-
+// === Utility Functions ===
 
 /**
  * Get cluster display name

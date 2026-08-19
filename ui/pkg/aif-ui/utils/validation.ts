@@ -288,13 +288,3 @@ export const k8sNameRule: FieldValidationRule = {
     };
   }
 };
-
-
-
-// === Chart Values Validation ===
-
-
-// === Form Validation ===
-
-
-
