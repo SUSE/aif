@@ -367,6 +367,13 @@ suseai:
       saveSuccess: Saved successfully
       deleteSuccess: Deleted successfully
       confirmDelete: Are you sure you want to delete this item?
+  workloads:
+    openInRancher: Open in Rancher
+    viewApp: Open app in Rancher
+    viewNamespace: View namespace in Rancher
+    selectCluster: Select a cluster
+    noTargetCluster: No target cluster
+    noNamespace: No namespace
   validation:
     required: '{field} is required'
     invalidFormat: '{field} has invalid format'
