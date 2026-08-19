@@ -149,6 +149,8 @@ func cancelledCtx() context.Context {
 // Driven through EnsureRelease rather than upgrade directly, so the assertion
 // covers the call as it is really made.
 func TestUpgradeSurvivesACancelledReconcileContext(t *testing.T) {
+	noGoroutineLeak(t)
+
 	c, _ := newSlowClient(t, applyDelay)
 	values := map[string]interface{}{"replicas": float64(1)}
 
@@ -182,6 +184,8 @@ func TestUpgradeSurvivesACancelledReconcileContext(t *testing.T) {
 // upgrade's evidence would be an argument by analogy across two different code
 // paths in Helm.
 func TestInstallSurvivesACancelledReconcileContext(t *testing.T) {
+	noGoroutineLeak(t)
+
 	c, _ := newSlowClient(t, applyDelay)
 
 	err := c.EnsureRelease(cancelledCtx(), testSpec("2.1.0", nil))
@@ -228,6 +232,11 @@ func TestInstallSurvivesACancelledReconcileContext(t *testing.T) {
 // It costs ShutdownGrace of wall clock. That is the price of testing a duration
 // that production reads from a const, and it buys the one property no unit test
 // of the helper can reach: that the call site passes that const.
+//
+// No noGoroutineLeak here, unlike the two above. Abandoning the write is the
+// point of the test, so Helm's apply goroutine is still in flight when it ends
+// — by construction, and in production too. A goleak guard would either fail on
+// the thing being asserted or need an ignore broad enough to hide a real leak.
 func TestAWriteThatOutlastsTheGraceIsStillGivenUp(t *testing.T) {
 	c, kubeClient := newSlowClient(t, 0)
 

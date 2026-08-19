@@ -21,6 +21,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 // The grace is short enough to keep the suite fast and long enough that a
@@ -28,6 +30,26 @@ import (
 const testGrace = 120 * time.Millisecond
 
 type graceKey struct{}
+
+// noGoroutineLeak fails the test if withShutdownGrace's goroutine is still
+// running when it ends.
+//
+// Every test below asserts on a context, and a context is exactly the wrong
+// instrument for this: the helper hands back a real cancel, so ctx.Done()
+// closes whether or not the goroutine watching it ever returns. The whole suite
+// would pass over a helper that parked a goroutine per Helm operation forever.
+//
+// That is not hypothetical. The goroutine blocks on parent.Done() first, and
+// the parent here is the manager's reconcile context — one that outlives every
+// individual operation and, on the steady-state health-check path, is only
+// cancelled at shutdown. A missed ctx.Done() arm in either select accumulates
+// one goroutine per reconcile, and the operator reconciles on a 60s timer.
+//
+// t.Cleanup rather than defer, so it runs after the test's own cancel() has.
+func noGoroutineLeak(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+}
 
 // TestShutdownGraceOutlivesTheParentCancellation is the whole point of the
 // helper: SIGTERM must stop being an instant verdict on a Helm operation.
@@ -39,6 +61,8 @@ type graceKey struct{}
 // every reconcile context at SIGTERM, restarting the operator during an upgrade
 // recorded `failed: context canceled` against a chart that was fine.
 func TestShutdownGraceOutlivesTheParentCancellation(t *testing.T) {
+	noGoroutineLeak(t)
+
 	parent, cancelParent := context.WithCancel(context.Background())
 	ctx, cancel := withShutdownGrace(parent, testGrace)
 	defer cancel()
@@ -62,6 +86,8 @@ func TestShutdownGraceOutlivesTheParentCancellation(t *testing.T) {
 // no reconcile recovers from. Expiring on our own terms lands on `failed`
 // instead, which the next pass simply retries.
 func TestShutdownGraceExpiresAfterTheGrace(t *testing.T) {
+	noGoroutineLeak(t)
+
 	parent, cancelParent := context.WithCancel(context.Background())
 	ctx, cancel := withShutdownGrace(parent, testGrace)
 	defer cancel()
@@ -85,6 +111,8 @@ func TestShutdownGraceExpiresAfterTheGrace(t *testing.T) {
 // start counting at cancellation, not at creation — which is exactly why this
 // cannot be a context.WithTimeout.
 func TestShutdownGraceIgnoresAnUncancelledParent(t *testing.T) {
+	noGoroutineLeak(t)
+
 	parent, cancelParent := context.WithCancel(context.Background())
 	defer cancelParent()
 
@@ -103,6 +131,8 @@ func TestShutdownGraceIgnoresAnUncancelledParent(t *testing.T) {
 // someone simplified this to context.Background(): the logger and any trace
 // state ride on the context, and Helm's own logging is wired through it.
 func TestShutdownGraceKeepsParentValues(t *testing.T) {
+	noGoroutineLeak(t)
+
 	parent := context.WithValue(context.Background(), graceKey{}, "carried")
 
 	ctx, cancel := withShutdownGrace(parent, testGrace)
@@ -119,6 +149,8 @@ func TestShutdownGraceKeepsParentValues(t *testing.T) {
 // helper's goroutine — a cancel that only took effect after the grace would
 // leak one per Helm operation.
 func TestShutdownGraceCancelIsImmediate(t *testing.T) {
+	noGoroutineLeak(t)
+
 	parent, cancelParent := context.WithCancel(context.Background())
 	defer cancelParent()
 
