@@ -568,6 +568,9 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return ctrl.Result{}, err
 	}
 	if releaseInfo != nil {
+		if err := r.restartReadinessClocks(ctx, ext, int32(releaseInfo.Revision)); err != nil {
+			return ctrl.Result{}, err
+		}
 		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
 	}
 
@@ -878,6 +881,56 @@ func (r *InstallAIExtensionReconciler) deploymentReader() client.Reader {
 		return r.APIReader
 	}
 	return r.Client
+}
+
+// restartReadinessClocks drops the readiness markers when the release moves to
+// a new revision, so the next wait is timed from the rollout it is actually
+// waiting on.
+//
+// awaitReadiness keeps a timed-out marker on purpose — clearing it there would
+// restart the clock and flap the CR between Failed and waiting forever. The
+// cost is that the stamp outlives the wait it measured. Fix a bad image tag
+// twenty minutes after the timeout fired and the next pass compares a
+// three-second-old rollout against the *previous* rollout's start: instant
+// ReadinessTimedOut, and then a re-check every healthCheckInterval instead of
+// every readinessRequeue — six times slower, for the whole of a rollout that is
+// perfectly healthy.
+//
+// A new revision is what separates the two cases, and it is the only honest
+// signal available: whatever the old wait concluded, it concluded it about a
+// release that is no longer deployed.
+//
+// Both clocks, because a new revision replaces the Service as well as the
+// Deployment. And here rather than inside awaitReadiness, which is not reached
+// at all on a pass where the rollout is already ready — so a stale stamp left
+// for it to clean up would instead be inherited by the wait after next.
+func (r *InstallAIExtensionReconciler) restartReadinessClocks(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	revision int32,
+) error {
+	// Zero is "no revision recorded", not "a different revision". The status
+	// field and the marker are written by the same pass, so a live marker with no
+	// recorded revision means an earlier status write failed — and inferring a
+	// fresh rollout from a failed write would restart a clock that never ran.
+	if ext.Status.HelmReleaseRevision == 0 || revision == ext.Status.HelmReleaseRevision {
+		return nil
+	}
+
+	cleared := false
+	for _, annotation := range []string{annotationWaitingSince, annotationServiceWaitingSince} {
+		if !r.getWaitingSince(ext, annotation).IsZero() {
+			r.clearWaitingSince(ext, annotation)
+			cleared = true
+		}
+	}
+	if !cleared {
+		return nil
+	}
+
+	// updateAnnotations, not Update: HelmReleaseName was set earlier in this pass
+	// and a bare Update would drop it before persistStatus ever sees it.
+	return r.updateAnnotations(ctx, ext)
 }
 
 // awaitReadiness advances a bounded wait on an install step that has not
