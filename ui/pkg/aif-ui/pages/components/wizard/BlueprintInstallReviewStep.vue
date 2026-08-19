@@ -18,6 +18,9 @@
       <div v-for="comp in components" :key="comp.chartName" class="component-row">
         <span>{{ comp.chartName }}</span>
         <span class="text-muted">{{ comp.chartVersion }}</span>
+        <span v-if="comp.releaseName" class="comp-release text-muted">
+          {{ t('suseai.wizard.labels.releaseName', 'Release') }}: {{ comp.releaseName }}
+        </span>
         <span class="comp-target text-muted">
           → {{ comp.targetNamespace || namespace }}
           <template v-if="comp.targetNamespace">({{ t('suseai.wizard.labels.fixedNamespace', 'fixed') }})</template>

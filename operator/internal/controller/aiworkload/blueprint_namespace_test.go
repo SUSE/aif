@@ -368,6 +368,47 @@ func helmOpDefaultNamespace(t *testing.T, r *AIWorkloadReconciler, name string) 
 	return ns
 }
 
+func helmOpReleaseName(t *testing.T, r *AIWorkloadReconciler, name string) string {
+	t.Helper()
+	ho := &unstructured.Unstructured{}
+	ho.SetGroupVersionKind(helmOpGVK)
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "fleet-local", Name: name}, ho); err != nil {
+		t.Fatalf("get HelmOp %s: %v", name, err)
+	}
+	rn, _, _ := unstructured.NestedString(ho.Object, "spec", "helm", "releaseName")
+	return rn
+}
+
+func TestEnsureBlueprintHelmOp_ReleaseNameResolution(t *testing.T) {
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "aif-operator"},
+	}
+	w.Spec.TargetNamespace = "install-ns"
+	w.Spec.TargetClusters = []string{"local"}
+
+	t.Run("component override wins", func(t *testing.T) {
+		r := newRepoFakeClient(t)
+		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "milvus", ChartVersion: "1.0.0", ReleaseName: "my-milvus"}
+		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-milvus"); err != nil {
+			t.Fatalf("ensureBlueprintHelmOp: %v", err)
+		}
+		if got := helmOpReleaseName(t, r, "wl-milvus"); got != "my-milvus" {
+			t.Errorf("expected releaseName my-milvus, got %q", got)
+		}
+	})
+
+	t.Run("falls back to chart name", func(t *testing.T) {
+		r := newRepoFakeClient(t)
+		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "milvus", ChartVersion: "1.0.0"}
+		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-plain-milvus"); err != nil {
+			t.Fatalf("ensureBlueprintHelmOp: %v", err)
+		}
+		if got := helmOpReleaseName(t, r, "wl-plain-milvus"); got != "milvus" {
+			t.Errorf("expected releaseName milvus, got %q", got)
+		}
+	})
+}
+
 func TestEnsureBlueprintHelmOp_NamespaceResolution(t *testing.T) {
 	w := &aiplatformv1alpha1.AIWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "aif-operator"},

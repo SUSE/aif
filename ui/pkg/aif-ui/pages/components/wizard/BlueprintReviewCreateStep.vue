@@ -26,6 +26,9 @@
         <span v-if="comp.targetNamespace" class="comp-ns text-muted">
           {{ t('suseai.wizard.labels.namespace', 'Namespace') }}: {{ comp.targetNamespace }}
         </span>
+        <span v-if="comp.releaseName" class="comp-release text-muted">
+          {{ t('suseai.wizard.labels.releaseName', 'Release') }}: {{ comp.releaseName }}
+        </span>
       </div>
     </div>
   </div>
@@ -61,6 +64,7 @@ const t = useT();
   .comp-version { min-width: 80px; }
   .comp-repo    { font-size: 12px; }
   .comp-ns      { font-size: 12px; }
+  .comp-release { font-size: 12px; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

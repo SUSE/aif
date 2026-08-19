@@ -19,7 +19,30 @@ package aiworkload
 import (
 	"strings"
 	"testing"
+
+	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
+
+// TestComponentReleaseName covers the resolver mirroring componentNamespace: a
+// blueprint component can pin its Helm release name via BlueprintComponent.ReleaseName,
+// falling back to the chart name when unset. This is what the three Fleet helm-spec
+// call sites feed into capReleaseName so per-component installs can override the
+// default chart-name-derived release name.
+func TestComponentReleaseName(t *testing.T) {
+	t.Run("falls back to chart name when component release name unset", func(t *testing.T) {
+		c := aiplatformv1alpha1.BlueprintComponent{ChartName: "milvus"}
+		if got := componentReleaseName(c); got != "milvus" {
+			t.Errorf("expected milvus, got %q", got)
+		}
+	})
+
+	t.Run("uses component release name when set", func(t *testing.T) {
+		c := aiplatformv1alpha1.BlueprintComponent{ChartName: "milvus", ReleaseName: "my-milvus"}
+		if got := componentReleaseName(c); got != "my-milvus" {
+			t.Errorf("expected my-milvus, got %q", got)
+		}
+	})
+}
 
 func TestCapReleaseName(t *testing.T) {
 	// Names within Helm's 53-byte limit are returned unchanged.
