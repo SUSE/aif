@@ -50,8 +50,8 @@ export const PAGE_TYPES = {
   ABOUT:        'about',
 } as const;
 
-// === Virtual Type Configuration ===
-export interface VirtualTypeConfig {
+// === Navigation Configuration ===
+export interface NavItem {
   name: string;
   label: string;
   route: {
@@ -59,6 +59,15 @@ export interface VirtualTypeConfig {
     params: Record<string, string>;
     meta: Record<string, string>;
   };
+  exact?: boolean;
+  icon?: string;
+}
+
+// === Virtual Type Configuration ===
+export interface VirtualTypeConfig {
+  name: string;
+  label: string;
+  route: NavItem['route'];
 }
 
 export const VIRTUAL_TYPES: VirtualTypeConfig[] = [
