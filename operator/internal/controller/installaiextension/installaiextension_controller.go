@@ -122,13 +122,36 @@ type InstallAIExtensionReconciler struct {
 	// --allowed-registry-hosts) to bound the CR-supplied chartURL and prevent
 	// credential exfiltration to an attacker-chosen registry (confused-deputy).
 	AllowedRegistryHosts []string
-	rancherMgr           *rancher.Manager
+	// rancherMgr owns the Rancher-side objects. An interface for the same reason
+	// helmClientFor is a field: the failure branches behind these calls are
+	// recoverable ones the reconcile has to retry, and reaching them through the
+	// real manager means reaching them through a live index fetch over the
+	// network. See rancherManager.
+	rancherMgr rancherManager
 	// helmClientFor builds the Helm client for a namespace. A field rather than a
 	// direct call so tests can drive the reconcile paths end to end against a stub
 	// release backend; nil means newHelmClientForNamespace.
 	helmClientFor func(namespace string) (helmClient.HelmClient, error)
 	// helmClients memoizes those clients by namespace. See helmFor.
 	helmClients sync.Map
+}
+
+// rancherManager is the Rancher-side surface the reconciler uses, satisfied by
+// *rancher.Manager.
+//
+// Declared here rather than in the rancher package because it exists for the
+// consumer's sake. Four reconcile branches turn a failed Ensure into a retry,
+// and every one of them is a transient the cluster resolves on its own — a
+// webhook mid-restart, a CRD not yet served. Driving them through the real
+// manager means driving them through its Helm index fetch, so a test for
+// "does this retry" would come to depend on how the machine running it answers
+// a DNS query for a Service that does not exist.
+type rancherManager interface {
+	CheckCRDs(ctx context.Context, crds []string) error
+	EnsureClusterRepo(ctx context.Context, ext *v1alpha1.InstallAIExtension, svcURL string) error
+	EnsureUIPlugin(ctx context.Context, ext *v1alpha1.InstallAIExtension, svcURL string, namespace string) error
+	DeleteClusterRepo(ctx context.Context, name string) error
+	DeleteUIPlugin(ctx context.Context, name string, namespace string) error
 }
 
 // helmFor returns the Helm client for a namespace, building it once and reusing
