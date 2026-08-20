@@ -148,6 +148,10 @@ func TestShutdownGraceKeepsParentValues(t *testing.T) {
 // defer it on every path, including the happy one, and it is what releases the
 // helper's goroutine — a cancel that only took effect after the grace would
 // leak one per Helm operation.
+//
+// The parent stays live here, so this only ever exercises the ctx.Done() arm of
+// the *first* select. The second one is
+// TestShutdownGraceStopsWaitingWhenTheWorkFinishesDuringTheGrace.
 func TestShutdownGraceCancelIsImmediate(t *testing.T) {
 	noGoroutineLeak(t)
 
@@ -162,4 +166,54 @@ func TestShutdownGraceCancelIsImmediate(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancel() did not take effect; the helper's goroutine outlives the call")
 	}
+}
+
+// TestShutdownGraceStopsWaitingWhenTheWorkFinishesDuringTheGrace covers the
+// ctx.Done() arm of the second select — the one reached only after the parent
+// has been cancelled, when a Helm write finishes inside its grace window. That
+// is the ordinary shutdown case, not a corner: the grace is sized so the write
+// normally lands well inside it.
+//
+// Without the arm the goroutine sleeps out the whole grace and then calls
+// cancel() on a context whose operation already returned. Helm parks a goroutine
+// of its own on that context for the life of the operation — handleContext, in
+// upgrade.go — and it answers cancellation by *sending* the failure report back
+// to performUpgrade. Cancel after performUpgrade has returned and there is no
+// longer anyone receiving, so Helm's goroutine blocks on that send and never
+// comes back. A permanent leak inside a dependency, caused from here.
+//
+// An hour of grace, deliberately. The other tests run on a 120ms testGrace,
+// which lets a goroutine that wrongly sleeps out the grace finish before goleak
+// looks — measured at catching the missing arm in only about half of runs, and
+// `make test` does not pass -race. At an hour there is no ambiguity in either
+// direction: with the arm the goroutine is gone at once, without it goleak is
+// certain to still find it parked. Nothing here waits on the clock, so the test
+// costs milliseconds.
+func TestShutdownGraceStopsWaitingWhenTheWorkFinishesDuringTheGrace(t *testing.T) {
+	noGoroutineLeak(t)
+
+	parent, cancelParent := context.WithCancel(context.Background())
+
+	ctx, cancel := withShutdownGrace(parent, time.Hour)
+
+	// Shutdown starts, so the goroutine moves past the first select and begins
+	// waiting on the grace timer.
+	cancelParent()
+	select {
+	case <-ctx.Done():
+		t.Fatal("ctx was cancelled with the parent; the grace never applied")
+	case <-time.After(testGrace):
+	}
+
+	// The write finishes and the caller releases the context, as every caller
+	// does. The goroutine must give up on the timer here rather than outlive it.
+	cancel()
+
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ctx.Err() = %v after cancel(), want context.Canceled", err)
+	}
+
+	// goleak, in the cleanup noGoroutineLeak registered, is what actually makes
+	// the assertion: ctx.Done() is closed by cancel() whether or not the
+	// goroutine watching it ever returned.
 }
