@@ -3,7 +3,15 @@
 {{- fail "crds.rbac.create is false but crds.serviceAccountName is empty: point crds.serviceAccountName at a pre-provisioned ServiceAccount, or set crds.rbac.create=true so the chart creates one." }}
 {{- end }}
 # ConfigMap carrying the chart's CRD manifests, consumed by the CRD-apply Job.
-# Rendered from files/crds/ (~57 KiB total, well under the ConfigMap size limit).
+# Rendered from crds/ (~57 KiB total, well under the ConfigMap size limit) — the
+# same files Helm installs natively on first install. Helm keeps crds/ in
+# .Files, so one copy on disk serves both delivery paths:
+#   - fresh install: Helm's native crds/ path registers the CRDs BEFORE it builds
+#     the release manifest, so this chart's Blueprint/Settings/InstallAIExtension
+#     resources resolve. Without this, `helm install` fails with
+#     "no matches for kind" before any pre-install hook runs.
+#   - upgrade: Helm never touches crds/ again (install-only, in Helm 3 and 4), so
+#     this Job is the only writer and rolls schema changes out.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,13 +24,16 @@ metadata:
     "helm.sh/hook-weight": "-15"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 data:
-{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{- range $path, $_ := .Files.Glob "crds/*.yaml" }}
   {{ base $path }}: |
 {{ $.Files.Get $path | indent 4 }}
 {{- end }}
 ---
 # Applies (server-side) the chart's CRDs before the release's resources are created,
 # so schema changes roll out on `helm upgrade` (which otherwise never touches CRDs).
+# On install this is a no-op re-apply over what Helm's native crds/ path just
+# created; --force-conflicts transfers field ownership to aif-operator-crds once,
+# and Helm never writes the CRDs again.
 apiVersion: batch/v1
 kind: Job
 metadata:

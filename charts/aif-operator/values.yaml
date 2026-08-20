@@ -236,15 +236,22 @@ aiExtension:
 defaultBlueprints:
   enabled: true
 
-# CRD lifecycle. The chart ships its CRDs under files/crds/ (not Helm's magic
-# crds/ directory), so Helm never natively installs or owns them. When
-# manageWithJob is true, a pre-install/pre-upgrade hook Job server-side-applies
-# the chart's CRDs so schema changes roll out on upgrade without a manual
-# `kubectl apply`. The Job only applies CRDs (never deletes them), so uninstall
-# safety is preserved. Set manageWithJob to false in restricted environments
-# where the installer may not create CRD-managing RBAC, and apply the CRDs
-# out-of-band instead (kubectl apply --server-side -f files/crds/).
+# CRD lifecycle. The chart ships its CRDs under Helm's standard crds/ directory,
+# so Helm natively installs them before it builds the release manifest (the
+# chart's own Blueprint/Settings/InstallAIExtension resources depend on that).
+# Helm never upgrades crds/ after install, so when manageWithJob is true a
+# pre-install/pre-upgrade hook Job server-side-applies the chart's CRDs to carry
+# schema changes forward without a manual `kubectl apply`. The Job only applies
+# CRDs (never deletes them), so uninstall safety is preserved. Set manageWithJob
+# to false in restricted environments where the installer may not create
+# CRD-managing RBAC, and apply the CRDs out-of-band instead
+# (kubectl apply --server-side -f crds/).
 crds:
+  # Upgrade CRDs via the pre-install/pre-upgrade hook Job. CRDs are installed on
+  # first install by Helm's native crds/ path regardless of this setting; the Job
+  # is what carries schema changes forward on `helm upgrade` (Helm never upgrades
+  # crds/ itself). Set to false to skip the Job — no kubectl image or cluster-scoped
+  # hook RBAC needed — but then you must apply crds/ out-of-band before upgrades.
   manageWithJob: true
   # RBAC for the CRD-apply hook Job. Set create=false in restricted environments
   # where the installer may not create cluster-scoped RBAC. Then pre-provision the
