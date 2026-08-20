@@ -98,8 +98,9 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		"chart": chartDir,
 		// releaseName uses the chart name (not bundleName) so chart sub-resources
 		// templated as `{{ .Release.Name }}-foo` fit under the 63-char DNS-label
-		// limit — see ensureBlueprintHelmOp for the full rationale.
-		"releaseName": capReleaseName(c.ChartName),
+		// limit — see ensureBlueprintHelmOp for the full rationale. A component
+		// may override this default via its ReleaseName (componentReleaseName).
+		"releaseName": capReleaseName(componentReleaseName(c)),
 		// disablePreProcess: we resolve all values ourselves and upstream charts
 		// legitimately use ${ } which Fleet would otherwise mis-parse.
 		"disablePreProcess": true,
@@ -351,19 +352,24 @@ func (r *AIWorkloadReconciler) gitChartBundleMatches(ctx context.Context, ns, bu
 }
 
 // gitChartFingerprint identifies everything that feeds the generated Bundle,
-// including the chart archive. The archive is NOT pinned by (repo, name,
-// version) here: this path only ever serves a git-backed repo, which tracks a
-// branch, and re-pushing a chart without bumping Chart.yaml's version is the
-// normal development workflow the feature exists to support. What does pin the
-// archive is the repo's indexed commit (ClusterRepo status.commit), so that is
-// hashed too — without it a chart that changes in place is never re-fetched and
-// the Bundle serves the old chart forever.
+// including the chart archive and the per-app release-name override. The archive
+// is NOT pinned by (repo, name, version) here: this path only ever serves a
+// git-backed repo, which tracks a branch, and re-pushing a chart without bumping
+// Chart.yaml's version is the normal development workflow the feature exists to
+// support. What does pin the archive is the repo's indexed commit (ClusterRepo
+// status.commit), so that is hashed too — without it a chart that changes in
+// place is never re-fetched and the Bundle serves the old chart forever.
+//
+// c.ReleaseName is hashed because it is baked into the Bundle's Helm options
+// (see the "releaseName" key in buildGitChartBundle); without it, changing only
+// the release name on an existing component would leave the fingerprint
+// unchanged and the override would never reach the cluster.
 //
 // A change in any of these means the Bundle must be rebuilt — and the chart
 // re-fetched, since the archive is the one input we cannot diff without it.
 func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit string, vals map[string]any, targetSets ...[]any) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, ns, repoCommit)
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, c.ReleaseName, ns, repoCommit)
 	// json.Marshal sorts map keys, so equivalent values hash equally.
 	valsJSON, err := json.Marshal(vals)
 	if err != nil {
