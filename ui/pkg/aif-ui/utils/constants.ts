@@ -6,11 +6,7 @@
 // === Product Information ===
 export const PRODUCT_NAME = 'SUSE AI';
 export const PRODUCT_SLUG = 'suseai';
-export const EXTENSION_NAME = 'aif-ui';
 export const EXTENSION_VERSION: string = process.env.VUE_APP_EXTENSION_VERSION || '';
-
-// === Store Namespaces ===
-export const STORE_NAMESPACE = 'suseai';
 export const STORE_MODULES = {
   APPS: 'apps',
   CLUSTERS: 'clusters', 
@@ -155,12 +151,6 @@ export const NOTIFICATION_DURATION = {
 } as const;
 
 // === Progress and Timeouts ===
-export const PROGRESS_VALUES = {
-  MIN: 0,
-  MAX: 100,
-  INDETERMINATE: -1
-} as const;
-
 export const TIMEOUT_VALUES = {
   SHORT: 5000,        // 5 seconds
   READ: 8000,         // 8 seconds - hot-path reads (lists, discovery, catalog lookups)
@@ -191,26 +181,7 @@ export const DEFAULT_VALUES = {
   MAX_CONCURRENT_OPERATIONS: 3
 } as const;
 
-// === API and Service Constants ===
-export const API_ENDPOINTS = {
-  APPS: '/api/apps',
-  CHARTS: '/api/charts',
-  INSTALLATIONS: '/api/installations',
-  REPOSITORIES: '/api/repositories',
-  CLUSTERS: '/api/clusters'
-} as const;
-
-export const HELM_CONSTANTS = {
-  OWNER_LABEL: 'app.kubernetes.io/managed-by',
-  OWNER_VALUE: 'Helm',
-  NAME_LABEL: 'app.kubernetes.io/name',
-  INSTANCE_LABEL: 'app.kubernetes.io/instance',
-  VERSION_LABEL: 'app.kubernetes.io/version',
-  COMPONENT_LABEL: 'app.kubernetes.io/component',
-  PART_OF_LABEL: 'app.kubernetes.io/part-of'
-} as const;
-
-// === Feature Flags (will be used by feature-flags.ts) ===
+// === Feature Flags ===
 export const FEATURE_FLAGS = {
   BULK_OPERATIONS: 'bulk-operations',
   ADVANCED_FILTERING: 'advanced-filtering',
@@ -224,56 +195,7 @@ export const FEATURE_FLAGS = {
   SECURITY_SCANNING: 'security-scanning'
 } as const;
 
-// === Version Requirements ===
-export const VERSION_REQUIREMENTS = {
-  MIN_RANCHER_VERSION: '2.6.0',
-  MIN_KUBERNETES_VERSION: '1.20.0',
-  MIN_HELM_VERSION: '3.8.0',
-  RECOMMENDED_RANCHER_VERSION: '2.7.0',
-  RECOMMENDED_KUBERNETES_VERSION: '1.24.0'
-} as const;
 
-// === Chart and App Categories ===
-export const APP_CATEGORIES = {
-  AI_ML: 'AI & ML',
-  ANALYTICS: 'Analytics',
-  DATABASE: 'Database',
-  MONITORING: 'Monitoring',
-  NETWORKING: 'Networking',
-  SECURITY: 'Security',
-  STORAGE: 'Storage',
-  TOOLS: 'Tools',
-  WEB: 'Web',
-  OTHER: 'Other'
-} as const;
-
-// === Built-in Repository Configuration ===
-export const BUILT_IN_REPOSITORIES = {
-  RANCHER_CHARTS: {
-    name: 'rancher-charts',
-    displayName: 'Rancher Charts',
-    url: 'https://releases.rancher.com/server-charts/stable',
-    type: REPOSITORY_TYPE.HELM,
-    description: 'Official Rancher application charts',
-    official: true
-  },
-  RANCHER_PARTNER: {
-    name: 'rancher-partner-charts',
-    displayName: 'Rancher Partner Charts', 
-    url: 'https://releases.rancher.com/server-charts/partner',
-    type: REPOSITORY_TYPE.HELM,
-    description: 'Certified partner application charts',
-    official: true
-  },
-  SUSE_AI: {
-    name: 'suse-ai-charts',
-    displayName: 'SUSE AI Charts',
-    url: 'https://registry.suse.com/charts/ai',
-    type: REPOSITORY_TYPE.HELM,
-    description: 'SUSE AI and ML application charts',
-    official: true
-  }
-} as const;
 
 // === Error Codes ===
 export const ERROR_CODES = {
@@ -318,32 +240,6 @@ export const ERROR_CODES = {
   INVALID_LENGTH: 'ERR_INVALID_LENGTH'
 } as const;
 
-// === Event Names (for event bus) ===
-export const EVENT_NAMES = {
-  APP_INSTALLED: 'app:installed',
-  APP_UPGRADED: 'app:upgraded',
-  APP_UNINSTALLED: 'app:uninstalled',
-  APP_FAILED: 'app:failed',
-  
-  CLUSTER_CONNECTED: 'cluster:connected',
-  CLUSTER_DISCONNECTED: 'cluster:disconnected',
-  
-  REPO_SYNCED: 'repo:synced',
-  REPO_SYNC_FAILED: 'repo:sync-failed',
-  
-  DISCOVERY_STARTED: 'discovery:started',
-  DISCOVERY_COMPLETED: 'discovery:completed',
-  DISCOVERY_FAILED: 'discovery:failed'
-} as const;
-
-// === Local Storage Keys ===
-export const STORAGE_KEYS = {
-  SETTINGS: 'suseai-settings',
-  UI_STATE: 'suseai-ui-state',
-  FILTERS: 'suseai-filters',
-  FAVORITES: 'suseai-favorites',
-  LAST_DISCOVERY: 'suseai-last-discovery'
-} as const;
 
 // === Operator Service Coordinates ===
 // These constants build the Rancher proxy URL used by operator-api.ts.
@@ -354,25 +250,11 @@ export const OPERATOR_SERVICE    = 'aif-operator';
 export const OPERATOR_PORT       = 8080;
 
 // === Type Exports (for TypeScript) ===
-export type ProductSlug = typeof PRODUCT_SLUG;
 export type StoreModule = typeof STORE_MODULES[keyof typeof STORE_MODULES];
-export type RouteName = typeof ROUTE_NAMES[keyof typeof ROUTE_NAMES];
 export type DiscoveryStage = typeof DISCOVERY_STAGES[keyof typeof DISCOVERY_STAGES];
-export type LoadingState = typeof LOADING_STATES[keyof typeof LOADING_STATES];
 export type InstallationStatus = typeof INSTALLATION_STATUS[keyof typeof INSTALLATION_STATUS];
 export type AppStatus = typeof APP_STATUS[keyof typeof APP_STATUS];
-export type HealthStatus = typeof HEALTH_STATUS[keyof typeof HEALTH_STATUS];
 export type ConnectionStatus = typeof CONNECTION_STATUS[keyof typeof CONNECTION_STATUS];
 export type RepositoryType = typeof REPOSITORY_TYPE[keyof typeof REPOSITORY_TYPE];
-export type RepositoryStatus = typeof REPOSITORY_STATUS[keyof typeof REPOSITORY_STATUS];
-export type SyncStatus = typeof SYNC_STATUS[keyof typeof SYNC_STATUS];
-export type OperationType = typeof OPERATION_TYPE[keyof typeof OPERATION_TYPE];
-export type ViewMode = typeof VIEW_MODES[keyof typeof VIEW_MODES];
 export type SortDirection = typeof SORT_DIRECTIONS[keyof typeof SORT_DIRECTIONS];
-export type AppSortField = typeof APP_SORT_FIELDS[keyof typeof APP_SORT_FIELDS];
-export type NotificationType = typeof NOTIFICATION_TYPE[keyof typeof NOTIFICATION_TYPE];
-export type FeatureFlag = typeof FEATURE_FLAGS[keyof typeof FEATURE_FLAGS];
-export type AppCategory = typeof APP_CATEGORIES[keyof typeof APP_CATEGORIES];
 export type ErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODES];
-export type EventName = typeof EVENT_NAMES[keyof typeof EVENT_NAMES];
-export type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];

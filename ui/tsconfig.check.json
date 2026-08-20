@@ -1,0 +1,15 @@
+{
+  "extends": "./pkg/aif-ui/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["webpack-env"],
+    "typeRoots": ["./node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@shell/*": ["./node_modules/@rancher/shell/*"],
+      "@components/*": ["./node_modules/@rancher/shell/rancher-components/*"]
+    }
+  },
+  "include": ["pkg/aif-ui/**/*.ts", "tsconfig-check-shim.d.ts"],
+  "exclude": ["node_modules", "pkg/aif-ui/node_modules"]
+}

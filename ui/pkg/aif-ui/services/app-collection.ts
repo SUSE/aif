@@ -468,54 +468,6 @@ export async function fetchAppsFromRepository($store: any, repoName: string): Pr
   return apps;
 }
 
-/** Fetch apps from all cluster repositories */
-export async function fetchAllRepositoryApps($store: any): Promise<{ [repoName: string]: AppCollectionItem[] }> {
-  logger.debug('Starting fetch all repository apps', {
-    component: 'AppCollection'
-  });
-  const repositories = await fetchClusterRepositories($store);
-  logger.debug('Found repositories', {
-    component: 'AppCollection',
-    data: {
-      count: repositories.length,
-      repos: repositories.map(r => ({ name: r.name, enabled: r.enabled }))
-    }
-  });
-  
-  const repoApps: { [repoName: string]: AppCollectionItem[] } = {};
-  
-  await Promise.all(repositories.map(async (repo) => {
-    logger.debug('Processing repository', {
-      component: 'AppCollection',
-      data: { repoName: repo.name }
-    });
-    try {
-      const apps = await fetchAppsFromRepository($store, repo.name);
-      if (apps.length > 0) {
-        repoApps[repo.name] = apps;
-        logger.debug('Repository apps loaded', {
-          component: 'AppCollection',
-          data: { repoName: repo.name, count: apps.length }
-        });
-      }
-    } catch (e) {
-      logger.error('Failed to fetch apps from repository', e, {
-        component: 'AppCollection',
-        data: { repoName: repo.name }
-      });
-    }
-  }));
-  
-  logger.info('All repository apps fetched successfully', {
-    component: 'AppCollection',
-    data: {
-      totalRepos: Object.keys(repoApps).length,
-      repos: Object.keys(repoApps).map(key => ({ repo: key, count: repoApps[key].length }))
-    }
-  });
-  return repoApps;
-}
-
 /**
  * Merge curated catalog metadata onto dynamically-discovered apps.
  *
