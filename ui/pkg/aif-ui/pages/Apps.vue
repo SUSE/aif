@@ -98,7 +98,7 @@
 
       <!-- Main content area - always present to avoid layout jumps -->
       <div class="main-content">
-        <!-- Non-fatal warning: NGC repositories present but not contributing apps -->
+        <!-- Non-fatal warning: managed repositories present but not contributing apps -->
         <div v-if="catalogWarnings.length" class="catalog-warning-banner" role="status">
           <i class="icon icon-warning" aria-hidden="true"></i>
           <div class="catalog-warning-body">
@@ -299,7 +299,7 @@ import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { fetchStaticCatalog } from '../services/static-catalog';
 
@@ -488,16 +488,21 @@ export default defineComponent({
         // Dynamic mode: discover apps from live chart repositories, then overlay
         // curated metadata (labels + detail fields). The overlay is additive and
         // never fatal — a curated-fetch failure just leaves apps un-enriched.
-        const settings = await fetchSettingsOrNull();
+        // List the managed ClusterRepos once and thread the set into both fetchers;
+        // each would otherwise re-list the same clusterrepos endpoint (see fetchManagedRepos).
+        const [settings, managedRepos] = await Promise.all([
+          fetchSettingsOrNull(),
+          fetchManagedRepos(store),
+        ]);
         settingsData.value = settings;
-        const [suseApps, nvidiaResult, curated] = await Promise.all([
-          fetchSuseAiApps(store, settings),
-          fetchNvidiaApps(store, settings),
+        const [suseResult, nvidiaResult, curated] = await Promise.all([
+          fetchSuseAiApps(store, settings, managedRepos),
+          fetchNvidiaApps(store, settings, managedRepos),
           fetchCuratedOverlayOrEmpty(),
         ]);
-        const discovered = [...suseApps, ...nvidiaResult.apps];
+        const discovered = [...suseResult.apps, ...nvidiaResult.apps];
         items.value = overlayCuratedMetadata(discovered, curated);
-        catalogWarnings.value = buildWarnings(nvidiaResult.failedRepos);
+        catalogWarnings.value = buildWarnings([...suseResult.failedRepos, ...nvidiaResult.failedRepos]);
       } catch (err) {
         console.error('Failed to load apps:', err);
         throw err;
@@ -521,11 +526,9 @@ export default defineComponent({
         query: { n: app.name },
       };
 
-      if (app.repository_url) {
-        const repoName = await getClusterRepoNameFromUrl(store, app.repository_url);
-        if (repoName) {
-          route.query = { ...route.query, repo: repoName };
-        }
+      const repoName = await resolveInstallRepoName(store, app);
+      if (repoName) {
+        route.query = { ...route.query, repo: repoName };
       }
 
       await $router.push(route);

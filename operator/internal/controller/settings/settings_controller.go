@@ -297,6 +297,15 @@ const (
 	teamRepoMarkerLabel = "ai-factory.suse.com/nvidia-team-repo"
 	teamRepoMarkerValue = "true"
 
+	// managedRepoMarkerLabel marks EVERY ClusterRepo the operator creates
+	// (org/AC/SR/nvidia/blueprint/air-gap mirror + team repos). The UI uses it as
+	// the sole provenance signal for dynamic-catalog discovery, so an out-of-band
+	// ClusterRepo at a matching URL/host is never picked up. Generalizes the
+	// team-repo marker above; do not reuse app.kubernetes.io/managed-by, which is
+	// already used with value "Helm" for Helm-owned objects the operator avoids.
+	managedRepoMarkerLabel = "ai-factory.suse.com/managed-repo"
+	managedRepoMarkerValue = "true"
+
 	// clusterRepoNameMax is the DNS-1123 label cap for a ClusterRepo name.
 	clusterRepoNameMax = 63
 )
@@ -561,7 +570,8 @@ func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, cl
 			"apiVersion": "catalog.cattle.io/v1",
 			"kind":       "ClusterRepo",
 			"metadata": map[string]any{
-				"name": name,
+				"name":   name,
+				"labels": map[string]any{managedRepoMarkerLabel: managedRepoMarkerValue},
 			},
 			"spec": map[string]any{
 				"url": url,
@@ -678,10 +688,10 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 	return nil
 }
 
-// reconcileNvidiaRepos handles NVIDIA's two-mode topology: a single gated OCI
-// repo when registryEndpoints.nvidia is set (air-gap), or the public NGC charts
-// + blueprint pair otherwise. Either way it prunes every NVIDIA repo + mirror
-// when credentials are gone.
+// reconcileNvidiaRepos handles NVIDIA's two-mode topology: a single OCI mirror
+// when registryEndpoints.nvidia is set (air-gap, created with or without
+// credentials), or the public NGC charts + blueprint pair otherwise (connected
+// mode). Without credentials, connected mode tears all NVIDIA repos down.
 func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	nvUser, nvToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.Nvidia.UserSecretRef,
@@ -695,41 +705,43 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 
 	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
 
-	// Configured NVIDIA credentials are the signal that NVIDIA is in use. Without
-	// them, tear every NVIDIA repo + mirror back down.
-	if nvUser == nil || nvToken == nil {
-		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
-			return err
-		}
-		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
-	}
-
+	// Air-gap (registryEndpoints.nvidia set): a single OCI mirror at a private URL.
+	// Supported WITH or WITHOUT credentials (an internal mirror may be anonymous),
+	// so this is evaluated BEFORE the no-creds teardown below — otherwise an
+	// intentionally unauthenticated mirror would be pruned instead of created.
 	if nvURL != "" {
-		// Air-gap: a single gated OCI repo at a private mirror, which genuinely
-		// needs auth. Prune the public blueprint repo in case we are switching
-		// modes.
-		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
-		if err != nil {
-			return err
-		}
-		if secretName == "" {
-			// Refs are set but unreadable: nothing to authenticate the private
-			// mirror with, so tear the repos down rather than create a broken one.
-			// Also prune team repos orphaned from a prior connected mode.
-			if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
-				return err
-			}
-			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
-		}
+		// Mode-switch cleanup: the public blueprint repo and any team repos never
+		// belong in air-gap.
 		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
 			return err
 		}
-		if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName); err != nil {
+		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
 			return err
 		}
-		// Prune team repos on the connected→air-gap switch, but PRESERVE
-		// ngc-helm-auth — the air-gap mirror still consumes it.
-		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+
+		hasRefs := nvUser != nil && nvToken != nil
+		secretName := ""
+		changed := false
+		if hasRefs {
+			var err error
+			secretName, changed, err = r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
+			if err != nil {
+				return err
+			}
+			if secretName == "" {
+				// Refs are set but unreadable: the admin intended authentication but
+				// we have nothing to authenticate with. Tear the repos + mirror down
+				// rather than create a repo that will 401 against a gated mirror.
+				return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+			}
+		} else {
+			// No refs at all: intentional anonymous mirror. Drop any stale auth secret.
+			if err := r.deleteAuthSecret(ctx, credentials.AuthSecretNvidia); err != nil {
+				return err
+			}
+		}
+
+		if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName); err != nil {
 			return err
 		}
 		if changed {
@@ -738,20 +750,24 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		return nil
 	}
 
-	// Connected: both NGC repos are PUBLIC — https://helm.ngc.nvidia.com/nvidia
-	// and .../nvidia/blueprint each serve their index anonymously. Create them
-	// WITHOUT a clientSecret: presenting a valid NGC key that is NOT entitled to a
-	// path makes NGC return 403, which Rancher surfaces as the misleading "no API
-	// version specified". Sending no credential restores public access (this also
-	// matches what the UI extension creates, so the two reconcilers agree instead
-	// of fighting over the blueprint repo's clientSecret).
+	// Connected mode: NVIDIA credentials are the "in use" signal. Without them,
+	// tear every NVIDIA repo + mirror back down.
+	if nvUser == nil || nvToken == nil {
+		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+			return err
+		}
+		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+	}
+
+	// Connected: both NGC repos are PUBLIC — create them WITHOUT a clientSecret
+	// (presenting an unentitled key makes NGC 403; anonymous access serves the
+	// public index, and this matches what the reconciler agrees on).
 	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, ""); err != nil {
 		return err
 	}
 	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint, credentials.DefaultNvidiaBlueprintURL, ""); err != nil {
 		return err
 	}
-	// Connected-mode NGC team repos (public anonymous, gated ngc-helm-auth).
 	return r.reconcileNGCTeamRepos(ctx, s.Namespace, nvUser, nvToken)
 }
 
@@ -776,8 +792,11 @@ func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngc
 			"apiVersion": "catalog.cattle.io/v1",
 			"kind":       "ClusterRepo",
 			"metadata": map[string]any{
-				"name":   name,
-				"labels": map[string]any{teamRepoMarkerLabel: teamRepoMarkerValue},
+				"name": name,
+				"labels": map[string]any{
+					teamRepoMarkerLabel:    teamRepoMarkerValue,
+					managedRepoMarkerLabel: managedRepoMarkerValue,
+				},
 			},
 			"spec": map[string]any{
 				"url": ngcURL,
