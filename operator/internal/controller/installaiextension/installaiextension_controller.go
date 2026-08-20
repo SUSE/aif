@@ -62,6 +62,11 @@ const (
 	readinessRequeue        = 10 * time.Second
 	uiConfigMapName         = "aif-ui-config"
 	healthCheckInterval     = 60 * time.Second
+	// maxFailureRetryInterval caps the backoff in setFailureAndRetry. Fifteen
+	// minutes is short enough that a cluster fixed by hand is picked up while the
+	// person who fixed it is still watching, and long enough that a CR nobody is
+	// coming back for costs four pulls an hour instead of sixty.
+	maxFailureRetryInterval = 15 * time.Minute
 	// resolutionRetryInterval requeues the CR after a registry auth/TLS
 	// resolution failure so it self-heals when a referenced Secret is created
 	// or corrected (the controller has no Secret watch).
@@ -850,10 +855,34 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 // (~10h). Phase stays Failed and the conditions still say what went wrong; the
 // CR is simply looked at again.
 //
-// healthCheckInterval, deliberately: a failed CR is re-examined no faster than
-// a healthy one. It is also six times gentler than the readinessRequeue loop
-// that already re-enters EnsureRelease while waiting, so this adds no pull rate
-// the operator did not already sustain.
+// healthCheckInterval is the floor, deliberately: a failed CR is re-examined no
+// faster than a healthy one. It is also six times gentler than the
+// readinessRequeue loop that already re-enters EnsureRelease while waiting, so
+// the first retry adds no pull rate the operator did not already sustain.
+//
+// It is only the floor because the interval is flat but the wait is not bounded,
+// and those two together are the problem. Nothing here gives up: a CR pointing at
+// a registry that is never coming back retries at the same rate for as long as
+// the operator runs, which is ~1,440 attempts a day, each one a real pull.
+// Private charts make that concrete — chartCacheKey declines to cache a spec
+// carrying credentials, precisely so a hit cannot skip the authentication a fetch
+// would have performed, so every one of those attempts is an authenticated round
+// trip to someone else's registry. A minute is a reasonable thing to do once and
+// an unreasonable thing to do forever at a fixed rate.
+//
+// So the interval grows with how long the CR has already been failing, clamped
+// into [healthCheckInterval, maxFailureRetryInterval]: 60s, 60s, 120s, 240s,
+// 480s, then 900s from there on. The elapsed time comes from Ready's
+// LastTransitionTime rather than a counter in status, because
+// meta.SetStatusCondition only moves that stamp when the status *changes*. A CR
+// that stays False keeps its original stamp and the interval widens; one that
+// recovers and fails again gets a fresh stamp and starts over at the floor. That
+// is the behaviour a counter would have to be written, persisted and reset by
+// hand to reproduce, and it survives an operator restart or a leader change for
+// free, which an in-memory map would not.
+//
+// Read after the conditions are set, not before: on the first failure Ready has
+// just been stamped now, so elapsed is ~0 and the clamp returns the floor.
 //
 // Failures that are *not* routed through here are the ones a retry cannot
 // change: an unsupported source kind, a malformed chart URL, a host the
@@ -868,7 +897,34 @@ func setFailureAndRetry(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 	}
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
 
-	return ctrl.Result{RequeueAfter: healthCheckInterval}
+	return ctrl.Result{RequeueAfter: failureRetryInterval(ext)}
+}
+
+// failureRetryInterval is how long to wait before looking at a failing CR again:
+// about as long as it has already been failing, never under healthCheckInterval,
+// never over maxFailureRetryInterval.
+//
+// Stated that way it needs no state of its own, and the doubling falls out —
+// waiting the elapsed time doubles the elapsed time. A missing Ready condition,
+// a zero stamp, or a stamp in the future all fall back to the floor: the future
+// case is a clock skew or a hand-edited status, and the honest answer to "this
+// has been failing for minus five minutes" is to retry at the ordinary rate
+// rather than to compute a negative wait and requeue in a hot loop.
+func failureRetryInterval(ext *v1alpha1.InstallAIExtension) time.Duration {
+	ready := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
+	if ready == nil || ready.LastTransitionTime.IsZero() {
+		return healthCheckInterval
+	}
+
+	elapsed := time.Since(ready.LastTransitionTime.Time)
+	switch {
+	case elapsed < healthCheckInterval:
+		return healthCheckInterval
+	case elapsed > maxFailureRetryInterval:
+		return maxFailureRetryInterval
+	default:
+		return elapsed
+	}
 }
 
 // deploymentReader returns the reader the deployment readiness check must use:
