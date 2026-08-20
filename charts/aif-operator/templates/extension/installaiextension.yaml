@@ -20,12 +20,26 @@ spec:
       tls:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- /* Forward the operator-level appCatalog.useStaticCatalog to the aif-ui
-             chart as a convenience alias, UNLESS the user set it explicitly under
-             aiExtension.source.helm.values. Use a presence check (hasKey), not a
-             dict merge: Sprig's merge treats false as an empty value and would let
-             the alias clobber an explicit `false`. */}}
+      {{- /* Forward selected operator-level values to the managed aif-ui chart,
+             UNLESS the user set the corresponding UI value explicitly under
+             aiExtension.source.helm.values. Use presence checks (hasKey), not dict
+             merges: Sprig's merge treats false and other zero values as empty and
+             can clobber intentional overrides. */}}
       {{- $extra := deepCopy (.Values.aiExtension.source.helm.values | default dict) }}
+      {{- $global := get $extra "global" | default dict }}
+      {{- $image := get $extra "image" | default dict }}
+      {{- $globalChanged := false }}
+      {{- if and .Values.global.imageRegistry (kindIs "map" $global) (not (hasKey $global "imageRegistry")) (or (not (kindIs "map" $image)) (not (hasKey $image "registry"))) }}
+      {{-   $_ := set $global "imageRegistry" .Values.global.imageRegistry }}
+      {{-   $globalChanged = true }}
+      {{- end }}
+      {{- if and .Values.global.imagePullSecrets (kindIs "map" $global) (not (hasKey $global "imagePullSecrets")) }}
+      {{-   $_ := set $global "imagePullSecrets" (deepCopy .Values.global.imagePullSecrets) }}
+      {{-   $globalChanged = true }}
+      {{- end }}
+      {{- if $globalChanged }}
+      {{-   $_ := set $extra "global" $global }}
+      {{- end }}
       {{- $ac := default dict $extra.appCatalog }}
       {{- if not (hasKey $ac "useStaticCatalog") }}
       {{-   $_ := set $ac "useStaticCatalog" .Values.appCatalog.useStaticCatalog }}
