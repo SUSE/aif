@@ -50,6 +50,14 @@ jobs:
             exit 1
           fi
 
+      # helm-unittest vendors the Helm v3 SDK, so the suites above prove nothing
+      # about Helm 4 rendering. The workflow already has Helm 4 installed.
+      - name: Render charts under Helm 4
+        run: |
+          helm template charts/aif-ui > /dev/null
+          helm template charts/aif-ui --set standalone=true > /dev/null
+          helm template charts/aif-operator > /dev/null
+
       - name: Guard the image annotation against appVersion drift
         run: |
           # release-aif-extension.yml rewrites appVersion and the helm.sh/images
