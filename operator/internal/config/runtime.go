@@ -36,6 +36,20 @@ func GetOperatorNamespace() string {
 	return DefaultOperatorNamespace
 }
 
+const DefaultWorkloadNamespace = "aif-workloads"
+
+// GetWorkloadNamespace returns the namespace on the control cluster where
+// AIWorkload CRs are stored. It is intentionally distinct from the operator
+// release namespace (GetOperatorNamespace) so control-plane config resources and
+// workload records keep independent RBAC and quota boundaries. The deployment
+// target namespace of a workload is carried separately by Spec.TargetNamespace.
+func GetWorkloadNamespace() string {
+	if ns := os.Getenv("WORKLOAD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return DefaultWorkloadNamespace
+}
+
 const DefaultOperatorService = "aif-operator"
 
 func GetOperatorService() string {
