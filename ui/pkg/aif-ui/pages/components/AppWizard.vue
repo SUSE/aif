@@ -32,6 +32,7 @@ import { validateReleaseName, instanceNameError } from '../../validators/appInst
 import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { createErrorHandler } from '../../utils/error-handler';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
@@ -1274,6 +1275,7 @@ async function installToCluster(
   onProgress: (progress: number, message: string) => void
 ) {
   const allPullSecrets = new Set<string>();
+  const pullSecretErrorHandler = createErrorHandler(store, 'RancherApps');
 
   onProgress(15, 'Preparing namespace...');
 
@@ -1330,8 +1332,21 @@ async function installToCluster(
     else if (vs.create === undefined || !!vs.create) saCandidates.add(form.value.release);
     for (const sa of saCandidates) {
       for (const secretName of pullSecrets) {
-        try { await ensureServiceAccountPullSecret(store, clusterId, form.value.namespace, sa, secretName); }
-        catch (e) { console.warn('[SUSE-AI] SA pull-secret attach (pre) failed', { sa, ns: form.value.namespace, e }); }
+        try {
+          await ensureServiceAccountPullSecret(store, clusterId, form.value.namespace, sa, secretName);
+        } catch (e) {
+          const standardError = pullSecretErrorHandler.normalizeError(e);
+          // A chart-created SA commonly does not exist until after Helm runs;
+          // the post-install sweep handles it. Permission and malformed-response
+          // failures are actionable and must stop the install.
+          if (standardError.status === 404) continue;
+          pullSecretErrorHandler.handleApiError(e, 'attach image pull secret', {
+            clusterId,
+            namespace: form.value.namespace,
+            serviceAccount: sa,
+          });
+          throw e;
+        }
       }
     }
   }
@@ -1374,8 +1389,17 @@ async function installToCluster(
         }
         break;
       } catch (e) {
-        if (attempt === 5) break;
-        await new Promise(r => setTimeout(r, 2000));
+        const standardError = pullSecretErrorHandler.normalizeError(e);
+        if (attempt < 5 && standardError.retryable) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        pullSecretErrorHandler.handleApiError(e, 'finalize image pull secrets', {
+          clusterId,
+          namespace: form.value.namespace,
+          attempt,
+        });
+        throw new Error(`Application installed, but configuring image pull secrets failed: ${standardError.message}`);
       }
     }
   }
@@ -1651,7 +1675,7 @@ function previousStep() {
 <template>
   <div class="install-steps pt-20 outlet">
     <Loading v-if="loading" />
-    
+
     <div v-else class="custom-wizard">
       <!-- Fixed Header -->
       <div class="wizard-header">
@@ -1662,8 +1686,8 @@ function previousStep() {
       <!-- Fixed Step Navigation -->
       <div class="wizard-nav">
         <div class="steps-container">
-          <div 
-            v-for="(step, index) in wizardSteps" 
+          <div
+            v-for="(step, index) in wizardSteps"
             :key="step.name"
             class="step-item"
             :class="{
