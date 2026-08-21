@@ -7,7 +7,7 @@ release:
   namespace: cattle-ui-plugin-system
 chart:
   version: 9.9.9
-  appVersion: 9.9.9
+  appVersion: "2.2"
 tests:
   - it: renders neither resource when embedded in aif-operator
     templates:
@@ -48,7 +48,7 @@ tests:
           value: aif-ui
       - equal:
           path: spec.plugin.endpoint
-          value: http://my-rel-aif-ui-svc.cattle-ui-plugin-system:8080/plugin/aif-ui-9.9.9
+          value: http://my-rel-aif-ui-svc.cattle-ui-plugin-system:8080/plugin/aif-ui-2.2
 
   - it: quotes the plugin version so semver-like values stay strings
     template: templates/uiplugin.yaml
@@ -57,7 +57,7 @@ tests:
     asserts:
       - equal:
           path: spec.plugin.version
-          value: "9.9.9"
+          value: "2.2"
       - isType:
           path: spec.plugin.version
           type: string

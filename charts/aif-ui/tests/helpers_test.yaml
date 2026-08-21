@@ -6,7 +6,7 @@ release:
   namespace: cattle-ui-plugin-system
 chart:
   version: 9.9.9
-  appVersion: 9.9.9
+  appVersion: "2.2"
 tests:
   - it: builds the default fullname from release name and chart name
     template: templates/deployment.yaml
@@ -68,7 +68,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].image
-          value: ghcr.io/suse/aif-ui:9.9.9
+          value: ghcr.io/suse/aif-ui:2.2
 
   - it: prefers an explicit image.tag over Chart.AppVersion
     template: templates/deployment.yaml
@@ -140,7 +140,7 @@ tests:
             catalog.cattle.io/ui-extensions-catalog-image: aif-ui
             app.kubernetes.io/name: aif-ui
             app.kubernetes.io/instance: my-rel
-            app.kubernetes.io/version: "9.9.9"
+            app.kubernetes.io/version: "2.2"
             app.kubernetes.io/managed-by: Helm
             helm.sh/chart: aif-ui-9.9.9
 

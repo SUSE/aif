@@ -6,7 +6,7 @@ release:
   namespace: cattle-ui-plugin-system
 chart:
   version: 9.9.9
-  appVersion: 9.9.9
+  appVersion: "2.2"
 tests:
   - it: reports the release and namespace
     template: templates/NOTES.txt

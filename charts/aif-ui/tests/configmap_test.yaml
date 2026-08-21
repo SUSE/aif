@@ -6,7 +6,7 @@ release:
   namespace: cattle-ui-plugin-system
 chart:
   version: 9.9.9
-  appVersion: 9.9.9
+  appVersion: "2.2"
 tests:
   # The name is deliberately release-independent: the UI extension reads a fixed
   # name out of cattle-ui-plugin-system. Two releases in one namespace would
