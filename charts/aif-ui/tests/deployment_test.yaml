@@ -1,0 +1,234 @@
+suite: deployment shape and value plumbing
+templates:
+  - templates/deployment.yaml
+release:
+  name: my-rel
+  namespace: cattle-ui-plugin-system
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+tests:
+  - it: is an apps/v1 Deployment with one replica and a bounded history
+    template: templates/deployment.yaml
+    asserts:
+      - isKind:
+          of: Deployment
+      - isAPIVersion:
+          of: apps/v1
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 10
+
+  - it: honours replicaCount
+    template: templates/deployment.yaml
+    set:
+      replicaCount: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: rolls out with the configured surge and unavailability
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 25%
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 25%
+
+  - it: honours rollingUpdate overrides
+    template: templates/deployment.yaml
+    set:
+      rollingUpdate.maxSurge: 1
+      rollingUpdate.maxUnavailable: 0
+    asserts:
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+
+  - it: names the container after the chart and sets the pull policy
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: aif-ui
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: IfNotPresent
+
+  - it: exposes the http container port tracking service.port
+    template: templates/deployment.yaml
+    set:
+      service.port: 9090
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].name
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 9090
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].protocol
+          value: TCP
+
+  - it: runs as a non-root user with a seccomp profile
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 1000
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 1000
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: drops all capabilities and forbids privilege escalation
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: sets resource requests and limits
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: 250m
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 128Mi
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: 50m
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 64Mi
+
+  # The template uses `omit .Values.probes.liveness "enabled"`. If that omit were
+  # dropped, an "enabled" key would leak into the probe and the API server would
+  # reject the Deployment.
+  - it: renders probes without leaking the enabled toggle into them
+    template: templates/deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe.enabled
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.enabled
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.initialDelaySeconds
+          value: 10
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.initialDelaySeconds
+          value: 5
+
+  - it: omits probes entirely when disabled
+    template: templates/deployment.yaml
+    set:
+      probes.liveness.enabled: false
+      probes.readiness.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe
+
+  - it: carries the catalog pod label alongside the selector labels
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel
+            catalog.cattle.io/ui-extensions-catalog-image: aif-ui
+
+  - it: merges podLabels without displacing the selector labels
+    template: templates/deployment.yaml
+    set:
+      podLabels.team: aif
+    asserts:
+      # isSubset at a nested path requires the inner map to match exactly, so
+      # assert against the labels map directly to keep this a genuine subset.
+      - isSubset:
+          path: spec.template.metadata.labels
+          content:
+            team: aif
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel
+
+  - it: omits pod annotations unless configured
+    template: templates/deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: renders pod annotations when configured
+    template: templates/deployment.yaml
+    set:
+      podAnnotations:
+        prometheus.io/scrape: "true"
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/scrape"]
+          value: "true"
+
+  - it: omits scheduling constraints unless configured
+    template: templates/deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+      - notExists:
+          path: spec.template.spec.tolerations
+      - notExists:
+          path: spec.template.spec.affinity
+
+  - it: renders scheduling constraints when configured
+    template: templates/deployment.yaml
+    set:
+      nodeSelector.disktype: ssd
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: ui
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector.disktype
+          value: ssd
+      - lengthEqual:
+          path: spec.template.spec.tolerations
+          count: 1
+      - exists:
+          path: spec.template.spec.affinity.nodeAffinity
