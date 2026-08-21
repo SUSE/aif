@@ -77,6 +77,15 @@ tests:
           path: data.useStaticCatalog
           type: string
 
+  - it: follows the release into a different namespace
+    template: templates/configmap.yaml
+    release:
+      namespace: other-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: other-ns
+
   - it: carries the standard labels
     template: templates/configmap.yaml
     asserts:
