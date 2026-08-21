@@ -20,6 +20,8 @@ package credcheck
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -51,7 +53,31 @@ const probeTimeout = 10 * time.Second
 // ProbeRegistry checks that (username, password) authenticate against the
 // registry at host, following the Docker Registry v2 bearer-token handshake.
 func ProbeRegistry(ctx context.Context, host, username, password string) Result {
-	return probe(ctx, http.DefaultClient, "https", host, username, password)
+	return ProbeRegistryWithCA(ctx, host, username, password, nil)
+}
+
+// ProbeRegistryWithCA is ProbeRegistry with an optional PEM CA bundle added to
+// the system trust store. The same client follows a registry's bearer-token
+// challenge, so a private-CA Harbor registry and its token endpoint use
+// consistent trust.
+func ProbeRegistryWithCA(ctx context.Context, host, username, password string, caPEM []byte) Result {
+	client := http.DefaultClient
+	if len(caPEM) > 0 {
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return Result{Status: StatusError, Message: "CA bundle does not contain a valid PEM certificate"}
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    pool,
+		}
+		client = &http.Client{Transport: transport}
+	}
+	return probe(ctx, client, "https", host, username, password)
 }
 
 func probe(ctx context.Context, client *http.Client, scheme, host, username, password string) Result {

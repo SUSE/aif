@@ -207,6 +207,43 @@ func TestSettingsPut_RoundTripsRancherCatalog(t *testing.T) {
 	}
 }
 
+func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	body := `{"spec":{` +
+		`"applicationCollection":{"caBundleSecretRef":{"name":"appco-ca","key":"ca.crt"}},` +
+		`"suseRegistry":{"caBundleSecretRef":{"name":"suse-ca","key":"bundle.pem"}},` +
+		`"nvidia":{"caBundleSecretRef":{"name":"nvidia-ca","key":"tls-ca"}}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	cases := []struct {
+		name string
+		got  *aiplatformv1alpha1.SecretKeyRef
+		want aiplatformv1alpha1.SecretKeyRef
+	}{
+		{"application collection", stored.Spec.ApplicationCollection.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"}},
+		{"SUSE registry", stored.Spec.SUSERegistry.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "suse-ca", Key: "bundle.pem"}},
+		{"NVIDIA", stored.Spec.Nvidia.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "tls-ca"}},
+	}
+	for _, tc := range cases {
+		if tc.got == nil || *tc.got != tc.want {
+			t.Errorf("%s caBundleSecretRef=%+v want %+v", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
 // PUT with invalid JSON returns 400.
 func TestSettingsPut_InvalidJSON_400(t *testing.T) {
 	c := newSettingsFakeClient(t)
@@ -518,6 +555,7 @@ func TestGetRegistryCredentials_AppCollectionHostFromOCIURL(t *testing.T) {
 
 func TestValidateCredentials_RegistryOKFromSaved(t *testing.T) {
 	const ns = "aif-operator"
+	const caBundle = "test private registry CA"
 	userSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "su-user", Namespace: ns},
 		Data:       map[string][]byte{"username": []byte("u")},
@@ -526,23 +564,28 @@ func TestValidateCredentials_RegistryOKFromSaved(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "su-token", Namespace: ns},
 		Data:       map[string][]byte{"token": []byte("p")},
 	}
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "su-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": []byte(caBundle)},
+	}
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			SUSERegistry: aiplatformv1alpha1.SUSERegistrySettings{
-				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "su-user", Key: "username"},
-				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "su-token", Key: "token"},
+				UserSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "su-user", Key: "username"},
+				TokenSecretRef:    &aiplatformv1alpha1.SecretKeyRef{Name: "su-token", Key: "token"},
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "su-ca", Key: "ca.crt"},
 			},
 		},
 	}
-	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
+	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret, caSecret)
 	h := newSettingsHandler(c, ns)
 
 	// Stub the probe: assert it receives the resolved creds + default host.
 	orig := probeRegistryFn
 	defer func() { probeRegistryFn = orig }()
-	probeRegistryFn = func(_ context.Context, host, user, pass string) credcheck.Result {
-		if host != "registry.suse.com" || user != "u" || pass != "p" {
+	probeRegistryFn = func(_ context.Context, host, user, pass string, caPEM []byte) credcheck.Result {
+		if host != "registry.suse.com" || user != "u" || pass != "p" || string(caPEM) != caBundle {
 			return credcheck.Result{Status: credcheck.StatusFailed, Message: "unexpected inputs"}
 		}
 		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
@@ -566,6 +609,55 @@ func TestValidateCredentials_RegistryOKFromSaved(t *testing.T) {
 	}
 	if resp.Results[0].Host != "registry.suse.com" {
 		t.Errorf("host=%q want registry.suse.com", resp.Results[0].Host)
+	}
+}
+
+func TestValidateCredentials_RegistryMissingCAIsConfigurationError(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "su-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("u")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "su-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("p")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			SUSERegistry: aiplatformv1alpha1.SUSERegistrySettings{
+				UserSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "su-user", Key: "username"},
+				TokenSecretRef:    &aiplatformv1alpha1.SecretKeyRef{Name: "su-token", Key: "token"},
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "missing-ca", Key: "ca.crt"},
+			},
+		},
+	}
+	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryFn
+	defer func() { probeRegistryFn = orig }()
+	called := false
+	probeRegistryFn = func(_ context.Context, _, _, _ string, _ []byte) credcheck.Result {
+		called = true
+		return credcheck.Result{Status: credcheck.StatusOK}
+	}
+
+	body := `{"targets":["suseRegistry"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if called {
+		t.Fatal("registry probe must not run when the configured CA cannot be read")
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusError || !strings.Contains(resp.Results[0].Message, "missing-ca") {
+		t.Fatalf("want missing CA configuration error, got %+v", resp.Results)
 	}
 }
 
@@ -603,7 +695,7 @@ func TestValidateCredentials_OverrideRefsBeforeSave(t *testing.T) {
 	orig := probeRegistryFn
 	defer func() { probeRegistryFn = orig }()
 	got := struct{ user, pass, host string }{}
-	probeRegistryFn = func(_ context.Context, host, user, pass string) credcheck.Result {
+	probeRegistryFn = func(_ context.Context, host, user, pass string, _ []byte) credcheck.Result {
 		got.user, got.pass, got.host = user, pass, host
 		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
 	}
@@ -944,7 +1036,7 @@ func TestValidateCredentials_PartialOverrideFallsBack(t *testing.T) {
 	orig := probeRegistryFn
 	defer func() { probeRegistryFn = orig }()
 	got := struct{ user, pass, host string }{}
-	probeRegistryFn = func(_ context.Context, host, user, pass string) credcheck.Result {
+	probeRegistryFn = func(_ context.Context, host, user, pass string, _ []byte) credcheck.Result {
 		got.user, got.pass, got.host = user, pass, host
 		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
 	}
