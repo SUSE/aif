@@ -13,13 +13,17 @@ tests:
     asserts:
       - notFailedTemplate: {}
 
+  # Every errorPattern below is anchored on the schema path the violation is
+  # reported at. A bare pattern like `pullPolicy` or `type` would match almost
+  # any render error, so the test would still pass if the schema stopped
+  # enforcing the rule it claims to cover.
   - it: rejects an unknown top-level key
     template: templates/deployment.yaml
     set:
       totallyBogusKey: 1
     asserts:
       - failedTemplate:
-          errorPattern: additional properties .*totallyBogusKey.* not allowed
+          errorPattern: "at '': additional properties .*totallyBogusKey.* not allowed"
 
   - it: rejects a pull policy outside the enum
     template: templates/deployment.yaml
@@ -27,7 +31,7 @@ tests:
       image.pullPolicy: Sometimes
     asserts:
       - failedTemplate:
-          errorPattern: pullPolicy
+          errorPattern: "at '/image/pullPolicy': value must be one of"
 
   - it: rejects a negative replica count
     template: templates/deployment.yaml
@@ -35,7 +39,7 @@ tests:
       replicaCount: -1
     asserts:
       - failedTemplate:
-          errorPattern: replicaCount
+          errorPattern: "at '/replicaCount': minimum: got -1, want 0"
 
   - it: rejects a service type outside the enum
     template: templates/deployment.yaml
@@ -43,7 +47,7 @@ tests:
       service.type: Bogus
     asserts:
       - failedTemplate:
-          errorPattern: type
+          errorPattern: "at '/service/type': value must be one of"
 
   - it: rejects an unknown operator connection property
     template: templates/deployment.yaml
@@ -51,7 +55,7 @@ tests:
       operator.bogus: x
     asserts:
       - failedTemplate:
-          errorPattern: additional properties
+          errorPattern: "at '/operator': additional properties .*bogus.* not allowed"
 
   - it: rejects an unknown appCatalog property
     template: templates/deployment.yaml
@@ -59,7 +63,7 @@ tests:
       appCatalog.bogus: x
     asserts:
       - failedTemplate:
-          errorPattern: additional properties
+          errorPattern: "at '/appCatalog': additional properties .*bogus.* not allowed"
 
   - it: accepts a fully specified valid override set
     template: templates/deployment.yaml
