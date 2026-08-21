@@ -116,6 +116,11 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 	b.SetName(bundleName)
 	if fingerprint != "" {
 		b.SetAnnotations(map[string]string{chartFingerprintAnnotation: fingerprint})
+		// renderDigestLabel mirrors the HelmOp path: certifyDeployedSource and
+		// buildComponentMatrix compare this label against the per-component
+		// expected digest (the fingerprint returned by ensureBlueprintGitChartBundle),
+		// so a git-backed Bundle certifies the same way an http/oci one does.
+		b.SetLabels(map[string]string{renderDigestLabel: fingerprint})
 	}
 	_ = unstructured.SetNestedField(b.Object, namespace, "spec", "defaultNamespace")
 	_ = unstructured.SetNestedField(b.Object, helm, "spec", "helm")
@@ -241,13 +246,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	bundleName string,
 	repoInfo clusterRepoInfo,
 	gitOps bool,
-) error {
+) (string, error) {
 	var fetcher rancher.ChartFetcher
 	if r.CatalogClient != nil {
 		fetcher = r.CatalogClient.Get()
 	}
 	if fetcher == nil {
-		return fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
+		return "", fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
 	}
 
 	// Resolve values and inject pull secrets BEFORE deciding whether to re-fetch:
@@ -261,7 +266,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
-		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 
@@ -272,18 +277,18 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		allTargets := append(append([]any{}, localTargets...), downstreamTargets...)
 		tgz, err := fetchGitChart(ctx, fetcher, c)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, allTargets)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b.SetNamespace(gitOpsFleetNamespace(w))
 		yamlBytes, err := json.MarshalIndent(b.Object, "", "  ")
 		if err != nil {
-			return err
+			return "", err
 		}
-		return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
+		return fingerprint, r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
 	}
 
 	pairs := []struct {
@@ -309,12 +314,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		}
 	}
 	if upToDate {
-		return nil
+		return fingerprint, nil
 	}
 
 	tgz, err := fetchGitChart(ctx, fetcher, c)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, pair := range pairs {
 		if len(pair.targets) == 0 {
@@ -322,14 +327,14 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		}
 		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b.SetNamespace(pair.ns)
 		if err := r.Patch(ctx, b, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator")); err != nil {
-			return fmt.Errorf("patch Bundle %s/%s: %w", pair.ns, bundleName, err)
+			return "", fmt.Errorf("patch Bundle %s/%s: %w", pair.ns, bundleName, err)
 		}
 	}
-	return nil
+	return fingerprint, nil
 }
 
 func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatformv1alpha1.BlueprintComponent) ([]byte, error) {
