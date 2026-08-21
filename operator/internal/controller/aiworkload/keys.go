@@ -12,6 +12,7 @@ type HelmOpKey struct {
 	Namespace          string // fleet-local | fleet-default
 	Name               string // deterministic bundle name
 	ComponentChartName string // chart name (for componentStatuses.componentName)
+	ReleaseName        string // capped Helm release name (for componentStatuses.releaseName)
 	ExpectedClusters   int    // clusters this HelmOp is responsible for
 }
 
@@ -46,19 +47,20 @@ func desiredHelmOpKeys(
 	keys := make([]HelmOpKey, 0, len(components)*2)
 	for _, c := range components {
 		name := blueprintBundleName(workloadName, c.ChartName)
+		release := capReleaseName(componentReleaseName(c))
 		switch strategy {
 		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
 			if hasLocal {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: localCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: localCount})
 			}
 			if hasDownstream {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: downstreamCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: downstreamCount})
 			}
 		case aiplatformv1alpha1.AIWorkloadDeployGitOps:
 			if hasLocal && !hasDownstream {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: localCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: localCount})
 			} else {
-				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ExpectedClusters: downstreamCount})
+				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: downstreamCount})
 			}
 		}
 	}

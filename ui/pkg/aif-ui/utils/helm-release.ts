@@ -36,3 +36,20 @@ export function fnv1a32(s: string): number {
   }
   return h >>> 0;
 }
+
+// getHelmReleaseFromLabels returns the Helm release name a resource belongs to,
+// read from its labels: app.kubernetes.io/instance (the modern convention Helm
+// and the operator stamp) falling back to the legacy helm.sh/release. Null when
+// neither is present.
+export function getHelmReleaseFromLabels(labels?: Record<string, string>): string | null {
+  return labels?.['app.kubernetes.io/instance'] ||
+         labels?.['helm.sh/release'] ||
+         null;
+}
+
+// isManagedByHelm reports whether a resource's labels mark it as Helm-managed,
+// via the modern app.kubernetes.io/managed-by=Helm or the legacy helm.sh/heritage=Helm.
+export function isManagedByHelm(labels?: Record<string, string>): boolean {
+  return labels?.['app.kubernetes.io/managed-by'] === 'Helm' ||
+         labels?.['helm.sh/heritage'] === 'Helm';
+}

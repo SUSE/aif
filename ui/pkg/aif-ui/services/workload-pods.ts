@@ -2,8 +2,7 @@
 // authenticated proxy and surfaces the unhealthy ones. UI-only; no operator changes.
 import type { AIWorkload } from '../types/aiworkload-types';
 import type { ClusterPodStatus, WorkloadPod, PodContainerIssue } from '../types/workload-pods-types';
-import { getHelmReleaseFromLabels, isManagedByHelm } from '../config/labels-annotations';
-import { capReleaseName } from '../utils/helm-release';
+import { capReleaseName, getHelmReleaseFromLabels, isManagedByHelm } from '../utils/helm-release';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import logger from '../utils/logger';
 
@@ -27,8 +26,10 @@ function clusterIdOrLocal(clusterId: string): string {
 }
 
 // Expected app.kubernetes.io/instance values for this workload's own releases.
-// Blueprint: capReleaseName(componentName) — componentName == chartName (see plan
-// Global Constraints). App: the stored release name.
+// Blueprint: the operator-reported componentStatuses[].releaseName (already capped,
+// and equal to the pods' instance label even when a component pins a custom
+// releaseName). Falls back to capReleaseName(componentName) for statuses from older
+// operators that don't populate releaseName. App: the stored release name.
 function expectedReleaseNames(w: AIWorkload): Set<string> {
   const names = new Set<string>();
   if (w.spec.source.sourceType === 'App') {
@@ -39,7 +40,8 @@ function expectedReleaseNames(w: AIWorkload): Set<string> {
     return names;
   }
   for (const cs of w.status?.componentStatuses || []) {
-    if (cs.componentName) names.add(capReleaseName(cs.componentName));
+    if (cs.releaseName) names.add(cs.releaseName);
+    else if (cs.componentName) names.add(capReleaseName(cs.componentName));
   }
   return names;
 }

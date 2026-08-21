@@ -58,6 +58,28 @@ func TestDesiredHelmOpKeys_GitOps(t *testing.T) {
 	}
 }
 
+func TestDesiredHelmOpKeys_ReleaseName(t *testing.T) {
+	// Default: ReleaseName falls back to the (capped) chart name.
+	def := desiredHelmOpKeys("wl", []string{"local"}, comps("qdrant"), aiplatformv1alpha1.AIWorkloadDeployFleetBundle)
+	if len(def) != 1 || def[0].ReleaseName != "qdrant" {
+		t.Fatalf("want ReleaseName=qdrant (chart-name default), got %+v", def)
+	}
+
+	// Custom component ReleaseName override propagates onto every key.
+	custom := []aiplatformv1alpha1.BlueprintComponent{
+		{ChartRepo: "r", ChartName: "qdrant", ChartVersion: "1.0.0", ReleaseName: "saif-qdrant"},
+	}
+	keys := desiredHelmOpKeys("wl", []string{"local", "c-a"}, custom, aiplatformv1alpha1.AIWorkloadDeployFleetBundle)
+	if len(keys) != 2 {
+		t.Fatalf("want 2 keys, got %d: %+v", len(keys), keys)
+	}
+	for _, k := range keys {
+		if k.ReleaseName != "saif-qdrant" {
+			t.Fatalf("want ReleaseName=saif-qdrant on every key, got %+v", k)
+		}
+	}
+}
+
 func TestDesiredHelmOpKeys_Deterministic(t *testing.T) {
 	a := desiredHelmOpKeys("wl", []string{"c-b", "c-a"}, comps("z", "a"), aiplatformv1alpha1.AIWorkloadDeployFleetBundle)
 	b := desiredHelmOpKeys("wl", []string{"c-a", "c-b"}, comps("a", "z"), aiplatformv1alpha1.AIWorkloadDeployFleetBundle)

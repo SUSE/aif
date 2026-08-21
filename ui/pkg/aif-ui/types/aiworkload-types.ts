@@ -51,6 +51,9 @@ export interface DeployedSourceSnapshot {
 
 export interface AIWorkloadComponentStatus {
   componentName:     string;
+  // The capped Helm release name the operator installed (== the pods'
+  // app.kubernetes.io/instance label). Absent on statuses from older operators.
+  releaseName?:      string;
   clusterId:         string;
   phase:             AIWorkloadClusterPhase;
   revision?:         string;

@@ -197,3 +197,28 @@ func TestBuildComponentMatrix_MissingBDIsPending(t *testing.T) {
 		t.Errorf("c-beta (missing BD) should be Pending, got %v", cells[1].Phase)
 	}
 }
+
+// A component's custom Helm release name must surface on every cell so the
+// dashboard can attribute the component's pods by app.kubernetes.io/instance.
+func TestBuildComponentMatrix_CarriesReleaseName(t *testing.T) {
+	ctx := context.Background()
+	name := blueprintBundleName("wl", "qdrant")
+	keys := []HelmOpKey{{Namespace: "fleet-local", Name: name, ComponentChartName: "qdrant", ReleaseName: "saif-qdrant", ExpectedClusters: 1}}
+	digests := map[string]string{"fleet-local/" + name: "sha256:current"}
+
+	// No Bundle, no BundleDeployment: the expected local cluster yields a Pending cell.
+	w := &aiplatformv1alpha1.AIWorkload{Spec: aiplatformv1alpha1.AIWorkloadSpec{TargetClusters: []string{"local"}}}
+	cl := fakeClient(w)
+	r := &AIWorkloadReconciler{Client: cl, Scheme: cl.Scheme()}
+
+	cells, err := r.buildComponentMatrix(ctx, w, keys, digests)
+	if err != nil {
+		t.Fatalf("buildComponentMatrix failed: %v", err)
+	}
+	if len(cells) != 1 {
+		t.Fatalf("expected 1 cell, got %d", len(cells))
+	}
+	if cells[0].ComponentName != "qdrant" || cells[0].ReleaseName != "saif-qdrant" {
+		t.Errorf("want componentName=qdrant releaseName=saif-qdrant, got name=%q release=%q", cells[0].ComponentName, cells[0].ReleaseName)
+	}
+}

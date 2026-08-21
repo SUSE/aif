@@ -271,6 +271,13 @@ spec:
                       - Failed
                       - Pending
                       type: string
+                    releaseName:
+                      description: |-
+                        ReleaseName is the capped Helm release name the operator installed for this
+                        component (component's ReleaseName override, else chart name). It equals the
+                        pods' app.kubernetes.io/instance label, so the dashboard uses it to attribute
+                        a component's pods even when the release name differs from the component name.
+                      type: string
                     revision:
                       type: string
                   required:

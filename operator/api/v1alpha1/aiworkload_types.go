@@ -189,7 +189,12 @@ type DeployedSourceSnapshot struct {
 
 // AIWorkloadComponentStatus is one cell of the expected (component, cluster) matrix.
 type AIWorkloadComponentStatus struct {
-	ComponentName    string                 `json:"componentName"`
+	ComponentName string `json:"componentName"`
+	// ReleaseName is the capped Helm release name the operator installed for this
+	// component (component's ReleaseName override, else chart name). It equals the
+	// pods' app.kubernetes.io/instance label, so the dashboard uses it to attribute
+	// a component's pods even when the release name differs from the component name.
+	ReleaseName      string                 `json:"releaseName,omitempty"`
 	ClusterID        string                 `json:"clusterId"`
 	Phase            AIWorkloadClusterPhase `json:"phase"`
 	Revision         string                 `json:"revision,omitempty"`

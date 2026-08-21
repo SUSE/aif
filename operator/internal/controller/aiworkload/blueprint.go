@@ -1318,7 +1318,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 			}
 			rev, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
 			cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{
-				ComponentName: k.ComponentChartName, ClusterID: clusterID, Phase: phase,
+				ComponentName: k.ComponentChartName, ReleaseName: k.ReleaseName, ClusterID: clusterID, Phase: phase,
 				Revision: rev, Message: truncateMessage(msg),
 			})
 		}
@@ -1370,6 +1370,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 				}
 				cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{
 					ComponentName: k.ComponentChartName,
+					ReleaseName:   k.ReleaseName,
 					ClusterID:     expectedID,
 					Phase:         cellPhase,
 				})
