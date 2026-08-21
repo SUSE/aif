@@ -18,10 +18,9 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "aif-ui.podLabels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+        {{- /* merge: chart labels are the destination, so a colliding user
+               podLabel cannot displace a selector label or emit a duplicate key */}}
+        {{- toYaml (merge (dict) (include "aif-ui.podLabels" . | fromYaml) (default (dict) .Values.podLabels)) | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}

@@ -179,6 +179,28 @@ tests:
             app.kubernetes.io/name: aif-ui
             app.kubernetes.io/instance: my-rel
 
+  # spec.selector is immutable and the API server rejects a Deployment whose
+  # template labels do not match it, so a user podLabel must never displace a
+  # selector label. This previously rendered a duplicate app.kubernetes.io/name
+  # key, and the user's value won.
+  - it: does not let podLabels displace a selector label
+    template: templates/deployment.yaml
+    set:
+      podLabels:
+        team: aif
+        app.kubernetes.io/name: hijacked
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: aif-ui
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel
+            catalog.cattle.io/ui-extensions-catalog-image: aif-ui
+            team: aif
+
   - it: omits pod annotations unless configured
     template: templates/deployment.yaml
     asserts:
