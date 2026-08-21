@@ -89,7 +89,7 @@
               class="btn role-secondary"
               @click="refresh"
               :disabled="loading"
-              :title="t('suseai.instances.refresh', 'Refresh instances')"
+              :title="t('suseai.instances.refreshTooltip', 'Refresh instances')"
               :aria-label="loading ? 'Refreshing instances...' : 'Refresh instances'"
               type="button"
             >
@@ -191,7 +191,7 @@
                       class="btn btn-sm role-secondary manage-instance-btn"
                       @click="onManage(instance)"
                       :disabled="!canManage(instance)"
-                      :title="t('suseai.instances.manage', 'Manage instance')"
+                      :title="t('suseai.instances.manageTooltip', 'Manage instance')"
                       :aria-label="`Manage ${instance.instanceName || instance.releaseName}`"
                     >
                       <i class="icon icon-edit" aria-hidden="true" />
@@ -201,7 +201,7 @@
                       class="btn btn-sm role-secondary text-error"
                       @click="onDelete(instance)"
                       :disabled="!canDelete(instance) || deletingInstances.has(getInstanceKey(instance))"
-                      :title="t('suseai.instances.delete', 'Delete instance')"
+                      :title="t('suseai.instances.deleteTooltip', 'Delete instance')"
                       :aria-label="`Delete ${instance.instanceName || instance.releaseName}`"
                     >
                       <i v-if="deletingInstances.has(getInstanceKey(instance))" class="icon icon-spinner icon-spin" aria-hidden="true" />

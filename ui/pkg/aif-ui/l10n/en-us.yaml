@@ -219,7 +219,8 @@
       }
     },
     "apps": {
-      "title": "AI/ML Applications",
+      "title": "Apps",
+      "backToApps": "Back to Apps",
       "subtitle": "Browse and install AI/ML applications",
       "search": "Search applications...",
       "sortSupported": "Supported first",
@@ -245,6 +246,29 @@
         "training": "Training",
         "workflow": "Workflow"
       }
+    },
+    "instances": {
+      "search": "Search instances",
+      "install": "Install",
+      "installNew": "Install new instance",
+      "installFirst": "Install First Instance",
+      "refresh": "Refresh",
+      "refreshTooltip": "Refresh instances",
+      "manage": "Manage",
+      "manageTooltip": "Manage instance",
+      "delete": "Delete",
+      "deleteTooltip": "Delete instance",
+      "deleting": "Deleting...",
+      "loading": "Loading instances...",
+      "name": "Instance Name",
+      "cluster": "Cluster",
+      "namespace": "Namespace",
+      "version": "Version",
+      "status": "Status",
+      "actions": "Actions",
+      "noInstances": "No instances found",
+      "noInstancesFiltered": "No instances match your search criteria. Try adjusting your filters.",
+      "noInstancesAvailable": "This application has not been installed yet."
     },
     "wizard": {
       "steps": {
