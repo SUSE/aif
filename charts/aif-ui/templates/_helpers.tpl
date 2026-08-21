@@ -67,3 +67,12 @@ imagePullSecrets:
   {{- toYaml $secrets | nindent 2 }}
 {{- end }}
 {{- end }}
+
+{{/*
+Service DNS name. The "-svc" suffix must fit inside the 63-character RFC 1035
+label limit, so the fullname is truncated to 59 first — truncating afterwards
+would silently produce a 64-character name for a 53-character release name.
+*/}}
+{{- define "aif-ui.serviceName" -}}
+{{- printf "%s-svc" (include "aif-ui.fullname" . | trunc 59 | trimSuffix "-") -}}
+{{- end }}

@@ -6,6 +6,6 @@ metadata:
   labels:
     {{- include "aif-ui.labels" . | nindent 4 }}
 spec:
-  url: http://{{ include "aif-ui.fullname" . }}-svc.{{ .Release.Namespace }}:{{ .Values.service.port }}
+  url: http://{{ include "aif-ui.serviceName" . }}.{{ .Release.Namespace }}:{{ .Values.service.port }}
 {{- end }}
 
