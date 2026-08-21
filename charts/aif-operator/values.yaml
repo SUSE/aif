@@ -98,7 +98,7 @@ manager:
   image:
     registry: ghcr.io
     repository: suse/aif-operator
-    tag: "2.2.0-dev.1"
+    tag: "2.2.0-dev.2"
     pullPolicy: IfNotPresent
 
   imagePullSecrets: []
@@ -185,7 +185,7 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "2.2.0-dev.1"
+      version: "2.2.0-dev.2"
       # values are merged onto the aif-ui chart's default values. The top-level
       # global image registry and pull Secrets are forwarded here automatically.
       # Existing per-component overrides remain supported, for example:
@@ -211,7 +211,7 @@ aiExtension:
       #   # acknowledgeInsecure: true                    #   manager.allowInsecureRegistryTLS=true
   extension:
     name: "aif-ui"
-    version: "2.2.0-dev.1"
+    version: "2.2.0-dev.2"
   cleanup:
     image:
       registry: registry.suse.com
@@ -244,15 +244,34 @@ aiExtension:
 defaultBlueprints:
   enabled: true
 
-# CRD lifecycle. Helm installs the CRDs under crds/ on first install but never
-# upgrades them on `helm upgrade` (Helm's design). When manageWithJob is true, a
-# pre-install/pre-upgrade hook Job server-side-applies the chart's CRDs so schema
-# changes roll out on upgrade without a manual `kubectl apply`. The Job only applies
-# CRDs (never deletes them), so uninstall safety is preserved. Set to false in
-# restricted environments where the installer may not create CRD-managing RBAC, and
-# apply the CRDs out-of-band instead (kubectl apply -f crds/).
+# CRD lifecycle. The chart ships its CRDs under Helm's standard crds/ directory,
+# so Helm natively installs them before it builds the release manifest (the
+# chart's own Blueprint/Settings/InstallAIExtension resources depend on that).
+# Helm never upgrades crds/ after install, so when manageWithJob is true a
+# pre-install/pre-upgrade hook Job server-side-applies the chart's CRDs to carry
+# schema changes forward without a manual `kubectl apply`. The Job only applies
+# CRDs (never deletes them), so uninstall safety is preserved. Set manageWithJob
+# to false in restricted environments where the installer may not create
+# CRD-managing RBAC, and apply the CRDs out-of-band instead
+# (kubectl apply --server-side -f crds/).
 crds:
+  # Upgrade CRDs via the pre-install/pre-upgrade hook Job. CRDs are installed on
+  # first install by Helm's native crds/ path regardless of this setting; the Job
+  # is what carries schema changes forward on `helm upgrade` (Helm never upgrades
+  # crds/ itself). Set to false to skip the Job — no kubectl image or cluster-scoped
+  # hook RBAC needed — but then you must apply crds/ out-of-band before upgrades.
   manageWithJob: true
+  # RBAC for the CRD-apply hook Job. Set create=false in restricted environments
+  # where the installer may not create cluster-scoped RBAC. Then pre-provision the
+  # ServiceAccount + ClusterRole + ClusterRoleBinding out-of-band and point
+  # serviceAccountName at the pre-created ServiceAccount (which must live in the
+  # release namespace). CRDs are still applied by the Job — no need to disable it.
+  rbac:
+    create: true
+  # ServiceAccount the CRD-apply Job runs as. Empty = the chart's own
+  # "<fullname>-crd-apply" SA (created when rbac.create=true). Set this to a
+  # pre-provisioned SA when rbac.create=false.
+  serviceAccountName: ""
   image:
     registry: registry.suse.com
     repository: suse/kubectl
@@ -272,6 +291,7 @@ crds:
       type: RuntimeDefault
   securityContext:
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL

@@ -282,6 +282,12 @@
         "componentNamespacePlaceholder": "defaults to install namespace",
         "componentNamespaceInvalid": "Must be a valid namespace: lowercase letters, digits and '-', starting and ending with a letter or digit (max 63 chars).",
         "componentNamespacesInvalid": "One or more components have an invalid target namespace.",
+        "componentReleaseName": "Release name (optional)",
+        "componentReleaseNamePlaceholder": "defaults to chart name",
+        "componentReleaseNameInvalid": "Must be a valid release name: lowercase letters, digits and '-', starting and ending with a letter or digit (max 53 chars).",
+        "componentReleaseNameDuplicate": "Another component in the same namespace already uses this release name.",
+        "componentReleaseNamesInvalid": "One or more components have an invalid release name.",
+        "componentReleaseNamesDuplicate": "Two or more components resolve to the same release name in the same namespace.",
         "removeApp": "Remove application"
       },
       "target": {
@@ -315,6 +321,7 @@
         "components": "Components",
         "applications": "Applications",
         "namespace": "Namespace",
+        "releaseName": "Release",
         "fixedNamespace": "fixed"
       }
     },

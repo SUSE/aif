@@ -224,8 +224,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// (14 chars) tipped a 52-char release past 63 and Kubernetes rejected
 		// the Service. Helm release names are unique per (cluster, namespace),
 		// and Blueprint components are addressed by chart name, so the chart
-		// name alone is the right level of granularity here.
-		"releaseName": capReleaseName(c.ChartName),
+		// name alone is the right level of granularity here. A component may
+		// override this default via its ReleaseName (componentReleaseName).
+		"releaseName": capReleaseName(componentReleaseName(c)),
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
@@ -784,8 +785,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// (14 chars) tipped a 52-char release past 63 and Kubernetes rejected
 		// the Service. Helm release names are unique per (cluster, namespace),
 		// and Blueprint components are addressed by chart name, so the chart
-		// name alone is the right level of granularity here.
-		"releaseName": capReleaseName(c.ChartName),
+		// name alone is the right level of granularity here. A component may
+		// override this default via its ReleaseName (componentReleaseName).
+		"releaseName": capReleaseName(componentReleaseName(c)),
 		// Disable Fleet's ${ } value templating: we resolve all values ourselves,
 		// and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
 		// which Fleet would otherwise mis-parse as a template function.
@@ -1132,4 +1134,15 @@ func componentNamespace(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.B
 		return c.TargetNamespace
 	}
 	return w.Spec.TargetNamespace
+}
+
+// componentReleaseName returns the Helm release name for a blueprint component:
+// the component's own ReleaseName when set, else the chart name (the historical
+// default). Callers pass the result through capReleaseName, so an over-long
+// override is still truncated to a valid release name.
+func componentReleaseName(c aiplatformv1alpha1.BlueprintComponent) string {
+	if c.ReleaseName != "" {
+		return c.ReleaseName
+	}
+	return c.ChartName
 }
