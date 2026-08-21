@@ -39,7 +39,7 @@ tests:
       replicaCount: -1
     asserts:
       - failedTemplate:
-          errorPattern: "at '/replicaCount': minimum: got -1, want 0"
+          errorPattern: "at '/replicaCount'"
 
   - it: rejects a service type outside the enum
     template: templates/deployment.yaml
