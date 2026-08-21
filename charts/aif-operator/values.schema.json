@@ -313,6 +313,22 @@
           "default": true,
           "description": "Apply/upgrade CRDs via a pre-install/pre-upgrade hook Job (server-side apply). The Job never deletes CRDs."
         },
+        "rbac": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "default": true,
+              "description": "Create the ServiceAccount/ClusterRole/ClusterRoleBinding for the CRD-apply Job. Set false to pre-provision this RBAC out-of-band in restricted environments."
+            }
+          }
+        },
+        "serviceAccountName": {
+          "type": "string",
+          "default": "",
+          "description": "ServiceAccount the CRD-apply Job runs as. Empty = the chart's own '<fullname>-crd-apply' SA. Set to a pre-provisioned SA when rbac.create=false."
+        },
         "image": {
           "type": "object",
           "properties": {

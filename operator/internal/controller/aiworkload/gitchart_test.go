@@ -75,6 +75,10 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	if chart != "rancher-ai-agent" {
 		t.Fatalf("helm.chart = %q, want chart dir", chart)
 	}
+	// releaseName defaults to the chart name when the component sets no override.
+	if rn, _, _ := unstructured.NestedString(b.Object, "spec", "helm", "releaseName"); rn != "rancher-ai-agent" {
+		t.Fatalf("helm.releaseName = %q, want chart name", rn)
+	}
 	// version is pinned by the fetched archive, so helm.version must be absent.
 	if _, ok, _ := unstructured.NestedString(b.Object, "spec", "helm", "version"); ok {
 		t.Fatal("helm.version should be omitted for unpacked git charts")
@@ -96,6 +100,20 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	}
 	if _, ok, _ := unstructured.NestedMap(b.Object, "spec", "helm", "values"); !ok {
 		t.Fatal("expected helm.values to be set")
+	}
+}
+
+func TestBuildGitChartBundle_ReleaseNameOverride(t *testing.T) {
+	tgz := makeChartTgz(t, map[string]string{
+		"milvus/Chart.yaml": "apiVersion: v2\nname: milvus\nversion: 1.0.0\n",
+	})
+	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "milvus", ChartVersion: "1.0.0", ReleaseName: "my-milvus"}
+	b, err := buildGitChartBundle("wl-milvus", "ns", "", tgz, c, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rn, _, _ := unstructured.NestedString(b.Object, "spec", "helm", "releaseName"); rn != "my-milvus" {
+		t.Fatalf("helm.releaseName = %q, want override my-milvus", rn)
 	}
 }
 
@@ -212,11 +230,16 @@ func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 
 	bumped := c
 	bumped.ChartVersion = "1.0.1"
+	renamed := c
+	renamed.ReleaseName = "custom-release"
 	for name, got := range map[string]string{
 		"version":   gitChartFingerprint(bumped, "ns", "commit-aaa", map[string]any{"a": 1}, targets),
 		"namespace": gitChartFingerprint(c, "other-ns", "commit-aaa", map[string]any{"a": 1}, targets),
 		"values":    gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 2}, targets),
 		"targets":   gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, []any{map[string]any{"clusterName": "downstream"}}),
+		// The release name is baked into the Bundle's Helm options, so changing
+		// only it must invalidate the fingerprint or the override never ships.
+		"release name": gitChartFingerprint(renamed, "ns", "commit-aaa", map[string]any{"a": 1}, targets),
 		// The reason this input exists: a git-backed repo tracks a branch, so a
 		// developer can re-push a corrected chart at the SAME version. Only the
 		// repo's indexed commit distinguishes the two, and without it the Bundle
