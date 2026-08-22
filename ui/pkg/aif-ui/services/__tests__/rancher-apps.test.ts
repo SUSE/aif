@@ -35,6 +35,13 @@ function k8sFailure(code: number, message: string) {
   return body;
 }
 
+function plainFailure(status: number, message: string) {
+  const body = { data: message };
+
+  Object.defineProperty(body, '_status', { value: status });
+  return body;
+}
+
 function fakeStore(responses: unknown[]) {
   const calls: RecordedCall[] = [];
   const queue = [...responses];
@@ -162,7 +169,7 @@ describe('ensureServiceAccountPullSecret', () => {
         metadata:         { name: 'app', namespace: 'apps', resourceVersion: '42' },
         imagePullSecrets: [{ name: 'existing-pull-secret' }],
       },
-      k8sFailure(409, 'the object has been modified'),
+      plainFailure(409, 'the object has been modified'),
       {
         metadata: { name: 'app', namespace: 'apps', resourceVersion: '43' },
         imagePullSecrets: [
@@ -220,11 +227,17 @@ describe('ensureServiceAccountPullSecret', () => {
 });
 
 describe('ServiceAccount discovery and sweep', () => {
-  it('reads raw Kubernetes list responses and includes default exactly once', async () => {
+  it('reads raw lists, scopes to Helm-managed accounts, and includes default exactly once', async () => {
     const store = fakeStore([{
       items: [
         { metadata: { name: 'default', namespace: 'apps' } },
-        { metadata: { name: 'app', namespace: 'apps' } },
+        {
+          metadata: {
+            name:      'app',
+            namespace: 'apps',
+            labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
+          }
+        },
         { metadata: { name: 'worker', namespace: 'apps' } },
       ],
     }]);
@@ -232,17 +245,24 @@ describe('ServiceAccount discovery and sweep', () => {
     await expect(listServiceAccounts(asStore(store), 'local', 'apps')).resolves.toEqual([
       'default',
       'app',
-      'worker',
     ]);
-    expect(store.calls[0].payload.url).toContain(
-      'labelSelector=app.kubernetes.io%2Fmanaged-by%3DHelm'
+    expect(store.calls[0].payload.url).toBe(
+      '/k8s/clusters/local/api/v1/namespaces/apps/serviceaccounts?limit=5000'
     );
   });
 
   it('ignores a ServiceAccount deleted after listing and updates the rest', async () => {
     const store = fakeStore([
-      { items: [{ metadata: { name: 'app', namespace: 'apps' } }] },
-      k8sFailure(404, 'serviceaccount default not found'),
+      {
+        items: [{
+          metadata: {
+            name:      'app',
+            namespace: 'apps',
+            labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
+          }
+        }],
+      },
+      plainFailure(404, 'serviceaccount default not found'),
       { metadata: { name: 'app', namespace: 'apps', resourceVersion: '42' } },
       {},
     ]);
@@ -263,6 +283,30 @@ describe('ServiceAccount discovery and sweep', () => {
     await expect(ensurePullSecretOnAllSAs(
       asStore(store), 'local', 'apps', 'new-pull-secret'
     )).rejects.toMatchObject({ code: 403 });
+  });
+
+  it('continues updating other ServiceAccounts before surfacing a failure', async () => {
+    const store = fakeStore([
+      {
+        items: [{
+          metadata: {
+            name:      'app',
+            namespace: 'apps',
+            labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
+          }
+        }],
+      },
+      plainFailure(403, 'serviceaccount default is forbidden'),
+      { metadata: { name: 'app', namespace: 'apps', resourceVersion: '42' } },
+      {},
+    ]);
+
+    await expect(ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    )).rejects.toMatchObject({ data: 'serviceaccount default is forbidden' });
+
+    const patch = store.calls.find(call => call.payload.method === 'PATCH');
+    expect(patch?.payload.url).toContain('/serviceaccounts/app');
   });
 });
 

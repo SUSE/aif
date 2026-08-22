@@ -22,7 +22,7 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
 }
 import { log as logger } from '../utils/logger';
 import { createChartValuesService, extractFileFromTarGz } from './chart-values';
-import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
+import { createErrorHandler, handleSimpleError, httpStatus } from '../utils/error-handler';
 import type {
   Dispatchable,
   ClusterInfo,
@@ -1154,20 +1154,45 @@ export async function listServiceAccounts(
 ): Promise<string[]> {
   // Match the operator's ownership boundary: chart-managed ServiceAccounts plus
   // the namespace default. Do not mutate unrelated administrator-managed SAs.
-  const selector = encodeURIComponent('app.kubernetes.io/managed-by=Helm');
-  const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000&labelSelector=${selector}`;
+  // Read the complete list so diagnostics can report how many accounts were
+  // intentionally skipped; only the selected names are ever mutated.
+  const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   const responseItems = res?.data?.items ?? res?.items ?? res?.data ?? [];
   const items = Array.isArray(responseItems) ? responseItems as ServiceAccount[] : [];
-  const names = items
+  const selected = items.filter(sa =>
+    sa?.metadata?.name === 'default' ||
+    sa?.metadata?.labels?.['app.kubernetes.io/managed-by'] === 'Helm'
+  );
+  const names = selected
     .map(sa => sa?.metadata?.name)
     .filter((name): name is string => typeof name === 'string' && name.length > 0);
+
+  logger.debug('Discovered ServiceAccounts for pull-secret updates', {
+    component: 'RancherApps',
+    data: {
+      total:   items.length,
+      matched: selected.length,
+      skipped: items.length - selected.length,
+    }
+  });
 
   return [...new Set(['default', ...names])];
 }
 
 const SERVICE_ACCOUNT_PATCH_ATTEMPTS = 5;
-const SERVICE_ACCOUNT_CONFLICT_DELAY_MS = 100;
+const SERVICE_ACCOUNT_CONFLICT_BASE_DELAY_MS = 200;
+const SERVICE_ACCOUNT_CONFLICT_MAX_DELAY_MS = 2_000;
+
+function serviceAccountConflictDelay(attempt: number): number {
+  const exponential = Math.min(
+    SERVICE_ACCOUNT_CONFLICT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+    SERVICE_ACCOUNT_CONFLICT_MAX_DELAY_MS,
+  );
+  const jitter = Math.floor(Math.random() * Math.max(1, exponential / 4));
+
+  return exponential + jitter;
+}
 
 export async function ensureServiceAccountPullSecret(
   $store: Dispatchable,
@@ -1216,7 +1241,7 @@ export async function ensureServiceAccountPullSecret(
     } catch (e) {
       const standardError = errorHandler.normalizeError(e);
       if (standardError.status === 409 && attempt < SERVICE_ACCOUNT_PATCH_ATTEMPTS) {
-        await new Promise(resolve => setTimeout(resolve, SERVICE_ACCOUNT_CONFLICT_DELAY_MS * attempt));
+        await new Promise(resolve => setTimeout(resolve, serviceAccountConflictDelay(attempt)));
         continue;
       }
       throw e;
@@ -1232,6 +1257,8 @@ export async function ensurePullSecretOnAllSAs(
 ) {
   const sas = await listServiceAccounts($store, clusterId, namespace);
   const errorHandler = createErrorHandler($store, 'RancherApps');
+  const failures: Array<{ serviceAccount: string; error: unknown }> = [];
+
   for (const saName of sas) {
     try {
       await ensureServiceAccountPullSecret($store, clusterId, namespace, saName, secretName);
@@ -1240,8 +1267,26 @@ export async function ensurePullSecretOnAllSAs(
       // and a listed chart SA can disappear before its GET. Neither should
       // prevent remaining ServiceAccounts from converging.
       if (errorHandler.normalizeError(e).status === 404) continue;
-      throw e;
+      failures.push({ serviceAccount: saName, error: e });
     }
+  }
+
+  if (failures.length === 1) throw failures[0].error;
+  if (failures.length > 1) {
+    const statuses = [...new Set(failures.map(failure => httpStatus(failure.error)))];
+    const message = failures
+      .map(failure => `${failure.serviceAccount}: ${handleSimpleError(failure.error)}`)
+      .join('; ');
+    const aggregate = new Error(
+      `Failed to attach image pull secret to ${failures.length} ServiceAccounts: ${message}`
+    );
+
+    // Preserve a common HTTP status so the caller can still make a safe retry
+    // decision without discarding the per-account failure summary.
+    if (statuses.length === 1 && statuses[0] !== undefined) {
+      Object.defineProperty(aggregate, '_status', { value: statuses[0] });
+    }
+    throw aggregate;
   }
 }
 

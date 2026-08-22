@@ -5,6 +5,8 @@
 // caller's own principal. A ServiceAccount therefore cannot mint one, which is
 // why this lives in the UI and not in the operator.
 
+import { httpStatus } from '../utils/error-handler';
+
 export const TOKEN_EXPIRES_ANNOTATION = 'ai-factory.suse.com/token-expires-at';
 export const TOKEN_NAME_ANNOTATION = 'ai-factory.suse.com/token-name';
 export const DEFAULT_TOKEN_SECRET_NAME = 'aif-rancher-token';
@@ -18,17 +20,6 @@ export interface MintedToken {
   value: string;
   expiresAt: string;
   tokenName: string;
-}
-
-// rancher/request rejects with the parsed response body, not an axios error:
-// see @rancher/shell/plugins/steve/actions.js. A Kubernetes failure carries the
-// code under `code` and puts the string "Failure" in `status`; a plain-text body
-// arrives as { data: '…' }; Norman reports its status as a string. `_status` is
-// non-enumerable and set on every rejection, so it is the reliable one.
-function httpStatus(e: any): number | undefined {
-  const raw = e?._status ?? e?.code ?? e?.status ?? e?.statusCode ?? e?.response?.status;
-  const n = typeof raw === 'string' ? parseInt(raw, 10) : raw;
-  return Number.isFinite(n) ? n : undefined;
 }
 
 function isNotFound(e: any): boolean {

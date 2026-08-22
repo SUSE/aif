@@ -33,6 +33,7 @@ import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } fro
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { createErrorHandler } from '../../utils/error-handler';
+import { log as logger } from '../../utils/logger';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
@@ -820,9 +821,10 @@ async function performMultiClusterInstall() {
   await installWithConcurrencyLimit(targetClusters, INSTALL_CONCURRENCY);
 
   // Check final status
-  const allSucceeded = installProgress.value.every(p => p.status === 'success');
-  if (allSucceeded) {
-    console.log('[SUSE-AI] Multi-cluster install completed successfully');
+  const allCompleted = installProgress.value.every(p => p.status === 'success' || p.status === 'warning');
+  if (allCompleted) {
+    const warnings = installProgress.value.filter(p => p.status === 'warning');
+    console.log(`[SUSE-AI] Multi-cluster install completed with ${warnings.length} warning(s)`);
   } else {
     const failed = installProgress.value.filter(p => p.status === 'failed');
     console.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
@@ -1075,11 +1077,11 @@ async function recordAIWorkload(
       const p = installProgress.value.find(x => x.clusterId === clusterId);
       const single: AIWorkloadClusterStatus = {
         clusterId,
-        phase:   p?.status === 'success' ? 'Running' : 'Failed',
-        message: p?.error || p?.message || '',
+        phase:   p?.status === 'success' ? 'Running' : p?.status === 'warning' ? 'Pending' : 'Failed',
+        message: p?.error || p?.warning || p?.message || '',
       };
       clusterStatuses = [single];
-      phase = single.phase === 'Running' ? 'Running' : 'Failed';
+      phase = p?.status === 'warning' ? 'Degraded' : single.phase === 'Running' ? 'Running' : 'Failed';
     }
 
     const crName = crNameForCluster(form.value.release, clusterId);
@@ -1175,14 +1177,19 @@ async function installSingleCluster(clusterId: string): Promise<void> {
   });
 
   try {
-    await installToCluster(clusterId, (progress, message) => {
+    const warning = await installToCluster(clusterId, (progress, message) => {
       updateClusterProgress(clusterId, { progress, message });
     });
 
     updateClusterProgress(clusterId, {
-      status: 'success',
+      status: warning ? 'warning' : 'success',
       progress: 100,
-      message: form.value.deployType === 'Helm' ? 'Helm install complete — check Workloads page for status' : 'Scheduled for deployment'
+      message: warning
+        ? 'Application installed with a pull-secret warning'
+        : form.value.deployType === 'Helm'
+          ? 'Helm install complete — check Workloads page for status'
+          : 'Scheduled for deployment',
+      warning,
     });
   } catch (e: any) {
     updateClusterProgress(clusterId, {
@@ -1273,9 +1280,9 @@ function onProgressModalContinueAnyway() {
 async function installToCluster(
   clusterId: string,
   onProgress: (progress: number, message: string) => void
-) {
+): Promise<string | undefined> {
   const allPullSecrets = new Set<string>();
-  const pullSecretErrorHandler = createErrorHandler(store, 'RancherApps');
+  const pullSecretErrorHandler = createErrorHandler(store, 'AppWizard');
 
   onProgress(15, 'Preparing namespace...');
 
@@ -1340,12 +1347,20 @@ async function installToCluster(
           // the post-install sweep handles it. Permission and malformed-response
           // failures are actionable and must stop the install.
           if (standardError.status === 404) continue;
-          pullSecretErrorHandler.handleApiError(e, 'attach image pull secret', {
-            clusterId,
-            namespace: form.value.namespace,
-            serviceAccount: sa,
+          logger.warn('Pre-install pull-secret attachment failed', {
+            component: 'AppWizard',
+            action:    'attach image pull secret',
+            data:      {
+              clusterId,
+              namespace: form.value.namespace,
+              serviceAccount: sa,
+              status: standardError.status,
+            },
           });
-          throw e;
+          throw new Error(
+            `Could not attach image pull secret to ServiceAccount ` +
+            `${form.value.namespace}/${sa}: ${standardError.message}`
+          );
         }
       }
     }
@@ -1381,6 +1396,7 @@ async function installToCluster(
 
   onProgress(90, 'Finalizing service accounts...');
 
+  let finalizationWarning: string | undefined;
   if (pullSecrets.length > 0) {
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
@@ -1394,17 +1410,29 @@ async function installToCluster(
           await new Promise(r => setTimeout(r, 2000));
           continue;
         }
-        pullSecretErrorHandler.handleApiError(e, 'finalize image pull secrets', {
-          clusterId,
-          namespace: form.value.namespace,
-          attempt,
+        logger.warn('Application installed but pull-secret finalization failed', {
+          component: 'AppWizard',
+          action:    'finalize image pull secrets',
+          data:      {
+            clusterId,
+            namespace: form.value.namespace,
+            attempt,
+            status: standardError.status,
+          },
         });
-        throw new Error(`Application installed, but configuring image pull secrets failed: ${standardError.message}`);
+        finalizationWarning = `Application installed, but configuring image pull secrets failed: ${standardError.message}`;
+        break;
       }
     }
   }
 
-  onProgress(100, 'Deployment initiated — watch status on Workloads page');
+  onProgress(
+    100,
+    finalizationWarning
+      ? 'Deployment initiated with a pull-secret warning'
+      : 'Deployment initiated — watch status on Workloads page'
+  );
+  return finalizationWarning;
 }
 
 async function performUpgrade() {

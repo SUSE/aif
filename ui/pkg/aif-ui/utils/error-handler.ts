@@ -15,6 +15,37 @@ export interface StandardError {
   retryable?: boolean;
 }
 
+interface HttpErrorShape {
+  _status?: unknown;
+  code?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+  response?: { status?: unknown };
+}
+
+// rancher/request rejects with the parsed response body rather than an axios
+// Error. The HTTP status is attached as a non-enumerable `_status`, including
+// when the body is plain text. Norman may instead return a numeric string.
+export function httpStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+
+  const candidate = error as HttpErrorShape;
+  const rawStatuses = [
+    candidate._status,
+    candidate.code,
+    candidate.status,
+    candidate.statusCode,
+    candidate.response?.status,
+  ];
+
+  for (const rawStatus of rawStatuses) {
+    const status = typeof rawStatus === 'string' ? Number.parseInt(rawStatus, 10) : rawStatus;
+    if (typeof status === 'number' && Number.isFinite(status)) return status;
+  }
+
+  return undefined;
+}
+
 export class ErrorHandler {
   private store: Dispatchable;
   private component: string;
@@ -49,18 +80,19 @@ export class ErrorHandler {
    * Normalize different error types into a consistent format
    */
   public normalizeError(error: unknown): StandardError {
+    const status = httpStatus(error);
+
     // Handle RancherError
-    if (this.isRancherError(error)) {
-      // Kubernetes API errors have 'code' as HTTP status (number), 'status' as "Failure" (string)
-      // Rancher errors may have 'status' or 'response.status' as HTTP status
-      const httpStatus = (error as any).code || error.status || error.response?.status;
+    if (status !== undefined || this.isRancherError(error)) {
+      const rancherError = error as RancherError;
+      const rawCode = (error as HttpErrorShape).code;
 
       return {
-        message: error.message || 'API request failed',
-        status: typeof httpStatus === 'number' ? httpStatus : undefined,
-        code: (error as any).code?.toString() || error.code?.toString(),
-        details: this.extractErrorDetails(error),
-        retryable: this.isRetryableStatus(httpStatus)
+        message:   this.extractErrorMessage(rancherError),
+        status,
+        code:      typeof rawCode === 'string' || typeof rawCode === 'number' ? String(rawCode) : undefined,
+        details:   this.extractErrorDetails(rancherError),
+        retryable: this.isRetryableStatus(status) || this.isRetryableTransportError(error)
       };
     }
 
@@ -68,7 +100,7 @@ export class ErrorHandler {
     if (error instanceof Error) {
       return {
         message: error.message,
-        retryable: false
+        retryable: this.isRetryableTransportError(error)
       };
     }
 
@@ -77,6 +109,22 @@ export class ErrorHandler {
       message: typeof error === 'string' ? error : 'Unknown error occurred',
       retryable: false
     };
+  }
+
+  private extractErrorMessage(error: RancherError): string {
+    if (error.message) return error.message;
+    if (typeof error.data === 'string') return error.data;
+    if (error.data && typeof error.data === 'object' && 'message' in error.data) {
+      return String(error.data.message);
+    }
+
+    const responseData = error.response?.data;
+    if (typeof responseData === 'string') return responseData;
+    if (responseData && typeof responseData === 'object' && 'message' in responseData) {
+      return String(responseData.message);
+    }
+
+    return 'API request failed';
   }
 
   /**
@@ -112,6 +160,22 @@ export class ErrorHandler {
 
     // Retryable status codes
     return [408, 429, 500, 502, 503, 504].includes(status);
+  }
+
+  private isRetryableTransportError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    const code = (error as Error & { code?: unknown }).code;
+    if (typeof code === 'string' && [
+      'ECONNABORTED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'ERR_NETWORK',
+    ].includes(code)) {
+      return true;
+    }
+
+    return /network error|failed to fetch|timed?\s*out/i.test(error.message);
   }
 
   /**
@@ -236,6 +300,14 @@ export function handleSimpleError(error: unknown, fallbackMessage = 'Operation f
 
   if (typeof error === 'object' && error !== null && 'message' in error) {
     return (error as { message: string }).message;
+  }
+
+  if (typeof error === 'object' && error !== null && 'data' in error) {
+    const data = (error as { data?: unknown }).data;
+    if (typeof data === 'string') return data;
+    if (typeof data === 'object' && data !== null && 'message' in data) {
+      return String((data as { message: unknown }).message);
+    }
   }
 
   return fallbackMessage;
