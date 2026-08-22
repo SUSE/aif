@@ -22,7 +22,7 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
 }
 import { log as logger } from '../utils/logger';
 import { createChartValuesService, extractFileFromTarGz } from './chart-values';
-import { createErrorHandler, handleSimpleError } from '../utils/error-handler';
+import { createErrorHandler, handleSimpleError, httpStatus } from '../utils/error-handler';
 import type {
   Dispatchable,
   ClusterInfo,
@@ -1030,7 +1030,9 @@ async function listNsSecrets(
 ): Promise<RegistrySecret[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/secrets?limit=5000`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
-  return (res?.data?.items || res?.data || []) as RegistrySecret[];
+  const items = res?.data?.items ?? res?.items ?? res?.data ?? [];
+
+  return Array.isArray(items) ? items as RegistrySecret[] : [];
 }
 
 export async function ensureRegistrySecret(
@@ -1065,7 +1067,7 @@ export async function ensureRegistrySecret(
   // 0) If an existing usable secret already exists with the base prefix, reuse it (avoid races)
   try {
     const all = await listNsSecrets($store, clusterId, namespace);
-    log('ensureRegistrySecret: List all secrets in the namespace', {secrets: [all]});
+    log('ensureRegistrySecret: listed secrets in the namespace', { count: all.length });
     const match = all.find((s: RegistrySecret) => s?.metadata?.name?.startsWith(base) &&
       s?.type === 'kubernetes.io/dockerconfigjson' &&
       typeof s?.data?.['.dockerconfigjson'] === 'string' &&
@@ -1150,10 +1152,58 @@ export async function listServiceAccounts(
   clusterId: string,
   namespace: string
 ): Promise<string[]> {
+  // Match the operator's namespace-wide ownership boundary: ServiceAccounts
+  // from any Helm release plus the namespace default. Unlabelled accounts are
+  // not selected.
+  // Read the complete list so diagnostics can report how many accounts were
+  // intentionally skipped; only the selected names are ever mutated.
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
-  const items = (res?.data?.items || res?.data || []) as ServiceAccount[];
-  return items.map(sa => sa?.metadata?.name).filter(Boolean);
+  const responseItems = res?.data?.items ?? res?.items ?? res?.data ?? [];
+  const items = Array.isArray(responseItems) ? responseItems as ServiceAccount[] : [];
+  const continueToken = (res?.data ?? res)?.metadata?.continue;
+  const selected = items.filter(sa =>
+    sa?.metadata?.name === 'default' ||
+    sa?.metadata?.labels?.['app.kubernetes.io/managed-by'] === 'Helm'
+  );
+  const names = selected
+    .map(sa => sa?.metadata?.name)
+    .filter((name): name is string => typeof name === 'string' && name.length > 0);
+
+  logger.debug('Discovered ServiceAccounts for pull-secret updates', {
+    component: 'RancherApps',
+    data: {
+      total:   items.length,
+      matched: selected.length,
+      skipped: items.length - selected.length,
+    }
+  });
+
+  // 5,000 is deliberately far above the expected chart namespace size. Do
+  // not fail silently if Kubernetes nevertheless paginates the result; the
+  // operator remains the convergence authority for accounts beyond this page.
+  if (continueToken) {
+    logger.warn('ServiceAccount discovery reached its page limit', {
+      component: 'RancherApps',
+      data:      { namespace, limit: 5_000 },
+    });
+  }
+
+  return [...new Set(['default', ...names])];
+}
+
+const SERVICE_ACCOUNT_PATCH_ATTEMPTS = 5;
+const SERVICE_ACCOUNT_CONFLICT_BASE_DELAY_MS = 200;
+const SERVICE_ACCOUNT_CONFLICT_MAX_DELAY_MS = 2_000;
+
+function serviceAccountConflictDelay(attempt: number): number {
+  const exponential = Math.min(
+    SERVICE_ACCOUNT_CONFLICT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+    SERVICE_ACCOUNT_CONFLICT_MAX_DELAY_MS,
+  );
+  const jitter = Math.floor(Math.random() * Math.max(1, exponential / 4));
+
+  return exponential + jitter;
 }
 
 export async function ensureServiceAccountPullSecret(
@@ -1162,33 +1212,52 @@ export async function ensureServiceAccountPullSecret(
   namespace: string,
   saName: string,
   secretName: string
-) {
+): Promise<void> {
   const base = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts`;
   const url  = `${base}/${encodeURIComponent(saName)}`;
+  const errorHandler = createErrorHandler($store, 'RancherApps');
 
-  try {
-    const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
-    const sa  = (cur?.data ?? cur) || {};
-    const rv  = sa?.metadata?.resourceVersion;
+  for (let attempt = 1; attempt <= SERVICE_ACCOUNT_PATCH_ATTEMPTS; attempt++) {
+    try {
+      const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
+      const sa = ((cur?.data ?? cur) || {}) as Partial<ServiceAccount>;
+      const rv = sa.metadata?.resourceVersion;
 
-    const orig = Array.isArray(sa.imagePullSecrets) ? sa.imagePullSecrets.slice() : [];
-    const has  = orig.some((e: { name?: string }) => e?.name === secretName);
-    const next = has ? orig : [...orig, { name: secretName }];
+      // A successful Kubernetes GET must include resourceVersion. Without it we
+      // cannot prove that the list below reflects current state, and an
+      // unconditional merge patch could replace an administrator-managed list.
+      if (!rv) {
+        throw new Error(`Refusing to update ServiceAccount ${namespace}/${saName}: GET response is missing metadata.resourceVersion`);
+      }
 
-    await $store.dispatch('rancher/request', {
-      url, method: 'PUT',
-      data: {
-        apiVersion: 'v1',
-        kind: 'ServiceAccount',
-        metadata: { name: saName, namespace, resourceVersion: rv },
-        secrets: sa.secrets,
-        automountServiceAccountToken: sa.automountServiceAccountToken,
-        imagePullSecrets: next
-      },
-      timeout: TIMEOUT_VALUES.MUTATION
-    });
-  } catch (e) {
-    try { console.warn('[SUSE-AI] could not update ServiceAccount imagePullSecrets', { namespace, saName, e }); } catch {}
+      const orig = Array.isArray(sa.imagePullSecrets) ? sa.imagePullSecrets.slice() : [];
+      const has = orig.some(entry => entry?.name === secretName);
+      if (has) return;
+
+      // imagePullSecrets is an atomic list on ServiceAccount, so send the
+      // complete read/merged list. resourceVersion preserves Kubernetes'
+      // optimistic-concurrency protection around that replacement.
+      const patch = {
+        metadata:         { resourceVersion: rv },
+        imagePullSecrets: [...orig, { name: secretName }],
+      };
+
+      await $store.dispatch('rancher/request', {
+        url,
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/merge-patch+json' },
+        data: patch,
+        timeout: TIMEOUT_VALUES.MUTATION
+      });
+      return;
+    } catch (e) {
+      const standardError = errorHandler.normalizeError(e);
+      if (standardError.status === 409 && attempt < SERVICE_ACCOUNT_PATCH_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, serviceAccountConflictDelay(attempt)));
+        continue;
+      }
+      throw e;
+    }
   }
 }
 
@@ -1197,14 +1266,39 @@ export async function ensurePullSecretOnAllSAs(
   clusterId: string,
   namespace: string,
   secretName: string
-) {
+): Promise<void> {
   const sas = await listServiceAccounts($store, clusterId, namespace);
+  const errorHandler = createErrorHandler($store, 'RancherApps');
+  const failures: Array<{ serviceAccount: string; error: unknown }> = [];
+
   for (const saName of sas) {
     try {
       await ensureServiceAccountPullSecret($store, clusterId, namespace, saName, secretName);
     } catch (e) {
-      try { console.warn('[SUSE-AI] SA attach failed', { namespace, saName, e }); } catch {}
+      // The default SA can be absent briefly while a namespace is terminating,
+      // and a listed chart SA can disappear before its GET. Neither should
+      // prevent remaining ServiceAccounts from converging.
+      if (errorHandler.normalizeError(e).status === 404) continue;
+      failures.push({ serviceAccount: saName, error: e });
     }
+  }
+
+  if (failures.length > 0) {
+    const statuses = [...new Set(failures.map(failure => httpStatus(failure.error)))];
+    const message = failures
+      .map(failure => `${failure.serviceAccount}: ${handleSimpleError(failure.error)}`)
+      .join('; ');
+    const aggregate = new Error(
+      `Failed to attach image pull secret to ${failures.length} ServiceAccounts: ${message}`
+    );
+
+    // Preserve a common HTTP status so the caller can still make a safe retry
+    // decision without discarding the per-account failure summary. Mixed
+    // statuses intentionally remain unclassified.
+    if (statuses.length === 1 && statuses[0] !== undefined) {
+      Object.defineProperty(aggregate, '_status', { value: statuses[0] });
+    }
+    throw aggregate;
   }
 }
 

@@ -32,6 +32,8 @@ import { validateReleaseName, instanceNameError } from '../../validators/appInst
 import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { createErrorHandler } from '../../utils/error-handler';
+import { log as logger } from '../../utils/logger';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
@@ -819,9 +821,10 @@ async function performMultiClusterInstall() {
   await installWithConcurrencyLimit(targetClusters, INSTALL_CONCURRENCY);
 
   // Check final status
-  const allSucceeded = installProgress.value.every(p => p.status === 'success');
-  if (allSucceeded) {
-    console.log('[SUSE-AI] Multi-cluster install completed successfully');
+  const allCompleted = installProgress.value.every(p => p.status === 'success' || p.status === 'warning');
+  if (allCompleted) {
+    const warnings = installProgress.value.filter(p => p.status === 'warning');
+    console.log(`[SUSE-AI] Multi-cluster install completed with ${warnings.length} warning(s)`);
   } else {
     const failed = installProgress.value.filter(p => p.status === 'failed');
     console.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
@@ -1072,10 +1075,13 @@ async function recordAIWorkload(
       clusterStatuses = initialStatus.clusterStatuses;
     } else {
       const p = installProgress.value.find(x => x.clusterId === clusterId);
+      const installed = p?.status === 'success' || p?.status === 'warning';
       const single: AIWorkloadClusterStatus = {
         clusterId,
-        phase:   p?.status === 'success' ? 'Running' : 'Failed',
-        message: p?.error || p?.message || '',
+        phase:   installed ? 'Running' : 'Failed',
+        // Pull-secret warnings stay in the install modal. The Helm status
+        // reconciler owns persisted workload status and cannot preserve them.
+        message: p?.status === 'warning' ? '' : p?.error || p?.message || '',
       };
       clusterStatuses = [single];
       phase = single.phase === 'Running' ? 'Running' : 'Failed';
@@ -1174,14 +1180,19 @@ async function installSingleCluster(clusterId: string): Promise<void> {
   });
 
   try {
-    await installToCluster(clusterId, (progress, message) => {
+    const warning = await installToCluster(clusterId, (progress, message) => {
       updateClusterProgress(clusterId, { progress, message });
     });
 
     updateClusterProgress(clusterId, {
-      status: 'success',
+      status: warning ? 'warning' : 'success',
       progress: 100,
-      message: form.value.deployType === 'Helm' ? 'Helm install complete — check Workloads page for status' : 'Scheduled for deployment'
+      message: warning
+        ? 'Application installed with a pull-secret warning'
+        : form.value.deployType === 'Helm'
+          ? 'Helm install complete — check Workloads page for status'
+          : 'Scheduled for deployment',
+      warning,
     });
   } catch (e: any) {
     updateClusterProgress(clusterId, {
@@ -1272,8 +1283,9 @@ function onProgressModalContinueAnyway() {
 async function installToCluster(
   clusterId: string,
   onProgress: (progress: number, message: string) => void
-) {
+): Promise<string | undefined> {
   const allPullSecrets = new Set<string>();
+  const pullSecretErrorHandler = createErrorHandler(store, 'AppWizard');
 
   onProgress(15, 'Preparing namespace...');
 
@@ -1330,8 +1342,26 @@ async function installToCluster(
     else if (vs.create === undefined || !!vs.create) saCandidates.add(form.value.release);
     for (const sa of saCandidates) {
       for (const secretName of pullSecrets) {
-        try { await ensureServiceAccountPullSecret(store, clusterId, form.value.namespace, sa, secretName); }
-        catch (e) { console.warn('[SUSE-AI] SA pull-secret attach (pre) failed', { sa, ns: form.value.namespace, e }); }
+        try {
+          await ensureServiceAccountPullSecret(store, clusterId, form.value.namespace, sa, secretName);
+        } catch (e) {
+          const standardError = pullSecretErrorHandler.normalizeError(e);
+          // A chart-created SA commonly does not exist until after Helm runs;
+          // the post-install sweep handles it. Other failures are also
+          // best-effort here because the operator converges the same accounts
+          // under controller RBAC after the AIWorkload is recorded.
+          if (standardError.status === 404) continue;
+          logger.warn('Pre-install pull-secret attachment failed', {
+            component: 'AppWizard',
+            action:    'attach image pull secret',
+            data:      {
+              clusterId,
+              namespace: form.value.namespace,
+              serviceAccount: sa,
+              status: standardError.status,
+            },
+          });
+        }
       }
     }
   }
@@ -1366,6 +1396,7 @@ async function installToCluster(
 
   onProgress(90, 'Finalizing service accounts...');
 
+  let finalizationWarning: string | undefined;
   if (pullSecrets.length > 0) {
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
@@ -1374,13 +1405,34 @@ async function installToCluster(
         }
         break;
       } catch (e) {
-        if (attempt === 5) break;
-        await new Promise(r => setTimeout(r, 2000));
+        const standardError = pullSecretErrorHandler.normalizeError(e);
+        if (attempt < 5 && standardError.retryable) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        logger.warn('Application installed but pull-secret finalization failed', {
+          component: 'AppWizard',
+          action:    'finalize image pull secrets',
+          data:      {
+            clusterId,
+            namespace: form.value.namespace,
+            attempt,
+            status: standardError.status,
+          },
+        });
+        finalizationWarning = `Application installed, but configuring image pull secrets failed: ${standardError.message}`;
+        break;
       }
     }
   }
 
-  onProgress(100, 'Deployment initiated — watch status on Workloads page');
+  onProgress(
+    100,
+    finalizationWarning
+      ? 'Deployment initiated with a pull-secret warning'
+      : 'Deployment initiated — watch status on Workloads page'
+  );
+  return finalizationWarning;
 }
 
 async function performUpgrade() {
@@ -1651,7 +1703,7 @@ function previousStep() {
 <template>
   <div class="install-steps pt-20 outlet">
     <Loading v-if="loading" />
-    
+
     <div v-else class="custom-wizard">
       <!-- Fixed Header -->
       <div class="wizard-header">
@@ -1662,8 +1714,8 @@ function previousStep() {
       <!-- Fixed Step Navigation -->
       <div class="wizard-nav">
         <div class="steps-container">
-          <div 
-            v-for="(step, index) in wizardSteps" 
+          <div
+            v-for="(step, index) in wizardSteps"
             :key="step.name"
             class="step-item"
             :class="{

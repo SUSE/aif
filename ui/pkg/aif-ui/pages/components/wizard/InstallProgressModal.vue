@@ -33,11 +33,13 @@
             <i v-if="item.status === 'pending'" class="icon icon-clock" />
             <i v-else-if="item.status === 'installing'" class="icon icon-spinner icon-spin" />
             <i v-else-if="item.status === 'success'" class="icon icon-checkmark" />
+            <i v-else-if="item.status === 'warning'" class="icon icon-warning" />
             <i v-else-if="item.status === 'failed'" class="icon icon-close" />
           </div>
           <div class="cluster-info">
             <div class="cluster-name">{{ item.clusterName }}</div>
             <div class="cluster-message">{{ item.message }}</div>
+            <div v-if="item.warning" class="cluster-warning">{{ item.warning }}</div>
             <div v-if="item.error" class="cluster-error">{{ item.error }}</div>
           </div>
           <div class="cluster-progress-bar" v-if="item.status === 'installing'">
@@ -54,7 +56,7 @@
       <!-- Action Buttons -->
       <div class="modal-actions">
         <!-- All succeeded -->
-        <template v-if="allSucceeded">
+        <template v-if="allCompletedWithoutFailures">
           <button class="btn role-primary" @click="$emit('done')">
             Done
           </button>
@@ -97,9 +99,10 @@ import { computed } from 'vue';
 export interface ClusterInstallProgress {
   clusterId: string;
   clusterName: string;
-  status: 'pending' | 'installing' | 'success' | 'failed';
+  status: 'pending' | 'installing' | 'success' | 'warning' | 'failed';
   progress: number;
   message: string;
+  warning?: string;
   error?: string;
 }
 
@@ -132,7 +135,7 @@ defineEmits<Emits>();
 const totalCount = computed(() => props.progress.length);
 
 const completedCount = computed(() =>
-  props.progress.filter(p => p.status === 'success' || p.status === 'failed').length
+  props.progress.filter(p => ['success', 'warning', 'failed'].includes(p.status)).length
 );
 
 const successCount = computed(() =>
@@ -143,14 +146,20 @@ const failedCount = computed(() =>
   props.progress.filter(p => p.status === 'failed').length
 );
 
+const warningCount = computed(() =>
+  props.progress.filter(p => p.status === 'warning').length
+);
+
+const completedWithoutFailureCount = computed(() => successCount.value + warningCount.value);
+
 const overallPercentage = computed(() => {
   if (totalCount.value === 0) return 0;
   return Math.round((completedCount.value / totalCount.value) * 100);
 });
 
 const overallProgressClass = computed(() => {
-  if (failedCount.value > 0 && successCount.value === 0) return 'progress-error';
-  if (failedCount.value > 0) return 'progress-warning';
+  if (failedCount.value > 0 && completedWithoutFailureCount.value === 0) return 'progress-error';
+  if (failedCount.value > 0 || warningCount.value > 0) return 'progress-warning';
   if (completedCount.value === totalCount.value) return 'progress-success';
   return 'progress-active';
 });
@@ -163,17 +172,24 @@ const allSucceeded = computed(() =>
   props.progress.length > 0 && props.progress.every(p => p.status === 'success')
 );
 
+const allCompletedWithoutFailures = computed(() =>
+  props.progress.length > 0 && props.progress.every(p => p.status === 'success' || p.status === 'warning')
+);
+
 const allFailed = computed(() =>
   props.progress.length > 0 && props.progress.every(p => p.status === 'failed')
 );
 
 const hasFailures = computed(() => failedCount.value > 0);
-const hasSuccesses = computed(() => successCount.value > 0);
+const hasSuccesses = computed(() => completedWithoutFailureCount.value > 0);
 
 const displayTitle = computed(() => {
   if (allSucceeded.value) {
     if (props.doneTitle) return props.doneTitle;
     return props.title.replace(/^Installing\b/, 'Installed').replace(/^Upgrading\b/, 'Upgraded');
+  }
+  if (allCompletedWithoutFailures.value) {
+    return props.mode === 'upgrade' ? 'Upgraded with warnings' : 'Installed with warnings';
   }
   return props.title;
 });
@@ -181,7 +197,7 @@ const displayTitle = computed(() => {
 const subtitle = computed(() => {
   const isHelm = props.deployType === 'Helm';
   const isUpgrade = props.mode === 'upgrade';
-  const sc = successCount.value;
+  const sc = completedWithoutFailureCount.value;
   const fc = failedCount.value;
   const clusterWord = (n: number) => `cluster${n !== 1 ? 's' : ''}`;
 
@@ -193,6 +209,10 @@ const subtitle = computed(() => {
     return isHelm
       ? `Deployed on ${sc} ${clusterWord(sc)}`
       : `Scheduled for deployment on ${sc} ${clusterWord(sc)}`;
+  }
+  if (allCompletedWithoutFailures.value) {
+    const warningVerb = warningCount.value === 1 ? 'requires' : 'require';
+    return `${sc} ${clusterWord(sc)} completed; ${warningCount.value} ${warningVerb} attention`;
   }
   if (allFailed.value) {
     return `Installation failed on all ${fc} ${clusterWord(fc)}`;
@@ -333,6 +353,11 @@ const subtitle = computed(() => {
   background: var(--success-banner-bg, rgba(16, 185, 129, 0.05));
 }
 
+.cluster-progress-item.status-warning {
+  border-color: var(--warning, #f59e0b);
+  background: var(--warning-banner-bg, rgba(245, 158, 11, 0.05));
+}
+
 .cluster-progress-item.status-failed {
   border-color: var(--error, #ef4444);
   background: var(--error-banner-bg, rgba(239, 68, 68, 0.05));
@@ -363,6 +388,10 @@ const subtitle = computed(() => {
   color: var(--success, #10b981);
 }
 
+.status-warning .cluster-status-icon {
+  color: var(--warning, #f59e0b);
+}
+
 .status-failed .cluster-status-icon {
   color: var(--error, #ef4444);
 }
@@ -390,6 +419,16 @@ const subtitle = computed(() => {
   margin-top: 4px;
   padding: 6px 8px;
   background: var(--error-banner-bg, rgba(220, 38, 38, 0.1));
+  border-radius: 4px;
+  word-break: break-word;
+}
+
+.cluster-warning {
+  font-size: 12px;
+  color: var(--warning-text, #92400e);
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: var(--warning-banner-bg, rgba(245, 158, 11, 0.1));
   border-radius: 4px;
   word-break: break-word;
 }

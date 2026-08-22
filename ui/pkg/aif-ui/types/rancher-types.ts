@@ -211,6 +211,7 @@ export interface ServiceAccount {
     name: string;
     namespace: string;
     resourceVersion?: string;
+    labels?: Record<string, string>;
   };
   imagePullSecrets?: Array<{
     name: string;
