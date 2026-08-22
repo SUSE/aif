@@ -1152,14 +1152,16 @@ export async function listServiceAccounts(
   clusterId: string,
   namespace: string
 ): Promise<string[]> {
-  // Match the operator's ownership boundary: chart-managed ServiceAccounts plus
-  // the namespace default. Do not mutate unrelated administrator-managed SAs.
+  // Match the operator's namespace-wide ownership boundary: ServiceAccounts
+  // from any Helm release plus the namespace default. Unlabelled accounts are
+  // not selected.
   // Read the complete list so diagnostics can report how many accounts were
   // intentionally skipped; only the selected names are ever mutated.
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
   const responseItems = res?.data?.items ?? res?.items ?? res?.data ?? [];
   const items = Array.isArray(responseItems) ? responseItems as ServiceAccount[] : [];
+  const continueToken = (res?.data ?? res)?.metadata?.continue;
   const selected = items.filter(sa =>
     sa?.metadata?.name === 'default' ||
     sa?.metadata?.labels?.['app.kubernetes.io/managed-by'] === 'Helm'
@@ -1176,6 +1178,16 @@ export async function listServiceAccounts(
       skipped: items.length - selected.length,
     }
   });
+
+  // 5,000 is deliberately far above the expected chart namespace size. Do
+  // not fail silently if Kubernetes nevertheless paginates the result; the
+  // operator remains the convergence authority for accounts beyond this page.
+  if (continueToken) {
+    logger.warn('ServiceAccount discovery reached its page limit', {
+      component: 'RancherApps',
+      data:      { namespace, limit: 5_000 },
+    });
+  }
 
   return [...new Set(['default', ...names])];
 }
@@ -1254,7 +1266,7 @@ export async function ensurePullSecretOnAllSAs(
   clusterId: string,
   namespace: string,
   secretName: string
-) {
+): Promise<void> {
   const sas = await listServiceAccounts($store, clusterId, namespace);
   const errorHandler = createErrorHandler($store, 'RancherApps');
   const failures: Array<{ serviceAccount: string; error: unknown }> = [];
@@ -1271,8 +1283,7 @@ export async function ensurePullSecretOnAllSAs(
     }
   }
 
-  if (failures.length === 1) throw failures[0].error;
-  if (failures.length > 1) {
+  if (failures.length > 0) {
     const statuses = [...new Set(failures.map(failure => httpStatus(failure.error)))];
     const message = failures
       .map(failure => `${failure.serviceAccount}: ${handleSimpleError(failure.error)}`)
@@ -1282,7 +1293,8 @@ export async function ensurePullSecretOnAllSAs(
     );
 
     // Preserve a common HTTP status so the caller can still make a safe retry
-    // decision without discarding the per-account failure summary.
+    // decision without discarding the per-account failure summary. Mixed
+    // statuses intentionally remain unclassified.
     if (statuses.length === 1 && statuses[0] !== undefined) {
       Object.defineProperty(aggregate, '_status', { value: statuses[0] });
     }

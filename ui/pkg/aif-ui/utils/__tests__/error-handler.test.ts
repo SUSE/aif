@@ -46,6 +46,7 @@ describe('ErrorHandler.normalizeError', () => {
 
     expect(errorHandler.normalizeError(timeout)).toMatchObject({
       message:   'request timed out',
+      code:      'ETIMEDOUT',
       retryable: true,
     });
   });

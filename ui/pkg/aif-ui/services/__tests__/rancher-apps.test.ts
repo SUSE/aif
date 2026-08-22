@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensurePullSecretOnAllSAs,
   ensureRegistrySecret,
@@ -6,6 +6,12 @@ import {
   listServiceAccounts,
 } from '../rancher-apps';
 import type { Dispatchable } from '../../types/rancher-types';
+import { httpStatus } from '../../utils/error-handler';
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 interface RequestConfig {
   url?: string;
@@ -164,6 +170,8 @@ describe('ensureServiceAccountPullSecret', () => {
   });
 
   it('re-reads and preserves a concurrent update after a 409', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     const store = fakeStore([
       {
         metadata:         { name: 'app', namespace: 'apps', resourceVersion: '42' },
@@ -180,7 +188,11 @@ describe('ensureServiceAccountPullSecret', () => {
       {},
     ]);
 
-    await ensureServiceAccountPullSecret(asStore(store), 'local', 'apps', 'app', 'new-pull-secret');
+    const update = ensureServiceAccountPullSecret(
+      asStore(store), 'local', 'apps', 'app', 'new-pull-secret'
+    );
+    await vi.runAllTimersAsync();
+    await update;
 
     const patches = store.calls.filter(call => call.payload.method === 'PATCH');
     expect(patches).toHaveLength(2);
@@ -192,6 +204,32 @@ describe('ensureServiceAccountPullSecret', () => {
         { name: 'new-pull-secret' },
       ],
     });
+  });
+
+  it('surfaces a conflict after exhausting five fresh-read attempts', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const responses = Array.from({ length: 5 }, (_, index) => [
+      {
+        metadata: {
+          name:            'app',
+          namespace:       'apps',
+          resourceVersion: String(42 + index),
+        },
+      },
+      plainFailure(409, `conflict ${index + 1}`),
+    ]).flat();
+    const store = fakeStore(responses);
+
+    const update = ensureServiceAccountPullSecret(
+      asStore(store), 'local', 'apps', 'app', 'new-pull-secret'
+    );
+    const rejection = expect(update).rejects.toMatchObject({ data: 'conflict 5' });
+    await vi.runAllTimersAsync();
+    await rejection;
+
+    expect(store.calls.filter(call => call.payload.method === 'PATCH')).toHaveLength(5);
+    expect(store.calls.filter(call => !call.payload.method)).toHaveLength(5);
   });
 
   it('propagates a forbidden PATCH', async () => {
@@ -280,9 +318,13 @@ describe('ServiceAccount discovery and sweep', () => {
       k8sFailure(403, 'serviceaccounts is forbidden'),
     ]);
 
-    await expect(ensurePullSecretOnAllSAs(
+    const error = await ensurePullSecretOnAllSAs(
       asStore(store), 'local', 'apps', 'new-pull-secret'
-    )).rejects.toMatchObject({ code: 403 });
+    ).catch(e => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('default: serviceaccounts is forbidden');
+    expect(httpStatus(error)).toBe(403);
   });
 
   it('continues updating other ServiceAccounts before surfacing a failure', async () => {
@@ -301,12 +343,62 @@ describe('ServiceAccount discovery and sweep', () => {
       {},
     ]);
 
-    await expect(ensurePullSecretOnAllSAs(
+    const error = await ensurePullSecretOnAllSAs(
       asStore(store), 'local', 'apps', 'new-pull-secret'
-    )).rejects.toMatchObject({ data: 'serviceaccount default is forbidden' });
+    ).catch(e => e);
 
+    expect(error.message).toContain('default: serviceaccount default is forbidden');
+    expect(httpStatus(error)).toBe(403);
     const patch = store.calls.find(call => call.payload.method === 'PATCH');
     expect(patch?.payload.url).toContain('/serviceaccounts/app');
+  });
+
+  it('aggregates multiple failures and preserves their common status', async () => {
+    const store = fakeStore([
+      {
+        items: [{
+          metadata: {
+            name:      'app',
+            namespace: 'apps',
+            labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
+          }
+        }],
+      },
+      plainFailure(503, 'default unavailable'),
+      plainFailure(503, 'app unavailable'),
+    ]);
+
+    const error = await ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    ).catch(e => e);
+
+    expect(error.message).toContain('default: default unavailable');
+    expect(error.message).toContain('app: app unavailable');
+    expect(httpStatus(error)).toBe(503);
+  });
+
+  it('leaves a mixed-status aggregate unclassified', async () => {
+    const store = fakeStore([
+      {
+        items: [{
+          metadata: {
+            name:      'app',
+            namespace: 'apps',
+            labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
+          }
+        }],
+      },
+      plainFailure(403, 'default forbidden'),
+      plainFailure(503, 'app unavailable'),
+    ]);
+
+    const error = await ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    ).catch(e => e);
+
+    expect(error.message).toContain('default: default forbidden');
+    expect(error.message).toContain('app: app unavailable');
+    expect(httpStatus(error)).toBeUndefined();
   });
 });
 

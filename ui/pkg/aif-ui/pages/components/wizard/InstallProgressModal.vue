@@ -211,7 +211,8 @@ const subtitle = computed(() => {
       : `Scheduled for deployment on ${sc} ${clusterWord(sc)}`;
   }
   if (allCompletedWithoutFailures.value) {
-    return `${sc} ${clusterWord(sc)} completed; ${warningCount.value} require attention`;
+    const warningVerb = warningCount.value === 1 ? 'requires' : 'require';
+    return `${sc} ${clusterWord(sc)} completed; ${warningCount.value} ${warningVerb} attention`;
   }
   if (allFailed.value) {
     return `Installation failed on all ${fc} ${clusterWord(fc)}`;

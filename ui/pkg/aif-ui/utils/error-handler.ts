@@ -81,14 +81,17 @@ export class ErrorHandler {
    */
   public normalizeError(error: unknown): StandardError {
     const status = httpStatus(error);
+    const rawCode = typeof error === 'object' && error !== null
+      ? (error as HttpErrorShape).code
+      : undefined;
 
-    // Handle RancherError
-    if (status !== undefined || this.isRancherError(error)) {
-      const rancherError = error as RancherError;
-      const rawCode = (error as HttpErrorShape).code;
+    // Standard Error instances may still carry axios/Rancher status fields,
+    // but transport errors also need message/code-based retry classification.
+    if (error instanceof Error) {
+      const rancherError = error as Error & RancherError;
 
       return {
-        message:   this.extractErrorMessage(rancherError),
+        message:   error.message,
         status,
         code:      typeof rawCode === 'string' || typeof rawCode === 'number' ? String(rawCode) : undefined,
         details:   this.extractErrorDetails(rancherError),
@@ -96,11 +99,16 @@ export class ErrorHandler {
       };
     }
 
-    // Handle standard Error
-    if (error instanceof Error) {
+    // Handle RancherError
+    if (status !== undefined || this.isRancherError(error)) {
+      const rancherError = error as RancherError;
+
       return {
-        message: error.message,
-        retryable: this.isRetryableTransportError(error)
+        message:   this.extractErrorMessage(rancherError),
+        status,
+        code:      typeof rawCode === 'string' || typeof rawCode === 'number' ? String(rawCode) : undefined,
+        details:   this.extractErrorDetails(rancherError),
+        retryable: this.isRetryableStatus(status) || this.isRetryableTransportError(error)
       };
     }
 
@@ -184,6 +192,7 @@ export class ErrorHandler {
   private isRancherError(error: unknown): error is RancherError {
     return typeof error === 'object' &&
            error !== null &&
+           !(error instanceof Error) &&
            ('message' in error || 'status' in error || 'response' in error);
   }
 

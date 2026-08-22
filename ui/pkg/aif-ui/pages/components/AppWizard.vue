@@ -1075,13 +1075,16 @@ async function recordAIWorkload(
       clusterStatuses = initialStatus.clusterStatuses;
     } else {
       const p = installProgress.value.find(x => x.clusterId === clusterId);
+      const installed = p?.status === 'success' || p?.status === 'warning';
       const single: AIWorkloadClusterStatus = {
         clusterId,
-        phase:   p?.status === 'success' ? 'Running' : p?.status === 'warning' ? 'Pending' : 'Failed',
-        message: p?.error || p?.warning || p?.message || '',
+        phase:   installed ? 'Running' : 'Failed',
+        // Pull-secret warnings stay in the install modal. The Helm status
+        // reconciler owns persisted workload status and cannot preserve them.
+        message: p?.status === 'warning' ? '' : p?.error || p?.message || '',
       };
       clusterStatuses = [single];
-      phase = p?.status === 'warning' ? 'Degraded' : single.phase === 'Running' ? 'Running' : 'Failed';
+      phase = single.phase === 'Running' ? 'Running' : 'Failed';
     }
 
     const crName = crNameForCluster(form.value.release, clusterId);
@@ -1344,8 +1347,9 @@ async function installToCluster(
         } catch (e) {
           const standardError = pullSecretErrorHandler.normalizeError(e);
           // A chart-created SA commonly does not exist until after Helm runs;
-          // the post-install sweep handles it. Permission and malformed-response
-          // failures are actionable and must stop the install.
+          // the post-install sweep handles it. Other failures are also
+          // best-effort here because the operator converges the same accounts
+          // under controller RBAC after the AIWorkload is recorded.
           if (standardError.status === 404) continue;
           logger.warn('Pre-install pull-secret attachment failed', {
             component: 'AppWizard',
@@ -1357,10 +1361,6 @@ async function installToCluster(
               status: standardError.status,
             },
           });
-          throw new Error(
-            `Could not attach image pull secret to ServiceAccount ` +
-            `${form.value.namespace}/${sa}: ${standardError.message}`
-          );
         }
       }
     }
