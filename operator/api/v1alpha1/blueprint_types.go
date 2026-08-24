@@ -57,23 +57,49 @@ const (
 	BlueprintOriginCustom BlueprintOrigin = "Custom"
 )
 
-// BlueprintComponent defines one Helm chart in a Blueprint.
+// ApplicationReference identifies the logical Application and package version
+// required by a Blueprint. The Application resolves the chart name, source,
+// and credential profile at reconciliation time.
+type ApplicationReference struct {
+	// Name is the cluster-scoped Application resource name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+	// Version is the chart version pinned by this Blueprint qualification.
+	// +kubebuilder:validation:MinLength=1
+	Version string `json:"version"`
+}
+
+// BlueprintComponent defines one deployable application in a Blueprint.
+// New Blueprints should use ApplicationRef. The direct chart fields remain as
+// a compatibility path for existing and custom Blueprints.
+// +kubebuilder:validation:XValidation:rule="has(self.applicationRef) != has(self.chartRepo)",message="set exactly one of applicationRef or the direct chart fields"
+// +kubebuilder:validation:XValidation:rule="has(self.chartRepo) == has(self.chartName) && has(self.chartRepo) == has(self.chartVersion)",message="chartRepo, chartName, and chartVersion must be set together"
+// +kubebuilder:validation:XValidation:rule="!has(self.applicationRef) || !has(self.vendor)",message="vendor belongs to the Application credential profile when applicationRef is set"
 type BlueprintComponent struct {
+	// ApplicationRef is the preferred source-independent application identity.
+	// +optional
+	ApplicationRef *ApplicationReference `json:"applicationRef,omitempty"`
 	// ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
 	// ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
 	// fetches the chart from Rancher's catalog and deploys it as a self-contained
-	// Fleet Bundle; such charts must compress to under ~1MiB.
+	// Fleet Bundle; such charts must compress to under ~1MiB. Deprecated: use
+	// ApplicationRef.
 	// +kubebuilder:validation:MinLength=1
-	ChartRepo string `json:"chartRepo"`
-	// ChartName is the Helm chart name.
+	// +optional
+	ChartRepo string `json:"chartRepo,omitempty"`
+	// ChartName is the Helm chart name. Deprecated: use ApplicationRef.
 	// +kubebuilder:validation:MinLength=1
-	ChartName string `json:"chartName"`
-	// ChartVersion is the semver chart version.
+	// +optional
+	ChartName string `json:"chartName,omitempty"`
+	// ChartVersion is the semver chart version. Deprecated: use ApplicationRef.
 	// +kubebuilder:validation:MinLength=1
-	ChartVersion string `json:"chartVersion"`
-	// Vendor selects the secret-injection profile. Defaults to "suse" so
-	// existing blueprints behave identically after CRD upgrade.
-	// +kubebuilder:default=suse
+	// +optional
+	ChartVersion string `json:"chartVersion,omitempty"`
+	// Vendor selects the secret-injection profile for a legacy direct chart
+	// component. Application-backed components obtain this explicitly from the
+	// Application and must omit Vendor.
 	// +optional
 	Vendor ComponentVendor `json:"vendor,omitempty"`
 	// Values are the Helm values for this component.
@@ -118,7 +144,7 @@ type BlueprintSpec struct {
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
-	// Components are the Helm charts included in this blueprint.
+	// Components are the applications included in this blueprint.
 	// +kubebuilder:validation:MinItems=1
 	Components []BlueprintComponent `json:"components"`
 }

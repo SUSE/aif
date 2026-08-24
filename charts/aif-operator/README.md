@@ -71,8 +71,14 @@ competing:
 
 The hook Job's ClusterRole is least-privilege: `create`/`list` on
 `customresourcedefinitions` cluster-wide (unavoidable), and `get`/`update`/`patch`
-scoped via `resourceNames` to exactly this chart's four CRDs — so the hook can
+scoped via `resourceNames` to exactly this chart's five CRDs — so the hook can
 never mutate unrelated CRDs. It has no `delete`.
+
+When introducing a brand-new CRD, do not add custom resources of that kind to
+the same chart release. On upgrade, Helm resolves the target manifest before its
+`pre-upgrade` hooks run, so those resources fail discovery before the CRD Job can
+install the new kind. Stage such resources in a later release or apply them
+out-of-band after the CRD upgrade.
 
 **Restricted environments**
 If the installer may not create cluster-scoped RBAC, you have two options:

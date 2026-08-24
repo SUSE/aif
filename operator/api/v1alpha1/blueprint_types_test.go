@@ -36,6 +36,7 @@ func TestBlueprintTypesCompile(t *testing.T) {
 	_ = BlueprintOriginSUSE
 	_ = BlueprintOriginNvidia
 	_ = BlueprintOriginCustom
+	_ = ApplicationReference{Name: "suse.ollama", Version: "1.0.0"}
 }
 
 func TestBlueprintComponentTargetNamespaceJSON(t *testing.T) {

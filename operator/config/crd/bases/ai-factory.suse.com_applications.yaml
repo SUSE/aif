@@ -1,0 +1,97 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: applications.ai-factory.suse.com
+spec:
+  group: ai-factory.suse.com
+  names:
+    kind: Application
+    listKind: ApplicationList
+    plural: applications
+    shortNames:
+    - aifapp
+    singular: application
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.chart.name
+      name: Chart
+      type: string
+    - jsonPath: .spec.chart.sourceRef
+      name: Source
+      type: string
+    - jsonPath: .spec.credentialProfile
+      name: Profile
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Application is the source-independent identity a Blueprint references.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ApplicationSpec defines the deployable package behind a stable logical
+              application identity. Blueprint qualification pins the package version; the
+              Application owns the chart/source mapping while the ClusterRepo owns the
+              endpoint, trust, and authentication configuration.
+            properties:
+              chart:
+                description: Chart identifies the Helm package and its configurable
+                  source.
+                properties:
+                  name:
+                    description: Name is the chart name within the referenced source.
+                    minLength: 1
+                    type: string
+                  sourceRef:
+                    description: SourceRef is the name of a Rancher ClusterRepo.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                - sourceRef
+                type: object
+              credentialProfile:
+                default: suse
+                description: |-
+                  CredentialProfile selects the runtime secret-injection profile explicitly.
+                  It is independent of the chart source URL. Empty values retain the
+                  historical SUSE profile for objects created outside API-server defaulting.
+                enum:
+                - suse
+                - nvidia
+                type: string
+            required:
+            - chart
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

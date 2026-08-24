@@ -51,6 +51,7 @@ const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
 const (
 	conditionTypeReady        = "Ready"
 	reasonClusterRepoNotReady = "ClusterRepoNotReady"
+	reasonApplicationNotFound = "ApplicationNotFound"
 	reasonReconciled          = "Reconciled"
 	// Deletion-path (uninstall safety-net) reasons, surfaced on the terminating CR.
 	reasonAwaitingUninstall    = "AwaitingUninstall"
@@ -109,6 +110,7 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=applications,verbs=get;list;watch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundles,verbs=get;list;watch;create;update;patch;delete
@@ -655,11 +657,23 @@ func (r *AIWorkloadReconciler) credentialSecretToAIWorkloads(ctx context.Context
 // helm/app workloads are skipped; reconcile is idempotent so re-enqueuing the
 // rest is safe.
 func (r *AIWorkloadReconciler) settingsToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.blueprintAIWorkloadRequests(ctx)
+}
+
+// blueprintDependencyToAIWorkloads requeues Blueprint-sourced workloads when
+// a Blueprint, logical Application, or backing ClusterRepo changes. Resolution
+// is deliberately performed during every reconcile rather than cached in the
+// Blueprint, so a source can move without editing the Blueprint itself.
+func (r *AIWorkloadReconciler) blueprintDependencyToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.blueprintAIWorkloadRequests(ctx)
+}
+
+func (r *AIWorkloadReconciler) blueprintAIWorkloadRequests(ctx context.Context) []reconcile.Request {
 	var list aiplatformv1alpha1.AIWorkloadList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}
-	var reqs []reconcile.Request
+	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for i := range list.Items {
 		if list.Items[i].Spec.Source.Blueprint == nil {
 			continue
@@ -693,6 +707,9 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	helmOp := &unstructured.Unstructured{}
 	helmOp.SetGroupVersionKind(helmOpGVK)
+
+	clusterRepo := &unstructured.Unstructured{}
+	clusterRepo.SetGroupVersionKind(clusterRepoGVK)
 
 	isHelmSecret := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		return obj.GetLabels()["owner"] == "helm"
@@ -728,6 +745,31 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
 
+	// ClusterRepo generation changes cover endpoint/auth/source edits. Git-backed
+	// repositories additionally publish the indexed revision in status.commit;
+	// that revision participates in the embedded Bundle fingerprint, so it must
+	// also trigger reconciliation even though it does not change generation.
+	clusterRepoChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+			oldRepo, oldOK := e.ObjectOld.(*unstructured.Unstructured)
+			newRepo, newOK := e.ObjectNew.(*unstructured.Unstructured)
+			if !oldOK || !newOK {
+				return true
+			}
+			oldCommit, _, _ := unstructured.NestedString(oldRepo.Object, "status", "commit")
+			newCommit, _, _ := unstructured.NestedString(newRepo.Object, "status", "commit")
+			return oldCommit != newCommit
+		},
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+
+	dependencyChanged := predicate.GenerationChangedPredicate{}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiplatformv1alpha1.AIWorkload{}).
 		Watches(bd, handler.EnqueueRequestsFromMapFunc(r.bundleDeploymentToAIWorkloads)).
@@ -738,5 +780,11 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(isCredentialSecret)).
 		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads),
 			builder.WithPredicates(catalogSettingsChanged)).
+		Watches(&aiplatformv1alpha1.Blueprint{}, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
+			builder.WithPredicates(dependencyChanged)).
+		Watches(&aiplatformv1alpha1.Application{}, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
+			builder.WithPredicates(dependencyChanged)).
+		Watches(clusterRepo, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
+			builder.WithPredicates(clusterRepoChanged)).
 		Complete(r)
 }

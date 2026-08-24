@@ -1,0 +1,28 @@
+# This sample demonstrates the AG-001 prototype boundary. The ClusterRepo is
+# configured independently and may point to an internal OCI, HTTP Helm, or Git
+# source. Changing that source does not require changing the Blueprint.
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Application
+metadata:
+  name: example.ollama
+spec:
+  chart:
+    name: ollama
+    sourceRef: private-applications
+  credentialProfile: suse
+---
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: logical-application-example-1-0-0
+  labels:
+    ai-factory.suse.com/blueprint-name: logical-application-example
+    ai-factory.suse.com/blueprint-version: 1.0.0
+spec:
+  displayName: Logical Application Example
+  version: 1.0.0
+  source: Custom
+  components:
+    - applicationRef:
+        name: example.ollama
+        version: 1.55.0

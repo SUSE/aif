@@ -63,6 +63,18 @@ const (
 // Ready=False condition and auto-requeues instead of hard-failing.
 var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 
+// applicationNotFoundError marks a logical Application reference that cannot
+// yet be resolved. Applications are independent resources and may be applied
+// after their Blueprints, so this is a recoverable configuration state rather
+// than a terminal controller error.
+type applicationNotFoundError struct {
+	name string
+}
+
+func (e *applicationNotFoundError) Error() string {
+	return fmt.Sprintf("Application %q was not found.", e.name)
+}
+
 // errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
 // cannot be deployed because no Rancher catalog client is configured (the
 // operator has no Rancher API token). The catalog config is editable at runtime
@@ -101,10 +113,26 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		return ctrl.Result{}, err
 	}
 
+	// Resolve logical application requirements before deriving bundle names or
+	// rendering deployment objects. The resolved coordinates live only in this
+	// reconcile pass: the stored Blueprint remains independent of repository
+	// names, chart names, endpoints, and credential profiles.
+	components, err := r.resolveBlueprintComponents(ctx, bp.Spec.Components)
+	if err != nil {
+		var missing *applicationNotFoundError
+		if stderrors.As(err, &missing) {
+			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonApplicationNotFound,
+				missing.Error(), w.Generation)
+			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Step 2: populate FleetBundleNames from components on first reconcile.
 	if len(w.Spec.FleetBundleNames) == 0 {
-		names := make([]string, 0, len(bp.Spec.Components))
-		for _, c := range bp.Spec.Components {
+		names := make([]string, 0, len(components))
+		for _, c := range components {
 			name := naming.TruncateDNS1123Label(w.Name+"-"+naming.Slugify(c.ChartName), 63)
 			names = append(names, name)
 		}
@@ -116,7 +144,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	}
 
 	// Step 3: ensure HelmOps or git files exist for each component bundle.
-	for i, c := range bp.Spec.Components {
+	for i, c := range components {
 		if i >= len(w.Spec.FleetBundleNames) {
 			break
 		}
@@ -191,6 +219,43 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	}
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
 	return ctrl.Result{}, nil
+}
+
+// resolveBlueprintComponents materializes Application-backed components into
+// the existing internal chart representation. Legacy direct-chart components
+// pass through unchanged, which keeps custom and already-persisted Blueprints
+// compatible while the logical reference API is introduced incrementally.
+func (r *AIWorkloadReconciler) resolveBlueprintComponents(
+	ctx context.Context,
+	components []aiplatformv1alpha1.BlueprintComponent,
+) ([]aiplatformv1alpha1.BlueprintComponent, error) {
+	resolved := make([]aiplatformv1alpha1.BlueprintComponent, len(components))
+	for i := range components {
+		component := components[i]
+		if component.ApplicationRef == nil {
+			resolved[i] = component
+			continue
+		}
+
+		var application aiplatformv1alpha1.Application
+		key := types.NamespacedName{Name: component.ApplicationRef.Name}
+		if err := r.Get(ctx, key, &application); err != nil {
+			if errors.IsNotFound(err) {
+				return nil, &applicationNotFoundError{name: component.ApplicationRef.Name}
+			}
+			return nil, fmt.Errorf("get Application %q: %w", component.ApplicationRef.Name, err)
+		}
+
+		component.ChartRepo = application.Spec.Chart.SourceRef
+		component.ChartName = application.Spec.Chart.Name
+		component.ChartVersion = component.ApplicationRef.Version
+		component.Vendor = application.Spec.CredentialProfile
+		if component.Vendor == "" {
+			component.Vendor = aiplatformv1alpha1.ComponentVendorSUSE
+		}
+		resolved[i] = component
+	}
+	return resolved, nil
 }
 
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.

@@ -1,9 +1,34 @@
 export type BlueprintComponentVendor = 'suse' | 'nvidia';
 
+export interface ApplicationReference {
+  name:    string;
+  version: string;
+}
+
+export interface Application {
+  apiVersion: string;
+  kind:       'Application';
+  metadata:   {
+    name: string;
+  };
+  spec: {
+    chart: {
+      name:      string;
+      sourceRef: string;
+    };
+    credentialProfile?: BlueprintComponentVendor;
+  };
+}
+
+// BlueprintComponent is the UI's resolved view. Application-backed components
+// receive chartRepo/chartName/chartVersion from getBlueprint() for the existing
+// wizard components, while applicationRef remains attached so writes can remove
+// those derived coordinates again.
 export interface BlueprintComponent {
   chartRepo:        string;
   chartName:        string;
   chartVersion:     string;
+  applicationRef?:  ApplicationReference;
   vendor?:          BlueprintComponentVendor;
   values?:          Record<string, any>;
   targetNamespace?: string;
