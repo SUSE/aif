@@ -252,6 +252,7 @@ import { fetchAppsFromRepository } from '../services/app-collection';
 import { discoverExistingInstall, getClusters, listCatalogApps, deleteApp } from '../services/rancher-apps';
 import { DEFAULT_VALUES } from '../utils/constants';
 import { PRODUCT } from '../config/suseai';
+import { useT } from '../composables/useT';
 
 interface InstanceData extends AppInstallationSummary {
   instanceName?: string;
@@ -714,11 +715,7 @@ export default defineComponent({
       clustersCacheTime = 0;
     });
 
-    // Translation helper
-    const t = (key: string, fallback: string) => {
-      // Will be replaced with proper i18n in later phases
-      return fallback;
-    };
+    const t = useT();
 
     return {
       // State
