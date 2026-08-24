@@ -54,6 +54,11 @@ type ApplicationCollectionSettings struct {
 	// TokenSecretRef references the access token secret.
 	// +optional
 	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+	// CABundleSecretRef references a Secret containing the PEM CA bundle used
+	// to verify the configured chart registry. The Settings controller mirrors
+	// this value as "cacerts" in Rancher/Fleet registry auth Secrets.
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 	// Categories filters catalog entries by category.
 	// +optional
 	Categories []string `json:"categories,omitempty"`
@@ -67,6 +72,11 @@ type SUSERegistrySettings struct {
 	// TokenSecretRef references the access token secret.
 	// +optional
 	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+	// CABundleSecretRef references a Secret containing the PEM CA bundle used
+	// to verify the configured chart registry. The Settings controller mirrors
+	// this value as "cacerts" in Rancher/Fleet registry auth Secrets.
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 	// RefreshIntervalMinutes is the NIM index refresh cadence.
 	// +kubebuilder:default=10
 	// +optional
@@ -81,6 +91,12 @@ type NvidiaSettings struct {
 	// TokenSecretRef references the NGC API key secret.
 	// +optional
 	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+	// CABundleSecretRef references a Secret containing the PEM CA bundle used
+	// to verify a configured mirrored NVIDIA chart registry. The Settings
+	// controller mirrors this value as "cacerts" in Rancher/Fleet registry auth
+	// Secrets. It is unused by the public NGC chart repositories.
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 }
 
 // RegistryEndpointsSettings overrides upstream registry hosts for air-gap deployments.

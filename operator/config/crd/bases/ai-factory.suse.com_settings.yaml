@@ -63,6 +63,22 @@ spec:
               applicationCollection:
                 description: ApplicationCollection configures SUSE Application Collection.
                 properties:
+                  caBundleSecretRef:
+                    description: |-
+                      CABundleSecretRef references a Secret containing the PEM CA bundle used
+                      to verify the configured chart registry. The Settings controller mirrors
+                      this value as "cacerts" in Rancher/Fleet registry auth Secrets.
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
                   categories:
                     description: Categories filters catalog entries by category.
                     items:
@@ -170,6 +186,23 @@ spec:
               nvidia:
                 description: Nvidia configures NVIDIA NGC integration.
                 properties:
+                  caBundleSecretRef:
+                    description: |-
+                      CABundleSecretRef references a Secret containing the PEM CA bundle used
+                      to verify a configured mirrored NVIDIA chart registry. The Settings
+                      controller mirrors this value as "cacerts" in Rancher/Fleet registry auth
+                      Secrets. It is unused by the public NGC chart repositories.
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
                   tokenSecretRef:
                     description: TokenSecretRef references the NGC API key secret.
                     properties:
@@ -275,6 +308,22 @@ spec:
               suseRegistry:
                 description: SUSERegistry configures SUSE Registry integration.
                 properties:
+                  caBundleSecretRef:
+                    description: |-
+                      CABundleSecretRef references a Secret containing the PEM CA bundle used
+                      to verify the configured chart registry. The Settings controller mirrors
+                      this value as "cacerts" in Rancher/Fleet registry auth Secrets.
+                    properties:
+                      key:
+                        description: Key is the key within the Secret.
+                        type: string
+                      name:
+                        description: Name is the Secret name.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
                   refreshIntervalMinutes:
                     default: 10
                     description: RefreshIntervalMinutes is the NIM index refresh cadence.

@@ -146,14 +146,14 @@ export async function createOrUpgradeApp(
   const log = (l: string, ...a: unknown[]) => { try { console.log(`[SUSE-AI-INSTALL] ${l}`, ...a); } catch {} };
 
   log('=== Starting createOrUpgradeApp ===');
-  log('Input parameters:', { 
-    clusterId, 
-    namespace, 
-    releaseName, 
+  log('Input parameters:', {
+    clusterId,
+    namespace,
+    releaseName,
     chart: chart,
     preferredAction,
     valuesKeys: Object.keys(values || {}),
-    valuesSize: JSON.stringify(values || {}).length 
+    valuesSize: JSON.stringify(values || {}).length
   });
 
   const clusterReposUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/catalog.cattle.io.clusterrepos/${chart.repoName}?action=${preferredAction}`;
@@ -163,7 +163,7 @@ export async function createOrUpgradeApp(
   log('URLs constructed:', { clusterReposUrl, appsUrl, appUrl });
 
   log('Fetching projects for cluster...', clusterId);
-  try {    
+  try {
     const charts = [
       {
         chartName: chart.chartName,
@@ -213,7 +213,7 @@ export async function createOrUpgradeApp(
         disableOpenAPIValidation: false,
         skipCRDs: false
       };
-      
+
       try {
         log('Dispatching upgrade request...', { url: clusterReposUrl, data: upgradeData });
         const upgradeResult = await $store.dispatch('rancher/request', {
@@ -283,7 +283,7 @@ export async function createOrUpgradeApp(
 
       if (standardError.status === 404) {
         log('App does not exist (404), performing install (POST)');
-        
+
         const installData = {
           charts,
           namespace,
@@ -294,7 +294,7 @@ export async function createOrUpgradeApp(
           disableOpenAPIValidation: false,
           skipCRDs: false
         };
-        
+
         try {
           const installResult = await $store.dispatch('rancher/request', {
             method: 'post',
@@ -322,7 +322,7 @@ export async function createOrUpgradeApp(
     const standardError = errorHandler.handleApiError(projectError, 'fetch-projects', { operation: 'fetch projects' });
     throw new Error(`Failed to fetch projects: ${standardError.message}`);
   }
-  
+
   log('=== Completed createOrUpgradeApp ===');
   return { upgraded: false };
 }
@@ -791,13 +791,17 @@ async function upsertBasicAuthSecret(
   name: string,
   username: string,
   password: string,
+  cacerts?: string,
 ): Promise<void> {
+  const stringData: Record<string, string> = { username, password };
+  if (cacerts) stringData.cacerts = cacerts;
+
   const secretBody = {
     apiVersion: 'v1',
     kind:       'Secret',
     metadata:   { name, namespace },
     type:       'kubernetes.io/basic-auth',
-    stringData: { username, password },
+    stringData,
   };
   try {
     const res = await $store.dispatch('rancher/request', {
@@ -824,7 +828,7 @@ async function upsertBasicAuthSecret(
 export async function ensureClusterRepo(
   $store: Dispatchable,
   ociUrl: string,
-  credentials?: { username: string; password: string },
+  credentials?: { username: string; password: string; cacerts?: string },
 ): Promise<string> {
   const repos = await listClusterRepos($store);
   const existing = repos.find((r: any) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
@@ -833,7 +837,14 @@ export async function ensureClusterRepo(
   let clientSecret: { name: string; namespace: string } | undefined;
   if (credentials) {
     const secretName = `${name}-auth`;
-    await upsertBasicAuthSecret($store, 'cattle-system', secretName, credentials.username, credentials.password);
+    await upsertBasicAuthSecret(
+      $store,
+      'cattle-system',
+      secretName,
+      credentials.username,
+      credentials.password,
+      credentials.cacerts,
+    );
     clientSecret = { name: secretName, namespace: 'cattle-system' };
   }
 

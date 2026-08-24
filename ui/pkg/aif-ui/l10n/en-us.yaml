@@ -46,6 +46,10 @@ suseai:
             label: Access Token Secret
             secretNameLabel: Secret Name
             keyNameLabel: Secret Key
+          caBundleSecretRef:
+            label: Chart Registry CA Bundle (optional)
+            secretNameLabel: CA Secret Name
+            keyNameLabel: CA Bundle Key
           categories:
             label: Categories
             placeholder: 'ai, nlp, vision'
@@ -59,6 +63,10 @@ suseai:
             label: Access Token Secret
             secretNameLabel: Secret Name
             keyNameLabel: Secret Key
+          caBundleSecretRef:
+            label: Chart Registry CA Bundle (optional)
+            secretNameLabel: CA Secret Name
+            keyNameLabel: CA Bundle Key
           refreshIntervalMinutes:
             label: NIM Index Refresh (minutes)
         nvidia:
@@ -72,6 +80,10 @@ suseai:
             label: API Key Secret
             secretNameLabel: Secret Name
             keyNameLabel: Secret Key
+          caBundleSecretRef:
+            label: Mirrored Chart Registry CA Bundle (optional)
+            secretNameLabel: CA Secret Name
+            keyNameLabel: CA Bundle Key
         fleet:
           title: Fleet / GitOps
           repoURL:

@@ -302,7 +302,7 @@ func (h *SettingsHandler) publishToGit(w http.ResponseWriter, r *http.Request) {
 
 // Function seams so tests can stub the live network checks.
 var (
-	probeRegistryFn         = credcheck.ProbeRegistry
+	probeRegistryFn         = credcheck.ProbeRegistryWithCA
 	gitCheckAuthFn          = (*git.Client).CheckAuth
 	rancherCatalogCheckAuth = (*rancher.CatalogClient).CheckAuth
 )
@@ -388,7 +388,7 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
 	res := validateResult{Target: target, Host: h.registryHost(target, s)}
 
-	savedUser, savedToken := savedRegistryRefs(target, s)
+	savedUser, savedToken, savedCA := savedRegistryRefs(target, s)
 	userRef := ov.UserSecretRef
 	if userRef == nil {
 		userRef = savedUser
@@ -396,6 +396,10 @@ func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s
 	tokenRef := ov.TokenSecretRef
 	if tokenRef == nil {
 		tokenRef = savedToken
+	}
+	caRef := ov.CABundleSecretRef
+	if caRef == nil {
+		caRef = savedCA
 	}
 	// An incomplete ref (no secret name, or no key selected — e.g. a form still
 	// being filled in) is "not configured", not an auth failure. Nothing is sent
@@ -429,9 +433,24 @@ func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s
 		res.Message = "not configured"
 		return res
 	}
+	var caPEM []byte
+	if caRef != nil {
+		ca, err := h.readSecretKey(ctx, caRef)
+		if err != nil {
+			res.Status = statusError
+			res.Message = "could not read CA bundle: " + err.Error()
+			return res
+		}
+		if ca == "" {
+			res.Status = statusError
+			res.Message = "CA bundle is empty"
+			return res
+		}
+		caPEM = []byte(ca)
+	}
 
 	start := time.Now()
-	probe := probeRegistryFn(ctx, res.Host, user, pass)
+	probe := probeRegistryFn(ctx, res.Host, user, pass, caPEM)
 	res.LatencyMs = time.Since(start).Milliseconds()
 	res.Status = string(probe.Status)
 	res.Message = probe.Message
@@ -573,16 +592,19 @@ func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatf
 	return res
 }
 
-func savedRegistryRefs(target string, s *aiplatformv1alpha1.Settings) (*aiplatformv1alpha1.SecretKeyRef, *aiplatformv1alpha1.SecretKeyRef) {
+func savedRegistryRefs(
+	target string,
+	s *aiplatformv1alpha1.Settings,
+) (*aiplatformv1alpha1.SecretKeyRef, *aiplatformv1alpha1.SecretKeyRef, *aiplatformv1alpha1.SecretKeyRef) {
 	switch target {
 	case "applicationCollection":
-		return s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef
+		return s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef, s.Spec.ApplicationCollection.CABundleSecretRef
 	case "suseRegistry":
-		return s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef
+		return s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef, s.Spec.SUSERegistry.CABundleSecretRef
 	case "nvidia":
-		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef
+		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, s.Spec.Nvidia.CABundleSecretRef
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 // secretRefComplete reports whether a secret ref names both a secret and a key.
