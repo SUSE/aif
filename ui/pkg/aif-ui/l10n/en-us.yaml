@@ -191,6 +191,23 @@ suseai:
     loading: Loading applications and discovering installations...
     repoWarningTitle: Some NVIDIA repositories couldn't be loaded
     dismiss: Dismiss
+    refresh: Refresh
+    tileView: Tile View
+    listView: List View
+    name: Name
+    description: Description
+    actions: Actions
+    noRegistryTitle: No applications available
+    noCatalogDescBefore: The application catalog is empty.
+    noCatalogDescAfter: to check again, or contact your administrator if this persists.
+    noRegistryDescBefore: To browse applications, add your registry connection details on the
+    noRegistryDescAfter: page.
+    settingsLink: Settings
+    noAppsYetTitle: No applications available yet
+    noAppsYetDescBefore: Registry connections are configured but no applications were found. If you recently added your registry, the catalog may still be loading — this can take a few minutes.
+    noAppsYetDescAfter: to check again.
+    noAppsDesc: Try adjusting your search or filter.
+    noAppsLibrary: No applications are available in the selected library.
     status:
       available: Available
       installing: Installing...
@@ -234,6 +251,8 @@ suseai:
       configuration: Configuration
       selectApps: Select Applications
       review: Review
+    review:
+      readonlyNotice: Configuration preview (read-only)
     form:
       release: Instance Name
       releasePlaceholder: Enter instance name

@@ -49,30 +49,52 @@ describe('l10n locale files', () => {
   });
 });
 
-describe('components using the global t() helper', () => {
-  // Components that import useT get `(key, fallback)` and degrade to the
-  // fallback string on a miss. Components that do not are using @rancher/shell's
-  // global `t(key, args)` — a miss there renders `%key%` (or, when a fallback
-  // string is passed into the `args` slot, `%key%(0: A, 1: p, ...)`). Those keys
-  // must exist in the locale file.
+describe('components calling t()', () => {
+  // Two legitimate ways a template's bare `t(...)` resolves:
+  //  - Composition API: a local `const t = useT();` (checked below).
+  //  - Options API: @rancher/shell's mixin exposes `this.t`, which templates
+  //    can call as bare `t(...)` without the `this.` — no local `t` to check.
+  // A miss renders the fallback silently (useT) or `%key%` (shell's global
+  // t(key, args) — note arg 2 there is interpolation args, not a fallback).
+  // Either way the key must exist, so every t()/this.t() call is checked
+  // regardless of which flavor sources it — a component silently shadowing
+  // `t` with something that isn't useT() is exactly the bug this guards.
   const translations = localeKeys();
-  const offenders: string[] = [];
+  const unresolvedKeys: string[] = [];
+  const unwiredT: string[] = [];
 
   for (const file of vueFiles(PKG)) {
     const src = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(PKG, file);
 
-    if (src.includes('useT')) {
-      continue;
+    for (const m of src.matchAll(/\bt\(\s*['"]([a-zA-Z0-9._]+)['"]/g)) {
+      if (typeof lookup(translations, m[1]) !== 'string') {
+        unresolvedKeys.push(`${rel}: ${m[1]}`);
+      }
     }
 
-    for (const m of src.matchAll(/\bt\(\s*'([a-zA-Z0-9._]+)'/g)) {
-      if (typeof lookup(translations, m[1]) !== 'string') {
-        offenders.push(`${path.relative(PKG, file)}: ${m[1]}`);
-      }
+    // Composition API components have no implicit `this` in the template, so
+    // a bare `t(...)` call there can only be legitimate if the script wires
+    // `t` from useT(). Without that wiring, `t` is either undefined (a
+    // template error) or a local reimplementation nothing here can vouch
+    // for — which is exactly how AppInstances.vue's tooltip keys went dead:
+    // a hand-rolled `const t = (key, fallback) => fallback` shadowed useT
+    // and every key resolved in this file's other check while doing nothing
+    // at runtime.
+    const isCompositionAPI = /\bsetup\s*\(/.test(src);
+    const hasBareT = /(?<!\.)\bt\(/.test(src);
+    const wiresUseT = /\bt\s*=\s*useT\(\)/.test(src);
+
+    if (isCompositionAPI && hasBareT && !wiresUseT) {
+      unwiredT.push(rel);
     }
   }
 
   it('resolves every key it references', () => {
-    expect(offenders).toEqual([]);
+    expect(unresolvedKeys).toEqual([]);
+  });
+
+  it('sources every Composition API t() from useT()', () => {
+    expect(unwiredT).toEqual([]);
   });
 });
