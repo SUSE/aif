@@ -236,7 +236,7 @@ func TestEnsureBlueprintHelmOp_UsesDefaultNamespace(t *testing.T) {
 		Vendor:       aiplatformv1alpha1.ComponentVendorNvidia,
 	}
 
-	if err := r.ensureBlueprintHelmOp(context.Background(), w, comp, "bp-comp"); err != nil {
+	if _, err := r.ensureBlueprintHelmOp(context.Background(), w, comp, "bp-comp"); err != nil {
 		t.Fatalf("ensureBlueprintHelmOp: %v", err)
 	}
 
@@ -389,7 +389,7 @@ func TestEnsureBlueprintHelmOp_ReleaseNameResolution(t *testing.T) {
 	t.Run("component override wins", func(t *testing.T) {
 		r := newRepoFakeClient(t)
 		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "milvus", ChartVersion: "1.0.0", ReleaseName: "my-milvus"}
-		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-milvus"); err != nil {
+		if _, err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-milvus"); err != nil {
 			t.Fatalf("ensureBlueprintHelmOp: %v", err)
 		}
 		if got := helmOpReleaseName(t, r, "wl-milvus"); got != "my-milvus" {
@@ -400,7 +400,7 @@ func TestEnsureBlueprintHelmOp_ReleaseNameResolution(t *testing.T) {
 	t.Run("falls back to chart name", func(t *testing.T) {
 		r := newRepoFakeClient(t)
 		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "milvus", ChartVersion: "1.0.0"}
-		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-plain-milvus"); err != nil {
+		if _, err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-plain-milvus"); err != nil {
 			t.Fatalf("ensureBlueprintHelmOp: %v", err)
 		}
 		if got := helmOpReleaseName(t, r, "wl-plain-milvus"); got != "milvus" {
@@ -419,7 +419,7 @@ func TestEnsureBlueprintHelmOp_NamespaceResolution(t *testing.T) {
 	t.Run("component override wins", func(t *testing.T) {
 		r := newRepoFakeClient(t)
 		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "pinned", ChartVersion: "1.0.0", TargetNamespace: "fixed-ns"}
-		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-pinned"); err != nil {
+		if _, err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-pinned"); err != nil {
 			t.Fatalf("ensureBlueprintHelmOp: %v", err)
 		}
 		if got := helmOpDefaultNamespace(t, r, "wl-pinned"); got != "fixed-ns" {
@@ -430,7 +430,7 @@ func TestEnsureBlueprintHelmOp_NamespaceResolution(t *testing.T) {
 	t.Run("falls back to install namespace", func(t *testing.T) {
 		r := newRepoFakeClient(t)
 		c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "suse-ai", ChartName: "plain", ChartVersion: "1.0.0"}
-		if err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-plain"); err != nil {
+		if _, err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-plain"); err != nil {
 			t.Fatalf("ensureBlueprintHelmOp: %v", err)
 		}
 		if got := helmOpDefaultNamespace(t, r, "wl-plain"); got != "install-ns" {

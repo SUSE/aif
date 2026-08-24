@@ -7,16 +7,8 @@
 // We sidestep that by suffixing the cluster ID onto the CR name; the user
 // continues to see the unprefixed release name in the UI.
 
-// FNV-1a 32-bit; matches the operator's Go capReleaseName so client+server
-// produce identical truncated names for the same input.
-function fnv32a(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h >>> 0;
-}
+// Shared 32-bit FNV-1a (matches the operator's Go hash) — single source of truth.
+import { fnv1a32 } from './helm-release';
 
 function toBase36(n: number): string {
   return n.toString(36);
@@ -46,7 +38,7 @@ export function crNameForCluster(release: string, clusterId: string): string {
   if (safe.length <= MAX_LABEL_LEN) {
     return safe;
   }
-  const suffix = toBase36(fnv32a(safe)).slice(0, HASH_SUFFIX_LEN);
+  const suffix = toBase36(fnv1a32(safe)).slice(0, HASH_SUFFIX_LEN);
   const head = safe.slice(0, MAX_LABEL_LEN - suffix.length - 1).replace(/-+$/, '');
   return head ? `${head}-${suffix}` : suffix;
 }
