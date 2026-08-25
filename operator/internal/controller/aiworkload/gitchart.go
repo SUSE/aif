@@ -121,7 +121,7 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		// buildComponentMatrix compare this label against the per-component
 		// expected digest (the fingerprint returned by ensureBlueprintGitChartBundle),
 		// so a git-backed Bundle certifies the same way an http/oci one does.
-		b.SetLabels(map[string]string{renderDigestLabel: fingerprint})
+		b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue(fingerprint)})
 	}
 	_ = unstructured.SetNestedField(b.Object, namespace, "spec", "defaultNamespace")
 	_ = unstructured.SetNestedField(b.Object, helm, "spec", "helm")
