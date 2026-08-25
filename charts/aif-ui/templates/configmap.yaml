@@ -4,6 +4,13 @@
 # load (the UI falls back to defaults). They take effect after the user saves the
 # Operator Connection section in Settings, which writes the ConfigMap to the
 # correct namespace automatically.
+#
+# resource-policy: keep — survives `helm uninstall` so operator coordinates and
+# catalog settings aren't lost across a reinstall. It keeps this release's own
+# ownership labels/annotations (Helm doesn't strip them on a kept object), so a
+# subsequent install under the same release name/namespace adopts it cleanly
+# with no ownership conflict. If the release identity changes instead, the
+# aif-operator's own adoption step (SUSEAI-1039) re-stamps it for the new one.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,6 +18,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-ui.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
 data:
   operatorNamespace: {{ .Values.operator.namespace | quote }}
   operatorService:   {{ .Values.operator.service   | quote }}

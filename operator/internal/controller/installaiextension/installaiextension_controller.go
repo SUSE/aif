@@ -324,7 +324,10 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // manual configuration. It runs on every successful reconcile loop, giving
 // self-healing behaviour if the ConfigMap is deleted or corrupted.
 // The ConfigMap is intentionally not deleted when the CR is removed — the UI
-// retains the last-known operator coordinates so it remains functional.
+// retains the last-known operator coordinates so it remains functional. This
+// operator never deletes it directly; the chart's own configmap.yaml carries a
+// helm.sh/resource-policy: keep annotation so `helm uninstall` leaves it behind
+// too.
 //
 // When the just-reconciled extension is Helm-sourced, this also stamps Helm's
 // ownership label/annotations onto the ConfigMap. The aif-ui chart's own
