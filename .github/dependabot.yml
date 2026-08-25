@@ -34,10 +34,27 @@ updates:
       interval: daily
     commit-message:
         prefix: chore
+    groups:
+        eslint:
+          patterns:
+            - "eslint"
+            - "@eslint/*"
+            - "eslint-plugin-*"
+            - "vue-eslint-parser"
+            - "typescript-eslint"
+            - "@typescript-eslint/*"
+            - "globals"
     open-pull-requests-limit: 12
     labels:
       - dependencies
       - javascript
+    ignore:
+      - dependency-name: "eslint"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "@eslint/js"
+        update-types:
+          - "version-update:semver-major"
 
   # Dockerfiles under build/
   - package-ecosystem: docker

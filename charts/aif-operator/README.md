@@ -31,24 +31,93 @@ kubectl get crd clusterrepos.catalog.cattle.io
 
 ## CRD Management
 
-This chart ships CRDs in the standard Helm crds/ directory.
+This chart ships CRDs under the standard Helm `crds/` directory and additionally
+upgrades them via a `pre-install`/`pre-upgrade` hook Job using server-side apply
+(field manager `aif-operator-crds`). The two paths are complementary, not
+competing:
+
+| Phase | Who writes the CRDs |
+|---|---|
+| `helm install` | Helm's native `crds/` path, then the hook Job re-applies and takes field ownership |
+| `helm upgrade` | The hook Job only — Helm never touches `crds/` after install (Helm 3 **and** Helm 4) |
+| `helm uninstall` | Nobody touches the CRDs — they (and any custom resources you keep) are left intact. See the note below on which custom resources persist |
+
+**Why both paths are needed**
+- Helm installs `crds/` *before* it builds the release manifest. This chart's own
+  `Blueprint`, `Settings`, and `InstallAIExtension` resources are release objects,
+  so their kinds must already be registered at that point. Without `crds/`, a
+  fresh `helm install` fails with `no matches for kind "Blueprint"` before any
+  pre-install hook has a chance to run.
+- Helm never upgrades CRDs from `crds/` — that is unchanged in Helm 4 — so the
+  hook Job carries schema changes forward on every `helm upgrade`.
 
 **How It Works**
-- CRDs are installed automatically by Helm on first install (from `crds/`).
-- Helm never upgrades CRDs on `helm upgrade`. To roll out schema changes
-  automatically, this chart runs a `pre-install`/`pre-upgrade` hook Job
-  (`crds.manageWithJob`, enabled by default) that **server-side-applies** the
+- The hook Job (`crds.manageWithJob`, enabled by default) server-side-applies the
   chart's CRDs before the release's resources are created. No manual step needed.
-- The hook Job only applies CRDs — it never deletes them — so `helm uninstall`
-  still leaves CRDs (and your custom resources) intact.
+- On install the Job re-applies what Helm just created; `--force-conflicts`
+  transfers field ownership to `aif-operator-crds` once. Helm does not write the
+  CRDs again, so the two managers never contend on subsequent upgrades.
+- The Job only applies CRDs — it never deletes them — and CRDs from `crds/` are
+  not release-manifest objects, so `helm uninstall` always leaves the CRDs
+  themselves intact.
+- Custom *resources* follow their own policy on uninstall, not the CRDs':
+  - `Settings` carries `helm.sh/resource-policy: keep`, so it survives uninstall.
+  - The bundled `Blueprint` defaults are ordinary release objects and are
+    removed on uninstall (set `defaultBlueprints.enabled=false` to manage them
+    yourself). Any Blueprints you create outside the chart are unaffected.
+  - The `InstallAIExtension` is deliberately removed on uninstall by the
+    `pre-delete` cleanup hook, which deletes the CR so the operator's finalizer
+    can tear the extension down before the operator itself goes away.
+
+The hook Job's ClusterRole is least-privilege: `create`/`list` on
+`customresourcedefinitions` cluster-wide (unavoidable), and `get`/`update`/`patch`
+scoped via `resourceNames` to exactly this chart's four CRDs — so the hook can
+never mutate unrelated CRDs. It has no `delete`.
 
 **Restricted environments**
-Set `crds.manageWithJob=false` if the installer may not create the cluster-scoped
-RBAC the hook Job needs, then apply the CRDs out-of-band:
+If the installer may not create cluster-scoped RBAC, you have two options:
 
-```bash
-kubectl apply -f crds/
-```
+1. **Pre-provision the RBAC out-of-band.** A cluster admin creates the
+   ServiceAccount + ClusterRole + ClusterRoleBinding once (see
+   `templates/crds/crd-apply-rbac.yaml` for the exact rules), then install with:
+
+   ```bash
+   helm install ... \
+     --set crds.rbac.create=false \
+     --set crds.serviceAccountName=<pre-created-sa>
+   ```
+
+   The pre-created ServiceAccount must live in the release namespace. The Job still
+   applies CRDs on every install/upgrade — no manual CRD step needed.
+
+2. **Disable the Job** with `crds.manageWithJob=false`. CRDs are still installed
+   natively from `crds/` on first install, and no `kubectl` image or cluster-scoped
+   hook RBAC is required. **Note:** in this mode CRD *schema upgrades* are your
+   responsibility — apply them out-of-band before each `helm upgrade`:
+
+   ```bash
+   kubectl apply --server-side -f crds/
+   ```
+
+**Air-gapped clusters**
+The hook Job needs the `kubectl` image (`crds.image.*`, default
+`registry.suse.com/suse/kubectl`); the same image is used by the `pre-delete`
+extension-cleanup Job, so it must be mirrored regardless. Mirror it and override
+`crds.image.registry`, or set the chart-wide `global.imageRegistry`. Sites that
+cannot mirror it can install with `crds.manageWithJob=false` (see above) — the
+native `crds/` path needs no image at all. CRDs themselves ship inside the chart;
+nothing is fetched at apply time.
+
+**GitOps (Argo CD / Flux)**
+CRDs are delivered by `crds/` plus a Helm hook, so they are **not** rendered as
+release objects: they do not appear in `helm diff`, and Argo CD/Flux track only
+the hook, not the CRD schema. Two consequences to plan for:
+- Argo CD runs the hook as a PreSync job; if you see it stall, it is usually the
+  known hook SA/ClusterRole teardown ordering issue — the CRDs still apply.
+- To review CRD schema changes in your GitOps pipeline, manage the manifests under
+  `crds/` in a **separate** Argo Application / Flux Kustomization with
+  server-side apply (and pruning disabled), and install this chart with
+  `crds.manageWithJob=false`.
 
 ## Installing the Chart
 

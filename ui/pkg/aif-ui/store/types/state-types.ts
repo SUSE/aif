@@ -273,10 +273,3 @@ export interface SyncRepositoryPayload {
   clusterId: string;
   force?: boolean;
 }
-
-// === Utility Types ===
-export type StateKey = keyof SuseAIState;
-export type AppStateKey = keyof AppState;
-export type ClusterStateKey = keyof ClusterState;
-export type InstallationStateKey = keyof InstallationState;
-export type RepositoryStateKey = keyof RepositoryState;

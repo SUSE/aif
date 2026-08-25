@@ -98,8 +98,9 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		"chart": chartDir,
 		// releaseName uses the chart name (not bundleName) so chart sub-resources
 		// templated as `{{ .Release.Name }}-foo` fit under the 63-char DNS-label
-		// limit — see ensureBlueprintHelmOp for the full rationale.
-		"releaseName": capReleaseName(c.ChartName),
+		// limit — see ensureBlueprintHelmOp for the full rationale. A component
+		// may override this default via its ReleaseName (componentReleaseName).
+		"releaseName": capReleaseName(componentReleaseName(c)),
 		// disablePreProcess: we resolve all values ourselves and upstream charts
 		// legitimately use ${ } which Fleet would otherwise mis-parse.
 		"disablePreProcess": true,
@@ -115,6 +116,11 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 	b.SetName(bundleName)
 	if fingerprint != "" {
 		b.SetAnnotations(map[string]string{chartFingerprintAnnotation: fingerprint})
+		// renderDigestLabel mirrors the HelmOp path: certifyDeployedSource and
+		// buildComponentMatrix compare this label against the per-component
+		// expected digest (the fingerprint returned by ensureBlueprintGitChartBundle),
+		// so a git-backed Bundle certifies the same way an http/oci one does.
+		b.SetLabels(map[string]string{renderDigestLabel: fingerprint})
 	}
 	_ = unstructured.SetNestedField(b.Object, namespace, "spec", "defaultNamespace")
 	_ = unstructured.SetNestedField(b.Object, helm, "spec", "helm")
@@ -240,13 +246,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	bundleName string,
 	repoInfo clusterRepoInfo,
 	gitOps bool,
-) error {
+) (string, error) {
 	var fetcher rancher.ChartFetcher
 	if r.CatalogClient != nil {
 		fetcher = r.CatalogClient.Get()
 	}
 	if fetcher == nil {
-		return fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
+		return "", fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
 	}
 
 	// Resolve values and inject pull secrets BEFORE deciding whether to re-fetch:
@@ -260,7 +266,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
-		return fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 
@@ -271,18 +277,18 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		allTargets := append(append([]any{}, localTargets...), downstreamTargets...)
 		tgz, err := fetchGitChart(ctx, fetcher, c)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, allTargets)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b.SetNamespace(gitOpsFleetNamespace(w))
 		yamlBytes, err := json.MarshalIndent(b.Object, "", "  ")
 		if err != nil {
-			return err
+			return "", err
 		}
-		return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
+		return fingerprint, r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
 	}
 
 	pairs := []struct {
@@ -308,12 +314,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		}
 	}
 	if upToDate {
-		return nil
+		return fingerprint, nil
 	}
 
 	tgz, err := fetchGitChart(ctx, fetcher, c)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, pair := range pairs {
 		if len(pair.targets) == 0 {
@@ -321,14 +327,14 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		}
 		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
 		if err != nil {
-			return err
+			return "", err
 		}
 		b.SetNamespace(pair.ns)
 		if err := r.Patch(ctx, b, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator")); err != nil {
-			return fmt.Errorf("patch Bundle %s/%s: %w", pair.ns, bundleName, err)
+			return "", fmt.Errorf("patch Bundle %s/%s: %w", pair.ns, bundleName, err)
 		}
 	}
-	return nil
+	return fingerprint, nil
 }
 
 func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatformv1alpha1.BlueprintComponent) ([]byte, error) {
@@ -351,19 +357,24 @@ func (r *AIWorkloadReconciler) gitChartBundleMatches(ctx context.Context, ns, bu
 }
 
 // gitChartFingerprint identifies everything that feeds the generated Bundle,
-// including the chart archive. The archive is NOT pinned by (repo, name,
-// version) here: this path only ever serves a git-backed repo, which tracks a
-// branch, and re-pushing a chart without bumping Chart.yaml's version is the
-// normal development workflow the feature exists to support. What does pin the
-// archive is the repo's indexed commit (ClusterRepo status.commit), so that is
-// hashed too — without it a chart that changes in place is never re-fetched and
-// the Bundle serves the old chart forever.
+// including the chart archive and the per-app release-name override. The archive
+// is NOT pinned by (repo, name, version) here: this path only ever serves a
+// git-backed repo, which tracks a branch, and re-pushing a chart without bumping
+// Chart.yaml's version is the normal development workflow the feature exists to
+// support. What does pin the archive is the repo's indexed commit (ClusterRepo
+// status.commit), so that is hashed too — without it a chart that changes in
+// place is never re-fetched and the Bundle serves the old chart forever.
+//
+// c.ReleaseName is hashed because it is baked into the Bundle's Helm options
+// (see the "releaseName" key in buildGitChartBundle); without it, changing only
+// the release name on an existing component would leave the fingerprint
+// unchanged and the override would never reach the cluster.
 //
 // A change in any of these means the Bundle must be rebuilt — and the chart
 // re-fetched, since the archive is the one input we cannot diff without it.
 func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit string, vals map[string]any, targetSets ...[]any) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, ns, repoCommit)
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, c.ReleaseName, ns, repoCommit)
 	// json.Marshal sorts map keys, so equivalent values hash equally.
 	valsJSON, err := json.Marshal(vals)
 	if err != nil {

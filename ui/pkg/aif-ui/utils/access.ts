@@ -26,8 +26,10 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
 
   if (isAdminUser(getters)) return true;
 
+  // allowThrow=false: with no schemas loaded the getter throws instead of
+  // returning null, and `?.` does not guard against that.
   const crtbMethods: string[] = (
-    getters['management/schemaFor'](CRTB_TYPE)?.collectionMethods || []
+    getters['management/schemaFor'](CRTB_TYPE, false, false)?.collectionMethods || []
   ).map((m: string) => m.toUpperCase());
 
   if (!crtbMethods.includes('POST')) return false;

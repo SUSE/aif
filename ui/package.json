@@ -1,6 +1,6 @@
 {
   "name": "aif-ui",
-  "version": "2.2.0-dev.1",
+  "version": "2.2.0-dev.2",
   "description": "AIF UI",
   "private": false,
   "license": "Apache-2.0",
@@ -16,10 +16,11 @@
     "@eslint/js": "^9.39.0",
     "@types/js-yaml": "^4.0.9",
     "eslint": "^9.39.0",
-    "eslint-plugin-vue": "^9.33.0",
+    "eslint-plugin-vue": "^10.10.0",
     "globals": "^17.11.0",
     "typescript-eslint": "^8.39.0",
-    "vitest": "^2"
+    "vitest": "^2",
+    "vue-eslint-parser": "^10.4.1"
   },
   "resolutions": {
     "@types/node": "~20.10.0",
@@ -34,6 +35,7 @@
     "publish-pkgs": "./node_modules/@rancher/shell/scripts/extension/publish",
     "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name",
     "lint": "eslint pkg/aif-ui/",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.check.json"
   }
 }

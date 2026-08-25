@@ -17,7 +17,9 @@ limitations under the License.
 package settings
 
 import (
+	"bytes"
 	"context"
+	"crypto/x509"
 	stderrors "errors"
 	"fmt"
 	"net/url"
@@ -248,17 +250,16 @@ func (r *SettingsReconciler) allSettingsRequests(ctx context.Context) []reconcil
 }
 
 // enqueueSettingsForSecret reconciles Settings when a Secret it depends on
-// changes. Two families qualify: the well-known registry credential secrets
-// (which feed the ClusterRepo mirrors), and the Secrets referenced by
-// spec.rancherCatalog. The latter matter because the catalog client is built
-// once per reconcile and parked in the holder — rotating a token in place
-// changes no Settings field, so without this the operator would keep using the
-// revoked token until the next informer resync.
+// changes. Both well-known registry credential Secrets and every Secret
+// explicitly referenced by Settings qualify. Rotation mutates no Settings
+// field, so without this watch registry/Fleet mirrors and the Rancher catalog
+// client would keep stale credentials or CA data until the next informer
+// resync.
 func (r *SettingsReconciler) enqueueSettingsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	if obj.GetNamespace() != r.OperatorNamespace {
 		return nil
 	}
-	if !credentials.IsWellKnownSecret(obj.GetName()) && !r.isRancherCatalogSecret(ctx, obj.GetName()) {
+	if !credentials.IsWellKnownSecret(obj.GetName()) && !r.isReferencedSettingsSecret(ctx, obj.GetName()) {
 		return nil
 	}
 	return []reconcile.Request{{
@@ -269,19 +270,35 @@ func (r *SettingsReconciler) enqueueSettingsForSecret(ctx context.Context, obj c
 	}}
 }
 
-// isRancherCatalogSecret reports whether name is referenced by
-// Settings.spec.rancherCatalog (token or CA bundle).
-func (r *SettingsReconciler) isRancherCatalogSecret(ctx context.Context, name string) bool {
+// isReferencedSettingsSecret reports whether name is referenced anywhere in
+// Settings where rotating the Secret must refresh a generated resource or
+// in-memory client.
+func (r *SettingsReconciler) isReferencedSettingsSecret(ctx context.Context, name string) bool {
 	var s aiplatformv1alpha1.Settings
 	key := types.NamespacedName{Name: credentials.SettingsName, Namespace: r.OperatorNamespace}
 	if err := r.Get(ctx, key, &s); err != nil {
 		return false
 	}
-	rc := s.Spec.RancherCatalog
-	if rc.TokenSecretRef != nil && rc.TokenSecretRef.Name == name {
-		return true
+	refs := []*aiplatformv1alpha1.SecretKeyRef{
+		s.Spec.Fleet.CredSecretRef,
+		s.Spec.ApplicationCollection.UserSecretRef,
+		s.Spec.ApplicationCollection.TokenSecretRef,
+		s.Spec.ApplicationCollection.CABundleSecretRef,
+		s.Spec.SUSERegistry.UserSecretRef,
+		s.Spec.SUSERegistry.TokenSecretRef,
+		s.Spec.SUSERegistry.CABundleSecretRef,
+		s.Spec.Nvidia.UserSecretRef,
+		s.Spec.Nvidia.TokenSecretRef,
+		s.Spec.Nvidia.CABundleSecretRef,
+		s.Spec.RancherCatalog.TokenSecretRef,
+		s.Spec.RancherCatalog.CABundleSecretRef,
 	}
-	return rc.CABundleSecretRef != nil && rc.CABundleSecretRef.Name == name
+	for _, ref := range refs {
+		if ref != nil && ref.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -480,6 +497,7 @@ func (r *SettingsReconciler) applyRegistryAuthSecret(
 	ns string,
 	secretName string,
 	userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef,
+	caBundleRef *aiplatformv1alpha1.SecretKeyRef,
 ) (name string, changed bool, err error) {
 	user, token, ok, err := credentials.ReadPair(ctx, r.Client, ns, userRef, tokenRef)
 	if err != nil {
@@ -488,15 +506,26 @@ func (r *SettingsReconciler) applyRegistryAuthSecret(
 	if !ok {
 		return "", false, nil
 	}
+	caBundle, err := r.readRegistryCABundle(ctx, ns, caBundleRef)
+	if err != nil {
+		return "", false, err
+	}
 
-	// Capture whether the credentials rotated BEFORE overwriting the mirror.
+	// Capture whether credentials or CA trust rotated BEFORE overwriting the mirror.
 	// Rancher's ClusterRepo controller does not watch the clientSecret's
 	// content, so a rotated key only takes effect on its ~1h periodic retry
 	// (and a cached auth failure can linger). The caller bumps spec.forceUpdate
 	// when this reports a change so Rancher re-reads the secret immediately.
-	changed = r.registryAuthChanged(ctx, secretName, user, token)
+	changed = r.registryAuthChanged(ctx, secretName, user, token, caBundle)
 
 	for _, targetNS := range authSecretNamespaces {
+		data := map[string][]byte{
+			"username": []byte(user),
+			"password": []byte(token),
+		}
+		if len(caBundle) > 0 {
+			data["cacerts"] = caBundle
+		}
 		mirror := &corev1.Secret{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 			ObjectMeta: metav1.ObjectMeta{
@@ -504,10 +533,7 @@ func (r *SettingsReconciler) applyRegistryAuthSecret(
 				Namespace: targetNS,
 			},
 			Type: corev1.SecretTypeBasicAuth,
-			Data: map[string][]byte{
-				"username": []byte(user),
-				"password": []byte(token),
-			},
+			Data: data,
 		}
 		if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
 			// The Fleet workspaces are absent on clusters without Fleet; only
@@ -517,18 +543,68 @@ func (r *SettingsReconciler) applyRegistryAuthSecret(
 			}
 			return "", false, fmt.Errorf("apply auth secret %s/%s: %w", targetNS, secretName, err)
 		}
+		if len(caBundle) == 0 {
+			if err := r.removeRegistryCABundle(ctx, targetNS, secretName); err != nil {
+				return "", false, err
+			}
+		}
 	}
 
 	return secretName, changed, nil
 }
 
+// removeRegistryCABundle explicitly removes a stale cacerts key. Omitting the
+// key from an apply object is insufficient when another field manager (for
+// example, an older UI-created Secret) owns that map entry.
+func (r *SettingsReconciler) removeRegistryCABundle(ctx context.Context, namespace, name string) error {
+	var existing corev1.Secret
+	key := types.NamespacedName{Namespace: namespace, Name: name}
+	if err := r.Get(ctx, key, &existing); err != nil {
+		return fmt.Errorf("get auth secret %s/%s before removing stale CA: %w", namespace, name, err)
+	}
+	if _, found := existing.Data["cacerts"]; !found {
+		return nil
+	}
+	patch := client.RawPatch(types.MergePatchType, []byte(`{"data":{"cacerts":null}}`))
+	if err := r.Patch(ctx, &existing, patch); err != nil {
+		return fmt.Errorf("remove stale CA from auth secret %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// readRegistryCABundle resolves and validates an explicitly configured chart
+// registry CA. An explicit missing, empty, or malformed reference is an error:
+// silently falling back to system trust would leave private-CA Fleet pulls
+// broken while making Settings appear reconciled.
+func (r *SettingsReconciler) readRegistryCABundle(
+	ctx context.Context,
+	namespace string,
+	ref *aiplatformv1alpha1.SecretKeyRef,
+) ([]byte, error) {
+	if ref == nil {
+		return nil, nil
+	}
+	pemValue, err := r.readSecretKey(ctx, namespace, ref)
+	if err != nil {
+		return nil, fmt.Errorf("read registry CA secret %s/%s: %w", namespace, ref.Name, err)
+	}
+	if pemValue == "" {
+		return nil, fmt.Errorf("registry CA secret %s/%s has empty or missing key %q", namespace, ref.Name, ref.Key)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(pemValue)) {
+		return nil, fmt.Errorf("registry CA secret %s/%s key %q does not contain a valid PEM certificate", namespace, ref.Name, ref.Key)
+	}
+	return []byte(pemValue), nil
+}
+
 // registryAuthChanged reports whether the cattle-system basic-auth mirror named
-// secretName differs from the freshly-resolved (user, token) — i.e. the
-// credentials rotated. cattle-system is the copy the ClusterRepo authenticates
-// with. A missing mirror counts as changed (first write); an unreadable mirror
-// counts as unchanged to avoid spurious force-updates that would churn the
-// ClusterRepo into a re-download every reconcile.
-func (r *SettingsReconciler) registryAuthChanged(ctx context.Context, secretName, user, token string) bool {
+// secretName differs from the freshly-resolved credentials or CA bundle.
+// cattle-system is the copy the ClusterRepo authenticates with. A missing
+// mirror counts as changed (first write); an unreadable mirror counts as
+// unchanged to avoid spurious force-updates that would churn the ClusterRepo
+// into a re-download every reconcile.
+func (r *SettingsReconciler) registryAuthChanged(ctx context.Context, secretName, user, token string, caBundle []byte) bool {
 	var existing corev1.Secret
 	err := r.Get(ctx, types.NamespacedName{Namespace: "cattle-system", Name: secretName}, &existing)
 	if errors.IsNotFound(err) {
@@ -537,10 +613,12 @@ func (r *SettingsReconciler) registryAuthChanged(ctx context.Context, secretName
 	if err != nil {
 		return false
 	}
-	return string(existing.Data["username"]) != user || string(existing.Data["password"]) != token
+	return string(existing.Data["username"]) != user ||
+		string(existing.Data["password"]) != token ||
+		!bytes.Equal(existing.Data["cacerts"], caBundle)
 }
 
-// forceUpdateClusterRepo bumps spec.forceUpdate to now (RFC3339) so Rancher
+// forceUpdateClusterRepo bumps spec.forceUpdate to now (RFC3339Nano) so Rancher
 // re-reads the clientSecret and re-downloads the index. A plain merge patch
 // keeps forceUpdate out of the SSA-managed field set (applyClusterRepo owns
 // url + clientSecret), so the two never fight over ownership.
@@ -548,7 +626,7 @@ func (r *SettingsReconciler) forceUpdateClusterRepo(ctx context.Context, name st
 	repo := &unstructured.Unstructured{}
 	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
 	repo.SetName(name)
-	patch := []byte(fmt.Sprintf(`{"spec":{"forceUpdate":%q}}`, time.Now().UTC().Format(time.RFC3339)))
+	patch := []byte(fmt.Sprintf(`{"spec":{"forceUpdate":%q}}`, time.Now().UTC().Format(time.RFC3339Nano)))
 	if err := r.Patch(ctx, repo, client.RawPatch(types.MergePatchType, patch)); err != nil {
 		return fmt.Errorf("force-update ClusterRepo %s: %w", name, err)
 	}
@@ -611,6 +689,7 @@ func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aipla
 	)
 	if err := r.reconcileRegistryRepo(ctx, s.Namespace,
 		acUser, acToken,
+		s.Spec.ApplicationCollection.CABundleSecretRef,
 		credentials.AuthSecretApplicationCollection,
 		acURL,
 		[]string{credentials.ClusterRepoApplicationCollection},
@@ -629,6 +708,7 @@ func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aipla
 	)
 	if err := r.reconcileRegistryRepo(ctx, s.Namespace,
 		srUser, srToken,
+		s.Spec.SUSERegistry.CABundleSecretRef,
 		credentials.AuthSecretSUSERegistry,
 		srURL,
 		[]string{credentials.ClusterRepoSUSERegistry},
@@ -648,6 +728,7 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 	ctx context.Context,
 	namespace string,
 	userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef,
+	caBundleRef *aiplatformv1alpha1.SecretKeyRef,
 	authSecretName, url string,
 	repoNames []string,
 ) error {
@@ -655,7 +736,7 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 	changed := false
 	if userRef != nil && tokenRef != nil {
 		var err error
-		secretName, changed, err = r.applyRegistryAuthSecret(ctx, namespace, authSecretName, userRef, tokenRef)
+		secretName, changed, err = r.applyRegistryAuthSecret(ctx, namespace, authSecretName, userRef, tokenRef, caBundleRef)
 		if err != nil {
 			return err
 		}
@@ -678,10 +759,10 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 	return nil
 }
 
-// reconcileNvidiaRepos handles NVIDIA's two-mode topology: a single gated OCI
-// repo when registryEndpoints.nvidia is set (air-gap), or the public NGC charts
-// + blueprint pair otherwise. Either way it prunes every NVIDIA repo + mirror
-// when credentials are gone.
+// reconcileNvidiaRepos handles NVIDIA's two-mode topology: two stable logical
+// repos backed by one gated OCI mirror when registryEndpoints.nvidia is set
+// (air-gap), or the public NGC charts + blueprint pair otherwise. Either way it
+// prunes every NVIDIA repo + mirror when credentials are gone.
 func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	nvUser, nvToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.Nvidia.UserSecretRef,
@@ -705,10 +786,11 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 	}
 
 	if nvURL != "" {
-		// Air-gap: a single gated OCI repo at a private mirror, which genuinely
-		// needs auth. Prune the public blueprint repo in case we are switching
-		// modes.
-		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
+		// Air-gap: preserve both stable logical repo names at the gated private
+		// mirror. Bundled Blueprints reference nvidia-blueprints while Apps use
+		// nvidia; collapsing them to one ClusterRepo makes the Blueprint charts
+		// unresolvable even when both live under the same mirrored OCI path.
+		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken, s.Spec.Nvidia.CABundleSecretRef)
 		if err != nil {
 			return err
 		}
@@ -721,11 +803,10 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			}
 			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
 		}
-		if err := r.deleteClusterRepo(ctx, credentials.ClusterRepoNvidiaBlueprint); err != nil {
-			return err
-		}
-		if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, nvURL, secretName); err != nil {
-			return err
+		for _, name := range allNvidiaRepos {
+			if err := r.applyClusterRepo(ctx, name, nvURL, secretName); err != nil {
+				return err
+			}
 		}
 		// Prune team repos on the connected→air-gap switch, but PRESERVE
 		// ngc-helm-auth — the air-gap mirror still consumes it.
@@ -733,7 +814,11 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			return err
 		}
 		if changed {
-			return r.forceUpdateClusterRepo(ctx, credentials.ClusterRepoNvidia)
+			for _, name := range allNvidiaRepos {
+				if err := r.forceUpdateClusterRepo(ctx, name); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}
@@ -752,7 +837,7 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		return err
 	}
 	// Connected-mode NGC team repos (public anonymous, gated ngc-helm-auth).
-	return r.reconcileNGCTeamRepos(ctx, s.Namespace, nvUser, nvToken)
+	return r.reconcileNGCTeamRepos(ctx, s.Namespace, nvUser, nvToken, s.Spec.Nvidia.CABundleSecretRef)
 }
 
 // pruneRegistryRepos deletes the given ClusterRepos and the registry's
@@ -807,6 +892,7 @@ func (r *SettingsReconciler) reconcileNGCTeamRepos(
 	ctx context.Context,
 	namespace string,
 	nvUser, nvToken *aiplatformv1alpha1.SecretKeyRef,
+	caBundleRef *aiplatformv1alpha1.SecretKeyRef,
 ) error {
 	teams := catalog.ClassifyNGCTeamRepos()
 
@@ -817,7 +903,7 @@ func (r *SettingsReconciler) reconcileNGCTeamRepos(
 	changed := false
 	if len(teams.Gated) > 0 {
 		var err error
-		secretName, changed, err = r.applyRegistryAuthSecret(ctx, namespace, credentials.AuthSecretNvidia, nvUser, nvToken)
+		secretName, changed, err = r.applyRegistryAuthSecret(ctx, namespace, credentials.AuthSecretNvidia, nvUser, nvToken, caBundleRef)
 		if err != nil {
 			return err
 		}

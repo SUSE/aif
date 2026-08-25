@@ -53,6 +53,7 @@ spec:
             properties:
               components:
                 description: Components are the Helm charts included in this blueprint.
+                  chartName is unique per blueprint.
                 items:
                   description: BlueprintComponent defines one Helm chart in a Blueprint.
                   properties:
@@ -71,6 +72,17 @@ spec:
                     chartVersion:
                       description: ChartVersion is the semver chart version.
                       minLength: 1
+                      type: string
+                    releaseName:
+                      description: |-
+                        ReleaseName optionally pins this component's Helm release name.
+                        When empty, the chart name is used (the historical default). The operator
+                        still passes this through capReleaseName, so a value within the limit is
+                        used verbatim while an over-long one is truncated to a valid release name.
+                        Must be a valid Helm release name (lowercase alphanumerics and '-', starting
+                        and ending with an alphanumeric, max 53 chars — Helm/Fleet's release-name limit).
+                      maxLength: 53
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     targetNamespace:
                       description: |-
@@ -100,6 +112,9 @@ spec:
                   type: object
                 minItems: 1
                 type: array
+                x-kubernetes-list-map-keys:
+                - chartName
+                x-kubernetes-list-type: map
               deprecated:
                 description: Deprecated marks this blueprint version as deprecated.
                 type: boolean

@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -101,6 +102,15 @@ type AIWorkloadReconciler struct {
 	// git-backed components then report a clear condition and http/oci components
 	// are unaffected.
 	CatalogClient *rancher.Holder
+	Recorder      record.EventRecorder
+}
+
+// event records a Kubernetes event, tolerating a nil Recorder (unit tests / early boot).
+func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype, reason, msgFmt string, args ...any) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(w, eventtype, reason, msgFmt, args...)
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads,verbs=get;list;watch;create;update;patch;delete
@@ -119,6 +129,7 @@ type AIWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
@@ -137,6 +148,12 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, r.Update(ctx, &w)
 	}
 
+	if handled, err := r.handleTriggers(ctx, &w); err != nil {
+		return ctrl.Result{}, err
+	} else if handled {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	result, reconcileErr := r.reconcileStatus(ctx, &w)
 
 	// Advance ObservedGeneration only when reconciliation reached a terminal
@@ -144,6 +161,10 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if reconcileErr == nil && !result.Requeue && result.RequeueAfter == 0 {
 		w.Status.ObservedGeneration = w.Generation
 	}
+
+	// Project any in-progress recovery operation onto status so its state
+	// reaches the UI as part of the single persist below.
+	r.projectOperation(&w)
 
 	// Always persist status — even when reconcile failed or asked for a
 	// requeue — so failure conditions/phase reach the UI instead of being
@@ -160,6 +181,10 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	if result.Requeue || result.RequeueAfter > 0 {
 		return result, nil
+	}
+
+	if res, err := r.reconcileOperation(ctx, &w); err != nil || res.RequeueAfter > 0 {
+		return res, err
 	}
 
 	if len(w.Status.PullSecretDeliveries) > 0 {
@@ -368,15 +393,25 @@ func (r *AIWorkloadReconciler) reconcileFleetStatus(ctx context.Context, w *aipl
 // deleteHelmOp deletes the HelmOp from whichever fleet workspace namespace it lives in.
 // It attempts every namespace and joins any non-NotFound errors, so a failure in one
 // namespace does not skip cleanup in the others.
+// deleteHelmOpIn deletes a single HelmOp identified by (namespace, name). Use this for stale-item
+// cleanup, where deleting the same name from the OTHER fleet namespace would tear down a still-
+// desired deployment (a mixed workload shares one bundle name across fleet-local/fleet-default).
+func (r *AIWorkloadReconciler) deleteHelmOpIn(ctx context.Context, ns, name string) error {
+	ho := &unstructured.Unstructured{}
+	ho.SetGroupVersionKind(helmOpGVK)
+	ho.SetName(name)
+	ho.SetNamespace(ns)
+	if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete HelmOp %s/%s: %w", ns, name, err)
+	}
+	return nil
+}
+
 func (r *AIWorkloadReconciler) deleteHelmOp(ctx context.Context, name string) error {
 	var errs []error
 	for _, ns := range fleetNamespaces {
-		ho := &unstructured.Unstructured{}
-		ho.SetGroupVersionKind(helmOpGVK)
-		ho.SetName(name)
-		ho.SetNamespace(ns)
-		if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("delete HelmOp %s/%s: %w", ns, name, err))
+		if err := r.deleteHelmOpIn(ctx, ns, name); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return stderrors.Join(errs...)
@@ -387,15 +422,24 @@ func (r *AIWorkloadReconciler) deleteHelmOp(ctx context.Context, name string) er
 // ownerReference — so deleting the HelmOp does not garbage-collect it, and Fleet's
 // own cleanup is racy. We delete the Bundle directly so teardown is deterministic;
 // the Bundle's finalizer then prunes the BundleDeployment and deployed resources.
+// deleteBundleIn deletes a single Fleet Bundle identified by (namespace, name). See deleteHelmOpIn
+// for why stale-item cleanup must be namespace-scoped rather than deleting from both namespaces.
+func (r *AIWorkloadReconciler) deleteBundleIn(ctx context.Context, ns, name string) error {
+	b := &unstructured.Unstructured{}
+	b.SetGroupVersionKind(bundleGVK)
+	b.SetName(name)
+	b.SetNamespace(ns)
+	if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete Bundle %s/%s: %w", ns, name, err)
+	}
+	return nil
+}
+
 func (r *AIWorkloadReconciler) deleteBundle(ctx context.Context, name string) error {
 	var errs []error
 	for _, ns := range fleetNamespaces {
-		b := &unstructured.Unstructured{}
-		b.SetGroupVersionKind(bundleGVK)
-		b.SetName(name)
-		b.SetNamespace(ns)
-		if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("delete Bundle %s/%s: %w", ns, name, err))
+		if err := r.deleteBundleIn(ctx, ns, name); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return stderrors.Join(errs...)
@@ -406,7 +450,7 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 	bdList.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeploymentList",
 	})
-	// App-sourced workloads always have exactly one bundle; Blueprint workloads use mirrorBlueprintStatus.
+	// App-sourced workloads always have exactly one bundle; Blueprint workloads use buildComponentMatrix + aggregateClusterStatuses.
 	if err := r.List(ctx, bdList, client.MatchingLabels{
 		"fleet.cattle.io/bundle-name": w.Spec.FleetBundleNames[0],
 	}); err != nil {
@@ -579,6 +623,24 @@ func (r *AIWorkloadReconciler) helmOpToAIWorkloads(ctx context.Context, obj clie
 	return r.workloadsWithFleetBundle(ctx, obj.GetName())
 }
 
+// bundleToAIWorkloads maps a Fleet Bundle to its owning AIWorkload — first by the workload-uid
+// label (set on the generating HelmOp and copied by Fleet onto the Bundle), then by the
+// bundle-name → FleetBundleNames lookup as a fallback for pre-labeled bundles.
+func (r *AIWorkloadReconciler) bundleToAIWorkloads(ctx context.Context, obj client.Object) []reconcile.Request {
+	if uid := obj.GetLabels()[workloadUIDLabel]; uid != "" {
+		var list aiplatformv1alpha1.AIWorkloadList
+		if err := r.List(ctx, &list); err == nil {
+			for i := range list.Items {
+				if string(list.Items[i].UID) == uid {
+					return []reconcile.Request{{NamespacedName: types.NamespacedName{
+						Name: list.Items[i].Name, Namespace: list.Items[i].Namespace}}}
+				}
+			}
+		}
+	}
+	return r.workloadsWithFleetBundle(ctx, obj.GetName())
+}
+
 func (r *AIWorkloadReconciler) workloadsWithFleetBundle(ctx context.Context, bundleName string) []reconcile.Request {
 	var list aiplatformv1alpha1.AIWorkloadList
 	if err := r.List(ctx, &list); err != nil {
@@ -691,6 +753,9 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	bd := &unstructured.Unstructured{}
 	bd.SetGroupVersionKind(bundleDeploymentGVK)
 
+	bundle := &unstructured.Unstructured{}
+	bundle.SetGroupVersionKind(bundleGVK)
+
 	helmOp := &unstructured.Unstructured{}
 	helmOp.SetGroupVersionKind(helmOpGVK)
 
@@ -732,6 +797,7 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&aiplatformv1alpha1.AIWorkload{}).
 		Watches(bd, handler.EnqueueRequestsFromMapFunc(r.bundleDeploymentToAIWorkloads)).
 		Watches(helmOp, handler.EnqueueRequestsFromMapFunc(r.helmOpToAIWorkloads)).
+		Watches(bundle, handler.EnqueueRequestsFromMapFunc(r.bundleToAIWorkloads)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.helmSecretToAIWorkloads),
 			builder.WithPredicates(isHelmSecret)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),

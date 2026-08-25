@@ -63,7 +63,7 @@ func TestEnsureBlueprintHelmOp_GitRepoEmitsBundle(t *testing.T) {
 	w.Name = "wl"
 	w.Spec.TargetClusters = []string{"local"}
 
-	if err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent"); err != nil {
+	if _, err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent"); err != nil {
 		t.Fatalf("ensureBlueprintHelmOp: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func (h *refetchHarness) reconcile(t *testing.T, c aiplatformv1alpha1.BlueprintC
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"
 	w.Spec.TargetClusters = []string{"local"}
-	if err := h.r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-agent"); err != nil {
+	if _, err := h.r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-agent"); err != nil {
 		t.Fatalf("ensureBlueprintHelmOp: %v", err)
 	}
 }
@@ -212,7 +212,7 @@ func TestEnsureBlueprintHelmOp_GitRepoNoCatalogClient(t *testing.T) {
 	w.Name = "wl"
 	w.Spec.TargetClusters = []string{"local"}
 
-	err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent")
+	_, err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent")
 	if err == nil {
 		t.Fatal("expected error when catalog client is not configured")
 	}

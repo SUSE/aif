@@ -8,7 +8,7 @@ import BlueprintAppSelectorStep from './wizard/BlueprintAppSelectorStep.vue';
 const BlueprintConfigStep       = defineAsyncComponent(() => import('./wizard/BlueprintConfigStep.vue'));
 const BlueprintReviewCreateStep = defineAsyncComponent(() => import('./wizard/BlueprintReviewCreateStep.vue'));
 import type { BlueprintSpec } from '../../types/blueprint-types';
-import { SEMVER_PATTERN, DNS_LABEL_PATTERN } from '../../types/blueprint-types';
+import { SEMVER_PATTERN, DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../types/blueprint-types';
 import { createBlueprint } from '../../utils/blueprint-api';
 import { PRODUCT } from '../../config/suseai';
 
@@ -51,14 +51,40 @@ const namespacesValid = computed(() => components.value.every((c) => {
   return !ns || (ns.length <= 63 && DNS_LABEL_PATTERN.test(ns));
 }));
 
+const releaseNamesValid = computed(() => components.value.every((c) => {
+  const rn = c.releaseName?.trim();
+  return !rn || (rn.length <= HELM_RELEASE_NAME_MAX && DNS_LABEL_PATTERN.test(rn));
+}));
+
+// Resolved (namespace, release name) pairs must be unique — a collision would
+// fail at install. Empty targetNamespace shares the install-namespace bucket;
+// empty releaseName falls back to the chart name.
+const releaseNamesUnique = computed(() => {
+  const seen = new Set<string>();
+  for (const c of components.value) {
+    const ns = c.targetNamespace?.trim() || '';
+    const rn = c.releaseName?.trim() || c.chartName;
+    // Null delimiter can never appear in a namespace or release name, so
+    // distinct (ns, rn) pairs can never alias into the same bucket.
+    const key = `${ ns }\u0000${ rn }`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+});
+
+const componentsValid = computed(() =>
+  components.value.length > 0 && namespacesValid.value && releaseNamesValid.value && releaseNamesUnique.value
+);
+
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),      ready: true },
   {
     label: t('suseai.wizard.steps.selectApps', 'Select Applications'),
     ready: basicInfo.value.displayName.trim() !== '' && SEMVER_PATTERN.test(basicInfo.value.version),
   },
-  { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: components.value.length > 0 && namespacesValid.value },
-  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: components.value.length > 0 && namespacesValid.value },
+  { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: componentsValid.value },
+  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: componentsValid.value },
 ]);
 
 function nextStep() {
@@ -82,6 +108,16 @@ async function onCreate() {
   error.value = null;
   if (!namespacesValid.value) {
     error.value = t('suseai.wizard.form.componentNamespacesInvalid', 'One or more components have an invalid target namespace.');
+    submitting.value = false;
+    return;
+  }
+  if (!releaseNamesValid.value) {
+    error.value = t('suseai.wizard.form.componentReleaseNamesInvalid', 'One or more components have an invalid release name.');
+    submitting.value = false;
+    return;
+  }
+  if (!releaseNamesUnique.value) {
+    error.value = t('suseai.wizard.form.componentReleaseNamesDuplicate', 'Two or more components resolve to the same release name in the same namespace.');
     submitting.value = false;
     return;
   }

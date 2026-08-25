@@ -48,6 +48,18 @@ Enable debug logging in development (from the `ui/` directory):
 NODE_ENV=development yarn build-pkg aif-ui
 ```
 
+### Alternative: full local shell (`yarn dev`)
+
+Instead of building the extension and Developer Loading it into a running Rancher, `yarn dev` (from `ui/`) boots the whole Rancher Dashboard shell locally with every package under `pkg/` — including `aif-ui` — compiled in and hot-reloaded. It's heavier than the flow above (a full shell build, not just this extension) and needs a real backend to talk to:
+
+```bash
+API=https://<your-rancher-host> yarn dev
+```
+
+(`API` defaults to `http://localhost:8989`.) `@rancher/shell` also supports replaying a captured `.har` file instead of a live backend — see `HAR_FILE`/`HAR_DIR` in its `vue.config.js` — useful if you don't have a spare cluster handy.
+
+One thing behaves differently here than in the documented flow above: `yarn dev` resolves `l10n/` files via webpack's `require.context` with a hardcoded `.yaml`-only filter, so a locale shipped as `.json` is silently invisible in this workflow specifically (nothing errors; every key just renders as `%the.key%`). The packaged build (`build-pkg`) has no such restriction. This is why `l10n/en-us.yaml` must stay `.yaml`.
+
 ## Building for Production
 
 From the `ui/` directory:

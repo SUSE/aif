@@ -45,12 +45,6 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
 
-export interface ChartRef {
-  repoName: string;   // ClusterRepo metadata.name
-  chartName: string;  // Chart name within repo
-  version: string;    // SemVer
-}
-
 /* ============================== logging helpers - CLEANED UP ============================== */
 // Legacy logging functions - replaced with proper logger
 const log = (l: string, ...a: unknown[]) => {
@@ -152,14 +146,14 @@ export async function createOrUpgradeApp(
   const log = (l: string, ...a: unknown[]) => { try { console.log(`[SUSE-AI-INSTALL] ${l}`, ...a); } catch {} };
 
   log('=== Starting createOrUpgradeApp ===');
-  log('Input parameters:', { 
-    clusterId, 
-    namespace, 
-    releaseName, 
+  log('Input parameters:', {
+    clusterId,
+    namespace,
+    releaseName,
     chart: chart,
     preferredAction,
     valuesKeys: Object.keys(values || {}),
-    valuesSize: JSON.stringify(values || {}).length 
+    valuesSize: JSON.stringify(values || {}).length
   });
 
   const clusterReposUrl = `/k8s/clusters/${encodeURIComponent(clusterId)}/v1/catalog.cattle.io.clusterrepos/${chart.repoName}?action=${preferredAction}`;
@@ -169,7 +163,7 @@ export async function createOrUpgradeApp(
   log('URLs constructed:', { clusterReposUrl, appsUrl, appUrl });
 
   log('Fetching projects for cluster...', clusterId);
-  try {    
+  try {
     const charts = [
       {
         chartName: chart.chartName,
@@ -219,7 +213,7 @@ export async function createOrUpgradeApp(
         disableOpenAPIValidation: false,
         skipCRDs: false
       };
-      
+
       try {
         log('Dispatching upgrade request...', { url: clusterReposUrl, data: upgradeData });
         const upgradeResult = await $store.dispatch('rancher/request', {
@@ -289,7 +283,7 @@ export async function createOrUpgradeApp(
 
       if (standardError.status === 404) {
         log('App does not exist (404), performing install (POST)');
-        
+
         const installData = {
           charts,
           namespace,
@@ -300,7 +294,7 @@ export async function createOrUpgradeApp(
           disableOpenAPIValidation: false,
           skipCRDs: false
         };
-        
+
         try {
           const installResult = await $store.dispatch('rancher/request', {
             method: 'post',
@@ -328,7 +322,7 @@ export async function createOrUpgradeApp(
     const standardError = errorHandler.handleApiError(projectError, 'fetch-projects', { operation: 'fetch projects' });
     throw new Error(`Failed to fetch projects: ${standardError.message}`);
   }
-  
+
   log('=== Completed createOrUpgradeApp ===');
   return { upgraded: false };
 }
@@ -714,79 +708,6 @@ function textFromFileEntry(v: FileEntry): string {
 }
 // Note: Complex file fetching functions removed - now handled by ChartValuesService
 
-
-export async function fetchChartYaml(
-  $store: Dispatchable,
-  repoName: string,
-  chartName: string,
-  version: string
-): Promise<any | null> {
-  const found = await getClusterContext($store, { repoName });
-
-  if (!found) {
-    logger.warn(`ClusterRepo "${repoName}" not found in any cluster`);
-    return null;
-  }
-
-  const { baseApi } = found;
-  const repoPath = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(repoName)}`;
-  const chartParams = `chartName=${encodeURIComponent(chartName)}&version=${encodeURIComponent(version)}`;
-
-  // Try 1: ?link=files approach (gets all chart files)
-  try {
-    const response = await $store.dispatch('rancher/request', {
-      url: `${repoPath}?link=files&${chartParams}`,
-      timeout: TIMEOUT_VALUES.READ
-    });
-    const filesData = response?.data ?? response;
-
-    if (filesData && typeof filesData === 'object') {
-      for (const key of Object.keys(filesData)) {
-        if (key.toLowerCase().endsWith('chart.yaml')) {
-          const text = textFromFileEntry(filesData[key]);
-          if (text && text.includes(':')) {
-            return yaml.load(text);
-          }
-        }
-      }
-    }
-  } catch { /* continue to next method */ }
-
-  // Try 2: ?link=file approach (direct file fetch)
-  try {
-    const response = await $store.dispatch('rancher/request', {
-      url: `${repoPath}?link=file&${chartParams}&name=${encodeURIComponent('Chart.yaml')}`,
-      timeout: TIMEOUT_VALUES.READ
-    });
-    const text = textFromFileEntry(response?.data ?? response);
-
-    if (text && text.includes(':')) {
-      return yaml.load(text);
-    }
-  } catch { /* continue to next method */ }
-
-  // Try 3: ?link=chart tar.gz approach (most reliable for OCI repos)
-  try {
-    const response = await $store.dispatch('rancher/request', {
-      url: `${repoPath}?link=chart&${chartParams}`,
-      responseType: 'arraybuffer',
-      headers: { Accept: 'application/gzip, application/x-gzip, application/octet-stream' },
-      timeout: TIMEOUT_VALUES.MEDIUM
-    });
-
-    const buffer = response?.data ?? response;
-    if (buffer instanceof ArrayBuffer) {
-      const text = await extractFileFromTarGz(buffer, 'chart.yaml');
-      if (text && text.includes(':')) {
-        return yaml.load(text);
-      }
-    }
-  } catch { /* all methods failed */ }
-
-  logger.warn(`Failed to fetch Chart.yaml for ${chartName}@${version} from ${repoName}`);
-  return null;
-}
-
 export async function fetchChartDefaultValues(
   $store: Dispatchable,
   _repoClusterId: string,
@@ -870,13 +791,17 @@ async function upsertBasicAuthSecret(
   name: string,
   username: string,
   password: string,
+  cacerts?: string,
 ): Promise<void> {
+  const stringData: Record<string, string> = { username, password };
+  if (cacerts) stringData.cacerts = cacerts;
+
   const secretBody = {
     apiVersion: 'v1',
     kind:       'Secret',
     metadata:   { name, namespace },
     type:       'kubernetes.io/basic-auth',
-    stringData: { username, password },
+    stringData,
   };
   try {
     const res = await $store.dispatch('rancher/request', {
@@ -903,31 +828,48 @@ async function upsertBasicAuthSecret(
 export async function ensureClusterRepo(
   $store: Dispatchable,
   ociUrl: string,
-  credentials?: { username: string; password: string },
+  credentials?: { username: string; password: string; cacerts?: string },
+  preferredName?: string,
 ): Promise<string> {
   const repos = await listClusterRepos($store);
-  const existing = repos.find((r: any) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
-  const name = existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
+  const existing = preferredName
+    ? repos.find((r) => r?.metadata?.name === preferredName)
+    : repos.find((r) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
+  const name = preferredName || existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
 
   let clientSecret: { name: string; namespace: string } | undefined;
   if (credentials) {
     const secretName = `${name}-auth`;
-    await upsertBasicAuthSecret($store, 'cattle-system', secretName, credentials.username, credentials.password);
+    await upsertBasicAuthSecret(
+      $store,
+      'cattle-system',
+      secretName,
+      credentials.username,
+      credentials.password,
+      credentials.cacerts,
+    );
     clientSecret = { name: secretName, namespace: 'cattle-system' };
   }
 
   if (existing) {
-    // If we now have credentials and the repo didn't before, patch it
-    if (clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name) {
+    // Keep stable logical aliases pointed at the selected mirror when switching
+    // between connected and air-gapped modes. Also attach credentials when the
+    // existing repo did not have the desired auth Secret.
+    const currentUrl = existing.spec?.url || existing.spec?.ociRepo || '';
+    const urlChanged = currentUrl !== ociUrl;
+    const secretChanged = clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name;
+    if (urlChanged || secretChanged) {
       const res = await $store.dispatch('rancher/request', {
         url:     `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
         timeout: TIMEOUT_VALUES.CLUSTER,
       });
       const full = res?.data || res;
+      const spec = { ...full.spec, url: ociUrl };
+      if (clientSecret) spec.clientSecret = clientSecret;
       await $store.dispatch('rancher/request', {
         url:    `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
         method: 'PUT',
-        data:   { ...full, spec: { ...full.spec, clientSecret } },
+        data:   { ...full, spec },
         timeout: TIMEOUT_VALUES.MUTATION,
       });
     }

@@ -87,6 +87,16 @@ type BlueprintComponent struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	TargetNamespace string `json:"targetNamespace,omitempty"`
+	// ReleaseName optionally pins this component's Helm release name.
+	// When empty, the chart name is used (the historical default). The operator
+	// still passes this through capReleaseName, so a value within the limit is
+	// used verbatim while an over-long one is truncated to a valid release name.
+	// Must be a valid Helm release name (lowercase alphanumerics and '-', starting
+	// and ending with an alphanumeric, max 53 chars — Helm/Fleet's release-name limit).
+	// +optional
+	// +kubebuilder:validation:MaxLength=53
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	ReleaseName string `json:"releaseName,omitempty"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.
@@ -108,8 +118,10 @@ type BlueprintSpec struct {
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
-	// Components are the Helm charts included in this blueprint.
+	// Components are the Helm charts included in this blueprint. chartName is unique per blueprint.
 	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=chartName
 	Components []BlueprintComponent `json:"components"`
 }
 

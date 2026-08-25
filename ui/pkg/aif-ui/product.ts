@@ -44,7 +44,9 @@ export function init($plugin: IPlugin, store: RancherStore) {
     ifHaveGroup: AIFACTORY_API_GROUP,
     to: {
       name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`,
-      params: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER },
+      // `product` is a literal path segment, not a route param; passing it here
+      // only earns a "Discarded invalid param(s)" warning from vue-router.
+      params: { cluster: MANAGEMENT_CLUSTER },
       meta: { product: PRODUCT, cluster: MANAGEMENT_CLUSTER }
     }
     // ifHaveType and ifHaveGroup are valid at runtime but absent from the
@@ -99,7 +101,12 @@ export function init($plugin: IPlugin, store: RancherStore) {
   // the first navigation hits the Vuex cache rather than blocking on a network
   // request inside the nav guard. Skipped for users without schema access to
   // avoid a guaranteed 403 on every login.
-  if (store.getters?.['management/schemaFor']?.(CRTB_TYPE)) {
+  //
+  // schemaFor's third argument is `allowThrow`, which defaults to true: with no
+  // schemas loaded at all it throws rather than returning null. init() runs
+  // before authentication, when the management store is empty, so the throw
+  // would escape and skip everything below.
+  if (store.getters?.['management/schemaFor']?.(CRTB_TYPE, false, false)) {
     void store.dispatch('management/findAll', { type: CRTB_TYPE, opt: { namespaced: LOCAL_CLUSTER } });
   }
 

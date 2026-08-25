@@ -247,16 +247,3 @@ export interface SuseAIStore {
 export interface StorePlugin {
   install: (store: any) => void;
 }
-
-// === Store Configuration ===
-export interface StoreConfig {
-  strict?: boolean;
-  plugins?: StorePlugin[];
-  devtools?: boolean;
-}
-
-// === Utility Types ===
-export type ModuleName = 'apps' | 'installations' | 'clusters' | 'repositories';
-export type GetterName<T> = T extends { getters: infer G } ? keyof G : never;
-export type MutationName<T> = T extends { mutations: infer M } ? keyof M : never;
-export type ActionName<T> = T extends { actions: infer A } ? keyof A : never;

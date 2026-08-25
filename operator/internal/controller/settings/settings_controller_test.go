@@ -18,7 +18,12 @@ limitations under the License.
 package settings_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
@@ -455,6 +460,176 @@ func getClusterRepo(t *testing.T, c client.Client, name string) *unstructured.Un
 	return repo
 }
 
+func registryTestCAPEM(t *testing.T) []byte {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+}
+
+func TestSettingsController_MirrorsRegistryCAAndDetectsRotation(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	oldCA := append(registryTestCAPEM(t), '\n')
+	newCA := registryTestCAPEM(t)
+
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
+				UserSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "appco-creds", Key: "user"},
+				TokenSecretRef:    &aiplatformv1alpha1.SecretKeyRef{Name: "appco-creds", Key: "token"},
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "registry-ca", Key: "ca.crt"},
+			},
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+				ApplicationCollection: "oci://harbor.example.test/appco/charts",
+			},
+		},
+	}
+	creds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco-creds", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("robot"), "token": []byte("secret")},
+	}
+	ca := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "registry-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": newCA},
+	}
+	staleMirror := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system"},
+		Type:       corev1.SecretTypeBasicAuth,
+		Data: map[string][]byte{
+			"username": []byte("robot"),
+			"password": []byte("secret"),
+			"cacerts":  oldCA,
+		},
+	}
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	repo.SetName(credentials.ClusterRepoApplicationCollection)
+	_ = unstructured.SetNestedField(repo.Object, credentials.DefaultApplicationCollectionURL, "spec", "url")
+	_ = unstructured.SetNestedField(repo.Object, "before-ca-rotation", "spec", "forceUpdate")
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, creds, ca, staleMirror, repo).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, targetNS := range []string{"cattle-system", "fleet-local", "fleet-default"} {
+		var mirror corev1.Secret
+		if err := c.Get(context.Background(), types.NamespacedName{
+			Name: credentials.AuthSecretApplicationCollection, Namespace: targetNS,
+		}, &mirror); err != nil {
+			t.Fatalf("get %s auth mirror: %v", targetNS, err)
+		}
+		if mirror.Type != corev1.SecretTypeBasicAuth {
+			t.Errorf("%s secret type=%q want %q", targetNS, mirror.Type, corev1.SecretTypeBasicAuth)
+		}
+		if !bytes.Equal(mirror.Data["cacerts"], newCA) {
+			t.Errorf("%s cacerts was not updated to the configured CA", targetNS)
+		}
+	}
+
+	gotRepo := getClusterRepo(t, c, credentials.ClusterRepoApplicationCollection)
+	forceUpdate, _, _ := unstructured.NestedString(gotRepo.Object, "spec", "forceUpdate")
+	if forceUpdate == "" || forceUpdate == "before-ca-rotation" {
+		t.Errorf("expected CA rotation to force-update ClusterRepo, got %q", forceUpdate)
+	}
+}
+
+func TestSettingsController_RemovesStaleRegistryCAWhenReferenceCleared(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "appco-creds", Key: "user"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "appco-creds", Key: "token"},
+			},
+		},
+	}
+	creds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco-creds", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("robot"), "token": []byte("secret")},
+	}
+	staleMirror := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system"},
+		Type:       corev1.SecretTypeBasicAuth,
+		Data: map[string][]byte{
+			"username": []byte("robot"),
+			"password": []byte("secret"),
+			"cacerts":  registryTestCAPEM(t),
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, creds, staleMirror).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var mirror corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system",
+	}, &mirror); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := mirror.Data["cacerts"]; found {
+		t.Error("stale cacerts key remains after caBundleSecretRef was cleared")
+	}
+}
+
+func TestSettingsController_RejectsUnreadableRegistryCA(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
+				UserSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "appco-creds", Key: "user"},
+				TokenSecretRef:    &aiplatformv1alpha1.SecretKeyRef{Name: "appco-creds", Key: "token"},
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "registry-ca", Key: "ca.crt"},
+			},
+		},
+	}
+	creds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco-creds", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("robot"), "token": []byte("secret")},
+	}
+	badCA := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "registry-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": []byte("not a certificate")},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, creds, badCA).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	})
+	if err == nil || !strings.Contains(err.Error(), "valid PEM certificate") {
+		t.Fatalf("expected invalid CA error, got %v", err)
+	}
+
+	var mirror corev1.Secret
+	err = c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.AuthSecretApplicationCollection, Namespace: "cattle-system",
+	}, &mirror)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("auth mirror must not be created for invalid CA, got err=%v", err)
+	}
+}
+
 // A rotated registry credential must make the operator nudge the ClusterRepo
 // (spec.forceUpdate) so Rancher re-reads the clientSecret and re-authenticates.
 // Updating the mirror secret alone leaves Rancher serving the cached (often
@@ -621,16 +796,17 @@ func TestSettingsController_PrunesOrphanTeamRepo(t *testing.T) {
 	}
 }
 
-// Switching to air-gap deletes team repos but PRESERVES ngc-helm-auth
-// (the mirror still consumes it).
-func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
+// Switching to air-gap deletes team repos, preserves ngc-helm-auth, and keeps
+// both stable org/Blueprint repo identities backed by the private mirror.
+func TestSettingsController_AirGapKeepsStableNvidiaRepoAliases(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
 	const ns = "aif-operator"
+	const mirrorURL = "oci://registry.internal/nvidia"
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: "oci://registry.internal/nvidia"},
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: mirrorURL},
 		},
 	}
 	nvidia := &corev1.Secret{
@@ -659,5 +835,21 @@ func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); err != nil {
 		t.Errorf("air-gap must preserve ngc-helm-auth: %v", err)
+	}
+
+	for _, name := range []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint} {
+		repo := getClusterRepo(t, c, name)
+		url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
+		if url != mirrorURL {
+			t.Errorf("%s URL=%q want private mirror %q", name, url, mirrorURL)
+		}
+		secretName, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+		secretNamespace, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "namespace")
+		if secretName != credentials.AuthSecretNvidia || secretNamespace != "cattle-system" {
+			t.Errorf("%s clientSecret=%s/%s want cattle-system/%s", name, secretNamespace, secretName, credentials.AuthSecretNvidia)
+		}
+		if forceUpdate, _, _ := unstructured.NestedString(repo.Object, "spec", "forceUpdate"); forceUpdate == "" {
+			t.Errorf("%s was not force-updated after the initial mirror credential write", name)
+		}
 	}
 }
