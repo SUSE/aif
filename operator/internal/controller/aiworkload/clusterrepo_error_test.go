@@ -191,7 +191,7 @@ func TestReconcileBlueprintStatus_ApplicationSourceMovesWithoutBlueprintEdit(t *
 	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("resolve public source: %v", err)
 	}
-	helmOpKey := types.NamespacedName{Namespace: "fleet-local", Name: "wl-app"}
+	helmOpKey := types.NamespacedName{Namespace: "fleet-local", Name: blueprintBundleName(w.Name, "ollama")}
 	helmOp := &unstructured.Unstructured{}
 	helmOp.SetGroupVersionKind(helmOpGVK)
 	if err := c.Get(context.Background(), helmOpKey, helmOp); err != nil {

@@ -303,6 +303,7 @@ import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNa
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from '../services/static-catalog';
+import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 
 export default defineComponent({
   name: 'SuseAIApps',
@@ -320,7 +321,11 @@ export default defineComponent({
     const loading = ref(true);
     const error = ref<string | null>(null);
     const search = ref('');
-    const selectedRepo = ref(''); // '' = All libraries (default)
+    // '' = All libraries. Seeded from the URL so the filter survives leaving the
+    // page and coming back — the install wizard's Cancel/Finish, browser back,
+    // or a reload. This ref alone cannot hold it: the page is remounted each
+    // time (see utils/catalog-route).
+    const selectedRepo = ref(readLibraryFilter(route?.query));
     const sortBy = ref('supported'); // default: supported apps first
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
@@ -383,6 +388,18 @@ export default defineComponent({
       selectedRepo.value = libs.includes('suse-ai') ? 'suse-ai' : (libs[0] ?? '');
     };
     watch(items, ensureValidSelectedRepo);
+
+    // Mirror the selection back into the URL so it is there to be restored when
+    // the user returns. Read $route fresh — the `route` captured at setup is a
+    // snapshot and goes stale after the first replace.
+    watch(selectedRepo, (library) => {
+      const query = (vm as any)?.proxy?.$route?.query;
+      if (readLibraryFilter(query) === library) return;
+      $router?.replace({ query: withLibraryFilter(query, library) })
+        .catch((err: any) => {
+          if (err?.name !== 'NavigationDuplicated') console.warn('Navigation failed:', err);
+        });
+    });
 
     const hasRegistryConfigured = computed(() => {
       const spec = settingsData.value?.spec;
@@ -512,7 +529,8 @@ export default defineComponent({
           cluster: currentClusterId,
           slug:    app.slug_name,
         },
-        query: { n: app.name },
+        // Carry the library filter so the wizard can hand it back on Cancel.
+        query: withLibraryFilter({ n: app.name }, selectedRepo.value),
       };
 
       if (app.repository_url) {

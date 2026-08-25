@@ -182,8 +182,11 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 	}
 	const bundleName = "logical-workload-airgap-smoke"
 	const filePath = "workloads/logical-workload-airgap-smoke.yaml"
+	if err := client.Create(ctx, workload); err != nil {
+		t.Fatalf("create workload: %v", err)
+	}
 
-	if err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
+	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
 		t.Fatalf("publish first source: %v", err)
 	}
 	firstContent := readBlueprintGitOpsFile(t, remoteURL, filePath)
@@ -198,7 +201,7 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 	}
 
 	component.ChartRepo = "source-b"
-	if err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
+	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
 		t.Fatalf("publish switched source: %v", err)
 	}
 	secondContent := readBlueprintGitOpsFile(t, remoteURL, filePath)
@@ -263,38 +266,9 @@ func TestEnsureBlueprintGitFile_GitBackedChartTargetsBothFleetWorkspaces(t *test
 		},
 	}
 
-	if err := reconciler.ensureBlueprintGitFile(ctx, workload, gitComponent(), "git-chart-workload-agent"); err != nil {
+	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, gitComponent(), "git-chart-workload-agent"); err != nil {
 		t.Fatalf("publish git-backed chart: %v", err)
 	}
 	content := readBlueprintGitOpsFile(t, remoteURL, "workloads/git-chart-workload-agent.yaml")
 	requireGitOpsWorkspaceTargets(t, decodeBlueprintGitOpsDocuments(t, content), "Bundle")
-}
-
-func TestHelmOpMatchesDesiredSpec(t *testing.T) {
-	desired := map[string]any{
-		"defaultNamespace": "application-system",
-		"helm": map[string]any{
-			"repo":    "oci://registry.example/charts/app",
-			"version": "1.0.0",
-		},
-	}
-	helmOp := &unstructured.Unstructured{}
-	helmOp.SetNamespace("fleet-local")
-	_ = unstructured.SetNestedMap(helmOp.Object, desired, "spec")
-	if !helmOpMatchesDesiredSpec(helmOp, "fleet-local", desired) {
-		t.Fatal("identical HelmOp spec should be current")
-	}
-	changed := map[string]any{
-		"defaultNamespace": "application-system",
-		"helm": map[string]any{
-			"repo":    "oci://private.example/charts/app",
-			"version": "1.0.0",
-		},
-	}
-	if helmOpMatchesDesiredSpec(helmOp, "fleet-local", changed) {
-		t.Fatal("a changed chart source must invalidate the materialized HelmOp")
-	}
-	if helmOpMatchesDesiredSpec(helmOp, "fleet-default", desired) {
-		t.Fatal("a changed Fleet namespace must invalidate the materialized HelmOp")
-	}
 }

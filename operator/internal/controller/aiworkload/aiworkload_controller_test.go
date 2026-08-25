@@ -509,6 +509,7 @@ var _ = Describe("Blueprint AIWorkload", func() {
 					DisplayName:     "Test",
 					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployFleetBundle,
 					TargetNamespace: "ns",
+					TargetClusters:  []string{"local"},
 					Source: aiplatformv1alpha1.AIWorkloadSource{
 						SourceType: aiplatformv1alpha1.AIWorkloadSourceBlueprint,
 						Blueprint: &aiplatformv1alpha1.BlueprintSource{
@@ -555,6 +556,7 @@ var _ = Describe("Blueprint AIWorkload", func() {
 					DisplayName:     "Test",
 					DeployStrategy:  aiplatformv1alpha1.AIWorkloadDeployFleetBundle,
 					TargetNamespace: "ns",
+					TargetClusters:  []string{"local"},
 					Source: aiplatformv1alpha1.AIWorkloadSource{
 						SourceType: aiplatformv1alpha1.AIWorkloadSourceBlueprint,
 						Blueprint:  &aiplatformv1alpha1.BlueprintSource{Name: "my-stack", Version: "1.0.0"},

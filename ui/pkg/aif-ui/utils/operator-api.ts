@@ -58,6 +58,31 @@ export function deleteAIWorkload(namespace: string, name: string): Promise<void>
   );
 }
 
+export function upgradeAIWorkload(
+  namespace: string,
+  name:      string,
+  targetVersion: string,
+): Promise<{ status: string; targetVersion: string }> {
+  return operatorFetch(
+    `/api/v1/namespaces/${ encodeURIComponent(namespace) }/aiworkloads/${ encodeURIComponent(name) }/upgrade`,
+    { method: 'POST', body: JSON.stringify({ targetVersion }) },
+  );
+}
+
+export function rollbackAIWorkload(namespace: string, name: string): Promise<{ status: string }> {
+  return operatorFetch(
+    `/api/v1/namespaces/${ encodeURIComponent(namespace) }/aiworkloads/${ encodeURIComponent(name) }/rollback`,
+    { method: 'POST' },
+  );
+}
+
+export function retryAIWorkload(namespace: string, name: string): Promise<{ status: string }> {
+  return operatorFetch(
+    `/api/v1/namespaces/${ encodeURIComponent(namespace) }/aiworkloads/${ encodeURIComponent(name) }/retry`,
+    { method: 'POST' },
+  );
+}
+
 export function publishToFleetGit(bundleName: string, bundleYAML: string): Promise<{ commit: string }> {
   return operatorFetch('/api/v1/git/publish', {
     method: 'POST',

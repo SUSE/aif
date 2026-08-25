@@ -52,7 +52,10 @@ spec:
             description: BlueprintSpec defines the desired state of a Blueprint version.
             properties:
               components:
-                description: Components are the applications included in this blueprint.
+                description: |-
+                  Components are the applications included in this blueprint. Logical
+                  Application names and legacy direct chart names are unique within their
+                  respective representation.
                 items:
                   description: |-
                     BlueprintComponent defines one deployable application in a Blueprint.
@@ -82,6 +85,7 @@ spec:
                     chartName:
                       description: 'ChartName is the Helm chart name. Deprecated:
                         use ApplicationRef.'
+                      maxLength: 253
                       minLength: 1
                       type: string
                     chartRepo:
@@ -141,8 +145,15 @@ spec:
                   - message: vendor belongs to the Application credential profile
                       when applicationRef is set
                     rule: '!has(self.applicationRef) || !has(self.vendor)'
+                maxItems: 100
                 minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: component application names and direct chart names must
+                    be unique within a blueprint
+                  rule: self.all(x, self.exists_one(y, (has(x.applicationRef) && has(y.applicationRef)
+                    && x.applicationRef.name == y.applicationRef.name) || (has(x.chartName)
+                    && has(y.chartName) && x.chartName == y.chartName)))
               deprecated:
                 description: Deprecated marks this blueprint version as deprecated.
                 type: boolean

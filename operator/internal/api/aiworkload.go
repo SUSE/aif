@@ -33,6 +33,19 @@ import (
 
 const aiWorkloadFieldOwner = "aif-operator-api"
 
+// validateAIWorkloadSpec enforces the recovery-feature invariants with friendly errors,
+// mirroring the CRD CEL rules for clients that read API responses. existing is nil on create.
+func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *aiplatformv1alpha1.AIWorkload) error {
+	isBlueprint := spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceBlueprint
+	if isBlueprint && len(spec.TargetClusters) == 0 {
+		return fmt.Errorf("%w: Blueprint workloads require at least one target cluster", ErrInvalidInput)
+	}
+	if existing != nil && existing.Spec.DeployStrategy != "" && existing.Spec.DeployStrategy != spec.DeployStrategy {
+		return fmt.Errorf("%w: deployStrategy is immutable", ErrInvalidInput)
+	}
+	return nil
+}
+
 // AIWorkloadHandler serves AIWorkload CRUD endpoints.
 type AIWorkloadHandler struct {
 	client client.Client
@@ -49,6 +62,9 @@ func (h *AIWorkloadHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
 	mux.HandleFunc("PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
 	mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.deleteAIWorkload)
+	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade", h.upgradeAIWorkload)
+	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback", h.rollbackAIWorkload)
+	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry", h.retryAIWorkload)
 }
 
 func (h *AIWorkloadHandler) listAIWorkloads(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +102,11 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	var body aiWorkloadCreateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		return
+	}
+
+	if err := validateAIWorkloadSpec(body.Spec, nil); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -163,6 +184,11 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if err := validateAIWorkloadSpec(body.Spec, existing); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 

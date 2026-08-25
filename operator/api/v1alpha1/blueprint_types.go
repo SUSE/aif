@@ -91,6 +91,7 @@ type BlueprintComponent struct {
 	ChartRepo string `json:"chartRepo,omitempty"`
 	// ChartName is the Helm chart name. Deprecated: use ApplicationRef.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	ChartName string `json:"chartName,omitempty"`
 	// ChartVersion is the semver chart version. Deprecated: use ApplicationRef.
@@ -144,8 +145,12 @@ type BlueprintSpec struct {
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
-	// Components are the applications included in this blueprint.
+	// Components are the applications included in this blueprint. Logical
+	// Application names and legacy direct chart names are unique within their
+	// respective representation.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.exists_one(y, (has(x.applicationRef) && has(y.applicationRef) && x.applicationRef.name == y.applicationRef.name) || (has(x.chartName) && has(y.chartName) && x.chartName == y.chartName)))",message="component application names and direct chart names must be unique within a blueprint"
 	Components []BlueprintComponent `json:"components"`
 }
 

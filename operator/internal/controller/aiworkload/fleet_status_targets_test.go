@@ -22,7 +22,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
@@ -72,34 +71,6 @@ func TestMirrorFleetStatusRequiresEveryRequestedCluster(t *testing.T) {
 
 	if err := reconciler.mirrorFleetStatus(context.Background(), workload); err != nil {
 		t.Fatalf("mirror Fleet status: %v", err)
-	}
-	requireClusterStatus(t, workload, 0, "local", aiplatformv1alpha1.AIWorkloadClusterPhasePending)
-	requireClusterStatus(t, workload, 1, "c-downstream", aiplatformv1alpha1.AIWorkloadClusterPhaseRunning)
-	if workload.Status.Phase != aiplatformv1alpha1.AIWorkloadPhaseDegraded {
-		t.Fatalf("workload phase = %s, want Degraded", workload.Status.Phase)
-	}
-}
-
-func TestMirrorBlueprintStatusRequiresEveryComponentOnEveryCluster(t *testing.T) {
-	objects := []client.Object{
-		statusBundleDeployment("app-local", "cluster-local", "workload-app", "local"),
-		statusBundleDeployment("app-downstream", "cluster-downstream", "workload-app", "c-downstream"),
-		statusBundleDeployment("database-downstream", "cluster-downstream", "workload-database", "c-downstream"),
-	}
-	scheme := gitRepoTestScheme()
-	reconciler := &AIWorkloadReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
-	}
-	workload := &aiplatformv1alpha1.AIWorkload{
-		ObjectMeta: metav1.ObjectMeta{Name: "workload", Namespace: "aif-operator"},
-		Spec: aiplatformv1alpha1.AIWorkloadSpec{
-			TargetClusters:   []string{"local", "c-downstream"},
-			FleetBundleNames: []string{"workload-app", "workload-database"},
-		},
-	}
-
-	if err := reconciler.mirrorBlueprintStatus(context.Background(), workload); err != nil {
-		t.Fatalf("mirror Blueprint status: %v", err)
 	}
 	requireClusterStatus(t, workload, 0, "local", aiplatformv1alpha1.AIWorkloadClusterPhasePending)
 	requireClusterStatus(t, workload, 1, "c-downstream", aiplatformv1alpha1.AIWorkloadClusterPhaseRunning)

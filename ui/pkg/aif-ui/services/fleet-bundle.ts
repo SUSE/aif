@@ -1,6 +1,7 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
 import { APP_COLLECTION_REPO_URL } from './registry-endpoints';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { capReleaseName, fnv1a32 } from '../utils/helm-release';
 
 // The operator-managed AppCollection ClusterRepo name. SUSE-registry charts
 // frequently bundle subcharts whose container images come from AppCollection
@@ -92,43 +93,10 @@ export function buildBundleNameForCluster(release: string, namespace: string, cl
   return capBundleName(`suse-ai-${ release }-${ namespace }-${ clusterId }`);
 }
 
-// 53 = 63 (K8s DNS-1123 label max) − 10 bytes Helm reserves for generated
-// suffixes. Fleet validates spec.helm.releaseName against this.
-const HELM_RELEASE_NAME_MAX = 53; // Helm/Fleet reject release names longer than this.
-const HELM_HASH_LEN         = 6;  // base36 suffix; 36^6 ≈ 2.2e9 distinct values, ample for collision avoidance.
+const HELM_HASH_LEN = 6;  // base36 suffix; 36^6 ≈ 2.2e9 distinct values, ample for collision avoidance.
 
-// Fleet validates spec.helm.releaseName against Helm's 53-byte limit, but a
-// bundle name can be up to 63 (a valid K8s object name). Cap the release name,
-// appending a short deterministic hash when truncating so distinct bundle names
-// don't collide on the same prefix. The result is always a valid DNS-1123 label
-// (no leading/trailing '-'), even for pathological inputs.
-//
-// Uses the same algorithm (FNV-1a / base36) as the operator's Go capReleaseName
-// so both sides produce identical names for the same input. They don't strictly
-// need to match — a single install's releaseName is produced by exactly one side,
-// and the operator looks workloads up by bundle (object) name, never by
-// releaseName — but keeping them aligned avoids confusion.
-//
-// Callers pass ASCII names (buildBundleName strips non-[a-z0-9-]), so .length
-// (UTF-16 units) equals the byte count here; this is not safe for arbitrary
-// multibyte input.
-export function capReleaseName(name: string): string {
-  if (name.length <= HELM_RELEASE_NAME_MAX) return name;
-  const hash = fnv1a32(name).toString(36).slice(0, HELM_HASH_LEN);
-  const head = name.slice(0, HELM_RELEASE_NAME_MAX - hash.length - 1).replace(/^-+|-+$/g, '');
-  return head ? `${ head }-${ hash }` : hash;
-}
+export { capReleaseName };
 
-// fnv1a32 is the 32-bit FNV-1a hash, matching Go's hash/fnv New32a() byte-for-byte
-// for ASCII input. Math.imul does the 32-bit multiply without precision loss.
-function fnv1a32(s: string): number {
-  let h = 0x811c9dc5; // offset basis (2166136261)
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193); // FNV prime (16777619)
-  }
-  return h >>> 0;
-}
 
 interface ClientSecretRef { name: string; namespace: string; }
 

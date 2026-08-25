@@ -268,6 +268,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
 		CatalogClient:     catalogHolder,
+		Recorder:          mgr.GetEventRecorderFor("aiworkload-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
 		os.Exit(1)
