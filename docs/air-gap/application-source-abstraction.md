@@ -82,8 +82,12 @@ installs AIF only from the mirror. Its acceptance matrix covers:
 
 - authenticated private-CA HTTPS Gitea for AIF writes and Fleet reads;
 - Blueprint delivery from `blueprints/` in private Gitea;
+- application-chart delivery from a separate authenticated private Gitea
+  repository through a Rancher `ClusterRepo`;
 - direct and logical Blueprint compatibility;
 - FleetBundle and GitOps on local and downstream clusters;
+- chart embedding in both Fleet workspaces when the application source is
+  private Git;
 - changing only an Application `sourceRef` between two private ClusterRepos;
 - an unchanged stored Blueprint before and after that source change; and
 - upstream-named workload images pulled through fail-closed RKE2 Harbor
@@ -115,3 +119,5 @@ managed through the private Git repository after the CRD exists.
 5. Keep SSH Git support as a separate contract: it requires private-key and
    known-hosts fields and must never disable host-key verification. The current
    qualified baseline is HTTPS token/basic authentication.
+6. Define minimum Rancher permissions and lifecycle policy for the API token
+   used to retrieve indexed charts from git-backed `ClusterRepo` sources.
