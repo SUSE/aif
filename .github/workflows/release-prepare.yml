@@ -116,11 +116,21 @@ jobs:
           # operator source of truth
           printf '%s\n' "$VERSION" > operator/VERSION
 
-          # operator chart (yq keeps a clean diff — Chart.yaml has no blank lines)
+          # operator chart (yq keeps a clean diff — Chart.yaml has no blank lines).
+          # Keep the annotation complete: the combined chart ships the operator,
+          # installs the UI, and runs kubectl-based CRD/cleanup hook Jobs.
+          KUBECTL_IMAGE="$(yq -r '.crds.image | .registry + "/" + .repository + ":" + .tag' charts/aif-operator/values.yaml)"
+          export KUBECTL_IMAGE
           yq -i '
             .version = strenv(VERSION) |
             .appVersion = strenv(VERSION) |
-            .annotations."helm.sh/images" = "- image: ghcr.io/suse/aif-operator:" + strenv(VERSION) + "\n  name: aif-operator\n"
+            .annotations."helm.sh/images" =
+              "- image: ghcr.io/suse/aif-operator:" + strenv(VERSION) +
+              "\n  name: aif-operator" +
+              "\n- image: ghcr.io/suse/aif-ui:" + strenv(VERSION) +
+              "\n  name: aif-ui" +
+              "\n- image: " + strenv(KUBECTL_IMAGE) +
+              "\n  name: kubectl\n"
           ' charts/aif-operator/Chart.yaml
 
           # operator values: own image tag + lockstep aif-ui/extension version refs.

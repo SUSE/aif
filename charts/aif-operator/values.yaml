@@ -1,5 +1,12 @@
 global:
+  # Override the registry host (and optional path prefix) for every image
+  # rendered by this chart. When the UI is installed through aiExtension, this
+  # value is also forwarded to the aif-ui chart unless that nested chart has an
+  # explicit global.imageRegistry or legacy image.registry override.
   imageRegistry: ""
+  # Pull Secrets used by the operator, helper Jobs, and the managed aif-ui chart.
+  # An explicit nested aiExtension.source.helm.values.global.imagePullSecrets
+  # value takes precedence for the UI, including an intentionally empty list.
   imagePullSecrets: []
 
 nameOverride: ""
@@ -179,8 +186,9 @@ aiExtension:
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
       version: "2.2.0-dev.2"
-      # values are merged onto the aif-ui chart's default values. Useful for
-      # overriding the UI image during development:
+      # values are merged onto the aif-ui chart's default values. The top-level
+      # global image registry and pull Secrets are forwarded here automatically.
+      # Existing per-component overrides remain supported, for example:
       #   aiExtension.source.helm.values.image.registry=ghcr.io
       #   aiExtension.source.helm.values.image.repository=suse/aif-ui
       #   aiExtension.source.helm.values.image.tag=2.0.0
