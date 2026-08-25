@@ -84,11 +84,16 @@ export function getCatalog(timeoutMs = 25000): Promise<any> {
 }
 
 export interface ValidateOverride {
-  userSecretRef?:  { name: string; key: string } | null;
-  tokenSecretRef?: { name: string; key: string } | null;
-  credSecretRef?:  { name: string; key: string } | null;
-  repoURL?:        string;
-  branch?:         string;
+  userSecretRef?:     { name: string; key: string } | null;
+  tokenSecretRef?:    { name: string; key: string } | null;
+  credSecretRef?:     { name: string; key: string } | null;
+  caBundleSecretRef?: { name: string; key: string } | null;
+  repoURL?:           string;
+  branch?:            string;
+  authType?:          string;
+  username?:          string;
+  url?:               string;
+  insecureSkipVerify?: boolean;
 }
 
 export interface ValidateRequest {

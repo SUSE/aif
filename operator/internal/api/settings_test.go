@@ -713,6 +713,41 @@ func TestValidateCredentials_OverrideRefsBeforeSave(t *testing.T) {
 	}
 }
 
+func TestValidateCredentials_EndpointOverrideBeforeSave(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ov-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("ou")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ov-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("op")},
+	}
+	c := newSettingsFakeClient(t, sampleCR(), userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryFn
+	defer func() { probeRegistryFn = orig }()
+	gotHost := ""
+	probeRegistryFn = func(_ context.Context, host, _, _ string, _ []byte) credcheck.Result {
+		gotHost = host
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
+	}
+
+	body := `{"targets":["suseRegistry"],"overrides":{"suseRegistry":{"url":"oci://harbor.airgap.test/charts","userSecretRef":{"name":"ov-user","key":"username"},"tokenSecretRef":{"name":"ov-token","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if gotHost != "harbor.airgap.test" {
+		t.Fatalf("probe host=%q want harbor.airgap.test", gotHost)
+	}
+}
+
 func TestValidateCredentials_RancherCatalogOKFromSaved(t *testing.T) {
 	const ns = "aif-operator"
 	tokenSecret := &corev1.Secret{

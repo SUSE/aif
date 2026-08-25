@@ -47,6 +47,14 @@
         "sections": {
           "appCollection": {
             "title": "SUSE Application Collection",
+            "endpoint": {
+              "label": "Chart Repository (OCI)",
+              "placeholder": "oci://registry.example.com/charts"
+            },
+            "apiEndpoint": {
+              "label": "Catalog API Endpoint",
+              "placeholder": "https://api.apps.rancher.io"
+            },
             "userSecretRef": {
               "label": "Username Secret",
               "secretNameLabel": "Secret Name",
@@ -69,6 +77,10 @@
           },
           "suseRegistry": {
             "title": "SUSE Registry",
+            "endpoint": {
+              "label": "Chart Repository (OCI)",
+              "placeholder": "oci://registry.example.com/charts"
+            },
             "userSecretRef": {
               "label": "Username Secret",
               "secretNameLabel": "Secret Name",
@@ -90,7 +102,11 @@
           },
           "nvidia": {
             "title": "NVIDIA AI Library",
-            "description": "NGC credential used to pull gated NVIDIA images (nvcr.io), and — in air-gapped mode, when a mirrored NVIDIA chart repository is set under Registry Endpoints — to authenticate to that OCI chart repo. Username is conventionally “$oauthtoken”.",
+            "description": "NGC credential used to pull gated NVIDIA images (nvcr.io) and, when configured below, to authenticate to a mirrored OCI chart repository. Username is conventionally “$oauthtoken”.",
+            "endpoint": {
+              "label": "Chart Repository (OCI)",
+              "placeholder": "oci://registry.example.com/nvidia/charts"
+            },
             "userSecretRef": {
               "label": "Username Secret",
               "secretNameLabel": "Secret Name",
@@ -189,25 +205,6 @@
               "service": {
                 "label": "Operator Service",
                 "placeholder": "aif-operator"
-              }
-            },
-            "registryEndpoints": {
-              "title": "Registry Endpoints",
-              "suseRegistry": {
-                "label": "SUSE Registry (OCI)",
-                "placeholder": "oci://registry.example.com/charts"
-              },
-              "applicationCollection": {
-                "label": "Application Collection (OCI)",
-                "placeholder": "oci://registry.example.com/charts"
-              },
-              "applicationCollectionAPI": {
-                "label": "Application Collection API",
-                "placeholder": "https://api.apps.rancher.io"
-              },
-              "nvidia": {
-                "label": "NVIDIA Charts (OCI)",
-                "placeholder": "oci://registry.example.com/nvidia/charts"
               }
             },
             "catalogDiscovery": {

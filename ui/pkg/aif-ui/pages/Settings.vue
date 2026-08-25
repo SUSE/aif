@@ -641,6 +641,28 @@ export default {
           v-if="expanded.appCollection"
           class="mt-15"
         >
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.applicationCollection"
+                :label="t('suseai.pages.settings.sections.appCollection.endpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.appCollection.endpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.applicationCollectionAPI"
+                :label="t('suseai.pages.settings.sections.appCollection.apiEndpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.appCollection.apiEndpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
           <p class="text-label mb-5">
             {{ t('suseai.pages.settings.sections.appCollection.userSecretRef.label') }}
           </p>
@@ -713,7 +735,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('applicationCollection')"
-                @click="cb => runTest('applicationCollection', { userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef, caBundleSecretRef: spec.applicationCollection.caBundleSecretRef }, cb)"
+                @click="cb => runTest('applicationCollection', { url: spec.registryEndpoints.applicationCollection, userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef, caBundleSecretRef: spec.applicationCollection.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.applicationCollection"
@@ -742,6 +764,17 @@ export default {
           v-if="expanded.suseRegistry"
           class="mt-15"
         >
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.suseRegistry"
+                :label="t('suseai.pages.settings.sections.suseRegistry.endpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.suseRegistry.endpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
           <p class="text-label mb-5">
             {{ t('suseai.pages.settings.sections.suseRegistry.userSecretRef.label') }}
           </p>
@@ -816,7 +849,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('suseRegistry')"
-                @click="cb => runTest('suseRegistry', { userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef, caBundleSecretRef: spec.suseRegistry.caBundleSecretRef }, cb)"
+                @click="cb => runTest('suseRegistry', { url: spec.registryEndpoints.suseRegistry, userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef, caBundleSecretRef: spec.suseRegistry.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.suseRegistry"
@@ -848,6 +881,17 @@ export default {
           <p class="text-muted mb-15">
             {{ t('suseai.pages.settings.sections.nvidia.description') }}
           </p>
+
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.nvidia"
+                :label="t('suseai.pages.settings.sections.nvidia.endpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.nvidia.endpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
 
           <p class="text-label mb-5">
             {{ t('suseai.pages.settings.sections.nvidia.userSecretRef.label') }}
@@ -906,7 +950,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('nvidia')"
-                @click="cb => runTest('nvidia', { userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef, caBundleSecretRef: spec.nvidia.caBundleSecretRef }, cb)"
+                @click="cb => runTest('nvidia', { url: spec.registryEndpoints.nvidia, userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef, caBundleSecretRef: spec.nvidia.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.nvidia"
@@ -1243,50 +1287,6 @@ export default {
                 :label="t('suseai.pages.settings.sections.advanced.operatorConnection.service.label')"
                 :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.service.placeholder')"
                 :mode="operatorManaged ? 'view' : mode"
-              />
-            </div>
-          </div>
-
-          <h3 class="mb-10">
-            {{ t('suseai.pages.settings.sections.advanced.registryEndpoints.title') }}
-          </h3>
-          <div class="row mb-10">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.suseRegistry"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.suseRegistry.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.suseRegistry.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <div class="row mb-10">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.applicationCollection"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollection.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollection.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <div class="row mb-20">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.applicationCollectionAPI"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollectionAPI.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollectionAPI.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <div class="row mb-20">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.nvidia"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.nvidia.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.nvidia.placeholder')"
-                :mode="mode"
               />
             </div>
           </div>

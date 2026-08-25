@@ -388,7 +388,7 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 }
 
 func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
-	res := validateResult{Target: target, Host: h.registryHost(target, s)}
+	res := validateResult{Target: target, Host: h.registryHost(target, s, ov.URL)}
 
 	savedUser, savedToken, savedCA := savedRegistryRefs(target, s)
 	userRef := ov.UserSecretRef
@@ -622,7 +622,10 @@ func secretRefComplete(ref *aiplatformv1alpha1.SecretKeyRef) bool {
 	return ref != nil && ref.Name != "" && ref.Key != ""
 }
 
-func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Settings) string {
+func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Settings, overrideURL string) string {
+	if overrideURL != "" {
+		return registryurl.Host(overrideURL)
+	}
 	switch target {
 	case "applicationCollection":
 		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
@@ -635,6 +638,9 @@ func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Sett
 		}
 		return defaultSUSERegistryHost
 	case "nvidia":
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
+			return registryurl.Host(s.Spec.RegistryEndpoints.Nvidia)
+		}
 		return defaultNvidiaHost
 	}
 	return ""
