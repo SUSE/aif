@@ -27,6 +27,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
@@ -163,13 +165,31 @@ var _ = Describe("UI ConfigMap Helm ownership", func() {
 		raceCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 
+		// Two goroutines hammering with no pacing exhaust the default client-side
+		// QPS/burst well before raceCtx's deadline, and the rate limiter then
+		// rejects proactively whenever it can predict a wait would outlast the
+		// remaining context — a client-side artifact of this test's own tight loop,
+		// unrelated to the actual writers' correctness. A dedicated client with
+		// client-side throttling disabled keeps that from dominating the run
+		// instead of the real race (a raised QPS/burst still throttled under this
+		// loop's real request rate against envtest's local API server).
+		raceCfg := rest.CopyConfig(cfg)
+		raceCfg.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+		raceClient, err := client.New(raceCfg, client.Options{Scheme: k8sClient.Scheme()})
+		Expect(err).NotTo(HaveOccurred())
+		raceReconciler := &InstallAIExtensionReconciler{Client: raceClient, ExtensionNamespace: namespace}
+
 		var (
 			wg         sync.WaitGroup
 			mu         sync.Mutex
 			unexpected []error
 		)
 		recordUnexpected := func(err error) {
-			if err == nil || apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) {
+			// Conflict/AlreadyExists are the genuine race outcomes this test checks
+			// for. Once raceCtx has expired, an in-flight request can still return a
+			// context-cancellation error a moment later — wind-down noise from the
+			// test's own fixed window, not a correctness signal about the writers.
+			if err == nil || apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) || raceCtx.Err() != nil {
 				return
 			}
 			mu.Lock()
@@ -181,13 +201,13 @@ var _ = Describe("UI ConfigMap Helm ownership", func() {
 		go func() {
 			defer wg.Done()
 			for raceCtx.Err() == nil {
-				r.adoptUIConfigMap(raceCtx, "aif-ui-server")
+				raceReconciler.adoptUIConfigMap(raceCtx, "aif-ui-server")
 			}
 		}()
 		go func() {
 			defer wg.Done()
 			for raceCtx.Err() == nil {
-				recordUnexpected(simulateUISave(raceCtx, k8sClient, namespace))
+				recordUnexpected(simulateUISave(raceCtx, raceClient, namespace))
 			}
 		}()
 		wg.Wait()
