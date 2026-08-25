@@ -415,10 +415,15 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 		return err
 	}
 
-	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, 0, len(bdList.Items))
+	desiredClusters := make(map[string]bool, len(w.Spec.TargetClusters))
+	for _, clusterID := range w.Spec.TargetClusters {
+		desiredClusters[clusterID] = true
+	}
+	clusterPhases := make(map[string]aiplatformv1alpha1.AIWorkloadClusterPhase, len(w.Spec.TargetClusters))
+	clusterMessages := make(map[string]string, len(w.Spec.TargetClusters))
 	for _, bd := range bdList.Items {
 		clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
-		if clusterID == "" {
+		if clusterID == "" || !desiredClusters[clusterID] {
 			continue
 		}
 		state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
@@ -428,16 +433,43 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 		if phase == aiplatformv1alpha1.AIWorkloadClusterPhaseRunning {
 			message = ""
 		}
+		existing, seen := clusterPhases[clusterID]
+		if !seen || worstClusterPhase(existing, phase) != existing {
+			clusterPhases[clusterID] = phase
+			clusterMessages[clusterID] = message
+		}
+	}
+
+	statuses := statusesForTargetClusters(w.Spec.TargetClusters, clusterPhases, clusterMessages)
+	w.Status.ClusterStatuses = statuses
+	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
+	return nil
+}
+
+// statusesForTargetClusters returns one deterministic status entry for every
+// requested cluster. A target without a materialized BundleDeployment remains
+// Pending; otherwise a partially materialized multi-cluster workload could be
+// reported as Running based only on the clusters Fleet happened to create.
+func statusesForTargetClusters(
+	targetClusters []string,
+	clusterPhases map[string]aiplatformv1alpha1.AIWorkloadClusterPhase,
+	clusterMessages map[string]string,
+) []aiplatformv1alpha1.AIWorkloadClusterStatus {
+	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, 0, len(targetClusters))
+	for _, clusterID := range targetClusters {
+		phase, found := clusterPhases[clusterID]
+		message := clusterMessages[clusterID]
+		if !found {
+			phase = aiplatformv1alpha1.AIWorkloadClusterPhasePending
+			message = "Waiting for Fleet to create the cluster deployment"
+		}
 		statuses = append(statuses, aiplatformv1alpha1.AIWorkloadClusterStatus{
 			ClusterID: clusterID,
 			Phase:     phase,
 			Message:   message,
 		})
 	}
-
-	w.Status.ClusterStatuses = statuses
-	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
-	return nil
+	return statuses
 }
 
 // ── Finalizer / deletion ──────────────────────────────────────────────────────

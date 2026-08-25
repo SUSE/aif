@@ -819,11 +819,6 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	c aiplatformv1alpha1.BlueprintComponent,
 	bundleName string,
 ) error {
-	ho, err := r.getHelmOp(ctx, bundleName)
-	if err != nil {
-		return err
-	}
-
 	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
 	if err != nil {
 		return fmt.Errorf("resolve repo %q: %w", c.ChartRepo, err)
@@ -884,50 +879,86 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
-	targets := append(append([]any{}, localTargets...), downstreamTargets...)
-	fleetNS := gitOpsFleetNamespace(w)
-	if repoInfo.ClientSecret != "" {
-		if err := r.ensureFleetAuthSecret(ctx, fleetNS, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
-			return fmt.Errorf("sync auth secret to %s: %w", fleetNS, err)
+	pairs := []struct {
+		namespace string
+		targets   []any
+	}{
+		{namespace: "fleet-local", targets: localTargets},
+		{namespace: "fleet-default", targets: downstreamTargets},
+	}
+	desiredNamespaces := make(map[string]bool, len(pairs))
+	objects := make([]map[string]any, 0, len(pairs))
+	upToDate := true
+	for _, pair := range pairs {
+		if len(pair.targets) == 0 {
+			continue
+		}
+		desiredNamespaces[pair.namespace] = true
+		if repoInfo.ClientSecret != "" {
+			if err := r.ensureFleetAuthSecret(ctx, pair.namespace, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
+				return fmt.Errorf("sync auth secret to %s: %w", pair.namespace, err)
+			}
+		}
+
+		helmOpSpec := map[string]any{
+			// defaultNamespace (not namespace): targets the release namespace without
+			// forcing every resource into it. Fleet's strict `namespace` field rejects
+			// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+			// operator/CRD-bearing charts.
+			"defaultNamespace": ns,
+			"helm":             helmSpec,
+			"targets":          pair.targets,
+		}
+		if repoInfo.ClientSecret != "" {
+			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+		}
+		current, err := r.getHelmOpInNamespace(ctx, pair.namespace, bundleName)
+		if err != nil {
+			return err
+		}
+		if !helmOpMatchesDesiredSpec(current, pair.namespace, helmOpSpec) {
+			upToDate = false
+		}
+		objects = append(objects, map[string]any{
+			"apiVersion": "fleet.cattle.io/v1alpha1",
+			"kind":       "HelmOp",
+			"metadata":   map[string]any{"name": bundleName, "namespace": pair.namespace},
+			"spec":       helmOpSpec,
+		})
+	}
+	if len(objects) == 0 {
+		return fmt.Errorf("GitOps blueprint component %q has no target clusters", c.ChartName)
+	}
+	// A target-set change can remove a workspace from the desired file. Treat a
+	// still-materialized HelmOp there as stale so the file is republished without
+	// that document and Fleet removes the orphaned object.
+	for _, namespace := range fleetNamespaces {
+		if desiredNamespaces[namespace] {
+			continue
+		}
+		current, err := r.getHelmOpInNamespace(ctx, namespace, bundleName)
+		if err != nil {
+			return err
+		}
+		if current != nil {
+			upToDate = false
 		}
 	}
-
-	helmOpSpec := map[string]any{
-		// defaultNamespace (not namespace): targets the release namespace without
-		// forcing every resource into it. Fleet's strict `namespace` field rejects
-		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
-		// operator/CRD-bearing charts.
-		"defaultNamespace": ns,
-		"helm":             helmSpec,
-		"targets":          targets,
-	}
-	if repoInfo.ClientSecret != "" {
-		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
-	}
-	// A materialized HelmOp proves that Fleet consumed the git file, but it
-	// does not prove the file still reflects the current Blueprint dependencies.
-	// In particular, changing a logical Application's source must rewrite an
-	// existing GitOps workload without changing the Blueprint itself. Avoid the
-	// git clone only when the materialized object exactly matches what this
-	// reconcile resolved; WriteFile performs a second content-level no-op check
-	// for the short interval before Fleet observes a freshly pushed update.
-	if helmOpMatchesDesiredSpec(ho, fleetNS, helmOpSpec) {
+	// Materialized HelmOps prove that Fleet consumed the git file, but only an
+	// exact match proves it still reflects the current Blueprint dependencies.
+	// In particular, changing a logical Application's source must rewrite every
+	// target workspace without changing the Blueprint itself. WriteFile performs
+	// a second content-level no-op check while Fleet observes a freshly pushed
+	// update.
+	if upToDate {
 		return nil
 	}
 
-	helmOpObj := map[string]any{
-		"apiVersion": "fleet.cattle.io/v1alpha1",
-		"kind":       "HelmOp",
-		"metadata":   map[string]any{"name": bundleName, "namespace": fleetNS},
-		"spec":       helmOpSpec,
-	}
-
-	yamlBytes, err := json.MarshalIndent(helmOpObj, "", "  ")
+	content, err := marshalGitResources(objects)
 	if err != nil {
 		return err
 	}
-
-	return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
+	return r.publishBlueprintGitFile(ctx, w, bundleName, content)
 }
 
 func helmOpMatchesDesiredSpec(helmOp *unstructured.Unstructured, namespace string, desired map[string]any) bool {
@@ -947,6 +978,18 @@ func helmOpMatchesDesiredSpec(helmOp *unstructured.Unstructured, namespace strin
 		return false
 	}
 	return string(currentJSON) == string(desiredJSON)
+}
+
+func marshalGitResources(objects []map[string]any) (string, error) {
+	documents := make([]string, 0, len(objects))
+	for _, object := range objects {
+		data, err := json.MarshalIndent(object, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		documents = append(documents, string(data))
+	}
+	return strings.Join(documents, "\n---\n"), nil
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {
@@ -971,6 +1014,11 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
 	clusterPhases := make(map[string]aiplatformv1alpha1.AIWorkloadClusterPhase)
 	clusterMessages := make(map[string]string)
+	clusterBundleCount := make(map[string]int, len(w.Spec.TargetClusters))
+	desiredClusters := make(map[string]bool, len(w.Spec.TargetClusters))
+	for _, clusterID := range w.Spec.TargetClusters {
+		desiredClusters[clusterID] = true
+	}
 
 	for _, bundleName := range w.Spec.FleetBundleNames {
 		bdList := &unstructured.UnstructuredList{}
@@ -982,11 +1030,13 @@ func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aip
 		}); err != nil {
 			return err
 		}
+		seenForBundle := make(map[string]bool, len(w.Spec.TargetClusters))
 		for _, bd := range bdList.Items {
 			clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
-			if clusterID == "" {
+			if clusterID == "" || !desiredClusters[clusterID] {
 				continue
 			}
+			seenForBundle[clusterID] = true
 			state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
 			message, _, _ := unstructured.NestedString(bd.Object, "status", "display", "message")
 			phase := fleetStateToClusterPhase(state)
@@ -1004,16 +1054,24 @@ func (r *AIWorkloadReconciler) mirrorBlueprintStatus(ctx context.Context, w *aip
 				}
 			}
 		}
+		for clusterID := range seenForBundle {
+			clusterBundleCount[clusterID]++
+		}
 	}
 
-	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, 0, len(clusterPhases))
-	for id, phase := range clusterPhases {
-		statuses = append(statuses, aiplatformv1alpha1.AIWorkloadClusterStatus{
-			ClusterID: id,
-			Phase:     phase,
-			Message:   clusterMessages[id],
-		})
+	// Every Blueprint component must have a BundleDeployment on every target.
+	// Seeing one healthy component is not enough to declare that cluster healthy.
+	for _, clusterID := range w.Spec.TargetClusters {
+		if clusterBundleCount[clusterID] == len(w.Spec.FleetBundleNames) && len(w.Spec.FleetBundleNames) > 0 {
+			continue
+		}
+		if phase, found := clusterPhases[clusterID]; !found || phase == aiplatformv1alpha1.AIWorkloadClusterPhaseRunning {
+			clusterPhases[clusterID] = aiplatformv1alpha1.AIWorkloadClusterPhasePending
+			clusterMessages[clusterID] = "Waiting for every Blueprint component to reach the cluster"
+		}
 	}
+
+	statuses := statusesForTargetClusters(w.Spec.TargetClusters, clusterPhases, clusterMessages)
 	w.Status.ClusterStatuses = statuses
 	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
 	return nil

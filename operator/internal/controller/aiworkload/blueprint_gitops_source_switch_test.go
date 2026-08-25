@@ -18,8 +18,8 @@ package aiworkload
 
 import (
 	"context"
-	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -28,9 +28,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 func newBlueprintGitOpsRemote(t *testing.T) string {
@@ -61,12 +63,74 @@ func readBlueprintGitOpsFile(t *testing.T, remoteURL, filePath string) string {
 	if err != nil {
 		t.Fatalf("open %s: %v", filePath, err)
 	}
-	defer file.Close()
 	content, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatalf("read %s: %v", filePath, err)
 	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close %s: %v", filePath, err)
+	}
 	return string(content)
+}
+
+func decodeBlueprintGitOpsDocuments(t *testing.T, content string) []map[string]any {
+	t.Helper()
+	decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096)
+	var documents []map[string]any
+	for {
+		var object map[string]any
+		err := decoder.Decode(&object)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("decode GitOps document: %v", err)
+		}
+		if len(object) > 0 {
+			documents = append(documents, object)
+		}
+	}
+	return documents
+}
+
+func requireGitOpsWorkspaceTargets(t *testing.T, documents []map[string]any, kind string) {
+	t.Helper()
+	if len(documents) != 2 {
+		t.Fatalf("published %d GitOps documents, want one per Fleet workspace", len(documents))
+	}
+	seen := map[string]bool{}
+	for _, object := range documents {
+		if objectKind, _, _ := unstructured.NestedString(object, "kind"); objectKind != kind {
+			t.Fatalf("published kind = %q, want %q", objectKind, kind)
+		}
+		namespace, _, _ := unstructured.NestedString(object, "metadata", "namespace")
+		targets, _, _ := unstructured.NestedSlice(object, "spec", "targets")
+		if len(targets) != 1 {
+			t.Fatalf("%s has %d targets, want exactly its workspace target", namespace, len(targets))
+		}
+		target, ok := targets[0].(map[string]any)
+		if !ok {
+			t.Fatalf("%s target has unexpected type %T", namespace, targets[0])
+		}
+		switch namespace {
+		case "fleet-local":
+			cluster, _, _ := unstructured.NestedString(target, "clusterName")
+			if cluster != "local" {
+				t.Fatalf("fleet-local target = %q", cluster)
+			}
+		case "fleet-default":
+			cluster, _, _ := unstructured.NestedString(target, "clusterSelector", "matchLabels", "management.cattle.io/cluster-name")
+			if cluster != "c-downstream" {
+				t.Fatalf("fleet-default target = %q", cluster)
+			}
+		default:
+			t.Fatalf("unexpected Fleet workspace %q", namespace)
+		}
+		seen[namespace] = true
+	}
+	if !seen["fleet-local"] || !seen["fleet-default"] {
+		t.Fatalf("published workspaces = %v", seen)
+	}
 }
 
 func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
@@ -107,7 +171,7 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "logical-workload", Namespace: "aif-operator"},
 		Spec: aiplatformv1alpha1.AIWorkloadSpec{
 			TargetNamespace: "application-system",
-			TargetClusters:  []string{"local"},
+			TargetClusters:  []string{"local", "c-downstream"},
 		},
 	}
 	component := aiplatformv1alpha1.BlueprintComponent{
@@ -123,14 +187,14 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 		t.Fatalf("publish first source: %v", err)
 	}
 	firstContent := readBlueprintGitOpsFile(t, remoteURL, filePath)
-	var firstObject map[string]any
-	if err := json.Unmarshal([]byte(firstContent), &firstObject); err != nil {
-		t.Fatalf("decode first HelmOp: %v", err)
-	}
-	materialized := &unstructured.Unstructured{Object: firstObject}
-	materialized.SetGroupVersionKind(helmOpGVK)
-	if err := client.Create(ctx, materialized); err != nil {
-		t.Fatalf("materialize first HelmOp: %v", err)
+	firstDocuments := decodeBlueprintGitOpsDocuments(t, firstContent)
+	requireGitOpsWorkspaceTargets(t, firstDocuments, "HelmOp")
+	for _, firstObject := range firstDocuments {
+		materialized := &unstructured.Unstructured{Object: firstObject}
+		materialized.SetGroupVersionKind(helmOpGVK)
+		if err := client.Create(ctx, materialized); err != nil {
+			t.Fatalf("materialize first HelmOp: %v", err)
+		}
 	}
 
 	component.ChartRepo = "source-b"
@@ -138,27 +202,72 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 		t.Fatalf("publish switched source: %v", err)
 	}
 	secondContent := readBlueprintGitOpsFile(t, remoteURL, filePath)
-	var secondObject map[string]any
-	if err := json.Unmarshal([]byte(secondContent), &secondObject); err != nil {
-		t.Fatalf("decode switched HelmOp: %v", err)
-	}
-	repo, _, _ := unstructured.NestedString(secondObject, "spec", "helm", "repo")
-	if repo != "oci://registry-b.example/charts/airgap-smoke" {
-		t.Fatalf("switched HelmOp repo = %q", repo)
-	}
-	helmSecret, _, _ := unstructured.NestedString(secondObject, "spec", "helmSecretName")
-	if helmSecret != "source-b-auth" {
-		t.Fatalf("switched HelmOp auth secret = %q", helmSecret)
+	secondDocuments := decodeBlueprintGitOpsDocuments(t, secondContent)
+	requireGitOpsWorkspaceTargets(t, secondDocuments, "HelmOp")
+	for _, secondObject := range secondDocuments {
+		repo, _, _ := unstructured.NestedString(secondObject, "spec", "helm", "repo")
+		if repo != "oci://registry-b.example/charts/airgap-smoke" {
+			t.Fatalf("switched HelmOp repo = %q", repo)
+		}
+		helmSecret, _, _ := unstructured.NestedString(secondObject, "spec", "helmSecretName")
+		if helmSecret != "source-b-auth" {
+			t.Fatalf("switched HelmOp auth secret = %q", helmSecret)
+		}
 	}
 
-	copiedAuth := &corev1.Secret{}
-	if err := client.Get(ctx, types.NamespacedName{Namespace: "fleet-local", Name: "source-b-auth"}, copiedAuth); err != nil {
-		t.Fatalf("get switched source auth in Fleet namespace: %v", err)
+	for _, namespace := range []string{"fleet-local", "fleet-default"} {
+		copiedAuth := &corev1.Secret{}
+		if err := client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "source-b-auth"}, copiedAuth); err != nil {
+			t.Fatalf("get switched source auth in %s: %v", namespace, err)
+		}
+		if string(copiedAuth.Data[corev1.BasicAuthUsernameKey]) != "robot" ||
+			string(copiedAuth.Data[corev1.BasicAuthPasswordKey]) != "secret" {
+			t.Fatalf("%s auth secret did not preserve source credentials", namespace)
+		}
 	}
-	if string(copiedAuth.Data[corev1.BasicAuthUsernameKey]) != "robot" ||
-		string(copiedAuth.Data[corev1.BasicAuthPasswordKey]) != "secret" {
-		t.Fatalf("Fleet auth secret did not preserve source credentials")
+}
+
+func TestEnsureBlueprintGitFile_GitBackedChartTargetsBothFleetWorkspaces(t *testing.T) {
+	ctx := context.Background()
+	remoteURL := newBlueprintGitOpsRemote(t)
+	scheme := gitRepoTestScheme()
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+		},
 	}
+	repo := repoObj("rancher-charts", map[string]any{
+		"gitRepo":   "https://git.example.test/charts.git",
+		"gitBranch": "main",
+	})
+	_ = unstructured.SetNestedField(repo.Object, "commit-aaa", "status", "commit")
+	chart := makeChartTgz(t, map[string]string{
+		"rancher-ai-agent/Chart.yaml":        "apiVersion: v2\nname: rancher-ai-agent\nversion: 109.0.1\n",
+		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: agent\n",
+	})
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings, repo).Build()
+	holder := rancher.NewHolder()
+	holder.Set(fakeCatalog{tgz: chart})
+	reconciler := &AIWorkloadReconciler{
+		Client:            client,
+		Scheme:            scheme,
+		OperatorNamespace: "aif-operator",
+		CatalogClient:     holder,
+	}
+	workload := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-chart-workload", Namespace: "aif-operator"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "application-system",
+			TargetClusters:  []string{"local", "c-downstream"},
+		},
+	}
+
+	if err := reconciler.ensureBlueprintGitFile(ctx, workload, gitComponent(), "git-chart-workload-agent"); err != nil {
+		t.Fatalf("publish git-backed chart: %v", err)
+	}
+	content := readBlueprintGitOpsFile(t, remoteURL, "workloads/git-chart-workload-agent.yaml")
+	requireGitOpsWorkspaceTargets(t, decodeBlueprintGitOpsDocuments(t, content), "Bundle")
 }
 
 func TestHelmOpMatchesDesiredSpec(t *testing.T) {

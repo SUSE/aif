@@ -44,17 +44,27 @@ const (
 // or nil if not found in either.
 func (r *AIWorkloadReconciler) getHelmOp(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	for _, ns := range fleetNamespaces {
-		ho := &unstructured.Unstructured{}
-		ho.SetGroupVersionKind(helmOpGVK)
-		err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, ho)
-		if err == nil {
-			return ho, nil
-		}
-		if !errors.IsNotFound(err) {
+		ho, err := r.getHelmOpInNamespace(ctx, ns, name)
+		if err != nil {
 			return nil, err
+		}
+		if ho != nil {
+			return ho, nil
 		}
 	}
 	return nil, nil
+}
+
+func (r *AIWorkloadReconciler) getHelmOpInNamespace(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
+	ho := &unstructured.Unstructured{}
+	ho.SetGroupVersionKind(helmOpGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, ho); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return ho, nil
 }
 
 // reconcileGitOpsStatus handles the GitOps strategy reconcile loop.
