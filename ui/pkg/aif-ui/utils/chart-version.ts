@@ -1,7 +1,7 @@
 /**
  * Pure helpers for filtering and ordering Helm chart versions shown in the
- * install/upgrade version selectors. Shared by `services/rancher-apps.ts` and
- * `services/chart-service.ts` so the accepted-version rules live in one place.
+ * install/upgrade version selectors. Used by `services/rancher-apps.ts` so the
+ * accepted-version rules live in one place.
  */
 
 // Versions we surface in the UI: x.y.z, optionally with an upstream `v` prefix

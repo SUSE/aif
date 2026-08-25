@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,11 @@ const DefaultBaseURL = "https://rancher.cattle-system.svc"
 // exhaust memory. Set well above the embedded-bundle ceiling so oversized charts
 // are still read and rejected with a clear message by the Bundle builder.
 const maxChartDownloadBytes = 64 << 20 // 64 MiB
+
+// maxAppStatusBytes bounds the App status document read by AppUninstallInProgress.
+// An App resource is small JSON; 1 MiB is generous while keeping a misbehaving
+// endpoint from exhausting memory on what is otherwise an unbounded body.
+const maxAppStatusBytes = 1 << 20 // 1 MiB
 
 // CatalogClient fetches chart archives from Rancher's Steve catalog API.
 type CatalogClient struct {
@@ -146,6 +152,97 @@ func (c *CatalogClient) FetchChart(ctx context.Context, repoName, chartName, ver
 			resp.Status, chartName, version, repoName, errorBodyExcerpt(body))
 	}
 	return body, nil
+}
+
+// UninstallApp triggers Rancher's catalog `action=uninstall` for a Helm release
+// (a catalog.cattle.io App) on the local cluster. Rancher runs the uninstall via
+// its privileged helm-operation, so this succeeds for chart resource kinds the
+// operator's own ServiceAccount cannot delete. The call is asynchronous on
+// Rancher's side; callers poll for the release to disappear.
+//
+// A 404 means the App is already gone and is reported as success so the caller's
+// deletion flow is idempotent. A 401/403 carries ErrUnauthorized (same contract
+// as FetchChart) so callers can surface a "re-authorize" hint.
+func (c *CatalogClient) UninstallApp(ctx context.Context, namespace, releaseName string) error {
+	u := fmt.Sprintf("%s/v1/catalog.cattle.io.apps/%s/%s?action=uninstall",
+		c.baseURL, url.PathEscape(namespace), url.PathEscape(releaseName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(`{"timeout":"600s"}`))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request Rancher uninstall %s/%s: %w", namespace, releaseName, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes*2))
+
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil // already uninstalled — idempotent
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("%w: rancher uninstall %s/%s returned %s: %s",
+			ErrUnauthorized, namespace, releaseName, resp.Status, errorBodyExcerpt(body))
+	default:
+		return fmt.Errorf("rancher uninstall %s/%s returned %s: %s",
+			namespace, releaseName, resp.Status, errorBodyExcerpt(body))
+	}
+}
+
+// AppUninstallInProgress reports whether Rancher already has an uninstall in
+// flight for the given App (a catalog.cattle.io App) on the local cluster. The
+// deletion-path finalizer uses it to avoid re-issuing action=uninstall — and
+// spawning a fresh privileged helm-operation — on every reconcile while Rancher
+// is still tearing the release down.
+//
+// A 404 means the App is already gone and is reported as not-in-progress
+// (false), so the caller falls through to its release-gone check. A 401/403
+// carries ErrUnauthorized (same contract as FetchChart/UninstallApp).
+func (c *CatalogClient) AppUninstallInProgress(ctx context.Context, namespace, releaseName string) (bool, error) {
+	u := fmt.Sprintf("%s/v1/catalog.cattle.io.apps/%s/%s",
+		c.baseURL, url.PathEscape(namespace), url.PathEscape(releaseName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return false, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("request Rancher app %s/%s: %w", namespace, releaseName, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxAppStatusBytes))
+
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return false, nil // App already gone
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return false, fmt.Errorf("%w: rancher app %s/%s returned %s: %s",
+			ErrUnauthorized, namespace, releaseName, resp.Status, errorBodyExcerpt(body))
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		return false, fmt.Errorf("rancher app %s/%s returned %s: %s",
+			namespace, releaseName, resp.Status, errorBodyExcerpt(body))
+	}
+
+	var app struct {
+		Status struct {
+			Summary struct {
+				State string `json:"state"`
+			} `json:"summary"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(body, &app); err != nil {
+		return false, fmt.Errorf("decode rancher app %s/%s: %w", namespace, releaseName, err)
+	}
+	return strings.EqualFold(app.Status.Summary.State, "uninstalling"), nil
 }
 
 // maxErrorBodyBytes bounds how much of a non-200 response body is quoted back in

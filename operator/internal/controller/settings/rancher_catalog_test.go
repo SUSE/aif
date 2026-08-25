@@ -53,7 +53,7 @@ func TestReconcileRancherCatalogClient(t *testing.T) {
 
 // Rotating the catalog token in place mutates no Settings field, so the Secret
 // watch is the only thing that rebuilds the client before the next resync.
-func TestEnqueueSettingsForSecret_MatchesRancherCatalogRefs(t *testing.T) {
+func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = aiplatformv1alpha1.AddToScheme(scheme)
@@ -61,6 +61,16 @@ func TestEnqueueSettingsForSecret_MatchesRancherCatalogRefs(t *testing.T) {
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: "aif"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
+			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"},
+			},
+			SUSERegistry: aiplatformv1alpha1.SUSERegistrySettings{
+				UserSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "suse-creds", Key: "username"},
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "suse-ca", Key: "ca.crt"},
+			},
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "ca.crt"},
+			},
 			RancherCatalog: aiplatformv1alpha1.RancherCatalogSettings{
 				TokenSecretRef:    &aiplatformv1alpha1.SecretKeyRef{Name: "rc-token", Key: "token"},
 				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "rc-ca", Key: "ca.crt"},
@@ -77,6 +87,10 @@ func TestEnqueueSettingsForSecret_MatchesRancherCatalogRefs(t *testing.T) {
 	}{
 		{"token secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: "aif"}}, true},
 		{"ca bundle secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "rc-ca", Namespace: "aif"}}, true},
+		{"AppCo CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "appco-ca", Namespace: "aif"}}, true},
+		{"SUSE explicit credentials", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "suse-creds", Namespace: "aif"}}, true},
+		{"SUSE CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "suse-ca", Namespace: "aif"}}, true},
+		{"NVIDIA CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "nvidia-ca", Namespace: "aif"}}, true},
 		{"unrelated secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "nope", Namespace: "aif"}}, false},
 		{"right name wrong namespace", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: "other"}}, false},
 	}

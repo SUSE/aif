@@ -266,9 +266,9 @@ func main() {
 	if err := (&aiworkloadctrl.AIWorkloadReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
-		RestConfig:        mgr.GetConfig(),
 		OperatorNamespace: operatorNamespace,
 		CatalogClient:     catalogHolder,
+		Recorder:          mgr.GetEventRecorderFor("aiworkload-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
 		os.Exit(1)

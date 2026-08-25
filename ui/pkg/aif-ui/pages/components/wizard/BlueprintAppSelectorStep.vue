@@ -42,7 +42,7 @@
           <button class="btn-remove" type="button" :aria-label="t('suseai.wizard.form.removeApp', 'Remove application')" @click="removeApp(idx)">✕</button>
         </div>
         <div class="row tile-fields">
-          <div class="col span-6">
+          <div class="col span-4">
             <LabeledSelect
               :value="comp.chartVersion"
               :label="t('suseai.wizard.form.version', 'Version')"
@@ -50,7 +50,7 @@
               @update:value="onVersionChange(idx, $event)"
             />
           </div>
-          <div class="col span-6">
+          <div class="col span-4">
             <LabeledInput
               :value="comp.targetNamespace || ''"
               :label="t('suseai.wizard.form.componentNamespace', 'Target namespace (optional)')"
@@ -60,6 +60,20 @@
                 ? t('suseai.wizard.form.componentNamespaceInvalid', {}, true)
                 : undefined"
               @update:value="onNamespaceChange(idx, $event)"
+            />
+          </div>
+          <div class="col span-4">
+            <LabeledInput
+              :value="comp.releaseName || ''"
+              :label="t('suseai.wizard.form.componentReleaseName', 'Release name (optional)')"
+              :placeholder="t('suseai.wizard.form.componentReleaseNamePlaceholder', 'defaults to chart name')"
+              :status="(releaseNameInvalid(comp) || releaseNameDuplicate(comp, idx)) ? 'error' : undefined"
+              :sub-label="releaseNameInvalid(comp)
+                ? t('suseai.wizard.form.componentReleaseNameInvalid', {}, true)
+                : releaseNameDuplicate(comp, idx)
+                  ? t('suseai.wizard.form.componentReleaseNameDuplicate', {}, true)
+                  : undefined"
+              @update:value="onReleaseNameChange(idx, $event)"
             />
           </div>
         </div>
@@ -74,7 +88,7 @@ import { useT } from '../../../composables/useT';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
-import { DNS_LABEL_PATTERN } from '../../../types/blueprint-types';
+import { DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, resolveInstallRepoName } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
@@ -218,6 +232,44 @@ function onNamespaceChange(idx: number, raw: string) {
 function nsInvalid(comp: BlueprintComponent): boolean {
   const ns = comp.targetNamespace?.trim();
   return !!ns && (ns.length > 63 || !DNS_LABEL_PATTERN.test(ns));
+}
+
+function onReleaseNameChange(idx: number, raw: string) {
+  const rn = raw.trim();
+  const updated = props.components.map((c, i) =>
+    i === idx ? { ...c, releaseName: rn || undefined } : c
+  );
+  emit('update:components', updated);
+}
+
+function releaseNameInvalid(comp: BlueprintComponent): boolean {
+  const rn = comp.releaseName?.trim();
+  return !!rn && (rn.length > HELM_RELEASE_NAME_MAX || !DNS_LABEL_PATTERN.test(rn));
+}
+
+// A component's effective namespace at create time: its override, or '' to
+// represent the (yet-unknown) shared install namespace. Two components both
+// falling back to the install namespace share the '' bucket.
+function resolvedNamespace(comp: BlueprintComponent): string {
+  return comp.targetNamespace?.trim() || '';
+}
+
+// A component's effective Helm release name: its override, or the chart name.
+function resolvedReleaseName(comp: BlueprintComponent): string {
+  return comp.releaseName?.trim() || comp.chartName;
+}
+
+// Flags a user-entered release name that collides with another component in the
+// same namespace (override-vs-override or override-vs-default chart name), which
+// would fail at install. Chart names are unique per blueprint (addApp guard), so
+// two defaults never collide — only entered overrides need flagging.
+function releaseNameDuplicate(comp: BlueprintComponent, idx: number): boolean {
+  const rn = comp.releaseName?.trim();
+  if (!rn) return false;
+  const ns = resolvedNamespace(comp);
+  return props.components.some((other, i) =>
+    i !== idx && resolvedNamespace(other) === ns && resolvedReleaseName(other) === rn
+  );
 }
 
 function versionsFor(chartName: string): string[] {

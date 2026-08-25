@@ -17,9 +17,9 @@ import {
 function createEmptySpec() {
   return {
     fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
-    applicationCollection: { userSecretRef: null, tokenSecretRef: null, categories: [] },
-    suseRegistry:          { userSecretRef: null, tokenSecretRef: null, refreshIntervalMinutes: 10 },
-    nvidia:                { userSecretRef: null, tokenSecretRef: null },
+    applicationCollection: { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, categories: [] },
+    suseRegistry:          { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, refreshIntervalMinutes: 10 },
+    nvidia:                { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null },
     rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
     registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '', nvidia: '' },
     catalogDiscovery:      { applicationCollectionMode: 'api' },
@@ -179,22 +179,25 @@ export default {
       }
       if (crdSpec.applicationCollection) {
         s.applicationCollection = {
-          userSecretRef:  crdSpec.applicationCollection.userSecretRef || null,
-          tokenSecretRef: crdSpec.applicationCollection.tokenSecretRef || null,
-          categories:     crdSpec.applicationCollection.categories || [],
+          userSecretRef:     crdSpec.applicationCollection.userSecretRef || null,
+          tokenSecretRef:    crdSpec.applicationCollection.tokenSecretRef || null,
+          caBundleSecretRef: crdSpec.applicationCollection.caBundleSecretRef || null,
+          categories:        crdSpec.applicationCollection.categories || [],
         };
       }
       if (crdSpec.suseRegistry) {
         s.suseRegistry = {
           userSecretRef:          crdSpec.suseRegistry.userSecretRef || null,
           tokenSecretRef:         crdSpec.suseRegistry.tokenSecretRef || null,
+          caBundleSecretRef:      crdSpec.suseRegistry.caBundleSecretRef || null,
           refreshIntervalMinutes: crdSpec.suseRegistry.refreshIntervalMinutes ?? 10,
         };
       }
       if (crdSpec.nvidia) {
         s.nvidia = {
-          userSecretRef:  crdSpec.nvidia.userSecretRef || null,
-          tokenSecretRef: crdSpec.nvidia.tokenSecretRef || null,
+          userSecretRef:     crdSpec.nvidia.userSecretRef || null,
+          tokenSecretRef:    crdSpec.nvidia.tokenSecretRef || null,
+          caBundleSecretRef: crdSpec.nvidia.caBundleSecretRef || null,
         };
       }
       if (crdSpec.rancherCatalog) {
@@ -235,27 +238,30 @@ export default {
 
       const ac = spec.applicationCollection;
 
-      if (ac.userSecretRef?.name || ac.tokenSecretRef?.name || ac.categories.length) {
+      if (ac.userSecretRef?.name || ac.tokenSecretRef?.name || ac.caBundleSecretRef?.name || ac.categories.length) {
         out.applicationCollection = {};
         if (ac.userSecretRef?.name) out.applicationCollection.userSecretRef = ac.userSecretRef;
         if (ac.tokenSecretRef?.name) out.applicationCollection.tokenSecretRef = ac.tokenSecretRef;
+        if (ac.caBundleSecretRef?.name) out.applicationCollection.caBundleSecretRef = ac.caBundleSecretRef;
         if (ac.categories.length) out.applicationCollection.categories = ac.categories;
       }
 
       const sr = spec.suseRegistry;
 
-      if (sr.userSecretRef?.name || sr.tokenSecretRef?.name || sr.refreshIntervalMinutes !== 10) {
+      if (sr.userSecretRef?.name || sr.tokenSecretRef?.name || sr.caBundleSecretRef?.name || sr.refreshIntervalMinutes !== 10) {
         out.suseRegistry = { refreshIntervalMinutes: sr.refreshIntervalMinutes };
         if (sr.userSecretRef?.name) out.suseRegistry.userSecretRef = sr.userSecretRef;
         if (sr.tokenSecretRef?.name) out.suseRegistry.tokenSecretRef = sr.tokenSecretRef;
+        if (sr.caBundleSecretRef?.name) out.suseRegistry.caBundleSecretRef = sr.caBundleSecretRef;
       }
 
       const nv = spec.nvidia;
 
-      if (nv.userSecretRef?.name || nv.tokenSecretRef?.name) {
+      if (nv.userSecretRef?.name || nv.tokenSecretRef?.name || nv.caBundleSecretRef?.name) {
         out.nvidia = {};
         if (nv.userSecretRef?.name) out.nvidia.userSecretRef = nv.userSecretRef;
         if (nv.tokenSecretRef?.name) out.nvidia.tokenSecretRef = nv.tokenSecretRef;
+        if (nv.caBundleSecretRef?.name) out.nvidia.caBundleSecretRef = nv.caBundleSecretRef;
       }
 
       const rc = spec.rancherCatalog;
@@ -554,6 +560,23 @@ export default {
             </div>
           </div>
 
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.appCollection.caBundleSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.applicationCollection.caBundleSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.appCollection.caBundleSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.appCollection.caBundleSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.applicationCollection.caBundleSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
           <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
           <div
             v-if="false"
@@ -575,7 +598,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('applicationCollection')"
-                @click="cb => runTest('applicationCollection', { userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef }, cb)"
+                @click="cb => runTest('applicationCollection', { userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef, caBundleSecretRef: spec.applicationCollection.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.applicationCollection"
@@ -638,6 +661,23 @@ export default {
             </div>
           </div>
 
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.suseRegistry.caBundleSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.suseRegistry.caBundleSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.suseRegistry.caBundleSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.suseRegistry.caBundleSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.suseRegistry.caBundleSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
           <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
           <div
             v-if="false"
@@ -661,7 +701,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('suseRegistry')"
-                @click="cb => runTest('suseRegistry', { userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef }, cb)"
+                @click="cb => runTest('suseRegistry', { userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef, caBundleSecretRef: spec.suseRegistry.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.suseRegistry"
@@ -728,13 +768,30 @@ export default {
             </div>
           </div>
 
+          <p class="text-label mb-5">
+            {{ t('suseai.pages.settings.sections.nvidia.caBundleSecretRef.label') }}
+          </p>
+          <div class="row mb-15">
+            <div class="col span-8">
+              <SecretSelector
+                :value="toSelectorValue(spec.nvidia.caBundleSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.nvidia.caBundleSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.nvidia.caBundleSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.nvidia.caBundleSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
           <div class="row mt-10">
             <div class="col span-12">
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('nvidia')"
-                @click="cb => runTest('nvidia', { userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef }, cb)"
+                @click="cb => runTest('nvidia', { userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef, caBundleSecretRef: spec.nvidia.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.nvidia"
