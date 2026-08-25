@@ -41,9 +41,19 @@ type FleetSettings struct {
 	// +kubebuilder:validation:Enum=ssh;token;basic
 	// +optional
 	AuthType string `json:"authType,omitempty"`
+	// Username is the HTTPS Git username. It defaults to "token" for token
+	// authentication. Basic authentication requires this field or a username
+	// key in the referenced credential Secret.
+	// +optional
+	Username string `json:"username,omitempty"`
 	// CredSecretRef references the Git credential secret.
 	// +optional
 	CredSecretRef *SecretKeyRef `json:"credSecretRef,omitempty"`
+	// CABundleSecretRef references a Secret containing the PEM CA bundle used
+	// to verify an HTTPS Git server. AIF and the generated Fleet GitRepo consume
+	// the same bundle so private Git has one trust configuration.
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 }
 
 // ApplicationCollectionSettings configures SUSE Application Collection.

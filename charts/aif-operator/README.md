@@ -114,6 +114,29 @@ cannot mirror it can install with `crds.manageWithJob=false` (see above) — the
 native `crds/` path needs no image at all. CRDs themselves ship inside the chart;
 nothing is fetched at apply time.
 
+For private application and Blueprint sources, configure the `Settings`
+resource after installation:
+
+```yaml
+spec:
+  fleet:
+    repoURL: https://gitea.internal/platform/aif.git
+    branch: main
+    authType: token
+    username: platform
+    credSecretRef: {name: git-credentials, key: token}
+    caBundleSecretRef: {name: private-ca, key: ca.crt}
+```
+
+The generated Fleet `GitRepo` reads Blueprint definitions from `blueprints/`
+and AIF writes GitOps deployment resources under `workloads/`. Both AIF and
+Fleet use the configured Git CA and HTTPS credentials. A logical `Application`
+then maps a source-independent Blueprint requirement to a Rancher
+`ClusterRepo`; see
+[`docs/air-gap/application-source-abstraction.md`](../../docs/air-gap/application-source-abstraction.md).
+Node-level image mirrors, private registry trust, and disabled default registry
+fallback are still required for container images.
+
 **GitOps (Argo CD / Flux)**
 CRDs are delivered by `crds/` plus a Helm hook, so they are **not** rendered as
 release objects: they do not appear in `helm diff`, and Argo CD/Flux track only

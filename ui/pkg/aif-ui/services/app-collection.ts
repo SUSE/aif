@@ -2,6 +2,7 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
 import { getSettings } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from './static-catalog';
 
 // Canonical OCI registry URLs for the two SUSE chart repositories.
@@ -80,10 +81,7 @@ export interface NvidiaAppsResult {
 }
 
 function normalizeLogoUrl(logo?: string): string | undefined {
-  if (!logo) return undefined;
-  try { new URL(logo); return logo; } catch { /* not absolute */ }
-  // These are relative (e.g. "/logos/xxx.png"); load directly from upstream
-  return logo.startsWith('/logos/') ? `https://api.apps.rancher.io${logo}` : logo;
+  return browserSafeCatalogLogo(logo);
 }
 
 
@@ -334,13 +332,13 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
         itemsLength: res?.data?.items ? res.data.items.length : 'N/A'
       }
     });
-    
+
     const repos = res?.data?.items || res?.data || res?.items || [];
     logger.debug('Raw repositories count', {
       component: 'AppCollection',
       data: { count: repos.length }
     });
-    
+
     if (repos.length > 0) {
       logger.debug('First repository sample', {
         component: 'AppCollection',
@@ -352,7 +350,7 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
         }
       });
     }
-    
+
     const filtered = repos.filter((repo: any) => {
       const enabled = repo?.spec?.enabled !== false;
       const isReady = isRepoReady(repo);
@@ -368,12 +366,12 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
       });
       return enabled && isReady;
     });
-    
+
     logger.debug('Filtered repositories count', {
       component: 'AppCollection',
       data: { count: filtered.length }
     });
-    
+
     const mapped = filtered.map((repo: any) => ({
       name: repo.metadata?.name || '',
       displayName: getRepoDisplayName(repo.metadata?.name || ''),
@@ -381,7 +379,7 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
       url: repo.spec?.url || repo.spec?.gitRepo || '',
       enabled: repo.spec?.enabled !== false
     }));
-    
+
     const final = mapped.filter((repo: AppRepository) => repo.name);
     logger.info('Cluster repositories fetched successfully', {
       component: 'AppCollection',
@@ -390,7 +388,7 @@ export async function fetchClusterRepositories($store: any): Promise<AppReposito
         repos: final.map((r: AppRepository) => ({ name: r.name, type: r.type, enabled: r.enabled }))
       }
     });
-    
+
     return final;
   } catch (e: any) {
     logger.error('Failed to fetch cluster repositories', e, {
@@ -509,7 +507,7 @@ export function overlayCuratedMetadata(
       documentation_url:   c.documentation_url  || app.documentation_url,
       reference_guide_url: c.reference_guide_url || app.reference_guide_url,
       changelog_url:       c.changelog_url       || app.changelog_url,
-      logo_url:            c.logo_url            || app.logo_url,
+      logo_url:            browserSafeCatalogLogo(c.logo_url) || browserSafeCatalogLogo(app.logo_url),
       // live wins, curated fallback
       name:            app.name            || c.name,
       description:     app.description     || c.description,

@@ -322,7 +322,9 @@ type validateOverride struct {
 	CredSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"credSecretRef,omitempty"`
 	RepoURL        string                           `json:"repoURL,omitempty"`
 	Branch         string                           `json:"branch,omitempty"`
-	// rancherCatalog-specific overrides (TokenSecretRef above carries the token).
+	AuthType       string                           `json:"authType,omitempty"`
+	Username       string                           `json:"username,omitempty"`
+	// CA trust override for registry, Git, or Rancher catalog validation.
 	CABundleSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 	URL                string                           `json:"url,omitempty"`
 	InsecureSkipVerify bool                             `json:"insecureSkipVerify,omitempty"`
@@ -463,11 +465,15 @@ func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1
 	// Git fallback is all-or-nothing on repoURL (unlike the per-field registry
 	// fallback): repoURL/branch/credRef form one unit and the UI always sends all
 	// three together, so a partial git override is not a real case to support.
-	repoURL, branch, credRef := ov.RepoURL, ov.Branch, ov.CredSecretRef
+	repoURL, branch, authType, username := ov.RepoURL, ov.Branch, ov.AuthType, ov.Username
+	credRef, caRef := ov.CredSecretRef, ov.CABundleSecretRef
 	if repoURL == "" {
 		repoURL = s.Spec.Fleet.RepoURL
 		branch = s.Spec.Fleet.Branch
+		authType = s.Spec.Fleet.AuthType
+		username = s.Spec.Fleet.Username
 		credRef = s.Spec.Fleet.CredSecretRef
+		caRef = s.Spec.Fleet.CABundleSecretRef
 	}
 	if repoURL == "" {
 		res.Status = statusSkipped
@@ -478,7 +484,10 @@ func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1
 	tmp := &aiplatformv1alpha1.Settings{}
 	tmp.Spec.Fleet.RepoURL = repoURL
 	tmp.Spec.Fleet.Branch = branch
+	tmp.Spec.Fleet.AuthType = authType
+	tmp.Spec.Fleet.Username = username
 	tmp.Spec.Fleet.CredSecretRef = credRef
+	tmp.Spec.Fleet.CABundleSecretRef = caRef
 
 	gc, err := git.NewFromSettings(ctx, tmp, h.namespace, settingsSecretReader{h.client})
 	if err != nil {

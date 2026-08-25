@@ -126,10 +126,19 @@
                 "basic": "Basic"
               }
             },
+            "username": {
+              "label": "Username",
+              "placeholder": "Defaults to token for token authentication"
+            },
             "credSecretRef": {
               "label": "Git Credentials",
               "secretNameLabel": "Credential Secret",
               "keyNameLabel": "Secret Key"
+            },
+            "caBundleSecretRef": {
+              "label": "HTTPS CA Bundle (optional)",
+              "secretNameLabel": "CA Secret Name",
+              "keyNameLabel": "CA Bundle Key"
             }
           },
           "rancherCatalog": {

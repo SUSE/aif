@@ -91,6 +91,112 @@ func TestSettingsController_CreatesFleetGitRepo(t *testing.T) {
 	if repo != "https://github.com/example/ai-workloads" {
 		t.Errorf("expected repo URL %q, got %q", "https://github.com/example/ai-workloads", repo)
 	}
+	paths, found, err := unstructured.NestedStringSlice(gitRepo.Object, "spec", "paths")
+	if err != nil || !found {
+		t.Fatalf("GitRepo paths missing: found=%v err=%v", found, err)
+	}
+	if len(paths) != 2 || paths[0] != "blueprints" || paths[1] != "workloads" {
+		t.Fatalf("GitRepo paths=%v, want [blueprints workloads]", paths)
+	}
+}
+
+func TestSettingsController_FleetGitRepoUsesConfiguredPrivateCA(t *testing.T) {
+	s := newScheme(t)
+	const ns = "suse-ai-system"
+	caPEM := registryTestCAPEM(t)
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL:           "https://gitea.internal.example/aif.git",
+				Branch:            "main",
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+			},
+		},
+	}
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": caPEM},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, caSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	gitRepo := &unstructured.Unstructured{}
+	gitRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "suse-ai-fleet-repo", Namespace: "fleet-local",
+	}, gitRepo); err != nil {
+		t.Fatalf("get GitRepo: %v", err)
+	}
+	got, found, err := unstructured.NestedString(gitRepo.Object, "spec", "caBundle")
+	if err != nil || !found {
+		t.Fatalf("GitRepo spec.caBundle missing: found=%v err=%v", found, err)
+	}
+	if got != string(caPEM) {
+		t.Error("GitRepo spec.caBundle does not match the configured Secret key")
+	}
+}
+
+func TestSettingsController_RejectsInvalidFleetGitCA(t *testing.T) {
+	s := newScheme(t)
+	const ns = "suse-ai-system"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL:           "https://gitea.internal.example/aif.git",
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+			},
+		},
+	}
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": []byte("not a certificate")},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, caSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not contain a PEM certificate") {
+		t.Fatalf("reconcile error=%v, want invalid PEM error", err)
+	}
+}
+
+func TestSettingsController_RejectsFleetGitAuthWithoutCredentials(t *testing.T) {
+	s := newScheme(t)
+	const ns = "suse-ai-system"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL:  "https://gitea.internal.example/aif.git",
+				AuthType: "token",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires fleet.credSecretRef") {
+		t.Fatalf("reconcile error=%v, want incomplete Git authentication error", err)
+	}
 }
 
 func TestSettingsController_DeletesFleetGitRepoWhenURLCleared(t *testing.T) {
@@ -143,6 +249,7 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 			Fleet: aiplatformv1alpha1.FleetSettings{
 				RepoURL:  "https://github.com/example/ai-workloads",
 				AuthType: "token",
+				Username: "git-user",
 				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
 					Name: "git-creds",
 					Key:  "token",
@@ -173,8 +280,8 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 	if string(mirror.Data["password"]) != "mytoken" {
 		t.Errorf("expected password=mytoken, got %q", string(mirror.Data["password"]))
 	}
-	if string(mirror.Data["username"]) != "token" {
-		t.Errorf("expected username=token, got %q", string(mirror.Data["username"]))
+	if string(mirror.Data["username"]) != "git-user" {
+		t.Errorf("expected username=git-user, got %q", string(mirror.Data["username"]))
 	}
 }
 

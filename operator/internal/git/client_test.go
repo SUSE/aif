@@ -18,7 +18,11 @@ package git_test
 
 import (
 	"context"
+	"encoding/pem"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -38,6 +42,16 @@ type fakeReader struct{}
 
 func (fakeReader) ReadSecretKey(_ context.Context, _, _, _ string) (string, error) {
 	return "token", nil
+}
+
+type mapReader map[string]string
+
+func (r mapReader) ReadSecretKey(_ context.Context, namespace, name, key string) (string, error) {
+	value, found := r[namespace+"/"+name+"/"+key]
+	if !found {
+		return "", fmt.Errorf("secret key not found")
+	}
+	return value, nil
 }
 
 // newTestRemote creates a bare git repo with one initial commit on branch "main".
@@ -223,6 +237,39 @@ func TestNewFromSettings_NoRepoURL(t *testing.T) {
 	_, err := igit.NewFromSettings(context.Background(), s, "ns", fakeReader{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "repoURL")
+}
+
+func TestCheckAuth_UsesConfiguredPrivateCA(t *testing.T) {
+	reached := false
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	s := &aiplatformv1alpha1.Settings{}
+	s.Spec.Fleet.RepoURL = srv.URL + "/owner/repo.git"
+	s.Spec.Fleet.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"}
+
+	client, err := igit.NewFromSettings(context.Background(), s, "aif-operator", mapReader{
+		"aif-operator/git-ca/ca.crt": string(caPEM),
+	})
+	require.NoError(t, err)
+	err = client.CheckAuth(context.Background())
+	require.Error(t, err) // The test endpoint is not a Git repository.
+	require.True(t, reached, "the Git client did not complete the private-CA TLS handshake")
+	require.NotContains(t, err.Error(), "unknown authority")
+}
+
+func TestNewFromSettings_RejectsInvalidPrivateCA(t *testing.T) {
+	s := &aiplatformv1alpha1.Settings{}
+	s.Spec.Fleet.RepoURL = "https://gitea.internal.example/owner/repo.git"
+	s.Spec.Fleet.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"}
+
+	_, err := igit.NewFromSettings(context.Background(), s, "aif-operator", mapReader{
+		"aif-operator/git-ca/ca.crt": "not a certificate",
+	})
+	require.ErrorContains(t, err, "does not contain a PEM certificate")
 }
 
 func TestCheckAuth_ReachableOK(t *testing.T) {

@@ -19,7 +19,7 @@ import {
 
 function createEmptySpec() {
   return {
-    fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
+    fleet:                 { repoURL: '', branch: 'main', authType: '', username: '', credSecretRef: null, caBundleSecretRef: null },
     applicationCollection: { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, categories: [] },
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, refreshIntervalMinutes: 10 },
     nvidia:                { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null },
@@ -113,7 +113,6 @@ export default {
     authTypeOptions() {
       return [
         { label: this.t('suseai.pages.settings.sections.fleet.authType.options.none'), value: '' },
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.ssh'), value: 'ssh' },
         { label: this.t('suseai.pages.settings.sections.fleet.authType.options.token'), value: 'token' },
         { label: this.t('suseai.pages.settings.sections.fleet.authType.options.basic'), value: 'basic' },
       ];
@@ -177,7 +176,9 @@ export default {
           repoURL:       crdSpec.fleet.repoURL || '',
           branch:        crdSpec.fleet.branch || 'main',
           authType:      crdSpec.fleet.authType || '',
+          username:      crdSpec.fleet.username || '',
           credSecretRef: crdSpec.fleet.credSecretRef || null,
+          caBundleSecretRef: crdSpec.fleet.caBundleSecretRef || null,
         };
       }
       if (crdSpec.applicationCollection) {
@@ -231,12 +232,14 @@ export default {
     buildCrdSpec(spec) {
       const out = {};
 
-      if (spec.fleet.repoURL || spec.fleet.credSecretRef?.name) {
+      if (spec.fleet.repoURL || spec.fleet.credSecretRef?.name || spec.fleet.caBundleSecretRef?.name) {
         out.fleet = {};
         if (spec.fleet.repoURL) out.fleet.repoURL = spec.fleet.repoURL;
         if (spec.fleet.branch) out.fleet.branch = spec.fleet.branch;
         if (spec.fleet.authType) out.fleet.authType = spec.fleet.authType;
+        if (spec.fleet.username) out.fleet.username = spec.fleet.username;
         if (spec.fleet.credSecretRef?.name) out.fleet.credSecretRef = spec.fleet.credSecretRef;
+        if (spec.fleet.caBundleSecretRef?.name) out.fleet.caBundleSecretRef = spec.fleet.caBundleSecretRef;
       }
 
       const ac = spec.applicationCollection;
@@ -474,11 +477,11 @@ export default {
 
     // canTest gates the per-section Test button so it only fires with inputs the
     // probe can actually use. Registries need both secret name+key on each ref;
-    // gitops needs a repoURL and an auth type the git check supports (SSH is not
-    // wired for the HTTP-based CheckAuth, so it would always error).
+    // gitops needs a repoURL. Authentication is optional for an anonymous
+    // repository; HTTPS CA trust is tested when configured.
     canTest(target) {
       if (target === 'gitops') {
-        return !!this.spec.fleet.repoURL && this.spec.fleet.authType !== 'ssh';
+        return !!this.spec.fleet.repoURL;
       }
       // rancherCatalog authenticates with a single API token (no username), so it
       // only needs a complete token secret ref.
@@ -959,10 +962,21 @@ export default {
                 :mode="mode"
               />
             </div>
+            <div
+              v-if="spec.fleet.authType"
+              class="col span-4"
+            >
+              <LabeledInput
+                v-model:value="spec.fleet.username"
+                :label="t('suseai.pages.settings.sections.fleet.username.label')"
+                :placeholder="t('suseai.pages.settings.sections.fleet.username.placeholder')"
+                :mode="mode"
+              />
+            </div>
           </div>
           <div
             v-if="spec.fleet.authType"
-            class="row"
+            class="row mb-15"
           >
             <div class="col span-8">
               <p class="text-label mb-5">
@@ -980,13 +994,30 @@ export default {
             </div>
           </div>
 
+          <div class="row">
+            <div class="col span-8">
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.fleet.caBundleSecretRef.label') }}
+              </p>
+              <SecretSelector
+                :value="toSelectorValue(spec.fleet.caBundleSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.fleet.caBundleSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.fleet.caBundleSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.fleet.caBundleSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
           <div class="row mt-10">
             <div class="col span-12">
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('gitops')"
-                @click="cb => runTest('gitops', { repoURL: spec.fleet.repoURL, branch: spec.fleet.branch, credSecretRef: spec.fleet.credSecretRef }, cb)"
+                @click="cb => runTest('gitops', { repoURL: spec.fleet.repoURL, branch: spec.fleet.branch, authType: spec.fleet.authType, username: spec.fleet.username, credSecretRef: spec.fleet.credSecretRef, caBundleSecretRef: spec.fleet.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.gitops"

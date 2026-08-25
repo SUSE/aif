@@ -212,6 +212,7 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 	h := newSettingsHandler(c, "aif-operator")
 
 	body := `{"spec":{` +
+		`"fleet":{"caBundleSecretRef":{"name":"git-ca","key":"ca.crt"}},` +
 		`"applicationCollection":{"caBundleSecretRef":{"name":"appco-ca","key":"ca.crt"}},` +
 		`"suseRegistry":{"caBundleSecretRef":{"name":"suse-ca","key":"bundle.pem"}},` +
 		`"nvidia":{"caBundleSecretRef":{"name":"nvidia-ca","key":"tls-ca"}}}}`
@@ -233,6 +234,7 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 		got  *aiplatformv1alpha1.SecretKeyRef
 		want aiplatformv1alpha1.SecretKeyRef
 	}{
+		{"Fleet Git", stored.Spec.Fleet.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"}},
 		{"application collection", stored.Spec.ApplicationCollection.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"}},
 		{"SUSE registry", stored.Spec.SUSERegistry.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "suse-ca", Key: "bundle.pem"}},
 		{"NVIDIA", stored.Spec.Nvidia.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "tls-ca"}},
