@@ -4,20 +4,11 @@ import { getSettings } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from './static-catalog';
-
-// Canonical OCI registry URLs for the two SUSE chart repositories.
-// These are the single source of truth for all hardcoded registry URLs in the codebase.
-// Air-gapped environments override these in each source's Settings section.
-export const APP_COLLECTION_REPO_URL = 'oci://dp.apps.rancher.io/charts';
-export const SUSE_REGISTRY_REPO_URL  = 'oci://registry.suse.com/ai/charts';
-
-// The single NGC Helm registry host. A repo is classified 'nvidia' iff its URL
-// host equals this (see getLibraryFromRepoUrl); mirror of the operator's NGCHost.
-export const NGC_HOST = 'helm.ngc.nvidia.com';
-
-// NVIDIA NGC Helm repositories (HTTPS, public charts). Images are gated behind nvcr.io.
-export const NVIDIA_REPO_URL           = `https://${NGC_HOST}/nvidia`;
-export const NVIDIA_BLUEPRINT_REPO_URL = `https://${NGC_HOST}/nvidia/blueprint`;
+import {
+  APP_COLLECTION_REPO_URL,
+  SUSE_REGISTRY_REPO_URL,
+  NGC_HOST,
+} from './registry-endpoints';
 
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';
 

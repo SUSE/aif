@@ -49,11 +49,7 @@
             "title": "SUSE Application Collection",
             "endpoint": {
               "label": "Chart Repository (OCI)",
-              "placeholder": "oci://registry.example.com/charts"
-            },
-            "apiEndpoint": {
-              "label": "Catalog API Endpoint",
-              "placeholder": "https://api.apps.rancher.io"
+              "placeholder": "oci://dp.apps.rancher.io/charts"
             },
             "userSecretRef": {
               "label": "Username Secret",
@@ -79,7 +75,7 @@
             "title": "SUSE Registry",
             "endpoint": {
               "label": "Chart Repository (OCI)",
-              "placeholder": "oci://registry.example.com/charts"
+              "placeholder": "oci://registry.suse.com/ai/charts"
             },
             "userSecretRef": {
               "label": "Username Secret",
@@ -102,9 +98,9 @@
           },
           "nvidia": {
             "title": "NVIDIA AI Library",
-            "description": "NGC credential used to pull gated NVIDIA images (nvcr.io) and, when configured below, to authenticate to a mirrored OCI chart repository. Username is conventionally “$oauthtoken”.",
+            "description": "NGC credentials pull gated NVIDIA images from nvcr.io. Leave the mirror empty to use the public NGC chart repositories; configure it only for a private OCI mirror. Username is conventionally “$oauthtoken”.",
             "endpoint": {
-              "label": "Chart Repository (OCI)",
+              "label": "Mirrored Chart Repository (OCI, optional)",
               "placeholder": "oci://registry.example.com/nvidia/charts"
             },
             "userSecretRef": {
@@ -205,17 +201,6 @@
               "service": {
                 "label": "Operator Service",
                 "placeholder": "aif-operator"
-              }
-            },
-            "catalogDiscovery": {
-              "title": "Catalog Discovery",
-              "applicationCollectionMode": {
-                "label": "Discovery Mode",
-                "options": {
-                  "api": "API (default)",
-                  "registryFallback": "Registry Fallback (air-gap)",
-                  "disabled": "Disabled"
-                }
               }
             },
             "imageRewrite": {

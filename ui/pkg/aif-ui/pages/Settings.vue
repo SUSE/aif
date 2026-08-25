@@ -10,7 +10,14 @@ import { getSettings, putSettings, validateCredentials } from '../utils/operator
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
+import {
+  APP_COLLECTION_REPO_URL,
+  SUSE_REGISTRY_REPO_URL,
+  NVIDIA_REPO_URL,
+  NVIDIA_BLUEPRINT_REPO_URL,
+  resolveRegistryEndpoints,
+  registryEndpointOverrides,
+} from '../services/registry-endpoints';
 import {
   mintOperatorToken, ensureTokenSecret, deleteToken, requestErrorMessage,
   TOKEN_EXPIRES_ANNOTATION, TOKEN_NAME_ANNOTATION,
@@ -24,8 +31,7 @@ function createEmptySpec() {
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, refreshIntervalMinutes: 10 },
     nvidia:                { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null },
     rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
-    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '', nvidia: '' },
-    catalogDiscovery:      { applicationCollectionMode: 'api' },
+    registryEndpoints:     resolveRegistryEndpoints(),
     imageRewrite:          { enabled: false, rules: [] },
   };
 }
@@ -118,14 +124,6 @@ export default {
       ];
     },
 
-    catalogDiscoveryOptions() {
-      return [
-        { label: this.t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.options.api'), value: 'api' },
-        { label: this.t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.options.registryFallback'), value: 'registry-fallback' },
-        { label: this.t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.options.disabled'), value: 'disabled' },
-      ];
-    },
-
     categoriesString: {
       get() {
         return (this.spec.applicationCollection.categories || []).join(', ');
@@ -212,13 +210,7 @@ export default {
           insecureSkipVerify: !!crdSpec.rancherCatalog.insecureSkipVerify,
         };
       }
-      if (crdSpec.registryEndpoints) {
-        s.registryEndpoints = { ...s.registryEndpoints, ...crdSpec.registryEndpoints };
-      }
-      if (crdSpec.catalogDiscovery) {
-        s.catalogDiscovery.applicationCollectionMode =
-          crdSpec.catalogDiscovery.applicationCollectionMode || 'api';
-      }
+      s.registryEndpoints = resolveRegistryEndpoints(crdSpec.registryEndpoints);
       if (crdSpec.imageRewrite) {
         s.imageRewrite = {
           enabled: !!crdSpec.imageRewrite.enabled,
@@ -282,16 +274,10 @@ export default {
 
       const re = spec.registryEndpoints;
 
-      if (re.suseRegistry || re.applicationCollection || re.applicationCollectionAPI || re.nvidia) {
-        out.registryEndpoints = {};
-        if (re.suseRegistry) out.registryEndpoints.suseRegistry = re.suseRegistry;
-        if (re.applicationCollection) out.registryEndpoints.applicationCollection = re.applicationCollection;
-        if (re.applicationCollectionAPI) out.registryEndpoints.applicationCollectionAPI = re.applicationCollectionAPI;
-        if (re.nvidia) out.registryEndpoints.nvidia = re.nvidia;
-      }
+      const endpointOverrides = registryEndpointOverrides(re);
 
-      if (spec.catalogDiscovery.applicationCollectionMode !== 'api') {
-        out.catalogDiscovery = { applicationCollectionMode: spec.catalogDiscovery.applicationCollectionMode };
+      if (Object.keys(endpointOverrides).length) {
+        out.registryEndpoints = endpointOverrides;
       }
 
       if (spec.imageRewrite.enabled || spec.imageRewrite.rules.length) {
@@ -647,17 +633,6 @@ export default {
                 v-model:value="spec.registryEndpoints.applicationCollection"
                 :label="t('suseai.pages.settings.sections.appCollection.endpoint.label')"
                 :placeholder="t('suseai.pages.settings.sections.appCollection.endpoint.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-
-          <div class="row mb-15">
-            <div class="col span-8">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.applicationCollectionAPI"
-                :label="t('suseai.pages.settings.sections.appCollection.apiEndpoint.label')"
-                :placeholder="t('suseai.pages.settings.sections.appCollection.apiEndpoint.placeholder')"
                 :mode="mode"
               />
             </div>
@@ -1290,23 +1265,6 @@ export default {
               />
             </div>
           </div>
-
-          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
-          <template v-if="false">
-            <h3 class="mb-10">
-              {{ t('suseai.pages.settings.sections.advanced.catalogDiscovery.title') }}
-            </h3>
-            <div class="row mb-20">
-              <div class="col span-4">
-                <LabeledSelect
-                  v-model:value="spec.catalogDiscovery.applicationCollectionMode"
-                  :label="t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.label')"
-                  :options="catalogDiscoveryOptions"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-          </template>
 
           <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
           <template v-if="false">

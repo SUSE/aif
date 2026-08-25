@@ -1,5 +1,5 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
-import { APP_COLLECTION_REPO_URL } from './app-collection';
+import { APP_COLLECTION_REPO_URL } from './registry-endpoints';
 import { TIMEOUT_VALUES } from '../utils/constants';
 
 // The operator-managed AppCollection ClusterRepo name. SUSE-registry charts

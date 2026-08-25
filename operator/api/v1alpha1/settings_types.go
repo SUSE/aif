@@ -109,17 +109,14 @@ type NvidiaSettings struct {
 	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 }
 
-// RegistryEndpointsSettings overrides upstream registry hosts for air-gap deployments.
+// RegistryEndpointsSettings configures custom chart repositories.
 type RegistryEndpointsSettings struct {
-	// SUSERegistry overrides the default SUSE Registry hostname.
+	// SUSERegistry overrides the default SUSE Registry chart repository URL.
 	// +optional
 	SUSERegistry string `json:"suseRegistry,omitempty"`
-	// ApplicationCollection overrides the SUSE App Collection OCI hostname.
+	// ApplicationCollection overrides the SUSE App Collection chart repository URL.
 	// +optional
 	ApplicationCollection string `json:"applicationCollection,omitempty"`
-	// ApplicationCollectionAPI overrides the SUSE App Collection HTTP API URL.
-	// +optional
-	ApplicationCollectionAPI string `json:"applicationCollectionAPI,omitempty"`
 	// Nvidia is the OCI URL of a mirrored NVIDIA chart repository for air-gapped installs
 	// (e.g. oci://registry.example.com/nvidia). When empty, NVIDIA charts are pulled from the
 	// public NGC HTTPS repositories; when set, a single gated OCI ClusterRepo is created at this URL.
@@ -127,15 +124,6 @@ type RegistryEndpointsSettings struct {
 	// require node-level registry redirection (e.g. containerd hosts.toml) in a true air-gap.
 	// +optional
 	Nvidia string `json:"nvidia,omitempty"`
-}
-
-// CatalogDiscoverySettings controls how the SUSE Application Collection is discovered.
-type CatalogDiscoverySettings struct {
-	// ApplicationCollectionMode selects the discovery strategy.
-	// +kubebuilder:validation:Enum=api;registry-fallback;disabled
-	// +kubebuilder:default=api
-	// +optional
-	ApplicationCollectionMode string `json:"applicationCollectionMode,omitempty"`
 }
 
 // ImageRewriteRule defines a single image prefix rewrite rule.
@@ -183,12 +171,9 @@ type SettingsSpec struct {
 	// Nvidia configures NVIDIA NGC integration.
 	// +optional
 	Nvidia NvidiaSettings `json:"nvidia,omitempty"`
-	// RegistryEndpoints overrides upstream registry defaults for air-gap deployments.
+	// RegistryEndpoints configures custom chart repositories for air-gap deployments.
 	// +optional
 	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
-	// CatalogDiscovery controls how the SUSE Application Collection is discovered.
-	// +optional
-	CatalogDiscovery CatalogDiscoverySettings `json:"catalogDiscovery,omitempty"`
 	// ImageRewrite controls Helm-values prefix substitution at deploy time.
 	// +optional
 	ImageRewrite ImageRewriteSettings `json:"imageRewrite,omitempty"`

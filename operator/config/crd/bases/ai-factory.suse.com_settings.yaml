@@ -111,19 +111,6 @@ spec:
                     - name
                     type: object
                 type: object
-              catalogDiscovery:
-                description: CatalogDiscovery controls how the SUSE Application Collection
-                  is discovered.
-                properties:
-                  applicationCollectionMode:
-                    default: api
-                    description: ApplicationCollectionMode selects the discovery strategy.
-                    enum:
-                    - api
-                    - registry-fallback
-                    - disabled
-                    type: string
-                type: object
               fleet:
                 description: Fleet configures Fleet GitOps integration.
                 properties:
@@ -303,16 +290,12 @@ spec:
                     type: string
                 type: object
               registryEndpoints:
-                description: RegistryEndpoints overrides upstream registry defaults
+                description: RegistryEndpoints configures custom chart repositories
                   for air-gap deployments.
                 properties:
                   applicationCollection:
                     description: ApplicationCollection overrides the SUSE App Collection
-                      OCI hostname.
-                    type: string
-                  applicationCollectionAPI:
-                    description: ApplicationCollectionAPI overrides the SUSE App Collection
-                      HTTP API URL.
+                      chart repository URL.
                     type: string
                   nvidia:
                     description: |-
@@ -324,7 +307,7 @@ spec:
                     type: string
                   suseRegistry:
                     description: SUSERegistry overrides the default SUSE Registry
-                      hostname.
+                      chart repository URL.
                     type: string
                 type: object
               suseRegistry:
