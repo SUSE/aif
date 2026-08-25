@@ -9,6 +9,29 @@ The chart creates a Deployment and Service that serve the built extension assets
 - Rancher 2.10+ with UI Extensions support (`catalog.cattle.io/v1` API)
 - Target namespace: `cattle-ui-plugin-system`
 
+## Air-gapped installation
+
+Use the same image-only values file as the operator chart. Copy
+[`../values-airgap-images.example.yaml`](../values-airgap-images.example.yaml),
+set the private registry prefix and pull Secret name, then install the mirrored
+UI chart:
+
+```bash
+helm upgrade --install aif-ui \
+  oci://registry.example.com/ai-factory/charts/aif-ui \
+  --namespace cattle-ui-plugin-system \
+  --create-namespace \
+  --version <version> \
+  -f charts/values-airgap-images.example.yaml \
+  --set standalone=true
+```
+
+The named pull Secret must already exist in `cattle-ui-plugin-system`.
+`global.imageRegistry` changes only the container image prefix; it does not
+redirect or authenticate the OCI Helm chart source. In a combined install, the
+operator forwards its global registry and pull Secrets to this chart unless an
+explicit nested UI registry or pull-Secret value is present.
+
 ## Values
 
 | Key | Type | Default | Description |

@@ -161,6 +161,75 @@ helm install aif-operator \
 
 The command deploys the SUSE AI Operator using the default configuration. See the [Parameters](#parameters) section for configurable options.
 
+## Air-gapped image configuration
+
+The operator and UI charts accept the same image-only values file. Copy
+[`../values-airgap-images.example.yaml`](../values-airgap-images.example.yaml),
+replace the example registry prefix and pull Secret name, and use that file for
+both combined and separate installations.
+
+The private registry must contain these images, preserving the repository paths
+shown in the charts' `helm.sh/images` annotations:
+
+- `ghcr.io/suse/aif-operator`
+- `ghcr.io/suse/aif-ui`
+- `registry.suse.com/suse/kubectl`
+
+For example, with `global.imageRegistry: registry.example.com/ai-factory`, the
+operator image resolves to
+`registry.example.com/ai-factory/suse/aif-operator:<tag>`. The same prefix is
+used for the CRD and cleanup hook Jobs and is forwarded to the managed UI chart.
+An explicit UI override under `aiExtension.source.helm.values.global` or the
+legacy `aiExtension.source.helm.values.image.registry` takes precedence, so
+existing installations remain compatible.
+
+The registry prefix does **not** redirect Helm chart sources. Mirror both OCI
+charts separately and set the managed UI's private chart URL explicitly:
+
+```bash
+helm upgrade --install aif-operator \
+  oci://registry.example.com/ai-factory/charts/aif-operator \
+  --namespace aif-operator \
+  --create-namespace \
+  --version <version> \
+  -f charts/values-airgap-images.example.yaml \
+  --set-string aiExtension.source.helm.chartURL=oci://registry.example.com/ai-factory/charts/aif-ui \
+  --set-string aiExtension.source.helm.version=<version> \
+  --set-string manager.allowedRegistryHosts[0]=registry.example.com
+```
+
+`global.imagePullSecrets` supplies Kubernetes image-pull credentials; it does
+not authenticate the operator's Helm chart download. Configure a private chart's
+`aiExtension.source.helm.auth` and `aiExtension.source.helm.tls` Secret
+references separately. Those Secrets must exist in the operator namespace.
+The image-pull Secret named by the shared values must exist in both the operator
+namespace and `cattle-ui-plugin-system` before installation.
+
+For separate installation, disable the managed UI and pass the same file to the
+standalone UI chart:
+
+```bash
+helm upgrade --install aif-operator \
+  oci://registry.example.com/ai-factory/charts/aif-operator \
+  --namespace aif-operator \
+  --create-namespace \
+  --version <version> \
+  -f charts/values-airgap-images.example.yaml \
+  --set aiExtension.enabled=false
+
+helm upgrade --install aif-ui \
+  oci://registry.example.com/ai-factory/charts/aif-ui \
+  --namespace cattle-ui-plugin-system \
+  --create-namespace \
+  --version <version> \
+  -f charts/values-airgap-images.example.yaml \
+  --set standalone=true
+```
+
+The shared override covers images rendered by these charts only. Application
+images referenced by catalogs and Blueprints must be mirrored and configured as
+part of the corresponding private catalog workflow.
+
 ## Uninstalling the Chart
 
 To uninstall the operator:
@@ -179,8 +248,8 @@ For example:
 
 | Name                      | Description                        | Value |
 | ------------------------- | ---------------------------------- | ----- |
-| `global.imageRegistry`    | Global override for image registry | `""`  |
-| `global.imagePullSecrets` | Global image pull secrets          | `[]`  |
+| `global.imageRegistry`    | Registry/prefix for operator, helper Job, and managed UI images | `""`  |
+| `global.imagePullSecrets` | Pull Secrets for operator, helper Job, and managed UI images | `[]`  |
 | `nameOverride`            | Partially override chart name      | `""`  |
 | `fullnameOverride`        | Fully override resource names      | `""`  |
 
@@ -270,9 +339,9 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 | `aiExtension.enabled`                          | Create InstallAIExtension CR on install    | `true`                                   |
 | `aiExtension.source.kind`                      | Source type                                | `Helm`                                   |
 | `aiExtension.source.helm.chartURL`             | Helm chart URL (OCI or HTTPS)              | `oci://ghcr.io/suse/chart/aif-ui`       |
-| `aiExtension.source.helm.version`              | Helm chart version                         | `0.1.0`                                  |
+| `aiExtension.source.helm.version`              | Helm chart version                         | `2.2.0-dev.2`                            |
 | `aiExtension.extension.name`                   | Extension name (UIPlugin name)             | `aif-ui`                                 |
-| `aiExtension.extension.version`                | Extension version                          | `0.1.0`                                  |
+| `aiExtension.extension.version`                | Extension version                          | `2.2.0-dev.2`                            |
 | `aiExtension.cleanup.image.registry`           | kubectl image registry for cleanup job     | `registry.suse.com`                      |
 | `aiExtension.cleanup.image.repository`         | kubectl image repository                   | `suse/kubectl`                           |
 | `aiExtension.cleanup.image.tag`                | kubectl image tag                          | `1.35`                                   |
@@ -347,6 +416,15 @@ bash charts/aif-operator/tests/default-blueprints-render.sh
 ```
 
 Both print `PASS` on success. The convention check enforces the rules above; the render check confirms the files render and carry the marker label when `defaultBlueprints.enabled=true` (and nothing when `false`).
+
+Chart changes must also pass the shared air-gap image-closure check. It renders
+combined and separate deployments, enumerates containers and init containers in
+all workload and hook manifests, and rejects any image outside the private
+registry prefix in the example values:
+
+```bash
+bash charts/tests/airgap-image-closure.sh
+```
 
 For full CRD schema conformance (required fields, the semver pattern, `components` having at least one entry with non-empty `chartRepo`/`chartName`/`chartVersion`), validate against a cluster that has the Blueprint CRD installed:
 

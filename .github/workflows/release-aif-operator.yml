@@ -173,12 +173,20 @@ jobs:
 
       - name: Update Chart.yaml versions
         run: |
-          yq -i '.version = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
-          yq -i '.appVersion = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
+          set -euo pipefail
+          KUBECTL_IMAGE="$(yq -r '.crds.image | .registry + "/" + .repository + ":" + .tag' "$CHART_PATH/values.yaml")"
+          export KUBECTL_IMAGE
+          yq -i '.version = "${{ needs.prepare.outputs.VERSION }}"' "$CHART_PATH/Chart.yaml"
+          yq -i '.appVersion = "${{ needs.prepare.outputs.VERSION }}"' "$CHART_PATH/Chart.yaml"
           yq -i '
             .annotations."helm.sh/images" =
-            "- image: ghcr.io/suse/aif-operator:${{ needs.prepare.outputs.VERSION }}\n  name: aif-operator"
-          ' $CHART_PATH/Chart.yaml
+              "- image: ghcr.io/suse/aif-operator:${{ needs.prepare.outputs.VERSION }}" +
+              "\n  name: aif-operator" +
+              "\n- image: ghcr.io/suse/aif-ui:${{ needs.prepare.outputs.VERSION }}" +
+              "\n  name: aif-ui" +
+              "\n- image: " + strenv(KUBECTL_IMAGE) +
+              "\n  name: kubectl"
+          ' "$CHART_PATH/Chart.yaml"
 
       - name: Package and push Helm chart
         run: |

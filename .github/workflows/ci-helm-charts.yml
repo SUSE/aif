@@ -1,0 +1,51 @@
+name: AI Factory Helm Charts CI
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+      - '.github/workflows/ci-helm-charts.yml'
+      - '.github/workflows/release-prepare.yml'
+      - '.github/workflows/release-aif-operator.yml'
+      - '.github/workflows/release-aif-extension.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  charts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.6
+
+      - name: Install pinned yq
+        env:
+          YQ_VERSION: v4.53.2
+          YQ_SHA256: d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b
+        run: |
+          set -euo pipefail
+          yq_download="$(mktemp)"
+          trap 'rm -f -- "${yq_download}"' EXIT
+          curl --fail --silent --show-error --location \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+            --output "${yq_download}"
+          printf '%s  %s\n' "${YQ_SHA256}" "${yq_download}" | sha256sum --check --strict
+          sudo install -m 0755 "${yq_download}" /usr/local/bin/yq
+
+      - name: Validate charts and air-gap image closure
+        run: |
+          set -euo pipefail
+          helm version --short
+          yq --version
+          bash charts/tests/airgap-image-closure.sh
