@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	stderrors "errors"
 	"fmt"
 	"net/url"
@@ -411,7 +412,10 @@ func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatfor
 		if err != nil {
 			return err
 		}
-		spec["caBundle"] = string(caBundle)
+		// Fleet declares caBundle as []byte (OpenAPI format: byte). Because this
+		// controller applies an unstructured object, it must perform the JSON
+		// base64 encoding that a typed []byte field would receive automatically.
+		spec["caBundle"] = base64.StdEncoding.EncodeToString(caBundle)
 	}
 
 	gitRepo := &unstructured.Unstructured{

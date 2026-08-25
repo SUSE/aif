@@ -20,6 +20,7 @@ package settings_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -142,8 +143,12 @@ func TestSettingsController_FleetGitRepoUsesConfiguredPrivateCA(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("GitRepo spec.caBundle missing: found=%v err=%v", found, err)
 	}
-	if got != string(caPEM) {
-		t.Error("GitRepo spec.caBundle does not match the configured Secret key")
+	decoded, err := base64.StdEncoding.DecodeString(got)
+	if err != nil {
+		t.Fatalf("GitRepo spec.caBundle is not JSON base64: %v", err)
+	}
+	if !bytes.Equal(decoded, caPEM) {
+		t.Error("decoded GitRepo spec.caBundle does not match the configured Secret key")
 	}
 }
 
