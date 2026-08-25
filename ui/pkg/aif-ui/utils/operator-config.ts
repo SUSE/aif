@@ -215,7 +215,12 @@ export function invalidateOperatorConfig(): void {
 /** Write operator coordinates to the ConfigMap and refresh the in-memory cache.
  *  GETs the existing ConfigMap first to obtain its resourceVersion for optimistic
  *  concurrency control, then PUTs. Falls back to POST (create) when the ConfigMap
- *  doesn't exist yet (git-based install, no Helm chart ran). */
+ *  doesn't exist yet (git-based install, no Helm chart ran).
+ *
+ *  The create path stamps the same Helm ownership label/annotations the aif-ui
+ *  chart's own configmap.yaml sets. Without them, a ConfigMap created here can
+ *  block a later `helm install`/`upgrade` of the aif-ui-server release with
+ *  "invalid ownership metadata" (SUSEAI-1039). */
 export async function saveOperatorConfig(namespace: string, service: string): Promise<void> {
   const url     = configMapUrl();
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -244,7 +249,18 @@ export async function saveOperatorConfig(namespace: string, service: string): Pr
     res = await fetch(configMapCollectionUrl(), {
       method: 'POST',
       headers,
-      body:   JSON.stringify({ ...payload, data: { operatorNamespace: namespace, operatorService: service } }),
+      body:   JSON.stringify({
+        ...payload,
+        metadata: {
+          ...payload.metadata,
+          labels:      { 'app.kubernetes.io/managed-by': 'Helm' },
+          annotations: {
+            'meta.helm.sh/release-name':      'aif-ui-server',
+            'meta.helm.sh/release-namespace': CONFIG_NAMESPACE,
+          },
+        },
+        data: { operatorNamespace: namespace, operatorService: service },
+      }),
     });
   } else {
     res = getRes;
