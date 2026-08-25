@@ -823,9 +823,6 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	if err != nil {
 		return err
 	}
-	if ho != nil {
-		return nil // already published
-	}
 
 	repoInfo, err := r.resolveClusterRepo(ctx, c.ChartRepo)
 	if err != nil {
@@ -889,6 +886,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
 	targets := append(append([]any{}, localTargets...), downstreamTargets...)
 	fleetNS := gitOpsFleetNamespace(w)
+	if repoInfo.ClientSecret != "" {
+		if err := r.ensureFleetAuthSecret(ctx, fleetNS, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
+			return fmt.Errorf("sync auth secret to %s: %w", fleetNS, err)
+		}
+	}
 
 	helmOpSpec := map[string]any{
 		// defaultNamespace (not namespace): targets the release namespace without
@@ -901,6 +903,16 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 	if repoInfo.ClientSecret != "" {
 		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+	}
+	// A materialized HelmOp proves that Fleet consumed the git file, but it
+	// does not prove the file still reflects the current Blueprint dependencies.
+	// In particular, changing a logical Application's source must rewrite an
+	// existing GitOps workload without changing the Blueprint itself. Avoid the
+	// git clone only when the materialized object exactly matches what this
+	// reconcile resolved; WriteFile performs a second content-level no-op check
+	// for the short interval before Fleet observes a freshly pushed update.
+	if helmOpMatchesDesiredSpec(ho, fleetNS, helmOpSpec) {
+		return nil
 	}
 
 	helmOpObj := map[string]any{
@@ -916,6 +928,25 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	}
 
 	return r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
+}
+
+func helmOpMatchesDesiredSpec(helmOp *unstructured.Unstructured, namespace string, desired map[string]any) bool {
+	if helmOp == nil || helmOp.GetNamespace() != namespace {
+		return false
+	}
+	current, found, err := unstructured.NestedMap(helmOp.Object, "spec")
+	if err != nil || !found {
+		return false
+	}
+	currentJSON, err := json.Marshal(current)
+	if err != nil {
+		return false
+	}
+	desiredJSON, err := json.Marshal(desired)
+	if err != nil {
+		return false
+	}
+	return string(currentJSON) == string(desiredJSON)
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {
