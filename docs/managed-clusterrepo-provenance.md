@@ -18,8 +18,22 @@ Pre-existing UI-created air-gap mirrors have slug-based names and no provenance 
 The operator intentionally does not auto-delete "any repo at this URL we did not create" because doing so could delete a legitimately admin-created repository. Operators should delete the old slug-based ClusterRepo manually after confirming the labeled `nvidia` repository is Ready:
 
 ```bash
-kubectl get clusterrepos -l '!ai-factory.suse.com/managed-repo' -o name   # candidates
+# List every unlabeled ClusterRepo WITH its URL, so you can match by URL — do not
+# delete by the label selector alone.
+kubectl get clusterrepos -o custom-columns=NAME:.metadata.name,URL:.spec.url,GITREPO:.spec.gitRepo
 kubectl delete clusterrepo <old-slug-name>
 ```
 
-The first command lists ClusterRepos without the managed-repo label (candidates for cleanup). Review the list to identify UI-created air-gap mirrors, then use the second command to delete the specific old slug-based repository once the new labeled repository is confirmed Ready.
+Match the old slug-based mirror by its **URL** — it will equal your `registryEndpoints.nvidia` value (the air-gap mirror URL). Delete only that repository, and only once the new labeled `nvidia` repository is confirmed Ready.
+
+> **Warning — do not delete built-in or extension repositories.** The inverse label
+> selector (`-l '!ai-factory.suse.com/managed-repo'`) also matches Rancher's own
+> `rancher-charts`, `rancher-partner-charts`, `rancher-rke2-charts`, and every
+> UI-extension ClusterRepo — none of which carry the managed-repo label. Never
+> delete a `rancher-*` or extension repository; deleting them breaks the cluster's
+> chart catalog. Always confirm the URL before deleting.
+
+Two related caveats:
+
+- **AIWorkloads pin their source repo by name** (`spec.chartRepo`). Deleting a slug-based repository that an existing workload was installed from will break redeploy of that workload until it is repointed at the labeled canonical repository.
+- The removed UI code also created a `cattle-system/<slug>-auth` Secret alongside each mirror. After the operator takes over, that Secret is orphaned; remove it manually if you no longer need it.

@@ -42,12 +42,24 @@ const (
 	DefaultNvidiaBlueprintURL       = "https://helm.ngc.nvidia.com/nvidia/blueprint"
 )
 
-// ClusterRepo names align with pkg/aif-ui/services/rancher-apps.ts.
+// ClusterRepo names align with pkg/aif-ui/services/app-collection.ts.
 const (
 	ClusterRepoApplicationCollection = "application-collection"
 	ClusterRepoSUSERegistry          = "suse-ai-registry"
 	ClusterRepoNvidia                = "nvidia"
 	ClusterRepoNvidiaBlueprint       = "nvidia-blueprints"
+)
+
+// Provenance labels stamped on operator-created ClusterRepos. Single source of
+// truth: the reconciler (internal/controller/settings) and its tests reference
+// these, and the UI mirrors them in pkg/aif-ui/services/app-collection.ts as the
+// sole signal for dynamic-catalog discovery. ManagedRepoLabel marks EVERY repo
+// the operator creates; TeamRepoLabel additionally marks NGC team repos so
+// pruning can list-and-diff them by label. Value is always LabelValueTrue.
+const (
+	ManagedRepoLabel = "ai-factory.suse.com/managed-repo"
+	TeamRepoLabel    = "ai-factory.suse.com/nvidia-team-repo"
+	LabelValueTrue   = "true"
 )
 
 // Basic-auth secrets written to cattle-system for Rancher catalog / Fleet chart pulls.

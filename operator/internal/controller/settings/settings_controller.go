@@ -289,22 +289,21 @@ const (
 	fleetGitRepoNamespace = "fleet-local"
 )
 
-// teamRepoMarkerLabel marks ClusterRepos the operator creates for NGC team
-// repos, so pruning can list-and-diff them by label (blueprint.go / pullsecrets.go
-// house pattern). Applied ONLY to team repos — never to the org/AC/SR/mirror
-// repos, which keep name-list pruning.
+// Provenance-label aliases. The literals live once in the credentials package
+// (credentials.TeamRepoLabel / ManagedRepoLabel), which the UI also mirrors;
+// these unexported names keep the reconciler's call sites terse. teamRepoMarker*
+// marks ONLY NGC team repos, so pruning can list-and-diff them by label
+// (blueprint.go / pullsecrets.go house pattern). managedRepoMarker* marks EVERY
+// ClusterRepo the operator creates (org/AC/SR/nvidia/blueprint/air-gap mirror +
+// team repos) and is the sole provenance signal the UI reads for dynamic-catalog
+// discovery, so an out-of-band ClusterRepo at a matching URL/host is never picked
+// up. (Do not reuse app.kubernetes.io/managed-by — it already carries value
+// "Helm" for Helm-owned objects the operator avoids.)
 const (
-	teamRepoMarkerLabel = "ai-factory.suse.com/nvidia-team-repo"
-	teamRepoMarkerValue = "true"
-
-	// managedRepoMarkerLabel marks EVERY ClusterRepo the operator creates
-	// (org/AC/SR/nvidia/blueprint/air-gap mirror + team repos). The UI uses it as
-	// the sole provenance signal for dynamic-catalog discovery, so an out-of-band
-	// ClusterRepo at a matching URL/host is never picked up. Generalizes the
-	// team-repo marker above; do not reuse app.kubernetes.io/managed-by, which is
-	// already used with value "Helm" for Helm-owned objects the operator avoids.
-	managedRepoMarkerLabel = "ai-factory.suse.com/managed-repo"
-	managedRepoMarkerValue = "true"
+	teamRepoMarkerLabel    = credentials.TeamRepoLabel
+	teamRepoMarkerValue    = credentials.LabelValueTrue
+	managedRepoMarkerLabel = credentials.ManagedRepoLabel
+	managedRepoMarkerValue = credentials.LabelValueTrue
 
 	// clusterRepoNameMax is the DNS-1123 label cap for a ClusterRepo name.
 	clusterRepoNameMax = 63
@@ -564,6 +563,27 @@ func (r *SettingsReconciler) forceUpdateClusterRepo(ctx context.Context, name st
 	return nil
 }
 
+// managedRepoSpec builds the ClusterRepo spec the operator owns via server-side
+// apply. Beyond spec.url it EXPLICITLY zeroes the alternate-source surface so that
+// when the operator adopts a pre-existing ClusterRepo squatting a canonical name
+// (applyClusterRepo patches with client.Apply + ForceOwnership and no adoption
+// guard, so fields absent from this object survive), SSA neutralizes any foreign
+// fields the squatter set — a git source, downgraded TLS, or a ServiceAccount —
+// rather than leaving them intact on a repo the operator then blesses as managed.
+// The operator never legitimately sets any of these on its repos, so forcing them
+// empty is a no-op for repos the operator itself created. The caller adds
+// spec.clientSecret.
+func managedRepoSpec(repoURL string) map[string]any {
+	return map[string]any{
+		"url":                     repoURL,
+		"gitRepo":                 "",
+		"gitBranch":               "",
+		"insecureSkipTLSVerify":   false,
+		"serviceAccount":          "",
+		"serviceAccountNamespace": "",
+	}
+}
+
 func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, clientSecretName string) error {
 	repo := &unstructured.Unstructured{
 		Object: map[string]any{
@@ -573,9 +593,7 @@ func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, cl
 				"name":   name,
 				"labels": map[string]any{managedRepoMarkerLabel: managedRepoMarkerValue},
 			},
-			"spec": map[string]any{
-				"url": url,
-			},
+			"spec": managedRepoSpec(url),
 		},
 	}
 
@@ -798,9 +816,7 @@ func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngc
 					managedRepoMarkerLabel: managedRepoMarkerValue,
 				},
 			},
-			"spec": map[string]any{
-				"url": ngcURL,
-			},
+			"spec": managedRepoSpec(ngcURL),
 		},
 	}
 	if clientSecretName != "" {
