@@ -64,3 +64,19 @@ explicit nested UI registry or pull-Secret value is present.
 | `rollingUpdate.maxUnavailable` | string | `25%` | Rolling update max unavailable |
 | `operator.namespace` | string | `aif-operator` | Namespace where the SUSE AI operator is installed. Written to the `aif-ui-config` ConfigMap and read by the UI extension at runtime to build the operator API URL. |
 | `operator.service` | string | `aif-operator` | Service name of the SUSE AI operator. |
+
+## Testing
+
+The chart has unit tests that verify template rendering and values handling. To run them locally:
+
+```bash
+# Install the helm-unittest plugin (Helm 4 requires --verify=false)
+helm plugin install https://github.com/helm-unittest/helm-unittest.git \
+  --version v1.1.2 --verify=false
+
+# Run all test suites
+helm unittest charts/aif-ui
+
+# Run a single suite
+helm unittest -f tests/helpers_test.yaml charts/aif-ui
+```

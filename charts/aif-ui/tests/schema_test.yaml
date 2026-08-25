@@ -1,0 +1,78 @@
+suite: values.schema.json contract
+templates:
+  - templates/deployment.yaml
+release:
+  name: my-rel
+  namespace: cattle-ui-plugin-system
+chart:
+  version: 9.9.9
+  appVersion: "2.2"
+tests:
+  - it: accepts the shipped defaults
+    template: templates/deployment.yaml
+    asserts:
+      - notFailedTemplate: {}
+
+  # Every errorPattern below is anchored on the schema path the violation is
+  # reported at. A bare pattern like `pullPolicy` or `type` would match almost
+  # any render error, so the test would still pass if the schema stopped
+  # enforcing the rule it claims to cover.
+  - it: rejects an unknown top-level key
+    template: templates/deployment.yaml
+    set:
+      totallyBogusKey: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '': additional properties .*totallyBogusKey.* not allowed"
+
+  - it: rejects a pull policy outside the enum
+    template: templates/deployment.yaml
+    set:
+      image.pullPolicy: Sometimes
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/image/pullPolicy': value must be one of"
+
+  - it: rejects a negative replica count
+    template: templates/deployment.yaml
+    set:
+      replicaCount: -1
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/replicaCount'"
+
+  - it: rejects a service type outside the enum
+    template: templates/deployment.yaml
+    set:
+      service.type: Bogus
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/service/type': value must be one of"
+
+  - it: rejects an unknown operator connection property
+    template: templates/deployment.yaml
+    set:
+      operator.bogus: x
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/operator': additional properties .*bogus.* not allowed"
+
+  - it: rejects an unknown appCatalog property
+    template: templates/deployment.yaml
+    set:
+      appCatalog.bogus: x
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/appCatalog': additional properties .*bogus.* not allowed"
+
+  - it: accepts a fully specified valid override set
+    template: templates/deployment.yaml
+    set:
+      replicaCount: 2
+      standalone: true
+      image.pullPolicy: Always
+      service.type: NodePort
+      appCatalog.useStaticCatalog: false
+      operator.namespace: custom-ns
+    asserts:
+      - notFailedTemplate: {}
