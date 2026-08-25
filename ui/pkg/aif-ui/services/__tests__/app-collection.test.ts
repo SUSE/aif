@@ -20,6 +20,7 @@ import {
   resolveInstallRepoName,
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
+  MANAGED_REPO_LABEL,
 } from '../app-collection';
 
 type RawRepo = {
@@ -43,6 +44,19 @@ function readyNoIndex(): RawRepo['status'] {
 function notReady(message: string): RawRepo['status'] {
   return { conditions: [{ type: 'Downloaded', status: 'False', message }] };
 }
+// A stale index: the ConfigMap from a PREVIOUS successful download is still
+// present, but the most recent download flipped to False (e.g. spec.url was
+// changed to a broken endpoint). Serving that index would list apps from a
+// source the cluster is no longer configured to use, so it must be not-ready.
+function staleIndex(message: string): RawRepo['status'] {
+  return {
+    conditions: [
+      { type: 'Downloaded', status: 'True' },
+      { type: 'OCIDownloaded', status: 'False', message },
+    ],
+    indexConfigMapName: 'idx-old',
+  };
+}
 
 // A $store whose dispatch returns `repos` for the clusterrepos list, and per-repo
 // index entries for `?link=index` requests. Index is keyed by repo name.
@@ -60,7 +74,7 @@ function makeStore(repos: RawRepo[], indexByRepo: Record<string, any> = {}) {
   };
 }
 
-const MANAGED = 'ai-factory.suse.com/managed-repo';
+const MANAGED = MANAGED_REPO_LABEL;
 
 describe('fetchManagedRepos', () => {
   it('includes only provenance-labeled repos, classified by library', async () => {
@@ -84,6 +98,7 @@ describe('fetchManagedRepos', () => {
   it('excludes a canonical-named repo that lacks the provenance label', async () => {
     const store = makeStore([
       { metadata: { name: 'application-collection' }, spec: { url: 'oci://ac' }, status: ready() }, // no label
+      { metadata: { name: 'suse-ai-registry', labels: { [MANAGED]: 'false' } }, spec: { url: 'oci://sr' }, status: ready() }, // exact-match gate: 'false' is excluded
       { metadata: { name: 'admin-ngc', labels: { [MANAGED]: 'true' } }, spec: { url: 'https://helm.ngc.nvidia.com/other' }, status: ready() }, // labeled but unclassifiable
     ]);
     const managed = await fetchManagedRepos(store);
@@ -107,6 +122,26 @@ describe('fetchManagedRepos', () => {
     expect(managed).toEqual([
       { name: 'nvidia', url: 'https://helm.ngc.nvidia.com/nvidia', library: 'nvidia', ready: false, message: 'index download failed' },
     ]);
+  });
+
+  it('treats a stale index as not-ready when the latest download failed', async () => {
+    // indexConfigMapName present (previous success) but OCIDownloaded=False now.
+    const store = makeStore([
+      { metadata: { name: 'nvidia', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://mirror' }, status: staleIndex('tls: failed to verify certificate') },
+    ]);
+    const managed = await fetchManagedRepos(store);
+    expect(managed).toEqual([
+      { name: 'nvidia', url: 'oci://mirror', library: 'nvidia', ready: false, message: 'tls: failed to verify certificate' },
+    ]);
+  });
+
+  it('rethrows when the clusterrepos list request fails (not silently empty)', async () => {
+    // A failed list (operator/Rancher unreachable, RBAC) must not look like
+    // "no managed repos" — callers surface it as an error instead.
+    const store = {
+      dispatch: vi.fn(async () => { throw new Error('boom'); }),
+    };
+    await expect(fetchManagedRepos(store)).rejects.toThrow('boom');
   });
 });
 
@@ -138,8 +173,10 @@ describe('fetchSuseAiApps', () => {
 
   it('loads managed repos by fixed name and ignores a same-URL unmanaged repo', async () => {
     const store = makeStore([
-      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac' }, status: ready() },
+      // Listed suse-ai-registry FIRST so the AC-wins dedup can only come from the
+      // name-precedence sort, not from list order.
       { metadata: { name: 'suse-ai-registry', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://sr' }, status: ready() },
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac' }, status: ready() },
       // Admin-created repo at the same AC URL but a different name — must be ignored.
       { metadata: { name: 'admin-copy' }, spec: { url: 'oci://ac' }, status: ready() },
     ], { 'application-collection': acEntries, 'suse-ai-registry': srEntries });
@@ -239,6 +276,22 @@ describe('fetchNvidiaApps', () => {
     expect(apps).toEqual([]);
     expect(failedRepos).toEqual([
       { url: 'https://helm.ngc.nvidia.com/nvidia', reason: 'not-ready', message: 'repository not created yet' },
+    ]);
+  });
+
+  it('reports "not created yet" for an air-gap endpoint with no credentials', async () => {
+    // The operator creates the NVIDIA mirror WITHOUT credentials when
+    // registryEndpoints.nvidia is set, so a creds-only gate would stay silent
+    // while the mirror is pending. Banner must fire on the endpoint alone, and at
+    // the endpoint URL.
+    (getRegistryCredentials as any).mockResolvedValueOnce({});
+    const store = makeStore([]);
+    const { apps, failedRepos } = await fetchNvidiaApps(store, {
+      spec: { registryEndpoints: { nvidia: 'oci://mirror.local/nvidia' } },
+    });
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([
+      { url: 'oci://mirror.local/nvidia', reason: 'not-ready', message: 'repository not created yet' },
     ]);
   });
 });

@@ -181,7 +181,22 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
   const order = ['application-collection', 'suse-ai-registry'];
   const ranked = managed.slice().sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
 
-  const readyRepos = ranked.filter((r) => {
+  const apps = await loadAppsFromRepos($store, ranked, 'suse-ai', failedRepos);
+  return { apps, failedRepos };
+}
+
+/** Shared repo→apps loader for fetchSuseAiApps / fetchNvidiaApps. Filters to ready
+ *  repos (reporting not-ready ones via failedRepos), fetches each repo's index in
+ *  parallel, and dedups apps by slug_name with first-repo-in-`repos`-order winning,
+ *  tagging each app with the repo's url/name and `library`. `repos` MUST already be
+ *  in dedup-precedence order; `failedRepos` is appended to in place. */
+async function loadAppsFromRepos(
+  $store: any,
+  repos: ManagedRepo[],
+  library: 'suse-ai' | 'nvidia',
+  failedRepos: FailedRepo[],
+): Promise<AppCollectionItem[]> {
+  const readyRepos = repos.filter((r) => {
     if (!r.ready) {
       failedRepos.push({ url: r.url, reason: 'not-ready', message: r.message });
       return false;
@@ -197,6 +212,8 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
   const appMap = new Map<string, AppCollectionItem>();
   for (const { repo, apps, error } of perRepo) {
     if (error) {
+      // rancher/request often rejects with a plain response object, not an
+      // Error — prefer its message so the banner never shows "[object Object]".
       const e = error as any;
       const message = e?.message || e?.data?.message || String(error);
       failedRepos.push({ url: repo.url, reason: 'fetch-failed', message });
@@ -204,13 +221,12 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
     }
     for (const a of apps) {
       if (!appMap.has(a.slug_name)) {
-        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library: 'suse-ai' as const });
+        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library });
       }
     }
   }
 
-  const appsOut = Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  return { apps: appsOut, failedRepos };
+  return Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -241,54 +257,28 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
   const failedRepos: FailedRepo[] = [];
 
   if (managed.length === 0) {
-    // No managed repo. Only nag when NVIDIA is effectively configured per the
-    // operator's credentials endpoint (EffectiveRefs — catches well-known secret
-    // names a spec.nvidia.tokenSecretRef check misses). Otherwise stay silent.
-    let configured = false;
+    // No managed repo. Nag ("not created yet") only when NVIDIA is effectively
+    // configured — either credentials resolve (per the operator's credentials
+    // endpoint, EffectiveRefs — catches well-known secret names a
+    // spec.nvidia.tokenSecretRef check misses) OR an air-gap
+    // registryEndpoints.nvidia is set (the operator creates that mirror WITHOUT
+    // credentials, so a creds-only gate would leave the pending mirror wrongly
+    // silent). Otherwise stay silent so an unconfigured registry shows nothing.
+    const s = settings !== undefined ? settings : await fetchSettingsOrNull();
+    let credsConfigured = false;
     try {
       const creds = await getRegistryCredentials();
-      configured = Boolean(creds?.nvidia?.username);
+      credsConfigured = Boolean(creds?.nvidia?.username);
     } catch { /* operator unreachable — fail silent, no false banner */ }
-    if (configured) {
-      // Only now is `settings` needed — for the banner's registry-URL fallback.
-      const s = settings !== undefined ? settings : await fetchSettingsOrNull();
+    const endpointConfigured = Boolean(s?.spec?.registryEndpoints?.nvidia);
+    if (credsConfigured || endpointConfigured) {
       const url = s?.spec?.registryEndpoints?.nvidia || NVIDIA_REPO_URL;
       failedRepos.push({ url, reason: 'not-ready', message: 'repository not created yet' });
     }
     return { apps: [], failedRepos };
   }
 
-  const readyRepos = managed.filter((r) => {
-    if (!r.ready) {
-      failedRepos.push({ url: r.url, reason: 'not-ready', message: r.message });
-      return false;
-    }
-    return true;
-  });
-
-  const perRepo = await Promise.all(readyRepos.map(async (r) => {
-    const { apps, error } = await fetchAppsFromRepositoryResult($store, r.name);
-    return { repo: r, apps, error };
-  }));
-
-  const appMap = new Map<string, AppCollectionItem>();
-  for (const { repo, apps, error } of perRepo) {
-    if (error) {
-      // rancher/request often rejects with a plain response object, not an
-      // Error — prefer its message so the banner never shows "[object Object]".
-      const e = error as any;
-      const message = e?.message || e?.data?.message || String(error);
-      failedRepos.push({ url: repo.url, reason: 'fetch-failed', message });
-      continue;
-    }
-    for (const a of apps) {
-      if (!appMap.has(a.slug_name)) {
-        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library: 'nvidia' as const });
-      }
-    }
-  }
-
-  const apps = Array.from(appMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const apps = await loadAppsFromRepos($store, managed, 'nvidia', failedRepos);
   return { apps, failedRepos };
 }
 
@@ -310,7 +300,18 @@ const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloade
  *  it also preserves the older-Rancher path that set the ConfigMap without a ready
  *  condition. */
 export function isRepoReady(repo: any): boolean {
-  return !!repo?.status?.indexConfigMapName;
+  if (!repo?.status?.indexConfigMapName) return false;
+  // A stale index can outlive a later download failure: if spec.url is changed to
+  // a broken endpoint, indexConfigMapName keeps pointing at the PREVIOUS index
+  // while OCIDownloaded/Downloaded flips to False. Serving that index would list
+  // apps from a source the cluster is no longer configured to use, so treat any
+  // currently-failing download condition as not-ready (repoNotReadyMessage then
+  // surfaces the reason).
+  const conditions = repo?.status?.conditions || [];
+  const failing = conditions.some(
+    (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status === 'False',
+  );
+  return !failing;
 }
 
 /** Human-readable reason a repo is not ready, from its failing download condition. */
@@ -384,8 +385,13 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
     }
     return out;
   } catch (e) {
+    // Rethrow: a failed ClusterRepo list (operator/Rancher unreachable, RBAC
+    // denial, timeout) is NOT "no managed repos". Swallowing it to [] would make
+    // every registry look unconfigured — a silently empty catalog and, on the
+    // install path (findManagedRepoNameByUrl), a wrong null resolution. Callers
+    // (Apps.vue loadApps) surface this as an error banner instead.
     logger.error('Failed to fetch managed cluster repositories', e, { component: 'AppCollection' });
-    return [];
+    throw e;
   }
 }
 

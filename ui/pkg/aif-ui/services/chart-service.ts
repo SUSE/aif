@@ -4,6 +4,7 @@ import { createChartValuesService } from './chart-values';
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { MANAGED_REPO_LABEL } from './app-collection';
 import type {
   Dispatchable,
   ClusterResource,
@@ -230,7 +231,11 @@ export class ChartService {
     preferVersion?: string
   ): Promise<string | null> {
     try {
-      const repos = await this.listClusterRepos($store);
+      // Scope to operator-managed repos only (mirror of the rancher-apps.ts
+      // implementation): the install path must never resolve a chart from an
+      // unmanaged ClusterRepo, which would bypass the provenance contract.
+      const repos = (await this.listClusterRepos($store))
+        .filter((r) => r?.metadata?.labels?.[MANAGED_REPO_LABEL] === 'true');
       let best: string | null = null;
 
       for (const r of repos) {

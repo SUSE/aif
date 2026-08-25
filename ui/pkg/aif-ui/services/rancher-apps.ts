@@ -43,6 +43,7 @@ import type {
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { MANAGED_REPO_LABEL } from './app-collection';
 
 export interface ChartRef {
   repoName: string;   // ClusterRepo metadata.name
@@ -826,7 +827,13 @@ export async function inferClusterRepoForChart(
   chartName: string,
   preferVersion?: string
 ): Promise<string | null> {
-  const repos = await listClusterRepos($store);
+  // Scope to operator-managed repos only: without this gate the install path
+  // would resolve a chart from ANY ClusterRepo on the cluster (first name match),
+  // bypassing the provenance contract that fetchManagedRepos enforces for
+  // discovery. An unmanaged repo publishing a like-named chart must never be
+  // chosen as an install source.
+  const repos = (await listClusterRepos($store))
+    .filter((r) => r?.metadata?.labels?.[MANAGED_REPO_LABEL] === 'true');
   let best: string | null = null;
 
   for (const r of repos) {

@@ -297,7 +297,7 @@
 import { defineComponent, computed, getCurrentInstance, onMounted, ref, watch } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
-import type { AppCollectionItem } from '../services/app-collection';
+import type { AppCollectionItem, ManagedRepo } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
@@ -325,6 +325,7 @@ export default defineComponent({
     const items = ref<AppCollectionItem[]>([]);
     const catalogWarnings = ref<string[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
+    const managedRepos = ref<ManagedRepo[]>([]); // operator-managed ClusterRepos discovered this load; drives hasRegistryConfigured
     const isStaticMode = ref(false); // resolved from the operator config in loadApps; dynamic is the default
 
     // Library grouping is data-driven: the tabs reflect the libraries actually
@@ -384,12 +385,22 @@ export default defineComponent({
     watch(items, ensureValidSelectedRepo);
 
     const hasRegistryConfigured = computed(() => {
+      // A registry is "in use" if the operator has created a managed ClusterRepo
+      // for it — the provenance signal, and the only one that covers air-gap
+      // endpoint-only NVIDIA (no secret refs, credential-free mirror). Fall back
+      // to config-present-but-repo-not-yet-created signals so the upgrade/just-
+      // configured window shows "loading" instead of "add your registry": Settings
+      // spec secret refs (WireSpec persists discovered well-known secrets here) or
+      // an air-gap registryEndpoints override.
+      if (managedRepos.value.length > 0) return true;
       const spec = settingsData.value?.spec;
       if (!spec) return false;
+      const endpoints = spec.registryEndpoints || {};
       return !!(
         (spec.applicationCollection?.userSecretRef && spec.applicationCollection?.tokenSecretRef) ||
         (spec.suseRegistry?.userSecretRef && spec.suseRegistry?.tokenSecretRef) ||
-        (spec.nvidia?.userSecretRef && spec.nvidia?.tokenSecretRef)
+        (spec.nvidia?.userSecretRef && spec.nvidia?.tokenSecretRef) ||
+        endpoints.applicationCollection || endpoints.suseRegistry || endpoints.nvidia
       );
     });
 
@@ -481,6 +492,7 @@ export default defineComponent({
           // fetchStaticCatalog() throws and the page shows an error (no local fallback,
           // since the bundled catalog now lives in the operator).
           settingsData.value = null;
+          managedRepos.value = [];
           items.value = await fetchStaticCatalog();
           return;
         }
@@ -490,14 +502,15 @@ export default defineComponent({
         // never fatal — a curated-fetch failure just leaves apps un-enriched.
         // List the managed ClusterRepos once and thread the set into both fetchers;
         // each would otherwise re-list the same clusterrepos endpoint (see fetchManagedRepos).
-        const [settings, managedRepos] = await Promise.all([
+        const [settings, repos] = await Promise.all([
           fetchSettingsOrNull(),
           fetchManagedRepos(store),
         ]);
         settingsData.value = settings;
+        managedRepos.value = repos;
         const [suseResult, nvidiaResult, curated] = await Promise.all([
-          fetchSuseAiApps(store, settings, managedRepos),
-          fetchNvidiaApps(store, settings, managedRepos),
+          fetchSuseAiApps(store, settings, repos),
+          fetchNvidiaApps(store, settings, repos),
           fetchCuratedOverlayOrEmpty(),
         ]);
         const discovered = [...suseResult.apps, ...nvidiaResult.apps];
