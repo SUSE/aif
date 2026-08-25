@@ -8,7 +8,7 @@ import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
-import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
+import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
 import { ensureClusterRepo } from '../services/rancher-apps';
 import {
   APP_COLLECTION_REPO_URL,
@@ -50,15 +50,7 @@ export default {
   },
 
   async fetch() {
-    [this.operatorManaged] = await Promise.all([
-      hasInstallAIExtension(),
-      loadOperatorConfig(),
-    ]);
-    this.operatorForbidden      = isExtensionCheckForbidden();
-    const operatorCfg = getOperatorConfig();
-    this.operatorNamespace      = operatorCfg.namespace;
-    this.operatorService        = operatorCfg.service;
-    this.operatorConfigMapFound = isConfigMapFound();
+    await loadOperatorConfig();
     try {
       const data = await getSettings();
 
@@ -85,11 +77,6 @@ export default {
       fetchErrorMessage: null,
       errors:            [],
       mode:              'edit',
-      operatorNamespace:      '',
-      operatorService:        '',
-      operatorConfigMapFound: false,
-      operatorManaged:        false,
-      operatorForbidden:      false,
       tokenState:      { expiresAt: '', tokenName: '', configured: false, loaded: false },
       authorizeError:  '',
       showAdvanced:    { rancherCatalog: false },
@@ -99,7 +86,6 @@ export default {
         suseRegistry:   false,
         nvidia:         false,
         rancherCatalog: false,
-        advanced:       false,
       },
       testResults: {
         applicationCollection: null,
@@ -113,7 +99,7 @@ export default {
 
   computed: {
     settingsNamespace() {
-      return this.operatorNamespace || getOperatorNamespace();
+      return getOperatorNamespace();
     },
 
     authTypeOptions() {
@@ -311,14 +297,6 @@ export default {
       return val?.valueFrom?.secretKeyRef || null;
     },
 
-    addRewriteRule() {
-      this.spec.imageRewrite.rules.push({ match: '', replace: '' });
-    },
-
-    removeRewriteRule(index) {
-      this.spec.imageRewrite.rules.splice(index, 1);
-    },
-
     async readSecretData(name) {
       if (!name) return {};
       try {
@@ -425,15 +403,6 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
-        // saveOperatorConfig must run first: it refreshes the in-memory cache so
-        // that the subsequent putSettings call reaches the correct operator URL.
-        // If the user is correcting a wrong namespace, putSettings would fail
-        // against the old URL if called before the cache is updated.
-        // Skip when managed by InstallAIExtension — the reconciler owns the ConfigMap.
-        if (!this.operatorManaged) {
-          await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
-          this.operatorConfigMapFound = true;
-        }
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
@@ -1194,133 +1163,6 @@ export default {
               >{{ testResultText('rancherCatalog') }}</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- Advanced -->
-      <div id="advanced" class="box mt-10">
-        <div
-          class="accordion-header"
-          role="button"
-          tabindex="0"
-          @click="toggle('advanced')"
-          @keydown.space.enter.prevent="toggle('advanced')"
-        >
-          <i :class="expanded.advanced ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-          <h2>{{ t('suseai.pages.settings.sections.advanced.title') }}</h2>
-        </div>
-
-        <div
-          v-if="expanded.advanced"
-          class="mt-15"
-        >
-          <Banner
-            color="warning"
-            :label="t('suseai.pages.settings.sections.advanced.warning')"
-            class="mb-15"
-          />
-
-          <h3 class="mb-10">
-            {{ t('suseai.pages.settings.sections.advanced.operatorConnection.title') }}
-          </h3>
-          <Banner
-            v-if="operatorManaged"
-            color="info"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.managed')"
-            class="mb-15"
-          />
-          <Banner
-            v-else-if="operatorForbidden"
-            color="warning"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.forbidden')"
-            class="mb-15"
-          />
-          <Banner
-            v-else-if="operatorConfigMapFound"
-            color="info"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.found')"
-            class="mb-15"
-          />
-          <Banner
-            v-else
-            color="warning"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.notFound')"
-            class="mb-15"
-          />
-          <div class="row mb-20">
-            <div class="col span-4">
-              <LabeledInput
-                v-model:value="operatorNamespace"
-                :label="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.placeholder')"
-                :mode="operatorManaged ? 'view' : mode"
-              />
-            </div>
-            <div class="col span-4">
-              <LabeledInput
-                v-model:value="operatorService"
-                :label="t('suseai.pages.settings.sections.advanced.operatorConnection.service.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.service.placeholder')"
-                :mode="operatorManaged ? 'view' : mode"
-              />
-            </div>
-          </div>
-
-          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
-          <template v-if="false">
-            <h3 class="mb-10">
-              {{ t('suseai.pages.settings.sections.advanced.imageRewrite.title') }}
-            </h3>
-            <div class="row mb-10">
-              <div class="col span-12">
-                <Checkbox
-                  v-model:value="spec.imageRewrite.enabled"
-                  :label="t('suseai.pages.settings.sections.advanced.imageRewrite.enabled.label')"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-            <template v-if="spec.imageRewrite.enabled">
-              <div
-                v-for="(rule, i) in spec.imageRewrite.rules"
-                :key="i"
-                class="row mb-5"
-              >
-                <div class="col span-5">
-                  <LabeledInput
-                    v-model:value="rule.match"
-                    :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.label') : ''"
-                    :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.placeholder')"
-                    :mode="mode"
-                  />
-                </div>
-                <div class="col span-5">
-                  <LabeledInput
-                    v-model:value="rule.replace"
-                    :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.label') : ''"
-                    :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.placeholder')"
-                    :mode="mode"
-                  />
-                </div>
-                <div class="col span-2 trash-col">
-                  <button
-                    type="button"
-                    class="btn btn-sm role-link"
-                    @click="removeRewriteRule(i)"
-                  >
-                    <i class="icon icon-trash" />
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="btn btn-sm role-secondary mt-5"
-                @click="addRewriteRule"
-              >
-                {{ t('suseai.pages.settings.sections.advanced.imageRewrite.rules.add') }}
-              </button>
-            </template>
-          </template>
         </div>
       </div>
 

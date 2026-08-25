@@ -11,7 +11,6 @@ const CONFIG_MAP_NAME  = 'aif-ui-config';
 interface OperatorCache {
   namespace:         string;
   service:           string;
-  found:             boolean;
   useStaticCatalog:  boolean;
 }
 
@@ -30,15 +29,9 @@ let cache: OperatorCache | null = null;
 let loadPromise: Promise<void> | null = null;
 let connectionError: string | null = null;
 let checkPromise: Promise<void> | null = null;
-let checkExtPromise: Promise<boolean> | null = null;
-let extensionForbidden = false;
 
 function configMapUrl(): string {
   return `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ CONFIG_NAMESPACE }/configmaps/${ CONFIG_MAP_NAME }`;
-}
-
-function configMapCollectionUrl(): string {
-  return `/k8s/clusters/${ MANAGEMENT_CLUSTER }/api/v1/namespaces/${ CONFIG_NAMESPACE }/configmaps`;
 }
 
 /** Shared fetch wrapper for operator API calls. Handles 204 No Content, JSON error
@@ -83,7 +76,6 @@ async function _doLoad(): Promise<void> {
       cache = {
         namespace:        cm?.data?.operatorNamespace || OPERATOR_NAMESPACE,
         service:          cm?.data?.operatorService   || OPERATOR_SERVICE,
-        found:            true,
         useStaticCatalog: parseConfigBool(cm?.data?.useStaticCatalog, true),
       };
       return;
@@ -92,7 +84,6 @@ async function _doLoad(): Promise<void> {
   cache = {
     namespace:        OPERATOR_NAMESPACE,
     service:          OPERATOR_SERVICE,
-    found:            false,
     useStaticCatalog: true,
   };
 }
@@ -155,109 +146,4 @@ export function checkOperatorConnection(force = false): Promise<void> {
 /** Error message set by checkOperatorConnection(), or null if reachable. */
 export function getConnectionError(): string | null {
   return connectionError;
-}
-
-/** Return current resolved coordinates (for Settings page display). */
-export function getOperatorConfig(): OperatorCache {
-  return cache ?? {
-    namespace: OPERATOR_NAMESPACE, service: OPERATOR_SERVICE, found: false,
-    useStaticCatalog: true,
-  };
-}
-
-export function isConfigMapFound(): boolean {
-  return cache?.found ?? false;
-}
-
-/** Returns true when at least one InstallAIExtension CR exists in the cluster,
- *  meaning the operator owns the ConfigMap and the Settings fields should be read-only.
- *  Returns false on any error (404 = CRD not installed, network error).
- *  On 403, sets the extensionForbidden flag — call isExtensionCheckForbidden() to
- *  distinguish "not managed" from "cannot determine". Idempotent: subsequent calls
- *  return the shared in-flight promise; pass force=true to re-run the check. */
-export function hasInstallAIExtension(force = false): Promise<boolean> {
-  if (force) { checkExtPromise = null; extensionForbidden = false; }
-  if (!checkExtPromise) checkExtPromise = _doCheckExtension();
-  return checkExtPromise;
-}
-
-async function _doCheckExtension(): Promise<boolean> {
-  try {
-    const url = `/k8s/clusters/${ MANAGEMENT_CLUSTER }/apis/ai-factory.suse.com/v1alpha1/installaiextensions`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (res.status === 403) {
-      extensionForbidden = true;
-      return false;
-    }
-    if (!res.ok) return false;
-    const body = await res.json().catch(() => null);
-    return Array.isArray(body?.items) && body.items.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/** Returns true when hasInstallAIExtension() returned false due to a 403 —
- *  meaning the managed state is unknown, not confirmed absent. */
-export function isExtensionCheckForbidden(): boolean {
-  return extensionForbidden;
-}
-
-export function invalidateOperatorConfig(): void {
-  cache               = null;
-  loadPromise         = null;
-  connectionError     = null;
-  checkPromise        = null;
-  checkExtPromise     = null;
-  extensionForbidden  = false;
-}
-
-/** Write operator coordinates to the ConfigMap and refresh the in-memory cache.
- *  GETs the existing ConfigMap first to obtain its resourceVersion for optimistic
- *  concurrency control, then PUTs. Falls back to POST (create) when the ConfigMap
- *  doesn't exist yet (git-based install, no Helm chart ran). */
-export async function saveOperatorConfig(namespace: string, service: string): Promise<void> {
-  const url     = configMapUrl();
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  const payload = {
-    apiVersion: 'v1',
-    kind:       'ConfigMap',
-    metadata:   { name: CONFIG_MAP_NAME, namespace: CONFIG_NAMESPACE },
-  };
-
-  const getRes = await fetch(url, { headers: { Accept: 'application/json' } });
-  let res: Response;
-
-  if (getRes.ok) {
-    const existing        = await getRes.json().catch(() => null);
-    const resourceVersion = existing?.metadata?.resourceVersion;
-    res = await fetch(url, {
-      method:  'PUT',
-      headers,
-      body:    JSON.stringify({
-        ...payload,
-        metadata: { ...payload.metadata, ...(resourceVersion ? { resourceVersion } : {}) },
-        data:     { ...(existing?.data || {}), operatorNamespace: namespace, operatorService: service },
-      }),
-    });
-  } else if (getRes.status === 404) {
-    res = await fetch(configMapCollectionUrl(), {
-      method: 'POST',
-      headers,
-      body:   JSON.stringify({ ...payload, data: { operatorNamespace: namespace, operatorService: service } }),
-    });
-  } else {
-    res = getRes;
-  }
-
-  if (!res.ok) {
-    if (res.status === 403) {
-      throw new Error('Permission denied — only cluster administrators can update the operator configuration.');
-    }
-    const err = await res.json().catch(() => null);
-    throw new Error(err?.message || `Failed to save operator config: ${ res.statusText }`);
-  }
-
-  invalidateOperatorConfig();
-  await loadOperatorConfig();
 }

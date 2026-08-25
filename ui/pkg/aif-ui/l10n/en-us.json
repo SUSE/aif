@@ -184,42 +184,6 @@
             "insecureSkipVerify": {
               "label": "Skip TLS verification (development only)"
             }
-          },
-          "advanced": {
-            "title": "Advanced",
-            "warning": "Advanced settings for air-gapped or custom deployments only. Modify with care.",
-            "operatorConnection": {
-              "title": "Operator Connection",
-              "managed": "Operator namespace and service are managed by an InstallAIExtension resource. The operator updates these values automatically — editing is disabled.",
-              "forbidden": "Cannot verify whether the operator connection is managed — access to InstallAIExtension resources is restricted. If a resource exists, changes saved here may be overwritten by the operator.",
-              "found": "Configuration loaded from the aif-ui-config ConfigMap in cattle-ui-plugin-system. Changes take effect immediately on save.",
-              "notFound": "No aif-ui-config ConfigMap found in cattle-ui-plugin-system. Fields below show defaults. Saving will create the ConfigMap.",
-              "namespace": {
-                "label": "Operator Namespace",
-                "placeholder": "aif-operator"
-              },
-              "service": {
-                "label": "Operator Service",
-                "placeholder": "aif-operator"
-              }
-            },
-            "imageRewrite": {
-              "title": "Image Rewrite Rules",
-              "enabled": {
-                "label": "Enable image rewriting"
-              },
-              "rules": {
-                "match": {
-                  "label": "Match Prefix",
-                  "placeholder": "nvcr.io"
-                },
-                "replace": {
-                  "label": "Replace With",
-                  "placeholder": "registry.suse.com/ai"
-                },
-                "add": "Add Rule"
-              }
-            }
           }
         }
       }
