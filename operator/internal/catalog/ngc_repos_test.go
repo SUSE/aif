@@ -1,23 +1,45 @@
 package catalog
 
 import (
+	"net/url"
+	"strings"
 	"testing"
 )
 
-// The bundled catalog now references only the two org repos
-// (/nvidia and /nvidia/blueprint), which are excluded from team classification.
-// So classifying it must yield no team repos at all — the connected-mode
-// team-repo provisioning is dormant until a team repo is re-added to the catalog.
+// The bundled catalog now includes the full NVAIE-supported set, which references
+// NGC team repos (both anonymous "public" and auth-gated). Two invariants must
+// hold for that data:
+//
+//  1. Every NGC repo URL in the bundled catalog is explicitly classified — none
+//     falls through to NGCPathUnknown. An unknown path silently fail-safes to
+//     anonymous Public (see classifyNGCTeamRepos), which would be wrong for a
+//     genuinely gated repo. When a weekly refresh introduces a new NGC path this
+//     test fails, signalling it must be classified in ngc_repos.go before the
+//     refresh PR is merged (mirrors the refresh-catalog workflow's guidance).
+//  2. Connected-mode team-repo provisioning is now active (no longer dormant): the
+//     catalog yields at least one team repo to provision.
+//
 // The split logic itself (public vs gated vs excluded, fail-safe) is covered by
 // TestClassifyNGCTeamRepos_UnclassifiedURLLandsInPublic with synthetic items.
-func TestClassifyNGCTeamRepos_BundledCatalogHasNoTeamRepos(t *testing.T) {
-	got := ClassifyNGCTeamRepos()
-
-	if len(got.Public) != 0 {
-		t.Errorf("expected no Public team repos from bundled catalog, got %v", got.Public)
+func TestClassifyNGCTeamRepos_BundledCatalogClassified(t *testing.T) {
+	for _, it := range Bundled() {
+		u := strings.TrimRight(strings.TrimSpace(it.RepositoryURL), "/")
+		if !IsNGCURL(u) {
+			continue
+		}
+		parsed, err := url.Parse(u)
+		if err != nil {
+			t.Errorf("bundled NGC URL %q failed to parse: %v", u, err)
+			continue
+		}
+		if ClassifyNGCPath(parsed.Path) == NGCPathUnknown {
+			t.Errorf("bundled catalog references unclassified NGC path %q; classify it in ngc_repos.go", parsed.Path)
+		}
 	}
-	if len(got.Gated) != 0 {
-		t.Errorf("expected no Gated team repos from bundled catalog, got %v", got.Gated)
+
+	got := ClassifyNGCTeamRepos()
+	if len(got.Public) == 0 && len(got.Gated) == 0 {
+		t.Error("expected the bundled NVAIE catalog to yield team repos to provision, got none")
 	}
 }
 
@@ -84,5 +106,29 @@ func TestClassifyNGCTeamRepos_UnclassifiedURLLandsInPublic(t *testing.T) {
 	// The unclassified URL must NEVER land in Gated (binding fail-safe constraint).
 	if gat["https://helm.ngc.nvidia.com/nvidia/brand-new-thing"] {
 		t.Errorf("FAIL-SAFE VIOLATED: unclassified URL landed in Gated (dangerous)")
+	}
+}
+
+func TestClassifyNGCPath(t *testing.T) {
+	cases := map[string]NGCPathKind{
+		"/nvidia":                         NGCPathOrg,
+		"/nvidia/blueprint":               NGCPathOrg,
+		"/nvidia/doca":                    NGCPathPublic,
+		"/nvidia/nemo-microservices":      NGCPathGated, // public index, gated charts
+		"/nvidia/omniverse":               NGCPathGated, // public index, gated charts
+		"/nim/nvidia":                     NGCPathGated,
+		"/nvidia/runai":                   NGCPathGated,
+		"/nim":                            NGCPathExcluded,
+		"/eevaigoeixww/animation":         NGCPathExcluded,
+		"/eevaigoeixww/conversational-ai": NGCPathExcluded,
+		"/some/brand-new-team":            NGCPathUnknown,
+	}
+	for path, want := range cases {
+		if got := ClassifyNGCPath(path); got != want {
+			t.Errorf("ClassifyNGCPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+	if NGCPathExcluded.String() != "excluded" {
+		t.Errorf("String() = %q, want excluded", NGCPathExcluded.String())
 	}
 }
