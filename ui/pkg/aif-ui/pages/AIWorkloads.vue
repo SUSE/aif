@@ -4,7 +4,7 @@ import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
-import { listAIWorkloads, updateAIWorkload } from '../utils/operator-api';
+import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
@@ -15,9 +15,14 @@ import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
+import RancherLinkCell from '../components/RancherLinkCell.vue';
+import { workloadRancherLinks } from '../utils/rancher-links';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
 import { useT } from '../composables/useT';
+import WorkloadPodStatus from '../components/WorkloadPodStatus.vue';
+import { fetchWorkloadPodStatus } from '../services/workload-pods';
+import type { WorkloadPodStatusMap } from '../types/workload-pods-types';
 
 const t       = useT();
 const vm      = getCurrentInstance()!.proxy as any;
@@ -34,6 +39,47 @@ const sortBy     = ref('name-asc');
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
 const clusters   = ref<ClusterInfo[]>([]);
+
+// Pod-level status, keyed by `${namespace}/${name}`, for workloads that aren't Running.
+const podStatus = ref<WorkloadPodStatusMap>({});
+
+function wlKey(w: AIWorkload): string {
+  return `${ w.metadata.namespace }/${ w.metadata.name }`;
+}
+
+// Trigger: only workloads not fully Running, or with an operation in progress.
+function needsPodStatus(w: AIWorkload): boolean {
+  return w.status?.phase !== 'Running' || w.status?.activeOperation?.state === 'InProgress';
+}
+
+// Every namespace a workload deploys into: the workload targetNamespace plus any
+// per-component namespace pins from the Blueprint (which override the workload one).
+// Falls back to just the workload namespace when the Blueprint can't be resolved.
+function workloadNamespaces(w: AIWorkload): string[] {
+  const base = w.spec.targetNamespace;
+  const set = new Set<string>();
+  if (base) set.add(base);
+  if (w.spec.source.sourceType === 'Blueprint' && w.spec.source.blueprint) {
+    const family = groupBlueprintsByFamily(blueprints.value).get(w.spec.source.blueprint.name);
+    const bp = family?.find(b => b.spec.version === w.spec.source.blueprint!.version);
+    for (const c of bp?.spec.components || []) {
+      set.add(c.targetNamespace || base);
+    }
+  }
+  return [...set].filter(Boolean);
+}
+
+async function refreshPodStatus() {
+  const targets = workloads.value.filter(needsPodStatus);
+  const results = await Promise.allSettled(
+    targets.map(async w => ({ key: wlKey(w), clusters: await fetchWorkloadPodStatus(vm.$store, w, workloadNamespaces(w)) })),
+  );
+  const next: WorkloadPodStatusMap = {};
+  for (const r of results) {
+    if (r.status === 'fulfilled') next[r.value.key] = r.value.clusters;
+  }
+  podStatus.value = next; // healthy workloads drop out automatically
+}
 
 // ── Delete modal ───────────────────────────────────────────────────────────────
 const deleteModal = reactive({
@@ -52,6 +98,15 @@ const upgradeModal = reactive({
   selectedVersion: '',
   upgrading:     false,
 });
+
+// ── Rollback confirmation modal ─────────────────────────────────────────────────
+const rollbackModal = reactive({
+  show:     false,
+  workload: null as AIWorkload | null,
+  rolling:  false,
+});
+
+const upgradeError = ref<string | null>(null);
 
 // ── Detail modal ────────────────────────────────────────────────────────────────
 const detailModal = reactive({
@@ -132,6 +187,14 @@ function workloadSource(w: AIWorkload): string {
   return w.spec.source.blueprint?.name || '—';
 }
 
+function linksFor(w: AIWorkload) {
+  return workloadRancherLinks(w, clusters.value);
+}
+
+function unhealthyComponents(w: AIWorkload) {
+  return (w.status?.componentStatuses || []).filter(c => c.phase !== 'Running');
+}
+
 // ── Data loading ───────────────────────────────────────────────────────────────
 async function refresh() {
   loading.value = true;
@@ -151,6 +214,7 @@ async function refresh() {
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
     clusters.value   = clResult;
+    void refreshPodStatus();
   } catch (e: any) {
     error.value = e?.message || 'Failed to load workloads';
   } finally {
@@ -171,6 +235,7 @@ async function silentRefresh() {
   try {
     const wlResult = await listAIWorkloads();
     workloads.value = wlResult.items || [];
+    void refreshPodStatus();
   } catch {
     // silently ignore — user can use the Refresh button if needed
   }
@@ -238,28 +303,64 @@ function openUpgradeModal(w: AIWorkload) {
 
 async function executeUpgrade() {
   if (!upgradeModal.workload) return;
+  upgradeError.value = null;
   const w = upgradeModal.workload;
   upgradeModal.upgrading = true;
-  error.value = null;
   try {
-    const newSpec = {
-      ...w.spec,
-      source: {
-        ...w.spec.source,
-        blueprint: {
-          ...w.spec.source.blueprint!,
-          version: upgradeModal.selectedVersion,
-        },
-      },
-    };
-    await updateAIWorkload(w.metadata.namespace, w.metadata.name, newSpec);
+    await upgradeAIWorkload(w.metadata.namespace, w.metadata.name, upgradeModal.selectedVersion);
     upgradeModal.show = false;
     await refresh();
   } catch (e: any) {
-    error.value = e?.message || 'Failed to upgrade workload';
+    upgradeError.value = e?.message || String(e);
     upgradeModal.show = false;
   } finally {
     upgradeModal.upgrading = false;
+  }
+}
+
+function canRollback(w: AIWorkload): boolean {
+  const ds = w.status?.deployedSource;
+  return !!ds && !!w.spec.source.blueprint && ds.version !== w.spec.source.blueprint.version;
+}
+
+function canRetry(w: AIWorkload): boolean {
+  const op = w.status?.activeOperation;
+  const opInFlight = op?.state === 'InProgress';
+  if (opInFlight) return false;
+  return w.status?.phase === 'Failed' || w.status?.phase === 'Degraded' || op?.state === 'Failed';
+}
+
+function openRollbackModal(w: AIWorkload) {
+  rollbackModal.workload = w;
+  rollbackModal.rolling  = false;
+  rollbackModal.show     = true;
+}
+
+async function confirmRollback() {
+  if (!rollbackModal.workload) return;
+  const w = rollbackModal.workload;
+  upgradeError.value = null;
+  rollbackModal.rolling = true;
+  try {
+    await rollbackAIWorkload(w.metadata.namespace, w.metadata.name);
+    rollbackModal.show = false;
+    await refresh();
+  } catch (e: any) {
+    rollbackModal.show = false;
+    upgradeError.value = e?.message || String(e);
+  } finally {
+    rollbackModal.rolling = false;
+  }
+}
+
+async function doRetry(w: AIWorkload) {
+  upgradeError.value = null;
+  try {
+    await retryAIWorkload(w.metadata.namespace, w.metadata.name);
+    await refresh();
+  } catch (e: any) {
+    // 409 (operation in flight) surfaces here.
+    upgradeError.value = e?.message || String(e);
   }
 }
 </script>
@@ -295,6 +396,8 @@ async function executeUpgrade() {
       <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
 
       <Banner v-if="error" color="error" class="mb-20">{{ error }}</Banner>
+
+      <Banner v-if="upgradeError" color="error" class="mb-20" @close="upgradeError = null">{{ upgradeError }}</Banner>
 
       <div class="main-content">
         <!-- Loading state -->
@@ -345,6 +448,23 @@ async function executeUpgrade() {
                   >
                     {{ workloadStatusMessage(w) }}
                   </div>
+                  <div
+                    v-if="(w.status?.phase === 'Failed' || w.status?.phase === 'Degraded') && unhealthyComponents(w).length"
+                    class="failure-detail"
+                  >
+                    <div v-for="c in unhealthyComponents(w)" :key="c.componentName + '/' + c.clusterId" class="failure-row">
+                      <span class="failure-comp">{{ c.componentName }}</span>
+                      <span class="failure-cluster">{{ c.clusterId }}</span>
+                      <span v-if="c.message" class="failure-msg" :title="c.message">{{ c.message }}</span>
+                    </div>
+                  </div>
+                  <div
+                    v-if="w.status?.activeOperation && w.status.activeOperation.state !== 'Succeeded'"
+                    class="op-detail"
+                  >
+                    {{ w.status.activeOperation.type }}: {{ w.status.activeOperation.state }}<span v-if="w.status.activeOperation.reason"> ({{ w.status.activeOperation.reason }})</span>
+                  </div>
+                  <WorkloadPodStatus :clusters="podStatus[wlKey(w)] || []" />
                 </td>
 
                 <!-- Name -->
@@ -354,7 +474,7 @@ async function executeUpgrade() {
 
                 <!-- Namespace -->
                 <td class="col-namespace">
-                  <span class="mono-chip">{{ w.metadata.namespace }}</span>
+                  {{ w.metadata.namespace }}
                 </td>
 
                 <!-- Cluster -->
@@ -396,29 +516,62 @@ async function executeUpgrade() {
                       <i class="icon icon-info" />
                       Details
                     </button>
+                    <!-- Open in Rancher (type-aware) -->
+                    <RancherLinkCell
+                      :link="linksFor(w).primary"
+                      :open-label="w.spec.source.sourceType === 'App'
+                        ? t('suseai.workloads.viewApp', 'Open app in Rancher')
+                        : t('suseai.workloads.viewNamespace', 'View namespace in Rancher')"
+                      trigger-class="btn btn-sm role-secondary"
+                    >
+                      <i class="icon icon-external-link" />
+                      <span>{{ t('suseai.workloads.openInRancher', 'Open in Rancher') }}</span>
+                    </RancherLinkCell>
 
                     <!-- App workload: Manage -->
                     <button
                       v-if="w.spec.source.sourceType === 'App'"
-                      class="btn btn-sm role-secondary"
+                      class="btn btn-sm role-secondary equal-action"
                       :disabled="w.status?.phase !== 'Running'"
                       @click="onManage(w)"
                       type="button"
                     >
                       <i class="icon icon-edit" />
-                      Manage
+                      <span>Manage</span>
                     </button>
 
                     <!-- Blueprint workload: Upgrade -->
                     <button
                       v-else
-                      class="btn btn-sm role-secondary"
-                      :disabled="w.status?.phase !== 'Running'"
+                      class="btn btn-sm role-secondary equal-action"
+                      :disabled="false"
                       @click="openUpgradeModal(w)"
                       type="button"
                     >
                       <i class="icon icon-upload" />
-                      Upgrade
+                      <span>Upgrade</span>
+                    </button>
+
+                    <!-- Blueprint workload: Roll Back -->
+                    <button
+                      v-if="w.spec.source.sourceType === 'Blueprint' && canRollback(w)"
+                      class="btn btn-sm role-secondary"
+                      @click="openRollbackModal(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-history" />
+                      Roll Back
+                    </button>
+
+                    <!-- Blueprint workload: Retry -->
+                    <button
+                      v-if="w.spec.source.sourceType === 'Blueprint' && canRetry(w)"
+                      class="btn btn-sm role-secondary"
+                      @click="doRetry(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-refresh" />
+                      Retry
                     </button>
 
                     <!-- Delete (both types) -->
@@ -428,7 +581,7 @@ async function executeUpgrade() {
                       type="button"
                     >
                       <i class="icon icon-delete" />
-                      Delete
+                      <span>Delete</span>
                     </button>
                   </div>
                 </td>
@@ -493,11 +646,50 @@ async function executeUpgrade() {
           <button
             class="btn role-primary"
             @click="executeUpgrade"
-            :disabled="upgradeModal.upgrading || upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version"
+            :disabled="upgradeModal.upgrading || (upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version && upgradeModal.workload?.status?.phase === 'Running')"
             type="button"
           >
             <i v-if="upgradeModal.upgrading" class="icon icon-spinner icon-spin" />
             Upgrade
+          </button>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- Blueprint rollback confirmation modal -->
+    <AppModal v-if="rollbackModal.show" :click-to-close="true" :width="480" @close="rollbackModal.show = false">
+      <div class="modal-body">
+        <h3>Roll Back Blueprint Workload</h3>
+        <p>
+          <strong>{{ rollbackModal.workload?.spec.displayName || rollbackModal.workload?.metadata.name }}</strong>
+          in namespace <code>{{ rollbackModal.workload?.metadata.namespace }}</code>
+        </p>
+
+        <div class="field-row">
+          <label class="field-label">Current version</label>
+          <span class="field-value">v{{ rollbackModal.workload?.spec.source.blueprint?.version }}</span>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label">Roll back to</label>
+          <span class="field-value">v{{ rollbackModal.workload?.status?.deployedSource?.version }}</span>
+        </div>
+
+        <p class="text-muted modal-warning">
+          The workload will be redeployed at the last certified version
+          (v{{ rollbackModal.workload?.status?.deployedSource?.version }}).
+        </p>
+
+        <div class="modal-buttons">
+          <button class="btn role-secondary" @click="rollbackModal.show = false" type="button">Cancel</button>
+          <button
+            class="btn role-primary"
+            @click="confirmRollback"
+            :disabled="rollbackModal.rolling"
+            type="button"
+          >
+            <i v-if="rollbackModal.rolling" class="icon icon-spinner icon-spin" />
+            Roll Back
           </button>
         </div>
       </div>
@@ -622,16 +814,6 @@ async function executeUpgrade() {
   .source-name { font-size: 12px; color: var(--muted); font-family: monospace; }
 }
 
-// Mono chip (namespace)
-.mono-chip {
-  font-family: monospace;
-  background: var(--accent-btn);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-}
-
 // Deploy badge
 .deploy-badge {
   display: inline-block;
@@ -647,6 +829,7 @@ async function executeUpgrade() {
 // Actions
 .btn-group {
   display: flex;
+  align-items: center;
   gap: 4px;
   justify-content: flex-end;
 }
@@ -705,7 +888,9 @@ async function executeUpgrade() {
 
 .text-right { text-align: right; }
 
-.btn {
+// `:deep` reaches the "Open in Rancher" trigger inside the RancherLinkCell child.
+.btn,
+:deep(.rancher-link-cell .btn) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -735,11 +920,40 @@ async function executeUpgrade() {
     color: var(--body-text);
 
     &.text-error { color: var(--error); }
-    &:disabled   { opacity: 0.6; cursor: not-allowed; }
+
+    // Override Rancher's global `.btn[disabled]` recolor: keep the border and
+    // let opacity convey the disabled state.
+    &:disabled,
+    &[disabled] {
+      opacity: 0.6;
+      cursor: not-allowed;
+      background: var(--body-bg);
+      border: 1px solid var(--border);
+      color: var(--body-text);
+    }
+
+    // Keep the border on focus; Rancher's global rule sets `border: 0`, shrinking it.
+    &.btn-sm:focus,
+    &.btn-sm.focused { border: 1px solid var(--border); }
   }
+
+  // The disabled "Open in Rancher" trigger is a <span>, so `:disabled` can't
+  // match it; RancherLinkCell marks it `.rl-disabled` instead.
+  &.rl-disabled { opacity: 0.6; cursor: not-allowed; }
 
   .icon-spin { animation: spin 1s linear infinite; }
 }
+
+// Shared min-width so the Manage/Upgrade labels line up across rows.
+.btn.equal-action {
+  min-width: 96px;
+  justify-content: center;
+}
+
+// Zero Rancher's global icon `margin-right` on row buttons so their spacing is
+// the flex `gap` alone; the `:deep` variant covers the RancherLinkCell trigger.
+.btn-group .btn .icon,
+.btn-group :deep(.rancher-link-cell .btn) .icon { margin-right: 0; }
 
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
@@ -753,10 +967,15 @@ async function executeUpgrade() {
   white-space: nowrap;
 }
 
-/* Only show the reason in error red once the workload has actually failed;
-   during the initial grace window the phase is still Pending and the message
-   is a hedged "not available yet", so keep it muted. */
+/* Red only once actually failed; Pending messages stay muted. */
 .state-message.is-failed {
   color: var(--error, #dc2626);
 }
+
+.failure-detail { margin-top: 4px; font-size: 12px; }
+.failure-row    { display: flex; gap: 8px; align-items: baseline; }
+.failure-comp   { font-weight: 600; }
+.failure-cluster{ opacity: 0.7; }
+.failure-msg    { opacity: 0.9; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-detail      { margin-top: 2px; font-size: 12px; opacity: 0.8; }
 </style>

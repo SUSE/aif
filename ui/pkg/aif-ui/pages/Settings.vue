@@ -400,7 +400,8 @@ export default {
       if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
 
       // NVIDIA chart repos.
-      //  - Air-gapped (registryEndpoints.nvidia set): one OCI repo at that URL. Credentials are
+      //  - Air-gapped (registryEndpoints.nvidia set): stable nvidia and
+      //    nvidia-blueprints identities at the mirrored OCI URL. Credentials are
       //    attached when configured; an unauthenticated mirror is also supported.
       //  - Connected (registryEndpoints.nvidia empty): the two PUBLIC HTTPS NGC repos, created
       //    when NVIDIA credentials are configured (the creds signal that NVIDIA is in use).
@@ -415,7 +416,10 @@ export default {
             'Check the selected secret and key names.'
           );
         }
-        tasks.push(ensureClusterRepo(store, re.nvidia, nvCreds || undefined));
+        tasks.push(
+          ensureClusterRepo(store, re.nvidia, nvCreds || undefined, 'nvidia'),
+          ensureClusterRepo(store, re.nvidia, nvCreds || undefined, 'nvidia-blueprints'),
+        );
       } else if (nvHasRefs) {
         tasks.push(
           ensureClusterRepo(store, NVIDIA_REPO_URL),

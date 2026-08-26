@@ -796,16 +796,17 @@ func TestSettingsController_PrunesOrphanTeamRepo(t *testing.T) {
 	}
 }
 
-// Switching to air-gap deletes team repos but PRESERVES ngc-helm-auth
-// (the mirror still consumes it).
-func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
+// Switching to air-gap deletes team repos, preserves ngc-helm-auth, and keeps
+// both stable org/Blueprint repo identities backed by the private mirror.
+func TestSettingsController_AirGapKeepsStableNvidiaRepoAliases(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
 	const ns = "aif-operator"
+	const mirrorURL = "oci://registry.internal/nvidia"
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: "oci://registry.internal/nvidia"},
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: mirrorURL},
 		},
 	}
 	nvidia := &corev1.Secret{
@@ -834,5 +835,21 @@ func TestSettingsController_AirGapPrunesTeamReposButKeepsAuth(t *testing.T) {
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); err != nil {
 		t.Errorf("air-gap must preserve ngc-helm-auth: %v", err)
+	}
+
+	for _, name := range []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint} {
+		repo := getClusterRepo(t, c, name)
+		url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
+		if url != mirrorURL {
+			t.Errorf("%s URL=%q want private mirror %q", name, url, mirrorURL)
+		}
+		secretName, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+		secretNamespace, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "namespace")
+		if secretName != credentials.AuthSecretNvidia || secretNamespace != "cattle-system" {
+			t.Errorf("%s clientSecret=%s/%s want cattle-system/%s", name, secretNamespace, secretName, credentials.AuthSecretNvidia)
+		}
+		if forceUpdate, _, _ := unstructured.NestedString(repo.Object, "spec", "forceUpdate"); forceUpdate == "" {
+			t.Errorf("%s was not force-updated after the initial mirror credential write", name)
+		}
 	}
 }

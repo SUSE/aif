@@ -12,7 +12,10 @@ replicaCount: 1
 standalone: false
 
 global:
+  # Override the registry host (and optional path prefix) for the UI image.
+  # The aif-operator chart forwards its global value here in combined installs.
   imageRegistry: ""
+  # Pull Secrets shared with the aif-operator chart's combined-install values.
   imagePullSecrets: []
 
 image:

@@ -36,6 +36,7 @@ import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import { crNameForCluster } from '../../utils/workload-name';
+import { readLibraryFilter, withLibraryFilter } from '../../utils/catalog-route';
 import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
 
 const REPO_CLUSTER = 'local' as const;
@@ -690,12 +691,29 @@ async function onWizardFinish() {
   await submit();
 }
 
-function onWizardCancel() {
+// Leaving the wizard — on Cancel or once an install/upgrade is done — returns to
+// the list the user came from. For the Apps catalog that means restoring the
+// library they were browsing: Apps.vue is remounted on arrival and would
+// otherwise fall back to its default library, dropping an NVIDIA selection.
+// The filter rides along in the query the wizard was opened with.
+function leaveWizard() {
   persistClear(PKEY);
+  if (isManageMode.value) {
+    router?.push({
+      name:   `c-cluster-suseai-workloads`,
+      params: { cluster: route?.params?.cluster },
+    });
+    return;
+  }
   router?.push({
-    name:   isManageMode.value ? `c-cluster-suseai-workloads` : `c-cluster-suseai-apps`,
+    name:   `c-cluster-suseai-apps`,
     params: { cluster: route?.params?.cluster },
+    query:  withLibraryFilter({}, readLibraryFilter(route?.query)),
   });
+}
+
+function onWizardCancel() {
+  leaveWizard();
 }
 
 async function submit() {
@@ -777,11 +795,7 @@ async function submit() {
 }
 
 function navigateAfterSuccess() {
-  persistClear(PKEY);
-  router?.push({
-    name:   isManageMode.value ? `c-cluster-suseai-workloads` : `c-cluster-suseai-apps`,
-    params: { cluster: route?.params?.cluster },
-  });
+  leaveWizard();
 }
 
 // Get cluster name for display (used in progress modal)

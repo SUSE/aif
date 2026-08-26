@@ -89,7 +89,7 @@
               class="btn role-secondary"
               @click="refresh"
               :disabled="loading"
-              :title="t('suseai.instances.refresh', 'Refresh instances')"
+              :title="t('suseai.instances.refreshTooltip', 'Refresh instances')"
               :aria-label="loading ? 'Refreshing instances...' : 'Refresh instances'"
               type="button"
             >
@@ -191,7 +191,7 @@
                       class="btn btn-sm role-secondary manage-instance-btn"
                       @click="onManage(instance)"
                       :disabled="!canManage(instance)"
-                      :title="t('suseai.instances.manage', 'Manage instance')"
+                      :title="t('suseai.instances.manageTooltip', 'Manage instance')"
                       :aria-label="`Manage ${instance.instanceName || instance.releaseName}`"
                     >
                       <i class="icon icon-edit" aria-hidden="true" />
@@ -201,7 +201,7 @@
                       class="btn btn-sm role-secondary text-error"
                       @click="onDelete(instance)"
                       :disabled="!canDelete(instance) || deletingInstances.has(getInstanceKey(instance))"
-                      :title="t('suseai.instances.delete', 'Delete instance')"
+                      :title="t('suseai.instances.deleteTooltip', 'Delete instance')"
                       :aria-label="`Delete ${instance.instanceName || instance.releaseName}`"
                     >
                       <i v-if="deletingInstances.has(getInstanceKey(instance))" class="icon icon-spinner icon-spin" aria-hidden="true" />
@@ -252,6 +252,7 @@ import { fetchAppsFromRepository } from '../services/app-collection';
 import { discoverExistingInstall, getClusters, listCatalogApps, deleteApp } from '../services/rancher-apps';
 import { DEFAULT_VALUES } from '../utils/constants';
 import { PRODUCT } from '../config/suseai';
+import { useT } from '../composables/useT';
 
 interface InstanceData extends AppInstallationSummary {
   instanceName?: string;
@@ -714,11 +715,7 @@ export default defineComponent({
       clustersCacheTime = 0;
     });
 
-    // Translation helper
-    const t = (key: string, fallback: string) => {
-      // Will be replaced with proper i18n in later phases
-      return fallback;
-    };
+    const t = useT();
 
     return {
       // State

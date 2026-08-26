@@ -829,10 +829,13 @@ export async function ensureClusterRepo(
   $store: Dispatchable,
   ociUrl: string,
   credentials?: { username: string; password: string; cacerts?: string },
+  preferredName?: string,
 ): Promise<string> {
   const repos = await listClusterRepos($store);
-  const existing = repos.find((r: any) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
-  const name = existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
+  const existing = preferredName
+    ? repos.find((r) => r?.metadata?.name === preferredName)
+    : repos.find((r) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
+  const name = preferredName || existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
 
   let clientSecret: { name: string; namespace: string } | undefined;
   if (credentials) {
@@ -849,17 +852,24 @@ export async function ensureClusterRepo(
   }
 
   if (existing) {
-    // If we now have credentials and the repo didn't before, patch it
-    if (clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name) {
+    // Keep stable logical aliases pointed at the selected mirror when switching
+    // between connected and air-gapped modes. Also attach credentials when the
+    // existing repo did not have the desired auth Secret.
+    const currentUrl = existing.spec?.url || existing.spec?.ociRepo || '';
+    const urlChanged = currentUrl !== ociUrl;
+    const secretChanged = clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name;
+    if (urlChanged || secretChanged) {
       const res = await $store.dispatch('rancher/request', {
         url:     `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
         timeout: TIMEOUT_VALUES.CLUSTER,
       });
       const full = res?.data || res;
+      const spec = { ...full.spec, url: ociUrl };
+      if (clientSecret) spec.clientSecret = clientSecret;
       await $store.dispatch('rancher/request', {
         url:    `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
         method: 'PUT',
-        data:   { ...full, spec: { ...full.spec, clientSecret } },
+        data:   { ...full, spec },
         timeout: TIMEOUT_VALUES.MUTATION,
       });
     }
