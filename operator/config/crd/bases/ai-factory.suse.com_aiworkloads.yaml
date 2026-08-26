@@ -186,11 +186,6 @@ spec:
             - message: Blueprint workloads require at least one target cluster
               rule: self.source.sourceType != 'Blueprint' || (has(self.targetClusters)
                 && size(self.targetClusters) > 0)
-            - message: mixed local and downstream target clusters are not supported
-                for GitOps workloads
-              rule: self.deployStrategy != 'GitOps' || !has(self.targetClusters) ||
-                size(self.targetClusters.filter(c, c == 'local')) == 0 || size(self.targetClusters.filter(c,
-                c != 'local')) == 0
           status:
             description: AIWorkloadStatus defines the observed state of AIWorkload.
             properties:

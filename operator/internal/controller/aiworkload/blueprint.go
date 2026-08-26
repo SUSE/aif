@@ -925,55 +925,80 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
-	targets := append(append([]any{}, localTargets...), downstreamTargets...)
-	fleetNS := gitOpsFleetNamespace(w)
-	if repoInfo.ClientSecret != "" {
-		if err := r.ensureFleetAuthSecret(ctx, fleetNS, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
-			return "", fmt.Errorf("sync auth secret to %s: %w", fleetNS, err)
+	pairs := []struct {
+		namespace string
+		targets   []any
+	}{
+		{namespace: "fleet-local", targets: localTargets},
+		{namespace: "fleet-default", targets: downstreamTargets},
+	}
+	objects := make([]map[string]any, 0, len(pairs))
+	for _, pair := range pairs {
+		if len(pair.targets) == 0 {
+			continue
 		}
-	}
+		if repoInfo.ClientSecret != "" {
+			if err := r.ensureFleetAuthSecret(ctx, pair.namespace, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
+				return "", fmt.Errorf("sync auth secret to %s: %w", pair.namespace, err)
+			}
+		}
 
-	helmOpSpec := map[string]any{
-		// defaultNamespace (not namespace): targets the release namespace without
-		// forcing every resource into it. Fleet's strict `namespace` field rejects
-		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
-		// operator/CRD-bearing charts.
-		"defaultNamespace": ns,
-		"helm":             helmSpec,
-		"targets":          targets,
-		// forceSyncGeneration lives at the HelmOp spec top level (not under spec.helm) —
-		// Fleet's HelmOp schema declares spec.forceSyncGeneration.
-		"forceSyncGeneration": epoch,
-		"labels": map[string]any{
-			renderDigestLabel: renderDigestLabelValue(digest),
-			workloadUIDLabel:  string(w.UID),
-		},
-	}
-	if repoInfo.ClientSecret != "" {
-		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
-	}
-
-	helmOpObj := map[string]any{
-		"apiVersion": "fleet.cattle.io/v1alpha1",
-		"kind":       "HelmOp",
-		"metadata": map[string]any{
-			"name":      bundleName,
-			"namespace": fleetNS,
+		helmOpSpec := map[string]any{
+			// defaultNamespace (not namespace): targets the release namespace without
+			// forcing every resource into it. Fleet's strict `namespace` field rejects
+			// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+			// operator/CRD-bearing charts.
+			"defaultNamespace": ns,
+			"helm":             helmSpec,
+			"targets":          pair.targets,
+			// forceSyncGeneration lives at the HelmOp spec top level (not under spec.helm) —
+			// Fleet's HelmOp schema declares spec.forceSyncGeneration.
+			"forceSyncGeneration": epoch,
 			"labels": map[string]any{
-				workloadUIDLabel: string(w.UID),
+				renderDigestLabel: renderDigestLabelValue(digest),
+				workloadUIDLabel:  string(w.UID),
 			},
-		},
-		"spec": helmOpSpec,
+		}
+		if repoInfo.ClientSecret != "" {
+			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+		}
+		objects = append(objects, map[string]any{
+			"apiVersion": "fleet.cattle.io/v1alpha1",
+			"kind":       "HelmOp",
+			"metadata": map[string]any{
+				"name":      bundleName,
+				"namespace": pair.namespace,
+				"labels": map[string]any{
+					workloadUIDLabel: string(w.UID),
+				},
+			},
+			"spec": helmOpSpec,
+		})
+	}
+	if len(objects) == 0 {
+		return "", fmt.Errorf("GitOps blueprint component %q has no target clusters", c.ChartName)
 	}
 
-	yamlBytes, err := json.MarshalIndent(helmOpObj, "", "  ")
+	content, err := marshalGitResources(objects)
 	if err != nil {
 		return "", err
 	}
-	if err := r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes)); err != nil {
+	if err := r.publishBlueprintGitFile(ctx, w, bundleName, content); err != nil {
 		return "", err
 	}
 	return digest, nil
+}
+
+func marshalGitResources(objects []map[string]any) (string, error) {
+	documents := make([]string, 0, len(objects))
+	for _, object := range objects {
+		data, err := json.MarshalIndent(object, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		documents = append(documents, string(data))
+	}
+	return strings.Join(documents, "\n---\n"), nil
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {

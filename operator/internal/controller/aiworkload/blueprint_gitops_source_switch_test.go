@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -76,6 +77,61 @@ func newGitOpsTestWorkload() *aiplatformv1alpha1.AIWorkload {
 			TargetNamespace: "application-system",
 			TargetClusters:  []string{"local"},
 		},
+	}
+}
+
+func TestEnsureBlueprintGitFile_PublishesMixedTargetsToBothFleetWorkspaces(t *testing.T) {
+	ctx := context.Background()
+	remoteURL := newBlueprintGitOpsRemote(t)
+	scheme := gitRepoTestScheme()
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+		},
+	}
+	source := repoObj("private-charts", map[string]any{"url": "oci://registry.example/charts"})
+	workload := newGitOpsTestWorkload()
+	workload.Spec.TargetClusters = []string{"local", "c-downstream"}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings, source, workload).Build()
+	reconciler := &AIWorkloadReconciler{
+		Client:            client,
+		Scheme:            scheme,
+		OperatorNamespace: "aif-operator",
+	}
+	component := aiplatformv1alpha1.BlueprintComponent{
+		ChartRepo:    "private-charts",
+		ChartName:    "airgap-smoke",
+		ChartVersion: "1.0.0",
+	}
+	const bundleName = "private-source-workload-airgap-smoke"
+	const filePath = "workloads/private-source-workload-airgap-smoke.yaml"
+
+	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
+		t.Fatalf("publish mixed-target source: %v", err)
+	}
+	documents := strings.Split(readBlueprintGitOpsFile(t, remoteURL, filePath), "\n---\n")
+	if len(documents) != 2 {
+		t.Fatalf("want two Fleet workspace documents, got %d", len(documents))
+	}
+	wantNamespaces := map[string]bool{"fleet-local": true, "fleet-default": true}
+	for _, document := range documents {
+		var object map[string]any
+		if err := json.Unmarshal([]byte(document), &object); err != nil {
+			t.Fatalf("decode mixed-target HelmOp: %v", err)
+		}
+		namespace, _, _ := unstructured.NestedString(object, "metadata", "namespace")
+		if !wantNamespaces[namespace] {
+			t.Fatalf("unexpected Fleet namespace %q", namespace)
+		}
+		delete(wantNamespaces, namespace)
+		targets, found, err := unstructured.NestedSlice(object, "spec", "targets")
+		if err != nil || !found || len(targets) != 1 {
+			t.Fatalf("%s targets: found=%v err=%v targets=%v", namespace, found, err, targets)
+		}
+	}
+	if len(wantNamespaces) != 0 {
+		t.Fatalf("missing Fleet workspaces: %v", wantNamespaces)
 	}
 }
 

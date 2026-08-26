@@ -123,7 +123,6 @@ type ComponentValueOverride struct {
 
 // AIWorkloadSpec defines the desired state of AIWorkload.
 // +kubebuilder:validation:XValidation:rule="self.source.sourceType != 'Blueprint' || (has(self.targetClusters) && size(self.targetClusters) > 0)",message="Blueprint workloads require at least one target cluster"
-// +kubebuilder:validation:XValidation:rule="self.deployStrategy != 'GitOps' || !has(self.targetClusters) || size(self.targetClusters.filter(c, c == 'local')) == 0 || size(self.targetClusters.filter(c, c != 'local')) == 0",message="mixed local and downstream target clusters are not supported for GitOps workloads"
 type AIWorkloadSpec struct {
 	// DisplayName is the user-provided workload display name.
 	// +kubebuilder:validation:MinLength=1
