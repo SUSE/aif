@@ -47,10 +47,26 @@ import (
 )
 
 const (
-	defaultReadinessTimeout = 5 * time.Minute
+	// DefaultReadinessTimeout bounds how long the controller waits for an
+	// extension's pods after applying a chart. Exported so the flag that
+	// overrides it cannot drift from it.
+	//
+	// Ten minutes, for two independent reasons. It is the tolerance Helm's own
+	// Wait used to give the rollout before the controller took the wait over, so
+	// anything shorter fails upgrades that used to succeed on a slow image pull.
+	// And it is the Deployment's default progressDeadlineSeconds, which the chart
+	// does not override: give up sooner and the CR calls a rollout dead while
+	// Kubernetes is still working on it, which — a readiness timeout being
+	// terminal — leaves the CR Failed through a rollout that then succeeds.
+	DefaultReadinessTimeout = 10 * time.Minute
 	readinessRequeue        = 10 * time.Second
 	uiConfigMapName         = "aif-ui-config"
 	healthCheckInterval     = 60 * time.Second
+	// maxFailureRetryInterval caps the backoff in setFailureAndRetry. Fifteen
+	// minutes is short enough that a cluster fixed by hand is picked up while the
+	// person who fixed it is still watching, and long enough that a CR nobody is
+	// coming back for costs four pulls an hour instead of sixty.
+	maxFailureRetryInterval = 15 * time.Minute
 	// resolutionRetryInterval requeues the CR after a registry auth/TLS
 	// resolution failure so it self-heals when a referenced Secret is created
 	// or corrected (the controller has no Secret watch).
@@ -88,6 +104,15 @@ const (
 
 type InstallAIExtensionReconciler struct {
 	client.Client
+	// APIReader reads straight from the API server, bypassing the manager's
+	// cache. Only the deployment readiness check uses it, and it has to: that
+	// check runs in the same pass that applied the manifest, and an informer that
+	// has not yet seen the apply serves the previous revision — a self-consistent
+	// picture of a rollout that finished, which readiness cannot tell apart from
+	// the new one finishing. See deploymentReader.
+	//
+	// SetupWithManager fills this in, so nothing outside tests has to.
+	APIReader          client.Reader
 	Scheme             *runtime.Scheme
 	ExtensionNamespace string
 	ReadinessTimeout   time.Duration
@@ -102,13 +127,36 @@ type InstallAIExtensionReconciler struct {
 	// --allowed-registry-hosts) to bound the CR-supplied chartURL and prevent
 	// credential exfiltration to an attacker-chosen registry (confused-deputy).
 	AllowedRegistryHosts []string
-	rancherMgr           *rancher.Manager
+	// rancherMgr owns the Rancher-side objects. An interface for the same reason
+	// helmClientFor is a field: the failure branches behind these calls are
+	// recoverable ones the reconcile has to retry, and reaching them through the
+	// real manager means reaching them through a live index fetch over the
+	// network. See rancherManager.
+	rancherMgr rancherManager
 	// helmClientFor builds the Helm client for a namespace. A field rather than a
 	// direct call so tests can drive the reconcile paths end to end against a stub
 	// release backend; nil means newHelmClientForNamespace.
 	helmClientFor func(namespace string) (helmClient.HelmClient, error)
 	// helmClients memoizes those clients by namespace. See helmFor.
 	helmClients sync.Map
+}
+
+// rancherManager is the Rancher-side surface the reconciler uses, satisfied by
+// *rancher.Manager.
+//
+// Declared here rather than in the rancher package because it exists for the
+// consumer's sake. Four reconcile branches turn a failed Ensure into a retry,
+// and every one of them is a transient the cluster resolves on its own — a
+// webhook mid-restart, a CRD not yet served. Driving them through the real
+// manager means driving them through its Helm index fetch, so a test for
+// "does this retry" would come to depend on how the machine running it answers
+// a DNS query for a Service that does not exist.
+type rancherManager interface {
+	CheckCRDs(ctx context.Context, crds []string) error
+	EnsureClusterRepo(ctx context.Context, ext *v1alpha1.InstallAIExtension, svcURL string) error
+	EnsureUIPlugin(ctx context.Context, ext *v1alpha1.InstallAIExtension, svcURL string, namespace string) error
+	DeleteClusterRepo(ctx context.Context, name string) error
+	DeleteUIPlugin(ctx context.Context, name string, namespace string) error
 }
 
 // helmFor returns the Helm client for a namespace, building it once and reusing
@@ -179,7 +227,52 @@ func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
+// Reconcile translates shutdown out of the error channel before handing the
+// pass back to controller-runtime.
+//
+// Every reconcile runs under the manager's context, so signalling the pod
+// fails whichever call the in-flight pass happened to be making — the Get, the
+// finalizer Update, a Helm write, the cleanup on the deletion path. All of
+// those return context.Canceled, and controller-runtime treats a non-nil error
+// as a reconcile that went wrong: it logs `ERROR ... Reconciler error` and
+// increments controller_runtime_reconcile_errors_total and
+// reconcile_total{result="error"}. So the ordinary act of rolling the operator
+// posts errors to whatever watches those, on a schedule set by how many CRs
+// were mid-pass — the same mislabelling as the Phase=Failed this controller
+// already guards against, one layer up.
+//
+// Keyed on ctx.Err() rather than on the returned error: the question is not
+// what the pass reported but whether it was still allowed to run. A cancelled
+// context means it was not, so its verdict — success or failure — says nothing
+// and is dropped either way.
+//
+// Keyed on context.Canceled specifically, not on ctx.Err() != nil. Setting
+// Controller.ReconciliationTimeout (unset here, zero by default) would cancel
+// this same context with DeadlineExceeded, and that is a real failure that
+// should keep reaching the error path rather than be quietly filed as a
+// restart.
+//
+// RequeueAfter, not a bare success: the pass did not settle the CR and must not
+// be recorded as having done so. On the way down this is moot — the queue is
+// shutting down and drops the add — but it keeps the return honest for a
+// cancellation that somehow is not a shutdown, and keeps the pass out of
+// reconcile_total{result="success"}.
 func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	result, err := r.reconcileRequest(ctx, req)
+
+	if cause := ctx.Err(); stderrors.Is(cause, context.Canceled) {
+		log.FromContext(ctx).Info("Reconcile abandoned: operator is shutting down",
+			"cause", cause, "reported", err)
+		return ctrl.Result{RequeueAfter: healthCheckInterval}, nil
+	}
+
+	return result, err
+}
+
+func (r *InstallAIExtensionReconciler) reconcileRequest(
+	ctx context.Context,
+	req ctrl.Request,
+) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	var ext v1alpha1.InstallAIExtension
@@ -205,6 +298,33 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 	original := ext.DeepCopy()
 
 	result, reconcileErr := r.reconcile(ctx, &ext)
+
+	// Shutdown is not a verdict. This context is the manager's, cancelled the
+	// moment the pod is signalled, and every failure path below records what the
+	// pass concluded — but a pass cut off partway through concluded nothing. The
+	// eighteen failure sites cannot tell "the chart is broken" from
+	// "we were killed mid-pull", so without this the ordinary act of rolling the
+	// operator stamps Phase=Failed on a healthy extension.
+	//
+	// Placed above the writes rather than inside them so there is one rule
+	// instead of eighteen, and so the stale-marker cleanup below cannot conclude
+	// the wait is over on the strength of a pass that concluded nothing.
+	//
+	// It does not put a marker back. handlePendingRelease writes that annotation
+	// through its own Update, well above this point, so an interrupted pass can
+	// have committed one already. That is the right way round: the marker times a
+	// wait that really did start, and the next pass either finds the release
+	// still pending and keeps the window or finds it settled and clears it.
+	//
+	// This guard's job is only to stop the write; how a cancelled pass is
+	// reported back to controller-runtime is Reconcile's, at the boundary, where
+	// it also covers the paths that return above this one. Returning the error
+	// here says "did not finish" and lets that one decision live in one place.
+	if err := ctx.Err(); err != nil {
+		logger.Info("Reconcile interrupted by shutdown; leaving status untouched",
+			"reason", err)
+		return ctrl.Result{}, err
+	}
 
 	// The marker times a wait on an in-flight Helm operation, so it must not
 	// outlive that wait. handlePendingRelease is the only thing that clears it, and
@@ -274,14 +394,17 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 		return ctrl.Result{}, err
 	}
 
+	// Through setFailureAndRetry like every other recoverable failure, and this
+	// is the one most likely to be hit: install the operator before Rancher and
+	// the CRDs appear minutes later, with no event to say so. A zero Result here
+	// left the CR Failed until the informer's ~10h resync — a first impression of
+	// the operator that never recovers on its own.
 	if err := r.rancherMgr.CheckCRDs(ctx, []string{
 		"uiplugins.catalog.cattle.io",
 		"clusterrepos.catalog.cattle.io",
 	}); err != nil {
-		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
-			"CRDsMissing", fmt.Sprintf("Rancher CRDs not found: %v", err), ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeReady,
+			"CRDsMissing", fmt.Sprintf("Rancher CRDs not found: %v", err)), nil
 	}
 
 	switch ext.Spec.Source.Kind {
@@ -464,55 +587,17 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		return result, nil
 	}
 	if ensureErr != nil {
-		setTerminalFailure(ext, conditionTypeHelmInstalled,
-			"InstallFailed", fmt.Sprintf("Helm install failed: %v", ensureErr))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeHelmInstalled,
+			"InstallFailed", fmt.Sprintf("Helm install failed: %v", ensureErr)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeHelmInstalled, metav1.ConditionTrue,
 		"Installed", fmt.Sprintf("Helm release %s installed", releaseName), ext.Generation)
 	ext.Status.HelmReleaseName = releaseName
 
-	// LastRelease, not DeployedRelease: the status field mirrors what Helm last
-	// recorded, which is the highest revision number rather than the running one.
-	releaseInfo, err := helm.LastRelease(ctx, releaseName)
-	if err != nil {
-		return ctrl.Result{}, err
+	if result, handled, err := r.awaitReleaseRunning(ctx, ext, namespace, releaseName, deploymentRequired); handled || err != nil {
+		return result, err
 	}
-	if releaseInfo != nil {
-		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
-	}
-
-	// A readiness check that errors and one that reports not-ready share a clock:
-	// both mean the deployment is not usable yet, and a check flapping between the
-	// two must not keep restarting the wait.
-	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.Client, namespace, releaseName, logger)
-	if err != nil {
-		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
-			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err))
-	}
-	if !deployStatus.Ready {
-		return r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
-			"NotReady", deployStatus.Message)
-	}
-
-	// Deployment is ready: clear the waiting marker and continue in the same pass
-	// rather than requeuing, so install completes immediately once readiness is
-	// reached. Continuing inline also avoids the cache-propagation race — there is
-	// no follow-up reconcile whose cached Get could still observe the stale marker,
-	// and no further main-resource write happens this pass (only the status patch).
-	if r.getWaitingSince(ext, annotationWaitingSince) != (time.Time{}) {
-		r.clearWaitingSince(ext, annotationWaitingSince)
-		// updateAnnotations, not Update: HelmReleaseName and HelmReleaseRevision were
-		// set earlier in this pass and a bare Update would drop both before
-		// persistStatus ever sees them.
-		if err := r.updateAnnotations(ctx, ext); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
-		"Available", deployStatus.Message, ext.Generation)
 
 	// Both Service failures share a clock for the same reason the deployment ones
 	// do: either way the Service is not yet usable, and the chart is free to
@@ -545,18 +630,16 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 		"Available", fmt.Sprintf("Service URL: %s", svcURL), ext.Generation)
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, svcURL); err != nil {
-		setTerminalFailure(ext, conditionTypeClusterRepo,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
 		"Created", "ClusterRepo created", ext.Generation)
 
 	if err := r.rancherMgr.EnsureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		setTerminalFailure(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin failed: %v", err))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin failed: %v", err)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
@@ -587,9 +670,8 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	}
 
 	if err := r.rancherMgr.EnsureClusterRepo(ctx, ext, ""); err != nil {
-		setTerminalFailure(ext, conditionTypeClusterRepo,
-			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeClusterRepo,
+			"Failed", fmt.Sprintf("ClusterRepo failed: %v", err)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
@@ -604,13 +686,26 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 		return result, nil
 	}
 	if pluginErr != nil {
-		setTerminalFailure(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
 		"Created", "UIPlugin installed from git source", ext.Generation)
+
+	// deploymentOptional, because a Rancher UI-plugin chart is allowed to be
+	// nothing but a UIPlugin CR and this path cannot tell that chart from one whose
+	// Deployment has not appeared yet. Required here would fail every install of
+	// the former after ReadinessTimeout — strictly worse than the wait it replaces.
+	//
+	// ext.Spec.Extension.Name, not releaseName: that is what ensureUIPluginGit
+	// installs under, and Status.HelmReleaseName is deliberately left unset on this
+	// path for the finalizer's sake.
+	if result, handled, err := r.awaitReleaseRunning(
+		ctx, ext, namespace, ext.Spec.Extension.Name, deploymentOptional,
+	); handled || err != nil {
+		return result, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -743,17 +838,260 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 	})
 }
 
-// setTerminalFailure records a terminal reconcile failure: it sets the specific
-// sub-condition to False and mirrors the same reason/message onto the top-level Ready
-// condition, then marks the phase Failed. Mirroring keeps Ready from showing a stale
-// success while phase is Failed (a pull/deployment/Rancher failure otherwise updated only
-// its own sub-condition). Sites that already set Ready directly do not need this.
-func setTerminalFailure(ext *v1alpha1.InstallAIExtension, condType, reason, message string) {
+// setFailureAndRetry records a reconcile failure the cluster may resolve on its
+// own, and returns the Result that will bring the CR back to be re-examined. It
+// sets the specific sub-condition to False and mirrors the same reason/message
+// onto the top-level Ready condition, then marks the phase Failed. Mirroring
+// keeps Ready from showing a stale success while phase is Failed (a
+// pull/deployment/Rancher failure otherwise updated only its own
+// sub-condition). Sites that already set Ready directly do not need this.
+//
+// The requeue is the point, and it is why this is no longer called
+// setTerminalFailure. Every caller is a failure with a cause outside the CR — a
+// registry that was unreachable, Rancher CRDs not installed yet, a rollout that
+// overran its bound. None of those produce an event when they clear, because
+// the controller watches InstallAIExtension and nothing else, so a zero Result
+// meant the CR stayed Failed until someone edited it or the informer resynced
+// (~10h). Phase stays Failed and the conditions still say what went wrong; the
+// CR is simply looked at again.
+//
+// healthCheckInterval is the floor, deliberately: a failed CR is re-examined no
+// faster than a healthy one. It is also six times gentler than the
+// readinessRequeue loop that already re-enters EnsureRelease while waiting, so
+// the first retry adds no pull rate the operator did not already sustain.
+//
+// It is only the floor because the interval is flat but the wait is not bounded,
+// and those two together are the problem. Nothing here gives up: a CR pointing at
+// a registry that is never coming back retries at the same rate for as long as
+// the operator runs, which is ~1,440 attempts a day, each one a real pull.
+// Private charts make that concrete — chartCacheKey declines to cache a spec
+// carrying credentials, precisely so a hit cannot skip the authentication a fetch
+// would have performed, so every one of those attempts is an authenticated round
+// trip to someone else's registry. A minute is a reasonable thing to do once and
+// an unreasonable thing to do forever at a fixed rate.
+//
+// So the interval grows with how long the CR has already been failing, clamped
+// into [healthCheckInterval, maxFailureRetryInterval]: 60s, 60s, 120s, 240s,
+// 480s, then 900s from there on. The elapsed time comes from Ready's
+// LastTransitionTime rather than a counter in status, because
+// meta.SetStatusCondition only moves that stamp when the status *changes*. A CR
+// that stays False keeps its original stamp and the interval widens; one that
+// recovers and fails again gets a fresh stamp and starts over at the floor. That
+// is the behaviour a counter would have to be written, persisted and reset by
+// hand to reproduce, and it survives an operator restart or a leader change for
+// free, which an in-memory map would not.
+//
+// Read after the conditions are set, not before: on the first failure Ready has
+// just been stamped now, so elapsed is ~0 and the clamp returns the floor.
+//
+// Failures that are *not* routed through here are the ones a retry cannot
+// change: an unsupported source kind, a malformed chart URL, a host the
+// allowlist rejects. Those are a pure function of the spec and the operator's
+// own flags, and a change to either already wakes the controller — through the
+// watch for a CR edit, through the restart for a flag. Requeuing them would
+// re-derive an identical answer every minute forever.
+func setFailureAndRetry(ext *v1alpha1.InstallAIExtension, condType, reason, message string) ctrl.Result {
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse, reason, message, ext.Generation)
 	if condType != conditionTypeReady {
 		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, message, ext.Generation)
 	}
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+
+	return ctrl.Result{RequeueAfter: failureRetryInterval(ext)}
+}
+
+// failureRetryInterval is how long to wait before looking at a failing CR again:
+// about as long as it has already been failing, never under healthCheckInterval,
+// never over maxFailureRetryInterval.
+//
+// Stated that way it needs no state of its own, and the doubling falls out —
+// waiting the elapsed time doubles the elapsed time. A missing Ready condition,
+// a zero stamp, or a stamp in the future all fall back to the floor: the future
+// case is a clock skew or a hand-edited status, and the honest answer to "this
+// has been failing for minus five minutes" is to retry at the ordinary rate
+// rather than to compute a negative wait and requeue in a hot loop.
+func failureRetryInterval(ext *v1alpha1.InstallAIExtension) time.Duration {
+	ready := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
+	if ready == nil || ready.LastTransitionTime.IsZero() {
+		return healthCheckInterval
+	}
+
+	elapsed := time.Since(ready.LastTransitionTime.Time)
+	switch {
+	case elapsed < healthCheckInterval:
+		return healthCheckInterval
+	case elapsed > maxFailureRetryInterval:
+		return maxFailureRetryInterval
+	default:
+		return elapsed
+	}
+}
+
+// deploymentReader returns the reader the deployment readiness check must use:
+// the uncached one whenever there is one.
+//
+// The fallback to Client exists for reconcilers built by hand in tests, which
+// never go through SetupWithManager. It is safe there because a fake client is
+// the API server — there is no second view to be stale relative to — and it is
+// unreachable in a running operator, where SetupWithManager is the only way a
+// reconciler is ever started.
+func (r *InstallAIExtensionReconciler) deploymentReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
+// deploymentPolicy says what the absence of a Deployment means for a release.
+//
+// It is the one thing the two source kinds genuinely disagree about. The Helm
+// path installs the extension's server chart, whose entire purpose is to run a
+// Deployment: none present is a broken chart, and reporting Installed would be
+// a lie. The Git path installs a Rancher UI-plugin chart, which is allowed to
+// contain nothing but a UIPlugin CR and a ClusterRepo — hold that to the same
+// rule and a correct extension never leaves Installing.
+type deploymentPolicy bool
+
+const (
+	deploymentRequired deploymentPolicy = true
+	deploymentOptional deploymentPolicy = false
+)
+
+// awaitReleaseRunning turns "Helm applied the release" into "the release is
+// running", and reports whether it took ownership of the outcome.
+//
+// This is the guarantee that used to come from Helm's own up.Wait. Turning Wait
+// off is what stopped a SIGTERM mid-rollout from cancelling the reconcile
+// context and resolving into failRelease — but Wait was also the only thing
+// checking that the workload came up, so switching it off without a replacement
+// swaps a release wrongly marked failed for one wrongly marked Installed.
+//
+// Shared by both source kinds deliberately. The replacement was written into
+// the Helm path only, which left the Git path applying a chart and declaring
+// UIPluginReady=True in the next statement: an upgrade to a broken image tag
+// reported Installed and stayed there. Nothing structural stopped the two
+// diverging, so the wait lives in one place and each caller states its policy.
+func (r *InstallAIExtensionReconciler) awaitReleaseRunning(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	namespace string,
+	releaseName string,
+	policy deploymentPolicy,
+) (ctrl.Result, bool, error) {
+	logger := log.FromContext(ctx)
+
+	helm, err := r.helmFor(namespace)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+
+	// LastRelease, not DeployedRelease: the status field mirrors what Helm last
+	// recorded, which is the highest revision number rather than the running one.
+	releaseInfo, err := helm.LastRelease(ctx, releaseName)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+	if releaseInfo != nil {
+		if err := r.restartReadinessClocks(ctx, ext, int32(releaseInfo.Revision)); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		ext.Status.HelmReleaseRevision = int32(releaseInfo.Revision)
+	}
+
+	// A readiness check that errors and one that reports not-ready share a clock:
+	// both mean the deployment is not usable yet, and a check flapping between the
+	// two must not keep restarting the wait.
+	deployStatus, err := kubernetes.IsDeploymentReady(ctx, r.deploymentReader(), namespace, releaseName, logger)
+	if err != nil {
+		result, awaitErr := r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
+			"CheckFailed", fmt.Sprintf("Failed to check deployment readiness: %v", err))
+		return result, true, awaitErr
+	}
+
+	// Nothing to wait on, under a policy that permits it. Distinguished from
+	// not-ready rather than folded into it: a chart with no workload is finished
+	// the moment Helm applies it, and timing it out after ReadinessTimeout would
+	// fail an extension that is working exactly as designed.
+	waiting := !deployStatus.Ready && (deployStatus.Found || policy == deploymentRequired)
+	if waiting {
+		result, awaitErr := r.awaitReadiness(ctx, ext, annotationWaitingSince, conditionTypeDeploymentReady,
+			"NotReady", deployStatus.Message)
+		return result, true, awaitErr
+	}
+
+	// Ready: clear the waiting marker and continue in the same pass rather than
+	// requeuing, so install completes immediately once readiness is reached.
+	// Continuing inline also avoids the cache-propagation race — there is no
+	// follow-up reconcile whose cached Get could still observe the stale marker,
+	// and no further main-resource write happens this pass (only the status patch).
+	if r.getWaitingSince(ext, annotationWaitingSince) != (time.Time{}) {
+		r.clearWaitingSince(ext, annotationWaitingSince)
+		// updateAnnotations, not Update: HelmReleaseName and HelmReleaseRevision were
+		// set earlier in this pass and a bare Update would drop both before
+		// persistStatus ever sees them.
+		if err := r.updateAnnotations(ctx, ext); err != nil {
+			return ctrl.Result{}, true, err
+		}
+	}
+
+	message := deployStatus.Message
+	if !deployStatus.Found {
+		message = "Release has no deployment to wait for"
+	}
+	setCondition(&ext.Status.Conditions, conditionTypeDeploymentReady, metav1.ConditionTrue,
+		"Available", message, ext.Generation)
+
+	return ctrl.Result{}, false, nil
+}
+
+// restartReadinessClocks drops the readiness markers when the release moves to
+// a new revision, so the next wait is timed from the rollout it is actually
+// waiting on.
+//
+// awaitReadiness keeps a timed-out marker on purpose — clearing it there would
+// restart the clock and flap the CR between Failed and waiting forever. The
+// cost is that the stamp outlives the wait it measured. Fix a bad image tag
+// twenty minutes after the timeout fired and the next pass compares a
+// three-second-old rollout against the *previous* rollout's start: instant
+// ReadinessTimedOut, and then a re-check every healthCheckInterval instead of
+// every readinessRequeue — six times slower, for the whole of a rollout that is
+// perfectly healthy.
+//
+// A new revision is what separates the two cases, and it is the only honest
+// signal available: whatever the old wait concluded, it concluded it about a
+// release that is no longer deployed.
+//
+// Both clocks, because a new revision replaces the Service as well as the
+// Deployment. And here rather than inside awaitReadiness, which is not reached
+// at all on a pass where the rollout is already ready — so a stale stamp left
+// for it to clean up would instead be inherited by the wait after next.
+func (r *InstallAIExtensionReconciler) restartReadinessClocks(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	revision int32,
+) error {
+	// Zero is "no revision recorded", not "a different revision". The status
+	// field and the marker are written by the same pass, so a live marker with no
+	// recorded revision means an earlier status write failed — and inferring a
+	// fresh rollout from a failed write would restart a clock that never ran.
+	if ext.Status.HelmReleaseRevision == 0 || revision == ext.Status.HelmReleaseRevision {
+		return nil
+	}
+
+	cleared := false
+	for _, annotation := range []string{annotationWaitingSince, annotationServiceWaitingSince} {
+		if !r.getWaitingSince(ext, annotation).IsZero() {
+			r.clearWaitingSince(ext, annotation)
+			cleared = true
+		}
+	}
+	if !cleared {
+		return nil
+	}
+
+	// updateAnnotations, not Update: HelmReleaseName was set earlier in this pass
+	// and a bare Update would drop it before persistStatus ever sees it.
+	return r.updateAnnotations(ctx, ext)
 }
 
 // awaitReadiness advances a bounded wait on an install step that has not
@@ -794,9 +1132,8 @@ func (r *InstallAIExtensionReconciler) awaitReadiness(
 		// advertises the previous pass's success for a whole requeue interval.
 
 	case time.Since(waitingSince) > r.ReadinessTimeout:
-		setTerminalFailure(ext, condType, reasonReadinessTimedOut,
-			fmt.Sprintf("%s (still not resolved after %s)", message, r.ReadinessTimeout))
-		return ctrl.Result{}, nil
+		return setFailureAndRetry(ext, condType, reasonReadinessTimedOut,
+			fmt.Sprintf("%s (still not resolved after %s)", message, r.ReadinessTimeout)), nil
 	}
 
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
@@ -862,17 +1199,16 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 		// previous pass's success for a whole requeue interval.
 
 	case time.Since(pendingSince) > pendingReleaseTimeout:
-		setTerminalFailure(ext, condType, reasonReleasePendingTimedOut, fmt.Sprintf(
+		return setFailureAndRetry(ext, condType, reasonReleasePendingTimedOut, fmt.Sprintf(
 			"Helm release still mid-operation after %s; a pending release cannot be "+
 				"upgraded over, so resolve it with `helm rollback` or `helm uninstall`: %v",
-			pendingReleaseTimeout, err))
-		return ctrl.Result{}, true, nil
+			pendingReleaseTimeout, err)), true, nil
 	}
 
 	msg := fmt.Sprintf("Waiting for in-flight Helm operation: %v", err)
 	setCondition(&ext.Status.Conditions, condType, metav1.ConditionFalse,
 		reasonReleasePending, msg, ext.Generation)
-	// Ready is mirrored for the same reason setTerminalFailure mirrors it: this is
+	// Ready is mirrored for the same reason setFailureAndRetry mirrors it: this is
 	// not a terminal failure, so that helper does not apply, but a CR that already
 	// reached Installed would otherwise keep advertising Ready=True while its
 	// upgrade sits wedged.
@@ -995,7 +1331,10 @@ func (r *InstallAIExtensionReconciler) clearWaitingSince(ext *v1alpha1.InstallAI
 
 func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.ReadinessTimeout == 0 {
-		r.ReadinessTimeout = defaultReadinessTimeout
+		r.ReadinessTimeout = DefaultReadinessTimeout
+	}
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
 	}
 	r.rancherMgr = rancher.NewManager(r.Client)
 	return ctrl.NewControllerManagedBy(mgr).
