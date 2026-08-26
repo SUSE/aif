@@ -1030,6 +1030,37 @@ func TestValidateCredentials_GitAuthClassification(t *testing.T) {
 	}
 }
 
+func TestValidateCredentials_GitHTTPSCredentialOverride(t *testing.T) {
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+	}
+	credential := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-credential", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("secret-token")},
+	}
+	c := newSettingsFakeClient(t, cr, credential)
+	h := newSettingsHandler(c, ns)
+
+	orig := gitCheckAuthFn
+	defer func() { gitCheckAuthFn = orig }()
+	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error { return nil }
+
+	body := `{"targets":["gitops"],"overrides":{"gitops":{"repoURL":"https://git.example.com/repo.git","branch":"main","username":"git-user","credSecretRef":{"name":"git-credential","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want ok, got %+v", resp.Results)
+	}
+}
+
 func TestValidateCredentials_InvalidJSON400(t *testing.T) {
 	c := newSettingsFakeClient(t, sampleCR())
 	h := newSettingsHandler(c, "aif-operator")

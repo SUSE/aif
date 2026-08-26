@@ -69,7 +69,6 @@ spec:
   fleet:
     repoURL: https://gitea.internal/platform/aif.git
     branch: main
-    authType: token
     username: platform
     credSecretRef:
       name: git-credentials
@@ -79,10 +78,18 @@ spec:
       key: ca.crt
 ```
 
-`authType` supports `token` and `basic`. The operator uses the same credentials
-and PEM CA bundle for its Git writes and for the generated Fleet `GitRepo`.
-Changing the repository URL or branch requeues existing Blueprint workloads and
-republishes their GitOps manifests to the new destination.
+Git over HTTPS has one credential model: `username` plus the selected Secret
+key as either a password or personal access token. Alternatively, the username
+may come from the `username` key in the same Secret. Leave both fields unset for
+an anonymous repository. AIF mirrors authenticated credentials to Fleet as a
+`kubernetes.io/basic-auth` Secret; a personal access token is the password and
+is not sent as an HTTP Bearer token. The deprecated `authType` values `token`
+and `basic` remain accepted only for compatibility with existing Settings.
+
+The operator uses the same credentials and PEM CA bundle for its Git writes and
+for the generated Fleet `GitRepo`. Changing the repository URL or branch
+requeues existing Blueprint workloads and republishes their GitOps manifests to
+the new destination.
 
 SSH is not part of this minimal contract. Supporting it safely requires an
 explicit private-key and known-hosts model; TLS or SSH host verification must

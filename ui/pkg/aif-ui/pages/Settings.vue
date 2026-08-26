@@ -3,7 +3,6 @@ import AsyncButton      from '@shell/components/AsyncButton';
 import { Banner }       from '@components/Banner';
 import Loading          from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
-import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
@@ -26,6 +25,8 @@ import {
 
 function createEmptySpec() {
   return {
+    // authType is retained only to round-trip Settings created by older AIF
+    // versions. New configurations use one HTTPS username + credential model.
     fleet:                 { repoURL: '', branch: 'main', authType: '', username: '', credSecretRef: null, caBundleSecretRef: null },
     applicationCollection: { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, categories: [] },
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, refreshIntervalMinutes: 10 },
@@ -43,7 +44,6 @@ export default {
     Banner,
     Loading,
     LabeledInput,
-    LabeledSelect,
     Checkbox,
     SecretSelector,
   },
@@ -99,14 +99,6 @@ export default {
   computed: {
     settingsNamespace() {
       return getOperatorNamespace();
-    },
-
-    authTypeOptions() {
-      return [
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.none'), value: '' },
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.token'), value: 'token' },
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.basic'), value: 'basic' },
-      ];
     },
 
     categoriesString: {
@@ -909,6 +901,9 @@ export default {
           v-if="expanded.fleet"
           class="mt-15"
         >
+          <p class="mb-15">
+            {{ t('suseai.pages.settings.sections.fleet.description') }}
+          </p>
           <div class="row mb-10">
             <div class="col span-6">
               <LabeledInput
@@ -928,18 +923,7 @@ export default {
             </div>
           </div>
           <div class="row mb-15">
-            <div class="col span-4">
-              <LabeledSelect
-                v-model:value="spec.fleet.authType"
-                :label="t('suseai.pages.settings.sections.fleet.authType.label')"
-                :options="authTypeOptions"
-                :mode="mode"
-              />
-            </div>
-            <div
-              v-if="spec.fleet.authType"
-              class="col span-4"
-            >
+            <div class="col span-6">
               <LabeledInput
                 v-model:value="spec.fleet.username"
                 :label="t('suseai.pages.settings.sections.fleet.username.label')"
@@ -948,10 +932,7 @@ export default {
               />
             </div>
           </div>
-          <div
-            v-if="spec.fleet.authType"
-            class="row mb-15"
-          >
+          <div class="row mb-15">
             <div class="col span-8">
               <p class="text-label mb-5">
                 {{ t('suseai.pages.settings.sections.fleet.credSecretRef.label') }}

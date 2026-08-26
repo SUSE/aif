@@ -241,7 +241,7 @@ func TestSettingsController_DeletesFleetGitRepoWhenURLCleared(t *testing.T) {
 	}
 }
 
-func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
+func TestSettingsController_MirrorsGitHTTPSCredential(t *testing.T) {
 	s := newScheme(t)
 	srcSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "suse-ai-system"},
@@ -253,7 +253,6 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
 				RepoURL:  "https://github.com/example/ai-workloads",
-				AuthType: "token",
 				Username: "git-user",
 				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
 					Name: "git-creds",
@@ -287,6 +286,53 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 	}
 	if string(mirror.Data["username"]) != "git-user" {
 		t.Errorf("expected username=git-user, got %q", string(mirror.Data["username"]))
+	}
+}
+
+func TestSettingsController_MirrorsGitHTTPSUsernameFromSecret(t *testing.T) {
+	s := newScheme(t)
+	srcSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "suse-ai-system"},
+		Type:       corev1.SecretTypeBasicAuth,
+		Data: map[string][]byte{
+			corev1.BasicAuthUsernameKey: []byte("git-user"),
+			corev1.BasicAuthPasswordKey: []byte("mytoken"),
+		},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL: "https://github.com/example/ai-workloads",
+				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+					Name: "git-creds",
+					Key:  corev1.BasicAuthPasswordKey,
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, srcSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var mirror corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "git-creds", Namespace: "fleet-local",
+	}, &mirror); err != nil {
+		t.Fatalf("expected mirror secret in fleet-local: %v", err)
+	}
+	if string(mirror.Data[corev1.BasicAuthUsernameKey]) != "git-user" {
+		t.Errorf("expected username=git-user, got %q", string(mirror.Data[corev1.BasicAuthUsernameKey]))
+	}
+	if string(mirror.Data[corev1.BasicAuthPasswordKey]) != "mytoken" {
+		t.Errorf("expected password=mytoken, got %q", string(mirror.Data[corev1.BasicAuthPasswordKey]))
 	}
 }
 
@@ -338,6 +384,9 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 	}
 	if string(mirror.Data["password"]) != "newtoken" {
 		t.Errorf("expected password=newtoken, got %q", string(mirror.Data["password"]))
+	}
+	if string(mirror.Data["username"]) != "token" {
+		t.Errorf("expected legacy username=token, got %q", string(mirror.Data["username"]))
 	}
 }
 

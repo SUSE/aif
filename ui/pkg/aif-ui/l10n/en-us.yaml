@@ -95,26 +95,20 @@ suseai:
             keyNameLabel: CA Bundle Key
         fleet:
           title: Fleet / GitOps
+          description: 'Git over HTTPS uses a username with either a password or personal access token. Leave both credential fields empty for a public repository.'
           repoURL:
             label: Repository URL
             placeholder: 'https://github.com/org/repo.git'
           branch:
             label: Branch
             placeholder: main
-          authType:
-            label: Auth Type
-            options:
-              none: None
-              ssh: SSH
-              token: Token
-              basic: Basic
           username:
-            label: Username
-            placeholder: Defaults to token for token authentication
+            label: HTTPS Username
+            placeholder: Git account or provider-specific username
           credSecretRef:
-            label: Git Credentials
+            label: Password or Personal Access Token (optional)
             secretNameLabel: Credential Secret
-            keyNameLabel: Secret Key
+            keyNameLabel: Password or Token Key
           caBundleSecretRef:
             label: HTTPS CA Bundle (optional)
             secretNameLabel: CA Secret Name

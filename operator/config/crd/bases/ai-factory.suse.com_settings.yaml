@@ -115,7 +115,12 @@ spec:
                 description: Fleet configures Fleet GitOps integration.
                 properties:
                   authType:
-                    description: AuthType is the HTTPS authentication method.
+                    description: |-
+                      AuthType is the legacy HTTPS credential selector.
+                      Deprecated: HTTPS Git credentials always use HTTP Basic authentication,
+                      with the configured credential as the password or personal access token.
+                      Existing token and basic values are accepted for compatibility; new
+                      clients should omit this field.
                     enum:
                     - token
                     - basic
@@ -158,9 +163,8 @@ spec:
                     type: string
                   username:
                     description: |-
-                      Username is the HTTPS Git username. It defaults to "token" for token
-                      authentication. Basic authentication requires this field or a username
-                      key in the referenced credential Secret.
+                      Username is the HTTPS Git username. When credentials are configured, set
+                      this field or provide a username key in the referenced credential Secret.
                     type: string
                 type: object
               nvidia:

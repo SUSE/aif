@@ -64,25 +64,29 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 	var auth *gogithttp.BasicAuth
 	if s.Spec.Fleet.CredSecretRef != nil {
 		ref := s.Spec.Fleet.CredSecretRef
+		switch s.Spec.Fleet.AuthType {
+		case "", "token", "basic":
+			// token and basic are deprecated compatibility aliases. Git HTTPS
+			// credentials use HTTP Basic in every case.
+		default:
+			return nil, fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
+		}
 		password, err := reader.ReadSecretKey(ctx, namespace, ref.Name, ref.Key)
 		if err != nil {
 			return nil, fmt.Errorf("read git credential: %w", err)
 		}
 		username := s.Spec.Fleet.Username
-		switch s.Spec.Fleet.AuthType {
-		case "", "token":
-			if username == "" {
-				username = "token"
+		if username == "" {
+			username, err = reader.ReadSecretKey(ctx, namespace, ref.Name, "username")
+			if err != nil && s.Spec.Fleet.AuthType == "" {
+				return nil, fmt.Errorf("read git HTTPS username: set fleet.username or add username to Secret %s: %w", ref.Name, err)
 			}
-		case "basic":
-			if username == "" {
-				username, err = reader.ReadSecretKey(ctx, namespace, ref.Name, "username")
-				if err != nil {
-					return nil, fmt.Errorf("read git basic-auth username: set fleet.username or add username to Secret %s: %w", ref.Name, err)
-				}
-			}
-		default:
-			return nil, fmt.Errorf("unsupported fleet.authType %q; use token or basic HTTPS authentication", s.Spec.Fleet.AuthType)
+		}
+		// Before the unified HTTPS credential model, authType caused a missing
+		// username to default to "token". Preserve that behavior only for
+		// resources that still carry the deprecated field.
+		if username == "" && s.Spec.Fleet.AuthType != "" {
+			username = "token"
 		}
 		if username == "" || password == "" {
 			return nil, fmt.Errorf("git username and credential must not be empty")

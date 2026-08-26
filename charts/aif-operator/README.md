@@ -119,15 +119,16 @@ spec:
   fleet:
     repoURL: https://gitea.internal/platform/aif.git
     branch: main
-    authType: token
     username: platform
     credSecretRef: {name: git-credentials, key: token}
     caBundleSecretRef: {name: private-ca, key: ca.crt}
 ```
 
-The generated Fleet `GitRepo` reads Blueprint definitions from `blueprints/`
-and AIF writes GitOps deployment resources under `workloads/`. Both AIF and
-Fleet use the configured Git CA and HTTPS credentials. Blueprints continue to
+The selected Git credential may be a password or personal access token; both
+use the same Git HTTPS username/password transport expected by Fleet. The
+generated Fleet `GitRepo` reads Blueprint definitions from `blueprints/` and
+AIF writes GitOps deployment resources under `workloads/`. Both AIF and Fleet
+use the configured Git CA and HTTPS credentials. Blueprints continue to
 reference stable Rancher `ClusterRepo` names; the Settings controller points
 those resources at the configured public or private chart endpoints. See
 [`docs/air-gap/operator-private-sources.md`](../../docs/air-gap/operator-private-sources.md).

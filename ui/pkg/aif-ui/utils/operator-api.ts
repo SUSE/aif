@@ -115,6 +115,7 @@ export interface ValidateOverride {
   caBundleSecretRef?: { name: string; key: string } | null;
   repoURL?:           string;
   branch?:            string;
+  /** @deprecated HTTPS Git credentials always use username plus password/PAT. */
   authType?:          string;
   username?:          string;
   url?:               string;

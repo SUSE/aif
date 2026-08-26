@@ -36,7 +36,7 @@ func (r internalMapReader) ReadSecretKey(_ context.Context, namespace, name, key
 	return value, nil
 }
 
-func TestNewFromSettingsTokenAuthDefaultsUsername(t *testing.T) {
+func TestNewFromSettingsLegacyTokenAuthDefaultsUsername(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
 		RepoURL:       "https://git.example.test/org/repo.git",
@@ -55,11 +55,10 @@ func TestNewFromSettingsTokenAuthDefaultsUsername(t *testing.T) {
 	}
 }
 
-func TestNewFromSettingsBasicAuthUsesExplicitUsername(t *testing.T) {
+func TestNewFromSettingsHTTPSCredentialsUseExplicitUsername(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
 		RepoURL:       "https://git.example.test/org/repo.git",
-		AuthType:      "basic",
 		Username:      "alice",
 		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "password"},
 	}
@@ -72,6 +71,40 @@ func TestNewFromSettingsBasicAuthUsesExplicitUsername(t *testing.T) {
 	}
 	if client.auth == nil || client.auth.Username != "alice" || client.auth.Password != "secret-password" {
 		t.Fatalf("unexpected basic auth: %#v", client.auth)
+	}
+}
+
+func TestNewFromSettingsHTTPSCredentialsReadUsernameFromSecret(t *testing.T) {
+	s := &aiplatformv1alpha1.Settings{}
+	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
+		RepoURL:       "https://git.example.test/org/repo.git",
+		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "password"},
+	}
+
+	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
+		"aif-operator/git-auth/username": "alice",
+		"aif-operator/git-auth/password": "secret-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.auth == nil || client.auth.Username != "alice" || client.auth.Password != "secret-password" {
+		t.Fatalf("unexpected HTTPS auth: %#v", client.auth)
+	}
+}
+
+func TestNewFromSettingsRejectsHTTPSCredentialsWithoutUsername(t *testing.T) {
+	s := &aiplatformv1alpha1.Settings{}
+	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
+		RepoURL:       "https://git.example.test/org/repo.git",
+		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "token"},
+	}
+
+	_, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
+		"aif-operator/git-auth/token": "secret-token",
+	})
+	if err == nil {
+		t.Fatal("expected missing HTTPS username to fail")
 	}
 }
 

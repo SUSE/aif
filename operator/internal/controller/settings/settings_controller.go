@@ -461,9 +461,9 @@ func (r *SettingsReconciler) readGitCABundle(
 }
 
 // mirrorGitCredSecret copies the Git credential from the Settings namespace
-// into fleet-local in the single HTTPS basic-auth shape Fleet understands.
-// Token authentication is HTTP Basic with an explicit/default username and
-// the token as password, matching the AIF go-git client.
+// into fleet-local in the single HTTPS basic-auth shape Fleet understands. The
+// selected credential may be a password or personal access token; neither AIF
+// nor Fleet sends it as an HTTP Bearer token.
 func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	ref := s.Spec.Fleet.CredSecretRef
 
@@ -472,22 +472,26 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 		return fmt.Errorf("read source secret %s/%s: %w", s.Namespace, ref.Name, err)
 	}
 
+	switch s.Spec.Fleet.AuthType {
+	case "", "token", "basic":
+		// token and basic are deprecated compatibility aliases. Fleet uses the
+		// same kubernetes.io/basic-auth Secret for both.
+	default:
+		return fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
+	}
+
 	password, found := src.Data[ref.Key]
 	if !found {
 		return fmt.Errorf("git credential Secret %s/%s does not contain key %q", s.Namespace, ref.Name, ref.Key)
 	}
 	username := []byte(s.Spec.Fleet.Username)
-	switch s.Spec.Fleet.AuthType {
-	case "", "token":
-		if len(username) == 0 {
-			username = []byte("token")
-		}
-	case "basic":
-		if len(username) == 0 {
-			username = src.Data[corev1.BasicAuthUsernameKey]
-		}
-	default:
-		return fmt.Errorf("unsupported fleet.authType %q; use token or basic HTTPS authentication", s.Spec.Fleet.AuthType)
+	if len(username) == 0 {
+		username = src.Data[corev1.BasicAuthUsernameKey]
+	}
+	// Keep the pre-existing default only for resources using the deprecated
+	// authType field. New configurations must provide a portable username.
+	if len(username) == 0 && s.Spec.Fleet.AuthType != "" {
+		username = []byte("token")
 	}
 	if len(username) == 0 || len(password) == 0 {
 		return fmt.Errorf("git username and credential must not be empty")

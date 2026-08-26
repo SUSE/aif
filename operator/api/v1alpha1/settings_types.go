@@ -37,13 +37,16 @@ type FleetSettings struct {
 	// +kubebuilder:default=main
 	// +optional
 	Branch string `json:"branch,omitempty"`
-	// AuthType is the HTTPS authentication method.
+	// AuthType is the legacy HTTPS credential selector.
+	// Deprecated: HTTPS Git credentials always use HTTP Basic authentication,
+	// with the configured credential as the password or personal access token.
+	// Existing token and basic values are accepted for compatibility; new
+	// clients should omit this field.
 	// +kubebuilder:validation:Enum=token;basic
 	// +optional
 	AuthType string `json:"authType,omitempty"`
-	// Username is the HTTPS Git username. It defaults to "token" for token
-	// authentication. Basic authentication requires this field or a username
-	// key in the referenced credential Secret.
+	// Username is the HTTPS Git username. When credentials are configured, set
+	// this field or provide a username key in the referenced credential Secret.
 	// +optional
 	Username string `json:"username,omitempty"`
 	// CredSecretRef references the Git credential secret.
