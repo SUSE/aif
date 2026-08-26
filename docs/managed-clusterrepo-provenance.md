@@ -13,9 +13,9 @@ The label-reading UI shows an empty managed repository set until ClusterRepos ca
 
 ## Manual Cleanup
 
-Pre-existing UI-created air-gap mirrors have slug-based names and no provenance label. After upgrading to the new operator version, it creates a labeled canonical `nvidia` ClusterRepo at the same URL, leaving the old slug-based repository orphaned as a cosmetic duplicate.
+Pre-existing UI-created air-gap mirrors carry no provenance label. Their name is whatever the old UI supplied — a canonical name (e.g. `nvidia`) when one was passed, otherwise a URL-derived slug. When that old name differs from the canonical name the operator now uses, upgrading creates a labeled canonical `nvidia` ClusterRepo at the same URL and leaves the old unlabeled repository orphaned as a cosmetic duplicate. (If the old name already matched the canonical name, the operator re-applies the label in place and there is nothing to clean up.)
 
-The operator intentionally does not auto-delete "any repo at this URL we did not create" because doing so could delete a legitimately admin-created repository. Operators should delete the old slug-based ClusterRepo manually after confirming the labeled `nvidia` repository is Ready:
+The operator intentionally does not auto-delete "any repo at this URL we did not create" because doing so could delete a legitimately admin-created repository. Operators should delete the old unlabeled ClusterRepo manually after confirming the labeled `nvidia` repository is Ready:
 
 ```bash
 # List every unlabeled ClusterRepo WITH its URL, so you can match by URL — do not
@@ -24,7 +24,7 @@ kubectl get clusterrepos -o custom-columns=NAME:.metadata.name,URL:.spec.url,GIT
 kubectl delete clusterrepo <old-slug-name>
 ```
 
-Match the old slug-based mirror by its **URL** — it will equal your `registryEndpoints.nvidia` value (the air-gap mirror URL). Delete only that repository, and only once the new labeled `nvidia` repository is confirmed Ready.
+Match the old mirror by its **URL** — it will equal your `registryEndpoints.nvidia` value (the air-gap mirror URL) — not by name. Delete only that repository, and only once the new labeled `nvidia` repository is confirmed Ready.
 
 > **Warning — do not delete built-in or extension repositories.** The inverse label
 > selector (`-l '!ai-factory.suse.com/managed-repo'`) also matches Rancher's own
@@ -35,5 +35,5 @@ Match the old slug-based mirror by its **URL** — it will equal your `registryE
 
 Two related caveats:
 
-- **AIWorkloads pin their source repo by name** (`spec.chartRepo`). Deleting a slug-based repository that an existing workload was installed from will break redeploy of that workload until it is repointed at the labeled canonical repository.
+- **AIWorkloads pin their source repo by name** (`spec.source.app.chartRepo`). Deleting a slug-based repository that an existing workload was installed from will break redeploy of that workload until it is repointed at the labeled canonical repository.
 - The removed UI code also created a `cattle-system/<slug>-auth` Secret alongside each mirror. After the operator takes over, that Secret is orphaned; remove it manually if you no longer need it.

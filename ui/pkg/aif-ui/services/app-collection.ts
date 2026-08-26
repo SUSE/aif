@@ -289,9 +289,9 @@ export const CLUSTERREPOS_URL =
 const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloaded'];
 
 /** A ClusterRepo is ready when its index is actually fetchable. Called by
- *  fetchClusterRepositories and fetchManagedRepos (which stamps the result onto
- *  ManagedRepo.ready, consumed by fetchSuseAiApps/fetchNvidiaApps) so the predicate
- *  cannot drift. Readiness is gated on `status.indexConfigMapName`: apps are read via
+ *  fetchManagedRepos (which stamps the result onto ManagedRepo.ready, consumed by
+ *  fetchSuseAiApps/fetchNvidiaApps) so the predicate cannot drift. Readiness is
+ *  gated on `status.indexConfigMapName`: apps are read via
  *  `?link=index`, which Rancher resolves *through* that ConfigMap. A repo can
  *  briefly report a download condition True (OCIDownloaded / Downloaded /
  *  FollowerDownloaded) before Rancher writes the index ConfigMap; fetching in that
@@ -395,118 +395,26 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
   }
 }
 
-/** Repository information */
-export interface AppRepository {
-  name: string;
-  displayName: string;
-  type: string;
-  url?: string;
-  enabled?: boolean;
-}
-
-/** Get list of all cluster repositories */
-export async function fetchClusterRepositories($store: any): Promise<AppRepository[]> {
-  logger.debug('Starting cluster repositories fetch', {
-    component: 'AppCollection'
-  });
+/** True when `name` is an operator-managed ClusterRepo — provenance label present
+ *  with value exactly 'true'. Used to validate an UNTRUSTED install target before
+ *  resolving a chart from it: the wizard seeds `chartRepo` from a `?repo=` query
+ *  param, and without this gate a crafted deep-link (or a copied stale URL) would
+ *  drive findChartInRepo against an unmanaged repo, bypassing the provenance
+ *  contract that inferClusterRepoForChart enforces on the normal path. Fails
+ *  CLOSED: any list failure returns false (treat as not-managed) so the caller
+ *  falls through to the scoped resolver rather than trusting the param. */
+export async function isManagedRepoName($store: any, name: string): Promise<boolean> {
+  if (!name) return false;
   try {
-    const url = CLUSTERREPOS_URL;
-    logger.debug('Requesting cluster repositories', {
-      component: 'AppCollection',
-      data: { url }
-    });
-    const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
-
-    logger.debug('Cluster repositories response received', {
-      component: 'AppCollection',
-      data: {
-        hasData: !!res?.data,
-        hasItems: !!res?.data?.items,
-        dataType: typeof res?.data,
-        itemsLength: res?.data?.items ? res.data.items.length : 'N/A'
-      }
-    });
-    
+    const res = await $store.dispatch('rancher/request', { url: CLUSTERREPOS_URL, timeout: TIMEOUT_VALUES.READ });
     const repos = res?.data?.items || res?.data || res?.items || [];
-    logger.debug('Raw repositories count', {
-      component: 'AppCollection',
-      data: { count: repos.length }
-    });
-    
-    if (repos.length > 0) {
-      logger.debug('First repository sample', {
-        component: 'AppCollection',
-        data: {
-          name: repos[0]?.metadata?.name,
-          enabled: repos[0]?.spec?.enabled,
-          state: repos[0]?.metadata?.state?.name,
-          url: repos[0]?.spec?.url || repos[0]?.spec?.gitRepo
-        }
-      });
-    }
-    
-    const filtered = repos.filter((repo: any) => {
-      const enabled = repo?.spec?.enabled !== false;
-      const isReady = isRepoReady(repo);
-
-      logger.debug('Repository filtering', {
-        component: 'AppCollection',
-        data: {
-          repo: repo?.metadata?.name,
-          enabled,
-          isReady,
-          conditionsCount: (repo?.status?.conditions || []).length
-        }
-      });
-      return enabled && isReady;
-    });
-    
-    logger.debug('Filtered repositories count', {
-      component: 'AppCollection',
-      data: { count: filtered.length }
-    });
-    
-    const mapped = filtered.map((repo: any) => ({
-      name: repo.metadata?.name || '',
-      displayName: getRepoDisplayName(repo.metadata?.name || ''),
-      type: getRepoType(repo),
-      url: repo.spec?.url || repo.spec?.gitRepo || '',
-      enabled: repo.spec?.enabled !== false
-    }));
-    
-    const final = mapped.filter((repo: AppRepository) => repo.name);
-    logger.info('Cluster repositories fetched successfully', {
-      component: 'AppCollection',
-      data: {
-        count: final.length,
-        repos: final.map((r: AppRepository) => ({ name: r.name, type: r.type, enabled: r.enabled }))
-      }
-    });
-    
-    return final;
-  } catch (e: any) {
-    logger.error('Failed to fetch cluster repositories', e, {
-      component: 'AppCollection'
-    });
-    return [];
+    return repos.some(
+      (r: any) => r?.metadata?.name === name && r?.metadata?.labels?.[MANAGED_REPO_LABEL] === 'true',
+    );
+  } catch (e) {
+    logger.error('Failed to verify managed repo name', e, { component: 'AppCollection', data: { name } });
+    return false;
   }
-}
-
-function getRepoDisplayName(name: string): string {
-  const displayNames: Record<string, string> = {
-    'rancher-charts': 'Rancher Charts',
-    'rancher-partner-charts': 'Rancher Partner Charts',
-    'rancher-rke2-charts': 'RKE2 Charts',
-    'jetstack': 'Jetstack',
-    'suse-edge': 'SUSE Edge'
-  };
-  return displayNames[name] || name.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-}
-
-function getRepoType(repo: any): string {
-  if (repo.spec?.gitRepo) return 'git';
-  if (repo.spec?.url?.startsWith('oci:')) return 'oci';
-  return 'helm';
 }
 
 /** Fetch apps from a specific cluster repository, surfacing fetch errors instead

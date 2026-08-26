@@ -18,6 +18,7 @@ import {
   fetchSuseAiApps,
   fetchNvidiaApps,
   resolveInstallRepoName,
+  isManagedRepoName,
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
@@ -345,5 +346,59 @@ describe('managed-repo threading (list once)', () => {
     // Neither fetcher hit the clusterrepos list endpoint — the set was threaded in.
     const listCalls = store.dispatch.mock.calls.filter((c: any) => c[1].url === CLUSTERREPOS_URL);
     expect(listCalls).toHaveLength(0);
+  });
+});
+
+describe('isManagedRepoName (untrusted ?repo= guard)', () => {
+  it('returns true for a repo carrying the provenance label (value exactly "true")', async () => {
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac' }, status: ready() },
+    ]);
+    expect(await isManagedRepoName(store, 'application-collection')).toBe(true);
+  });
+
+  it('returns false for an unlabeled repo — even at a canonical name', async () => {
+    const store = makeStore([
+      { metadata: { name: 'application-collection' }, spec: { url: 'oci://ac' }, status: ready() },
+    ]);
+    expect(await isManagedRepoName(store, 'application-collection')).toBe(false);
+  });
+
+  it('returns false when the label value is not exactly "true"', async () => {
+    const store = makeStore([
+      { metadata: { name: 'rogue', labels: { [MANAGED]: 'TRUE' } }, spec: { url: 'oci://x' }, status: ready() },
+    ]);
+    expect(await isManagedRepoName(store, 'rogue')).toBe(false);
+  });
+
+  it('returns false for a name absent from the cluster', async () => {
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac' }, status: ready() },
+    ]);
+    expect(await isManagedRepoName(store, 'does-not-exist')).toBe(false);
+  });
+
+  it('returns false for an empty name without listing', async () => {
+    const store = makeStore([]);
+    expect(await isManagedRepoName(store, '')).toBe(false);
+    expect(store.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('fails CLOSED — returns false when the clusterrepos list throws', async () => {
+    const store = { dispatch: vi.fn(async () => { throw new Error('boom'); }) };
+    expect(await isManagedRepoName(store, 'application-collection')).toBe(false);
+  });
+});
+
+describe('cross-language label constants (drift pins)', () => {
+  // These literals are ALSO defined in Go — operator/internal/credentials/credentials.go
+  // (ManagedRepoLabel / TeamRepoLabel). They are tied only by convention, so pin the
+  // exact strings on this side: a rename here shows up as a red diff, and the Go side
+  // has a matching pin (settings_label_internal_test.go). Change BOTH together.
+  it('MANAGED_REPO_LABEL matches the Go ManagedRepoLabel literal', () => {
+    expect(MANAGED_REPO_LABEL).toBe('ai-factory.suse.com/managed-repo');
+  });
+  it('NVIDIA_TEAM_REPO_LABEL matches the Go TeamRepoLabel literal', () => {
+    expect(NVIDIA_TEAM_REPO_LABEL).toBe('ai-factory.suse.com/nvidia-team-repo');
   });
 });
