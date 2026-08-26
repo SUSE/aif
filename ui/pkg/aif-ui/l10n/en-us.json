@@ -231,6 +231,27 @@
             }
           }
         }
+      },
+      "workloads": {
+        "detail": {
+          "title": "Workload details",
+          "overview": "Overview",
+          "source": "Source",
+          "deployStrategy": "Deploy strategy",
+          "targetNamespace": "Target namespace",
+          "targetClusters": "Target clusters",
+          "blueprintDescription": "Blueprint description",
+          "objects": "Objects being created",
+          "objectsHint": "Charts this workload deploys to the target cluster(s).",
+          "noBlueprint": "Blueprint details are not available for this workload.",
+          "perClusterStatus": "Per-cluster status",
+          "message": "Message",
+          "componentValues": "Configuration overrides",
+          "underlyingResources": "Underlying resources",
+          "fleetBundles": "Fleet bundles",
+          "helmRelease": "Helm release",
+          "close": "Close"
+        }
       }
     },
     "apps": {

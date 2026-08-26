@@ -5,11 +5,13 @@ import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, updateAIWorkload } from '../utils/operator-api';
-import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
+import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
+import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
-import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
+import AIWorkloadDetailModal from '../components/AIWorkloadDetailModal.vue';
+import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
@@ -49,6 +51,27 @@ const upgradeModal = reactive({
   workload:      null as AIWorkload | null,
   selectedVersion: '',
   upgrading:     false,
+});
+
+// ── Detail modal ────────────────────────────────────────────────────────────────
+const detailModal = reactive({
+  show:     false,
+  workload: null as AIWorkload | null,
+});
+
+function openDetailModal(w: AIWorkload) {
+  detailModal.workload = w;
+  detailModal.show     = true;
+}
+
+const detailBlueprint = computed(() => {
+  const w = detailModal.workload;
+  if (!w || w.spec.source.sourceType !== 'Blueprint') return null;
+  return findBlueprint(
+    blueprints.value,
+    w.spec.source.blueprint?.name || '',
+    w.spec.source.blueprint?.version || '',
+  );
 });
 
 const upgradeVersionOptions = computed(() => {
@@ -97,24 +120,6 @@ const filteredWorkloads = computed(() => {
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function phaseBadgeColor(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'bg-success';
-    case 'Degraded': return 'bg-warning';
-    case 'Failed':   return 'bg-error';
-    default:         return 'bg-info';
-  }
-}
-
-function phaseBadgeIcon(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'icon-checkmark';
-    case 'Degraded': return 'icon-warning';
-    case 'Failed':   return 'icon-x';
-    default:         return 'icon-info';
-  }
-}
-
 function workloadVersion(w: AIWorkload): string {
   if (w.spec.source.sourceType === 'App') return w.spec.source.app?.chartVersion || '—';
   return w.spec.source.blueprint?.version || '—';
@@ -125,19 +130,6 @@ function workloadSource(w: AIWorkload): string {
     return w.spec.source.app?.chartName || '—';
   }
   return w.spec.source.blueprint?.name || '—';
-}
-
-// workloadStatusMessage returns a human-readable reason when a workload is not
-// healthy: the Ready=False condition message (set by the operator when a
-// ClusterRepo can't be resolved), falling back to the first non-empty
-// per-cluster message. Empty string when there's nothing to surface.
-function workloadStatusMessage(w: AIWorkload): string {
-  const ready = (w.status?.conditions || []).find(
-    (c: any) => c?.type === 'Ready' && c?.status === 'False',
-  );
-  if (ready?.message) return ready.message;
-  const clusterMsg = (w.status?.clusterStatuses || []).find((s) => s.message);
-  return clusterMsg?.message || '';
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────────
@@ -396,6 +388,15 @@ async function executeUpgrade() {
                 <!-- Actions -->
                 <td class="col-actions text-right">
                   <div class="btn-group">
+                    <button
+                      class="btn btn-sm role-secondary"
+                      @click="openDetailModal(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-info" />
+                      Details
+                    </button>
+
                     <!-- App workload: Manage -->
                     <button
                       v-if="w.spec.source.sourceType === 'App'"
@@ -501,6 +502,15 @@ async function executeUpgrade() {
         </div>
       </div>
     </AppModal>
+
+    <!-- Workload detail modal -->
+    <AIWorkloadDetailModal
+      v-if="detailModal.show && detailModal.workload"
+      :workload="detailModal.workload"
+      :blueprint="detailBlueprint"
+      :clusters="clusters"
+      @close="detailModal.show = false"
+    />
   </main>
 </template>
 
