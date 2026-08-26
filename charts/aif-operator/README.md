@@ -71,14 +71,8 @@ competing:
 
 The hook Job's ClusterRole is least-privilege: `create`/`list` on
 `customresourcedefinitions` cluster-wide (unavoidable), and `get`/`update`/`patch`
-scoped via `resourceNames` to exactly this chart's five CRDs — so the hook can
+scoped via `resourceNames` to exactly this chart's four CRDs — so the hook can
 never mutate unrelated CRDs. It has no `delete`.
-
-When introducing a brand-new CRD, do not add custom resources of that kind to
-the same chart release. On upgrade, Helm resolves the target manifest before its
-`pre-upgrade` hooks run, so those resources fail discovery before the CRD Job can
-install the new kind. Stage such resources in a later release or apply them
-out-of-band after the CRD upgrade.
 
 **Restricted environments**
 If the installer may not create cluster-scoped RBAC, you have two options:
@@ -114,11 +108,14 @@ cannot mirror it can install with `crds.manageWithJob=false` (see above) — the
 native `crds/` path needs no image at all. CRDs themselves ship inside the chart;
 nothing is fetched at apply time.
 
-For private application and Blueprint sources, configure the `Settings`
-resource after installation:
+For private chart and Blueprint Git sources, configure the `Settings` resource
+after installation:
 
 ```yaml
 spec:
+  registryEndpoints:
+    applicationCollection: oci://harbor.internal/charts/application-collection
+    suseRegistry: oci://harbor.internal/charts/suse-ai
   fleet:
     repoURL: https://gitea.internal/platform/aif.git
     branch: main
@@ -130,10 +127,10 @@ spec:
 
 The generated Fleet `GitRepo` reads Blueprint definitions from `blueprints/`
 and AIF writes GitOps deployment resources under `workloads/`. Both AIF and
-Fleet use the configured Git CA and HTTPS credentials. A logical `Application`
-then maps a source-independent Blueprint requirement to a Rancher
-`ClusterRepo`; see
-[`docs/air-gap/application-source-abstraction.md`](../../docs/air-gap/application-source-abstraction.md).
+Fleet use the configured Git CA and HTTPS credentials. Blueprints continue to
+reference stable Rancher `ClusterRepo` names; the Settings controller points
+those resources at the configured public or private chart endpoints. See
+[`docs/air-gap/operator-private-sources.md`](../../docs/air-gap/operator-private-sources.md).
 Node-level image mirrors, private registry trust, and disabled default registry
 fallback are still required for container images.
 

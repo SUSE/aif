@@ -32,7 +32,6 @@ function createEmptySpec() {
     nvidia:                { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null },
     rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
     registryEndpoints:     resolveRegistryEndpoints(),
-    imageRewrite:          { enabled: false, rules: [] },
   };
 }
 
@@ -197,12 +196,6 @@ export default {
         };
       }
       s.registryEndpoints = resolveRegistryEndpoints(crdSpec.registryEndpoints);
-      if (crdSpec.imageRewrite) {
-        s.imageRewrite = {
-          enabled: !!crdSpec.imageRewrite.enabled,
-          rules:   (crdSpec.imageRewrite.rules || []).map((r) => ({ match: r.match, replace: r.replace })),
-        };
-      }
 
       return s;
     },
@@ -264,13 +257,6 @@ export default {
 
       if (Object.keys(endpointOverrides).length) {
         out.registryEndpoints = endpointOverrides;
-      }
-
-      if (spec.imageRewrite.enabled || spec.imageRewrite.rules.length) {
-        out.imageRewrite = {
-          enabled: spec.imageRewrite.enabled,
-          rules:   spec.imageRewrite.rules.filter((r) => r.match && r.replace),
-        };
       }
 
       return out;
@@ -363,13 +349,13 @@ export default {
       const tasks = [];
       const acCreds = buildCreds(ac.userSecretRef, ac.tokenSecretRef, ac.caBundleSecretRef);
       const srCreds = buildCreds(sr.userSecretRef, sr.tokenSecretRef, sr.caBundleSecretRef);
-      if (acCreds) tasks.push(ensureClusterRepo(store, acUrl, acCreds));
-      if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
+      if (acCreds) tasks.push(ensureClusterRepo(store, acUrl, acCreds, 'application-collection'));
+      if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds, 'suse-ai-registry'));
 
       // NVIDIA chart repos.
       //  - Air-gapped (registryEndpoints.nvidia set): stable nvidia and
       //    nvidia-blueprints identities at the mirrored OCI URL. Credentials are
-      //    attached when configured; an unauthenticated mirror is also supported.
+      //    attached when configured.
       //  - Connected (registryEndpoints.nvidia empty): the two PUBLIC HTTPS NGC repos, created
       //    when NVIDIA credentials are configured (the creds signal that NVIDIA is in use).
       const nvHasRefs = !!(nv.userSecretRef?.name && nv.tokenSecretRef?.name);

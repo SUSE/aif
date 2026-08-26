@@ -64,18 +64,6 @@ const (
 // Ready=False condition and auto-requeues instead of hard-failing.
 var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 
-// applicationNotFoundError marks a logical Application reference that cannot
-// yet be resolved. Applications are independent resources and may be applied
-// after their Blueprints, so this is a recoverable configuration state rather
-// than a terminal controller error.
-type applicationNotFoundError struct {
-	name string
-}
-
-func (e *applicationNotFoundError) Error() string {
-	return fmt.Sprintf("Application %q was not found.", e.name)
-}
-
 // errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
 // cannot be deployed because no Rancher catalog client is configured (the
 // operator has no Rancher API token). The catalog config is editable at runtime
@@ -114,26 +102,10 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		return ctrl.Result{}, err
 	}
 
-	// Resolve logical application requirements before deriving bundle names or
-	// rendering deployment objects. The resolved coordinates live only in this
-	// reconcile pass: the stored Blueprint remains independent of repository
-	// names, chart names, endpoints, and credential profiles.
-	components, err := r.resolveBlueprintComponents(ctx, bp.Spec.Components)
-	if err != nil {
-		var missing *applicationNotFoundError
-		if stderrors.As(err, &missing) {
-			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonApplicationNotFound,
-				missing.Error(), w.Generation)
-			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
 	// Step 2: populate FleetBundleNames from components on first reconcile.
 	if len(w.Spec.FleetBundleNames) == 0 {
-		names := make([]string, 0, len(components))
-		for _, c := range components {
+		names := make([]string, 0, len(bp.Spec.Components))
+		for _, c := range bp.Spec.Components {
 			name := naming.TruncateDNS1123Label(w.Name+"-"+naming.Slugify(c.ChartName), 63)
 			names = append(names, name)
 		}
@@ -150,7 +122,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// renames, or reorders components never desynchronizes the render names from the desired set
 	// (the stale FleetBundleNames[i] index is intentionally NOT used for rendering).
 	expectedDigests := map[string]string{}
-	for _, c := range components {
+	for _, c := range bp.Spec.Components {
 		var digest string
 		var err error
 		switch w.Spec.DeployStrategy {
@@ -242,7 +214,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	w.Status.ObservedGeneration = w.Generation
 
 	// Step 4: cleanup stale HelmOps, then build component matrix, set phase, and certify.
-	keys := desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, components, w.Spec.DeployStrategy)
+	keys := desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, bp.Spec.Components, w.Spec.DeployStrategy)
 	if err := r.cleanupStaleHelmOps(ctx, w, keys); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -270,43 +242,6 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// phase. Phase reflects rollout state; Ready reflects reconcile success.
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
 	return ctrl.Result{}, nil
-}
-
-// resolveBlueprintComponents materializes Application-backed components into
-// the existing internal chart representation. Legacy direct-chart components
-// pass through unchanged, which keeps custom and already-persisted Blueprints
-// compatible while the logical reference API is introduced incrementally.
-func (r *AIWorkloadReconciler) resolveBlueprintComponents(
-	ctx context.Context,
-	components []aiplatformv1alpha1.BlueprintComponent,
-) ([]aiplatformv1alpha1.BlueprintComponent, error) {
-	resolved := make([]aiplatformv1alpha1.BlueprintComponent, len(components))
-	for i := range components {
-		component := components[i]
-		if component.ApplicationRef == nil {
-			resolved[i] = component
-			continue
-		}
-
-		var application aiplatformv1alpha1.Application
-		key := types.NamespacedName{Name: component.ApplicationRef.Name}
-		if err := r.Get(ctx, key, &application); err != nil {
-			if errors.IsNotFound(err) {
-				return nil, &applicationNotFoundError{name: component.ApplicationRef.Name}
-			}
-			return nil, fmt.Errorf("get Application %q: %w", component.ApplicationRef.Name, err)
-		}
-
-		component.ChartRepo = application.Spec.Chart.SourceRef
-		component.ChartName = application.Spec.Chart.Name
-		component.ChartVersion = component.ApplicationRef.Version
-		component.Vendor = application.Spec.CredentialProfile
-		if component.Vendor == "" {
-			component.Vendor = aiplatformv1alpha1.ComponentVendorSUSE
-		}
-		resolved[i] = component
-	}
-	return resolved, nil
 }
 
 // retryEpochValue reads the durable retry-epoch counter (default 0). Every desired HelmOp is
@@ -990,86 +925,55 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
-	pairs := []struct {
-		namespace string
-		targets   []any
-	}{
-		{namespace: "fleet-local", targets: localTargets},
-		{namespace: "fleet-default", targets: downstreamTargets},
+	targets := append(append([]any{}, localTargets...), downstreamTargets...)
+	fleetNS := gitOpsFleetNamespace(w)
+	if repoInfo.ClientSecret != "" {
+		if err := r.ensureFleetAuthSecret(ctx, fleetNS, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
+			return "", fmt.Errorf("sync auth secret to %s: %w", fleetNS, err)
+		}
 	}
-	objects := make([]map[string]any, 0, len(pairs))
-	for _, pair := range pairs {
-		if len(pair.targets) == 0 {
-			continue
-		}
-		if repoInfo.ClientSecret != "" {
-			if err := r.ensureFleetAuthSecret(ctx, pair.namespace, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
-				return "", fmt.Errorf("sync auth secret to %s: %w", pair.namespace, err)
-			}
-		}
 
-		helmOpSpec := map[string]any{
-			// defaultNamespace (not namespace): targets the release namespace without
-			// forcing every resource into it. Fleet's strict `namespace` field rejects
-			// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
-			// operator/CRD-bearing charts.
-			"defaultNamespace":    ns,
-			"helm":                helmSpec,
-			"targets":             pair.targets,
-			"forceSyncGeneration": epoch,
+	helmOpSpec := map[string]any{
+		// defaultNamespace (not namespace): targets the release namespace without
+		// forcing every resource into it. Fleet's strict `namespace` field rejects
+		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+		// operator/CRD-bearing charts.
+		"defaultNamespace": ns,
+		"helm":             helmSpec,
+		"targets":          targets,
+		// forceSyncGeneration lives at the HelmOp spec top level (not under spec.helm) —
+		// Fleet's HelmOp schema declares spec.forceSyncGeneration.
+		"forceSyncGeneration": epoch,
+		"labels": map[string]any{
+			renderDigestLabel: renderDigestLabelValue(digest),
+			workloadUIDLabel:  string(w.UID),
+		},
+	}
+	if repoInfo.ClientSecret != "" {
+		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+	}
+
+	helmOpObj := map[string]any{
+		"apiVersion": "fleet.cattle.io/v1alpha1",
+		"kind":       "HelmOp",
+		"metadata": map[string]any{
+			"name":      bundleName,
+			"namespace": fleetNS,
 			"labels": map[string]any{
-				renderDigestLabel: renderDigestLabelValue(digest),
-				workloadUIDLabel:  string(w.UID),
+				workloadUIDLabel: string(w.UID),
 			},
-		}
-		if repoInfo.ClientSecret != "" {
-			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
-		}
-		objects = append(objects, map[string]any{
-			"apiVersion": "fleet.cattle.io/v1alpha1",
-			"kind":       "HelmOp",
-			"metadata": map[string]any{
-				"name":      bundleName,
-				"namespace": pair.namespace,
-				"labels": map[string]any{
-					workloadUIDLabel: string(w.UID),
-				},
-			},
-			"spec": helmOpSpec,
-		})
-	}
-	if len(objects) == 0 {
-		return "", fmt.Errorf("GitOps blueprint component %q has no target clusters", c.ChartName)
+		},
+		"spec": helmOpSpec,
 	}
 
-	content, err := marshalGitResources(objects)
+	yamlBytes, err := json.MarshalIndent(helmOpObj, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	newHash := gitManifestHash(content)
-	if w.Annotations[gitFileHashAnnotation(bundleName)] == newHash {
-		return digest, nil
-	}
-	if err := r.publishBlueprintGitFile(ctx, w, bundleName, content); err != nil {
-		return "", err
-	}
-	metav1.SetMetaDataAnnotation(&w.ObjectMeta, gitFileHashAnnotation(bundleName), newHash)
-	if err := r.Update(ctx, w); err != nil {
+	if err := r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes)); err != nil {
 		return "", err
 	}
 	return digest, nil
-}
-
-func marshalGitResources(objects []map[string]any) (string, error) {
-	documents := make([]string, 0, len(objects))
-	for _, object := range objects {
-		data, err := json.MarshalIndent(object, "", "  ")
-		if err != nil {
-			return "", err
-		}
-		documents = append(documents, string(data))
-	}
-	return strings.Join(documents, "\n---\n"), nil
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {
@@ -1080,13 +984,24 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 	}, &s); err != nil {
 		return fmt.Errorf("read settings: %w", err)
 	}
+	branch := s.Spec.Fleet.Branch
+	if branch == "" {
+		branch = "main"
+	}
+	publicationHash := gitManifestHash(s.Spec.Fleet.RepoURL + "\x00" + branch + "\x00" + content)
+	if w.Annotations[gitFileHashAnnotation(bundleName)] == publicationHash {
+		return nil
+	}
 	gc, err := igit.NewFromSettings(ctx, &s, r.OperatorNamespace, &controllerSecretReader{r.Client})
 	if err != nil {
 		return fmt.Errorf("init git client: %w", err)
 	}
 	filePath := "workloads/" + bundleName + ".yaml"
-	_, err = gc.WriteFile(ctx, filePath, content, "chore: deploy blueprint component "+bundleName)
-	return err
+	if _, err = gc.WriteFile(ctx, filePath, content, "chore: deploy blueprint component "+bundleName); err != nil {
+		return err
+	}
+	metav1.SetMetaDataAnnotation(&w.ObjectMeta, gitFileHashAnnotation(bundleName), publicationHash)
+	return r.Update(ctx, w)
 }
 
 // aggregateClusterStatuses derives ClusterStatuses from the component matrix by aggregating
@@ -1094,6 +1009,7 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 func aggregateClusterStatuses(cells []aiplatformv1alpha1.AIWorkloadComponentStatus) []aiplatformv1alpha1.AIWorkloadClusterStatus {
 	clusterPhases := make(map[string]aiplatformv1alpha1.AIWorkloadClusterPhase)
 	clusterMessages := make(map[string]string)
+
 	for _, c := range cells {
 		existing, seen := clusterPhases[c.ClusterID]
 		if !seen {

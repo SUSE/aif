@@ -52,7 +52,6 @@ const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
 const (
 	conditionTypeReady        = "Ready"
 	reasonClusterRepoNotReady = "ClusterRepoNotReady"
-	reasonApplicationNotFound = "ApplicationNotFound"
 	reasonReconciled          = "Reconciled"
 	// Deletion-path (uninstall safety-net) reasons, surfaced on the terminating CR.
 	reasonAwaitingUninstall    = "AwaitingUninstall"
@@ -120,7 +119,6 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=applications,verbs=get;list;watch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundles,verbs=get;list;watch;create;update;patch;delete
@@ -459,15 +457,10 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 		return err
 	}
 
-	desiredClusters := make(map[string]bool, len(w.Spec.TargetClusters))
-	for _, clusterID := range w.Spec.TargetClusters {
-		desiredClusters[clusterID] = true
-	}
-	clusterPhases := make(map[string]aiplatformv1alpha1.AIWorkloadClusterPhase, len(w.Spec.TargetClusters))
-	clusterMessages := make(map[string]string, len(w.Spec.TargetClusters))
+	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, 0, len(bdList.Items))
 	for _, bd := range bdList.Items {
 		clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
-		if clusterID == "" || !desiredClusters[clusterID] {
+		if clusterID == "" {
 			continue
 		}
 		state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
@@ -477,43 +470,16 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 		if phase == aiplatformv1alpha1.AIWorkloadClusterPhaseRunning {
 			message = ""
 		}
-		existing, seen := clusterPhases[clusterID]
-		if !seen || worstClusterPhase(existing, phase) != existing {
-			clusterPhases[clusterID] = phase
-			clusterMessages[clusterID] = message
-		}
-	}
-
-	statuses := statusesForTargetClusters(w.Spec.TargetClusters, clusterPhases, clusterMessages)
-	w.Status.ClusterStatuses = statuses
-	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
-	return nil
-}
-
-// statusesForTargetClusters returns one deterministic status entry for every
-// requested cluster. A target without a materialized BundleDeployment remains
-// Pending; otherwise a partially materialized multi-cluster workload could be
-// reported as Running based only on the clusters Fleet happened to create.
-func statusesForTargetClusters(
-	targetClusters []string,
-	clusterPhases map[string]aiplatformv1alpha1.AIWorkloadClusterPhase,
-	clusterMessages map[string]string,
-) []aiplatformv1alpha1.AIWorkloadClusterStatus {
-	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, 0, len(targetClusters))
-	for _, clusterID := range targetClusters {
-		phase, found := clusterPhases[clusterID]
-		message := clusterMessages[clusterID]
-		if !found {
-			phase = aiplatformv1alpha1.AIWorkloadClusterPhasePending
-			message = "Waiting for Fleet to create the cluster deployment"
-		}
 		statuses = append(statuses, aiplatformv1alpha1.AIWorkloadClusterStatus{
 			ClusterID: clusterID,
 			Phase:     phase,
 			Message:   message,
 		})
 	}
-	return statuses
+
+	w.Status.ClusterStatuses = statuses
+	w.Status.Phase = guardPhaseTransition(derivePhase(statuses), w.Status.Phase, w.CreationTimestamp.Time)
+	return nil
 }
 
 // ── Finalizer / deletion ──────────────────────────────────────────────────────
@@ -743,23 +709,38 @@ func (r *AIWorkloadReconciler) credentialSecretToAIWorkloads(ctx context.Context
 }
 
 // settingsToAIWorkloads re-enqueues every blueprint-sourced AIWorkload when
-// Settings changes. The Settings controller rebuilds the Rancher catalog client
-// (CatalogClient holder) from Settings.Spec.RancherCatalog at runtime; without
-// this watch, a git-backed workload that failed with CatalogClientNotConfigured
-// before the token was set would stay Failed until the next informer resync.
-// Only blueprint-sourced workloads can consume git-backed ClusterRepos, so
-// helm/app workloads are skipped; reconcile is idempotent so re-enqueuing the
-// rest is safe.
+// relevant Settings changes. Fleet changes can move the GitOps output to a new
+// private repository; RancherCatalog changes can make git-backed ClusterRepos
+// readable. Only Blueprint workloads consume either path.
 func (r *AIWorkloadReconciler) settingsToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
 	return r.blueprintAIWorkloadRequests(ctx)
 }
 
 // blueprintDependencyToAIWorkloads requeues Blueprint-sourced workloads when
-// a Blueprint, logical Application, or backing ClusterRepo changes. Resolution
-// is deliberately performed during every reconcile rather than cached in the
-// Blueprint, so a source can move without editing the Blueprint itself.
+// a Blueprint or backing ClusterRepo changes. ClusterRepo resolution happens
+// during every reconcile, so an administrator can move a stable repository
+// name to a private endpoint without modifying the Blueprint.
 func (r *AIWorkloadReconciler) blueprintDependencyToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
 	return r.blueprintAIWorkloadRequests(ctx)
+}
+
+// clusterRepoToAIWorkloads requeues every workload whose chart is resolved
+// through a ClusterRepo. Blueprint workloads must rebuild their deployment
+// resource; App workloads must at least refresh the registry credentials that
+// the operator delivers to their target clusters.
+func (r *AIWorkloadReconciler) clusterRepoToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	var list aiplatformv1alpha1.AIWorkloadList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		if list.Items[i].Spec.Source.Blueprint == nil && list.Items[i].Spec.Source.App == nil {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+	}
+	return reqs
 }
 
 func (r *AIWorkloadReconciler) blueprintAIWorkloadRequests(ctx context.Context) []reconcile.Request {
@@ -822,20 +803,18 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return obj.GetNamespace() == r.OperatorNamespace && credentials.IsWellKnownSecret(obj.GetName())
 	})
 
-	// Settings carries far more than the catalog config, and every field of it
-	// is edited from the UI. Without this filter each unrelated edit (and each
-	// status write the Settings controller itself makes) re-enqueues every
-	// blueprint workload, which for git-backed components means re-downloading
-	// their charts from Rancher. Only spec.rancherCatalog can change the
-	// outcome of a git-chart reconcile, so that is all we react to.
-	catalogSettingsChanged := predicate.Funcs{
+	// Ignore unrelated settings and status writes. Fleet changes alter the
+	// GitOps publication destination; RancherCatalog changes alter access to
+	// charts indexed from git-backed ClusterRepos.
+	blueprintSettingsChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			oldS, ok1 := e.ObjectOld.(*aiplatformv1alpha1.Settings)
 			newS, ok2 := e.ObjectNew.(*aiplatformv1alpha1.Settings)
 			if !ok1 || !ok2 {
 				return true
 			}
-			return !reflect.DeepEqual(oldS.Spec.RancherCatalog, newS.Spec.RancherCatalog)
+			return !reflect.DeepEqual(oldS.Spec.Fleet, newS.Spec.Fleet) ||
+				!reflect.DeepEqual(oldS.Spec.RancherCatalog, newS.Spec.RancherCatalog)
 		},
 		CreateFunc:  func(event.CreateEvent) bool { return true },
 		DeleteFunc:  func(event.DeleteEvent) bool { return true },
@@ -877,12 +856,10 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),
 			builder.WithPredicates(isCredentialSecret)).
 		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads),
-			builder.WithPredicates(catalogSettingsChanged)).
+			builder.WithPredicates(blueprintSettingsChanged)).
 		Watches(&aiplatformv1alpha1.Blueprint{}, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
 			builder.WithPredicates(dependencyChanged)).
-		Watches(&aiplatformv1alpha1.Application{}, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
-			builder.WithPredicates(dependencyChanged)).
-		Watches(clusterRepo, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
+		Watches(clusterRepo, handler.EnqueueRequestsFromMapFunc(r.clusterRepoToAIWorkloads),
 			builder.WithPredicates(clusterRepoChanged)).
 		Complete(r)
 }

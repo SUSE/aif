@@ -33,8 +33,6 @@ func gitRepoTestScheme() *runtime.Scheme {
 	scheme.AddKnownTypeWithName(clusterRepoGVK, &unstructured.Unstructured{})
 	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
 	scheme.AddKnownTypeWithName(helmOpGVK, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(bundleDeploymentGVK, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(bundleDeploymentGVK.GroupVersion().WithKind("BundleDeploymentList"), &unstructured.UnstructuredList{})
 	return scheme
 }
 

@@ -3,7 +3,7 @@
 {{- fail "crds.rbac.create is false but crds.serviceAccountName is empty: point crds.serviceAccountName at a pre-provisioned ServiceAccount, or set crds.rbac.create=true so the chart creates one." }}
 {{- end }}
 # ConfigMap carrying the chart's CRD manifests, consumed by the CRD-apply Job.
-# Rendered from crds/ (well under the ConfigMap size limit) — the
+# Rendered from crds/ (~57 KiB total, well under the ConfigMap size limit) — the
 # same files Helm installs natively on first install. Helm keeps crds/ in
 # .Files, so one copy on disk serves both delivery paths:
 #   - fresh install: Helm's native crds/ path registers the CRDs BEFORE it builds

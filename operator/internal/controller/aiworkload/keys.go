@@ -23,9 +23,10 @@ func blueprintBundleName(workloadName, chartName string) string {
 }
 
 // desiredHelmOpKeys returns the sorted set of HelmOps a blueprint workload should have.
-// FleetBundle and GitOps use up to two objects per component: fleet-local for
-// the local target and fleet-default for downstream targets. Non-blueprint
-// strategies (Helm) return nil.
+// FleetBundle: up to two per component (fleet-local for the local target, fleet-default for
+// downstream). GitOps: exactly one per component (fleet-local if local-only, else fleet-default;
+// mixed local+downstream GitOps is rejected at admission — Plan 1). Non-blueprint strategies
+// (Helm) return nil.
 func desiredHelmOpKeys(
 	workloadName string,
 	targetClusters []string,
@@ -48,11 +49,17 @@ func desiredHelmOpKeys(
 		name := blueprintBundleName(workloadName, c.ChartName)
 		release := capReleaseName(componentReleaseName(c))
 		switch strategy {
-		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle, aiplatformv1alpha1.AIWorkloadDeployGitOps:
+		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
 			if hasLocal {
 				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: localCount})
 			}
 			if hasDownstream {
+				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: downstreamCount})
+			}
+		case aiplatformv1alpha1.AIWorkloadDeployGitOps:
+			if hasLocal && !hasDownstream {
+				keys = append(keys, HelmOpKey{Namespace: "fleet-local", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: localCount})
+			} else {
 				keys = append(keys, HelmOpKey{Namespace: "fleet-default", Name: name, ComponentChartName: c.ChartName, ReleaseName: release, ExpectedClusters: downstreamCount})
 			}
 		}

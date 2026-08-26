@@ -1,5 +1,4 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
-import { APP_COLLECTION_REPO_URL } from './registry-endpoints';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { capReleaseName, fnv1a32 } from '../utils/helm-release';
 
@@ -100,21 +99,44 @@ export { capReleaseName };
 
 interface ClientSecretRef { name: string; namespace: string; }
 
-// Read the clientSecret ref from a Rancher ClusterRepo resource.
+interface ClusterRepoAccess {
+  clientSecret: ClientSecretRef | null;
+  url: string;
+}
+
+// Read the endpoint and clientSecret ref from a Rancher ClusterRepo resource.
 // Rancher stores spec.clientSecret as {name, namespace} for OCI repos,
 // or as a plain string in older versions.
-async function readClusterRepoClientSecret(store: any, repoName: string): Promise<ClientSecretRef | null> {
+async function readClusterRepoAccess(store: any, repoName: string): Promise<ClusterRepoAccess | null> {
   try {
     const res = await store.dispatch('management/find', {
       type: 'catalog.cattle.io.clusterrepo',
       id:   repoName,
     });
     const cs = res?.spec?.clientSecret;
-    if (!cs) return null;
-    if (typeof cs === 'object' && cs?.name) return { name: cs.name, namespace: cs.namespace || 'cattle-system' };
-    if (typeof cs === 'string' && cs)       return { name: cs, namespace: 'cattle-system' };
-    return null;
+    let clientSecret: ClientSecretRef | null = null;
+    if (typeof cs === 'object' && cs?.name) {
+      clientSecret = { name: cs.name, namespace: cs.namespace || 'cattle-system' };
+    } else if (typeof cs === 'string' && cs) {
+      clientSecret = { name: cs, namespace: 'cattle-system' };
+    }
+    return {
+      clientSecret,
+      url: res?.spec?.url || res?.spec?.ociRepo || '',
+    };
   } catch { return null; }
+}
+
+async function readClusterRepoClientSecret(store: any, repoName: string): Promise<ClientSecretRef | null> {
+  return (await readClusterRepoAccess(store, repoName))?.clientSecret || null;
+}
+
+export function registryHostFromRepoURL(repoURL: string): string {
+  try {
+    return new URL(repoURL).host;
+  } catch {
+    return '';
+  }
 }
 
 // Read a kubernetes.io/basic-auth secret and return decoded credentials.
@@ -276,10 +298,11 @@ export async function ensureAppCollectionPullSecrets(
   store: any, targetNamespace: string, clusterIds: string[], pullSecretNames: string[],
 ): Promise<void> {
   try {
-    const ref = await readClusterRepoClientSecret(store, APP_COLLECTION_REPO_NAME);
-    const creds = ref ? await readAuthSecret(store, ref) : null;
+    const access = await readClusterRepoAccess(store, APP_COLLECTION_REPO_NAME);
+    const creds = access?.clientSecret ? await readAuthSecret(store, access.clientSecret) : null;
     if (!creds) return;
-    const host = APP_COLLECTION_REPO_URL.replace(/^oci:\/\//, '').split('/')[0];
+    const host = registryHostFromRepoURL(access?.url || '');
+    if (!host) return;
     const slug = host.replace(/[^a-z0-9]/g, '-');
     for (const clusterId of clusterIds) {
       try {

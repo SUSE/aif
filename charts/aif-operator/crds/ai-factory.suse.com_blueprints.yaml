@@ -52,40 +52,13 @@ spec:
             description: BlueprintSpec defines the desired state of a Blueprint version.
             properties:
               components:
-                description: |-
-                  Components are the applications included in this blueprint. Logical
-                  Application names and legacy direct chart names are unique within their
-                  respective representation.
+                description: Components are the Helm charts included in this blueprint.
+                  chartName is unique per blueprint.
                 items:
-                  description: |-
-                    BlueprintComponent defines one deployable application in a Blueprint.
-                    New Blueprints should use ApplicationRef. The direct chart fields remain as
-                    a compatibility path for existing and custom Blueprints.
+                  description: BlueprintComponent defines one Helm chart in a Blueprint.
                   properties:
-                    applicationRef:
-                      description: ApplicationRef is the preferred source-independent
-                        application identity.
-                      properties:
-                        name:
-                          description: Name is the cluster-scoped Application resource
-                            name.
-                          maxLength: 253
-                          minLength: 1
-                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
-                          type: string
-                        version:
-                          description: Version is the chart version pinned by this
-                            Blueprint qualification.
-                          minLength: 1
-                          type: string
-                      required:
-                      - name
-                      - version
-                      type: object
                     chartName:
-                      description: 'ChartName is the Helm chart name. Deprecated:
-                        use ApplicationRef.'
-                      maxLength: 253
+                      description: ChartName is the Helm chart name.
                       minLength: 1
                       type: string
                     chartRepo:
@@ -93,13 +66,11 @@ spec:
                         ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
                         ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
                         fetches the chart from Rancher's catalog and deploys it as a self-contained
-                        Fleet Bundle; such charts must compress to under ~1MiB. Deprecated: use
-                        ApplicationRef.
+                        Fleet Bundle; such charts must compress to under ~1MiB.
                       minLength: 1
                       type: string
                     chartVersion:
-                      description: 'ChartVersion is the semver chart version. Deprecated:
-                        use ApplicationRef.'
+                      description: ChartVersion is the semver chart version.
                       minLength: 1
                       type: string
                     releaseName:
@@ -126,34 +97,24 @@ spec:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
                     vendor:
+                      default: suse
                       description: |-
-                        Vendor selects the secret-injection profile for a legacy direct chart
-                        component. Application-backed components obtain this explicitly from the
-                        Application and must omit Vendor.
+                        Vendor selects the secret-injection profile. Defaults to "suse" so
+                        existing blueprints behave identically after CRD upgrade.
                       enum:
                       - suse
                       - nvidia
                       type: string
+                  required:
+                  - chartName
+                  - chartRepo
+                  - chartVersion
                   type: object
-                  x-kubernetes-validations:
-                  - message: set exactly one of applicationRef or the direct chart
-                      fields
-                    rule: has(self.applicationRef) != has(self.chartRepo)
-                  - message: chartRepo, chartName, and chartVersion must be set together
-                    rule: has(self.chartRepo) == has(self.chartName) && has(self.chartRepo)
-                      == has(self.chartVersion)
-                  - message: vendor belongs to the Application credential profile
-                      when applicationRef is set
-                    rule: '!has(self.applicationRef) || !has(self.vendor)'
-                maxItems: 100
                 minItems: 1
                 type: array
-                x-kubernetes-validations:
-                - message: component application names and direct chart names must
-                    be unique within a blueprint
-                  rule: self.all(x, self.exists_one(y, (has(x.applicationRef) && has(y.applicationRef)
-                    && x.applicationRef.name == y.applicationRef.name) || (has(x.chartName)
-                    && has(y.chartName) && x.chartName == y.chartName)))
+                x-kubernetes-list-map-keys:
+                - chartName
+                x-kubernetes-list-type: map
               deprecated:
                 description: Deprecated marks this blueprint version as deprecated.
                 type: boolean

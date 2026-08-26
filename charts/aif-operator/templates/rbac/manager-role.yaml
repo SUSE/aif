@@ -177,14 +177,6 @@ rules:
   - apiGroups:
       - ai-factory.suse.com
     resources:
-      - applications
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ai-factory.suse.com
-    resources:
       - aiworkloads
     verbs:
       - create

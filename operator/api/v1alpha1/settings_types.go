@@ -37,8 +37,8 @@ type FleetSettings struct {
 	// +kubebuilder:default=main
 	// +optional
 	Branch string `json:"branch,omitempty"`
-	// AuthType is the authentication method.
-	// +kubebuilder:validation:Enum=ssh;token;basic
+	// AuthType is the HTTPS authentication method.
+	// +kubebuilder:validation:Enum=token;basic
 	// +optional
 	AuthType string `json:"authType,omitempty"`
 	// Username is the HTTPS Git username. It defaults to "token" for token
@@ -126,26 +126,6 @@ type RegistryEndpointsSettings struct {
 	Nvidia string `json:"nvidia,omitempty"`
 }
 
-// ImageRewriteRule defines a single image prefix rewrite rule.
-type ImageRewriteRule struct {
-	// Match is the prefix to match.
-	// +kubebuilder:validation:MinLength=1
-	Match string `json:"match"`
-	// Replace is the substitution prefix.
-	// +kubebuilder:validation:MinLength=1
-	Replace string `json:"replace"`
-}
-
-// ImageRewriteSettings controls Helm-values prefix substitution at deploy time.
-type ImageRewriteSettings struct {
-	// Enabled applies rewrite rules during Helm values merge.
-	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-	// Rules apply in order; first match per field wins.
-	// +optional
-	Rules []ImageRewriteRule `json:"rules,omitempty"`
-}
-
 // AppCatalogSettings configures the static application catalog served to the UI.
 type AppCatalogSettings struct {
 	// RemoteURL is an optional URL to a remote catalog JSON document. When set,
@@ -174,9 +154,6 @@ type SettingsSpec struct {
 	// RegistryEndpoints configures custom chart repositories for air-gap deployments.
 	// +optional
 	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
-	// ImageRewrite controls Helm-values prefix substitution at deploy time.
-	// +optional
-	ImageRewrite ImageRewriteSettings `json:"imageRewrite,omitempty"`
 	// AppCatalog configures the static application catalog.
 	// +optional
 	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`

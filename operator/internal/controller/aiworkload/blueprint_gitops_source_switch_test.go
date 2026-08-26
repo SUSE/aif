@@ -18,8 +18,8 @@ package aiworkload
 
 import (
 	"context"
+	"encoding/json"
 	"io"
-	"strings"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -28,11 +28,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 func newBlueprintGitOpsRemote(t *testing.T) string {
@@ -63,77 +61,25 @@ func readBlueprintGitOpsFile(t *testing.T, remoteURL, filePath string) string {
 	if err != nil {
 		t.Fatalf("open %s: %v", filePath, err)
 	}
+	defer file.Close()
 	content, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatalf("read %s: %v", filePath, err)
 	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close %s: %v", filePath, err)
-	}
 	return string(content)
 }
 
-func decodeBlueprintGitOpsDocuments(t *testing.T, content string) []map[string]any {
-	t.Helper()
-	decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096)
-	var documents []map[string]any
-	for {
-		var object map[string]any
-		err := decoder.Decode(&object)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("decode GitOps document: %v", err)
-		}
-		if len(object) > 0 {
-			documents = append(documents, object)
-		}
-	}
-	return documents
-}
-
-func requireGitOpsWorkspaceTargets(t *testing.T, documents []map[string]any, kind string) {
-	t.Helper()
-	if len(documents) != 2 {
-		t.Fatalf("published %d GitOps documents, want one per Fleet workspace", len(documents))
-	}
-	seen := map[string]bool{}
-	for _, object := range documents {
-		if objectKind, _, _ := unstructured.NestedString(object, "kind"); objectKind != kind {
-			t.Fatalf("published kind = %q, want %q", objectKind, kind)
-		}
-		namespace, _, _ := unstructured.NestedString(object, "metadata", "namespace")
-		targets, _, _ := unstructured.NestedSlice(object, "spec", "targets")
-		if len(targets) != 1 {
-			t.Fatalf("%s has %d targets, want exactly its workspace target", namespace, len(targets))
-		}
-		target, ok := targets[0].(map[string]any)
-		if !ok {
-			t.Fatalf("%s target has unexpected type %T", namespace, targets[0])
-		}
-		switch namespace {
-		case "fleet-local":
-			cluster, _, _ := unstructured.NestedString(target, "clusterName")
-			if cluster != "local" {
-				t.Fatalf("fleet-local target = %q", cluster)
-			}
-		case "fleet-default":
-			cluster, _, _ := unstructured.NestedString(target, "clusterSelector", "matchLabels", "management.cattle.io/cluster-name")
-			if cluster != "c-downstream" {
-				t.Fatalf("fleet-default target = %q", cluster)
-			}
-		default:
-			t.Fatalf("unexpected Fleet workspace %q", namespace)
-		}
-		seen[namespace] = true
-	}
-	if !seen["fleet-local"] || !seen["fleet-default"] {
-		t.Fatalf("published workspaces = %v", seen)
+func newGitOpsTestWorkload() *aiplatformv1alpha1.AIWorkload {
+	return &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "private-source-workload", Namespace: "aif-operator"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: "application-system",
+			TargetClusters:  []string{"local"},
+		},
 	}
 }
 
-func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
+func TestEnsureBlueprintGitFile_TracksClusterRepoEndpointChange(t *testing.T) {
 	ctx := context.Background()
 	remoteURL := newBlueprintGitOpsRemote(t)
 	scheme := gitRepoTestScheme()
@@ -144,13 +90,6 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 		},
 	}
 	sourceA := repoObj("source-a", map[string]any{"url": "oci://registry-a.example/charts"})
-	sourceB := repoObj("source-b", map[string]any{
-		"url": "oci://registry-b.example/charts",
-		"clientSecret": map[string]any{
-			"name":      "source-b-auth",
-			"namespace": "cattle-system",
-		},
-	})
 	sourceBAuth := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "source-b-auth", Namespace: "cattle-system"},
 		Type:       corev1.SecretTypeBasicAuth,
@@ -159,20 +98,14 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 			corev1.BasicAuthPasswordKey: []byte("secret"),
 		},
 	}
+	workload := newGitOpsTestWorkload()
 	client := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(settings, sourceA, sourceB, sourceBAuth).
+		WithObjects(settings, sourceA, sourceBAuth, workload).
 		Build()
 	reconciler := &AIWorkloadReconciler{
 		Client:            client,
 		Scheme:            scheme,
 		OperatorNamespace: "aif-operator",
-	}
-	workload := &aiplatformv1alpha1.AIWorkload{
-		ObjectMeta: metav1.ObjectMeta{Name: "logical-workload", Namespace: "aif-operator"},
-		Spec: aiplatformv1alpha1.AIWorkloadSpec{
-			TargetNamespace: "application-system",
-			TargetClusters:  []string{"local", "c-downstream"},
-		},
 	}
 	component := aiplatformv1alpha1.BlueprintComponent{
 		ChartRepo:    "source-a",
@@ -180,95 +113,93 @@ func TestEnsureBlueprintGitFile_ExistingHelmOpTracksSourceChange(t *testing.T) {
 		ChartVersion: "1.0.0",
 		Vendor:       aiplatformv1alpha1.ComponentVendorSUSE,
 	}
-	const bundleName = "logical-workload-airgap-smoke"
-	const filePath = "workloads/logical-workload-airgap-smoke.yaml"
-	if err := client.Create(ctx, workload); err != nil {
-		t.Fatalf("create workload: %v", err)
-	}
+	const bundleName = "private-source-workload-airgap-smoke"
+	const filePath = "workloads/private-source-workload-airgap-smoke.yaml"
 
 	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
 		t.Fatalf("publish first source: %v", err)
 	}
-	firstContent := readBlueprintGitOpsFile(t, remoteURL, filePath)
-	firstDocuments := decodeBlueprintGitOpsDocuments(t, firstContent)
-	requireGitOpsWorkspaceTargets(t, firstDocuments, "HelmOp")
-	for _, firstObject := range firstDocuments {
-		materialized := &unstructured.Unstructured{Object: firstObject}
-		materialized.SetGroupVersionKind(helmOpGVK)
-		if err := client.Create(ctx, materialized); err != nil {
-			t.Fatalf("materialize first HelmOp: %v", err)
-		}
-	}
 
-	component.ChartRepo = "source-b"
+	if err := client.Get(ctx, types.NamespacedName{Name: sourceA.GetName()}, sourceA); err != nil {
+		t.Fatalf("refresh ClusterRepo: %v", err)
+	}
+	_ = unstructured.SetNestedField(sourceA.Object, "oci://registry-b.example/charts", "spec", "url")
+	_ = unstructured.SetNestedMap(sourceA.Object, map[string]any{
+		"name":      "source-b-auth",
+		"namespace": "cattle-system",
+	}, "spec", "clientSecret")
+	if err := client.Update(ctx, sourceA); err != nil {
+		t.Fatalf("change ClusterRepo endpoint: %v", err)
+	}
 	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
 		t.Fatalf("publish switched source: %v", err)
 	}
-	secondContent := readBlueprintGitOpsFile(t, remoteURL, filePath)
-	secondDocuments := decodeBlueprintGitOpsDocuments(t, secondContent)
-	requireGitOpsWorkspaceTargets(t, secondDocuments, "HelmOp")
-	for _, secondObject := range secondDocuments {
-		repo, _, _ := unstructured.NestedString(secondObject, "spec", "helm", "repo")
-		if repo != "oci://registry-b.example/charts/airgap-smoke" {
-			t.Fatalf("switched HelmOp repo = %q", repo)
-		}
-		helmSecret, _, _ := unstructured.NestedString(secondObject, "spec", "helmSecretName")
-		if helmSecret != "source-b-auth" {
-			t.Fatalf("switched HelmOp auth secret = %q", helmSecret)
-		}
+	var object map[string]any
+	if err := json.Unmarshal([]byte(readBlueprintGitOpsFile(t, remoteURL, filePath)), &object); err != nil {
+		t.Fatalf("decode switched HelmOp: %v", err)
+	}
+	repo, _, _ := unstructured.NestedString(object, "spec", "helm", "repo")
+	if repo != "oci://registry-b.example/charts/airgap-smoke" {
+		t.Fatalf("switched HelmOp repo = %q", repo)
+	}
+	helmSecret, _, _ := unstructured.NestedString(object, "spec", "helmSecretName")
+	if helmSecret != "source-b-auth" {
+		t.Fatalf("switched HelmOp auth secret = %q", helmSecret)
 	}
 
-	for _, namespace := range []string{"fleet-local", "fleet-default"} {
-		copiedAuth := &corev1.Secret{}
-		if err := client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "source-b-auth"}, copiedAuth); err != nil {
-			t.Fatalf("get switched source auth in %s: %v", namespace, err)
-		}
-		if string(copiedAuth.Data[corev1.BasicAuthUsernameKey]) != "robot" ||
-			string(copiedAuth.Data[corev1.BasicAuthPasswordKey]) != "secret" {
-			t.Fatalf("%s auth secret did not preserve source credentials", namespace)
-		}
+	copiedAuth := &corev1.Secret{}
+	if err := client.Get(ctx, types.NamespacedName{Namespace: "fleet-local", Name: "source-b-auth"}, copiedAuth); err != nil {
+		t.Fatalf("get switched source auth: %v", err)
+	}
+	if string(copiedAuth.Data[corev1.BasicAuthUsernameKey]) != "robot" ||
+		string(copiedAuth.Data[corev1.BasicAuthPasswordKey]) != "secret" {
+		t.Fatal("Fleet auth secret did not preserve source credentials")
 	}
 }
 
-func TestEnsureBlueprintGitFile_GitBackedChartTargetsBothFleetWorkspaces(t *testing.T) {
+func TestEnsureBlueprintGitFile_RepublishesToChangedFleetRepository(t *testing.T) {
 	ctx := context.Background()
-	remoteURL := newBlueprintGitOpsRemote(t)
+	firstRemote := newBlueprintGitOpsRemote(t)
+	secondRemote := newBlueprintGitOpsRemote(t)
 	scheme := gitRepoTestScheme()
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: firstRemote, Branch: "main"},
 		},
 	}
-	repo := repoObj("rancher-charts", map[string]any{
-		"gitRepo":   "https://git.example.test/charts.git",
-		"gitBranch": "main",
-	})
-	_ = unstructured.SetNestedField(repo.Object, "commit-aaa", "status", "commit")
-	chart := makeChartTgz(t, map[string]string{
-		"rancher-ai-agent/Chart.yaml":        "apiVersion: v2\nname: rancher-ai-agent\nversion: 109.0.1\n",
-		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: agent\n",
-	})
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings, repo).Build()
-	holder := rancher.NewHolder()
-	holder.Set(fakeCatalog{tgz: chart})
+	source := repoObj("private-charts", map[string]any{"url": "oci://registry.example/charts"})
+	workload := newGitOpsTestWorkload()
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings, source, workload).Build()
 	reconciler := &AIWorkloadReconciler{
 		Client:            client,
 		Scheme:            scheme,
 		OperatorNamespace: "aif-operator",
-		CatalogClient:     holder,
 	}
-	workload := &aiplatformv1alpha1.AIWorkload{
-		ObjectMeta: metav1.ObjectMeta{Name: "git-chart-workload", Namespace: "aif-operator"},
-		Spec: aiplatformv1alpha1.AIWorkloadSpec{
-			TargetNamespace: "application-system",
-			TargetClusters:  []string{"local", "c-downstream"},
-		},
+	component := aiplatformv1alpha1.BlueprintComponent{
+		ChartRepo:    "private-charts",
+		ChartName:    "airgap-smoke",
+		ChartVersion: "1.0.0",
 	}
+	const bundleName = "private-source-workload-airgap-smoke"
+	const filePath = "workloads/private-source-workload-airgap-smoke.yaml"
 
-	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, gitComponent(), "git-chart-workload-agent"); err != nil {
-		t.Fatalf("publish git-backed chart: %v", err)
+	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
+		t.Fatalf("publish to first Git repository: %v", err)
 	}
-	content := readBlueprintGitOpsFile(t, remoteURL, "workloads/git-chart-workload-agent.yaml")
-	requireGitOpsWorkspaceTargets(t, decodeBlueprintGitOpsDocuments(t, content), "Bundle")
+	firstContent := readBlueprintGitOpsFile(t, firstRemote, filePath)
+
+	if err := client.Get(ctx, types.NamespacedName{Name: operatorSettingsName, Namespace: "aif-operator"}, settings); err != nil {
+		t.Fatalf("refresh Settings: %v", err)
+	}
+	settings.Spec.Fleet.RepoURL = secondRemote
+	if err := client.Update(ctx, settings); err != nil {
+		t.Fatalf("change Fleet repository: %v", err)
+	}
+	if _, err := reconciler.ensureBlueprintGitFile(ctx, workload, component, bundleName); err != nil {
+		t.Fatalf("republish to second Git repository: %v", err)
+	}
+	if secondContent := readBlueprintGitOpsFile(t, secondRemote, filePath); secondContent != firstContent {
+		t.Fatal("republished GitOps manifest changed despite an unchanged Blueprint source")
+	}
 }

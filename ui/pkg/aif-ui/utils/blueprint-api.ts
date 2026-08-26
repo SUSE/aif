@@ -1,11 +1,4 @@
-import type {
-  Application,
-  Blueprint,
-  BlueprintComponent,
-  BlueprintList,
-  BlueprintOrigin,
-  BlueprintSpec,
-} from '../types/blueprint-types';
+import type { Blueprint, BlueprintList, BlueprintOrigin, BlueprintSpec } from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
 import { operatorFetch } from './operator-config';
 
@@ -18,24 +11,14 @@ export function listBlueprints(): Promise<BlueprintList> {
 // all versions grouped under one tile instead of re-deriving the family from the
 // display name — which would split bundled blueprints into duplicate tiles.
 export function createBlueprint(spec: BlueprintSpec, blueprintName?: string): Promise<Blueprint> {
-  const persistedSpec = prepareBlueprintSpecForWrite(spec);
   return operatorFetch('/api/v1/blueprints', {
     method: 'POST',
-    body:   JSON.stringify(blueprintName ? { spec: persistedSpec, blueprintName } : { spec: persistedSpec }),
+    body:   JSON.stringify(blueprintName ? { spec, blueprintName } : { spec }),
   });
 }
 
-export function getApplication(name: string): Promise<Application> {
-  return operatorFetch(`/api/v1/applications/${ encodeURIComponent(name) }`);
-}
-
-function getStoredBlueprint(name: string): Promise<Blueprint> {
+export function getBlueprint(name: string): Promise<Blueprint> {
   return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`);
-}
-
-export async function getBlueprint(name: string): Promise<Blueprint> {
-  const blueprint = await getStoredBlueprint(name);
-  return resolveApplicationComponents(blueprint);
 }
 
 export function deleteBlueprint(name: string): Promise<void> {
@@ -45,79 +28,11 @@ export function deleteBlueprint(name: string): Promise<void> {
 }
 
 export async function updateBlueprintDeprecated(name: string, deprecated: boolean): Promise<Blueprint> {
-  // Deprecation is metadata on the Blueprint spec and must remain possible even
-  // when a referenced Application is temporarily missing. Read the stored form
-  // directly instead of resolving deployment coordinates for this write.
-  const bp = await getStoredBlueprint(name);
+  const bp = await getBlueprint(name);
   return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`, {
     method: 'PUT',
-    body:   JSON.stringify({ spec: prepareBlueprintSpecForWrite({ ...bp.spec, deprecated }) }),
+    body:   JSON.stringify({ spec: { ...bp.spec, deprecated } }),
   });
-}
-
-// resolveApplicationComponents creates the UI view expected by the existing
-// Blueprint wizards without mutating the API object or persisting derived
-// coordinates. One request is issued per distinct logical Application.
-export async function resolveApplicationComponents(blueprint: Blueprint): Promise<Blueprint> {
-  const cache = new Map<string, Promise<Application>>();
-  const resolveApplication = (name: string): Promise<Application> => {
-    let pending = cache.get(name);
-    if (!pending) {
-      pending = getApplication(name);
-      cache.set(name, pending);
-    }
-    return pending;
-  };
-
-  const components = await Promise.all(blueprint.spec.components.map(async(component): Promise<BlueprintComponent> => {
-    if (!component.applicationRef) return component;
-
-    const application = await resolveApplication(component.applicationRef.name);
-    const chart = application?.spec?.chart;
-    if (!chart?.name || !chart?.sourceRef) {
-      throw new Error(`Application "${ component.applicationRef.name }" has no usable chart mapping.`);
-    }
-
-    return {
-      ...component,
-      chartRepo:    chart.sourceRef,
-      chartName:    chart.name,
-      chartVersion: component.applicationRef.version,
-      vendor:       application.spec.credentialProfile ?? 'suse',
-    };
-  }));
-
-  return {
-    ...blueprint,
-    spec: { ...blueprint.spec, components },
-  };
-}
-
-// prepareBlueprintSpecForWrite removes the coordinates used only by the UI's
-// resolved view. If a user selects another version while editing, that version
-// is copied back into the logical requirement before the direct fields are
-// removed. Legacy direct-chart components pass through unchanged.
-export function prepareBlueprintSpecForWrite(spec: BlueprintSpec): Record<string, unknown> {
-  return {
-    ...spec,
-    components: spec.components.map((component) => {
-      if (!component.applicationRef) return component;
-
-      const chartVersion = component.chartVersion;
-      const logicalComponent: Record<string, unknown> = { ...component };
-      delete logicalComponent.chartRepo;
-      delete logicalComponent.chartName;
-      delete logicalComponent.chartVersion;
-      delete logicalComponent.vendor;
-      return {
-        ...logicalComponent,
-        applicationRef: {
-          ...component.applicationRef,
-          version: chartVersion || component.applicationRef.version,
-        },
-      };
-    }),
-  };
 }
 
 // sourceFor returns the blueprint's source for display purposes.

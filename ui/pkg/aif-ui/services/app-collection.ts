@@ -88,20 +88,13 @@ export async function findRepositoryByUrl($store: any, targetUrl: string): Promi
   }
 }
 
-/** Determine library type from repository URL.
+/** Determine library type from a repository URL for connected-mode discovery.
  *
  * NVIDIA classification is HOST-based: any helm.ngc.nvidia.com repo (org OR
  * team, e.g. .../nvidia, .../nvidia/omniverse, .../nim/nvidia) is 'nvidia'.
- * This is what tags the workload vendor=nvidia so the operator injects
- * ngc-secret/ngc-api (nvcr.io image pulls) — required by every NGC chart.
  *
- * Air-gap safety (by construction): this MUST be called with the LIVE
- * ClusterRepo URL (spec.url / spec.ociRepo), never the catalog repository_url.
- * In air-gap the live URL is the private mirror (oci://…), whose host is never
- * helm.ngc.nvidia.com, so it correctly stays 'suse' and uses the combined
- * injector that already carries nvcr.io auth. Contract: every caller MUST pass the
- * live ClusterRepo URL (spec.url / spec.ociRepo), never a catalog repository_url —
- * passing the catalog URL in air-gap would misclassify the repo as 'nvidia'.
+ * A private mirror URL cannot carry source identity. Installation paths must
+ * use getLibraryForClusterRepo so the stable ClusterRepo name wins.
  */
 export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | undefined {
   // Normalize URL by removing trailing slashes and lowercasing for comparison.
@@ -122,6 +115,25 @@ export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | u
   }
 
   return undefined;
+}
+
+/**
+ * Classify a chart source by its stable ClusterRepo identity first, then fall
+ * back to URL discovery for administrator-created connected repositories.
+ * Private mirrors deliberately change the URL, but not the well-known source
+ * name referenced by applications and Blueprints.
+ */
+export function getLibraryForClusterRepo(
+  repoName: string,
+  repoUrl: string,
+): 'suse-ai' | 'nvidia' | undefined {
+  if (repoName === 'application-collection' || repoName === 'suse-ai-registry') {
+    return 'suse-ai';
+  }
+  if (repoName === 'nvidia' || repoName === 'nvidia-blueprints') {
+    return 'nvidia';
+  }
+  return getLibraryFromRepoUrl(repoUrl);
 }
 
 /** Get cluster repository name from repository URL */
@@ -155,15 +167,17 @@ export async function fetchSuseAiApps($store: any, settings?: any | null): Promi
   const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
 
   const repos = await fetchClusterRepositories($store);
-  const appCollectionRepo = repos.find(r => r.url === acUrl);
-  const suseRegistryRepo  = repos.find(r => r.url === srUrl);
+  const appCollectionRepo = repos.find(r => r.name === 'application-collection') ||
+    repos.find(r => r.url === acUrl);
+  const suseRegistryRepo = repos.find(r => r.name === 'suse-ai-registry') ||
+    repos.find(r => r.url === srUrl);
 
   const [appCollectionApps, suseRegistryApps] = await Promise.all([
     appCollectionRepo
-      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: acUrl, library: 'suse-ai' as const })))
+      ? fetchAppsFromRepository($store, appCollectionRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: appCollectionRepo.url, library: 'suse-ai' as const })))
       : Promise.resolve([] as AppCollectionItem[]),
     suseRegistryRepo
-      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: srUrl, library: 'suse-ai' as const })))
+      ? fetchAppsFromRepository($store, suseRegistryRepo.name).then(apps => apps.map(a => ({ ...a, repository_url: suseRegistryRepo.url, library: 'suse-ai' as const })))
       : Promise.resolve([] as AppCollectionItem[]),
   ]);
 

@@ -115,9 +115,8 @@ spec:
                 description: Fleet configures Fleet GitOps integration.
                 properties:
                   authType:
-                    description: AuthType is the authentication method.
+                    description: AuthType is the HTTPS authentication method.
                     enum:
-                    - ssh
                     - token
                     - basic
                     type: string
@@ -163,34 +162,6 @@ spec:
                       authentication. Basic authentication requires this field or a username
                       key in the referenced credential Secret.
                     type: string
-                type: object
-              imageRewrite:
-                description: ImageRewrite controls Helm-values prefix substitution
-                  at deploy time.
-                properties:
-                  enabled:
-                    description: Enabled applies rewrite rules during Helm values
-                      merge.
-                    type: boolean
-                  rules:
-                    description: Rules apply in order; first match per field wins.
-                    items:
-                      description: ImageRewriteRule defines a single image prefix
-                        rewrite rule.
-                      properties:
-                        match:
-                          description: Match is the prefix to match.
-                          minLength: 1
-                          type: string
-                        replace:
-                          description: Replace is the substitution prefix.
-                          minLength: 1
-                          type: string
-                      required:
-                      - match
-                      - replace
-                      type: object
-                    type: array
                 type: object
               nvidia:
                 description: Nvidia configures NVIDIA NGC integration.

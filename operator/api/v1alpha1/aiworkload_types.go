@@ -81,9 +81,9 @@ type AppSource struct {
 	Release string `json:"release"`
 	// Vendor selects the secret-injection profile. Defaults to "suse" so
 	// existing App-sourced workloads behave identically after CRD upgrade.
-	// The UI is expected to populate this from the chart's repo URL (e.g.
-	// "nvidia" for charts pulled from helm.ngc.nvidia.com), mirroring how
-	// BlueprintComponent.Vendor is filled at Blueprint-build time.
+	// The UI populates this from the stable ClusterRepo identity, falling back
+	// to URL discovery for arbitrary connected repositories. This keeps the
+	// vendor stable when a well-known source moves to a private mirror.
 	// +kubebuilder:default=suse
 	// +optional
 	Vendor ComponentVendor `json:"vendor,omitempty"`
@@ -123,6 +123,7 @@ type ComponentValueOverride struct {
 
 // AIWorkloadSpec defines the desired state of AIWorkload.
 // +kubebuilder:validation:XValidation:rule="self.source.sourceType != 'Blueprint' || (has(self.targetClusters) && size(self.targetClusters) > 0)",message="Blueprint workloads require at least one target cluster"
+// +kubebuilder:validation:XValidation:rule="self.deployStrategy != 'GitOps' || !has(self.targetClusters) || size(self.targetClusters.filter(c, c == 'local')) == 0 || size(self.targetClusters.filter(c, c != 'local')) == 0",message="mixed local and downstream target clusters are not supported for GitOps workloads"
 type AIWorkloadSpec struct {
 	// DisplayName is the user-provided workload display name.
 	// +kubebuilder:validation:MinLength=1
