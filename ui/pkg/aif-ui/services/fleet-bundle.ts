@@ -218,12 +218,16 @@ export function buildFleetBundleYAML(params: {
   const values = JSON.parse(JSON.stringify(params.values));
   const pullSecretNames = withCombinedPullSecret(params.pullSecretNames, params.library);
   if (pullSecretNames.length > 0 && params.library !== 'nvidia') {
-    // NVIDIA charts don't have imagePullSecrets in their original values, so don't add them
+    // Non-NVIDIA charts get the combined pull secret via the standard pod-spec
+    // paths. NVIDIA charts are handled by injectNvidiaPullSecretRefs below, which
+    // references the operator-delivered ngc-secret (not the combined secret) in
+    // the vendor-specific value shapes those charts actually read.
     const secrets = pullSecretNames.map(name => ({ name }));
     values.global = { ...(values.global || {}), imagePullSecrets: secrets };
     values.imagePullSecrets = secrets;
   }
   disableNvidiaChartSecrets(values, params.library);
+  injectNvidiaPullSecretRefs(values, params.library);
 
   const isOCI = params.chartRepoUrl.startsWith('oci://');
   const spec: Record<string, any> = {
@@ -401,6 +405,10 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   if (params.library === 'nvidia' && helmSpec.values && typeof helmSpec.values === 'object') {
     helmSpec.values = JSON.parse(JSON.stringify(helmSpec.values));
     disableNvidiaChartSecrets(helmSpec.values, 'nvidia');
+    // Reference the operator-delivered ngc-secret in the pull-secret value shapes
+    // NVIDIA charts read, so team-repo NIM pods stop pulling with the hardcoded
+    // nvcrimagepullsecret (which nothing creates) and use ngc-secret instead.
+    injectNvidiaPullSecretRefs(helmSpec.values, 'nvidia');
   }
 
   if (localClusters.length > 0) {
@@ -442,7 +450,7 @@ function addPullSecretsToValues(values: Record<string, any>, names: string[], li
 //
 // Mutates `values` in place. Safe to call on any vendor; pass library to
 // gate it to NVIDIA charts only.
-function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
+export function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
   if (library !== 'nvidia') return;
   for (const [key, fallbackName] of [
     ['imagePullSecret', 'ngc-secret'],
@@ -454,6 +462,99 @@ function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-
       if (!existing.name) existing.name = fallbackName;
     } else {
       values[key] = { create: false, name: fallbackName };
+    }
+  }
+}
+
+// Operator-delivered image-pull secret referenced by workload pods. Must match
+// the operator's nvidiaImagePullSecretName
+// (operator/internal/controller/aiworkload/blueprint.go).
+const NVIDIA_IMAGE_PULL_SECRET_NAME = 'ngc-secret';
+
+// isPlainObject reports whether v is a non-null, non-array object — the only
+// shape into which these helpers write. Anything else (string, number, array)
+// is treated as deliberate author intent and left untouched.
+function isPlainObject(v: any): v is Record<string, any> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+// injectNvidiaPullSecretRefs is the TS port of the operator's
+// injectNvidiaPullSecretRefs (operator/internal/controller/aiworkload/blueprint.go).
+// It writes NVIDIA_IMAGE_PULL_SECRET_NAME into the three value paths NVIDIA
+// charts use for pod image pulls, so team-repo NIM charts (which default to a
+// hardcoded `nvcrimagepullsecret` that nothing creates) instead reference the
+// operator-delivered secret. The operator applies this on the Blueprint path;
+// this copy applies it on the UI-owned App/Fleet path.
+//
+// KEEP IN SYNC with the Go copy — the merge rules below mirror it exactly:
+//   - path absent            → create with [ngc-secret]
+//   - ngc-secret already set  → leave unchanged (idempotent)
+//   - path present w/ entries → prepend ngc-secret (preserve author entries)
+//   - path present w/ unexpected shape → leave untouched (honor author intent)
+//
+// Mutates `values` in place. Safe to call on any vendor; pass library to gate
+// it to NVIDIA charts only. Never touches `global` (owned by the non-nvidia code).
+export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
+  if (library !== 'nvidia') return;
+  const name = NVIDIA_IMAGE_PULL_SECRET_NAME;
+
+  // Top-level k8s pod-spec shape: list of {name} objects.
+  const top = values.imagePullSecrets;
+  if (top === undefined) {
+    values.imagePullSecrets = [{ name }];
+  } else if (Array.isArray(top)) {
+    if (!top.some((e: any) => isPlainObject(e) && e.name === name)) {
+      values.imagePullSecrets = [{ name }, ...top];
+    }
+  }
+
+  // NIM workload shape: image.pullSecrets is a flat string list.
+  injectFlatPullSecretList(values, 'image', name);
+  // k8s-nim-operator shape: operator.image.pullSecrets, flat string list.
+  injectNestedFlatPullSecretList(values, 'operator', 'image', name);
+}
+
+// injectFlatPullSecretList adds `name` to the flat string list at
+// values[topKey].pullSecrets, creating the parent map if absent. If the parent
+// exists but isn't a plain object, leaves it untouched (author intent).
+function injectFlatPullSecretList(values: Record<string, any>, topKey: string, name: string): void {
+  const topRaw = values[topKey];
+  if (topRaw === undefined) {
+    values[topKey] = { pullSecrets: [name] };
+    return;
+  }
+  if (!isPlainObject(topRaw)) return;
+  injectFlatIntoMap(topRaw, name);
+}
+
+// injectNestedFlatPullSecretList walks values[topKey][midKey].pullSecrets,
+// creating intermediate plain-object maps as needed. If any intermediate value
+// exists but isn't a plain object, leaves it untouched (author intent).
+function injectNestedFlatPullSecretList(values: Record<string, any>, topKey: string, midKey: string, name: string): void {
+  const topRaw = values[topKey];
+  if (topRaw === undefined) {
+    values[topKey] = { [midKey]: { pullSecrets: [name] } };
+    return;
+  }
+  if (!isPlainObject(topRaw)) return;
+  const midRaw = topRaw[midKey];
+  if (midRaw === undefined) {
+    topRaw[midKey] = { pullSecrets: [name] };
+    return;
+  }
+  if (!isPlainObject(midRaw)) return;
+  injectFlatIntoMap(midRaw, name);
+}
+
+// injectFlatIntoMap prepends `name` to map.pullSecrets (a flat string list),
+// creating it if absent and skipping if already present.
+function injectFlatIntoMap(map: Record<string, any>, name: string): void {
+  const list = map.pullSecrets;
+  if (list === undefined) {
+    map.pullSecrets = [name];
+  } else if (Array.isArray(list)) {
+    if (!list.includes(name)) {
+      map.pullSecrets = [name, ...list];
     }
   }
 }
