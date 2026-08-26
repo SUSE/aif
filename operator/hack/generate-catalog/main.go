@@ -1,6 +1,8 @@
-// Command refresh-catalog-labels regenerates the `labels` arrays in the operator's
-// bundled default-catalog.json from the NGC catalog search API. Manual: a developer
-// runs it and commits the result. See README.md.
+// Command generate-catalog regenerates the operator's bundled default-catalog.json
+// from the NGC catalog search API. It adds every nvaie_supported Helm chart (that
+// lives under a deployable NGC repo path) as a catalog entry with a single
+// "Supported" chip, preserving all existing entries. Manual runs and the weekly
+// refresh-catalog CI workflow both invoke it; commit the result. See README.md.
 package main
 
 import (
@@ -12,8 +14,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/SUSE/aif-operator/internal/catalog"
 )
 
 const ngcSearchBase = "https://api.ngc.nvidia.com/v2/search/catalog/resources/HELM_CHART"
@@ -31,17 +34,21 @@ func main() {
 		log.Fatalf("fetch NGC catalog: %v", err)
 	}
 
-	names := programDisplayNames()
-	hidden := hiddenPrograms()
-	byKey := make(map[string][]catalogLabel, len(resources))
-	needNames := map[string]bool{}
+	var derived []catalog.Item
+	var skippedExcluded, skippedUnknown int
 	for _, res := range resources {
-		labels, need := programLabels(res, names, hidden)
-		if len(labels) > 0 {
-			byKey[strings.ToLower(res.ResourceID)] = labels
+		if !isNVAIE(res) {
+			continue
 		}
-		for _, c := range need {
-			needNames[c] = true
+		switch kind := catalog.ClassifyNGCPath(ngcRepoPath(res)); kind {
+		case catalog.NGCPathExcluded:
+			skippedExcluded++
+		case catalog.NGCPathUnknown:
+			skippedUnknown++
+			log.Printf("warning: NVAIE chart %q is under unclassified NGC path %q; "+
+				"add it to ngc_repos.go before it can be listed", res.ResourceID, ngcRepoPath(res))
+		default: // org, public, gated → deployable
+			derived = append(derived, deriveItem(res))
 		}
 	}
 
@@ -49,28 +56,24 @@ func main() {
 	if err != nil {
 		log.Fatalf("read catalog: %v", err)
 	}
-	out, unmatched, err := applyLabels(catIn, byKey)
+	out, added, err := mergeNVAIE(catIn, derived)
 	if err != nil {
-		log.Fatalf("apply labels: %v", err)
+		log.Fatalf("merge catalog: %v", err)
 	}
 	if err := os.WriteFile(*catalogPath, out, 0o644); err != nil {
 		log.Fatalf("write catalog: %v", err)
 	}
 
-	for _, slug := range unmatched {
-		log.Printf("note: no NGC program labels for catalog entry %q (left without labels)", slug)
+	fmt.Printf("updated %s (%d NGC resources, %d NVAIE deployable, %d newly added, "+
+		"%d skipped excluded, %d skipped unclassified)\n",
+		*catalogPath, len(resources), len(derived), len(added), skippedExcluded, skippedUnknown)
+	for _, slug := range added {
+		log.Printf("added: %s", slug)
 	}
-	for code := range needNames {
-		log.Printf("note: program code %q has no display name; "+
-			"add it to programDisplayNames() for a nicer label", code)
-	}
-	fmt.Printf("updated %s (%d NGC resources, %d labeled keys, %d entries without labels, %d codes need a display name)\n",
-		*catalogPath, len(resources), len(byKey), len(unmatched), len(needNames))
 }
 
-// fetchAllResources pages through the match-all HELM_CHART search until all resources
-// are collected. Note: matchKey in applyLabels compares against res.ResourceID; here we
-// key byKey on the lower-cased ResourceID to match.
+// fetchAllResources pages through the match-all HELM_CHART search until a page
+// returns no new resources.
 func fetchAllResources(ctx context.Context, pageSize int) ([]ngcResource, error) {
 	var all []ngcResource
 	seen := map[string]bool{}
