@@ -109,6 +109,33 @@ func TestClassifyNGCTeamRepos_UnclassifiedURLLandsInPublic(t *testing.T) {
 	}
 }
 
+// The four path sets must be mutually disjoint. ClassifyNGCPath checks them in a
+// fixed order (org, excluded, public, gated), so a path accidentally left in two
+// sets would be classified by whichever is checked first — e.g. a gated repo also
+// left in publicNGCPaths would classify as Public, get provisioned with no auth,
+// and its chart .tgz would 403 (gzip: invalid header) at install. Since a weekly
+// refresh hand-maintains these sets, guard the invariant directly.
+func TestNGCPathSetsAreDisjoint(t *testing.T) {
+	sets := []struct {
+		kind NGCPathKind
+		set  map[string]bool
+	}{
+		{NGCPathOrg, orgNGCPaths},
+		{NGCPathExcluded, excludedNGCPaths},
+		{NGCPathPublic, publicNGCPaths},
+		{NGCPathGated, gatedNGCPaths},
+	}
+	owner := map[string]NGCPathKind{}
+	for _, s := range sets {
+		for path := range s.set {
+			if other, ok := owner[path]; ok {
+				t.Errorf("NGC path %q appears in both the %q and %q sets; it must be in exactly one", path, other, s.kind)
+			}
+			owner[path] = s.kind
+		}
+	}
+}
+
 func TestClassifyNGCPath(t *testing.T) {
 	cases := map[string]NGCPathKind{
 		"/nvidia":                         NGCPathOrg,

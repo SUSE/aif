@@ -487,7 +487,7 @@ function isPlainObject(v: any): v is Record<string, any> {
 // this copy applies it on the UI-owned App/Fleet path.
 //
 // KEEP IN SYNC with the Go copy — the merge rules below mirror it exactly:
-//   - path absent            → create with [ngc-secret]
+//   - path absent or null    → create with [ngc-secret]
 //   - ngc-secret already set  → leave unchanged (idempotent)
 //   - path present w/ entries → prepend ngc-secret (preserve author entries)
 //   - path present w/ unexpected shape → leave untouched (honor author intent)
@@ -498,9 +498,11 @@ export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?
   if (library !== 'nvidia') return;
   const name = NVIDIA_IMAGE_PULL_SECRET_NAME;
 
-  // Top-level k8s pod-spec shape: list of {name} objects.
+  // Top-level k8s pod-spec shape: list of {name} objects. Treat an explicit
+  // null the same as absent — mirrors the Go copy's `case nil`, which fires for
+  // both a missing key and a JSON null.
   const top = values.imagePullSecrets;
-  if (top === undefined) {
+  if (top === undefined || top === null) {
     values.imagePullSecrets = [{ name }];
   } else if (Array.isArray(top)) {
     if (!top.some((e: any) => isPlainObject(e) && e.name === name)) {

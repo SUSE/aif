@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { injectNvidiaPullSecretRefs } from '../fleet-bundle';
+import { injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../fleet-bundle';
 
 // TS port of the operator's injectNvidiaPullSecretRefs
 // (operator/internal/controller/aiworkload/blueprint.go). These cases mirror
@@ -67,5 +67,52 @@ describe('injectNvidiaPullSecretRefs', () => {
 
     expect(v.operator.replicas).toBe(2);
     expect(v.operator.image.pullSecrets).toEqual([NGC]);
+  });
+
+  it('treats an explicit null the same as absent', () => {
+    const v: Record<string, any> = { imagePullSecrets: null };
+    injectNvidiaPullSecretRefs(v, 'nvidia');
+
+    expect(v.imagePullSecrets).toEqual([{ name: NGC }]);
+  });
+});
+
+// TS port of the operator's disableChartSecretCreation
+// (operator/internal/controller/aiworkload/blueprint.go), mirroring
+// TestDisableChartSecretCreation. Turns off the charts' built-in secret creation
+// so they reference the operator-delivered ngc-secret / ngc-api instead.
+describe('disableNvidiaChartSecrets', () => {
+  it('is a no-op for non-nvidia libraries', () => {
+    const v: Record<string, any> = {};
+    disableNvidiaChartSecrets(v, 'suse-ai');
+    expect(v).toEqual({});
+  });
+
+  it('creates disabled secret refs with fallback names when absent', () => {
+    const v: Record<string, any> = {};
+    disableNvidiaChartSecrets(v, 'nvidia');
+
+    expect(v.imagePullSecret).toEqual({ create: false, name: 'ngc-secret' });
+    expect(v.ngcApiSecret).toEqual({ create: false, name: 'ngc-api' });
+  });
+
+  it('preserves an author-set name and only flips create to false', () => {
+    const v: Record<string, any> = {
+      imagePullSecret: { create: true, name: 'my-pull-secret' },
+      ngcApiSecret:    { create: true },
+    };
+    disableNvidiaChartSecrets(v, 'nvidia');
+
+    // Existing name kept; create forced off.
+    expect(v.imagePullSecret).toEqual({ create: false, name: 'my-pull-secret' });
+    // Missing name filled from the fallback.
+    expect(v.ngcApiSecret).toEqual({ create: false, name: 'ngc-api' });
+  });
+
+  it('overwrites an unexpected non-object shape with a disabled ref', () => {
+    const v: Record<string, any> = { imagePullSecret: 'nope' };
+    disableNvidiaChartSecrets(v, 'nvidia');
+
+    expect(v.imagePullSecret).toEqual({ create: false, name: 'ngc-secret' });
   });
 });

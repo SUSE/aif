@@ -20,6 +20,14 @@ type catalogDoc struct {
 
 const supportedCode = "supported"
 
+// Recognized top-level library keys in default-catalog.json. Must match
+// catalogDoc's json tags; used to reject any unknown library the round-trip
+// through catalogDoc would otherwise silently drop.
+const (
+	librarySuseAI = "suse-ai"
+	libraryNVIDIA = "nvidia"
+)
+
 // supportedLabel is the single chip every NVAIE entry carries.
 var supportedLabel = []catalog.Label{{Code: supportedCode, Name: "Supported"}}
 
@@ -33,6 +41,19 @@ var supportedLabel = []catalog.Label{{Code: supportedCode, Name: "Supported"}}
 // and re-runs with the same NGC data produce no diff. Returns the re-marshaled
 // document and the slugs of newly appended entries.
 func mergeNVAIE(catalogJSON []byte, derived []catalog.Item) (out []byte, added []string, err error) {
+	// The tool round-trips the file through catalogDoc's fixed fields, so an
+	// unrecognized top-level library key would be silently dropped on re-marshal.
+	// Fail loudly instead: add a field to catalogDoc before regenerating.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(catalogJSON, &keys); err != nil {
+		return nil, nil, fmt.Errorf("parse catalog keys: %w", err)
+	}
+	for k := range keys {
+		if k != librarySuseAI && k != libraryNVIDIA {
+			return nil, nil, fmt.Errorf("unrecognized top-level catalog library %q: add it to catalogDoc before regenerating", k)
+		}
+	}
+
 	var doc catalogDoc
 	if err := json.Unmarshal(catalogJSON, &doc); err != nil {
 		return nil, nil, fmt.Errorf("parse catalog: %w", err)

@@ -105,8 +105,10 @@ func (k NGCPathKind) String() string {
 }
 
 // ClassifyNGCPath maps an NGC repo path (parsed url.Path, e.g. "/nim/nvidia") to
-// its NGCPathKind. An unknown path is NGCPathUnknown: callers must fail safe
-// (never attach auth, never list) until it is added to one of the sets above.
+// its NGCPathKind. An unknown path is NGCPathUnknown: callers must fail safe by
+// never attaching auth. The provisioning caller then treats it as anonymous
+// public (a genuinely gated new repo simply 403s until it is classified); the
+// catalog generator instead warns and skips it.
 func ClassifyNGCPath(path string) NGCPathKind {
 	switch {
 	case orgNGCPaths[path]:
