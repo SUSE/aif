@@ -8,9 +8,11 @@
 # resource-policy: keep — survives `helm uninstall` so operator coordinates and
 # catalog settings aren't lost across a reinstall. It keeps this release's own
 # ownership labels/annotations (Helm doesn't strip them on a kept object), so a
-# subsequent install under the same release name/namespace adopts it cleanly
-# with no ownership conflict. If the release identity changes instead, the
-# aif-operator's own adoption step (SUSEAI-1039) re-stamps it for the new one.
+# subsequent install adopts it with no extra help needed. Even when the release
+# identity changes, or the object was created unowned entirely (the aif-operator
+# self-heal, or the UI's Settings page, both of which leave ownership metadata
+# alone — SUSEAI-1039), the aif-operator's own installs/upgrades set Helm's
+# TakeOwnership, so they claim this object regardless of its current state.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -27,17 +27,45 @@ describe('saveOperatorConfig', () => {
     invalidateOperatorConfig();
   });
 
-  // SUSEAI-1039: a ConfigMap this function creates without Helm's ownership
-  // stamps permanently blocks a later `helm install`/`upgrade` of the
-  // aif-ui-server release with "invalid ownership metadata".
-  it('stamps Helm ownership metadata when creating the ConfigMap for the first time', async () => {
+  it('creates the ConfigMap with no ownership metadata when it does not exist yet', async () => {
     const calls = stubFetch(() => ({ ok: false, status: 404, json: async () => null }));
 
     await saveOperatorConfig('aif-operator', 'aif-operator');
 
     const post = calls.find((c) => c.method === 'POST');
     expect(post).toBeDefined();
-    expect(post?.body?.metadata).toMatchObject({
+    expect(post?.body?.metadata).toEqual({ name: 'aif-ui-config', namespace: 'cattle-ui-plugin-system' });
+    expect(post?.body?.data).toEqual({ operatorNamespace: 'aif-operator', operatorService: 'aif-operator' });
+  });
+
+  // SUSEAI-1039 regression: an earlier version of this fix hand-stamped Helm
+  // ownership metadata on create, but the update path below did a PUT that
+  // omitted labels/annotations entirely — and PUT is a full-object replace, so
+  // the very next save silently stripped whatever ownership metadata a Helm
+  // install had since applied. The mock here must include labels/annotations
+  // on the "existing" object, or this test can't catch that regression.
+  it('carries forward existing labels and annotations on update instead of dropping them', async () => {
+    const calls = stubFetch(() => ({
+      ok:     true,
+      status: 200,
+      json:   async () => ({
+        metadata: {
+          resourceVersion: '7',
+          labels:          { 'app.kubernetes.io/managed-by': 'Helm' },
+          annotations:     {
+            'meta.helm.sh/release-name':      'aif-ui-server',
+            'meta.helm.sh/release-namespace': 'cattle-ui-plugin-system',
+          },
+        },
+        data: { existingKey: 'keep-me' },
+      }),
+    }));
+
+    await saveOperatorConfig('aif-operator', 'aif-operator');
+
+    const put = calls.find((c) => c.method === 'PUT');
+    expect(put).toBeDefined();
+    expect(put?.body?.metadata).toEqual({
       name:      'aif-ui-config',
       namespace: 'cattle-ui-plugin-system',
       labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
@@ -45,11 +73,16 @@ describe('saveOperatorConfig', () => {
         'meta.helm.sh/release-name':      'aif-ui-server',
         'meta.helm.sh/release-namespace': 'cattle-ui-plugin-system',
       },
+      resourceVersion: '7',
     });
-    expect(post?.body?.data).toEqual({ operatorNamespace: 'aif-operator', operatorService: 'aif-operator' });
+    expect(put?.body?.data).toEqual({
+      existingKey:       'keep-me',
+      operatorNamespace: 'aif-operator',
+      operatorService:   'aif-operator',
+    });
   });
 
-  it('does not touch ownership metadata when updating an existing ConfigMap', async () => {
+  it('update on an object with no existing labels/annotations does not invent any', async () => {
     const calls = stubFetch(() => ({
       ok:     true,
       status: 200,
@@ -59,12 +92,6 @@ describe('saveOperatorConfig', () => {
     await saveOperatorConfig('aif-operator', 'aif-operator');
 
     const put = calls.find((c) => c.method === 'PUT');
-    expect(put).toBeDefined();
     expect(put?.body?.metadata).toEqual({ name: 'aif-ui-config', namespace: 'cattle-ui-plugin-system', resourceVersion: '7' });
-    expect(put?.body?.data).toEqual({
-      existingKey:      'keep-me',
-      operatorNamespace: 'aif-operator',
-      operatorService:   'aif-operator',
-    });
   });
 });

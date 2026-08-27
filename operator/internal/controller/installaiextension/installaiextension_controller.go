@@ -310,7 +310,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 	ext.Status.ActiveExtensionName = ext.Spec.Extension.Name
 	ext.Status.ActiveSourceKind = ext.Spec.Source.Kind
 
-	if err := r.syncUIConfigMap(ctx, ext); err != nil {
+	if err := r.syncUIConfigMap(ctx); err != nil {
 		logger.Error(err, "failed to sync operator coordinates to UI ConfigMap")
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -329,15 +329,14 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // helm.sh/resource-policy: keep annotation so `helm uninstall` leaves it behind
 // too.
 //
-// When the just-reconciled extension is Helm-sourced, this also stamps Helm's
-// ownership label/annotations onto the ConfigMap. The aif-ui chart's own
-// configmap.yaml template creates this same object with those stamps, so a
-// self-heal here must match them exactly — otherwise a ConfigMap this function
-// creates (or recreates) while no release is installed permanently blocks the
-// next `helm install`/`upgrade` of that release with "invalid ownership
-// metadata" (SUSEAI-1039). Left unstamped for git-sourced extensions, which
-// have no Helm release to adopt into.
-func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context, ext *v1alpha1.InstallAIExtension) error {
+// Deliberately does not touch Helm ownership metadata: whoever creates this
+// object (this self-heal, or the UI's Settings page) doesn't need to get that
+// right, because the operator's own Helm installs/upgrades set TakeOwnership
+// (see helm.install/helm.upgrade) and adopt it regardless of its current
+// ownership state (SUSEAI-1039). Hand-stamping it here duplicated that and, in
+// an earlier version of this fix, went stale in three different ways — see the
+// PR history for SUSEAI-1039 if reintroducing anything like it.
+func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 	ns, svc := config.GetOperatorNamespace(), config.GetOperatorService()
 	logger.V(1).Info("syncing UI ConfigMap", "operatorNamespace", ns, "operatorService", svc)
@@ -353,53 +352,9 @@ func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context, ext 
 		}
 		cm.Data["operatorNamespace"] = ns
 		cm.Data["operatorService"] = svc
-		if ext.Status.ActiveSourceKind == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
-			stampHelmOwnership(cm, ext.Status.HelmReleaseName, r.ExtensionNamespace)
-		}
 		return nil
 	})
 	return err
-}
-
-// stampHelmOwnership sets the label/annotations Helm requires to adopt a
-// pre-existing object into releaseName instead of refusing it with "invalid
-// ownership metadata" (SUSEAI-1039). Must match exactly what the chart's own
-// template would set for that same release.
-func stampHelmOwnership(cm *corev1.ConfigMap, releaseName, releaseNamespace string) {
-	if cm.Labels == nil {
-		cm.Labels = make(map[string]string)
-	}
-	cm.Labels["app.kubernetes.io/managed-by"] = "Helm"
-	if cm.Annotations == nil {
-		cm.Annotations = make(map[string]string)
-	}
-	cm.Annotations["meta.helm.sh/release-name"] = releaseName
-	cm.Annotations["meta.helm.sh/release-namespace"] = releaseNamespace
-}
-
-// adoptUIConfigMap pre-stamps the well-known aif-ui-config ConfigMap with the
-// ownership metadata the about-to-run release expects, so a leftover or
-// self-healed unowned object (SUSEAI-1039) never blocks the very first `helm
-// install` either — syncUIConfigMap alone only prevents *recreating* it
-// unowned after a release has already succeeded once. Best-effort: a failure
-// here is logged, not returned, so the install attempt still proceeds and
-// fails with its own (equally informative) ownership error rather than being
-// blocked by this step instead.
-func (r *InstallAIExtensionReconciler) adoptUIConfigMap(ctx context.Context, releaseName string) {
-	logger := log.FromContext(ctx)
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      uiConfigMapName,
-			Namespace: r.ExtensionNamespace,
-		},
-	}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
-		stampHelmOwnership(cm, releaseName, r.ExtensionNamespace)
-		return nil
-	})
-	if err != nil {
-		logger.Error(err, "failed to pre-adopt UI ConfigMap ownership before Helm install", "release", releaseName)
-	}
 }
 
 func (r *InstallAIExtensionReconciler) reconcileHelmSource(
@@ -510,8 +465,6 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	if tlsCfg != nil {
 		releaseSpec.TLSConfig = tlsCfg
 	}
-
-	r.adoptUIConfigMap(ctx, releaseName)
 
 	ensureErr := helm.EnsureRelease(ctx, releaseSpec)
 	result, handled, err := r.handlePendingRelease(ctx, ext, conditionTypeHelmInstalled, ensureErr)

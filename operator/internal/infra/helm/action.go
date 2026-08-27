@@ -49,6 +49,17 @@ func (c *helmClient) install(
 	install.ReleaseName = spec.Name
 	install.Namespace = spec.Namespace
 	install.Version = spec.Version
+	// A ConfigMap the aif-ui chart also templates (aif-ui-config) can be created
+	// unowned by something other than this release — the operator's own
+	// self-heal, or the UI's Settings page, before any chart ever ran — and
+	// otherwise permanently blocks this install with "invalid ownership
+	// metadata" (SUSEAI-1039). TakeOwnership claims any pre-existing resource
+	// in the chart's manifest regardless of its current ownership, the same way
+	// blueprint.go already does for Fleet-installed charts colliding with
+	// pre-delivered Secrets. This operator only ever installs the one
+	// known extension chart, so the broadened scope (every resource in the
+	// manifest, not just that one ConfigMap) is an accepted, deliberate trade.
+	install.TakeOwnership = true
 	if spec.RepoURL != "" {
 		install.RepoURL = spec.RepoURL
 	}
@@ -92,6 +103,9 @@ func (c *helmClient) upgrade(
 	up.Wait = true
 	up.Atomic = false
 	up.Timeout = 10 * time.Minute
+	// See install's TakeOwnership comment (SUSEAI-1039) — the same adoption gap
+	// applies on upgrade.
+	up.TakeOwnership = true
 
 	ch, err := c.loadChart(up.SetRegistryClient, &up.ChartPathOptions, spec)
 	if err != nil {
@@ -125,6 +139,12 @@ func (c *helmClient) renderUpgrade(
 	up.Wait = false
 	up.Atomic = false
 	up.Timeout = 2 * time.Minute
+	// Helm's ownership check runs before the DryRun branch, so a dry run against
+	// an unowned resource fails exactly like a real upgrade would without this
+	// (SUSEAI-1039) — this is the pre-flight diff EnsureRelease uses to decide
+	// whether an upgrade is even needed, so without it the real upgrade below
+	// would never be reached at all.
+	up.TakeOwnership = true
 	if spec.RepoURL != "" {
 		up.RepoURL = spec.RepoURL
 	}

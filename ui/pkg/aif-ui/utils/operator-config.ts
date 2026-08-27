@@ -217,10 +217,14 @@ export function invalidateOperatorConfig(): void {
  *  concurrency control, then PUTs. Falls back to POST (create) when the ConfigMap
  *  doesn't exist yet (git-based install, no Helm chart ran).
  *
- *  The create path stamps the same Helm ownership label/annotations the aif-ui
- *  chart's own configmap.yaml sets. Without them, a ConfigMap created here can
- *  block a later `helm install`/`upgrade` of the aif-ui-server release with
- *  "invalid ownership metadata" (SUSEAI-1039). */
+ *  Does not stamp Helm ownership metadata — a PUT is a full-object replace, so
+ *  hand-stamping it here would need this function to also carry it forward on
+ *  every later save (a PUT that omits a field clears it, it doesn't leave it
+ *  alone), which an earlier version of this fix got wrong (SUSEAI-1039). The
+ *  operator's own Helm installs/upgrades set TakeOwnership, so they adopt this
+ *  object regardless of what created it or what its current metadata says —
+ *  this function only ever needs to carry forward whatever labels/annotations
+ *  are already there, never invent new ones. */
 export async function saveOperatorConfig(namespace: string, service: string): Promise<void> {
   const url     = configMapUrl();
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -241,26 +245,20 @@ export async function saveOperatorConfig(namespace: string, service: string): Pr
       headers,
       body:    JSON.stringify({
         ...payload,
-        metadata: { ...payload.metadata, ...(resourceVersion ? { resourceVersion } : {}) },
-        data:     { ...(existing?.data || {}), operatorNamespace: namespace, operatorService: service },
+        metadata: {
+          ...payload.metadata,
+          ...(existing?.metadata?.labels      ? { labels:      existing.metadata.labels }      : {}),
+          ...(existing?.metadata?.annotations ? { annotations: existing.metadata.annotations } : {}),
+          ...(resourceVersion ? { resourceVersion } : {}),
+        },
+        data: { ...(existing?.data || {}), operatorNamespace: namespace, operatorService: service },
       }),
     });
   } else if (getRes.status === 404) {
     res = await fetch(configMapCollectionUrl(), {
       method: 'POST',
       headers,
-      body:   JSON.stringify({
-        ...payload,
-        metadata: {
-          ...payload.metadata,
-          labels:      { 'app.kubernetes.io/managed-by': 'Helm' },
-          annotations: {
-            'meta.helm.sh/release-name':      'aif-ui-server',
-            'meta.helm.sh/release-namespace': CONFIG_NAMESPACE,
-          },
-        },
-        data: { operatorNamespace: namespace, operatorService: service },
-      }),
+      body:   JSON.stringify({ ...payload, data: { operatorNamespace: namespace, operatorService: service } }),
     });
   } else {
     res = getRes;
