@@ -644,6 +644,13 @@ async function doRetry(w: AIWorkload) {
           />
         </div>
 
+        <p class="text-muted modal-note">
+          This upgrades the deployed release only. It does not run data migrations, CRD
+          schema/storage-version conversions, or other application-level upgrade steps —
+          please make sure any required manual steps are completed. We strongly recommend
+          taking backups (e.g. of your CRs) before upgrading, in case you need to roll back.
+        </p>
+
         <div class="modal-buttons">
           <button class="btn role-secondary" @click="upgradeModal.show = false" type="button">Cancel</button>
           <button
@@ -681,6 +688,13 @@ async function doRetry(w: AIWorkload) {
         <p class="text-muted modal-warning">
           The workload will be redeployed at the last certified version
           (v{{ rollbackModal.workload?.status?.deployedSource?.version }}).
+        </p>
+
+        <p class="text-muted modal-note">
+          This redeploys the previously certified version. It does not undo data
+          migrations, CRD schema/storage-version conversions, or other manual changes
+          made after the original deployment — please revert those yourself before
+          rolling back.
         </p>
 
         <div class="modal-buttons">
@@ -842,6 +856,12 @@ async function doRetry(w: AIWorkload) {
     background: var(--warning-banner-bg);
     border-radius: 4px;
     border-left: 3px solid var(--warning);
+  }
+
+  .modal-note {
+    font-size: 12px;
+    font-style: italic;
+    opacity: 0.85;
   }
 
   .modal-buttons {
