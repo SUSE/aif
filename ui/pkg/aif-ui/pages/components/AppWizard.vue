@@ -29,7 +29,7 @@ import {
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
+import { fetchSuseAiApps, resolveInstallRepoName, getLibraryFromRepoUrl, isManagedRepoName } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
@@ -336,7 +336,17 @@ function populateFromUrlParams() {
 async function initializeInstallMode() {
   if (!store) return;
 
-  // If repo is provided in query, use it
+  // A repo seeded from the ?repo= query param is UNTRUSTED input. Only honor it
+  // when it's an operator-managed repo; otherwise drop it and fall through to the
+  // scoped resolver (findRepoForApp → resolveInstallRepoName / inferClusterRepoForChart).
+  // Without this, a crafted ?repo=<unmanaged> would drive findChartInRepo against
+  // an unmanaged repo, bypassing the provenance contract the install path enforces.
+  if (form.value.chartRepo && !(await isManagedRepoName(store, form.value.chartRepo))) {
+    console.warn(`[SUSE-AI] Ignoring non-managed repo from query param: ${form.value.chartRepo}`);
+    form.value.chartRepo = '';
+  }
+
+  // If a (validated, managed) repo is set, use it
   if (form.value.chartRepo) {
     const guess = await findChartInRepo(store, REPO_CLUSTER, form.value.chartRepo, props.slug);
     if (guess) {
@@ -362,11 +372,11 @@ async function findRepoForApp(slug: string): Promise<string | null> {
   if (!store) return null;
 
   try {
-    const suseAiApps = await fetchSuseAiApps(store);
+    const { apps: suseAiApps } = await fetchSuseAiApps(store);
     const staticApp = suseAiApps.find(app => app.slug_name === slug);
 
-    if (staticApp?.repository_url) {
-      const clusterRepoName = await getClusterRepoNameFromUrl(store, staticApp.repository_url);
+    if (staticApp) {
+      const clusterRepoName = await resolveInstallRepoName(store, staticApp);
       if (clusterRepoName) return clusterRepoName;
     }
 

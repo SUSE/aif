@@ -7,10 +7,7 @@ import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
-import { TIMEOUT_VALUES } from '../utils/constants';
 import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
-import { ensureClusterRepo } from '../services/rancher-apps';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../services/app-collection';
 import {
   mintOperatorToken, ensureTokenSecret, deleteToken, requestErrorMessage,
   TOKEN_EXPIRES_ANNOTATION, TOKEN_NAME_ANNOTATION,
@@ -330,106 +327,6 @@ export default {
       this.spec.imageRewrite.rules.splice(index, 1);
     },
 
-    async readSecretData(name) {
-      if (!name) return {};
-      try {
-        const res = await this.$store.dispatch('rancher/request', {
-          url:     `/k8s/clusters/local/api/v1/namespaces/${ getOperatorNamespace() }/secrets/${ name }`,
-          timeout: TIMEOUT_VALUES.CLUSTER,
-        });
-        // rancher/request returns the raw K8s object: res.data is the base64 data map.
-        // If ever wrapped (Axios-style), res.data is the K8s Secret and res.data.data is the map.
-        const secretObj = res?.kind === 'Secret' ? res : (res?.data?.kind === 'Secret' ? res.data : res);
-        const dataMap = secretObj?.data || {};
-        return Object.fromEntries(
-          Object.entries(dataMap).map(([k, v]) => [k, atob(String(v))])
-        );
-      } catch { return {}; }
-    },
-
-    async ensureClusterReposWithCredentials() {
-      const store = this.$store;
-      const ac = this.spec.applicationCollection;
-      const sr = this.spec.suseRegistry;
-      const nv = this.spec.nvidia;
-
-      // Read all unique secrets referenced in settings (deduped)
-      const secretNames = [...new Set([
-        ac.userSecretRef?.name,
-        ac.tokenSecretRef?.name,
-        ac.caBundleSecretRef?.name,
-        sr.userSecretRef?.name,
-        sr.tokenSecretRef?.name,
-        sr.caBundleSecretRef?.name,
-        nv.userSecretRef?.name,
-        nv.tokenSecretRef?.name,
-        nv.caBundleSecretRef?.name,
-      ].filter(Boolean))];
-
-      const secretCache = {};
-      await Promise.all(secretNames.map(async (name) => {
-        secretCache[name] = await this.readSecretData(name);
-      }));
-
-      const getVal = (ref) => ref?.name && ref?.key ? secretCache[ref.name]?.[ref.key] : null;
-
-      // Extract credentials for a registry: prefer explicit refs, fall back to common key names
-      const buildCreds = (userRef, tokenRef, caBundleRef) => {
-        const user  = getVal(userRef);
-        const token = getVal(tokenRef);
-        const data  = secretCache[tokenRef?.name] || secretCache[userRef?.name] || {};
-        const username = user  || data.username || data.user  || data.login || data.email || null;
-        const password = token || data.password || data.token || null;
-        const cacerts = getVal(caBundleRef);
-        if (this.secretRefComplete(caBundleRef) && !cacerts) {
-          throw new Error(
-            `CA bundle secret ${ caBundleRef.name } does not contain key ${ caBundleRef.key }`
-          );
-        }
-        return username && password ? { username, password, ...(cacerts ? { cacerts } : {}) } : null;
-      };
-
-      const re = this.spec.registryEndpoints;
-      const acUrl = re.applicationCollection || APP_COLLECTION_REPO_URL;
-      const srUrl = re.suseRegistry         || SUSE_REGISTRY_REPO_URL;
-
-      const tasks = [];
-      const acCreds = buildCreds(ac.userSecretRef, ac.tokenSecretRef, ac.caBundleSecretRef);
-      const srCreds = buildCreds(sr.userSecretRef, sr.tokenSecretRef, sr.caBundleSecretRef);
-      if (acCreds) tasks.push(ensureClusterRepo(store, acUrl, acCreds));
-      if (srCreds) tasks.push(ensureClusterRepo(store, srUrl, srCreds));
-
-      // NVIDIA chart repos.
-      //  - Air-gapped (registryEndpoints.nvidia set): stable nvidia and
-      //    nvidia-blueprints identities at the mirrored OCI URL. Credentials are
-      //    attached when configured; an unauthenticated mirror is also supported.
-      //  - Connected (registryEndpoints.nvidia empty): the two PUBLIC HTTPS NGC repos, created
-      //    when NVIDIA credentials are configured (the creds signal that NVIDIA is in use).
-      const nvHasRefs = !!(nv.userSecretRef?.name && nv.tokenSecretRef?.name);
-      if (re.nvidia) {
-        const nvCreds = buildCreds(nv.userSecretRef, nv.tokenSecretRef, nv.caBundleSecretRef);
-        // If secret refs are set but no usable credentials could be read, surface it rather
-        // than silently creating an unauthenticated repo against a gated mirror.
-        if (nvHasRefs && !nvCreds) {
-          throw new Error(
-            'NVIDIA secret references are set but no usable username/token could be read from them. ' +
-            'Check the selected secret and key names.'
-          );
-        }
-        tasks.push(
-          ensureClusterRepo(store, re.nvidia, nvCreds || undefined, 'nvidia'),
-          ensureClusterRepo(store, re.nvidia, nvCreds || undefined, 'nvidia-blueprints'),
-        );
-      } else if (nvHasRefs) {
-        tasks.push(
-          ensureClusterRepo(store, NVIDIA_REPO_URL),
-          ensureClusterRepo(store, NVIDIA_BLUEPRINT_REPO_URL),
-        );
-      }
-
-      await Promise.all(tasks);
-    },
-
     // Returns whether the save reached the operator. authorizeRancher needs to
     // know: it must not revoke the token it replaced unless the reference to the
     // new one was actually persisted.
@@ -449,15 +346,6 @@ export default {
 
         this.spec = this.buildSpec(data.spec);
         buttonDone(true);
-
-        // Settings are saved; now ensure ClusterRepos exist on the local cluster with
-        // credentials so the install wizard can list chart versions. This runs after the
-        // save succeeds, so on failure we surface a banner rather than failing the save.
-        this.ensureClusterReposWithCredentials()
-          .catch((e) => {
-            console.warn('[SUSE-AI] ClusterRepo setup failed:', e);
-            this.errors = [`Settings saved, but chart repository setup failed: ${ e?.message || e }`];
-          });
 
         return true;
       } catch (e) {

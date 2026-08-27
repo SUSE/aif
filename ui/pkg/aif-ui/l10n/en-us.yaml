@@ -189,7 +189,7 @@ suseai:
     manage: Manage Application
     noApps: No applications found
     loading: Loading applications and discovering installations...
-    repoWarningTitle: Some NVIDIA repositories couldn't be loaded
+    repoWarningTitle: Some repositories couldn't be loaded
     dismiss: Dismiss
     refresh: Refresh
     tileView: Tile View
