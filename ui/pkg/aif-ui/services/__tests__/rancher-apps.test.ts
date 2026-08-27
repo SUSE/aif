@@ -4,6 +4,7 @@ import {
   ensureServiceAccountPullSecret,
   listServiceAccounts,
 } from '../rancher-apps';
+import { log as logger } from '../../utils/logger';
 import type { Dispatchable } from '../../types/rancher-types';
 
 afterEach(() => {
@@ -309,6 +310,7 @@ describe('ServiceAccount discovery and sweep', () => {
   });
 
   it('ignores a ServiceAccount deleted after listing and updates the rest', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const store = fakeStore([
       {
         items: [{
@@ -328,9 +330,11 @@ describe('ServiceAccount discovery and sweep', () => {
 
     const patch = store.calls.find(call => call.payload.method === 'PATCH');
     expect(patch?.payload.url).toContain('/serviceaccounts/app');
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('continues updating other ServiceAccounts after a forbidden update', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const store = fakeStore([
       {
         items: [{
@@ -341,7 +345,7 @@ describe('ServiceAccount discovery and sweep', () => {
           }
         }],
       },
-      plainFailure(403, 'serviceaccount default is forbidden'),
+      k8sFailure(403, 'serviceaccount default is forbidden'),
       { metadata: { name: 'app', namespace: 'apps', resourceVersion: '42' } },
       {},
     ]);
@@ -352,5 +356,66 @@ describe('ServiceAccount discovery and sweep', () => {
 
     const patch = store.calls.find(call => call.payload.method === 'PATCH');
     expect(patch?.payload.url).toContain('/serviceaccounts/app');
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith('ServiceAccount pull-secret attachment failed', {
+      component: 'RancherApps',
+      action:    'attach image pull secret',
+      data:      {
+        namespace:      'apps',
+        serviceAccount: 'default',
+        status:         403,
+        message:        'serviceaccount default is forbidden',
+      },
+    });
+  });
+
+  it('logs the fail-closed message when resourceVersion is missing', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const store = fakeStore([
+      { items: [] },
+      { metadata: { name: 'default', namespace: 'apps' } },
+    ]);
+
+    await expect(ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    )).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith('ServiceAccount pull-secret attachment failed', {
+      component: 'RancherApps',
+      action:    'attach image pull secret',
+      data:      {
+        namespace:      'apps',
+        serviceAccount: 'default',
+        status:         undefined,
+        message:        'Refusing to update ServiceAccount apps/default: GET response is missing metadata.resourceVersion',
+      },
+    });
+  });
+
+  it('falls back to default when ServiceAccount discovery is forbidden', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const store = fakeStore([
+      k8sFailure(403, 'serviceaccounts is forbidden'),
+      { metadata: { name: 'default', namespace: 'apps', resourceVersion: '42' } },
+      {},
+    ]);
+
+    await expect(ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    )).resolves.toBeUndefined();
+
+    const patch = store.calls.find(call => call.payload.method === 'PATCH');
+    expect(patch?.payload.url).toContain('/serviceaccounts/default');
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith('ServiceAccount discovery failed; falling back to default', {
+      component: 'RancherApps',
+      action:    'discover service accounts',
+      data:      {
+        namespace: 'apps',
+        status:    403,
+        message:   'serviceaccounts is forbidden',
+      },
+    });
   });
 });

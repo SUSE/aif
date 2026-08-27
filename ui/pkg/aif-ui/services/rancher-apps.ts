@@ -1167,6 +1167,7 @@ export async function listServiceAccounts(
 interface RancherHttpErrorShape {
   _status?: unknown;
   code?: unknown;
+  message?: unknown;
   status?: unknown;
   statusCode?: unknown;
   response?: { status?: unknown };
@@ -1175,6 +1176,7 @@ interface RancherHttpErrorShape {
 // rancher/request rejects with the parsed response body and attaches the HTTP
 // status as a non-enumerable `_status`. Kubernetes and Norman use other fields.
 // Ignore non-HTTP numeric codes such as DOMException.code and transport status 0.
+// TODO: replace this local parser when Rancher HTTP status extraction is consolidated.
 function rancherHttpStatus(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
 
@@ -1196,6 +1198,22 @@ function rancherHttpStatus(error: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+function rancherErrorMessage(error: unknown): string | undefined {
+  let message: unknown;
+  if (error instanceof Error) {
+    message = error.message;
+  } else if (typeof error === 'string') {
+    message = error;
+  } else if (typeof error === 'object' && error !== null) {
+    message = (error as RancherHttpErrorShape).message;
+  }
+
+  if (typeof message !== 'string') return undefined;
+
+  const trimmed = message.trim();
+  return trimmed ? trimmed.slice(0, 1_000) : undefined;
 }
 
 const SERVICE_ACCOUNT_PATCH_ATTEMPTS = 5;
@@ -1239,9 +1257,9 @@ export async function ensureServiceAccountPullSecret(
       const has = orig.some(entry => entry?.name === secretName);
       if (has) return;
 
-      // imagePullSecrets is an atomic list on ServiceAccount, so send the
-      // complete read/merged list. resourceVersion preserves Kubernetes'
-      // optimistic-concurrency protection around that replacement.
+      // JSON Merge Patch replaces arrays wholesale, so send the complete
+      // read/merged list. resourceVersion preserves Kubernetes' optimistic-
+      // concurrency protection around that replacement.
       const patch = {
         metadata:         { resourceVersion: rv },
         imagePullSecrets: [...orig, { name: secretName }],
@@ -1271,7 +1289,21 @@ export async function ensurePullSecretOnAllSAs(
   namespace: string,
   secretName: string
 ): Promise<void> {
-  const sas = await listServiceAccounts($store, clusterId, namespace);
+  let sas: string[];
+  try {
+    sas = await listServiceAccounts($store, clusterId, namespace);
+  } catch (e) {
+    logger.warn('ServiceAccount discovery failed; falling back to default', {
+      component: 'RancherApps',
+      action:    'discover service accounts',
+      data:      {
+        namespace,
+        status:  rancherHttpStatus(e),
+        message: rancherErrorMessage(e),
+      },
+    });
+    sas = ['default'];
+  }
 
   for (const saName of sas) {
     try {
@@ -1280,14 +1312,16 @@ export async function ensurePullSecretOnAllSAs(
       // The default SA can be absent briefly while a namespace is terminating,
       // and a listed chart SA can disappear before its GET. Neither should
       // prevent remaining ServiceAccounts from converging.
-      if (rancherHttpStatus(e) === 404) continue;
+      const status = rancherHttpStatus(e);
+      if (status === 404) continue;
       logger.warn('ServiceAccount pull-secret attachment failed', {
         component: 'RancherApps',
         action:    'attach image pull secret',
         data:      {
           namespace,
           serviceAccount: saName,
-          status: rancherHttpStatus(e),
+          status,
+          message: rancherErrorMessage(e),
         },
       });
     }
