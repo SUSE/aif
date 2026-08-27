@@ -33,6 +33,11 @@ jobs:
           ref: ${{ inputs.target }}
           fetch-depth: 0
 
+      - name: Install Skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
       - name: Validate inputs
         id: validate
         shell: bash
@@ -171,13 +176,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          LATEST_UC_RKE2_VERSION=$(skopeo list-tags docker://registry.suse.com/elemental/rke2/rke2-manifest | jq -r '.Tags[]' | sort -r | head -n 1)
+          export CORE_PLATFORM_IMAGE="registry.suse.com/elemental/rke2/rke2-manifest:${LATEST_UC_RKE2_VERSION}"
+
           # The SUSE AI Factory release version and the aif-operator/aif-ui chart
           # entries move in lockstep with the operator version. yq targets the
           # fields by path so it is robust to value drift; other chart versions
           # in the manifest are left alone.
           yq -i '
             .metadata.version = strenv(VERSION) |
-            (.components.helm.charts[] | select(.chart == "aif-operator" or .chart == "aif-ui")).version = strenv(VERSION)
+            (.components.helm.charts[] | select(.chart == "aif-operator" or .chart == "aif-ui")).version = strenv(VERSION) |
+            .corePlatform.image = strenv(CORE_PLATFORM_IMAGE)
           ' uc-release-manifest/release_manifest.yaml
 
           echo "Bumped release manifest to $VERSION"
