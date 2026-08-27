@@ -459,7 +459,13 @@ export function disableNvidiaChartSecrets(values: Record<string, any>, library?:
     const existing = values[key];
     if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
       existing.create = false;
-      if (!existing.name) existing.name = fallbackName;
+      // Fill the name when absent, null, or an empty string; honor a non-empty
+      // author name and leave any non-string value untouched. Mirrors the Go
+      // copy's disableChartSecretCreation type switch exactly.
+      const nm = existing.name;
+      if (nm === undefined || nm === null || nm === '') {
+        existing.name = fallbackName;
+      }
     } else {
       values[key] = { create: false, name: fallbackName };
     }
@@ -493,7 +499,9 @@ function isPlainObject(v: any): v is Record<string, any> {
 //   - path present w/ unexpected shape → leave untouched (honor author intent)
 //
 // Mutates `values` in place. Safe to call on any vendor; pass library to gate
-// it to NVIDIA charts only. Never touches `global` (owned by the non-nvidia code).
+// it to NVIDIA charts only. Sets the scalar global.ngcImagePullSecretName but
+// never forces the global.imagePullSecrets list shape (owned by the non-nvidia
+// code).
 export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
   if (library !== 'nvidia') return;
   const name = NVIDIA_IMAGE_PULL_SECRET_NAME;
@@ -514,6 +522,34 @@ export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?
   injectFlatPullSecretList(values, 'image', name);
   // k8s-nim-operator shape: operator.image.pullSecrets, flat string list.
   injectNestedFlatPullSecretList(values, 'operator', 'image', name);
+  // Scalar name shape: a single string naming the pull secret, read by some
+  // charts at the top level and by others under global.
+  injectNgcImagePullSecretName(values, name);
+}
+
+// injectNgcImagePullSecretName sets the scalar pull-secret name at both the top
+// level and under global, since charts read one or the other (see
+// setScalarSecretName for the per-key rule). global is created when absent but
+// left alone if present with a non-object shape.
+function injectNgcImagePullSecretName(values: Record<string, any>, name: string): void {
+  setScalarSecretName(values, name);
+
+  const global = values.global;
+  if (global === undefined || global === null) {
+    values.global = { ngcImagePullSecretName: name };
+  } else if (isPlainObject(global)) {
+    setScalarSecretName(global, name);
+  }
+}
+
+// setScalarSecretName sets map.ngcImagePullSecretName to `name` when the key is
+// absent or an empty string (the chart default the injector cannot see), honors a
+// non-empty string override, and leaves any non-string value untouched.
+function setScalarSecretName(map: Record<string, any>, name: string): void {
+  const existing = map.ngcImagePullSecretName;
+  if (existing === undefined || existing === null || existing === '') {
+    map.ngcImagePullSecretName = name;
+  }
 }
 
 // injectFlatPullSecretList adds `name` to the flat string list at
@@ -552,7 +588,9 @@ function injectNestedFlatPullSecretList(values: Record<string, any>, topKey: str
 // creating it if absent and skipping if already present.
 function injectFlatIntoMap(map: Record<string, any>, name: string): void {
   const list = map.pullSecrets;
-  if (list === undefined) {
+  // Treat an explicit null the same as absent — mirrors the Go copy's `case nil`,
+  // which fires for both a missing key and a JSON null.
+  if (list === undefined || list === null) {
     map.pullSecrets = [name];
   } else if (Array.isArray(list)) {
     if (!list.includes(name)) {
