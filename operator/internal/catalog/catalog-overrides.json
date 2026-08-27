@@ -1,1 +1,12 @@
-{}
+{
+  "control-plane": {
+    "name": "Run:ai (self-hosted) Control Plane",
+    "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
+    "documentation_url": "https://docs.nvidia.com/run-ai/index.html"
+  },
+  "runai-cluster": {
+    "name": "Run:ai (self-hosted) Cluster",
+    "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
+    "documentation_url": "https://docs.nvidia.com/run-ai/index.html"
+  }
+}

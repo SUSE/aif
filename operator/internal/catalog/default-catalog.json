@@ -284,9 +284,10 @@
       ]
     },
     {
-      "name": "control-plane",
+      "name": "Run:ai (self-hosted) Control Plane",
       "slug_name": "control-plane",
-      "description": "Run:ai control-plane helm chart",
+      "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
+      "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
       "last_updated_at": "2026-08-10T16:30:12.726Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
@@ -443,7 +444,7 @@
       "slug_name": "dpf-operator",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of DPF.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-06-23T06:32:04.036Z",
+      "last_updated_at": "2026-08-27T11:24:16.173Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -458,7 +459,7 @@
       "slug_name": "dpf-storage",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of the DPF Storage Subsystem.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-06-23T06:32:09.348Z",
+      "last_updated_at": "2026-08-27T11:24:21.941Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -473,7 +474,7 @@
       "slug_name": "dpf-vpc-ovn",
       "description": "OVN VPC System Helm chart",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-06-23T06:32:05.463Z",
+      "last_updated_at": "2026-08-27T11:24:18.051Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -502,7 +503,7 @@
       "slug_name": "dpu-networking",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart is deployed by the DPF Operator and is responsible for setting up networking related components required on the DPU.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-06-23T06:32:02.600Z",
+      "last_updated_at": "2026-08-27T11:24:14.018Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -597,6 +598,7 @@
       "slug_name": "gpu-operator",
       "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
       "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
+      "last_updated_at": "2026-08-21T13:49:44.086Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -632,6 +634,7 @@
       "slug_name": "k8s-nim-operator",
       "description": "Helm chart for NIM Operator for deployment and maintenance of NVIDIA NIMs and NeMo microservices in a Kubernetes environment",
       "logo_url": "https://assets.ngc.nvidia.com/products/catalog/logos/NIMOperator.png",
+      "last_updated_at": "2026-08-10T19:39:35.361Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -893,6 +896,7 @@
       "slug_name": "network-operator",
       "description": "NVIDIA Network Operator Helm Chart provides an easy way to install, configure and manage the lifecycle of NVIDIA Mellanox network operator.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-Network-Operator.png",
+      "last_updated_at": "2026-07-24T05:56:10.558Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -1480,7 +1484,7 @@
       "slug_name": "ovn-chart",
       "description": "This Helm Chart deploys the OVN for DPF VPC",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-06-23T06:32:07.177Z",
+      "last_updated_at": "2026-08-27T11:24:20.062Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -1572,9 +1576,10 @@
       ]
     },
     {
-      "name": "runai-cluster",
+      "name": "Run:ai (self-hosted) Cluster",
       "slug_name": "runai-cluster",
-      "description": "Run:ai runai-cluster helm chart",
+      "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
+      "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
       "last_updated_at": "2026-08-10T14:56:37.578Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
