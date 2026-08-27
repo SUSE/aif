@@ -1,7 +1,9 @@
 // Command generate-catalog regenerates the operator's bundled default-catalog.json
-// from the NGC catalog search API. It adds every nvaie_supported Helm chart (that
-// lives under a deployable NGC repo path) as a catalog entry with a single
-// "Supported" chip, preserving all existing entries. Manual runs and the weekly
+// from the NGC catalog search API. It rebuilds every generator-owned entry (those
+// carrying the "Supported" chip) from the current NGC data — refreshing changed
+// fields and dropping charts NGC no longer lists — while preserving hand-added
+// entries and the suse-ai library. Pinned fields in catalog-overrides.json are
+// applied on top of the fresh NGC values. Manual runs and the weekly
 // refresh-catalog CI workflow both invoke it; commit the result. See README.md.
 package main
 
@@ -23,6 +25,8 @@ const ngcSearchBase = "https://api.ngc.nvidia.com/v2/search/catalog/resources/HE
 
 func main() {
 	catalogPath := flag.String("catalog", "internal/catalog/default-catalog.json", "path to default-catalog.json")
+	overridesPath := flag.String("overrides", "internal/catalog/catalog-overrides.json",
+		"path to catalog-overrides.json (pinned fields, generator-only input)")
 	pageSize := flag.Int("page-size", 100, "NGC search page size")
 	flag.Parse()
 
@@ -56,35 +60,56 @@ func main() {
 	if err != nil {
 		log.Fatalf("read catalog: %v", err)
 	}
-	out, added, err := mergeNVAIE(catIn, derived)
+
+	// The overrides file is optional: an absent file means no pinned fields, so a
+	// fresh checkout without it still runs.
+	ovRaw, err := os.ReadFile(*overridesPath)
+	if err != nil && !os.IsNotExist(err) {
+		log.Fatalf("read overrides: %v", err)
+	}
+	ov, err := loadOverrides(ovRaw)
 	if err != nil {
-		log.Fatalf("merge catalog: %v", err)
+		log.Fatalf("load overrides: %v", err)
+	}
+
+	out, added, removed, err := syncNVAIE(catIn, derived, ov)
+	if err != nil {
+		log.Fatalf("sync catalog: %v", err)
 	}
 	if err := os.WriteFile(*catalogPath, out, 0o644); err != nil {
 		log.Fatalf("write catalog: %v", err)
 	}
 
-	fmt.Printf("updated %s (%d NGC resources, %d NVAIE deployable, %d newly added, "+
+	fmt.Printf("updated %s (%d NGC resources, %d NVAIE deployable, %d added, %d removed, "+
 		"%d skipped excluded, %d skipped unclassified)\n",
-		*catalogPath, len(resources), len(derived), len(added), skippedExcluded, skippedUnknown)
+		*catalogPath, len(resources), len(derived), len(added), len(removed), skippedExcluded, skippedUnknown)
 	for _, slug := range added {
 		log.Printf("added: %s", slug)
+	}
+	for _, slug := range removed {
+		log.Printf("removed: %s", slug)
 	}
 }
 
 // fetchAllResources pages through the match-all HELM_CHART search until a page
-// returns no new resources.
+// returns no new resources, then verifies the collected count against the
+// resultTotal NGC reports so a truncated or degraded response fails loudly rather
+// than silently regenerating a stripped catalog.
 func fetchAllResources(ctx context.Context, pageSize int) ([]ngcResource, error) {
 	var all []ngcResource
 	seen := map[string]bool{}
+	resultTotal := 0
 	for page := 0; ; page++ {
 		body, err := fetchPage(ctx, page, pageSize)
 		if err != nil {
 			return nil, err
 		}
-		res, err := parseResources(body)
+		res, total, err := parseResources(body)
 		if err != nil {
 			return nil, err
+		}
+		if page == 0 {
+			resultTotal = total // NGC reports the query-wide total on every page.
 		}
 		added := 0
 		for _, r := range res {
@@ -98,6 +123,9 @@ func fetchAllResources(ctx context.Context, pageSize int) ([]ngcResource, error)
 		if added == 0 {
 			break
 		}
+	}
+	if err := verifyComplete(len(all), resultTotal); err != nil {
+		return nil, err
 	}
 	return all, nil
 }

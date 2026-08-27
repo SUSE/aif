@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
-	"strings"
 )
 
 type ngcLabelGroup struct {
@@ -39,11 +37,13 @@ type ngcResponse struct {
 	} `json:"results"`
 }
 
-// parseResources returns the HELM_CHART group's resources, deduped by ResourceID.
-func parseResources(body []byte) ([]ngcResource, error) {
+// parseResources returns the HELM_CHART group's resources (deduped by ResourceID)
+// and the resultTotal NGC reports for the query. The count lets the caller detect
+// a truncated or degraded response before it silently strips the catalog.
+func parseResources(body []byte) (res []ngcResource, resultTotal int, err error) {
 	var resp ngcResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse NGC response: %w", err)
+		return nil, 0, fmt.Errorf("parse NGC response: %w", err)
 	}
 	seen := map[string]bool{}
 	var out []ngcResource
@@ -59,23 +59,24 @@ func parseResources(body []byte) ([]ngcResource, error) {
 			out = append(out, r)
 		}
 	}
-	return out, nil
+	return out, resp.ResultTotal, nil
 }
 
-// matchKey normalizes a repository URL + chart name into an "org[/team]/chart" key
-// comparable to an NGC resourceId.
-func matchKey(repositoryURL, chart string) string {
-	path := strings.TrimSpace(repositoryURL)
-	if u, err := url.Parse(path); err == nil && u.Host != "" {
-		path = u.Path
-	} else {
-		path = strings.TrimPrefix(strings.TrimPrefix(path, "https://"), "http://")
-		if i := strings.IndexByte(path, '/'); i >= 0 {
-			path = path[i:]
-		} else {
-			path = ""
-		}
+// verifyComplete guards against a partial or degraded NGC response silently
+// gutting the catalog: NGC reports the total match count for the query, so if we
+// collected fewer HELM_CHART resources than it claims (a truncated page walk) or it
+// reported none at all (an empty/degraded 200), fail loudly instead of regenerating
+// from incomplete data. Reconcile-on-run would otherwise drop every owned entry.
+func verifyComplete(collected, resultTotal int) error {
+	if resultTotal <= 0 {
+		return fmt.Errorf(
+			"NGC returned no HELM_CHART results (resultTotal=%d); refusing to regenerate from an empty response",
+			resultTotal)
 	}
-	key := strings.Trim(path, "/") + "/" + chart
-	return strings.ToLower(strings.Trim(key, "/"))
+	if collected < resultTotal {
+		return fmt.Errorf(
+			"incomplete NGC response: collected %d of %d HELM_CHART resources; refusing to regenerate from a partial response",
+			collected, resultTotal)
+	}
+	return nil
 }
