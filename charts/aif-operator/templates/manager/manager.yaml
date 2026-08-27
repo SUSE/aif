@@ -83,7 +83,19 @@ spec:
               name: helm-cache
       {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ include "aif-operator.fullname" . }}
-      terminationGracePeriodSeconds: 30
+      # Shutdown spends this budget three ways, and all three have to fit or the
+      # kubelet SIGKILLs the operator partway through: draining in-flight
+      # reconciles (30s, the manager's GracefulShutdownTimeout), a Helm write
+      # finishing on borrowed time so a restart does not fail the release (10s,
+      # helm.ShutdownGrace, inside the drain), and handing the leader lease back
+      # so the next pod does not wait out its expiry (up to 10s, client-go's
+      # RenewDeadline, after the drain). 30 + 10 = 40, and 60 leaves headroom.
+      #
+      # A hard kill is the one outcome worth paying for: Helm writes a release
+      # revision as pending before it applies anything, so a process killed
+      # mid-write leaves the release wedged in a state no reconcile recovers
+      # from. cmd.TestShutdownFitsInTheGracePeriod reads this number.
+      terminationGracePeriodSeconds: 60
       volumes:
         - emptyDir: {}
           name: helm-cache

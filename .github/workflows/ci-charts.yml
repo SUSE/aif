@@ -1,0 +1,74 @@
+name: AI Factory Charts CI
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
+
+      # Helm 4 does not support the plugin's GPG verification webhook, so
+      # --verify=false is required. The plugin version is pinned so CI and local
+      # development render identically.
+      - name: Install helm-unittest
+        run: |
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git \
+            --version v1.1.2 --verify=false
+
+      - name: Lint charts
+        run: helm lint charts/aif-ui charts/aif-operator
+
+      - name: Run chart unit tests
+        run: |
+          set -o pipefail
+          helm unittest charts/aif-ui charts/aif-operator | tee unittest.out
+
+          # A chart with no suites exits 0, so a deleted tests/ directory would
+          # pass silently. Require the expected suite count so removals fail CI.
+          # When adding new suites, update EXPECTED_SUITES below.
+          EXPECTED_SUITES=7
+          suites=$(sed -nE 's/^Test Suites:.*[, ]([0-9]+) total$/\1/p' unittest.out)
+          if [ -z "$suites" ] || [ "$suites" -lt "$EXPECTED_SUITES" ]; then
+            echo "::error::expected ${EXPECTED_SUITES} helm-unittest suites, got ${suites:-0} — suite files may be missing"
+            exit 1
+          fi
+
+      # helm-unittest vendors the Helm v3 SDK, so the suites above prove nothing
+      # about Helm 4 rendering. The workflow already has Helm 4 installed.
+      - name: Render charts under Helm 4
+        run: |
+          helm template charts/aif-ui > /dev/null
+          helm template charts/aif-ui --set standalone=true > /dev/null
+          helm template charts/aif-operator > /dev/null
+
+      - name: Guard the image annotation against appVersion drift
+        run: |
+          # release-aif-extension.yml rewrites appVersion and the helm.sh/images
+          # annotation with separate yq expressions, so they can drift apart.
+          # That annotation is what air-gap mirroring reads to pull images, and
+          # no template renders it, so helm-unittest cannot see it.
+          appVersion=$(yq -r '.appVersion' charts/aif-ui/Chart.yaml)
+          annotated=$(yq -r '.annotations."helm.sh/images"' charts/aif-ui/Chart.yaml \
+                        | yq -r '.[0].image')
+          expected="ghcr.io/suse/aif-ui:${appVersion}"
+          if [ "$annotated" != "$expected" ]; then
+            echo "::error::helm.sh/images annotation is '${annotated}' but appVersion implies '${expected}'"
+            exit 1
+          fi

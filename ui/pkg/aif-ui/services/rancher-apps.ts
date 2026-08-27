@@ -1,5 +1,4 @@
 import yaml from 'js-yaml';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from './registry-endpoints';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
 function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
@@ -44,6 +43,7 @@ import type {
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { MANAGED_REPO_LABEL } from './app-collection';
 
 /* ============================== logging helpers - CLEANED UP ============================== */
 // Legacy logging functions - replaced with proper logger
@@ -748,7 +748,13 @@ export async function inferClusterRepoForChart(
   chartName: string,
   preferVersion?: string
 ): Promise<string | null> {
-  const repos = await listClusterRepos($store);
+  // Scope to operator-managed repos only: without this gate the install path
+  // would resolve a chart from ANY ClusterRepo on the cluster (first name match),
+  // bypassing the provenance contract that fetchManagedRepos enforces for
+  // discovery. An unmanaged repo publishing a like-named chart must never be
+  // chosen as an install source.
+  const repos = (await listClusterRepos($store))
+    .filter((r) => r?.metadata?.labels?.[MANAGED_REPO_LABEL] === 'true');
   let best: string | null = null;
 
   for (const r of repos) {
@@ -769,139 +775,6 @@ export async function inferClusterRepoForChart(
   }
   return best;
 }
-
-
-function clusterRepoNameFromUrl(repoUrl: string): string {
-  const KNOWN: Record<string, string> = {
-    [APP_COLLECTION_REPO_URL]:    'application-collection',
-    [SUSE_REGISTRY_REPO_URL]:     'suse-ai-registry',
-    [NVIDIA_REPO_URL]:            'nvidia',
-    [NVIDIA_BLUEPRINT_REPO_URL]:  'nvidia-blueprints',
-  };
-  return KNOWN[repoUrl] ?? repoUrl
-    .replace(/^oci:\/\//, '')
-    .replace(/[^a-z0-9]+/gi, '-')
-    .toLowerCase()
-    .replace(/^-|-$/g, '');
-}
-
-async function upsertBasicAuthSecret(
-  $store: Dispatchable,
-  namespace: string,
-  name: string,
-  username: string,
-  password: string,
-  cacerts?: string,
-): Promise<void> {
-  const stringData: Record<string, string> = { username, password };
-  if (cacerts) stringData.cacerts = cacerts;
-
-  const secretBody = {
-    apiVersion: 'v1',
-    kind:       'Secret',
-    metadata:   { name, namespace },
-    type:       'kubernetes.io/basic-auth',
-    stringData,
-  };
-  try {
-    const res = await $store.dispatch('rancher/request', {
-      url:     `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
-      timeout: TIMEOUT_VALUES.CLUSTER,
-    });
-    const existing = res?.data || res;
-    await $store.dispatch('rancher/request', {
-      url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
-      method: 'PUT',
-      data:   { ...secretBody, metadata: { ...secretBody.metadata, resourceVersion: existing?.metadata?.resourceVersion } },
-      timeout: TIMEOUT_VALUES.MUTATION,
-    });
-  } catch {
-    await $store.dispatch('rancher/request', {
-      url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets`,
-      method: 'POST',
-      data:   secretBody,
-      timeout: TIMEOUT_VALUES.MUTATION,
-    });
-  }
-}
-
-export async function ensureClusterRepo(
-  $store: Dispatchable,
-  ociUrl: string,
-  credentials?: { username: string; password: string; cacerts?: string },
-  preferredName?: string,
-): Promise<string> {
-  const repos = await listClusterRepos($store);
-  const existing = preferredName
-    ? repos.find((r) => r?.metadata?.name === preferredName)
-    : repos.find((r) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
-  const name = preferredName || existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
-
-  let clientSecret: { name: string; namespace: string } | undefined;
-  if (credentials) {
-    const secretName = `${name}-auth`;
-    await upsertBasicAuthSecret(
-      $store,
-      'cattle-system',
-      secretName,
-      credentials.username,
-      credentials.password,
-      credentials.cacerts,
-    );
-    clientSecret = { name: secretName, namespace: 'cattle-system' };
-  }
-
-  if (existing) {
-    // Keep stable logical aliases pointed at the selected mirror when switching
-    // between connected and air-gapped modes. Also attach credentials when the
-    // existing repo did not have the desired auth Secret.
-    const currentUrl = existing.spec?.url || existing.spec?.ociRepo || '';
-    const urlChanged = currentUrl !== ociUrl;
-    const secretChanged = clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name;
-    if (urlChanged || secretChanged) {
-      const res = await $store.dispatch('rancher/request', {
-        url:     `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
-        timeout: TIMEOUT_VALUES.CLUSTER,
-      });
-      const full = res?.data || res;
-      const spec = { ...full.spec, url: ociUrl };
-      if (clientSecret) spec.clientSecret = clientSecret;
-      await $store.dispatch('rancher/request', {
-        url:    `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
-        method: 'PUT',
-        data:   { ...full, spec },
-        timeout: TIMEOUT_VALUES.MUTATION,
-      });
-    }
-    return name;
-  }
-
-  // Create the ClusterRepo
-  const spec: any = { url: ociUrl };
-  if (clientSecret) spec.clientSecret = clientSecret;
-  await $store.dispatch('rancher/request', {
-    url:    '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos',
-    method: 'POST',
-    data:   { apiVersion: 'catalog.cattle.io/v1', kind: 'ClusterRepo', metadata: { name }, spec },
-    timeout: TIMEOUT_VALUES.MUTATION,
-  });
-
-  // Poll until indexed (up to 60 s)
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 2000));
-    try {
-      const fresh = await listClusterRepos($store);
-      const created = fresh.find((r: any) => r?.metadata?.name === name);
-      if (!created) continue;
-      const ready = (created?.status?.conditions || []).some((c: any) =>
-        ['OCIDownloaded', 'Downloaded', 'FollowerDownloaded'].includes(c.type) && c.status === 'True'
-      );
-      if (ready) return name;
-    } catch { /* retry */ }
-  }
-  return name;
-}
-
 
 async function findHelmReleaseObjects(
   $store: Dispatchable,

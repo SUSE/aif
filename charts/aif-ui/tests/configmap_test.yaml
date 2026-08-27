@@ -1,0 +1,100 @@
+suite: UI runtime config ConfigMap
+templates:
+  - templates/configmap.yaml
+release:
+  name: my-rel
+  namespace: cattle-ui-plugin-system
+chart:
+  version: 9.9.9
+  appVersion: "2.2"
+tests:
+  # The name is deliberately release-independent: the UI extension reads a fixed
+  # name out of cattle-ui-plugin-system. Two releases in one namespace would
+  # collide, and that is the intended trade-off (see the template's comment).
+  - it: uses a fixed name in the release namespace
+    template: templates/configmap.yaml
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: aif-ui-config
+      - equal:
+          path: metadata.namespace
+          value: cattle-ui-plugin-system
+
+  - it: keeps the fixed name under a different release
+    template: templates/configmap.yaml
+    release:
+      name: second-release
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aif-ui-config
+
+  - it: points at the operator defaults
+    template: templates/configmap.yaml
+    asserts:
+      - equal:
+          path: data.operatorNamespace
+          value: aif-operator
+      - equal:
+          path: data.operatorService
+          value: aif-operator
+
+  - it: honours operator connection overrides
+    template: templates/configmap.yaml
+    set:
+      operator.namespace: custom-ns
+      operator.service: custom-svc
+    asserts:
+      - equal:
+          path: data.operatorNamespace
+          value: custom-ns
+      - equal:
+          path: data.operatorService
+          value: custom-svc
+
+  - it: serialises useStaticCatalog as the string "true" by default
+    template: templates/configmap.yaml
+    asserts:
+      - equal:
+          path: data.useStaticCatalog
+          value: "true"
+      - isType:
+          path: data.useStaticCatalog
+          type: string
+
+  - it: serialises a disabled static catalog as the string "false"
+    template: templates/configmap.yaml
+    set:
+      appCatalog.useStaticCatalog: false
+    asserts:
+      - equal:
+          path: data.useStaticCatalog
+          value: "false"
+      - isType:
+          path: data.useStaticCatalog
+          type: string
+
+  - it: follows the release into a different namespace
+    template: templates/configmap.yaml
+    release:
+      namespace: other-ns
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: other-ns
+
+  - it: carries the standard labels
+    template: templates/configmap.yaml
+    asserts:
+      # isSubset at a nested path requires the inner map to match exactly, so
+      # assert against the labels map directly to keep this a genuine subset.
+      # helpers_test.yaml already pins the full six-key set exactly.
+      - isSubset:
+          path: metadata.labels
+          content:
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel
+            helm.sh/chart: aif-ui-9.9.9

@@ -7,7 +7,6 @@
 import { AppState } from '../types/state-types';
 import { AppSummary, AppInstallationInfo } from '../../types/app-types';
 import AppResource from '../../models/app/app-resource';
-import { fetchSuseAiApps } from '../../services/app-collection';
 import { browserSafeCatalogLogo } from '../../utils/catalog-logo';
 
 // === Initial State ===
@@ -365,71 +364,6 @@ const mutations = {
 
 // === Actions ===
 const actions = {
-  async fetchAllApps({ commit, dispatch, rootState }: any, payload: { force?: boolean, clusterId?: string } = {}) {
-    commit('SET_LOADING', { loading: true, type: 'all' });
-
-    try {
-      // Use existing service to fetch apps
-      const clusterId = payload.clusterId || 'local'; // Default to local cluster
-      const apps = await fetchSuseAiApps(clusterId);
-
-      // Convert raw app data to AppSummary format
-      const appSummaries: AppSummary[] = apps.map((app: any) => ({
-        id: app.slug_name || app.name,
-        name: app.name,
-        displayName: app.display_name || app.name,
-        description: app.description,
-        icon: browserSafeCatalogLogo(app.logo_url),
-        version: app.version,
-        appVersion: app.app_version,
-        category: app.category || 'Other',
-        repository: {
-          name: app.repository || 'default',
-          type: app.packaging_format === 'HELM_CHART' ? 'helm' : 'unknown'
-        },
-        status: 'available', // Will be updated based on installations
-        state: 'active',
-        installations: [],
-        stats: {
-          installCount: 0,
-          clusterCount: 0,
-          popularityScore: 0,
-          successRate: 1.0
-        },
-        health: {
-          overall: 'unknown' as const,
-          ready: 0,
-          total: 0,
-          issueCount: 0,
-          lastCheck: new Date().toISOString()
-        },
-        flags: {
-          isInstalled: false,
-          isRunning: false,
-          hasFailed: false,
-          isTransitioning: false,
-          isOfficial: false,
-          isVerified: false,
-          isPopular: false,
-          isDeprecated: false,
-          hasUpdates: false,
-          needsAttention: false
-        },
-        updated: app.last_updated_at || new Date().toISOString(),
-        created: app.created_at
-      }));
-
-      commit('SET_APPS', appSummaries);
-      commit('SET_LOADING', { loading: false, type: 'all' });
-
-    } catch (error: any) {
-      console.error('Failed to fetch apps:', error);
-      commit('SET_ERROR', { appId: 'global', error: error.message || 'Failed to fetch apps' });
-      commit('SET_LOADING', { loading: false, type: 'all' });
-      throw error;
-    }
-  },
-
   async fetchApp({ commit }: any, appId: string): Promise<AppSummary> {
     commit('SET_LOADING', { appId, loading: true });
 
@@ -499,10 +433,6 @@ const actions = {
 
   updateFilters({ commit }: any, filters: Partial<AppState['filters']>) {
     commit('SET_FILTERS', filters);
-  },
-
-  async refreshApps({ dispatch }: any) {
-    await dispatch('fetchAllApps', { force: true });
   },
 
   clearCache({ commit }: any) {

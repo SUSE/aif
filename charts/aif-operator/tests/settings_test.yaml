@@ -1,0 +1,132 @@
+suite: settings CR — the spec block is opt-in
+templates:
+  - templates/settings.yaml
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: default values produce a bare Settings resource with no spec
+    asserts:
+      - containsDocument:
+          kind: Settings
+          apiVersion: ai-factory.suse.com/v1alpha1
+          name: settings
+          namespace: aif-operator
+      - notExists:
+          path: spec
+
+  # The operator, not Helm, owns this resource after install. Losing the
+  # resource-policy annotation would make `helm uninstall` delete user settings.
+  - it: the Settings resource survives uninstall
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  - it: a remote catalog url opens the spec block
+    set:
+      appCatalog.remoteUrl: https://example.com/catalog.json
+    asserts:
+      - equal:
+          path: spec.appCatalog.remoteUrl
+          value: https://example.com/catalog.json
+
+  - it: an inline rancher token is referenced through a chart-managed secret
+    set:
+      rancherCatalog.token: token-abcde:secret
+    asserts:
+      - equal:
+          path: spec.rancherCatalog.tokenSecretRef.name
+          value: aif-operator-rancher-catalog
+      - equal:
+          path: spec.rancherCatalog.tokenSecretRef.key
+          value: token
+      - equal:
+          path: spec.rancherCatalog.url
+          value: https://rancher.cattle-system.svc
+
+  - it: an existing token secret takes precedence over the chart-managed one
+    set:
+      rancherCatalog.token: token-abcde:secret
+      rancherCatalog.tokenSecret.name: my-existing-secret
+      rancherCatalog.tokenSecret.key: api-token
+    asserts:
+      - equal:
+          path: spec.rancherCatalog.tokenSecretRef.name
+          value: my-existing-secret
+      - equal:
+          path: spec.rancherCatalog.tokenSecretRef.key
+          value: api-token
+
+  - it: a ca bundle is referenced only alongside a token
+    set:
+      rancherCatalog.token: token-abcde:secret
+      rancherCatalog.caBundle: |
+        -----BEGIN CERTIFICATE-----
+    asserts:
+      - equal:
+          path: spec.rancherCatalog.caBundleSecretRef.name
+          value: aif-operator-rancher-catalog
+      - equal:
+          path: spec.rancherCatalog.caBundleSecretRef.key
+          value: ca.crt
+
+  # Documented behaviour: a caBundle with no token has nothing to authenticate,
+  # so rancherCatalog is intentionally left out of the spec.
+  - it: a ca bundle on its own does not open the spec block
+    set:
+      rancherCatalog.caBundle: |
+        -----BEGIN CERTIFICATE-----
+    asserts:
+      - notExists:
+          path: spec
+
+  - it: insecureSkipVerify is emitted only when a token is present
+    set:
+      rancherCatalog.token: token-abcde:secret
+      rancherCatalog.insecureSkipVerify: true
+    asserts:
+      - equal:
+          path: spec.rancherCatalog.insecureSkipVerify
+          value: true
+
+  - it: a complete credential pair produces secret references
+    set:
+      credentials.applicationCollection.username: user
+      credentials.applicationCollection.password: pass
+    asserts:
+      - equal:
+          path: spec.applicationCollection
+          value:
+            tokenSecretRef:
+              key: token
+              name: application-collection
+            userSecretRef:
+              key: user
+              name: application-collection
+
+  - it: a half-filled credential pair is ignored
+    set:
+      credentials.nvidia.username: user
+    asserts:
+      - notExists:
+          path: spec
+
+  - it: each registry credential maps to its own secret
+    set:
+      credentials.nvidia.username: user
+      credentials.nvidia.password: pass
+      credentials.suseRegistry.username: user
+      credentials.suseRegistry.password: pass
+    asserts:
+      - equal:
+          path: spec.nvidia.tokenSecretRef.name
+          value: nvidia-registry
+      - equal:
+          path: spec.suseRegistry.tokenSecretRef.name
+          value: suse-registry
+      - notExists:
+          path: spec.applicationCollection

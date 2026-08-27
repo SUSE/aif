@@ -1,0 +1,157 @@
+suite: helper templates — naming, image, pull secrets, labels
+templates:
+  - templates/deployment.yaml
+release:
+  name: my-rel
+  namespace: cattle-ui-plugin-system
+chart:
+  version: 9.9.9
+  appVersion: "2.2"
+tests:
+  - it: builds the default fullname from release name and chart name
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: my-rel-aif-ui
+
+  - it: does not double the chart name when the release name already contains it
+    template: templates/deployment.yaml
+    release:
+      name: aif-ui-prod
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aif-ui-prod
+
+  - it: honours nameOverride
+    template: templates/deployment.yaml
+    set:
+      nameOverride: xui
+    asserts:
+      - equal:
+          path: metadata.name
+          value: my-rel-xui
+
+  - it: honours fullnameOverride
+    template: templates/deployment.yaml
+    set:
+      fullnameOverride: custom-name
+    asserts:
+      - equal:
+          path: metadata.name
+          value: custom-name
+
+  - it: truncates the fullname to 63 characters
+    template: templates/deployment.yaml
+    set:
+      fullnameOverride: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: ^a{63}$
+
+  # The override path above and the default path below are separate branches in
+  # aif-ui.fullname. Every real install goes through this one, so it needs its
+  # own guard: a silent rename here breaks in-place upgrades.
+  - it: truncates the default fullname to 63 characters
+    template: templates/deployment.yaml
+    release:
+      name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-aif-ui
+
+  - it: falls back to Chart.AppVersion when image.tag is empty
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/suse/aif-ui:2.2
+
+  - it: prefers an explicit image.tag over Chart.AppVersion
+    template: templates/deployment.yaml
+    set:
+      image.tag: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/suse/aif-ui:1.2.3
+
+  - it: lets global.imageRegistry override image.registry
+    template: templates/deployment.yaml
+    set:
+      global.imageRegistry: registry.suse.com
+      image.tag: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.suse.com/suse/aif-ui:1.2.3
+
+  - it: emits a bare repository when both registries are empty
+    template: templates/deployment.yaml
+    set:
+      image.registry: ""
+      global.imageRegistry: ""
+      image.tag: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: suse/aif-ui:1.2.3
+
+  - it: omits imagePullSecrets when none are configured
+    template: templates/deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.imagePullSecrets
+
+  - it: normalises bare strings into name maps
+    template: templates/deployment.yaml
+    set:
+      imagePullSecrets:
+        - local-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.imagePullSecrets
+          value:
+            - name: local-secret
+
+  - it: merges global pull secrets ahead of local ones and accepts both forms
+    template: templates/deployment.yaml
+    set:
+      global.imagePullSecrets:
+        - global-secret
+      imagePullSecrets:
+        - name: local-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.imagePullSecrets
+          value:
+            - name: global-secret
+            - name: local-secret
+
+  - it: stamps the full standard label set
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.labels
+          value:
+            catalog.cattle.io/ui-extensions-catalog-image: aif-ui
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel
+            app.kubernetes.io/version: "2.2"
+            app.kubernetes.io/managed-by: Helm
+            helm.sh/chart: aif-ui-9.9.9
+
+  # A Deployment's spec.selector is immutable. Adding a selector label turns a
+  # routine upgrade into a failure that only shows up against an existing
+  # release, so pin the key set exactly rather than using isSubset.
+  - it: keeps the selector to exactly two labels
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel

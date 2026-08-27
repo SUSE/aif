@@ -90,7 +90,7 @@ import LabeledSelect from '@shell/components/form/LabeledSelect';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import { DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../../../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, resolveInstallRepoName } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
 import { browserSafeCatalogLogo } from '../../../utils/catalog-logo';
 
@@ -115,11 +115,11 @@ const logoMap       = ref<Record<string, string>>({});
 // Combined catalog: SUSE AI Library + Nvidia Library (mirrors the Apps catalog selector).
 async function loadAllApps(): Promise<AppCollectionItem[]> {
   const settings = await fetchSettingsOrNull();
-  const [suseApps, nvidiaResult] = await Promise.all([
+  const [suseResult, nvidiaResult] = await Promise.all([
     fetchSuseAiApps(store, settings),
     fetchNvidiaApps(store, settings),
   ]);
-  return [...suseApps, ...nvidiaResult.apps];
+  return [...suseResult.apps, ...nvidiaResult.apps];
 }
 
 // Backfill logos and versions for components selected before this mount (navigate-back / edit flow).
@@ -176,12 +176,11 @@ async function addApp(app: AppCollectionItem) {
 
   if (props.components.find(c => c.chartName === app.slug_name)) return;
 
-  // Resolve the cluster repo name from the app's repository URL
   let chartRepo = 'suse-ai';
   try {
-    if (app.repository_url) {
-      const repoName = await getClusterRepoNameFromUrl(store, app.repository_url);
-      if (repoName) chartRepo = repoName;
+    const repoName = await resolveInstallRepoName(store, app);
+    if (repoName) {
+      chartRepo = repoName;
     } else {
       const inferred = await inferClusterRepoForChart(store, app.slug_name);
       if (inferred) chartRepo = inferred;
