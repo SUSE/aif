@@ -26,6 +26,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/kube"
 	kubefake "helm.sh/helm/v3/pkg/kube/fake"
 	"helm.sh/helm/v3/pkg/registry"
 	"helm.sh/helm/v3/pkg/release"
@@ -128,10 +129,24 @@ data:
 func newCountingClient(t *testing.T, rels ...*release.Release) (*helmClient, *pullCounter) {
 	t.Helper()
 
-	cfg := newNameOrderedTestConfig(t, rels...)
-	cfg.KubeClient = &kubefake.FailingKubeClient{
+	return newCountingClientWithKube(t, &kubefake.FailingKubeClient{
 		PrintingKubeClient: kubefake.PrintingKubeClient{Out: io.Discard},
-	}
+	}, rels...)
+}
+
+// newCountingClientWithKube is newCountingClient with the cluster side swapped
+// out. Only the shutdown-grace tests need that seam — they turn on the one
+// property the printing client cannot express, which is that applying takes
+// time.
+func newCountingClientWithKube(
+	t *testing.T,
+	kubeClient kube.Interface,
+	rels ...*release.Release,
+) (*helmClient, *pullCounter) {
+	t.Helper()
+
+	cfg := newNameOrderedTestConfig(t, rels...)
+	cfg.KubeClient = kubeClient
 	cfg.Capabilities = chartutil.DefaultCapabilities
 	cfg.Log = func(format string, v ...interface{}) {}
 

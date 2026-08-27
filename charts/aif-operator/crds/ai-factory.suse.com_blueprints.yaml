@@ -53,6 +53,7 @@ spec:
             properties:
               components:
                 description: Components are the Helm charts included in this blueprint.
+                  chartName is unique per blueprint.
                 items:
                   description: BlueprintComponent defines one Helm chart in a Blueprint.
                   properties:
@@ -111,6 +112,9 @@ spec:
                   type: object
                 minItems: 1
                 type: array
+                x-kubernetes-list-map-keys:
+                - chartName
+                x-kubernetes-list-type: map
               deprecated:
                 description: Deprecated marks this blueprint version as deprecated.
                 type: boolean

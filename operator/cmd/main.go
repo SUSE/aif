@@ -63,6 +63,120 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+// The two halves of the operator's shutdown, which share the Pod's
+// terminationGracePeriodSeconds. Their sum has to fit inside it, or the kubelet
+// SIGKILLs the process partway through — see TestShutdownFitsInTheGracePeriod.
+const (
+	// managerGracefulShutdownTimeout is how long in-flight reconciles get to
+	// wind down after SIGTERM.
+	//
+	// The controller-runtime default, kept rather than trimmed to make room for
+	// the lease release: the Pod's grace period was widened instead. Trimming
+	// it would have been the cheaper change and the wrong one, because this is
+	// the only bound on an uninstall — action.Uninstall.Run takes no context,
+	// so nothing else can stop it — and a kill partway through leaves the
+	// release stuck in `uninstalling`, which is not one of the pending states
+	// Helm's IsPending covers.
+	//
+	// It also has to outlast helm.ShutdownGrace, or a Helm write that overruns
+	// is killed by the process exiting rather than cancelled cleanly.
+	managerGracefulShutdownTimeout = 30 * time.Second
+
+	// leaseReleaseBudget is what handing the leader lease back can cost.
+	//
+	// client-go's release() runs its lock Get and Update under a single context
+	// bounded by RenewDeadline, so this is the number that decides how much of the grace
+	// period the release can eat — and it eats the most exactly when the API
+	// server is slow, which is also when the Pod is most likely being drained.
+	//
+	// Passed to the manager as RenewDeadline rather than left at the identical
+	// default. Same value today, but agreeing by coincidence is not the same as
+	// agreeing: as a bare constant it documented an assumption about
+	// controller-runtime that nothing checked, and TestShutdownFitsInTheGracePeriod
+	// would keep passing on a stale number after upstream changed its default.
+	leaseReleaseBudget = 10 * time.Second
+
+	// leaseDuration is how long a lease survives an operator that dies without
+	// releasing it — a SIGKILL, an OOM, a node loss — and so how long the
+	// extensions go unreconciled in that case.
+	//
+	// Set here only because leaseReleaseBudget is. client-go refuses a
+	// RenewDeadline that is not shorter than the lease duration, and leaving
+	// this one implicit would mean a future widening of the release budget
+	// crashed the operator at startup instead of failing a test.
+	leaseDuration = 15 * time.Second
+)
+
+// managerOptions is the manager's configuration, lifted out of main.
+//
+// Not for tidiness. Two of these fields are the shutdown behaviour the
+// pending-release fix rests on, and neither of them fails visibly: flip
+// LeaderElectionReleaseOnCancel back to false and the operator still works,
+// just with every upgrade stalled for the lease expiry. Inside main() nothing
+// could assert on them, because main() takes over the process. Out here they
+// are an ordinary value a test can read.
+func managerOptions(
+	metrics metricsserver.Options,
+	webhookServer webhook.Server,
+	probeAddr string,
+	enableLeaderElection bool,
+) ctrl.Options {
+	gracefulShutdownTimeout := managerGracefulShutdownTimeout
+	renewDeadline := leaseReleaseBudget
+	lease := leaseDuration
+
+	return ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metrics,
+		WebhookServer:          webhookServer,
+		HealthProbeBindAddress: probeAddr,
+		LeaderElection:         enableLeaderElection,
+		LeaderElectionID:       "77d8cb24.suse.com",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				// Watch secrets across all namespaces: settings controller needs
+				// operatorNamespace secrets; aiworkload controller needs Helm
+				// release secrets (owner=helm) from any target namespace.
+				&corev1.Secret{}: {},
+				// Restrict ConfigMap watch to the extension namespace — the namespaced
+				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
+				&corev1.ConfigMap{}: {
+					Namespaces: map[string]cache.Config{
+						config.GetExtensionNamespace(): {},
+					},
+				},
+			},
+		},
+		// Hand the lease back on the way out instead of letting the incoming
+		// operator wait out its ~15s expiry. That wait is dead time during every
+		// operator upgrade: the surge Pod is running and healthy and doing
+		// nothing, and any extension that needs reconciling sits untouched until
+		// it starts.
+		//
+		// Safe here because nothing runs after the manager stops — main returns
+		// straight into process exit, with no defers and no cleanup. The API
+		// server's shutdown goroutine is not an exception: it is triggered by the
+		// same cancelled context and runs alongside the drain, not after it.
+		// controller-runtime orders the release after the drain — the
+		// leader-election cancel is a defer in engageStopProcedure, so it runs
+		// once the runnable groups have stopped. Ordered, not guaranteed: that
+		// wait is itself bounded by GracefulShutdownTimeout, and when it expires
+		// the release goes ahead with whatever is still in flight still in
+		// flight. What keeps the ordering true in practice is the Helm grace
+		// being well inside the drain, not this option; see helm.ShutdownGrace.
+		//
+		// Not free, though: the release is a live API call the manager blocks
+		// on, so it has to be paid for out of the same grace period as the
+		// drain. See managerGracefulShutdownTimeout.
+		LeaderElectionReleaseOnCancel: true,
+		GracefulShutdownTimeout:       &gracefulShutdownTimeout,
+		// The other half of the shutdown budget, stated rather than inherited.
+		// See leaseReleaseBudget.
+		RenewDeadline: &renewDeadline,
+		LeaseDuration: &lease,
+	}
+}
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -98,7 +212,8 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	var deploymentReadinessTimeout time.Duration
-	flag.DurationVar(&deploymentReadinessTimeout, "deployment-readiness-timeout", 5*time.Minute,
+	flag.DurationVar(&deploymentReadinessTimeout, "deployment-readiness-timeout",
+		aiextensionctrl.DefaultReadinessTimeout,
 		"Maximum time to wait for Helm-deployed extension pods to become ready.")
 	var allowInsecureRegistryTLS bool
 	flag.BoolVar(&allowInsecureRegistryTLS, "allow-insecure-registry-tls", false,
@@ -187,40 +302,8 @@ func main() {
 
 	operatorNamespace := config.GetOperatorNamespace()
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "77d8cb24.suse.com",
-		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				// Watch secrets across all namespaces: settings controller needs
-				// operatorNamespace secrets; aiworkload controller needs Helm
-				// release secrets (owner=helm) from any target namespace.
-				&corev1.Secret{}: {},
-				// Restrict ConfigMap watch to the extension namespace — the namespaced
-				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
-				&corev1.ConfigMap{}: {
-					Namespaces: map[string]cache.Config{
-						config.GetExtensionNamespace(): {},
-					},
-				},
-			},
-		},
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
-	})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(),
+		managerOptions(metricsServerOptions, webhookServer, probeAddr, enableLeaderElection))
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -268,6 +351,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
 		CatalogClient:     catalogHolder,
+		Recorder:          mgr.GetEventRecorderFor("aiworkload-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
 		os.Exit(1)

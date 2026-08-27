@@ -21,3 +21,5 @@
 .idea/
 *.tmproj
 .vscode/
+# Dev-only chart tests (not needed at runtime)
+tests/

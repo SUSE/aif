@@ -43,6 +43,15 @@ import (
 	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
+// Provenance markers stamped by the reconciler. Aliased to the exported
+// credentials constants (the single source of truth the UI also mirrors) so a
+// rename can't leave these tests passing against a stale literal.
+const (
+	managedRepoLabel = credentials.ManagedRepoLabel
+	teamRepoLabel    = credentials.TeamRepoLabel
+	markerValueTrue  = credentials.LabelValueTrue
+)
+
 func newScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -779,7 +788,7 @@ func TestSettingsController_PrunesOrphanTeamRepo(t *testing.T) {
 	orphan := &unstructured.Unstructured{}
 	orphan.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
 	orphan.SetName("nvidia-gone-from-catalog")
-	orphan.SetLabels(map[string]string{"ai-factory.suse.com/nvidia-team-repo": "true"})
+	orphan.SetLabels(map[string]string{teamRepoLabel: markerValueTrue})
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, nvidia, orphan).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
@@ -816,7 +825,7 @@ func TestSettingsController_AirGapKeepsStableNvidiaRepoAliases(t *testing.T) {
 	staleTeam := &unstructured.Unstructured{}
 	staleTeam.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
 	staleTeam.SetName("nvidia-cuopt")
-	staleTeam.SetLabels(map[string]string{"ai-factory.suse.com/nvidia-team-repo": "true"})
+	staleTeam.SetLabels(map[string]string{teamRepoLabel: markerValueTrue})
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, nvidia, staleTeam).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
@@ -851,5 +860,178 @@ func TestSettingsController_AirGapKeepsStableNvidiaRepoAliases(t *testing.T) {
 		if forceUpdate, _, _ := unstructured.NestedString(repo.Object, "spec", "forceUpdate"); forceUpdate == "" {
 			t.Errorf("%s was not force-updated after the initial mirror credential write", name)
 		}
+	}
+}
+
+func TestSettingsController_AirGapUnauthenticatedMirrorCreated(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+				Nvidia: "oci://registry.internal/nvidia",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	// The mirror exists, is labeled, points at the private URL, and is anonymous.
+	nv := getClusterRepo(t, c, credentials.ClusterRepoNvidia)
+	if nv.GetLabels()[managedRepoLabel] != markerValueTrue {
+		t.Errorf("air-gap mirror missing managed-repo label, got labels=%v", nv.GetLabels())
+	}
+	if url, _, _ := unstructured.NestedString(nv.Object, "spec", "url"); url != "oci://registry.internal/nvidia" {
+		t.Errorf("air-gap mirror url = %q, want oci://registry.internal/nvidia", url)
+	}
+	if sec, found, _ := unstructured.NestedString(nv.Object, "spec", "clientSecret", "name"); found && sec != "" {
+		t.Errorf("unauthenticated air-gap mirror must have no clientSecret, got %q", sec)
+	}
+	// No auth secret should be written for an anonymous mirror.
+	var authSec corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); !apierrors.IsNotFound(err) {
+		t.Errorf("expected no ngc-helm-auth for anonymous mirror, got err=%v", err)
+	}
+}
+
+func TestSettingsController_StampsManagedRepoLabel(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec:       aiplatformv1alpha1.SettingsSpec{},
+	}
+	appco := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("user@suse.com"), "token": []byte("appco-token")},
+	}
+	nvidia := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "nvidia", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("$oauthtoken"), "token": []byte("nvapi-test")},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, appco, nvidia).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	// Org/AC repo carries the provenance label.
+	ac := getClusterRepo(t, c, credentials.ClusterRepoApplicationCollection)
+	if ac.GetLabels()[managedRepoLabel] != markerValueTrue {
+		t.Errorf("application-collection missing managed-repo label, got labels=%v", ac.GetLabels())
+	}
+	// Public NGC org repo carries it too.
+	nv := getClusterRepo(t, c, credentials.ClusterRepoNvidia)
+	if nv.GetLabels()[managedRepoLabel] != markerValueTrue {
+		t.Errorf("nvidia repo missing managed-repo label, got labels=%v", nv.GetLabels())
+	}
+}
+
+// Relabel-on-upgrade: an older operator created ClusterRepos WITHOUT the
+// provenance label. After upgrade the reconciler must adopt the existing repo and
+// stamp the managed-repo label — the migration path documented in
+// docs/managed-clusterrepo-provenance.md, and what makes the label-reading UI
+// discover pre-existing repos post-upgrade. Admin-added labels must survive. This
+// works only because applyClusterRepo uses server-side apply; swapping it for
+// ctrl.CreateOrUpdate would silently break the upgrade story, so this guards it.
+func TestSettingsController_RelabelsExistingRepoOnUpgrade(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec:       aiplatformv1alpha1.SettingsSpec{},
+	}
+	appco := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("user@suse.com"), "token": []byte("appco-token")},
+	}
+	// Pre-existing AC repo from an older operator: no provenance label, plus an
+	// admin-added label that must be preserved through the relabel.
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	existing.SetName(credentials.ClusterRepoApplicationCollection)
+	existing.SetLabels(map[string]string{"admin.example.com/keep": "yes"})
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, appco, existing).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	ac := getClusterRepo(t, c, credentials.ClusterRepoApplicationCollection)
+	if ac.GetLabels()[managedRepoLabel] != markerValueTrue {
+		t.Errorf("existing repo not relabeled on upgrade, got labels=%v", ac.GetLabels())
+	}
+	if ac.GetLabels()["admin.example.com/keep"] != "yes" {
+		t.Errorf("admin-added label must survive relabel, got labels=%v", ac.GetLabels())
+	}
+}
+
+// Adoption neutralizes a squatter's source surface: a pre-existing ClusterRepo
+// occupying a canonical name with a foreign git source and downgraded TLS must
+// NOT keep those fields once the operator adopts it via server-side apply. This
+// is the residual risk behind the trust model — SSA forces only the fields in the
+// applied object, so managedRepoSpec must own the whole alternate-source surface.
+func TestSettingsController_AdoptionNeutralizesForeignSource(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec:       aiplatformv1alpha1.SettingsSpec{},
+	}
+	nvidia := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "nvidia", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("$oauthtoken"), "token": []byte("nvapi-test")},
+	}
+	squatter := &unstructured.Unstructured{}
+	squatter.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	squatter.SetName(credentials.ClusterRepoNvidia)
+	_ = unstructured.SetNestedField(squatter.Object, "https://github.com/example/not-nvidia.git", "spec", "gitRepo")
+	_ = unstructured.SetNestedField(squatter.Object, "main", "spec", "gitBranch")
+	_ = unstructured.SetNestedField(squatter.Object, true, "spec", "insecureSkipTLSVerify")
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, nvidia, squatter).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	nv := getClusterRepo(t, c, credentials.ClusterRepoNvidia)
+	if nv.GetLabels()[managedRepoLabel] != markerValueTrue {
+		t.Errorf("adopted repo missing managed-repo label, got labels=%v", nv.GetLabels())
+	}
+	if gitRepo, _, _ := unstructured.NestedString(nv.Object, "spec", "gitRepo"); gitRepo != "" {
+		t.Errorf("adoption must clear foreign gitRepo, got %q", gitRepo)
+	}
+	if branch, _, _ := unstructured.NestedString(nv.Object, "spec", "gitBranch"); branch != "" {
+		t.Errorf("adoption must clear foreign gitBranch, got %q", branch)
+	}
+	if insecure, _, _ := unstructured.NestedBool(nv.Object, "spec", "insecureSkipTLSVerify"); insecure {
+		t.Errorf("adoption must reset insecureSkipTLSVerify to false")
+	}
+	if url, _, _ := unstructured.NestedString(nv.Object, "spec", "url"); url != credentials.DefaultNvidiaChartsURL {
+		t.Errorf("adopted repo url = %q, want %q", url, credentials.DefaultNvidiaChartsURL)
 	}
 }

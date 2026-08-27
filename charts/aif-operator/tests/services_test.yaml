@@ -1,0 +1,92 @@
+suite: services — api and metrics endpoints
+templates:
+  - templates/api-service.yaml
+  - templates/metrics/controller-manager-metrics-service.yaml
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: the api service exposes the api port in the release namespace
+    template: templates/api-service.yaml
+    asserts:
+      - containsDocument:
+          kind: Service
+          apiVersion: v1
+          name: aif-operator
+          namespace: aif-operator
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - equal:
+          path: spec.ports
+          value:
+            - name: http
+              port: 8080
+              targetPort: 8080
+              protocol: TCP
+
+  - it: the api service port follows api.port
+    template: templates/api-service.yaml
+    set:
+      api.port: 9090
+    asserts:
+      - equal:
+          path: spec.ports[0].port
+          value: 9090
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 9090
+
+  - it: the metrics service is rendered by default
+    template: templates/metrics/controller-manager-metrics-service.yaml
+    asserts:
+      - containsDocument:
+          kind: Service
+          apiVersion: v1
+          name: aif-operator-metrics
+          namespace: aif-operator
+      - equal:
+          path: spec.ports
+          value:
+            - name: https
+              port: 8443
+              targetPort: 8443
+              protocol: TCP
+
+  - it: disabling metrics removes the metrics service entirely
+    template: templates/metrics/controller-manager-metrics-service.yaml
+    set:
+      metrics.enable: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: the metrics service port follows metrics.port
+    template: templates/metrics/controller-manager-metrics-service.yaml
+    set:
+      metrics.port: 9443
+    asserts:
+      - equal:
+          path: spec.ports[0].port
+          value: 9443
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 9443
+
+  - it: both services select the operator pods
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: aif-operator
+            app.kubernetes.io/instance: my-release
+        template: templates/api-service.yaml
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: aif-operator
+            app.kubernetes.io/instance: my-release
+        template: templates/metrics/controller-manager-metrics-service.yaml

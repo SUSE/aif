@@ -7,10 +7,24 @@
       "properties": {
         "imageRegistry": {
           "type": "string",
-          "default": ""
+          "default": "",
+          "description": "Registry host and optional path prefix for operator, helper Job, and managed UI images."
         },
         "imagePullSecrets": {
           "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" }
+                },
+                "required": ["name"]
+              }
+            ]
+          },
+          "description": "Image pull Secrets for operator, helper Job, and managed UI Pods.",
           "default": []
         }
       }

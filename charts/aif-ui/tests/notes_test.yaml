@@ -1,0 +1,39 @@
+suite: NOTES.txt post-install guidance
+templates:
+  - templates/NOTES.txt
+release:
+  name: my-rel
+  namespace: cattle-ui-plugin-system
+chart:
+  version: 9.9.9
+  appVersion: "2.2"
+tests:
+  - it: reports the release and namespace
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "Release: my-rel"
+      - matchRegexRaw:
+          pattern: "Namespace: cattle-ui-plugin-system"
+
+  - it: prints a chart repository URL matching the rendered service
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "http://my-rel-aif-ui-svc\\.cattle-ui-plugin-system:8080"
+
+  - it: prints verification commands naming the real deployment and service
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "kubectl get deploy my-rel-aif-ui -n cattle-ui-plugin-system"
+      - matchRegexRaw:
+          pattern: "kubectl get svc my-rel-aif-ui-svc -n cattle-ui-plugin-system"
+
+  - it: tracks a custom service port
+    template: templates/NOTES.txt
+    set:
+      service.port: 9090
+    asserts:
+      - matchRegexRaw:
+          pattern: "http://my-rel-aif-ui-svc\\.cattle-ui-plugin-system:9090"

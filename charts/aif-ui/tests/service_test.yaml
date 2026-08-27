@@ -1,0 +1,75 @@
+suite: service identity and name length
+templates:
+  - templates/service.yaml
+release:
+  name: my-rel
+  namespace: cattle-ui-plugin-system
+chart:
+  version: 9.9.9
+  appVersion: "2.2"
+tests:
+  - it: names the service after the fullname with a -svc suffix
+    template: templates/service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: my-rel-aif-ui-svc
+
+  - it: is a ClusterIP on port 8080 targeting the named http port
+    template: templates/service.yaml
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - equal:
+          path: spec.ports[0].port
+          value: 8080
+      - equal:
+          path: spec.ports[0].targetPort
+          value: http
+      - equal:
+          path: spec.ports[0].protocol
+          value: TCP
+
+  - it: honours service.type and service.port overrides
+    template: templates/service.yaml
+    set:
+      service.type: NodePort
+      service.port: 9090
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+      - equal:
+          path: spec.ports[0].port
+          value: 9090
+
+  - it: selects pods using exactly the selector labels
+    template: templates/service.yaml
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: aif-ui
+            app.kubernetes.io/instance: my-rel
+
+  # Regression: a Service name is an RFC 1035 label capped at 63 characters.
+  # 53 characters is Helm's own maximum release name, so this is reachable
+  # without the user doing anything unusual.
+  - it: keeps the service name within 63 characters for a maximum-length release name
+    template: templates/service.yaml
+    release:
+      name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    asserts:
+      - matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+
+  - it: leaves ordinary release names byte-identical
+    template: templates/service.yaml
+    release:
+      name: aif-ui
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aif-ui-svc

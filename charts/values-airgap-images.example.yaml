@@ -1,0 +1,9 @@
+# Image-only values shared by the aif-operator and aif-ui charts.
+#
+# Mirror the images listed in each chart's helm.sh/images annotation while
+# preserving their repository paths beneath this private registry prefix. The
+# referenced pull Secret must exist in every namespace where either chart runs.
+global:
+  imageRegistry: registry.example.com/ai-factory
+  imagePullSecrets:
+    - name: airgap-registry

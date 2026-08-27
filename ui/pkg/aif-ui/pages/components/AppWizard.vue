@@ -29,13 +29,14 @@ import {
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
+import { fetchSuseAiApps, resolveInstallRepoName, getLibraryFromRepoUrl, isManagedRepoName } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import { crNameForCluster } from '../../utils/workload-name';
+import { readLibraryFilter, withLibraryFilter } from '../../utils/catalog-route';
 import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
 
 const REPO_CLUSTER = 'local' as const;
@@ -335,7 +336,17 @@ function populateFromUrlParams() {
 async function initializeInstallMode() {
   if (!store) return;
 
-  // If repo is provided in query, use it
+  // A repo seeded from the ?repo= query param is UNTRUSTED input. Only honor it
+  // when it's an operator-managed repo; otherwise drop it and fall through to the
+  // scoped resolver (findRepoForApp → resolveInstallRepoName / inferClusterRepoForChart).
+  // Without this, a crafted ?repo=<unmanaged> would drive findChartInRepo against
+  // an unmanaged repo, bypassing the provenance contract the install path enforces.
+  if (form.value.chartRepo && !(await isManagedRepoName(store, form.value.chartRepo))) {
+    console.warn(`[SUSE-AI] Ignoring non-managed repo from query param: ${form.value.chartRepo}`);
+    form.value.chartRepo = '';
+  }
+
+  // If a (validated, managed) repo is set, use it
   if (form.value.chartRepo) {
     const guess = await findChartInRepo(store, REPO_CLUSTER, form.value.chartRepo, props.slug);
     if (guess) {
@@ -361,11 +372,11 @@ async function findRepoForApp(slug: string): Promise<string | null> {
   if (!store) return null;
 
   try {
-    const suseAiApps = await fetchSuseAiApps(store);
+    const { apps: suseAiApps } = await fetchSuseAiApps(store);
     const staticApp = suseAiApps.find(app => app.slug_name === slug);
 
-    if (staticApp?.repository_url) {
-      const clusterRepoName = await getClusterRepoNameFromUrl(store, staticApp.repository_url);
+    if (staticApp) {
+      const clusterRepoName = await resolveInstallRepoName(store, staticApp);
       if (clusterRepoName) return clusterRepoName;
     }
 
@@ -690,12 +701,29 @@ async function onWizardFinish() {
   await submit();
 }
 
-function onWizardCancel() {
+// Leaving the wizard — on Cancel or once an install/upgrade is done — returns to
+// the list the user came from. For the Apps catalog that means restoring the
+// library they were browsing: Apps.vue is remounted on arrival and would
+// otherwise fall back to its default library, dropping an NVIDIA selection.
+// The filter rides along in the query the wizard was opened with.
+function leaveWizard() {
   persistClear(PKEY);
+  if (isManageMode.value) {
+    router?.push({
+      name:   `c-cluster-suseai-workloads`,
+      params: { cluster: route?.params?.cluster },
+    });
+    return;
+  }
   router?.push({
-    name:   isManageMode.value ? `c-cluster-suseai-workloads` : `c-cluster-suseai-apps`,
+    name:   `c-cluster-suseai-apps`,
     params: { cluster: route?.params?.cluster },
+    query:  withLibraryFilter({}, readLibraryFilter(route?.query)),
   });
+}
+
+function onWizardCancel() {
+  leaveWizard();
 }
 
 async function submit() {
@@ -777,11 +805,7 @@ async function submit() {
 }
 
 function navigateAfterSuccess() {
-  persistClear(PKEY);
-  router?.push({
-    name:   isManageMode.value ? `c-cluster-suseai-workloads` : `c-cluster-suseai-apps`,
-    params: { cluster: route?.params?.cluster },
-  });
+  leaveWizard();
 }
 
 // Get cluster name for display (used in progress modal)

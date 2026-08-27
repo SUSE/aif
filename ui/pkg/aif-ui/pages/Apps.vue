@@ -98,7 +98,7 @@
 
       <!-- Main content area - always present to avoid layout jumps -->
       <div class="main-content">
-        <!-- Non-fatal warning: NGC repositories present but not contributing apps -->
+        <!-- Non-fatal warning: managed repositories present but not contributing apps -->
         <div v-if="catalogWarnings.length" class="catalog-warning-banner" role="status">
           <i class="icon icon-warning" aria-hidden="true"></i>
           <div class="catalog-warning-body">
@@ -297,11 +297,12 @@
 import { defineComponent, computed, getCurrentInstance, onMounted, ref, watch } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
-import type { AppCollectionItem } from '../services/app-collection';
+import type { AppCollectionItem, ManagedRepo } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { fetchStaticCatalog } from '../services/static-catalog';
+import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 
 export default defineComponent({
   name: 'SuseAIApps',
@@ -319,12 +320,17 @@ export default defineComponent({
     const loading = ref(true);
     const error = ref<string | null>(null);
     const search = ref('');
-    const selectedRepo = ref(''); // '' = All libraries (default)
+    // '' = All libraries. Seeded from the URL so the filter survives leaving the
+    // page and coming back — the install wizard's Cancel/Finish, browser back,
+    // or a reload. This ref alone cannot hold it: the page is remounted each
+    // time (see utils/catalog-route).
+    const selectedRepo = ref(readLibraryFilter(route?.query));
     const sortBy = ref('supported'); // default: supported apps first
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
     const catalogWarnings = ref<string[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
+    const managedRepos = ref<ManagedRepo[]>([]); // operator-managed ClusterRepos discovered this load; drives hasRegistryConfigured
     const isStaticMode = ref(false); // resolved from the operator config in loadApps; dynamic is the default
 
     // Library grouping is data-driven: the tabs reflect the libraries actually
@@ -383,13 +389,35 @@ export default defineComponent({
     };
     watch(items, ensureValidSelectedRepo);
 
+    // Mirror the selection back into the URL so it is there to be restored when
+    // the user returns. Read $route fresh — the `route` captured at setup is a
+    // snapshot and goes stale after the first replace.
+    watch(selectedRepo, (library) => {
+      const query = (vm as any)?.proxy?.$route?.query;
+      if (readLibraryFilter(query) === library) return;
+      $router?.replace({ query: withLibraryFilter(query, library) })
+        .catch((err: any) => {
+          if (err?.name !== 'NavigationDuplicated') console.warn('Navigation failed:', err);
+        });
+    });
+
     const hasRegistryConfigured = computed(() => {
+      // A registry is "in use" if the operator has created a managed ClusterRepo
+      // for it — the provenance signal, and the only one that covers air-gap
+      // endpoint-only NVIDIA (no secret refs, credential-free mirror). Fall back
+      // to config-present-but-repo-not-yet-created signals so the upgrade/just-
+      // configured window shows "loading" instead of "add your registry": Settings
+      // spec secret refs (WireSpec persists discovered well-known secrets here) or
+      // an air-gap registryEndpoints override.
+      if (managedRepos.value.length > 0) return true;
       const spec = settingsData.value?.spec;
       if (!spec) return false;
+      const endpoints = spec.registryEndpoints || {};
       return !!(
         (spec.applicationCollection?.userSecretRef && spec.applicationCollection?.tokenSecretRef) ||
         (spec.suseRegistry?.userSecretRef && spec.suseRegistry?.tokenSecretRef) ||
-        (spec.nvidia?.userSecretRef && spec.nvidia?.tokenSecretRef)
+        (spec.nvidia?.userSecretRef && spec.nvidia?.tokenSecretRef) ||
+        endpoints.applicationCollection || endpoints.suseRegistry || endpoints.nvidia
       );
     });
 
@@ -481,6 +509,7 @@ export default defineComponent({
           // fetchStaticCatalog() throws and the page shows an error (no local fallback,
           // since the bundled catalog now lives in the operator).
           settingsData.value = null;
+          managedRepos.value = [];
           items.value = await fetchStaticCatalog();
           return;
         }
@@ -488,16 +517,22 @@ export default defineComponent({
         // Dynamic mode: discover apps from live chart repositories, then overlay
         // curated metadata (labels + detail fields). The overlay is additive and
         // never fatal — a curated-fetch failure just leaves apps un-enriched.
-        const settings = await fetchSettingsOrNull();
+        // List the managed ClusterRepos once and thread the set into both fetchers;
+        // each would otherwise re-list the same clusterrepos endpoint (see fetchManagedRepos).
+        const [settings, repos] = await Promise.all([
+          fetchSettingsOrNull(),
+          fetchManagedRepos(store),
+        ]);
         settingsData.value = settings;
-        const [suseApps, nvidiaResult, curated] = await Promise.all([
-          fetchSuseAiApps(store, settings),
-          fetchNvidiaApps(store, settings),
+        managedRepos.value = repos;
+        const [suseResult, nvidiaResult, curated] = await Promise.all([
+          fetchSuseAiApps(store, settings, repos),
+          fetchNvidiaApps(store, settings, repos),
           fetchCuratedOverlayOrEmpty(),
         ]);
-        const discovered = [...suseApps, ...nvidiaResult.apps];
+        const discovered = [...suseResult.apps, ...nvidiaResult.apps];
         items.value = overlayCuratedMetadata(discovered, curated);
-        catalogWarnings.value = buildWarnings(nvidiaResult.failedRepos);
+        catalogWarnings.value = buildWarnings([...suseResult.failedRepos, ...nvidiaResult.failedRepos]);
       } catch (err) {
         console.error('Failed to load apps:', err);
         throw err;
@@ -518,14 +553,13 @@ export default defineComponent({
           cluster: currentClusterId,
           slug:    app.slug_name,
         },
-        query: { n: app.name },
+        // Carry the library filter so the wizard can hand it back on Cancel.
+        query: withLibraryFilter({ n: app.name }, selectedRepo.value),
       };
 
-      if (app.repository_url) {
-        const repoName = await getClusterRepoNameFromUrl(store, app.repository_url);
-        if (repoName) {
-          route.query = { ...route.query, repo: repoName };
-        }
+      const repoName = await resolveInstallRepoName(store, app);
+      if (repoName) {
+        route.query = { ...route.query, repo: repoName };
       }
 
       await $router.push(route);

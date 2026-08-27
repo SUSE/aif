@@ -18,6 +18,29 @@ helm install aif-ui-server . --take-ownership
 helm upgrade aif-ui-server . --take-ownership
 ```
 
+## Air-gapped installation
+
+Use the same image-only values file as the operator chart. Copy
+[`../values-airgap-images.example.yaml`](../values-airgap-images.example.yaml),
+set the private registry prefix and pull Secret name, then install the mirrored
+UI chart:
+
+```bash
+helm upgrade --install aif-ui \
+  oci://registry.example.com/ai-factory/charts/aif-ui \
+  --namespace cattle-ui-plugin-system \
+  --create-namespace \
+  --version <version> \
+  -f charts/values-airgap-images.example.yaml \
+  --set standalone=true
+```
+
+The named pull Secret must already exist in `cattle-ui-plugin-system`.
+`global.imageRegistry` changes only the container image prefix; it does not
+redirect or authenticate the OCI Helm chart source. In a combined install, the
+operator forwards its global registry and pull Secrets to this chart unless an
+explicit nested UI registry or pull-Secret value is present.
+
 ## Values
 
 | Key | Type | Default | Description |
@@ -50,3 +73,19 @@ helm upgrade aif-ui-server . --take-ownership
 | `rollingUpdate.maxUnavailable` | string | `25%` | Rolling update max unavailable |
 | `operator.namespace` | string | `aif-operator` | Namespace where the SUSE AI operator is installed. Written to the `aif-ui-config` ConfigMap and read by the UI extension at runtime to build the operator API URL. |
 | `operator.service` | string | `aif-operator` | Service name of the SUSE AI operator. |
+
+## Testing
+
+The chart has unit tests that verify template rendering and values handling. To run them locally:
+
+```bash
+# Install the helm-unittest plugin (Helm 4 requires --verify=false)
+helm plugin install https://github.com/helm-unittest/helm-unittest.git \
+  --version v1.1.2 --verify=false
+
+# Run all test suites
+helm unittest charts/aif-ui
+
+# Run a single suite
+helm unittest -f tests/helpers_test.yaml charts/aif-ui
+```
