@@ -95,7 +95,8 @@ suseai:
             keyNameLabel: CA Bundle Key
         fleet:
           title: Fleet / GitOps
-          description: 'Git over HTTPS uses a username with either a password or personal access token. Leave both credential fields empty for a public repository.'
+          description: 'Git over HTTPS uses a username with either a password or personal access token. A non-empty username is required whenever a credential is configured, even if the Git provider does not use it for token authentication; it may also come from a username key in the selected Secret. Leave both credential fields empty for a public repository.'
+          activationNotice: 'Applying a repository URL immediately creates a Fleet GitRepo and starts reconciliation. First prepare both the blueprints/ and workloads/ paths on the selected branch with Fleet-readable content. fleet.yaml is optional when a path already contains deployable manifests.'
           repoURL:
             label: Repository URL
             placeholder: 'https://github.com/org/repo.git'

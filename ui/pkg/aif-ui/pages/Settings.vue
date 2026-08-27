@@ -789,6 +789,11 @@ export default {
           <p class="mb-15">
             {{ t('suseai.pages.settings.sections.fleet.description') }}
           </p>
+          <Banner
+            color="info"
+            :label="t('suseai.pages.settings.sections.fleet.activationNotice')"
+            class="mb-15"
+          />
           <div class="row mb-10">
             <div class="col span-6">
               <LabeledInput

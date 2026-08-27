@@ -61,6 +61,13 @@ One Fleet repository has two reserved paths:
 - `workloads/` contains deployment resources written by AIF for the GitOps
   strategy.
 
+Saving a non-empty `repoURL` immediately creates the Fleet `GitRepo` and starts
+reconciliation. The selected branch must therefore already contain both
+reserved paths with Fleet-readable content; otherwise the Fleet git job remains
+failed until the paths are added. A `fleet.yaml` is one way to initialize or
+customize a path, but it is optional when the path already contains deployable
+manifests.
+
 The minimal private-Git contract is authenticated HTTPS with optional private
 CA trust:
 
@@ -83,8 +90,11 @@ key as either a password or personal access token. Alternatively, the username
 may come from the `username` key in the same Secret. Leave both fields unset for
 an anonymous repository. AIF mirrors authenticated credentials to Fleet as a
 `kubernetes.io/basic-auth` Secret; a personal access token is the password and
-is not sent as an HTTP Bearer token. The deprecated `authType` values `token`
-and `basic` remain accepted only for compatibility with existing Settings.
+is not sent as an HTTP Bearer token. Some Git providers do not validate the
+username when a personal access token is used, but Fleet still requires a
+non-empty value because it consumes a Basic Auth Secret. The deprecated
+`authType` values `token` and `basic` remain accepted only for compatibility
+with existing Settings.
 
 The operator uses the same credentials and PEM CA bundle for its Git writes and
 for the generated Fleet `GitRepo`. Changing the repository URL or branch
