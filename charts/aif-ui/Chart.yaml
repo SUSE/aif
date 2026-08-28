@@ -1,7 +1,7 @@
 annotations:
   licenses: Apache-2.0
   helm.sh/images: |
-    - image: ghcr.io/suse/aif-ui:2.2.0-dev.3
+    - image: ghcr.io/suse/aif-ui:2.2.0-dev.4
       name: aif-ui
   catalog.cattle.io/display-name: SUSE AI Factory
   catalog.cattle.io/namespace: cattle-ui-plugin-system
@@ -11,7 +11,7 @@ annotations:
   catalog.cattle.io/scope: management
 apiVersion: v2
 name: aif-ui
-version: 2.2.0-dev.3
+version: 2.2.0-dev.4
 description: SUSE AI Rancher UI Extension
 type: application
 keywords:
@@ -22,7 +22,7 @@ home: https://github.com/SUSE/aif
 icon: https://raw.githubusercontent.com/SUSE/aif/main/pkg/aif-ui/assets/logo.svg
 sources:
   - https://github.com/SUSE/aif
-appVersion: 2.2.0-dev.3
+appVersion: 2.2.0-dev.4
 maintainers:
   - url: https://www.suse.com/
     name: SUSE LLC
