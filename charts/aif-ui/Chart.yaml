@@ -3,6 +3,12 @@ annotations:
   helm.sh/images: |
     - image: ghcr.io/suse/aif-ui:2.2.0-dev.3
       name: aif-ui
+  catalog.cattle.io/display-name: SUSE AI Factory
+  catalog.cattle.io/namespace: cattle-ui-plugin-system
+  catalog.cattle.io/os: linux
+  catalog.cattle.io/permits-os: linux
+  catalog.cattle.io/rancher-version: '>= 2.10.0-0'
+  catalog.cattle.io/scope: management
 apiVersion: v2
 name: aif-ui
 version: 2.2.0-dev.3
