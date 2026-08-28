@@ -1167,10 +1167,11 @@ export async function listServiceAccounts(
 interface RancherHttpErrorShape {
   _status?: unknown;
   code?: unknown;
+  data?: unknown;
   message?: unknown;
   status?: unknown;
   statusCode?: unknown;
-  response?: { status?: unknown };
+  response?: { data?: unknown; status?: unknown };
 }
 
 // rancher/request rejects with the parsed response body and attaches the HTTP
@@ -1200,34 +1201,71 @@ function rancherHttpStatus(error: unknown): number | undefined {
   return undefined;
 }
 
+function rancherDataMessage(data: unknown): string | undefined {
+  if (typeof data === 'string') return data;
+  if (typeof data !== 'object' || data === null) return undefined;
+
+  const candidate = data as { error?: unknown; message?: unknown };
+  if (typeof candidate.message === 'string') return candidate.message;
+  if (typeof candidate.error === 'string') return candidate.error;
+
+  return undefined;
+}
+
 function rancherErrorMessage(error: unknown): string | undefined {
-  let message: unknown;
-  if (error instanceof Error) {
-    message = error.message;
-  } else if (typeof error === 'string') {
-    message = error;
-  } else if (typeof error === 'object' && error !== null) {
-    message = (error as RancherHttpErrorShape).message;
+  const simpleMessage: unknown = handleSimpleError(error, '');
+  let message = typeof simpleMessage === 'string' && simpleMessage.trim() ? simpleMessage : undefined;
+
+  if (!message && typeof error === 'object' && error !== null) {
+    const candidate = error as RancherHttpErrorShape;
+    message = rancherDataMessage(candidate.data) ??
+      rancherDataMessage(candidate.response?.data) ??
+      rancherDataMessage(candidate);
   }
 
-  if (typeof message !== 'string') return undefined;
+  if (!message) return undefined;
 
   const trimmed = message.trim();
   return trimmed ? trimmed.slice(0, 1_000) : undefined;
 }
 
+const SERVICE_ACCOUNT_LIST_ATTEMPTS = 5;
 const SERVICE_ACCOUNT_PATCH_ATTEMPTS = 5;
-const SERVICE_ACCOUNT_CONFLICT_BASE_DELAY_MS = 200;
-const SERVICE_ACCOUNT_CONFLICT_MAX_DELAY_MS = 2_000;
+const SERVICE_ACCOUNT_RETRY_BASE_DELAY_MS = 200;
+const SERVICE_ACCOUNT_RETRY_MAX_DELAY_MS = 2_000;
 
-function serviceAccountConflictDelay(attempt: number): number {
+function serviceAccountRetryDelay(attempt: number): number {
   const exponential = Math.min(
-    SERVICE_ACCOUNT_CONFLICT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
-    SERVICE_ACCOUNT_CONFLICT_MAX_DELAY_MS,
+    SERVICE_ACCOUNT_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+    SERVICE_ACCOUNT_RETRY_MAX_DELAY_MS,
   );
   const jitter = Math.floor(Math.random() * Math.max(1, exponential / 4));
 
   return exponential + jitter;
+}
+
+function isRetryableServiceAccountListFailure(error: unknown): boolean {
+  const status = rancherHttpStatus(error);
+  return status === undefined || status === 408 || status === 429 || status >= 500;
+}
+
+async function listServiceAccountsWithRetry(
+  $store: Dispatchable,
+  clusterId: string,
+  namespace: string,
+): Promise<string[]> {
+  for (let attempt = 1; attempt <= SERVICE_ACCOUNT_LIST_ATTEMPTS; attempt++) {
+    try {
+      return await listServiceAccounts($store, clusterId, namespace);
+    } catch (e) {
+      if (!isRetryableServiceAccountListFailure(e) || attempt === SERVICE_ACCOUNT_LIST_ATTEMPTS) {
+        throw e;
+      }
+      await new Promise(resolve => setTimeout(resolve, serviceAccountRetryDelay(attempt)));
+    }
+  }
+
+  throw new Error('ServiceAccount discovery retry loop exhausted unexpectedly');
 }
 
 export async function ensureServiceAccountPullSecret(
@@ -1275,7 +1313,7 @@ export async function ensureServiceAccountPullSecret(
       return;
     } catch (e) {
       if (rancherHttpStatus(e) === 409 && attempt < SERVICE_ACCOUNT_PATCH_ATTEMPTS) {
-        await new Promise(resolve => setTimeout(resolve, serviceAccountConflictDelay(attempt)));
+        await new Promise(resolve => setTimeout(resolve, serviceAccountRetryDelay(attempt)));
         continue;
       }
       throw e;
@@ -1291,7 +1329,7 @@ export async function ensurePullSecretOnAllSAs(
 ): Promise<void> {
   let sas: string[];
   try {
-    sas = await listServiceAccounts($store, clusterId, namespace);
+    sas = await listServiceAccountsWithRetry($store, clusterId, namespace);
   } catch (e) {
     logger.warn('ServiceAccount discovery failed; falling back to default', {
       component: 'RancherApps',

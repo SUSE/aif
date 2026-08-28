@@ -25,26 +25,25 @@ interface RecordedCall {
   payload: RequestConfig;
 }
 
+function withStatus<T extends object>(body: T, status: number): T {
+  // rancher/request attaches the HTTP status as a non-enumerable property
+  // before rejecting with the parsed response body.
+  Object.defineProperty(body, '_status', { value: status });
+  return body;
+}
+
 function k8sFailure(code: number, message: string) {
-  const body = {
+  return withStatus({
     apiVersion: 'v1',
     kind:       'Status',
     status:     'Failure',
     message,
     code,
-  };
-
-  // rancher/request attaches the HTTP status as a non-enumerable property and
-  // rejects with the parsed Kubernetes Status body.
-  Object.defineProperty(body, '_status', { value: code });
-  return body;
+  }, code);
 }
 
 function plainFailure(status: number, message: string) {
-  const body = { data: message };
-
-  Object.defineProperty(body, '_status', { value: status });
-  return body;
+  return withStatus({ data: message }, status);
 }
 
 function fakeStore(responses: unknown[]) {
@@ -345,7 +344,7 @@ describe('ServiceAccount discovery and sweep', () => {
           }
         }],
       },
-      k8sFailure(403, 'serviceaccount default is forbidden'),
+      plainFailure(403, 'serviceaccount default is forbidden'),
       { metadata: { name: 'app', namespace: 'apps', resourceVersion: '42' } },
       {},
     ]);
@@ -393,6 +392,133 @@ describe('ServiceAccount discovery and sweep', () => {
     });
   });
 
+  it('bounds logged error messages to 1000 characters', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const longMessage = 'x'.repeat(1_001);
+    const store = fakeStore([
+      { items: [] },
+      k8sFailure(403, longMessage),
+    ]);
+
+    await ensurePullSecretOnAllSAs(asStore(store), 'local', 'apps', 'new-pull-secret');
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith('ServiceAccount pull-secret attachment failed', {
+      component: 'RancherApps',
+      action:    'attach image pull secret',
+      data:      {
+        namespace:      'apps',
+        serviceAccount: 'default',
+        status:         403,
+        message:        'x'.repeat(1_000),
+      },
+    });
+  });
+
+  it.each([
+    ['data.message', withStatus({ data: { message: 'nested data message' } }, 403), 'nested data message'],
+    [
+      'response.data message',
+      withStatus({ response: { data: { message: 'nested response message' }, status: 403 } }, 403),
+      'nested response message',
+    ],
+    [
+      'response.data error',
+      withStatus({ response: { data: { error: 'nested response error' }, status: 403 } }, 403),
+      'nested response error',
+    ],
+  ])('logs the %s error shape', async (_shape, failure, expectedMessage) => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const store = fakeStore([
+      { items: [] },
+      failure,
+    ]);
+
+    await ensurePullSecretOnAllSAs(asStore(store), 'local', 'apps', 'new-pull-secret');
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith('ServiceAccount pull-secret attachment failed', {
+      component: 'RancherApps',
+      action:    'attach image pull secret',
+      data:      {
+        namespace:      'apps',
+        serviceAccount: 'default',
+        status:         403,
+        message:        expectedMessage,
+      },
+    });
+  });
+
+  it('retries transient discovery failures before updating all ServiceAccounts', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const store = fakeStore([
+      plainFailure(503, 'cluster agent unavailable'),
+      {
+        items: [{
+          metadata: {
+            name:      'app',
+            namespace: 'apps',
+            labels:    { 'app.kubernetes.io/managed-by': 'Helm' },
+          }
+        }],
+      },
+      { metadata: { name: 'default', namespace: 'apps', resourceVersion: '41' } },
+      {},
+      { metadata: { name: 'app', namespace: 'apps', resourceVersion: '42' } },
+      {},
+    ]);
+
+    const sweep = ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    );
+    await vi.runAllTimersAsync();
+    await sweep;
+
+    const listCalls = store.calls.filter(call => call.payload.url?.includes('?limit=5000'));
+    const patches = store.calls.filter(call => call.payload.method === 'PATCH');
+    expect(listCalls).toHaveLength(2);
+    expect(patches.map(call => call.payload.url)).toEqual([
+      '/k8s/clusters/local/api/v1/namespaces/apps/serviceaccounts/default',
+      '/k8s/clusters/local/api/v1/namespaces/apps/serviceaccounts/app',
+    ]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('falls back to default after exhausting transient discovery retries', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const store = fakeStore([
+      ...Array.from({ length: 5 }, () => plainFailure(503, 'cluster agent unavailable')),
+      { metadata: { name: 'default', namespace: 'apps', resourceVersion: '42' } },
+      {},
+    ]);
+
+    const sweep = ensurePullSecretOnAllSAs(
+      asStore(store), 'local', 'apps', 'new-pull-secret'
+    );
+    await vi.runAllTimersAsync();
+    await sweep;
+
+    const listCalls = store.calls.filter(call => call.payload.url?.includes('?limit=5000'));
+    const patches = store.calls.filter(call => call.payload.method === 'PATCH');
+    expect(listCalls).toHaveLength(5);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].payload.url).toContain('/serviceaccounts/default');
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith('ServiceAccount discovery failed; falling back to default', {
+      component: 'RancherApps',
+      action:    'discover service accounts',
+      data:      {
+        namespace: 'apps',
+        status:    503,
+        message:   'cluster agent unavailable',
+      },
+    });
+  });
+
   it('falls back to default when ServiceAccount discovery is forbidden', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const store = fakeStore([
@@ -406,7 +532,9 @@ describe('ServiceAccount discovery and sweep', () => {
     )).resolves.toBeUndefined();
 
     const patch = store.calls.find(call => call.payload.method === 'PATCH');
+    const listCalls = store.calls.filter(call => call.payload.url?.includes('?limit=5000'));
     expect(patch?.payload.url).toContain('/serviceaccounts/default');
+    expect(listCalls).toHaveLength(1);
     expect(warn).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith('ServiceAccount discovery failed; falling back to default', {
       component: 'RancherApps',
