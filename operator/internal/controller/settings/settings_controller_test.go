@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/controller/settings"
 	"github.com/SUSE/aif-operator/internal/credentials"
 )
@@ -420,16 +421,13 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 		t.Errorf("nvidia-blueprints ClusterRepo must be anonymous, got clientSecret = %q", nvSecret)
 	}
 
-	// The bundled catalog references only the two org repos, so there are no gated
-	// team repos to consume ngc-helm-auth — the connected-mode reconcile must NOT
-	// write it in any namespace. Regression guard: if a gated team repo is ever
-	// re-added to the catalog, this expectation (and the dormant-feature tests)
-	// must be revisited.
+	// The bundled catalog references gated NGC team repos, so connected-mode
+	// reconcile MUST write ngc-helm-auth into every managed namespace — the gated
+	// ClusterRepos' clientSecret resolves against it.
 	for _, authNS := range []string{"cattle-system", "fleet-local", "fleet-default"} {
 		var nvAuth corev1.Secret
-		err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &nvAuth)
-		if !apierrors.IsNotFound(err) {
-			t.Errorf("expected no ngc-helm-auth in %s (no gated team repos in catalog), got err=%v", authNS, err)
+		if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &nvAuth); err != nil {
+			t.Errorf("expected ngc-helm-auth in %s (gated team repos present), got err=%v", authNS, err)
 		}
 	}
 
@@ -723,12 +721,20 @@ func TestSettingsController_NoForceUpdateWhenCredentialsUnchanged(t *testing.T) 
 	}
 }
 
-// The bundled catalog references only the two org repos (/nvidia and
-// /nvidia/blueprint), so connected-mode reconcile must provision NO NGC team
-// repos and NO ngc-helm-auth — the team-repo feature is dormant until a team
-// repo is re-added to the catalog. The org and blueprint repos are still created
-// anonymously. Regression guard for the org-only catalog.
-func TestSettingsController_OrgOnlyCatalogProvisionsNoTeamRepos(t *testing.T) {
+// The bundled catalog now references NVAIE NGC team repos, so connected-mode
+// reconcile provisions them from the embedded classification: public repos
+// anonymously, gated repos with the ngc-helm-auth clientSecret, plus the
+// ngc-helm-auth mirror in every managed namespace. The org and blueprint repos
+// remain anonymous. (Supersedes the former org-only dormant-feature guard.)
+// Expectations are derived from ClassifyNGCTeamRepos so a weekly catalog refresh
+// that changes the team-repo set does not silently drift this test.
+func TestSettingsController_ProvisionsNGCTeamReposFromCatalog(t *testing.T) {
+	teams := catalog.ClassifyNGCTeamRepos()
+	if len(teams.Gated) == 0 {
+		t.Fatalf("precondition: bundled catalog must reference >=1 gated NGC team repo, got %d public / %d gated",
+			len(teams.Public), len(teams.Gated))
+	}
+
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
 	const ns = "aif-operator"
@@ -749,7 +755,7 @@ func TestSettingsController_OrgOnlyCatalogProvisionsNoTeamRepos(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	// The org and blueprint repos ARE created, anonymously.
+	// The org and blueprint repos are created anonymously.
 	for _, name := range []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint} {
 		repo := getClusterRepo(t, c, name)
 		if secret, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && secret != "" {
@@ -757,20 +763,50 @@ func TestSettingsController_OrgOnlyCatalogProvisionsNoTeamRepos(t *testing.T) {
 		}
 	}
 
-	// No team repos are provisioned (formerly nvidia-omniverse public,
-	// nvidia-cuopt gated — both sourced from repos no longer in the catalog).
-	for _, name := range []string{"nvidia-omniverse", "nvidia-cuopt"} {
-		got := &unstructured.Unstructured{}
-		got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-		if err := c.Get(context.Background(), types.NamespacedName{Name: name}, got); !apierrors.IsNotFound(err) {
-			t.Errorf("expected no team repo %s from org-only catalog, got err=%v", name, err)
+	// Every marker-labelled team repo the reconcile provisioned must match its NGC
+	// classification: public -> anonymous, gated -> ngc-helm-auth clientSecret.
+	pub := map[string]bool{}
+	for _, u := range teams.Public {
+		pub[strings.TrimRight(u, "/")] = true
+	}
+	gated := map[string]bool{}
+	for _, u := range teams.Gated {
+		gated[strings.TrimRight(u, "/")] = true
+	}
+
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList"})
+	if err := c.List(context.Background(), list, client.MatchingLabels{teamRepoLabel: markerValueTrue}); err != nil {
+		t.Fatalf("list team ClusterRepos: %v", err)
+	}
+	if got, want := len(list.Items), len(teams.Public)+len(teams.Gated); got != want {
+		t.Errorf("provisioned %d team repos, want %d (from catalog classification)", got, want)
+	}
+	for i := range list.Items {
+		repo := &list.Items[i]
+		u, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
+		u = strings.TrimRight(u, "/")
+		secret, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+		switch {
+		case pub[u]:
+			if secret != "" {
+				t.Errorf("public team repo %s (%s) must be anonymous, got clientSecret %q", repo.GetName(), u, secret)
+			}
+		case gated[u]:
+			if secret != credentials.AuthSecretNvidia {
+				t.Errorf("gated team repo %s (%s) must use clientSecret %q, got %q", repo.GetName(), u, credentials.AuthSecretNvidia, secret)
+			}
+		default:
+			t.Errorf("provisioned team repo %s has URL %q not in catalog classification", repo.GetName(), u)
 		}
 	}
 
-	// No ngc-helm-auth written (no gated repo consumes it).
-	var authSec corev1.Secret
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); !apierrors.IsNotFound(err) {
-		t.Errorf("expected no ngc-helm-auth from org-only catalog, got err=%v", err)
+	// The ngc-helm-auth mirror exists in every managed namespace (>=1 gated repo).
+	for _, authNS := range []string{"cattle-system", "fleet-local", "fleet-default"} {
+		var authSec corev1.Secret
+		if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: authNS}, &authSec); err != nil {
+			t.Errorf("expected ngc-helm-auth in %s (gated team repos present), got err=%v", authNS, err)
+		}
 	}
 }
 

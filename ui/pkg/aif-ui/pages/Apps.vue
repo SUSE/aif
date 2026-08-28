@@ -447,14 +447,22 @@ export default defineComponent({
         );
       }
 
-      // Sort. "supported" groups supported apps first, then alphabetical within each
+      // Sort. "supported" groups supported apps first, then SUSE-AI library before
+      // NVIDIA (matching the library-tab order), then alphabetical within each
       // group; "alphabetical" is a straight name sort.
       if (sortBy.value === 'alphabetical') {
         arr.sort(byName);
       } else {
+        const libraryRank = (app: AppCollectionItem) => {
+          const i = presentLibraries.value.indexOf(libraryOf(app));
+          return i === -1 ? presentLibraries.value.length : i;
+        };
         arr.sort((a, b) => {
-          const d = Number(isAppSupported(b)) - Number(isAppSupported(a));
-          return d !== 0 ? d : byName(a, b);
+          const s = Number(isAppSupported(b)) - Number(isAppSupported(a));
+          if (s !== 0) return s;
+          const l = libraryRank(a) - libraryRank(b);
+          if (l !== 0) return l;
+          return byName(a, b);
         });
       }
 

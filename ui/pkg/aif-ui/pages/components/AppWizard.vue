@@ -33,7 +33,7 @@ import { fetchSuseAiApps, resolveInstallRepoName, getLibraryFromRepoUrl, isManag
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
-import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
+import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets, injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import { crNameForCluster } from '../../utils/workload-name';
 import { readLibraryFilter, withLibraryFilter } from '../../utils/catalog-route';
@@ -1340,11 +1340,21 @@ async function installToCluster(
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
   const library = getLibraryFromRepoUrl(chartRepoUrl);
 
-  // Only add pull secrets to values for non-NVIDIA charts
+  // Non-NVIDIA charts get the pull secrets via the standard pod-spec paths.
   if (pullSecrets.length > 0 && library !== 'nvidia') {
     const secrets = pullSecrets.map(name => ({ name }));
     v.global = { ...(v.global || {}), imagePullSecrets: secrets };
     v.imagePullSecrets = secrets;
+  }
+
+  // NVIDIA charts reference the operator-delivered ngc-secret / ngc-api by name
+  // in their vendor-specific value shapes. Without this, team-repo NIM charts
+  // default to a hardcoded `nvcrimagepullsecret` that nothing creates and their
+  // pods ImagePullBackOff. Mirrors the Fleet path (createFleetBundle) and the
+  // operator's Blueprint path (blueprint.go injectNvidiaPullSecretRefs).
+  if (library === 'nvidia') {
+    disableNvidiaChartSecrets(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia');
   }
 
   if (pullSecrets.length > 0) {

@@ -1151,6 +1151,49 @@ func injectNvidiaPullSecretRefs(vals map[string]any) {
 	// string list nested two levels deep (operator -> image -> pullSecrets).
 	// Same conservative shape policy as image.pullSecrets above.
 	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets")
+
+	// Scalar name shape: some NVIDIA charts read a single string that names the
+	// pull secret to wire into pod specs, rather than a list.
+	injectNgcImagePullSecretName(vals)
+}
+
+// nvidiaNgcImagePullSecretNameKey is the scalar value key some NVIDIA charts read
+// to name the image pull secret wired into their pod specs. Its default is the
+// empty string, which renders a pod-level imagePullSecrets entry with an empty
+// name. A non-empty pod-level entry suppresses the ServiceAccount admission
+// controller's pull-secret injection (it fills only an empty list), so the empty
+// default cannot be rescued by the service-account merge and must be set here.
+// Unlike the object-shaped keys, this key is only ever a scalar string across the
+// surveyed charts, so setting it blindly is safe.
+const nvidiaNgcImagePullSecretNameKey = "ngcImagePullSecretName"
+
+// injectNgcImagePullSecretName sets the scalar pull-secret name at both the top
+// level and under global, since charts read one or the other (see
+// setScalarSecretName for the per-key rule). global is created when absent but
+// left alone if present with a non-map shape.
+func injectNgcImagePullSecretName(vals map[string]any) {
+	setScalarSecretName(vals, nvidiaNgcImagePullSecretNameKey)
+
+	switch global := vals["global"].(type) {
+	case nil:
+		vals["global"] = map[string]any{nvidiaNgcImagePullSecretNameKey: nvidiaImagePullSecretName}
+	case map[string]any:
+		setScalarSecretName(global, nvidiaNgcImagePullSecretNameKey)
+	}
+}
+
+// setScalarSecretName sets m[key] to the ngc-secret name when the key is absent
+// or an empty string (the chart default the injector cannot see), honors a
+// non-empty string override, and leaves any non-string value untouched.
+func setScalarSecretName(m map[string]any, key string) {
+	switch existing := m[key].(type) {
+	case nil:
+		m[key] = nvidiaImagePullSecretName
+	case string:
+		if existing == "" {
+			m[key] = nvidiaImagePullSecretName
+		}
+	}
 }
 
 // injectFlatPullSecretList adds nvidiaImagePullSecretName to a flat string
@@ -1235,8 +1278,12 @@ func containsString(list []any, s string) bool {
 //
 // Merge rules:
 //   - vals[key] absent or wrong shape → replace with {create:false, name}
-//   - vals[key] is a map → set create=false; only set name if absent (honor
-//     any explicit override from the user's values)
+//   - vals[key] is a map → set create=false; set name when it is absent, null, or
+//     an empty string (the chart default the injector cannot see), honor a
+//     non-empty author name, and leave any non-string value untouched. An empty
+//     name renders imagePullSecrets: [{name:""}] and defeats the operator-delivered
+//     Secret — the exact 403 this guards against. Kept in sync with the UI copy's
+//     disableNvidiaChartSecrets (ui/pkg/aif-ui/services/fleet-bundle.ts).
 func disableChartSecretCreation(vals map[string]any, key, name string) {
 	existing, ok := vals[key].(map[string]any)
 	if !ok {
@@ -1244,8 +1291,13 @@ func disableChartSecretCreation(vals map[string]any, key, name string) {
 		return
 	}
 	existing["create"] = false
-	if _, hasName := existing["name"]; !hasName {
+	switch v := existing["name"].(type) {
+	case nil: // absent key or explicit null
 		existing["name"] = name
+	case string:
+		if v == "" {
+			existing["name"] = name
+		}
 	}
 }
 
