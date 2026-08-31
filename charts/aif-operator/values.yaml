@@ -98,7 +98,7 @@ manager:
   image:
     registry: ghcr.io
     repository: suse/aif-operator
-    tag: "2.2.0-dev.4"
+    tag: "2.2.0-rc.1"
     pullPolicy: IfNotPresent
 
   imagePullSecrets: []
@@ -185,7 +185,7 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "2.2.0-dev.4"
+      version: "2.2.0-rc.1"
       # values are merged onto the aif-ui chart's default values. The top-level
       # global image registry and pull Secrets are forwarded here automatically.
       # Existing per-component overrides remain supported, for example:
@@ -211,7 +211,7 @@ aiExtension:
       #   # acknowledgeInsecure: true                    #   manager.allowInsecureRegistryTLS=true
   extension:
     name: "aif-ui"
-    version: "2.2.0-dev.4"
+    version: "2.2.0-rc.1"
   cleanup:
     image:
       registry: registry.suse.com
