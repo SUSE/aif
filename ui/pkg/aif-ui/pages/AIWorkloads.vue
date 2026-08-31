@@ -1,15 +1,18 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, reactive, getCurrentInstance } from 'vue';
+import { useShell } from '@shell/apis';
 import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
-import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
+import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
+import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
-import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
+import AIWorkloadDetailPanel from '../components/AIWorkloadDetailPanel.vue';
+import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
@@ -106,6 +109,31 @@ const rollbackModal = reactive({
 
 const upgradeError = ref<string | null>(null);
 
+// ── Detail slide-in panel ───────────────────────────────────────────────────────
+// Rendered by the shell's SlideInPanelManager, the same way the Fleet dashboard
+// opens its resource details.
+const shell = useShell();
+
+function openDetailPanel(w: AIWorkload) {
+  const blueprint = w.spec.source.sourceType === 'Blueprint'
+    ? findBlueprint(
+      blueprints.value,
+      w.spec.source.blueprint?.name || '',
+      w.spec.source.blueprint?.version || '',
+    )
+    : null;
+
+  shell.slideIn.open(AIWorkloadDetailPanel, {
+    props: {
+      workload: w,
+      blueprint,
+      clusters: clusters.value,
+    },
+    width:              'default',
+    closeOnRouteChange: ['name', 'params', 'query'],
+  });
+}
+
 const upgradeVersionOptions = computed(() => {
   if (!upgradeModal.workload) return [];
   const family = upgradeModal.workload.spec.source.blueprint?.name || '';
@@ -152,24 +180,6 @@ const filteredWorkloads = computed(() => {
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function phaseBadgeColor(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'bg-success';
-    case 'Degraded': return 'bg-warning';
-    case 'Failed':   return 'bg-error';
-    default:         return 'bg-info';
-  }
-}
-
-function phaseBadgeIcon(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'icon-checkmark';
-    case 'Degraded': return 'icon-warning';
-    case 'Failed':   return 'icon-x';
-    default:         return 'icon-info';
-  }
-}
-
 function workloadVersion(w: AIWorkload): string {
   if (w.spec.source.sourceType === 'App') return w.spec.source.app?.chartVersion || '—';
   return w.spec.source.blueprint?.version || '—';
@@ -184,22 +194,6 @@ function workloadSource(w: AIWorkload): string {
 
 function linksFor(w: AIWorkload) {
   return workloadRancherLinks(w, clusters.value);
-}
-
-// workloadStatusMessage returns a human-readable reason when a workload is not
-// healthy: the Ready=False condition message (set by the operator when a
-// ClusterRepo can't be resolved), falling back to the first non-empty
-// per-cluster message. Empty string when there's nothing to surface. Running
-// workloads suppress the message — the success text ("Helm install complete…")
-// is noise once the badge already says Running.
-function workloadStatusMessage(w: AIWorkload): string {
-  if (w.status?.phase === 'Running') return '';
-  const ready = (w.status?.conditions || []).find(
-    (c: any) => c?.type === 'Ready' && c?.status === 'False',
-  );
-  if (ready?.message) return ready.message;
-  const clusterMsg = (w.status?.clusterStatuses || []).find((s) => s.message);
-  return clusterMsg?.message || '';
 }
 
 function unhealthyComponents(w: AIWorkload) {
@@ -519,6 +513,14 @@ async function doRetry(w: AIWorkload) {
                 <!-- Actions -->
                 <td class="col-actions text-right">
                   <div class="btn-group">
+                    <button
+                      class="btn btn-sm role-secondary"
+                      @click="openDetailPanel(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-info" />
+                      Details
+                    </button>
                     <!-- Open in Rancher (type-aware) -->
                     <RancherLinkCell
                       :link="linksFor(w).primary"
