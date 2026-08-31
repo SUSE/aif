@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import { computed, ref } from 'vue';
+import { computed, getCurrentInstance, ref } from 'vue';
 import yaml from 'js-yaml';
-import AppModal from '@shell/components/AppModal';
+import Drawer from '@shell/components/Drawer/Chrome.vue';
 import { BadgeState } from '@components/BadgeState';
 import ClusterChips from '../formatters/ClusterChips.vue';
 import { useT } from '../composables/useT';
@@ -16,9 +16,16 @@ const props = defineProps<{
   clusters:  ClusterInfo[];
 }>();
 
-const emit = defineEmits<{ (e: 'close'): void }>();
-
 const t = useT();
+
+// The panel is rendered by the shell's SlideInPanelManager, so closing it is a
+// store commit rather than an emit — the same way
+// @shell/components/fleet/dashboard/ResourceDetails.vue closes itself.
+const store = (getCurrentInstance()!.proxy as any)?.$store;
+
+function close() {
+  store?.commit('slideInPanel/close');
+}
 
 const w           = computed(() => props.workload);
 const isBlueprint = computed(() => w.value.spec.source.sourceType === 'Blueprint');
@@ -68,33 +75,29 @@ function dumpYaml(values: Record<string, any> | undefined): string {
 </script>
 
 <template>
-  <AppModal :click-to-close="true" :width="640" @close="emit('close')">
-    <div class="wl-detail">
-      <!-- Header -->
-      <header class="wl-detail-header">
-        <div class="wl-detail-title-row">
-          <h3 class="wl-detail-title">{{ displayName }}</h3>
-          <BadgeState
-            :color="phaseBadgeColor(phase)"
-            :icon="phaseBadgeIcon(phase)"
-            :label="phase"
-          />
-        </div>
+  <Drawer
+    :aria-target="w.metadata.name"
+    :remove-footer="true"
+    @close="close"
+  >
+    <template #title>
+      <div class="wl-title">
+        <span class="wl-title-name">{{ displayName }}</span>
+        <BadgeState
+          :color="phaseBadgeColor(phase)"
+          :icon="phaseBadgeIcon(phase)"
+          :label="phase"
+        />
+      </div>
+    </template>
+
+    <template #body>
+      <div class="wl-detail">
         <div class="wl-detail-subrow">
           <span class="mono-chip">{{ w.metadata.name }}</span>
           <span class="mono-chip">{{ w.metadata.namespace }}</span>
         </div>
-        <button
-          class="wl-detail-close"
-          type="button"
-          :aria-label="t('suseai.pages.workloads.detail.close', 'Close')"
-          @click="emit('close')"
-        >
-          <i class="icon icon-close" />
-        </button>
-      </header>
 
-      <div class="wl-detail-body">
         <!-- Overview -->
         <section class="wl-section">
           <h4 class="wl-section-heading">{{ t('suseai.pages.workloads.detail.overview', 'Overview') }}</h4>
@@ -198,7 +201,7 @@ function dumpYaml(values: Record<string, any> | undefined): string {
             <tbody>
               <tr v-for="cs in clusterStatuses" :key="cs.clusterId">
                 <td class="mono">{{ cs.clusterId }}</td>
-                <td>
+                <td class="wl-status-cell">
                   <BadgeState
                     :color="phaseBadgeColor(cs.phase)"
                     :icon="phaseBadgeIcon(cs.phase)"
@@ -243,63 +246,31 @@ function dumpYaml(values: Record<string, any> | undefined): string {
           </dl>
         </section>
       </div>
-    </div>
-  </AppModal>
+    </template>
+  </Drawer>
 </template>
 
 <style lang="scss" scoped>
-.wl-detail {
+// The header bar and close button come from the shell Drawer chrome; only the
+// title content is ours.
+.wl-title {
   display: flex;
-  flex-direction: column;
-  max-height: 80vh;
-}
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 
-.wl-detail-header {
-  position: relative;
-  padding: 20px 24px 14px;
-  border-bottom: 1px solid var(--border);
-
-  .wl-detail-title-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .wl-detail-title {
-    margin: 0;
-    font-size: 18px;
+  .wl-title-name {
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  .wl-detail-subrow {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .wl-detail-close {
-    position: absolute;
-    top: 14px;
-    right: 16px;
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--body-text);
-    &:hover { color: var(--primary); }
-  }
 }
 
-.wl-detail-body {
-  padding: 8px 24px 24px;
-  overflow-y: auto;
+.wl-detail-subrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .wl-section {
@@ -338,6 +309,7 @@ function dumpYaml(values: Record<string, any> | undefined): string {
   line-height: 1.5;
   color: var(--body-text);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .wl-table {
@@ -358,12 +330,17 @@ function dumpYaml(values: Record<string, any> | undefined): string {
     border-bottom: 1px solid var(--border);
     color: var(--body-text);
     vertical-align: top;
+    overflow-wrap: anywhere;
   }
 
   tr:last-child td { border-bottom: none; }
 }
 
 .wl-msg-cell { color: var(--muted); }
+
+// The panel is narrow enough that a phase badge would otherwise break across
+// two lines mid-word.
+.wl-status-cell { white-space: nowrap; }
 
 .wl-ready-message {
   font-size: 13px;
@@ -428,6 +405,7 @@ function dumpYaml(values: Record<string, any> | undefined): string {
   border-radius: 3px;
   font-size: 12px;
   border: 1px solid var(--border);
+  overflow-wrap: anywhere;
 }
 
 .source-type-badge {

@@ -197,7 +197,6 @@ suseai:
         underlyingResources: Underlying resources
         fleetBundles: Fleet bundles
         helmRelease: Helm release
-        close: Close
   apps:
     title: Apps
     backToApps: Back to Apps

@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, reactive, getCurrentInstance } from 'vue';
+import { useShell } from '@shell/apis';
 import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
@@ -10,7 +11,7 @@ import { checkOperatorConnection, getConnectionError } from '../utils/operator-c
 import { uninstallWorkload } from '../services/workload-uninstall';
 import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
-import AIWorkloadDetailModal from '../components/AIWorkloadDetailModal.vue';
+import AIWorkloadDetailPanel from '../components/AIWorkloadDetailPanel.vue';
 import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
@@ -108,26 +109,30 @@ const rollbackModal = reactive({
 
 const upgradeError = ref<string | null>(null);
 
-// ── Detail modal ────────────────────────────────────────────────────────────────
-const detailModal = reactive({
-  show:     false,
-  workload: null as AIWorkload | null,
-});
+// ── Detail slide-in panel ───────────────────────────────────────────────────────
+// Rendered by the shell's SlideInPanelManager, the same way the Fleet dashboard
+// opens its resource details.
+const shell = useShell();
 
-function openDetailModal(w: AIWorkload) {
-  detailModal.workload = w;
-  detailModal.show     = true;
+function openDetailPanel(w: AIWorkload) {
+  const blueprint = w.spec.source.sourceType === 'Blueprint'
+    ? findBlueprint(
+      blueprints.value,
+      w.spec.source.blueprint?.name || '',
+      w.spec.source.blueprint?.version || '',
+    )
+    : null;
+
+  shell.slideIn.open(AIWorkloadDetailPanel, {
+    props: {
+      workload: w,
+      blueprint,
+      clusters: clusters.value,
+    },
+    width:              'default',
+    closeOnRouteChange: ['name', 'params', 'query'],
+  });
 }
-
-const detailBlueprint = computed(() => {
-  const w = detailModal.workload;
-  if (!w || w.spec.source.sourceType !== 'Blueprint') return null;
-  return findBlueprint(
-    blueprints.value,
-    w.spec.source.blueprint?.name || '',
-    w.spec.source.blueprint?.version || '',
-  );
-});
 
 const upgradeVersionOptions = computed(() => {
   if (!upgradeModal.workload) return [];
@@ -510,7 +515,7 @@ async function doRetry(w: AIWorkload) {
                   <div class="btn-group">
                     <button
                       class="btn btn-sm role-secondary"
-                      @click="openDetailModal(w)"
+                      @click="openDetailPanel(w)"
                       type="button"
                     >
                       <i class="icon icon-info" />
@@ -694,15 +699,6 @@ async function doRetry(w: AIWorkload) {
         </div>
       </div>
     </AppModal>
-
-    <!-- Workload detail modal -->
-    <AIWorkloadDetailModal
-      v-if="detailModal.show && detailModal.workload"
-      :workload="detailModal.workload"
-      :blueprint="detailBlueprint"
-      :clusters="clusters"
-      @close="detailModal.show = false"
-    />
   </main>
 </template>
 
