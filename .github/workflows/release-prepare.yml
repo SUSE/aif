@@ -65,13 +65,14 @@ jobs:
             kind=prod
           fi
 
-          # R3 — suffix <-> branch
+          # R3 — suffix <-> branch. dev and rc may target main (rc can also cut 
+          # from an existing release-X.Y line); prod must never target main.
           if [[ "$kind" == "dev" && "$TARGET" != "main" ]]; then
             echo "::error::dev versions (-dev.N) must target main, not '$TARGET'"
             exit 1
           fi
-          if [[ "$kind" != "dev" && "$TARGET" == "main" ]]; then
-            echo "::error::$kind versions must target a release-X.Y branch, not main"
+          if [[ "$kind" == "prod" && "$TARGET" == "main" ]]; then
+            echo "::error::prod versions must target a release-X.Y branch, not main"
             exit 1
           fi
 
