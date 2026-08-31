@@ -1254,21 +1254,6 @@
       ]
     },
     {
-      "name": "NVIDIA NIM for Nemotron 3 Embed 1B",
-      "slug_name": "nvidia-nim-nemotron-3-embed-1b",
-      "description": "NVIDIA NIM for Nemotron 3 Embed 1B",
-      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
-      "last_updated_at": "2026-08-05T00:17:37.633Z",
-      "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
-      "labels": [
-        {
-          "code": "supported",
-          "name": "Supported"
-        }
-      ]
-    },
-    {
       "name": "NeMo Retriever Graphic Elements v1",
       "slug_name": "nvidia-nim-nemotron-graphic-elements-v1",
       "description": "Helm Chart for NeMo Retriever Graphic Elements v1",
