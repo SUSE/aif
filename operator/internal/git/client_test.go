@@ -40,16 +40,16 @@ import (
 // fakeReader satisfies git.SecretReader without touching Kubernetes.
 type fakeReader struct{}
 
-func (fakeReader) ReadSecretKey(_ context.Context, _, _, _ string) (string, error) {
-	return "token", nil
+func (fakeReader) ReadSecret(_ context.Context, _, _ string) (map[string][]byte, error) {
+	return map[string][]byte{"token": []byte("token")}, nil
 }
 
-type mapReader map[string]string
+type mapReader map[string]map[string][]byte
 
-func (r mapReader) ReadSecretKey(_ context.Context, namespace, name, key string) (string, error) {
-	value, found := r[namespace+"/"+name+"/"+key]
+func (r mapReader) ReadSecret(_ context.Context, namespace, name string) (map[string][]byte, error) {
+	value, found := r[namespace+"/"+name]
 	if !found {
-		return "", fmt.Errorf("secret key not found")
+		return nil, fmt.Errorf("secret not found")
 	}
 	return value, nil
 }
@@ -252,7 +252,7 @@ func TestCheckAuth_UsesConfiguredPrivateCA(t *testing.T) {
 	s.Spec.Fleet.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"}
 
 	client, err := igit.NewFromSettings(context.Background(), s, "aif-operator", mapReader{
-		"aif-operator/git-ca/ca.crt": string(caPEM),
+		"aif-operator/git-ca": {"ca.crt": caPEM},
 	})
 	require.NoError(t, err)
 	err = client.CheckAuth(context.Background())
@@ -267,7 +267,7 @@ func TestNewFromSettings_RejectsInvalidPrivateCA(t *testing.T) {
 	s.Spec.Fleet.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"}
 
 	_, err := igit.NewFromSettings(context.Background(), s, "aif-operator", mapReader{
-		"aif-operator/git-ca/ca.crt": "not a certificate",
+		"aif-operator/git-ca": {"ca.crt": []byte("not a certificate")},
 	})
 	require.ErrorContains(t, err, "does not contain a PEM certificate")
 }

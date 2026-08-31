@@ -492,18 +492,10 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 	if !found {
 		return fmt.Errorf("git credential Secret %s/%s does not contain key %q", s.Namespace, ref.Name, ref.Key)
 	}
-	username := []byte(s.Spec.Fleet.Username)
-	if len(username) == 0 {
-		username = src.Data[corev1.BasicAuthUsernameKey]
+	if len(password) == 0 {
+		return fmt.Errorf("git credential must not be empty")
 	}
-	// Keep the pre-existing default only for resources using the deprecated
-	// authType field. New configurations must provide a portable username.
-	if len(username) == 0 && s.Spec.Fleet.AuthType != "" {
-		username = []byte("token")
-	}
-	if len(username) == 0 || len(password) == 0 {
-		return fmt.Errorf("git username and credential must not be empty")
-	}
+	username := []byte(credentials.ResolveGitHTTPSUsername(s.Spec.Fleet.Username, src.Data))
 	mirrorData := map[string][]byte{
 		corev1.BasicAuthUsernameKey: username,
 		corev1.BasicAuthPasswordKey: password,

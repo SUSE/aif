@@ -26,12 +26,12 @@ import (
 
 const tokenAuth = "token"
 
-type internalMapReader map[string]string
+type internalMapReader map[string]map[string][]byte
 
-func (r internalMapReader) ReadSecretKey(_ context.Context, namespace, name, key string) (string, error) {
-	value, found := r[namespace+"/"+name+"/"+key]
+func (r internalMapReader) ReadSecret(_ context.Context, namespace, name string) (map[string][]byte, error) {
+	value, found := r[namespace+"/"+name]
 	if !found {
-		return "", fmt.Errorf("missing secret key")
+		return nil, fmt.Errorf("missing secret")
 	}
 	return value, nil
 }
@@ -45,7 +45,7 @@ func TestNewFromSettingsLegacyTokenAuthDefaultsUsername(t *testing.T) {
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
-		"aif-operator/git-auth/token": "secret-token",
+		"aif-operator/git-auth": {tokenAuth: []byte("secret-token")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,10 @@ func TestNewFromSettingsHTTPSCredentialsUseExplicitUsername(t *testing.T) {
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
-		"aif-operator/git-auth/password": "secret-password",
+		"aif-operator/git-auth": {
+			"username": []byte("secret-user"),
+			"password": []byte("secret-password"),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +85,10 @@ func TestNewFromSettingsHTTPSCredentialsReadUsernameFromSecret(t *testing.T) {
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
-		"aif-operator/git-auth/username": "alice",
-		"aif-operator/git-auth/password": "secret-password",
+		"aif-operator/git-auth": {
+			"username": []byte("alice"),
+			"password": []byte("secret-password"),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,18 +98,21 @@ func TestNewFromSettingsHTTPSCredentialsReadUsernameFromSecret(t *testing.T) {
 	}
 }
 
-func TestNewFromSettingsRejectsHTTPSCredentialsWithoutUsername(t *testing.T) {
+func TestNewFromSettingsHTTPSCredentialsDefaultUsername(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
 		RepoURL:       "https://git.example.test/org/repo.git",
 		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "token"},
 	}
 
-	_, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
-		"aif-operator/git-auth/token": "secret-token",
+	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
+		"aif-operator/git-auth": {"token": []byte("secret-token")},
 	})
-	if err == nil {
-		t.Fatal("expected missing HTTPS username to fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.auth == nil || client.auth.Username != tokenAuth || client.auth.Password != "secret-token" {
+		t.Fatalf("unexpected default HTTPS auth: %#v", client.auth)
 	}
 }
 
@@ -117,7 +125,7 @@ func TestNewFromSettingsRejectsUnsupportedSSH(t *testing.T) {
 	}
 
 	_, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
-		"aif-operator/git-auth/ssh-privatekey": "private-key",
+		"aif-operator/git-auth": {"ssh-privatekey": []byte("private-key")},
 	})
 	if err == nil {
 		t.Fatal("expected unsupported SSH authentication to fail")

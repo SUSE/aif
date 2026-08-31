@@ -125,12 +125,15 @@ spec:
 ```
 
 The selected Git credential may be a password or personal access token; both
-use the same Git HTTPS username/password transport expected by Fleet. The
-generated Fleet `GitRepo` reads Blueprint definitions from `blueprints/` and
-AIF writes GitOps deployment resources under `workloads/`. Both AIF and Fleet
-use the configured Git CA and HTTPS credentials. Blueprints continue to
-reference stable Rancher `ClusterRepo` names; the Settings controller points
-those resources at the configured public or private chart endpoints. See
+use the same Git HTTPS username/password transport expected by Fleet. If
+`username` is omitted, the operator uses the credential Secret's `username`
+key, then the generic value `token`; servers that validate account names need
+an explicit username. The generated Fleet `GitRepo` reads Blueprint definitions
+from `blueprints/` and AIF writes GitOps deployment resources under `workloads/`.
+Both AIF and Fleet use the configured Git CA and HTTPS credentials. Blueprints
+continue to reference stable Rancher `ClusterRepo` names; the Settings
+controller points those resources at the configured public or private chart
+endpoints. See
 [`docs/air-gap/operator-private-sources.md`](../../docs/air-gap/operator-private-sources.md).
 Node-level image mirrors, private registry trust, and disabled default registry
 fallback are still required for container images.

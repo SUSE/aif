@@ -85,16 +85,17 @@ spec:
       key: ca.crt
 ```
 
-Git over HTTPS has one credential model: `username` plus the selected Secret
-key as either a password or personal access token. Alternatively, the username
-may come from the `username` key in the same Secret. Leave both fields unset for
-an anonymous repository. AIF mirrors authenticated credentials to Fleet as a
-`kubernetes.io/basic-auth` Secret; a personal access token is the password and
-is not sent as an HTTP Bearer token. Some Git providers do not validate the
-username when a personal access token is used, but Fleet still requires a
-non-empty value because it consumes a Basic Auth Secret. The deprecated
-`authType` values `token` and `basic` remain accepted only for compatibility
-with existing Settings.
+Git over HTTPS has one credential model: a username plus the selected Secret
+key as either a password or personal access token. The username is optional and
+resolves in this order: `spec.fleet.username`, the `username` key in the same
+Secret, then the generic value `token`. The default supplies the non-empty Basic
+Auth username needed by the Git client and Fleet; servers that validate the
+account name require an explicit value or Secret key. Leave both credential
+fields unset for an anonymous repository. AIF mirrors authenticated credentials
+to Fleet as a `kubernetes.io/basic-auth` Secret; a personal access token is the
+password and is not sent as an HTTP Bearer token. The deprecated `authType`
+values `token` and `basic` remain accepted only for compatibility with existing
+Settings.
 
 The operator uses the same credentials and PEM CA bundle for its Git writes and
 for the generated Fleet `GitRepo`. Changing the repository URL or branch

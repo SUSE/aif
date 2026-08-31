@@ -45,8 +45,8 @@ type FleetSettings struct {
 	// +kubebuilder:validation:Enum=token;basic
 	// +optional
 	AuthType string `json:"authType,omitempty"`
-	// Username is the HTTPS Git username. When credentials are configured, set
-	// this field or provide a username key in the referenced credential Secret.
+	// Username optionally overrides the HTTPS Git username. When omitted, the
+	// operator uses the username key in the credential Secret, then "token".
 	// +optional
 	Username string `json:"username,omitempty"`
 	// CredSecretRef references the Git credential secret.

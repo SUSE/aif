@@ -36,11 +36,12 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
-// SecretReader reads a secret key value from a Kubernetes Secret.
+// SecretReader reads the data stored in a Kubernetes Secret.
 type SecretReader interface {
-	ReadSecretKey(ctx context.Context, namespace, name, key string) (string, error)
+	ReadSecret(ctx context.Context, namespace, name string) (map[string][]byte, error)
 }
 
 // Client performs in-memory git operations against a remote repository.
@@ -71,38 +72,34 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 		default:
 			return nil, fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
 		}
-		password, err := reader.ReadSecretKey(ctx, namespace, ref.Name, ref.Key)
+		secretData, err := reader.ReadSecret(ctx, namespace, ref.Name)
 		if err != nil {
-			return nil, fmt.Errorf("read git credential: %w", err)
+			return nil, fmt.Errorf("read git credential Secret %s: %w", ref.Name, err)
 		}
-		username := s.Spec.Fleet.Username
-		if username == "" {
-			username, err = reader.ReadSecretKey(ctx, namespace, ref.Name, "username")
-			if err != nil && s.Spec.Fleet.AuthType == "" {
-				return nil, fmt.Errorf("read git HTTPS username: set fleet.username or add username to Secret %s: %w", ref.Name, err)
-			}
+		password, found := secretData[ref.Key]
+		if !found {
+			return nil, fmt.Errorf("git credential Secret %s does not contain key %q", ref.Name, ref.Key)
 		}
-		// Before the unified HTTPS credential model, authType caused a missing
-		// username to default to "token". Preserve that behavior only for
-		// resources that still carry the deprecated field.
-		if username == "" && s.Spec.Fleet.AuthType != "" {
-			username = "token"
+		if len(password) == 0 {
+			return nil, fmt.Errorf("git credential must not be empty")
 		}
-		if username == "" || password == "" {
-			return nil, fmt.Errorf("git username and credential must not be empty")
-		}
-		auth = &gogithttp.BasicAuth{Username: username, Password: password}
+		username := credentials.ResolveGitHTTPSUsername(s.Spec.Fleet.Username, secretData)
+		auth = &gogithttp.BasicAuth{Username: username, Password: string(password)}
 	} else if s.Spec.Fleet.AuthType != "" || s.Spec.Fleet.Username != "" {
 		return nil, fmt.Errorf("fleet.authType or fleet.username requires fleet.credSecretRef")
 	}
 	var caBundle []byte
 	if s.Spec.Fleet.CABundleSecretRef != nil {
 		ref := s.Spec.Fleet.CABundleSecretRef
-		value, err := reader.ReadSecretKey(ctx, namespace, ref.Name, ref.Key)
+		secretData, err := reader.ReadSecret(ctx, namespace, ref.Name)
 		if err != nil {
 			return nil, fmt.Errorf("read git CA bundle: %w", err)
 		}
-		caBundle = []byte(value)
+		value, found := secretData[ref.Key]
+		if !found {
+			return nil, fmt.Errorf("git CA Secret %s does not contain key %q", ref.Name, ref.Key)
+		}
+		caBundle = value
 		pool := x509.NewCertPool()
 		if len(caBundle) == 0 || !pool.AppendCertsFromPEM(caBundle) {
 			return nil, fmt.Errorf("read git CA bundle: secret %s key %s does not contain a PEM certificate", ref.Name, ref.Key)

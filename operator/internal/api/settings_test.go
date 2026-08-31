@@ -1030,7 +1030,7 @@ func TestValidateCredentials_GitAuthClassification(t *testing.T) {
 	}
 }
 
-func TestValidateCredentials_GitHTTPSCredentialOverride(t *testing.T) {
+func TestValidateCredentials_GitHTTPSCredentialOverrideWithoutUsername(t *testing.T) {
 	const ns = "aif-operator"
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
@@ -1046,7 +1046,7 @@ func TestValidateCredentials_GitHTTPSCredentialOverride(t *testing.T) {
 	defer func() { gitCheckAuthFn = orig }()
 	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error { return nil }
 
-	body := `{"targets":["gitops"],"overrides":{"gitops":{"repoURL":"https://git.example.com/repo.git","branch":"main","username":"git-user","credSecretRef":{"name":"git-credential","key":"token"}}}}`
+	body := `{"targets":["gitops"],"overrides":{"gitops":{"repoURL":"https://git.example.com/repo.git","branch":"main","credSecretRef":{"name":"git-credential","key":"token"}}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
