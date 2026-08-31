@@ -108,6 +108,36 @@ cannot mirror it can install with `crds.manageWithJob=false` (see above) — the
 native `crds/` path needs no image at all. CRDs themselves ship inside the chart;
 nothing is fetched at apply time.
 
+For private chart and Blueprint Git sources, configure the `Settings` resource
+after installation:
+
+```yaml
+spec:
+  registryEndpoints:
+    applicationCollection: oci://harbor.internal/charts/application-collection
+    suseRegistry: oci://harbor.internal/charts/suse-ai
+  fleet:
+    repoURL: https://gitea.internal/platform/aif.git
+    branch: main
+    username: platform
+    credSecretRef: {name: git-credentials, key: token}
+    caBundleSecretRef: {name: private-ca, key: ca.crt}
+```
+
+The selected Git credential may be a password or personal access token; both
+use the same Git HTTPS username/password transport expected by Fleet. If
+`username` is omitted, the operator uses the credential Secret's `username`
+key, then the generic value `token`; servers that validate account names need
+an explicit username. The generated Fleet `GitRepo` reads Blueprint definitions
+from `blueprints/` and AIF writes GitOps deployment resources under `workloads/`.
+Both AIF and Fleet use the configured Git CA and HTTPS credentials. Blueprints
+continue to reference stable Rancher `ClusterRepo` names; the Settings
+controller points those resources at the configured public or private chart
+endpoints. See
+[`docs/air-gap/operator-private-sources.md`](../../docs/air-gap/operator-private-sources.md).
+Node-level image mirrors, private registry trust, and disabled default registry
+fallback are still required for container images.
+
 **GitOps (Argo CD / Flux)**
 CRDs are delivered by `crds/` plus a Helm hook, so they are **not** rendered as
 release objects: they do not appear in `helm diff`, and Argo CD/Flux track only

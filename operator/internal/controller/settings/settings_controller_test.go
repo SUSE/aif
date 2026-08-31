@@ -20,6 +20,7 @@ package settings_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -101,6 +102,116 @@ func TestSettingsController_CreatesFleetGitRepo(t *testing.T) {
 	if repo != "https://github.com/example/ai-workloads" {
 		t.Errorf("expected repo URL %q, got %q", "https://github.com/example/ai-workloads", repo)
 	}
+	paths, found, err := unstructured.NestedStringSlice(gitRepo.Object, "spec", "paths")
+	if err != nil || !found {
+		t.Fatalf("GitRepo paths missing: found=%v err=%v", found, err)
+	}
+	if len(paths) != 2 || paths[0] != "blueprints" || paths[1] != "workloads" {
+		t.Fatalf("GitRepo paths=%v, want [blueprints workloads]", paths)
+	}
+}
+
+func TestSettingsController_FleetGitRepoUsesConfiguredPrivateCA(t *testing.T) {
+	s := newScheme(t)
+	const ns = "suse-ai-system"
+	caPEM := registryTestCAPEM(t)
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL:           "https://gitea.internal.example/aif.git",
+				Branch:            "main",
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+			},
+		},
+	}
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": caPEM},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, caSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	gitRepo := &unstructured.Unstructured{}
+	gitRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "suse-ai-fleet-repo", Namespace: "fleet-local",
+	}, gitRepo); err != nil {
+		t.Fatalf("get GitRepo: %v", err)
+	}
+	got, found, err := unstructured.NestedString(gitRepo.Object, "spec", "caBundle")
+	if err != nil || !found {
+		t.Fatalf("GitRepo spec.caBundle missing: found=%v err=%v", found, err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(got)
+	if err != nil {
+		t.Fatalf("GitRepo spec.caBundle is not JSON base64: %v", err)
+	}
+	if !bytes.Equal(decoded, caPEM) {
+		t.Error("decoded GitRepo spec.caBundle does not match the configured Secret key")
+	}
+}
+
+func TestSettingsController_RejectsInvalidFleetGitCA(t *testing.T) {
+	s := newScheme(t)
+	const ns = "suse-ai-system"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL:           "https://gitea.internal.example/aif.git",
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+			},
+		},
+	}
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-ca", Namespace: ns},
+		Data:       map[string][]byte{"ca.crt": []byte("not a certificate")},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, caSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not contain a PEM certificate") {
+		t.Fatalf("reconcile error=%v, want invalid PEM error", err)
+	}
+}
+
+func TestSettingsController_RejectsFleetGitAuthWithoutCredentials(t *testing.T) {
+	s := newScheme(t)
+	const ns = "suse-ai-system"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL:  "https://gitea.internal.example/aif.git",
+				AuthType: "token",
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires fleet.credSecretRef") {
+		t.Fatalf("reconcile error=%v, want incomplete Git authentication error", err)
+	}
 }
 
 func TestSettingsController_DeletesFleetGitRepoWhenURLCleared(t *testing.T) {
@@ -140,7 +251,7 @@ func TestSettingsController_DeletesFleetGitRepoWhenURLCleared(t *testing.T) {
 	}
 }
 
-func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
+func TestSettingsController_MirrorsGitHTTPSCredential(t *testing.T) {
 	s := newScheme(t)
 	srcSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "suse-ai-system"},
@@ -152,7 +263,7 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
 				RepoURL:  "https://github.com/example/ai-workloads",
-				AuthType: "token",
+				Username: "git-user",
 				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
 					Name: "git-creds",
 					Key:  "token",
@@ -183,8 +294,99 @@ func TestSettingsController_MirrorsGitCredSecret_TokenAuth(t *testing.T) {
 	if string(mirror.Data["password"]) != "mytoken" {
 		t.Errorf("expected password=mytoken, got %q", string(mirror.Data["password"]))
 	}
-	if string(mirror.Data["username"]) != "token" {
-		t.Errorf("expected username=token, got %q", string(mirror.Data["username"]))
+	if string(mirror.Data["username"]) != "git-user" {
+		t.Errorf("expected username=git-user, got %q", string(mirror.Data["username"]))
+	}
+}
+
+func TestSettingsController_MirrorsGitHTTPSUsernameFromSecret(t *testing.T) {
+	s := newScheme(t)
+	srcSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "suse-ai-system"},
+		Type:       corev1.SecretTypeBasicAuth,
+		Data: map[string][]byte{
+			corev1.BasicAuthUsernameKey: []byte("git-user"),
+			corev1.BasicAuthPasswordKey: []byte("mytoken"),
+		},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL: "https://github.com/example/ai-workloads",
+				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+					Name: "git-creds",
+					Key:  corev1.BasicAuthPasswordKey,
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, srcSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var mirror corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "git-creds", Namespace: "fleet-local",
+	}, &mirror); err != nil {
+		t.Fatalf("expected mirror secret in fleet-local: %v", err)
+	}
+	if string(mirror.Data[corev1.BasicAuthUsernameKey]) != "git-user" {
+		t.Errorf("expected username=git-user, got %q", string(mirror.Data[corev1.BasicAuthUsernameKey]))
+	}
+	if string(mirror.Data[corev1.BasicAuthPasswordKey]) != "mytoken" {
+		t.Errorf("expected password=mytoken, got %q", string(mirror.Data[corev1.BasicAuthPasswordKey]))
+	}
+}
+
+func TestSettingsController_MirrorsGitHTTPSDefaultUsername(t *testing.T) {
+	s := newScheme(t)
+	srcSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "suse-ai-system"},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{"token": []byte("mytoken")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				RepoURL: "https://gitlab.example.com/example/ai-workloads",
+				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+					Name: "git-creds",
+					Key:  "token",
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, srcSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: "suse-ai-system"}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: "suse-ai-system"},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var mirror corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "git-creds", Namespace: "fleet-local",
+	}, &mirror); err != nil {
+		t.Fatalf("expected mirror secret in fleet-local: %v", err)
+	}
+	if got := string(mirror.Data[corev1.BasicAuthUsernameKey]); got != credentials.DefaultGitHTTPSUsername {
+		t.Errorf("username=%q, want %q", got, credentials.DefaultGitHTTPSUsername)
+	}
+	if got := string(mirror.Data[corev1.BasicAuthPasswordKey]); got != "mytoken" {
+		t.Errorf("password=%q, want mytoken", got)
 	}
 }
 
@@ -236,6 +438,9 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 	}
 	if string(mirror.Data["password"]) != "newtoken" {
 		t.Errorf("expected password=newtoken, got %q", string(mirror.Data["password"]))
+	}
+	if string(mirror.Data["username"]) != "token" {
+		t.Errorf("expected legacy username=token, got %q", string(mirror.Data["username"]))
 	}
 }
 

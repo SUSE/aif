@@ -120,7 +120,7 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		// buildComponentMatrix compare this label against the per-component
 		// expected digest (the fingerprint returned by ensureBlueprintGitChartBundle),
 		// so a git-backed Bundle certifies the same way an http/oci one does.
-		b.SetLabels(map[string]string{renderDigestLabel: fingerprint})
+		b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue(fingerprint)})
 	}
 	_ = unstructured.SetNestedField(b.Object, namespace, "spec", "defaultNamespace")
 	_ = unstructured.SetNestedField(b.Object, helm, "spec", "helm")
@@ -220,21 +220,6 @@ func splitWorkloadTargets(w *aiplatformv1alpha1.AIWorkload) (local, downstream [
 	return local, downstream
 }
 
-// gitOpsFleetNamespace mirrors the GitOps path's fleet-local vs fleet-default
-// choice: fleet-local only when every target is the local cluster and at least
-// one target is set; otherwise fleet-default.
-func gitOpsFleetNamespace(w *aiplatformv1alpha1.AIWorkload) string {
-	for _, id := range w.Spec.TargetClusters {
-		if id != "local" {
-			return "fleet-default"
-		}
-	}
-	if len(w.Spec.TargetClusters) == 0 {
-		return "fleet-default"
-	}
-	return "fleet-local"
-}
-
 // ensureBlueprintGitChartBundle fetches a git-backed ClusterRepo's chart from
 // Rancher and applies (gitOps=false) or git-publishes (gitOps=true) a
 // self-contained Fleet Bundle carrying the chart. It reuses the same value and
@@ -272,31 +257,42 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
 	fingerprint := gitChartFingerprint(c, ns, repoInfo.Commit, vals, localTargets, downstreamTargets)
-
-	if gitOps {
-		allTargets := append(append([]any{}, localTargets...), downstreamTargets...)
-		tgz, err := fetchGitChart(ctx, fetcher, c)
-		if err != nil {
-			return "", err
-		}
-		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, allTargets)
-		if err != nil {
-			return "", err
-		}
-		b.SetNamespace(gitOpsFleetNamespace(w))
-		yamlBytes, err := json.MarshalIndent(b.Object, "", "  ")
-		if err != nil {
-			return "", err
-		}
-		return fingerprint, r.publishBlueprintGitFile(ctx, w, bundleName, string(yamlBytes))
-	}
-
 	pairs := []struct {
 		ns      string
 		targets []any
 	}{
 		{"fleet-local", localTargets},
 		{"fleet-default", downstreamTargets},
+	}
+
+	if gitOps {
+		tgz, err := fetchGitChart(ctx, fetcher, c)
+		if err != nil {
+			return "", err
+		}
+		objects := make([]map[string]any, 0, len(pairs))
+		for _, pair := range pairs {
+			if len(pair.targets) == 0 {
+				continue
+			}
+			b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
+			if err != nil {
+				return "", err
+			}
+			b.SetNamespace(pair.ns)
+			objects = append(objects, b.Object)
+		}
+		if len(objects) == 0 {
+			return "", fmt.Errorf("GitOps blueprint component %q has no target clusters", c.ChartName)
+		}
+		content, err := marshalGitResources(objects)
+		if err != nil {
+			return "", err
+		}
+		if err := r.publishBlueprintGitFile(ctx, w, bundleName, content); err != nil {
+			return "", err
+		}
+		return fingerprint, nil
 	}
 
 	// Skip the chart download entirely when every Bundle we would write is

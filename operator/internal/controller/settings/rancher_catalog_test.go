@@ -61,6 +61,10 @@ func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T)
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: "aif"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{
+				CredSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "git-creds", Key: "token"},
+				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+			},
 			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
 				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"},
 			},
@@ -87,6 +91,8 @@ func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T)
 	}{
 		{"token secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: "aif"}}, true},
 		{"ca bundle secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "rc-ca", Namespace: "aif"}}, true},
+		{"Git credential", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "aif"}}, true},
+		{"Git CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "git-ca", Namespace: "aif"}}, true},
 		{"AppCo CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "appco-ca", Namespace: "aif"}}, true},
 		{"SUSE explicit credentials", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "suse-creds", Namespace: "aif"}}, true},
 		{"SUSE CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "suse-ca", Namespace: "aif"}}, true},

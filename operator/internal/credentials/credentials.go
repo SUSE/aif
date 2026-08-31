@@ -29,11 +29,31 @@ import (
 
 const SettingsName = "settings"
 
+// DefaultGitHTTPSUsername supplies the non-empty username required by HTTP
+// Basic authentication when a Git credential contains only a token/password.
+// Token-based Git providers generally ignore this value; servers that require
+// a real account name can override it in Settings or the credential Secret.
+const DefaultGitHTTPSUsername = "token"
+
 // NvidiaDefaultUsername is the conventional NGC username. The NVIDIA "official"
 // kubectl setup uses the literal string "$oauthtoken" as the username paired
 // with an nvapi- API key as the token. When a discovered nvidia secret carries
 // only a token, the operator normalizes it by writing this username.
 const NvidiaDefaultUsername = "$oauthtoken"
+
+// ResolveGitHTTPSUsername returns the username used for authenticated HTTPS
+// Git operations. An explicit Settings value wins, followed by the conventional
+// username key in the selected credential Secret and finally a neutral token
+// placeholder.
+func ResolveGitHTTPSUsername(explicit string, secretData map[string][]byte) string {
+	if explicit != "" {
+		return explicit
+	}
+	if username := string(secretData[corev1.BasicAuthUsernameKey]); username != "" {
+		return username
+	}
+	return DefaultGitHTTPSUsername
+}
 
 const (
 	DefaultApplicationCollectionURL = "oci://dp.apps.rancher.io/charts"

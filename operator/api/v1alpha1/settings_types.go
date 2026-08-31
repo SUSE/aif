@@ -37,13 +37,26 @@ type FleetSettings struct {
 	// +kubebuilder:default=main
 	// +optional
 	Branch string `json:"branch,omitempty"`
-	// AuthType is the authentication method.
-	// +kubebuilder:validation:Enum=ssh;token;basic
+	// AuthType is the legacy HTTPS credential selector.
+	// Deprecated: HTTPS Git credentials always use HTTP Basic authentication,
+	// with the configured credential as the password or personal access token.
+	// Existing token and basic values are accepted for compatibility; new
+	// clients should omit this field.
+	// +kubebuilder:validation:Enum=token;basic
 	// +optional
 	AuthType string `json:"authType,omitempty"`
+	// Username optionally overrides the HTTPS Git username. When omitted, the
+	// operator uses the username key in the credential Secret, then "token".
+	// +optional
+	Username string `json:"username,omitempty"`
 	// CredSecretRef references the Git credential secret.
 	// +optional
 	CredSecretRef *SecretKeyRef `json:"credSecretRef,omitempty"`
+	// CABundleSecretRef references a Secret containing the PEM CA bundle used
+	// to verify an HTTPS Git server. AIF and the generated Fleet GitRepo consume
+	// the same bundle so private Git has one trust configuration.
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 }
 
 // ApplicationCollectionSettings configures SUSE Application Collection.
@@ -99,17 +112,14 @@ type NvidiaSettings struct {
 	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 }
 
-// RegistryEndpointsSettings overrides upstream registry hosts for air-gap deployments.
+// RegistryEndpointsSettings configures custom chart repositories.
 type RegistryEndpointsSettings struct {
-	// SUSERegistry overrides the default SUSE Registry hostname.
+	// SUSERegistry overrides the default SUSE Registry chart repository URL.
 	// +optional
 	SUSERegistry string `json:"suseRegistry,omitempty"`
-	// ApplicationCollection overrides the SUSE App Collection OCI hostname.
+	// ApplicationCollection overrides the SUSE App Collection chart repository URL.
 	// +optional
 	ApplicationCollection string `json:"applicationCollection,omitempty"`
-	// ApplicationCollectionAPI overrides the SUSE App Collection HTTP API URL.
-	// +optional
-	ApplicationCollectionAPI string `json:"applicationCollectionAPI,omitempty"`
 	// Nvidia is the OCI URL of a mirrored NVIDIA chart repository for air-gapped installs
 	// (e.g. oci://registry.example.com/nvidia). When empty, NVIDIA charts are pulled from the
 	// public NGC HTTPS repositories; when set, a single gated OCI ClusterRepo is created at this URL.
@@ -117,35 +127,6 @@ type RegistryEndpointsSettings struct {
 	// require node-level registry redirection (e.g. containerd hosts.toml) in a true air-gap.
 	// +optional
 	Nvidia string `json:"nvidia,omitempty"`
-}
-
-// CatalogDiscoverySettings controls how the SUSE Application Collection is discovered.
-type CatalogDiscoverySettings struct {
-	// ApplicationCollectionMode selects the discovery strategy.
-	// +kubebuilder:validation:Enum=api;registry-fallback;disabled
-	// +kubebuilder:default=api
-	// +optional
-	ApplicationCollectionMode string `json:"applicationCollectionMode,omitempty"`
-}
-
-// ImageRewriteRule defines a single image prefix rewrite rule.
-type ImageRewriteRule struct {
-	// Match is the prefix to match.
-	// +kubebuilder:validation:MinLength=1
-	Match string `json:"match"`
-	// Replace is the substitution prefix.
-	// +kubebuilder:validation:MinLength=1
-	Replace string `json:"replace"`
-}
-
-// ImageRewriteSettings controls Helm-values prefix substitution at deploy time.
-type ImageRewriteSettings struct {
-	// Enabled applies rewrite rules during Helm values merge.
-	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-	// Rules apply in order; first match per field wins.
-	// +optional
-	Rules []ImageRewriteRule `json:"rules,omitempty"`
 }
 
 // AppCatalogSettings configures the static application catalog served to the UI.
@@ -173,15 +154,9 @@ type SettingsSpec struct {
 	// Nvidia configures NVIDIA NGC integration.
 	// +optional
 	Nvidia NvidiaSettings `json:"nvidia,omitempty"`
-	// RegistryEndpoints overrides upstream registry defaults for air-gap deployments.
+	// RegistryEndpoints configures custom chart repositories for air-gap deployments.
 	// +optional
 	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
-	// CatalogDiscovery controls how the SUSE Application Collection is discovered.
-	// +optional
-	CatalogDiscovery CatalogDiscoverySettings `json:"catalogDiscovery,omitempty"`
-	// ImageRewrite controls Helm-values prefix substitution at deploy time.
-	// +optional
-	ImageRewrite ImageRewriteSettings `json:"imageRewrite,omitempty"`
 	// AppCatalog configures the static application catalog.
 	// +optional
 	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`

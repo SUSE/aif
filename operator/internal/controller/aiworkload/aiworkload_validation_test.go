@@ -52,9 +52,9 @@ var _ = Describe("AIWorkload admission validation", func() {
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 	})
 
-	It("rejects mixed local+downstream GitOps", func() {
+	It("accepts mixed local+downstream GitOps", func() {
 		w := blueprintWorkload("mixed-gitops", aiplatformv1alpha1.AIWorkloadDeployGitOps, []string{"local", "c-downstream"})
-		Expect(k8sClient.Create(ctx, w)).ToNot(Succeed())
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 	})
 
 	It("accepts local-only GitOps and downstream-only GitOps", func() {
