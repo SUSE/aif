@@ -23,15 +23,12 @@ import (
 	"encoding/base64"
 	stderrors "errors"
 	"fmt"
-	"net/url"
-	"strings"
 	"time"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
-	"github.com/SUSE/aif-operator/internal/naming"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -323,9 +320,6 @@ const (
 	teamRepoMarkerValue    = credentials.LabelValueTrue
 	managedRepoMarkerLabel = credentials.ManagedRepoLabel
 	managedRepoMarkerValue = credentials.LabelValueTrue
-
-	// clusterRepoNameMax is the DNS-1123 label cap for a ClusterRepo name.
-	clusterRepoNameMax = 63
 )
 
 var fleetGitRepoGVK = schema.GroupVersionKind{
@@ -337,22 +331,44 @@ var fleetGitRepoGVK = schema.GroupVersionKind{
 // Errors if the URL is not an NGC URL, or if the slug collides with an org
 // ClusterRepo name (the collision space is slugs, not URLs).
 func teamClusterRepoName(ngcURL string) (string, error) {
-	if !catalog.IsNGCURL(ngcURL) {
-		return "", fmt.Errorf("not an NGC URL: %q", ngcURL)
-	}
-	parsed, err := url.Parse(strings.TrimSpace(ngcURL))
+	name, err := catalog.NGCClusterRepoName(ngcURL)
 	if err != nil {
-		return "", fmt.Errorf("parse NGC URL %q: %w", ngcURL, err)
-	}
-	name := naming.TruncateDNS1123Label(naming.Slugify(strings.TrimPrefix(parsed.Path, "/")), clusterRepoNameMax)
-	if name == "" {
-		return "", fmt.Errorf("empty slug for NGC URL %q", ngcURL)
+		return "", err
 	}
 	switch name {
 	case credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint:
 		return "", fmt.Errorf("team slug %q collides with org repo name", name)
 	}
 	return name, nil
+}
+
+// catalogNvidiaTeamRepoNames returns every stable team-repo identity referenced
+// by the bundled NVIDIA catalog. Mirror reconciliation uses the same catalog-
+// derived set as connected-mode provisioning, so adding a new NVAIE source does
+// not require maintaining a second list of aliases.
+func catalogNvidiaTeamRepoNames() ([]string, error) {
+	teams := catalog.ClassifyNGCTeamRepos()
+	urls := make([]string, 0, len(teams.Public)+len(teams.Gated))
+	urls = append(urls, teams.Public...)
+	urls = append(urls, teams.Gated...)
+
+	names := make([]string, 0, len(urls))
+	seen := make(map[string]string, len(urls))
+	for _, u := range urls {
+		name, err := teamClusterRepoName(u)
+		if err != nil {
+			return nil, err
+		}
+		if previousURL, exists := seen[name]; exists && previousURL != u {
+			return nil, fmt.Errorf("NGC repository URLs %q and %q collide at ClusterRepo name %q", previousURL, u, name)
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = u
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 // ensureWellKnownSecretRefs discovers operator-namespace registry secrets and
@@ -828,12 +844,12 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 	return nil
 }
 
-// reconcileNvidiaRepos handles NVIDIA's two-mode topology: two stable logical
-// repos (nvidia for Apps, nvidia-blueprints for bundled Blueprints) backed by
-// one OCI mirror when registryEndpoints.nvidia is set (air-gap, created with or
-// without credentials), or the public NGC charts + blueprint pair otherwise
-// (connected mode). Connected mode tears all NVIDIA repos down without
-// credentials; an air-gap mirror may be anonymous.
+// reconcileNvidiaRepos handles NVIDIA's two-mode topology. Connected mode uses
+// the public org/Blueprint repos plus one catalog-derived ClusterRepo per NGC
+// team. Mirror mode preserves every one of those logical identities while
+// repointing them at the single configured OCI mirror. This is required because
+// AIWorkloads persist spec.source.app.chartRepo by name. Connected mode tears all
+// NVIDIA repos down without credentials; an air-gap mirror may be anonymous.
 func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	nvUser, nvToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.Nvidia.UserSecretRef,
@@ -845,20 +861,16 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		nvURL = s.Spec.RegistryEndpoints.Nvidia
 	}
 
-	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
+	fixedNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
 
-	// Air-gap (registryEndpoints.nvidia set): preserve BOTH stable logical repo
-	// names at the gated private mirror. Bundled Blueprints reference
-	// nvidia-blueprints while Apps use nvidia; collapsing them to one ClusterRepo
-	// makes the Blueprint charts unresolvable even when both live under the same
-	// mirrored OCI path. Supported WITH or WITHOUT credentials (an internal mirror
-	// may be anonymous), so this is evaluated BEFORE the no-creds teardown below —
-	// otherwise an intentionally unauthenticated mirror would be pruned instead of
-	// created.
+	// Air-gap (registryEndpoints.nvidia set): preserve every stable logical repo
+	// name at the private mirror. This includes the two historical aliases and all
+	// catalog-derived NGC team aliases. Supported WITH or WITHOUT credentials (an
+	// internal mirror may be anonymous), so this is evaluated before the no-creds
+	// teardown below.
 	if nvURL != "" {
-		// Team repos never belong in air-gap; prune them on the connected→air-gap
-		// switch (pruneTeamRepos preserves ngc-helm-auth, unused by the mirror).
-		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+		teamRepoNames, err := catalogNvidiaTeamRepoNames()
+		if err != nil {
 			return err
 		}
 
@@ -873,9 +885,12 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			}
 			if secretName == "" {
 				// Refs are set but unreadable: the admin intended authentication but
-				// we have nothing to authenticate with. Tear the repos + mirror down
-				// rather than create a repo that will 401 against a gated mirror.
-				return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+				// we have nothing to authenticate with. Tear every alias + mirror down
+				// rather than create repos that will 401 against a gated mirror.
+				if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+					return err
+				}
+				return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, fixedNvidiaRepos)
 			}
 		} else {
 			// No refs at all: intentional anonymous mirror. Drop any stale auth secret.
@@ -884,13 +899,24 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			}
 		}
 
-		for _, name := range allNvidiaRepos {
+		for _, name := range fixedNvidiaRepos {
 			if err := r.applyClusterRepo(ctx, name, nvURL, secretName); err != nil {
 				return err
 			}
 		}
+		keepTeamRepos := make(map[string]bool, len(teamRepoNames))
+		for _, name := range teamRepoNames {
+			if err := r.applyMirroredTeamClusterRepo(ctx, name, nvURL, secretName); err != nil {
+				return err
+			}
+			keepTeamRepos[name] = true
+		}
+		// Remove only aliases that no longer correspond to the bundled catalog.
+		if err := r.pruneTeamRepos(ctx, keepTeamRepos); err != nil {
+			return err
+		}
 		if changed {
-			for _, name := range allNvidiaRepos {
+			for _, name := range append(fixedNvidiaRepos, teamRepoNames...) {
 				if err := r.forceUpdateClusterRepo(ctx, name); err != nil {
 					return err
 				}
@@ -905,7 +931,7 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
 			return err
 		}
-		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, fixedNvidiaRepos)
 	}
 
 	// Connected: both NGC repos are PUBLIC — https://helm.ngc.nvidia.com/nvidia
@@ -934,11 +960,10 @@ func (r *SettingsReconciler) pruneRegistryRepos(ctx context.Context, authSecretN
 	return r.deleteAuthSecret(ctx, authSecretName)
 }
 
-// applyTeamClusterRepo applies a ClusterRepo for an NGC team repo, stamped with
-// the team marker label so pruning can find it. clientSecretName is "" for
-// public repos (anonymous). Host guard (S1): a secret is only ever attached to
-// a helm.ngc.nvidia.com URL.
-func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngcURL, clientSecretName string) error {
+// applyMarkedTeamClusterRepo applies a ClusterRepo carrying both the managed and
+// NVIDIA team markers. Callers are responsible for deciding whether attaching a
+// credential to repoURL is allowed.
+func (r *SettingsReconciler) applyMarkedTeamClusterRepo(ctx context.Context, name, repoURL, clientSecretName string) error {
 	repo := &unstructured.Unstructured{
 		Object: map[string]any{
 			"apiVersion": "catalog.cattle.io/v1",
@@ -950,17 +975,32 @@ func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngc
 					managedRepoMarkerLabel: managedRepoMarkerValue,
 				},
 			},
-			"spec": managedRepoSpec(ngcURL),
+			"spec": managedRepoSpec(repoURL),
 		},
 	}
 	if clientSecretName != "" {
-		if !catalog.IsNGCURL(ngcURL) {
-			return fmt.Errorf("refusing to attach clientSecret to non-NGC URL %q", ngcURL)
-		}
 		_ = unstructured.SetNestedField(repo.Object, clientSecretName, "spec", "clientSecret", "name")
 		_ = unstructured.SetNestedField(repo.Object, "cattle-system", "spec", "clientSecret", "namespace")
 	}
 	return r.Patch(ctx, repo, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings"))
+}
+
+// applyTeamClusterRepo applies a connected-mode NGC team repo. Host guard (S1):
+// a secret is only ever attached to an HTTPS URL on helm.ngc.nvidia.com.
+func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngcURL, clientSecretName string) error {
+	if clientSecretName != "" && !catalog.IsNGCURL(ngcURL) {
+		return fmt.Errorf("refusing to attach clientSecret to non-NGC URL %q", ngcURL)
+	}
+	return r.applyMarkedTeamClusterRepo(ctx, name, ngcURL, clientSecretName)
+}
+
+// applyMirroredTeamClusterRepo repoints a stable NGC team identity at the
+// administrator-configured NVIDIA mirror. Unlike applyTeamClusterRepo, the URL
+// is intentionally private and may use the mirror credential; it originates
+// from Settings.spec.registryEndpoints.nvidia, the same trusted input used for
+// the canonical nvidia and nvidia-blueprints repos.
+func (r *SettingsReconciler) applyMirroredTeamClusterRepo(ctx context.Context, name, mirrorURL, clientSecretName string) error {
+	return r.applyMarkedTeamClusterRepo(ctx, name, mirrorURL, clientSecretName)
 }
 
 // reconcileNGCTeamRepos provisions the connected-mode NGC team-repo ClusterRepos
