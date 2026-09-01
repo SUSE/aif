@@ -1,10 +1,10 @@
 metadata:
   name: suse-ai-factory
   # TODO: we need to update this version as part of the release process
-  version: 2.0.1
+  version: 2.2.0
   creationDate: "2026-07-15"
 corePlatform:
-  image: registry.suse.com/elemental/rke2/rke2-manifest:1.35.6-42.1
+  image: registry.suse.com/elemental/rke2/rke2-manifest:1.35.6-48.1
 components:
   systemd:
     extensions:
@@ -74,7 +74,7 @@ components:
         version: "1.11.3"
         namespace: "longhorn-system"
         repository: "application-collection"
-        values: 
+        values:
           global:
             imagePullSecrets:
               - name: "application-collection"
@@ -83,7 +83,7 @@ components:
             type: "sysext"
       # SUSE AI Factory
       - chart: "aif-operator"
-        version: "2.0.1"
+        version: "2.2.0"
         namespace: "aif-operator"
         # will be application-collection when we finalize things
         repository: "ghcr"
