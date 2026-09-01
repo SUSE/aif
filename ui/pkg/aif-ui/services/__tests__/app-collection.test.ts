@@ -17,6 +17,7 @@ import {
   fetchManagedRepos,
   fetchSuseAiApps,
   fetchNvidiaApps,
+  overlayCuratedMetadata,
   resolveInstallRepoName,
   isManagedRepoName,
   CLUSTERREPOS_URL,
@@ -237,6 +238,44 @@ describe('fetchNvidiaApps', () => {
     const { apps, failedRepos } = await fetchNvidiaApps(store, { spec: {} });
     expect(apps).toEqual([]);
     expect(failedRepos).toEqual([]);
+  });
+
+  it('loads a shared NVIDIA mirror once and restores each app logical source alias', async () => {
+    const mirror = 'oci://registry.internal/nvidia';
+    const store = makeStore([
+      // Intentionally list a team alias first: endpoint dedup must still prefer
+      // the canonical nvidia repo when readiness is equal.
+      { metadata: { name: 'nim-nvidia', labels: { [MANAGED]: 'true', [NVIDIA_TEAM_REPO_LABEL]: 'true' } }, spec: { url: mirror }, status: ready() },
+      { metadata: { name: 'nvidia-blueprints', labels: { [MANAGED]: 'true' } }, spec: { url: mirror }, status: ready() },
+      { metadata: { name: 'nvidia', labels: { [MANAGED]: 'true' } }, spec: { url: mirror }, status: ready() },
+      { metadata: { name: 'nvidia-runai', labels: { [MANAGED]: 'true', [NVIDIA_TEAM_REPO_LABEL]: 'true' } }, spec: { url: mirror }, status: ready() },
+    ], { nvidia: { 'runai-installer': [{ name: 'runai-installer', created: '2026-01-01T00:00:00Z' }] } });
+
+    const { apps, failedRepos } = await fetchNvidiaApps(store, {
+      spec: { registryEndpoints: { nvidia: mirror } },
+    });
+    expect(failedRepos).toEqual([]);
+    expect(apps).toHaveLength(1);
+    expect(apps[0].repository_name).toBe('nvidia');
+
+    const indexRequests = store.dispatch.mock.calls
+      .map(call => (call[1] as { url: string }).url)
+      .filter((url: string) => url.includes('?link=index'));
+    expect(indexRequests).toEqual([
+      'https://base/catalog.cattle.io.clusterrepos/nvidia?link=index',
+    ]);
+
+    const enriched = overlayCuratedMetadata(apps, [{
+      name:            'Run:ai',
+      slug_name:       'runai-installer',
+      library:         'nvidia',
+      repository_url:  'https://helm.ngc.nvidia.com/nvidia/runai',
+      repository_name: 'nvidia-runai',
+    }]);
+    expect(enriched[0].repository_name).toBe('nvidia-runai');
+    // The effective URL remains live/mirrored; only the logical identity comes
+    // from the curated catalog.
+    expect(enriched[0].repository_url).toBe(mirror);
   });
 
   it('loads apps from an existing managed repo regardless of the (always-{}) settings section', async () => {
