@@ -111,6 +111,108 @@ spec:
                     - name
                     type: object
                 type: object
+              customRepos:
+                description: CustomRepos are admin-defined chart repositories provisioned
+                  as ClusterRepos.
+                items:
+                  description: |-
+                    CustomRepoSpec defines an admin-managed chart repository provisioned as a
+                    catalog.cattle.io ClusterRepo named "custom-<name>". Credentials are always
+                    referenced, never inlined. The operator materializes the referenced Secret
+                    into the registry auth namespaces and links it via the ClusterRepo clientSecret.
+                  properties:
+                    caBundleSecretRef:
+                      description: CABundleSecretRef references a Secret holding a
+                        PEM CA bundle.
+                      properties:
+                        key:
+                          description: Key is the key within the Secret.
+                          type: string
+                        name:
+                          description: Name is the Secret name.
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    displayName:
+                      description: DisplayName is an optional human-friendly label
+                        shown in the UI.
+                      type: string
+                    gitBranch:
+                      description: GitBranch is the git branch for the git type.
+                      type: string
+                    gitRepo:
+                      description: GitRepo is the git clone URL for the git type.
+                      type: string
+                    insecureSkipTLSVerify:
+                      description: InsecureSkipTLSVerify disables TLS verification
+                        for this repository.
+                      type: boolean
+                    name:
+                      description: |-
+                        Name is a DNS-1123 label, unique across custom repos, not colliding with a
+                        canonical repo name. The ClusterRepo is created as "custom-<name>".
+                      type: string
+                    sshKeySecretRef:
+                      description: |-
+                        SSHKeySecretRef references a Secret holding an SSH private key for git repos.
+                        Mutually exclusive with basic auth.
+                      properties:
+                        key:
+                          description: Key is the key within the Secret.
+                          type: string
+                        name:
+                          description: Name is the Secret name.
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    tokenSecretRef:
+                      description: TokenSecretRef references the basic-auth password/token
+                        secret.
+                      properties:
+                        key:
+                          description: Key is the key within the Secret.
+                          type: string
+                        name:
+                          description: Name is the Secret name.
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    type:
+                      description: Type selects the repository source shape.
+                      enum:
+                      - helm
+                      - oci
+                      - git
+                      type: string
+                    url:
+                      description: URL is the chart repository URL for helm (http/https)
+                        and oci (oci://).
+                      type: string
+                    userSecretRef:
+                      description: UserSecretRef references the basic-auth username
+                        secret.
+                      properties:
+                        key:
+                          description: Key is the key within the Secret.
+                          type: string
+                        name:
+                          description: Name is the Secret name.
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                  required:
+                  - name
+                  - type
+                  type: object
+                type: array
               fleet:
                 description: Fleet configures Fleet GitOps integration.
                 properties:
