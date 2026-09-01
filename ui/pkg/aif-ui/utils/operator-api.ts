@@ -118,7 +118,9 @@ export interface ValidateOverride {
   /** @deprecated HTTPS Git credentials always use username plus password/PAT. */
   authType?:          string;
   username?:          string;
+  type?:              string;
   url?:               string;
+  gitRepo?:           string;
   insecureSkipVerify?: boolean;
 }
 
