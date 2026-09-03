@@ -50,15 +50,22 @@ func (c *helmClient) install(
 	install.Namespace = spec.Namespace
 	install.Version = spec.Version
 	// A ConfigMap the aif-ui chart also templates (aif-ui-config) can be created
-	// unowned by something other than this release — the operator's own
-	// self-heal, before any chart ever ran — and otherwise permanently blocks
-	// this install with "invalid ownership metadata" (SUSEAI-1039).
-	// TakeOwnership claims any pre-existing resource
-	// in the chart's manifest regardless of its current ownership, the same way
-	// blueprint.go already does for Fleet-installed charts colliding with
-	// pre-delivered Secrets. This operator only ever installs the one
-	// known extension chart, so the broadened scope (every resource in the
-	// manifest, not just that one ConfigMap) is an accepted, deliberate trade.
+	// unowned by something other than this release — the operator's own self-heal,
+	// before any chart ever ran — and otherwise permanently blocks this install
+	// with "invalid ownership metadata" (SUSEAI-1039). TakeOwnership claims any
+	// pre-existing resource in the chart's manifest regardless of its current
+	// ownership, the same way blueprint.go already does for Fleet-installed charts
+	// colliding with pre-delivered Secrets.
+	//
+	// This buys more than that one ConfigMap: it covers every resource the chart
+	// templates, and adopting an object owned by another Helm release transfers
+	// deletion rights to this one. In practice we only ever point
+	// InstallAIExtension at the aif-ui chart, whose objects are release-scoped
+	// apart from aif-ui-config — but that is a deployment convention, not an
+	// invariant: the chart comes from the CR (spec.source.helm.chartURL, or
+	// spec.extension.name for the ClusterRepo path). Accepted deliberately; the
+	// narrower alternative, stamping ownership metadata onto the one ConfigMap
+	// ahead of the install, is what this replaced.
 	install.TakeOwnership = true
 	if spec.RepoURL != "" {
 		install.RepoURL = spec.RepoURL
