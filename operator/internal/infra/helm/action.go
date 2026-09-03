@@ -51,9 +51,9 @@ func (c *helmClient) install(
 	install.Version = spec.Version
 	// A ConfigMap the aif-ui chart also templates (aif-ui-config) can be created
 	// unowned by something other than this release — the operator's own
-	// self-heal, or the UI's Settings page, before any chart ever ran — and
-	// otherwise permanently blocks this install with "invalid ownership
-	// metadata" (SUSEAI-1039). TakeOwnership claims any pre-existing resource
+	// self-heal, before any chart ever ran — and otherwise permanently blocks
+	// this install with "invalid ownership metadata" (SUSEAI-1039).
+	// TakeOwnership claims any pre-existing resource
 	// in the chart's manifest regardless of its current ownership, the same way
 	// blueprint.go already does for Fleet-installed charts colliding with
 	// pre-delivered Secrets. This operator only ever installs the one

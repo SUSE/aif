@@ -5,6 +5,7 @@
 
 import SuseaiResource, { Action, ActionOpts } from '../base/suseai-resource';
 import { InstallationMixin, StateMixin, MetadataMixin, ResourceUtils, InstallationInfo } from '../base/resource-mixin';
+import { browserSafeCatalogLogo } from '../../utils/catalog-logo';
 
 export interface AppResourceData {
   name: string;
@@ -67,12 +68,12 @@ export default class AppResource extends SuseaiResource {
     super(data, store, router, route);
     Object.assign(this, data);
     this.appName = data.name;
-    
+
     // Initialize mixins
     this.installationMixin = new InstallationMixin();
     this.stateMixin = new StateMixin();
     this.metadataMixin = new MetadataMixin();
-    
+
     // Copy installation data to mixin
     if (data.installations) {
       this.installationMixin.installations = data.installations;
@@ -190,7 +191,7 @@ export default class AppResource extends SuseaiResource {
    * Get app logo URL or placeholder
    */
   get logoUrl(): string {
-    return this.logo_url || this.getPlaceholderLogo();
+    return browserSafeCatalogLogo(this.logo_url) || this.getPlaceholderLogo();
   }
 
   /**
@@ -337,7 +338,7 @@ export default class AppResource extends SuseaiResource {
       actions.push(VIEW_LOGS_ACTION);
     }
 
-    // View resources action - available if installed  
+    // View resources action - available if installed
     if (this.isInstalled) {
       actions.push(VIEW_RESOURCES_ACTION);
     }
@@ -410,7 +411,7 @@ export default class AppResource extends SuseaiResource {
     }
 
     const clusters = clusterId ? [clusterId] : this.installationClusters;
-    
+
     return this.$dispatch('suseai/uninstall', {
       app: this,
       clusters
@@ -426,7 +427,7 @@ export default class AppResource extends SuseaiResource {
     }
 
     const clusters = clusterId ? [clusterId] : this.installationClusters;
-    
+
     return this.$dispatch('suseai/restart', {
       app: this,
       clusters
@@ -460,10 +461,10 @@ export default class AppResource extends SuseaiResource {
   /**
    * Get app logs from specific cluster
    */
-  async getLogs(clusterId: string, options?: { 
-    namespace?: string; 
-    releaseName?: string; 
-    lines?: number; 
+  async getLogs(clusterId: string, options?: {
+    namespace?: string;
+    releaseName?: string;
+    lines?: number;
   }): Promise<string[]> {
     const installation = this.getInstallationForCluster(clusterId);
     if (!installation) {
@@ -522,13 +523,13 @@ export default class AppResource extends SuseaiResource {
    */
   async goToInstall(clusterId?: string): Promise<void> {
     const cluster = clusterId || this.$currentRoute?.params?.cluster || 'local';
-    
+
     await this.$push({
       name: 'c-cluster-suseai-install',
-      params: { 
-        product: 'suseai', 
-        cluster, 
-        slug: this.slug_name 
+      params: {
+        product: 'suseai',
+        cluster,
+        slug: this.slug_name
       },
       query: { n: this.appName }
     });
@@ -539,13 +540,13 @@ export default class AppResource extends SuseaiResource {
    */
   async goToManage(clusterId?: string): Promise<void> {
     const cluster = clusterId || this.installationClusters[0] || this.$currentRoute?.params?.cluster || 'local';
-    
+
     await this.$push({
       name: 'c-cluster-suseai-manage',
-      params: { 
-        product: 'suseai', 
-        cluster, 
-        slug: this.slug_name 
+      params: {
+        product: 'suseai',
+        cluster,
+        slug: this.slug_name
       },
       query: { n: this.appName }
     });
@@ -586,7 +587,7 @@ export default class AppResource extends SuseaiResource {
    */
   matchesSearch(query: string): boolean {
     if (!query) return true;
-    
+
     const searchText = query.toLowerCase();
     return (
       this.appName.toLowerCase().includes(searchText) ||
@@ -650,7 +651,7 @@ const INSTALL_ACTION: Action = {
 
 const MANAGE_ACTION: Action = {
   action: 'manage',
-  label: 'Manage', 
+  label: 'Manage',
   icon: 'icon-edit',
   invoke: async (opts: ActionOpts) => {
     const app = opts.resource as AppResource;
@@ -676,7 +677,7 @@ const UNINSTALL_ACTION: Action = {
   invoke: async (opts: ActionOpts) => {
     const app = opts.resource as AppResource;
     const confirmMessage = `Are you sure you want to uninstall "${app.appName}"? This action cannot be undone.`;
-    
+
     if (confirm(confirmMessage)) {
       await app.uninstall(opts.cluster);
     }
@@ -747,7 +748,7 @@ const VIEW_RESOURCES_ACTION: Action = {
   icon: 'icon-cluster',
   invoke: async (opts: ActionOpts) => {
     const app = opts.resource as AppResource;
-    // This would need cluster selection in a real implementation  
+    // This would need cluster selection in a real implementation
     const clusterId = app.installedClusters[0]; // Use first cluster for now
     if (clusterId) {
       await app.getResources(clusterId);

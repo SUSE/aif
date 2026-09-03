@@ -246,16 +246,12 @@ type settingsSecretReader struct {
 	c client.Client
 }
 
-func (r settingsSecretReader) ReadSecretKey(ctx context.Context, namespace, name, key string) (string, error) {
+func (r settingsSecretReader) ReadSecret(ctx context.Context, namespace, name string) (map[string][]byte, error) {
 	var secret corev1.Secret
 	if err := r.c.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &secret); err != nil {
-		return "", fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+		return nil, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
 	}
-	val, ok := secret.Data[key]
-	if !ok {
-		return "", fmt.Errorf("key %q not found in secret %q", key, name)
-	}
-	return string(val), nil
+	return secret.Data, nil
 }
 
 type gitPublishBody struct {
@@ -322,7 +318,9 @@ type validateOverride struct {
 	CredSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"credSecretRef,omitempty"`
 	RepoURL        string                           `json:"repoURL,omitempty"`
 	Branch         string                           `json:"branch,omitempty"`
-	// rancherCatalog-specific overrides (TokenSecretRef above carries the token).
+	AuthType       string                           `json:"authType,omitempty"`
+	Username       string                           `json:"username,omitempty"`
+	// CA trust override for registry, Git, or Rancher catalog validation.
 	CABundleSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 	URL                string                           `json:"url,omitempty"`
 	InsecureSkipVerify bool                             `json:"insecureSkipVerify,omitempty"`
@@ -386,7 +384,7 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 }
 
 func (h *SettingsHandler) validateRegistry(ctx context.Context, target string, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
-	res := validateResult{Target: target, Host: h.registryHost(target, s)}
+	res := validateResult{Target: target, Host: h.registryHost(target, s, ov.URL)}
 
 	savedUser, savedToken, savedCA := savedRegistryRefs(target, s)
 	userRef := ov.UserSecretRef
@@ -463,11 +461,15 @@ func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1
 	// Git fallback is all-or-nothing on repoURL (unlike the per-field registry
 	// fallback): repoURL/branch/credRef form one unit and the UI always sends all
 	// three together, so a partial git override is not a real case to support.
-	repoURL, branch, credRef := ov.RepoURL, ov.Branch, ov.CredSecretRef
+	repoURL, branch, authType, username := ov.RepoURL, ov.Branch, ov.AuthType, ov.Username
+	credRef, caRef := ov.CredSecretRef, ov.CABundleSecretRef
 	if repoURL == "" {
 		repoURL = s.Spec.Fleet.RepoURL
 		branch = s.Spec.Fleet.Branch
+		authType = s.Spec.Fleet.AuthType
+		username = s.Spec.Fleet.Username
 		credRef = s.Spec.Fleet.CredSecretRef
+		caRef = s.Spec.Fleet.CABundleSecretRef
 	}
 	if repoURL == "" {
 		res.Status = statusSkipped
@@ -478,7 +480,10 @@ func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1
 	tmp := &aiplatformv1alpha1.Settings{}
 	tmp.Spec.Fleet.RepoURL = repoURL
 	tmp.Spec.Fleet.Branch = branch
+	tmp.Spec.Fleet.AuthType = authType
+	tmp.Spec.Fleet.Username = username
 	tmp.Spec.Fleet.CredSecretRef = credRef
+	tmp.Spec.Fleet.CABundleSecretRef = caRef
 
 	gc, err := git.NewFromSettings(ctx, tmp, h.namespace, settingsSecretReader{h.client})
 	if err != nil {
@@ -613,7 +618,10 @@ func secretRefComplete(ref *aiplatformv1alpha1.SecretKeyRef) bool {
 	return ref != nil && ref.Name != "" && ref.Key != ""
 }
 
-func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Settings) string {
+func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Settings, overrideURL string) string {
+	if overrideURL != "" {
+		return registryurl.Host(overrideURL)
+	}
 	switch target {
 	case "applicationCollection":
 		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
@@ -626,6 +634,9 @@ func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Sett
 		}
 		return defaultSUSERegistryHost
 	case "nvidia":
+		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
+			return registryurl.Host(s.Spec.RegistryEndpoints.Nvidia)
+		}
 		return defaultNvidiaHost
 	}
 	return ""

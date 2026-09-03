@@ -7,6 +7,7 @@
 import { AppState } from '../types/state-types';
 import { AppSummary, AppInstallationInfo } from '../../types/app-types';
 import AppResource from '../../models/app/app-resource';
+import { browserSafeCatalogLogo } from '../../utils/catalog-logo';
 
 // === Initial State ===
 function createInitialState(): AppState {
@@ -44,14 +45,14 @@ const getters = {
   allApps: (state: AppState): AppSummary[] => {
     return Object.values(state.apps);
   },
-  
+
   appById: (state: AppState) => (id: string): AppSummary | null => {
     return state.apps[id] || null;
   },
-  
+
   appsByCategory: (state: AppState): Record<string, AppSummary[]> => {
     const result: Record<string, AppSummary[]> = {};
-    
+
     Object.values(state.apps).forEach(app => {
       const category = app.category || 'Other';
       if (!result[category]) {
@@ -59,13 +60,13 @@ const getters = {
       }
       result[category].push(app);
     });
-    
+
     return result;
   },
-  
+
   appsByRepository: (state: AppState): Record<string, AppSummary[]> => {
     const result: Record<string, AppSummary[]> = {};
-    
+
     Object.values(state.apps).forEach(app => {
       const repo = app.repository?.name || 'Unknown';
       if (!result[repo]) {
@@ -73,85 +74,85 @@ const getters = {
       }
       result[repo].push(app);
     });
-    
+
     return result;
   },
-  
+
   installedApps: (state: AppState, getters: any, rootState: any): AppSummary[] => {
     return Object.values(state.apps).filter(app => app.flags.isInstalled);
   },
-  
+
   availableApps: (state: AppState, getters: any, rootState: any): AppSummary[] => {
     return Object.values(state.apps).filter(app => !app.flags.isInstalled);
   },
-  
+
   filteredApps: (state: AppState): AppSummary[] => {
     let apps = Object.values(state.apps);
     const filters = state.filters;
-    
+
     // Search text filter
     if (filters.searchText) {
       const searchTerm = filters.searchText.toLowerCase();
-      apps = apps.filter(app => 
+      apps = apps.filter(app =>
         app.name.toLowerCase().includes(searchTerm) ||
         app.displayName?.toLowerCase().includes(searchTerm) ||
         app.description?.toLowerCase().includes(searchTerm) ||
         (app.keywords || []).some(keyword => keyword.toLowerCase().includes(searchTerm))
       );
     }
-    
+
     // Category filter
     if (filters.categories.length > 0) {
-      apps = apps.filter(app => 
+      apps = apps.filter(app =>
         filters.categories.includes(app.category || 'Other')
       );
     }
-    
+
     // Repository filter
     if (filters.repositories.length > 0) {
-      apps = apps.filter(app => 
+      apps = apps.filter(app =>
         filters.repositories.includes(app.repository.name)
       );
     }
-    
+
     // Status filter
     if (filters.statuses.length > 0) {
-      apps = apps.filter(app => 
+      apps = apps.filter(app =>
         filters.statuses.includes(app.status)
       );
     }
-    
+
     // Cluster filter
     if (filters.clusters.length > 0) {
       apps = apps.filter(app => {
         const appInstallations = app.installations || [];
-        return appInstallations.some(installation => 
+        return appInstallations.some(installation =>
           filters.clusters.includes(installation.clusterId)
         );
       });
     }
-    
+
     // Only installed filter
     if (filters.onlyInstalled) {
       apps = apps.filter(app => app.flags.isInstalled);
     }
-    
+
     // Only favorites filter (placeholder - you'd need to implement favorites)
     if (filters.onlyFavorites) {
       // apps = apps.filter(app => app.flags.isFavorite);
     }
-    
+
     return apps;
   },
-  
+
   searchResults: (state: AppState): AppSummary[] => {
     if (!state.filters.searchText) {
       return [];
     }
-    
+
     const searchTerm = state.filters.searchText.toLowerCase();
     const results = new Set<AppSummary>();
-    
+
     // Search by name
     Object.entries(state.searchIndex.byName).forEach(([name, appIds]) => {
       if (name.includes(searchTerm)) {
@@ -161,7 +162,7 @@ const getters = {
         });
       }
     });
-    
+
     // Search by keyword
     Object.entries(state.searchIndex.byKeyword).forEach(([keyword, appIds]) => {
       if (keyword.includes(searchTerm)) {
@@ -171,7 +172,7 @@ const getters = {
         });
       }
     });
-    
+
     // Search by description
     Object.entries(state.searchIndex.byDescription).forEach(([token, appIds]) => {
       if (token.includes(searchTerm)) {
@@ -181,10 +182,10 @@ const getters = {
         });
       }
     });
-    
+
     return Array.from(results);
   },
-  
+
   categories: (state: AppState): string[] => {
     const categories = new Set<string>();
     Object.values(state.apps).forEach(app => {
@@ -192,7 +193,7 @@ const getters = {
     });
     return Array.from(categories).sort();
   },
-  
+
   repositories: (state: AppState): string[] => {
     const repos = new Set<string>();
     Object.values(state.apps).forEach(app => {
@@ -200,18 +201,18 @@ const getters = {
     });
     return Array.from(repos).sort();
   },
-  
+
   isLoading: (state: AppState): boolean => {
-    return state.loading.loadingAll || 
+    return state.loading.loadingAll ||
            state.loading.loadingCategories ||
            Object.values(state.loading.loadingDetails).some(loading => loading) ||
            Object.values(state.loading.loadingCharts).some(loading => loading);
   },
-  
+
   hasErrors: (state: AppState): boolean => {
     return Object.keys(state.loading.errors).length > 0;
   },
-  
+
   getError: (state: AppState) => (appId: string): string | null => {
     return state.loading.errors[appId] || null;
   }
@@ -224,27 +225,27 @@ const mutations = {
     state.apps = {};
     state.appsByCategory = {};
     state.appsByRepository = {};
-    
+
     // Add new apps
     apps.forEach(app => {
       state.apps[app.id] = app;
     });
-    
+
     // Rebuild indexes
     mutations.BUILD_SEARCH_INDEX(state);
     state.lastUpdated = new Date().toISOString();
   },
-  
+
   SET_APP(state: AppState, app: AppSummary) {
     state.apps[app.id] = app;
     mutations.BUILD_SEARCH_INDEX(state);
   },
-  
+
   REMOVE_APP(state: AppState, appId: string) {
     delete state.apps[appId];
     mutations.BUILD_SEARCH_INDEX(state);
   },
-  
+
   UPDATE_APP_INSTALLATIONS(state: AppState, payload: { appId: string; installations: AppInstallationInfo[] }) {
     const app = state.apps[payload.appId];
     if (app) {
@@ -259,21 +260,21 @@ const mutations = {
         ready: installation.status === 'deployed',
         error: installation.error?.message
       }));
-      
+
       // Update flags based on installations
       app.flags.isInstalled = payload.installations.length > 0;
       app.flags.isRunning = payload.installations.some(i => i.status === 'deployed');
       app.flags.hasFailed = payload.installations.some(i => i.status === 'failed');
     }
   },
-  
+
   SET_FILTERS(state: AppState, filters: Partial<AppState['filters']>) {
     Object.assign(state.filters, filters);
   },
-  
+
   SET_LOADING(state: AppState, payload: { appId?: string; loading: boolean; type?: string }) {
     const { appId, loading, type = 'details' } = payload;
-    
+
     if (appId) {
       if (type === 'details') {
         state.loading.loadingDetails[appId] = loading;
@@ -288,7 +289,7 @@ const mutations = {
       }
     }
   },
-  
+
   SET_ERROR(state: AppState, payload: { appId: string; error: string | null }) {
     if (payload.error) {
       state.loading.errors[payload.appId] = payload.error;
@@ -296,7 +297,7 @@ const mutations = {
       delete state.loading.errors[payload.appId];
     }
   },
-  
+
   BUILD_SEARCH_INDEX(state: AppState) {
     // Reset index
     state.searchIndex = {
@@ -304,21 +305,21 @@ const mutations = {
       byKeyword: {},
       byDescription: {}
     };
-    
+
     Object.values(state.apps).forEach(app => {
       // Index by name
       const names = [
         app.name.toLowerCase(),
         ...(app.displayName ? [app.displayName.toLowerCase()] : [])
       ];
-      
+
       names.forEach(name => {
         if (!state.searchIndex.byName[name]) {
           state.searchIndex.byName[name] = [];
         }
         state.searchIndex.byName[name].push(app.id);
       });
-      
+
       // Index by keywords
       (app.keywords || []).forEach(keyword => {
         const key = keyword.toLowerCase();
@@ -327,7 +328,7 @@ const mutations = {
         }
         state.searchIndex.byKeyword[key].push(app.id);
       });
-      
+
       // Index by description tokens
       if (app.description) {
         const tokens = app.description.toLowerCase().split(/\s+/).filter(token => token.length > 2);
@@ -340,7 +341,7 @@ const mutations = {
       }
     });
   },
-  
+
   CLEAR_CACHE(state: AppState) {
     state.apps = {};
     state.appsByCategory = {};
@@ -365,23 +366,23 @@ const mutations = {
 const actions = {
   async fetchApp({ commit }: any, appId: string): Promise<AppSummary> {
     commit('SET_LOADING', { appId, loading: true });
-    
+
     try {
       // Fetch specific app details
       // For now, return placeholder data until integrated with existing services
       const app: any = null; // Placeholder - will be replaced with actual service calls
-      
+
       if (!app) {
         throw new Error(`App ${appId} not found`);
       }
-      
+
       // Convert to AppSummary and commit
       const appSummary: AppSummary = {
         id: app.slug_name || app.name,
         name: app.name,
         displayName: app.display_name || app.name,
         description: app.description,
-        icon: app.logo_url,
+        icon: browserSafeCatalogLogo(app.logo_url),
         version: app.version,
         appVersion: app.app_version,
         category: app.category || 'Other',
@@ -408,12 +409,12 @@ const actions = {
         updated: app.last_updated_at || new Date().toISOString(),
         created: app.created_at
       };
-      
+
       commit('SET_APP', appSummary);
       commit('SET_LOADING', { appId, loading: false });
-      
+
       return appSummary;
-      
+
     } catch (error: any) {
       console.error(`Failed to fetch app ${appId}:`, error);
       commit('SET_ERROR', { appId, error: error.message || 'Failed to fetch app' });
@@ -421,19 +422,19 @@ const actions = {
       throw error;
     }
   },
-  
+
   async searchApps({ commit, getters }: any, query: string): Promise<AppSummary[]> {
     // Update search filter
     commit('SET_FILTERS', { searchText: query });
-    
+
     // Return search results
     return getters.searchResults;
   },
-  
+
   updateFilters({ commit }: any, filters: Partial<AppState['filters']>) {
     commit('SET_FILTERS', filters);
   },
-  
+
   clearCache({ commit }: any) {
     commit('CLEAR_CACHE');
   }

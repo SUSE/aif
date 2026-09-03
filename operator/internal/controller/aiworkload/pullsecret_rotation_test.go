@@ -121,3 +121,36 @@ func TestSettingsToAIWorkloads_EnqueuesOnlyBlueprintWorkloads(t *testing.T) {
 		t.Errorf("expected the blueprint workload %q, got %q", "agent", reqs[0].Name)
 	}
 }
+
+func TestClusterRepoToAIWorkloads_EnqueuesChartSourcedWorkloads(t *testing.T) {
+	s := rotationScheme(t)
+	bp := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "agent-system"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{Source: aiplatformv1alpha1.AIWorkloadSource{
+			Blueprint: &aiplatformv1alpha1.BlueprintSource{Name: "rag", Version: "1.0.0"},
+		}},
+	}
+	app := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "litellm", Namespace: "litellm-system"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{Source: aiplatformv1alpha1.AIWorkloadSource{
+			App: &aiplatformv1alpha1.AppSource{
+				ChartRepo: "suse-ai-registry", ChartName: "litellm", ChartVersion: "1.0.0", Release: "litellm",
+			},
+		}},
+	}
+	other := &aiplatformv1alpha1.AIWorkload{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "other-system"}}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bp, app, other).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: s, OperatorNamespace: "aif-operator"}
+
+	reqs := r.clusterRepoToAIWorkloads(context.Background(), nil)
+	if len(reqs) != 2 {
+		t.Fatalf("expected 2 chart-sourced AIWorkloads, got %d", len(reqs))
+	}
+	got := map[string]bool{}
+	for _, req := range reqs {
+		got[req.Name] = true
+	}
+	if !got["agent"] || !got["litellm"] || got["other"] {
+		t.Fatalf("unexpected ClusterRepo reconcile requests: %#v", got)
+	}
+}

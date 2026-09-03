@@ -140,11 +140,11 @@
             @keydown.space.prevent="onTileClick(app)"
           >
             <div class="tile-header">
-              <template v-if="app.library === 'nvidia' && (!app.logo_url || failedLogos[app.slug_name])">
+              <template v-if="app.library === 'nvidia'">
                 <img :src="nvidiaLogo" alt="" class="tile-logo nvidia-logo--light" />
                 <img :src="nvidiaLogoDark" alt="" class="tile-logo nvidia-logo--dark" />
               </template>
-              <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="tile-logo" />
+              <img v-else :src="logoFor(app)" alt="" @error="onImgError" class="tile-logo" />
               <div class="tile-info">
                 <div class="tile-title-row">
                   <h3 class="tile-title">{{ app.name }}</h3>
@@ -206,11 +206,11 @@
               <!-- Name column with logo -->
               <td class="col-name">
                 <div class="name-cell">
-                  <template v-if="app.library === 'nvidia' && (!app.logo_url || failedLogos[app.slug_name])">
+                  <template v-if="app.library === 'nvidia'">
                     <img :src="nvidiaLogo" alt="" class="table-logo nvidia-logo--light" />
                     <img :src="nvidiaLogoDark" alt="" class="table-logo nvidia-logo--dark" />
                   </template>
-                  <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="table-logo" />
+                  <img v-else :src="logoFor(app)" alt="" @error="onImgError" class="table-logo" />
                   <div class="name-info">
                     <div class="app-name">{{ app.name }}</div>
                     <div v-if="app.packaging_format || (app.labels && app.labels.length)" class="app-meta">
@@ -301,6 +301,7 @@ import type { AppCollectionItem, ManagedRepo } from '../services/app-collection'
 import AppLabels from '../formatters/AppLabels.vue';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
+import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from '../services/static-catalog';
 import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 
@@ -447,14 +448,22 @@ export default defineComponent({
         );
       }
 
-      // Sort. "supported" groups supported apps first, then alphabetical within each
+      // Sort. "supported" groups supported apps first, then SUSE-AI library before
+      // NVIDIA (matching the library-tab order), then alphabetical within each
       // group; "alphabetical" is a straight name sort.
       if (sortBy.value === 'alphabetical') {
         arr.sort(byName);
       } else {
+        const libraryRank = (app: AppCollectionItem) => {
+          const i = presentLibraries.value.indexOf(libraryOf(app));
+          return i === -1 ? presentLibraries.value.length : i;
+        };
         arr.sort((a, b) => {
-          const d = Number(isAppSupported(b)) - Number(isAppSupported(a));
-          return d !== 0 ? d : byName(a, b);
+          const s = Number(isAppSupported(b)) - Number(isAppSupported(a));
+          if (s !== 0) return s;
+          const l = libraryRank(a) - libraryRank(b);
+          if (l !== 0) return l;
+          return byName(a, b);
         });
       }
 
@@ -467,18 +476,11 @@ export default defineComponent({
     };
 
     const logoFor = (item: AppCollectionItem): string => {
-      if (item.logo_url) return item.logo_url;
-      return require('../assets/generic-app.svg');
+      return browserSafeCatalogLogo(item.logo_url) || require('../assets/generic-app.svg');
     };
 
-    const failedLogos = ref<Record<string, boolean>>({});
-
-    const onImgError = (event: Event, item: AppCollectionItem) => {
-      if (item.library === 'nvidia') {
-        failedLogos.value = { ...failedLogos.value, [item.slug_name]: true };
-      } else {
-        (event.target as HTMLImageElement).src = require('../assets/generic-app.svg');
-      }
+    const onImgError = (event: Event) => {
+      (event.target as HTMLImageElement).src = require('../assets/generic-app.svg');
     };
 
     const refresh = async () => {
@@ -604,7 +606,6 @@ export default defineComponent({
       formatPackagingType,
       logoFor,
       onImgError,
-      failedLogos,
       goToSettings,
       dismissWarnings,
       t,

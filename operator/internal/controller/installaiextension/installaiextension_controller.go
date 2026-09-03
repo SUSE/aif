@@ -453,7 +453,7 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // too.
 //
 // Deliberately does not touch Helm ownership metadata: whoever creates this
-// object (this self-heal, or the UI's Settings page) doesn't need to get that
+// object (this self-heal, for one) doesn't need to get that
 // right, because the operator's own Helm installs/upgrades set TakeOwnership
 // (see helm.install/helm.upgrade) and adopt it regardless of its current
 // ownership state (SUSEAI-1039). Hand-stamping it here duplicated that and, in

@@ -18,6 +18,7 @@ package git
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -35,18 +36,20 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
-// SecretReader reads a secret key value from a Kubernetes Secret.
+// SecretReader reads the data stored in a Kubernetes Secret.
 type SecretReader interface {
-	ReadSecretKey(ctx context.Context, namespace, name, key string) (string, error)
+	ReadSecret(ctx context.Context, namespace, name string) (map[string][]byte, error)
 }
 
 // Client performs in-memory git operations against a remote repository.
 type Client struct {
-	repoURL string
-	branch  string
-	auth    *gogithttp.BasicAuth
+	repoURL  string
+	branch   string
+	auth     *gogithttp.BasicAuth
+	caBundle []byte
 }
 
 // NewFromSettings constructs a Client from the Fleet section of a Settings CR.
@@ -62,13 +65,47 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 	var auth *gogithttp.BasicAuth
 	if s.Spec.Fleet.CredSecretRef != nil {
 		ref := s.Spec.Fleet.CredSecretRef
-		password, err := reader.ReadSecretKey(ctx, namespace, ref.Name, ref.Key)
-		if err != nil {
-			return nil, fmt.Errorf("read git credential: %w", err)
+		switch s.Spec.Fleet.AuthType {
+		case "", "token", "basic":
+			// token and basic are deprecated compatibility aliases. Git HTTPS
+			// credentials use HTTP Basic in every case.
+		default:
+			return nil, fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
 		}
-		auth = &gogithttp.BasicAuth{Username: "token", Password: password}
+		secretData, err := reader.ReadSecret(ctx, namespace, ref.Name)
+		if err != nil {
+			return nil, fmt.Errorf("read git credential Secret %s: %w", ref.Name, err)
+		}
+		password, found := secretData[ref.Key]
+		if !found {
+			return nil, fmt.Errorf("git credential Secret %s does not contain key %q", ref.Name, ref.Key)
+		}
+		if len(password) == 0 {
+			return nil, fmt.Errorf("git credential must not be empty")
+		}
+		username := credentials.ResolveGitHTTPSUsername(s.Spec.Fleet.Username, secretData)
+		auth = &gogithttp.BasicAuth{Username: username, Password: string(password)}
+	} else if s.Spec.Fleet.AuthType != "" || s.Spec.Fleet.Username != "" {
+		return nil, fmt.Errorf("fleet.authType or fleet.username requires fleet.credSecretRef")
 	}
-	return &Client{repoURL: s.Spec.Fleet.RepoURL, branch: branch, auth: auth}, nil
+	var caBundle []byte
+	if s.Spec.Fleet.CABundleSecretRef != nil {
+		ref := s.Spec.Fleet.CABundleSecretRef
+		secretData, err := reader.ReadSecret(ctx, namespace, ref.Name)
+		if err != nil {
+			return nil, fmt.Errorf("read git CA bundle: %w", err)
+		}
+		value, found := secretData[ref.Key]
+		if !found {
+			return nil, fmt.Errorf("git CA Secret %s does not contain key %q", ref.Name, ref.Key)
+		}
+		caBundle = value
+		pool := x509.NewCertPool()
+		if len(caBundle) == 0 || !pool.AppendCertsFromPEM(caBundle) {
+			return nil, fmt.Errorf("read git CA bundle: secret %s key %s does not contain a PEM certificate", ref.Name, ref.Key)
+		}
+	}
+	return &Client{repoURL: s.Spec.Fleet.RepoURL, branch: branch, auth: auth, caBundle: caBundle}, nil
 }
 
 // CheckAuth verifies the configured repository is reachable and the credentials
@@ -82,7 +119,7 @@ func (c *Client) CheckAuth(ctx context.Context) error {
 		Name: gogit.DefaultRemoteName,
 		URLs: []string{c.repoURL},
 	})
-	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth})
+	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth, CABundle: c.caBundle})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		return nil
 	}
@@ -159,6 +196,7 @@ func (c *Client) clone(ctx context.Context) (*gogit.Repository, *gogit.Worktree,
 		SingleBranch:  true,
 		Depth:         1,
 		Auth:          c.auth,
+		CABundle:      c.caBundle,
 	})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		// A freshly created GitOps repo has no commits yet, so go-git cannot
@@ -220,6 +258,7 @@ func (c *Client) commitAndPush(ctx context.Context, repo *gogit.Repository, wt *
 		RemoteName: gogit.DefaultRemoteName,
 		RefSpecs:   []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", branchRef, branchRef))},
 		Auth:       c.auth,
+		CABundle:   c.caBundle,
 	}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
 		return "", fmt.Errorf("push: %w", err)
 	}

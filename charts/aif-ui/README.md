@@ -11,7 +11,7 @@ The chart creates a Deployment and Service that serve the built extension assets
 
 ## Standalone install/upgrade
 
-This chart templates `aif-ui-config`, a ConfigMap the aif-operator and the UI's own Settings page can also create or recreate outside of Helm (see `templates/configmap.yaml`). The aif-operator's own installs/upgrades handle this automatically, but if you run `helm install`/`helm upgrade` for this chart directly — outside the operator, e.g. for local development or troubleshooting — and `aif-ui-config` already exists unowned by Helm, the command fails with `invalid ownership metadata`. Pass `--take-ownership` to adopt it:
+This chart templates `aif-ui-config`, a ConfigMap the aif-operator can also create or recreate outside of Helm (see `templates/configmap.yaml`). The aif-operator's own installs/upgrades handle this automatically, but if you run `helm install`/`helm upgrade` for this chart directly — outside the operator, e.g. for local development or troubleshooting — and `aif-ui-config` already exists unowned by Helm, the command fails with `invalid ownership metadata`. Pass `--take-ownership` to adopt it:
 
 ```
 helm install aif-ui-server . --take-ownership

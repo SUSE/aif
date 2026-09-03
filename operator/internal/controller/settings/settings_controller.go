@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	stderrors "errors"
 	"fmt"
 	"net/url"
@@ -281,6 +282,7 @@ func (r *SettingsReconciler) isReferencedSettingsSecret(ctx context.Context, nam
 	}
 	refs := []*aiplatformv1alpha1.SecretKeyRef{
 		s.Spec.Fleet.CredSecretRef,
+		s.Spec.Fleet.CABundleSecretRef,
 		s.Spec.ApplicationCollection.UserSecretRef,
 		s.Spec.ApplicationCollection.TokenSecretRef,
 		s.Spec.ApplicationCollection.CABundleSecretRef,
@@ -398,17 +400,30 @@ func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatfor
 	if branch == "" {
 		branch = "main"
 	}
+	if s.Spec.Fleet.CredSecretRef == nil && (s.Spec.Fleet.AuthType != "" || s.Spec.Fleet.Username != "") {
+		return fmt.Errorf("fleet.authType or fleet.username requires fleet.credSecretRef")
+	}
 
 	spec := map[string]any{
 		"repo":   s.Spec.Fleet.RepoURL,
 		"branch": branch,
-		"paths":  []any{"workloads"},
+		"paths":  []any{"blueprints", "workloads"},
 	}
 	if s.Spec.Fleet.CredSecretRef != nil {
 		if err := r.mirrorGitCredSecret(ctx, s); err != nil {
 			return fmt.Errorf("mirror git credential secret: %w", err)
 		}
 		spec["clientSecretName"] = s.Spec.Fleet.CredSecretRef.Name
+	}
+	if s.Spec.Fleet.CABundleSecretRef != nil {
+		caBundle, err := r.readGitCABundle(ctx, s.Namespace, s.Spec.Fleet.CABundleSecretRef)
+		if err != nil {
+			return err
+		}
+		// Fleet declares caBundle as []byte (OpenAPI format: byte). Because this
+		// controller applies an unstructured object, it must perform the JSON
+		// base64 encoding that a typed []byte field would receive automatically.
+		spec["caBundle"] = base64.StdEncoding.EncodeToString(caBundle)
 	}
 
 	gitRepo := &unstructured.Unstructured{
@@ -430,11 +445,33 @@ func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatfor
 	)
 }
 
-// mirrorGitCredSecret copies the git credential secret from the Settings namespace
-// into fleet-local in the format Fleet expects for HTTPS auth.
-// Fleet detects auth type from secret keys: it requires username+password
-// (kubernetes.io/basic-auth) for token/basic auth. A raw Opaque secret with a
-// single "token" key is misidentified as GitHub App auth.
+// readGitCABundle resolves an explicitly configured HTTPS Git CA. Invalid or
+// unreadable references are fatal: omitting the trust material would make
+// Fleet and AIF fail differently and could hide an unsafe configuration.
+func (r *SettingsReconciler) readGitCABundle(
+	ctx context.Context,
+	namespace string,
+	ref *aiplatformv1alpha1.SecretKeyRef,
+) ([]byte, error) {
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: ref.Name}, &secret); err != nil {
+		return nil, fmt.Errorf("read Git CA Secret %s/%s: %w", namespace, ref.Name, err)
+	}
+	caBundle, found := secret.Data[ref.Key]
+	if !found {
+		return nil, fmt.Errorf("git CA Secret %s/%s does not contain key %q", namespace, ref.Name, ref.Key)
+	}
+	pool := x509.NewCertPool()
+	if len(caBundle) == 0 || !pool.AppendCertsFromPEM(caBundle) {
+		return nil, fmt.Errorf("git CA Secret %s/%s key %q does not contain a PEM certificate", namespace, ref.Name, ref.Key)
+	}
+	return caBundle, nil
+}
+
+// mirrorGitCredSecret copies the Git credential from the Settings namespace
+// into fleet-local in the single HTTPS basic-auth shape Fleet understands. The
+// selected credential may be a password or personal access token; neither AIF
+// nor Fleet sends it as an HTTP Bearer token.
 func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	ref := s.Spec.Fleet.CredSecretRef
 
@@ -443,23 +480,27 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 		return fmt.Errorf("read source secret %s/%s: %w", s.Namespace, ref.Name, err)
 	}
 
-	mirrorData := src.Data
-	mirrorType := src.Type
-
-	// For token and basic auth, Fleet requires kubernetes.io/basic-auth with
-	// username and password keys. Transform if the source is a raw token secret.
-	if s.Spec.Fleet.AuthType == "token" || s.Spec.Fleet.AuthType == "basic" {
-		token := src.Data[ref.Key]
-		username := src.Data["username"]
-		if len(username) == 0 {
-			username = []byte("token")
-		}
-		mirrorData = map[string][]byte{
-			"username": username,
-			"password": token,
-		}
-		mirrorType = corev1.SecretTypeBasicAuth
+	switch s.Spec.Fleet.AuthType {
+	case "", "token", "basic":
+		// token and basic are deprecated compatibility aliases. Fleet uses the
+		// same kubernetes.io/basic-auth Secret for both.
+	default:
+		return fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
 	}
+
+	password, found := src.Data[ref.Key]
+	if !found {
+		return fmt.Errorf("git credential Secret %s/%s does not contain key %q", s.Namespace, ref.Name, ref.Key)
+	}
+	if len(password) == 0 {
+		return fmt.Errorf("git credential must not be empty")
+	}
+	username := []byte(credentials.ResolveGitHTTPSUsername(s.Spec.Fleet.Username, src.Data))
+	mirrorData := map[string][]byte{
+		corev1.BasicAuthUsernameKey: username,
+		corev1.BasicAuthPasswordKey: password,
+	}
+	mirrorType := corev1.SecretTypeBasicAuth
 
 	// Check if the existing mirror has the wrong type — secret type is immutable,
 	// so we must delete and recreate rather than patch.

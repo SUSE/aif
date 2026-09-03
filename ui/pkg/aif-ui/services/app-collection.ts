@@ -2,21 +2,14 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
 import { getSettings, getRegistryCredentials } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from './static-catalog';
-
-// Canonical OCI registry URLs for the two SUSE chart repositories.
-// These are the single source of truth for all hardcoded registry URLs in the codebase.
-// Air-gapped environments override these via Settings → registryEndpoints.
-export const APP_COLLECTION_REPO_URL = 'oci://dp.apps.rancher.io/charts';
-export const SUSE_REGISTRY_REPO_URL  = 'oci://registry.suse.com/ai/charts';
-
-// The single NGC Helm registry host. A repo is classified 'nvidia' iff its URL
-// host equals this (see getLibraryFromRepoUrl); mirror of the operator's NGCHost.
-export const NGC_HOST = 'helm.ngc.nvidia.com';
-
-// NVIDIA NGC Helm repositories (HTTPS, public charts). Images are gated behind nvcr.io.
-export const NVIDIA_REPO_URL           = `https://${NGC_HOST}/nvidia`;
-export const NVIDIA_BLUEPRINT_REPO_URL = `https://${NGC_HOST}/nvidia/blueprint`;
+import {
+  APP_COLLECTION_REPO_URL,
+  SUSE_REGISTRY_REPO_URL,
+  NGC_HOST,
+  NVIDIA_REPO_URL,
+} from './registry-endpoints';
 
 export type PackagingFormat = 'HELM_CHART' | 'CONTAINER';
 
@@ -80,10 +73,7 @@ export interface RepoAppsResult {
 export type NvidiaAppsResult = RepoAppsResult;
 
 function normalizeLogoUrl(logo?: string): string | undefined {
-  if (!logo) return undefined;
-  try { new URL(logo); return logo; } catch { /* not absolute */ }
-  // These are relative (e.g. "/logos/xxx.png"); load directly from upstream
-  return logo.startsWith('/logos/') ? `https://api.apps.rancher.io${logo}` : logo;
+  return browserSafeCatalogLogo(logo);
 }
 
 
@@ -96,20 +86,13 @@ export async function findManagedRepoNameByUrl($store: any, targetUrl: string): 
   return repo?.name ?? null;
 }
 
-/** Determine library type from repository URL.
+/** Determine library type from a repository URL for connected-mode discovery.
  *
  * NVIDIA classification is HOST-based: any helm.ngc.nvidia.com repo (org OR
  * team, e.g. .../nvidia, .../nvidia/omniverse, .../nim/nvidia) is 'nvidia'.
- * This is what tags the workload vendor=nvidia so the operator injects
- * ngc-secret/ngc-api (nvcr.io image pulls) — required by every NGC chart.
  *
- * Air-gap safety (by construction): this MUST be called with the LIVE
- * ClusterRepo URL (spec.url / spec.ociRepo), never the catalog repository_url.
- * In air-gap the live URL is the private mirror (oci://…), whose host is never
- * helm.ngc.nvidia.com, so it correctly stays 'suse' and uses the combined
- * injector that already carries nvcr.io auth. Contract: every caller MUST pass the
- * live ClusterRepo URL (spec.url / spec.ociRepo), never a catalog repository_url —
- * passing the catalog URL in air-gap would misclassify the repo as 'nvidia'.
+ * A private mirror URL cannot carry source identity. Installation paths must
+ * use getLibraryForClusterRepo so the stable ClusterRepo name wins.
  */
 export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | undefined {
   // Normalize URL by removing trailing slashes and lowercasing for comparison.
@@ -130,6 +113,25 @@ export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | u
   }
 
   return undefined;
+}
+
+/**
+ * Classify a chart source by its stable ClusterRepo identity first, then fall
+ * back to URL discovery for administrator-created connected repositories.
+ * Private mirrors deliberately change the URL, but not the well-known source
+ * name referenced by applications and Blueprints.
+ */
+export function getLibraryForClusterRepo(
+  repoName: string,
+  repoUrl: string,
+): 'suse-ai' | 'nvidia' | undefined {
+  if (repoName === 'application-collection' || repoName === 'suse-ai-registry') {
+    return 'suse-ai';
+  }
+  if (repoName === 'nvidia' || repoName === 'nvidia-blueprints') {
+    return 'nvidia';
+  }
+  return getLibraryFromRepoUrl(repoUrl);
 }
 
 /** Resolve the ClusterRepo name to install an app from. Dynamic-mode items carry
@@ -509,7 +511,7 @@ export function overlayCuratedMetadata(
       documentation_url:   c.documentation_url  || app.documentation_url,
       reference_guide_url: c.reference_guide_url || app.reference_guide_url,
       changelog_url:       c.changelog_url       || app.changelog_url,
-      logo_url:            c.logo_url            || app.logo_url,
+      logo_url:            browserSafeCatalogLogo(c.logo_url) || browserSafeCatalogLogo(app.logo_url),
       // live wins, curated fallback
       name:            app.name            || c.name,
       description:     app.description     || c.description,

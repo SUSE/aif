@@ -3,11 +3,14 @@ import AsyncButton      from '@shell/components/AsyncButton';
 import { Banner }       from '@components/Banner';
 import Loading          from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
-import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
-import { loadOperatorConfig, getOperatorConfig, getOperatorNamespace, saveOperatorConfig, isConfigMapFound, hasInstallAIExtension, isExtensionCheckForbidden } from '../utils/operator-config';
+import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
+import {
+  resolveRegistryEndpoints,
+  registryEndpointOverrides,
+} from '../services/registry-endpoints';
 import {
   mintOperatorToken, ensureTokenSecret, deleteToken, requestErrorMessage,
   TOKEN_EXPIRES_ANNOTATION, TOKEN_NAME_ANNOTATION,
@@ -16,14 +19,14 @@ import {
 
 function createEmptySpec() {
   return {
-    fleet:                 { repoURL: '', branch: 'main', authType: '', credSecretRef: null },
+    // authType is retained only to round-trip Settings created by older AIF
+    // versions. New configurations use one HTTPS username + credential model.
+    fleet:                 { repoURL: '', branch: 'main', authType: '', username: '', credSecretRef: null, caBundleSecretRef: null },
     applicationCollection: { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, categories: [] },
     suseRegistry:          { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, refreshIntervalMinutes: 10 },
     nvidia:                { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null },
     rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
-    registryEndpoints:     { suseRegistry: '', applicationCollection: '', applicationCollectionAPI: '', nvidia: '' },
-    catalogDiscovery:      { applicationCollectionMode: 'api' },
-    imageRewrite:          { enabled: false, rules: [] },
+    registryEndpoints:     resolveRegistryEndpoints(),
   };
 }
 
@@ -35,21 +38,12 @@ export default {
     Banner,
     Loading,
     LabeledInput,
-    LabeledSelect,
     Checkbox,
     SecretSelector,
   },
 
   async fetch() {
-    [this.operatorManaged] = await Promise.all([
-      hasInstallAIExtension(),
-      loadOperatorConfig(),
-    ]);
-    this.operatorForbidden      = isExtensionCheckForbidden();
-    const operatorCfg = getOperatorConfig();
-    this.operatorNamespace      = operatorCfg.namespace;
-    this.operatorService        = operatorCfg.service;
-    this.operatorConfigMapFound = isConfigMapFound();
+    await loadOperatorConfig();
     try {
       const data = await getSettings();
 
@@ -76,11 +70,6 @@ export default {
       fetchErrorMessage: null,
       errors:            [],
       mode:              'edit',
-      operatorNamespace:      '',
-      operatorService:        '',
-      operatorConfigMapFound: false,
-      operatorManaged:        false,
-      operatorForbidden:      false,
       tokenState:      { expiresAt: '', tokenName: '', configured: false, loaded: false },
       authorizeError:  '',
       showAdvanced:    { rancherCatalog: false },
@@ -90,7 +79,6 @@ export default {
         suseRegistry:   false,
         nvidia:         false,
         rancherCatalog: false,
-        advanced:       false,
       },
       testResults: {
         applicationCollection: null,
@@ -104,24 +92,7 @@ export default {
 
   computed: {
     settingsNamespace() {
-      return this.operatorNamespace || getOperatorNamespace();
-    },
-
-    authTypeOptions() {
-      return [
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.none'), value: '' },
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.ssh'), value: 'ssh' },
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.token'), value: 'token' },
-        { label: this.t('suseai.pages.settings.sections.fleet.authType.options.basic'), value: 'basic' },
-      ];
-    },
-
-    catalogDiscoveryOptions() {
-      return [
-        { label: this.t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.options.api'), value: 'api' },
-        { label: this.t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.options.registryFallback'), value: 'registry-fallback' },
-        { label: this.t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.options.disabled'), value: 'disabled' },
-      ];
+      return getOperatorNamespace();
     },
 
     categoriesString: {
@@ -174,7 +145,9 @@ export default {
           repoURL:       crdSpec.fleet.repoURL || '',
           branch:        crdSpec.fleet.branch || 'main',
           authType:      crdSpec.fleet.authType || '',
+          username:      crdSpec.fleet.username || '',
           credSecretRef: crdSpec.fleet.credSecretRef || null,
+          caBundleSecretRef: crdSpec.fleet.caBundleSecretRef || null,
         };
       }
       if (crdSpec.applicationCollection) {
@@ -208,19 +181,7 @@ export default {
           insecureSkipVerify: !!crdSpec.rancherCatalog.insecureSkipVerify,
         };
       }
-      if (crdSpec.registryEndpoints) {
-        s.registryEndpoints = { ...s.registryEndpoints, ...crdSpec.registryEndpoints };
-      }
-      if (crdSpec.catalogDiscovery) {
-        s.catalogDiscovery.applicationCollectionMode =
-          crdSpec.catalogDiscovery.applicationCollectionMode || 'api';
-      }
-      if (crdSpec.imageRewrite) {
-        s.imageRewrite = {
-          enabled: !!crdSpec.imageRewrite.enabled,
-          rules:   (crdSpec.imageRewrite.rules || []).map((r) => ({ match: r.match, replace: r.replace })),
-        };
-      }
+      s.registryEndpoints = resolveRegistryEndpoints(crdSpec.registryEndpoints);
 
       return s;
     },
@@ -228,12 +189,14 @@ export default {
     buildCrdSpec(spec) {
       const out = {};
 
-      if (spec.fleet.repoURL || spec.fleet.credSecretRef?.name) {
+      if (spec.fleet.repoURL || spec.fleet.credSecretRef?.name || spec.fleet.caBundleSecretRef?.name) {
         out.fleet = {};
         if (spec.fleet.repoURL) out.fleet.repoURL = spec.fleet.repoURL;
         if (spec.fleet.branch) out.fleet.branch = spec.fleet.branch;
         if (spec.fleet.authType) out.fleet.authType = spec.fleet.authType;
+        if (spec.fleet.username) out.fleet.username = spec.fleet.username;
         if (spec.fleet.credSecretRef?.name) out.fleet.credSecretRef = spec.fleet.credSecretRef;
+        if (spec.fleet.caBundleSecretRef?.name) out.fleet.caBundleSecretRef = spec.fleet.caBundleSecretRef;
       }
 
       const ac = spec.applicationCollection;
@@ -276,23 +239,10 @@ export default {
 
       const re = spec.registryEndpoints;
 
-      if (re.suseRegistry || re.applicationCollection || re.applicationCollectionAPI || re.nvidia) {
-        out.registryEndpoints = {};
-        if (re.suseRegistry) out.registryEndpoints.suseRegistry = re.suseRegistry;
-        if (re.applicationCollection) out.registryEndpoints.applicationCollection = re.applicationCollection;
-        if (re.applicationCollectionAPI) out.registryEndpoints.applicationCollectionAPI = re.applicationCollectionAPI;
-        if (re.nvidia) out.registryEndpoints.nvidia = re.nvidia;
-      }
+      const endpointOverrides = registryEndpointOverrides(re);
 
-      if (spec.catalogDiscovery.applicationCollectionMode !== 'api') {
-        out.catalogDiscovery = { applicationCollectionMode: spec.catalogDiscovery.applicationCollectionMode };
-      }
-
-      if (spec.imageRewrite.enabled || spec.imageRewrite.rules.length) {
-        out.imageRewrite = {
-          enabled: spec.imageRewrite.enabled,
-          rules:   spec.imageRewrite.rules.filter((r) => r.match && r.replace),
-        };
+      if (Object.keys(endpointOverrides).length) {
+        out.registryEndpoints = endpointOverrides;
       }
 
       return out;
@@ -319,29 +269,12 @@ export default {
       return val?.valueFrom?.secretKeyRef || null;
     },
 
-    addRewriteRule() {
-      this.spec.imageRewrite.rules.push({ match: '', replace: '' });
-    },
-
-    removeRewriteRule(index) {
-      this.spec.imageRewrite.rules.splice(index, 1);
-    },
-
     // Returns whether the save reached the operator. authorizeRancher needs to
     // know: it must not revoke the token it replaced unless the reference to the
     // new one was actually persisted.
     async save(buttonDone) {
       try {
         this.errors = [];
-        // saveOperatorConfig must run first: it refreshes the in-memory cache so
-        // that the subsequent putSettings call reaches the correct operator URL.
-        // If the user is correcting a wrong namespace, putSettings would fail
-        // against the old URL if called before the cache is updated.
-        // Skip when managed by InstallAIExtension — the reconciler owns the ConfigMap.
-        if (!this.operatorManaged) {
-          await saveOperatorConfig(this.operatorNamespace || 'aif-operator', this.operatorService || 'aif-operator');
-          this.operatorConfigMapFound = true;
-        }
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
@@ -362,11 +295,11 @@ export default {
 
     // canTest gates the per-section Test button so it only fires with inputs the
     // probe can actually use. Registries need both secret name+key on each ref;
-    // gitops needs a repoURL and an auth type the git check supports (SSH is not
-    // wired for the HTTP-based CheckAuth, so it would always error).
+    // gitops needs a repoURL. Authentication is optional for an anonymous
+    // repository; HTTPS CA trust is tested when configured.
     canTest(target) {
       if (target === 'gitops') {
-        return !!this.spec.fleet.repoURL && this.spec.fleet.authType !== 'ssh';
+        return !!this.spec.fleet.repoURL;
       }
       // rancherCatalog authenticates with a single API token (no username), so it
       // only needs a complete token secret ref.
@@ -526,6 +459,17 @@ export default {
           v-if="expanded.appCollection"
           class="mt-15"
         >
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.applicationCollection"
+                :label="t('suseai.pages.settings.sections.appCollection.endpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.appCollection.endpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
           <p class="text-label mb-5">
             {{ t('suseai.pages.settings.sections.appCollection.userSecretRef.label') }}
           </p>
@@ -598,7 +542,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('applicationCollection')"
-                @click="cb => runTest('applicationCollection', { userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef, caBundleSecretRef: spec.applicationCollection.caBundleSecretRef }, cb)"
+                @click="cb => runTest('applicationCollection', { url: spec.registryEndpoints.applicationCollection, userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef, caBundleSecretRef: spec.applicationCollection.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.applicationCollection"
@@ -627,6 +571,17 @@ export default {
           v-if="expanded.suseRegistry"
           class="mt-15"
         >
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.suseRegistry"
+                :label="t('suseai.pages.settings.sections.suseRegistry.endpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.suseRegistry.endpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
+
           <p class="text-label mb-5">
             {{ t('suseai.pages.settings.sections.suseRegistry.userSecretRef.label') }}
           </p>
@@ -701,7 +656,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('suseRegistry')"
-                @click="cb => runTest('suseRegistry', { userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef, caBundleSecretRef: spec.suseRegistry.caBundleSecretRef }, cb)"
+                @click="cb => runTest('suseRegistry', { url: spec.registryEndpoints.suseRegistry, userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef, caBundleSecretRef: spec.suseRegistry.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.suseRegistry"
@@ -733,6 +688,17 @@ export default {
           <p class="text-muted mb-15">
             {{ t('suseai.pages.settings.sections.nvidia.description') }}
           </p>
+
+          <div class="row mb-15">
+            <div class="col span-8">
+              <LabeledInput
+                v-model:value="spec.registryEndpoints.nvidia"
+                :label="t('suseai.pages.settings.sections.nvidia.endpoint.label')"
+                :placeholder="t('suseai.pages.settings.sections.nvidia.endpoint.placeholder')"
+                :mode="mode"
+              />
+            </div>
+          </div>
 
           <p class="text-label mb-5">
             {{ t('suseai.pages.settings.sections.nvidia.userSecretRef.label') }}
@@ -791,7 +757,7 @@ export default {
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('nvidia')"
-                @click="cb => runTest('nvidia', { userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef, caBundleSecretRef: spec.nvidia.caBundleSecretRef }, cb)"
+                @click="cb => runTest('nvidia', { url: spec.registryEndpoints.nvidia, userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef, caBundleSecretRef: spec.nvidia.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.nvidia"
@@ -820,6 +786,14 @@ export default {
           v-if="expanded.fleet"
           class="mt-15"
         >
+          <p class="mb-15">
+            {{ t('suseai.pages.settings.sections.fleet.description') }}
+          </p>
+          <Banner
+            color="info"
+            :label="t('suseai.pages.settings.sections.fleet.activationNotice')"
+            class="mb-15"
+          />
           <div class="row mb-10">
             <div class="col span-6">
               <LabeledInput
@@ -839,19 +813,16 @@ export default {
             </div>
           </div>
           <div class="row mb-15">
-            <div class="col span-4">
-              <LabeledSelect
-                v-model:value="spec.fleet.authType"
-                :label="t('suseai.pages.settings.sections.fleet.authType.label')"
-                :options="authTypeOptions"
+            <div class="col span-6">
+              <LabeledInput
+                v-model:value="spec.fleet.username"
+                :label="t('suseai.pages.settings.sections.fleet.username.label')"
+                :placeholder="t('suseai.pages.settings.sections.fleet.username.placeholder')"
                 :mode="mode"
               />
             </div>
           </div>
-          <div
-            v-if="spec.fleet.authType"
-            class="row"
-          >
+          <div class="row mb-15">
             <div class="col span-8">
               <p class="text-label mb-5">
                 {{ t('suseai.pages.settings.sections.fleet.credSecretRef.label') }}
@@ -868,13 +839,30 @@ export default {
             </div>
           </div>
 
+          <div class="row">
+            <div class="col span-8">
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.fleet.caBundleSecretRef.label') }}
+              </p>
+              <SecretSelector
+                :value="toSelectorValue(spec.fleet.caBundleSecretRef)"
+                :namespace="settingsNamespace"
+                :show-key-selector="true"
+                :secret-name-label="t('suseai.pages.settings.sections.fleet.caBundleSecretRef.secretNameLabel')"
+                :key-name-label="t('suseai.pages.settings.sections.fleet.caBundleSecretRef.keyNameLabel')"
+                :mode="mode"
+                @update:value="spec.fleet.caBundleSecretRef = fromSelectorValue($event)"
+              />
+            </div>
+          </div>
+
           <div class="row mt-10">
             <div class="col span-12">
               <AsyncButton
                 mode="edit"
                 :action-label="t('suseai.pages.settings.test.button')"
                 :disabled="!canTest('gitops')"
-                @click="cb => runTest('gitops', { repoURL: spec.fleet.repoURL, branch: spec.fleet.branch, credSecretRef: spec.fleet.credSecretRef }, cb)"
+                @click="cb => runTest('gitops', { repoURL: spec.fleet.repoURL, branch: spec.fleet.branch, authType: spec.fleet.authType, username: spec.fleet.username, credSecretRef: spec.fleet.credSecretRef, caBundleSecretRef: spec.fleet.caBundleSecretRef }, cb)"
               />
               <span
                 v-if="testResults.gitops"
@@ -1032,194 +1020,6 @@ export default {
               >{{ testResultText('rancherCatalog') }}</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- Advanced -->
-      <div id="advanced" class="box mt-10">
-        <div
-          class="accordion-header"
-          role="button"
-          tabindex="0"
-          @click="toggle('advanced')"
-          @keydown.space.enter.prevent="toggle('advanced')"
-        >
-          <i :class="expanded.advanced ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-          <h2>{{ t('suseai.pages.settings.sections.advanced.title') }}</h2>
-        </div>
-
-        <div
-          v-if="expanded.advanced"
-          class="mt-15"
-        >
-          <Banner
-            color="warning"
-            :label="t('suseai.pages.settings.sections.advanced.warning')"
-            class="mb-15"
-          />
-
-          <h3 class="mb-10">
-            {{ t('suseai.pages.settings.sections.advanced.operatorConnection.title') }}
-          </h3>
-          <Banner
-            v-if="operatorManaged"
-            color="info"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.managed')"
-            class="mb-15"
-          />
-          <Banner
-            v-else-if="operatorForbidden"
-            color="warning"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.forbidden')"
-            class="mb-15"
-          />
-          <Banner
-            v-else-if="operatorConfigMapFound"
-            color="info"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.found')"
-            class="mb-15"
-          />
-          <Banner
-            v-else
-            color="warning"
-            :label="t('suseai.pages.settings.sections.advanced.operatorConnection.notFound')"
-            class="mb-15"
-          />
-          <div class="row mb-20">
-            <div class="col span-4">
-              <LabeledInput
-                v-model:value="operatorNamespace"
-                :label="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.namespace.placeholder')"
-                :mode="operatorManaged ? 'view' : mode"
-              />
-            </div>
-            <div class="col span-4">
-              <LabeledInput
-                v-model:value="operatorService"
-                :label="t('suseai.pages.settings.sections.advanced.operatorConnection.service.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.operatorConnection.service.placeholder')"
-                :mode="operatorManaged ? 'view' : mode"
-              />
-            </div>
-          </div>
-
-          <h3 class="mb-10">
-            {{ t('suseai.pages.settings.sections.advanced.registryEndpoints.title') }}
-          </h3>
-          <div class="row mb-10">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.suseRegistry"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.suseRegistry.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.suseRegistry.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <div class="row mb-10">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.applicationCollection"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollection.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollection.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <div class="row mb-20">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.applicationCollectionAPI"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollectionAPI.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.applicationCollectionAPI.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-          <div class="row mb-20">
-            <div class="col span-6">
-              <LabeledInput
-                v-model:value="spec.registryEndpoints.nvidia"
-                :label="t('suseai.pages.settings.sections.advanced.registryEndpoints.nvidia.label')"
-                :placeholder="t('suseai.pages.settings.sections.advanced.registryEndpoints.nvidia.placeholder')"
-                :mode="mode"
-              />
-            </div>
-          </div>
-
-          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
-          <template v-if="false">
-            <h3 class="mb-10">
-              {{ t('suseai.pages.settings.sections.advanced.catalogDiscovery.title') }}
-            </h3>
-            <div class="row mb-20">
-              <div class="col span-4">
-                <LabeledSelect
-                  v-model:value="spec.catalogDiscovery.applicationCollectionMode"
-                  :label="t('suseai.pages.settings.sections.advanced.catalogDiscovery.applicationCollectionMode.label')"
-                  :options="catalogDiscoveryOptions"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-          </template>
-
-          <!-- Hidden for MVP -- see issue: hide non-MVP Settings fields -->
-          <template v-if="false">
-            <h3 class="mb-10">
-              {{ t('suseai.pages.settings.sections.advanced.imageRewrite.title') }}
-            </h3>
-            <div class="row mb-10">
-              <div class="col span-12">
-                <Checkbox
-                  v-model:value="spec.imageRewrite.enabled"
-                  :label="t('suseai.pages.settings.sections.advanced.imageRewrite.enabled.label')"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-            <template v-if="spec.imageRewrite.enabled">
-              <div
-                v-for="(rule, i) in spec.imageRewrite.rules"
-                :key="i"
-                class="row mb-5"
-              >
-                <div class="col span-5">
-                  <LabeledInput
-                    v-model:value="rule.match"
-                    :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.label') : ''"
-                    :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.match.placeholder')"
-                    :mode="mode"
-                  />
-                </div>
-                <div class="col span-5">
-                  <LabeledInput
-                    v-model:value="rule.replace"
-                    :label="i === 0 ? t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.label') : ''"
-                    :placeholder="t('suseai.pages.settings.sections.advanced.imageRewrite.rules.replace.placeholder')"
-                    :mode="mode"
-                  />
-                </div>
-                <div class="col span-2 trash-col">
-                  <button
-                    type="button"
-                    class="btn btn-sm role-link"
-                    @click="removeRewriteRule(i)"
-                  >
-                    <i class="icon icon-trash" />
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="btn btn-sm role-secondary mt-5"
-                @click="addRewriteRule"
-              >
-                {{ t('suseai.pages.settings.sections.advanced.imageRewrite.rules.add') }}
-              </button>
-            </template>
-          </template>
         </div>
       </div>
 
