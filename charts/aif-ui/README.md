@@ -18,6 +18,10 @@ helm install aif-ui-server . --take-ownership
 helm upgrade aif-ui-server . --take-ownership
 ```
 
+## Uninstall
+
+`aif-ui-config` carries `helm.sh/resource-policy: keep`, so `helm uninstall` deliberately leaves it in place — Helm reports it under "These resources were kept due to the resource policy". This is intentional: operator coordinates and catalog settings survive a reinstall instead of reverting to chart defaults. Delete it by hand if you want a genuinely clean slate.
+
 ## Air-gapped installation
 
 Use the same image-only values file as the operator chart. Copy
