@@ -223,9 +223,19 @@ func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=catalog.cattle.io,resources=uiplugins,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=catalog.cattle.io,resources=uiplugins/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+
+// The extension chart's own objects. Helm applies these under the operator's
+// ServiceAccount, so the write verbs are the operator's, not the chart's — and
+// they are cluster-scoped rather than confined to a Role in
+// cattle-ui-plugin-system, because that namespace can be deleted out from under
+// us and would take the Role with it, leaving every reinstall Forbidden.
+// ReplicaSets are deliberately absent: the Deployment controller creates them,
+// the operator never does.
+// +kubebuilder:rbac:groups="",resources=configmaps;services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile translates shutdown out of the error channel before handing the
 // pass back to controller-runtime.
