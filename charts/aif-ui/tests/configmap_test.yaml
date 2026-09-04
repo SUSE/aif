@@ -77,6 +77,17 @@ tests:
           path: data.useStaticCatalog
           type: string
 
+  # The whole point of keeping this object across an uninstall is that operator
+  # coordinates and catalog settings survive a reinstall. Dropping the annotation
+  # is silent — the chart still renders, and every other assertion here still
+  # passes — so it gets pinned explicitly (SUSEAI-1039).
+  - it: survives helm uninstall via the keep resource policy
+    template: templates/configmap.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
   - it: follows the release into a different namespace
     template: templates/configmap.yaml
     release:

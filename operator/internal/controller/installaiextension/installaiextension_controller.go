@@ -447,7 +447,18 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // manual configuration. It runs on every successful reconcile loop, giving
 // self-healing behaviour if the ConfigMap is deleted or corrupted.
 // The ConfigMap is intentionally not deleted when the CR is removed — the UI
-// retains the last-known operator coordinates so it remains functional.
+// retains the last-known operator coordinates so it remains functional. This
+// operator never deletes it directly; the chart's own configmap.yaml carries a
+// helm.sh/resource-policy: keep annotation so `helm uninstall` leaves it behind
+// too.
+//
+// Deliberately does not touch Helm ownership metadata: whoever creates this
+// object (this self-heal, for one) doesn't need to get that
+// right, because the operator's own Helm installs/upgrades set TakeOwnership
+// (see helm.install/helm.upgrade) and adopt it regardless of its current
+// ownership state (SUSEAI-1039). Hand-stamping it here duplicated that and, in
+// an earlier version of this fix, went stale in three different ways — see the
+// PR history for SUSEAI-1039 if reintroducing anything like it.
 func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 	ns, svc := config.GetOperatorNamespace(), config.GetOperatorService()

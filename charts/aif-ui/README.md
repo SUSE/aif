@@ -9,6 +9,19 @@ The chart creates a Deployment and Service that serve the built extension assets
 - Rancher 2.10+ with UI Extensions support (`catalog.cattle.io/v1` API)
 - Target namespace: `cattle-ui-plugin-system`
 
+## Standalone install/upgrade
+
+This chart templates `aif-ui-config`, a ConfigMap the aif-operator can also create or recreate outside of Helm (see `templates/configmap.yaml`). The aif-operator's own installs/upgrades handle this automatically, but if you run `helm install`/`helm upgrade` for this chart directly — outside the operator, e.g. for local development or troubleshooting — and `aif-ui-config` already exists unowned by Helm, the command fails with `invalid ownership metadata`. Pass `--take-ownership` to adopt it:
+
+```
+helm install aif-ui-server . --take-ownership
+helm upgrade aif-ui-server . --take-ownership
+```
+
+## Uninstall
+
+`aif-ui-config` carries `helm.sh/resource-policy: keep`, so `helm uninstall` deliberately leaves it in place — Helm reports it under "These resources were kept due to the resource policy". This is intentional: operator coordinates and catalog settings survive a reinstall instead of reverting to chart defaults. Delete it by hand if you want a genuinely clean slate.
+
 ## Air-gapped installation
 
 Use the same image-only values file as the operator chart. Copy
