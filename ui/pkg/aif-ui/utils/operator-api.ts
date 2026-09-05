@@ -1,8 +1,8 @@
 import { operatorFetch } from './operator-config';
 import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryCredentials } from '../types/aiworkload-types';
 
-export function getSettings(): Promise<any> {
-  return operatorFetch('/api/v1/settings');
+export function getSettings(signal?: AbortSignal): Promise<any> {
+  return operatorFetch('/api/v1/settings', { signal });
 }
 
 export function putSettings(spec: any): Promise<any> {
