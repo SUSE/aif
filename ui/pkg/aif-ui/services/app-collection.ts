@@ -288,7 +288,7 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
 export const CLUSTERREPOS_URL =
   '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000';
 
-const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloaded'];
+export const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloaded'];
 
 /** A ClusterRepo is ready when its index is actually fetchable. Called by
  *  fetchManagedRepos (which stamps the result onto ManagedRepo.ready, consumed by

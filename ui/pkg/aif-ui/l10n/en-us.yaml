@@ -35,6 +35,38 @@ suseai:
         failed: Authentication failed
         error: Could not reach endpoint
         skipped: Not configured
+      registryConnection:
+        checking: Testing…
+        description: Test checks registry authentication and Rancher chart repositories separately. It does not save settings or refresh repositories.
+        authenticationLabel: Registry authentication (current form)
+        repositoriesLabel: Chart repositories (saved settings)
+        formChanged: The form changed since this test. Test again to check authentication for these inputs.
+        unsaved: The form differs from saved settings. Repository status and Refresh use the saved configuration, not these unsaved inputs. Apply changes, then Test again.
+        settingsError: Could not read saved settings; repository status cannot be matched to the form
+        settingsPending: The AI Factory operator has not finished applying the saved settings. Test again after reconciliation completes.
+        repositoriesError: Could not read Rancher chart repositories
+        refresh: Refresh
+        refreshLabel: 'Refresh saved repository {name}'
+        refreshing: Requesting refresh…
+        refreshError: Could not request repository refresh
+        authentication:
+          ok: Authentication probe succeeded (chart access not verified)
+          failed: Authentication probe failed
+          error: Could not complete authentication probe
+          skipped: Authentication not tested
+        states:
+          ready: Ready
+          pending: Pending
+          failed: Failed
+          missing: Missing
+        reasons:
+          missing: No repository exists with this name. Apply the registry settings and check that the AI Factory operator creates it.
+          unmanaged: This repository is not managed by AI Factory. Check its ownership in Rancher; it cannot be refreshed here.
+          disabled: This repository is disabled. Check its configuration in Rancher.
+          reconciling: Waiting for the saved configuration or refresh to be processed. Test again to check its status.
+          indexPending: The repository index is not ready yet. Test again, or open the repository in Rancher for details.
+          downloadFailed: Rancher could not download the chart repository index. Check the error below and open the repository in Rancher for details.
+          refreshRequested: Refresh requested for the saved repository. The download has not been verified; Test again to check its status.
       sections:
         appCollection:
           title: SUSE Application Collection
