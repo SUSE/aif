@@ -9,19 +9,23 @@ vi.mock('../../utils/cluster-operations', () => ({
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn(async () => null),
   getRegistryCredentials: vi.fn(async () => ({})),
+  getCatalog: vi.fn(async () => []),
 }));
 
-import { getRegistryCredentials } from '../../utils/operator-api';
+import { getRegistryCredentials, getCatalog } from '../../utils/operator-api';
 
 import {
   fetchManagedRepos,
   fetchSuseAiApps,
   fetchNvidiaApps,
+  fetchCustomRepoApps,
+  fetchStaticCatalogWithCustom,
   resolveInstallRepoName,
   isManagedRepoName,
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
+  CUSTOM_REPO_LABEL,
 } from '../app-collection';
 
 type RawRepo = {
@@ -143,6 +147,113 @@ describe('fetchManagedRepos', () => {
       dispatch: vi.fn(async () => { throw new Error('boom'); }),
     };
     await expect(fetchManagedRepos(store)).rejects.toThrow('boom');
+  });
+
+  it('classifies a custom-labeled repo as library "custom"', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ]);
+    const managed = await fetchManagedRepos(store);
+    expect(managed).toEqual([
+      { name: 'custom-acme', url: 'oci://custom', library: 'custom', ready: true, message: undefined },
+    ]);
+  });
+
+  it('excludes a repo labeled only custom-repo (missing managed-repo)', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ]);
+    const managed = await fetchManagedRepos(store);
+    expect(managed).toEqual([]);
+  });
+
+  it('isManagedRepoName returns true for a custom-labeled repo', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ]);
+    expect(await isManagedRepoName(store, 'custom-acme')).toBe(true);
+  });
+});
+
+describe('fetchCustomRepoApps', () => {
+  const customEntries = { grafana: [{ name: 'grafana', created: '2026-01-01T00:00:00Z' }] };
+
+  it('loads apps from ready custom repos', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ], { 'custom-acme': customEntries });
+    const { apps, failedRepos } = await fetchCustomRepoApps(store);
+    expect(apps.map(a => a.slug_name)).toEqual(['grafana']);
+    expect(apps[0].library).toBe('custom');
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('reports a not-ready custom repo via failedRepos', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: notReady('boom') },
+    ]);
+    const { apps, failedRepos } = await fetchCustomRepoApps(store);
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([
+      { url: 'oci://custom', reason: 'not-ready', message: 'boom' },
+    ]);
+  });
+
+  it('returns empty when no custom repos exist', async () => {
+    const store = makeStore([]);
+    const { apps, failedRepos } = await fetchCustomRepoApps(store);
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([]);
+  });
+});
+
+describe('fetchStaticCatalogWithCustom', () => {
+  const staticItem = { slug_name: 'suse-ai-thing', name: 'Thing', library: 'suse-ai' };
+  const customEntries = { grafana: [{ name: 'grafana', created: '2026-01-01T00:00:00Z' }] };
+
+  it('appends live custom-repo apps to the static catalog base', async () => {
+    (getCatalog as any).mockResolvedValueOnce([staticItem]);
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ], { 'custom-acme': customEntries });
+
+    const { apps, managedRepos, failedRepos } = await fetchStaticCatalogWithCustom(store);
+
+    expect(apps.map(a => a.slug_name)).toEqual(['suse-ai-thing', 'grafana']);
+    expect(apps.find(a => a.slug_name === 'grafana')?.library).toBe('custom');
+    expect(managedRepos.map(r => r.name)).toEqual(['custom-acme']);
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('returns the static base unchanged when no custom repos exist', async () => {
+    (getCatalog as any).mockResolvedValueOnce([staticItem]);
+    const store = makeStore([
+      // a managed but non-custom repo must not be overlaid in static mode
+      { metadata: { name: 'suse-ai-registry', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://sr' }, status: ready() },
+    ]);
+
+    const { apps, managedRepos, failedRepos } = await fetchStaticCatalogWithCustom(store);
+
+    expect(apps.map(a => a.slug_name)).toEqual(['suse-ai-thing']);
+    expect(managedRepos).toEqual([]);
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('is fail-soft: a ClusterRepo-list failure leaves the curated catalog intact', async () => {
+    (getCatalog as any).mockResolvedValueOnce([staticItem]);
+    const store = { dispatch: vi.fn(async () => { throw new Error('rbac denied'); }) };
+
+    const { apps, managedRepos, failedRepos } = await fetchStaticCatalogWithCustom(store);
+
+    expect(apps.map(a => a.slug_name)).toEqual(['suse-ai-thing']);
+    expect(managedRepos).toEqual([]);
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('propagates a static-catalog failure (static mode must show an error)', async () => {
+    (getCatalog as any).mockRejectedValueOnce(new Error('operator down'));
+    const store = makeStore([]);
+    await expect(fetchStaticCatalogWithCustom(store)).rejects.toThrow('operator down');
   });
 });
 
@@ -392,7 +503,7 @@ describe('isManagedRepoName (untrusted ?repo= guard)', () => {
 
 describe('cross-language label constants (drift pins)', () => {
   // These literals are ALSO defined in Go — operator/internal/credentials/credentials.go
-  // (ManagedRepoLabel / TeamRepoLabel). They are tied only by convention, so pin the
+  // (ManagedRepoLabel / TeamRepoLabel / CustomRepoLabel). They are tied only by convention, so pin the
   // exact strings on this side: a rename here shows up as a red diff, and the Go side
   // has a matching pin (settings_label_internal_test.go). Change BOTH together.
   it('MANAGED_REPO_LABEL matches the Go ManagedRepoLabel literal', () => {
@@ -400,5 +511,8 @@ describe('cross-language label constants (drift pins)', () => {
   });
   it('NVIDIA_TEAM_REPO_LABEL matches the Go TeamRepoLabel literal', () => {
     expect(NVIDIA_TEAM_REPO_LABEL).toBe('ai-factory.suse.com/nvidia-team-repo');
+  });
+  it('CUSTOM_REPO_LABEL matches the Go CustomRepoLabel literal', () => {
+    expect(CUSTOM_REPO_LABEL).toBe('ai-factory.suse.com/custom-repo');
   });
 });
