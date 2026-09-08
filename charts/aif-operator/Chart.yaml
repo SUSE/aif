@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: APACHE-2.0
+#!BuildTag: charts/aif-operator:2.2.0-rc.1-%RELEASE%
+#!BuildTag: charts/aif-operator:2.2.0-rc.1
 annotations:
   licenses: Apache-2.0
   helm.sh/images: |
