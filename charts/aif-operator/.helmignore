@@ -28,3 +28,6 @@ chart/*/*.tgz
 
 # Dev-only validation scripts (not needed at runtime; files/ must NOT be ignored)
 tests/
+
+# For IBS scmsync bridge only
+_service

@@ -23,3 +23,6 @@
 .vscode/
 # Dev-only chart tests (not needed at runtime)
 tests/
+
+# For IBS scmsync bridge only
+_service
