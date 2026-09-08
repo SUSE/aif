@@ -403,6 +403,38 @@ func TestSettingsPut_FirstSave_NoExistingCR(t *testing.T) {
 	}
 }
 
+func TestSettingsPut_InvalidCustomRepo_400(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	// Invalid: git repo without branch
+	body := `{"spec":{"customRepos":[{"name":"test","type":"git","gitRepo":"https://git.example.com/repo"}]}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 for invalid custom repo; body=%s", rec.Code, rec.Body)
+	}
+	var apiErr APIError
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal APIError: %v", err)
+	}
+	if apiErr.Code != ErrCodeInvalidInput {
+		t.Errorf("error.code=%q want %q", apiErr.Code, ErrCodeInvalidInput)
+	}
+
+	// Verify CR was not updated
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after rejected PUT: %v", err)
+	}
+	if len(stored.Spec.CustomRepos) > 0 {
+		t.Errorf("invalid custom repo should not have been persisted, got %d repos", len(stored.Spec.CustomRepos))
+	}
+}
+
 func TestGetRegistryCredentials_NoSettings(t *testing.T) {
 	c := newSettingsFakeClient(t)
 	h := newSettingsHandler(c, "suse-ai-system")
@@ -1218,5 +1250,130 @@ func TestValidateCredentials_UnresolvableSecretIsError(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || resp.Results[0].Status != statusError {
 		t.Fatalf("want status=error for unresolvable secret, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCustomRepo_HelmOK(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("cu")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("ct")},
+	}
+	c := newSettingsFakeClient(t, sampleCR(), userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeHelmIndexFn
+	defer func() { probeHelmIndexFn = orig }()
+	var got struct{ user, pass, url string }
+	probeHelmIndexFn = func(_ context.Context, repoURL, user, pass string, _ []byte, _ bool) credcheck.Result {
+		got.user, got.pass, got.url = user, pass, repoURL
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "index reachable"}
+	}
+
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"helm","url":"https://charts.example.com","userSecretRef":{"name":"custom-user","key":"username"},"tokenSecretRef":{"name":"custom-token","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want status=ok, got %+v", resp.Results)
+	}
+	if got.user != "cu" || got.pass != "ct" || got.url != "https://charts.example.com" {
+		t.Fatalf("probe got %+v want cu/ct/https://charts.example.com", got)
+	}
+}
+
+func TestValidateCustomRepo_GitOK(t *testing.T) {
+	const ns = "aif-operator"
+	credSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-git-cred", Namespace: ns},
+		Data:       map[string][]byte{"ssh-key": []byte("fake-key")},
+	}
+	c := newSettingsFakeClient(t, sampleCR(), credSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := gitCheckAuthFn
+	defer func() { gitCheckAuthFn = orig }()
+	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error {
+		return nil
+	}
+
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"git","gitRepo":"https://git.example.com/repo.git","branch":"main","credSecretRef":{"name":"custom-git-cred","key":"ssh-key"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want status=ok, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCustomRepo_NotConfigured(t *testing.T) {
+	const ns = "aif-operator"
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, ns)
+
+	// No URL or gitRepo provided
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"oci"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusSkipped {
+		t.Fatalf("want status=skipped, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCustomRepo_AnonymousProbe(t *testing.T) {
+	const ns = "aif-operator"
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryWithInsecureFn
+	defer func() { probeRegistryWithInsecureFn = orig }()
+	got := struct{ user, pass, host string }{}
+	probeRegistryWithInsecureFn = func(_ context.Context, host, user, pass string, _ []byte, _ bool) credcheck.Result {
+		got.user, got.pass, got.host = user, pass, host
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "anonymous access"}
+	}
+
+	// URL set, NO credential refs → should probe anonymously (not skipped)
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"oci","url":"oci://public.example.com/charts"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want status=ok for anonymous probe, got %+v", resp.Results)
+	}
+	if got.user != "" || got.pass != "" {
+		t.Fatalf("probe should be called with empty creds for anonymous, got user=%q pass=%q", got.user, got.pass)
+	}
+	if got.host != "public.example.com" {
+		t.Fatalf("probe got host=%q, want public.example.com", got.host)
 	}
 }
