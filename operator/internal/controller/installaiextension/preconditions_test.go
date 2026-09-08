@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 // The extension namespace and the Rancher CRDs are the two things this operator
@@ -45,21 +46,25 @@ import (
 // gateRancherManager makes CheckCRDs answerable per-test — the shared
 // stubRancherManager always succeeds — and counts the deletes that
 // cleanupStaleResources would issue, so a test can prove the gate ran first.
+// The two kinds are counted separately because reapOrphanedClusterRepo also
+// calls DeleteClusterRepo: only a UIPlugin delete can prove cleanupStaleResources
+// itself ran, since the reap never touches UIPlugin.
 type gateRancherManager struct {
 	stubRancherManager
-	crdErr  error
-	deletes int
+	crdErr             error
+	clusterRepoDeletes int
+	uiPluginDeletes    int
 }
 
 func (g *gateRancherManager) CheckCRDs(context.Context, []string) error { return g.crdErr }
 
 func (g *gateRancherManager) DeleteClusterRepo(context.Context, string) error {
-	g.deletes++
+	g.clusterRepoDeletes++
 	return nil
 }
 
 func (g *gateRancherManager) DeleteUIPlugin(context.Context, string, string) error {
-	g.deletes++
+	g.uiPluginDeletes++
 	return nil
 }
 
@@ -70,7 +75,7 @@ func (g *gateRancherManager) DeleteUIPlugin(context.Context, string, string) err
 func gateReconciler(
 	t *testing.T,
 	ext *v1alpha1.InstallAIExtension,
-	mgr *gateRancherManager,
+	mgr rancherManager,
 	objs ...client.Object,
 ) (*InstallAIExtensionReconciler, *record.FakeRecorder) {
 	t.Helper()
@@ -253,10 +258,10 @@ func TestPreconditionsRunBeforeStaleCleanup(t *testing.T) {
 		t.Fatalf("reconcile error = %v", err)
 	}
 
-	if mgr.deletes != 0 {
-		t.Errorf("cleanup issued %d deletes, want 0; the rename cleanup targets objects in a "+
-			"namespace that does not exist, and running it first replaces the diagnosis with "+
-			"its failure", mgr.deletes)
+	if mgr.uiPluginDeletes != 0 {
+		t.Errorf("cleanup issued %d UIPlugin deletes, want 0; only cleanupStaleResources deletes "+
+			"UIPlugins, and it targets objects in a namespace that does not exist — running it "+
+			"first would replace the diagnosis with its own failure", mgr.uiPluginDeletes)
 	}
 }
 
@@ -277,5 +282,106 @@ func TestPreconditionsPassWhenNamespaceAndCRDsExist(t *testing.T) {
 	if !result.IsZero() {
 		t.Errorf("result = %+v, want zero; a passing gate must leave the requeue to the rest "+
 			"of the pass", result)
+	}
+}
+
+// reapRancherManager records the names DeleteClusterRepo is called with, so a
+// test can check reapOrphanedClusterRepo targets the right extension rather
+// than merely firing at all. crdErr lets a case reach RancherUnavailable
+// instead of the namespace check, the same way gateRancherManager does.
+type reapRancherManager struct {
+	stubRancherManager
+	crdErr              error
+	deletedClusterRepos []string
+}
+
+func (r *reapRancherManager) CheckCRDs(context.Context, []string) error { return r.crdErr }
+
+func (r *reapRancherManager) DeleteClusterRepo(_ context.Context, name string) error {
+	r.deletedClusterRepos = append(r.deletedClusterRepos, name)
+	return nil
+}
+
+// The scenario item 1 exists for: UIPlugin is namespaced and is garbage
+// collected along with cattle-ui-plugin-system, but ClusterRepo is
+// cluster-scoped and survives, left pointing at a Service URL in a namespace
+// that no longer exists — a resource dangling exactly the way the platform
+// cannot afford one to. Once the namespace is confirmed gone, that ClusterRepo
+// must not be left standing for the whole outage.
+func TestMissingNamespaceReapsTheOrphanedClusterRepo(t *testing.T) {
+	ext := helmExtension()
+	mgr := &reapRancherManager{}
+	r, _ := gateReconciler(t, ext, mgr)
+
+	if _, err := r.reconcile(context.Background(), ext); err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	want := rancher.ClusterRepoName(ext.Spec.Extension.Name)
+	if len(mgr.deletedClusterRepos) != 1 || mgr.deletedClusterRepos[0] != want {
+		t.Fatalf("DeleteClusterRepo calls = %v, want exactly [%q]; the extension's own "+
+			"ClusterRepo must be reaped once its namespace is confirmed gone",
+			mgr.deletedClusterRepos, want)
+	}
+}
+
+// A rename in flight has two candidate names — cleanupStaleResources targets
+// both for the same reason, and reaping only the new one would leave the old
+// ClusterRepo dangling instead.
+func TestMissingNamespaceReapsBothNamesDuringARename(t *testing.T) {
+	ext := helmExtension()
+	ext.Status.ActiveExtensionName = "previous-extension"
+	mgr := &reapRancherManager{}
+	r, _ := gateReconciler(t, ext, mgr)
+
+	if _, err := r.reconcile(context.Background(), ext); err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	wantOld := rancher.ClusterRepoName("previous-extension")
+	wantNew := rancher.ClusterRepoName(ext.Spec.Extension.Name)
+	got := map[string]bool{}
+	for _, name := range mgr.deletedClusterRepos {
+		got[name] = true
+	}
+	if !got[wantOld] || !got[wantNew] {
+		t.Fatalf("DeleteClusterRepo calls = %v, want both %q and %q",
+			mgr.deletedClusterRepos, wantOld, wantNew)
+	}
+}
+
+// A namespace merely terminating is not yet the "gone" state this exists for
+// — its Service may still be resolving requests during the grace period — so
+// reaping here is left out on purpose, per the design.
+func TestTerminatingNamespaceDoesNotReapTheClusterRepo(t *testing.T) {
+	ext := helmExtension()
+	mgr := &reapRancherManager{}
+	r, _ := gateReconciler(t, ext, mgr, terminatingNamespace())
+
+	if _, err := r.reconcile(context.Background(), ext); err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	if len(mgr.deletedClusterRepos) != 0 {
+		t.Errorf("DeleteClusterRepo calls = %v, want none while the namespace is only "+
+			"terminating", mgr.deletedClusterRepos)
+	}
+}
+
+// Rancher being entirely unavailable must not fall through to the reap: if
+// the CRDs are gone, so is the ClusterRepo's own type, and RancherUnavailable
+// is the cause that needs reporting — not a namespace-shaped symptom of it.
+func TestRancherUnavailableDoesNotReapTheClusterRepo(t *testing.T) {
+	ext := helmExtension()
+	mgr := &reapRancherManager{crdErr: context.DeadlineExceeded}
+	r, _ := gateReconciler(t, ext, mgr)
+
+	if _, err := r.reconcile(context.Background(), ext); err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	if len(mgr.deletedClusterRepos) != 0 {
+		t.Errorf("DeleteClusterRepo calls = %v, want none when Rancher itself is unavailable",
+			mgr.deletedClusterRepos)
 	}
 }

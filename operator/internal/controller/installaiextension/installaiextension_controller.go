@@ -491,6 +491,7 @@ func (r *InstallAIExtensionReconciler) checkPreconditions(
 	err := r.uncachedReader().Get(ctx, client.ObjectKey{Name: r.ExtensionNamespace}, &ns)
 	switch {
 	case apierrors.IsNotFound(err):
+		r.reapOrphanedClusterRepo(ctx, ext)
 		return r.setBlockedAndRetry(ext, "ExtensionNamespaceMissing", fmt.Sprintf(
 			"Namespace %s does not exist. Rancher owns this namespace and does "+
 				"not recreate it on its own: run `kubectl rollout restart "+
@@ -515,6 +516,46 @@ func (r *InstallAIExtensionReconciler) checkPreconditions(
 	}
 
 	return ctrl.Result{}, false, nil
+}
+
+// reapOrphanedClusterRepo deletes this extension's ClusterRepo once its
+// namespace is confirmed gone, best-effort.
+//
+// UIPlugin is namespaced and is garbage-collected along with the namespace;
+// ClusterRepo is cluster-scoped and survives, left pointing at a Service URL
+// in a namespace that no longer exists. Rancher's Extensions page then shows a
+// broken, unreachable repo for the whole outage instead of "not installed".
+//
+// This is cleanup of the operator's own object, not management of Rancher's:
+// cleanupStaleResources already deletes the same ClusterRepo on a rename, and
+// EnsureClusterRepo already recreates it — with a fresh URL — on the first
+// successful pass after the namespace and release come back. Deleting it here
+// only shrinks the window where it dangles pointing nowhere; nothing about
+// recovery depends on this succeeding, so a failure is logged and swallowed
+// rather than turned into a second reason this pass is blocked.
+//
+// Both names cleanup() would delete: the current spec name, and the
+// previously-active one if a rename is still in flight and has not reached
+// cleanupStaleResources yet.
+func (r *InstallAIExtensionReconciler) reapOrphanedClusterRepo(
+	ctx context.Context, ext *v1alpha1.InstallAIExtension,
+) {
+	logger := log.FromContext(ctx)
+
+	names := []string{ext.Spec.Extension.Name}
+	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
+		names = append(names, ext.Status.ActiveExtensionName)
+	}
+
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(name)); err != nil {
+			logger.Error(err, "failed to reap ClusterRepo for a missing extension namespace; "+
+				"it will be retried next pass", "extension", name)
+		}
+	}
 }
 
 // syncUIConfigMap writes the operator namespace and service name into the
