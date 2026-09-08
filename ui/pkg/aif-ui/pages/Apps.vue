@@ -298,10 +298,9 @@ import { requestErrorMessage } from '../services/rancher-token';
 import nvidiaLogo from '../assets/nvidia-logo.svg';
 import nvidiaLogoDark from '../assets/nvidia-logo-light.svg';
 import genericLogo from '../assets/generic-app.svg';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchCustomRepoApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, fetchStaticCatalogWithCustom, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { resolveCatalogLogo, onCatalogLogoError } from '../utils/catalog-logo';
-import { fetchStaticCatalog } from '../services/static-catalog';
 import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 
 export default defineComponent({
@@ -507,16 +506,18 @@ export default defineComponent({
         // Static catalog mode (opt-in): serve the bundled or remote catalog.
         isStaticMode.value = getUseStaticCatalog();
         if (isStaticMode.value) {
+          // Static mode: the operator serves the curated catalog (bundled or remote);
+          // there is no Settings-driven registry config to show. Admin-added custom
+          // ClusterRepos are overlaid on top (best-effort) so they still appear here —
+          // the operator provisions them regardless of catalog mode. If the operator is
+          // unreachable, fetchStaticCatalogWithCustom() throws and the page shows an
+          // error (no local fallback, since the bundled catalog lives in the operator);
+          // a custom-overlay failure is fail-soft and leaves the curated catalog intact.
           settingsData.value = null;
-          const [catalog, repos] = await Promise.all([
-            fetchStaticCatalog(),
-            fetchManagedRepos(store).catch((e) => {
-              repositoryError.value = requestErrorMessage(e);
-              return [] as ManagedRepo[];
-            }),
-          ]);
-          managedRepos.value = repos;
-          items.value = catalog;
+          const staticResult = await fetchStaticCatalogWithCustom(store);
+          managedRepos.value = staticResult.managedRepos;
+          items.value = staticResult.apps;
+          repositoryWarnings.value = buildWarnings(staticResult.failedRepos);
           return;
         }
 
@@ -534,13 +535,14 @@ export default defineComponent({
         ]);
         settingsData.value = settings;
         managedRepos.value = repos;
-        const [suseResult, nvidiaResult, curated] = await Promise.all([
+        const [suseResult, nvidiaResult, customResult, curated] = await Promise.all([
           fetchSuseAiApps(store, settings, repos),
           fetchNvidiaApps(store, settings, repos),
+          fetchCustomRepoApps(store, repos),
           fetchCuratedOverlayOrEmpty(),
         ]);
-        const discovered = [...suseResult.apps, ...nvidiaResult.apps];
-        const failures = [...suseResult.failedRepos, ...nvidiaResult.failedRepos];
+        const discovered = [...suseResult.apps, ...nvidiaResult.apps, ...customResult.apps];
+        const failures = [...suseResult.failedRepos, ...nvidiaResult.failedRepos, ...customResult.failedRepos];
         repositoryWarnings.value = buildWarnings(failures.filter(failure => !repos.some(repo => repo.url === failure.url)));
         managedRepos.value = repos.map(repo => {
           const failure = failures.find(item => item.url === repo.url);
