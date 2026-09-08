@@ -61,19 +61,25 @@ func ProbeRegistry(ctx context.Context, host, username, password string) Result 
 // challenge, so a private-CA Harbor registry and its token endpoint use
 // consistent trust.
 func ProbeRegistryWithCA(ctx context.Context, host, username, password string, caPEM []byte) Result {
+	return ProbeRegistryWithCAAndInsecure(ctx, host, username, password, caPEM, false)
+}
+
+// ProbeRegistryWithCAAndInsecure is ProbeRegistryWithCA with optional TLS verification skip.
+func ProbeRegistryWithCAAndInsecure(ctx context.Context, host, username, password string, caPEM []byte, insecureSkipVerify bool) Result {
 	client := http.DefaultClient
-	if len(caPEM) > 0 {
+	if len(caPEM) > 0 || insecureSkipVerify {
 		pool, err := x509.SystemCertPool()
 		if err != nil || pool == nil {
 			pool = x509.NewCertPool()
 		}
-		if !pool.AppendCertsFromPEM(caPEM) {
+		if len(caPEM) > 0 && !pool.AppendCertsFromPEM(caPEM) {
 			return Result{Status: StatusError, Message: "CA bundle does not contain a valid PEM certificate"}
 		}
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.TLSClientConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			RootCAs:    pool,
+			MinVersion:         tls.VersionTLS12,
+			RootCAs:            pool,
+			InsecureSkipVerify: insecureSkipVerify,
 		}
 		client = &http.Client{Transport: transport}
 	}
@@ -215,4 +221,54 @@ func parseChallenge(h string) map[string]string {
 
 func statusMessage(code int) string {
 	return fmt.Sprintf("%d %s", code, http.StatusText(code))
+}
+
+// ProbeHelmIndex checks that a Helm chart repository is reachable by fetching
+// its index.yaml. Returns OK if the index is served (HTTP 200), failed for
+// auth rejection (401/403), or error for transport/DNS/timeout failures.
+func ProbeHelmIndex(ctx context.Context, repoURL, username, password string, caPEM []byte, insecureSkipVerify bool) Result {
+	client := http.DefaultClient
+	if len(caPEM) > 0 || insecureSkipVerify {
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if len(caPEM) > 0 && !pool.AppendCertsFromPEM(caPEM) {
+			return Result{Status: StatusError, Message: "CA bundle does not contain a valid PEM certificate"}
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			RootCAs:            pool,
+			InsecureSkipVerify: insecureSkipVerify,
+		}
+		client = &http.Client{Transport: transport}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	indexURL := strings.TrimSuffix(repoURL, "/") + "/index.yaml"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
+	if err != nil {
+		return Result{Status: StatusError, Message: err.Error()}
+	}
+	if username != "" || password != "" {
+		req.SetBasicAuth(username, password)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return Result{Status: StatusError, Message: err.Error()}
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return Result{Status: StatusOK, Message: "index reachable"}
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return Result{Status: StatusFailed, Message: statusMessage(resp.StatusCode)}
+	default:
+		return Result{Status: StatusError, Message: statusMessage(resp.StatusCode)}
+	}
 }
