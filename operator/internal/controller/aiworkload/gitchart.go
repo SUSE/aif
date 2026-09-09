@@ -244,9 +244,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	// the injector mutates vals (it appends imagePullSecrets), so the fingerprint
 	// has to be taken after it runs, and secret delivery must happen on every
 	// reconcile regardless of whether the chart itself changed.
-	vals := map[string]any{}
-	if c.Values != nil {
-		_ = json.Unmarshal(c.Values.Raw, &vals)
+	vals, err := resolveComponentValues(w, c)
+	if err != nil {
+		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))

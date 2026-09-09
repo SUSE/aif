@@ -27,22 +27,31 @@
         </span>
       </div>
     </div>
+
+    <div v-if="componentValues && componentValues.length" class="review-section">
+      <h3 class="section-title">{{ t('suseai.wizard.labels.customized', 'Customized') }} ({{ componentValues.length }})</h3>
+      <div v-for="ov in componentValues" :key="ov.componentName" class="component-row">
+        <span>{{ ov.componentName }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import type { BlueprintComponent } from '../../../types/blueprint-types';
+import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 import { useT } from '../../../composables/useT';
 
 interface Props {
-  workloadName:   string;
-  namespace:      string;
-  displayName:    string;
-  version:        string;
-  componentCount: number;
-  deployType:     string;
-  clusters:       string[];
-  components:     BlueprintComponent[];
+  workloadName:      string;
+  namespace:         string;
+  displayName:       string;
+  version:           string;
+  componentCount:    number;
+  deployType:        string;
+  clusters:          string[];
+  components:        BlueprintComponent[];
+  componentValues?:  ComponentValueOverride[];
 }
 defineProps<Props>();
 

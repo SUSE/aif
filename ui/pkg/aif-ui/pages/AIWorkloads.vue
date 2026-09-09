@@ -304,6 +304,22 @@ function onManage(w: AIWorkload) {
   });
 }
 
+// ── Customize (Blueprint) ────────────────────────────────────────────────────
+function onCustomize(w: AIWorkload) {
+  router.push({
+    name:   `c-cluster-${ PRODUCT }-blueprint-manage`,
+    params: { cluster },
+    query:  {
+      name:              w.spec.source.blueprint?.name || '',
+      version:           w.spec.source.blueprint?.version || '',
+      instanceName:      w.metadata.name,
+      instanceNamespace: w.metadata.namespace,
+      instanceCluster:   w.spec.targetClusters?.[0] || 'local',
+      deployStrategy:    w.spec.deployStrategy || 'FleetBundle',
+    },
+  });
+}
+
 // ── Upgrade (Blueprint) ────────────────────────────────────────────────────────
 function openUpgradeModal(w: AIWorkload) {
   upgradeModal.workload         = w;
@@ -553,6 +569,18 @@ async function doRetry(w: AIWorkload) {
                     >
                       <i class="icon icon-upload" />
                       <span>Upgrade</span>
+                    </button>
+
+                    <!-- Blueprint workload: Customize -->
+                    <button
+                      v-if="w.spec.source.sourceType === 'Blueprint'"
+                      class="btn btn-sm role-secondary"
+                      :disabled="w.status?.activeOperation?.state === 'InProgress'"
+                      @click="onCustomize(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-edit" />
+                      Customize
                     </button>
 
                     <!-- Blueprint workload: Roll Back -->

@@ -10,6 +10,7 @@
         v-model="localName"
         type="text"
         class="form-control"
+        :disabled="disabled"
         :placeholder="t('suseai.wizard.form.workloadNamePlaceholder', 'e.g. my-ai-deployment')"
         @input="emit('update:workloadName', localName)"
       />
@@ -23,6 +24,7 @@
         :options="namespaceOptions"
         :required="true"
         :loading="loadingNamespaces"
+        :disabled="disabled"
         @update:value="onNamespaceChange"
       />
       <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', {}, true) }}</small>
@@ -51,6 +53,7 @@ interface Props {
   workloadName:   string;
   namespace:      string;
   components:     BlueprintComponent[];
+  disabled?:      boolean;
 }
 interface Emits {
   (e: 'update:workloadName', v: string): void;
