@@ -1,5 +1,5 @@
 // Shared AIWorkload status presentation helpers. Extracted from AIWorkloads.vue
-// so the workloads table and the detail modal render identical phase badges and
+// so the workloads table and the detail drawer render identical phase badges and
 // surface the same failure message.
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
 

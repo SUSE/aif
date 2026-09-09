@@ -129,7 +129,8 @@ function openDetailPanel(w: AIWorkload) {
       blueprint,
       clusters: clusters.value,
     },
-    width:              'default',
+    width:              'wide',
+    height:             'full',
     closeOnRouteChange: ['name', 'params', 'query'],
   });
 }
