@@ -542,12 +542,7 @@ func (r *InstallAIExtensionReconciler) reapOrphanedClusterRepo(
 ) {
 	logger := log.FromContext(ctx)
 
-	names := []string{ext.Spec.Extension.Name}
-	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
-		names = append(names, ext.Status.ActiveExtensionName)
-	}
-
-	for _, name := range names {
+	for _, name := range extensionNames(ext) {
 		if name == "" {
 			continue
 		}

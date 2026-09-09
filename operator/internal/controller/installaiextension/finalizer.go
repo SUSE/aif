@@ -150,6 +150,20 @@ func (r *InstallAIExtensionReconciler) handleCleanupFailure(
 	return ctrl.Result{}, nil
 }
 
+// extensionNames returns the extension name(s) this CR currently has state
+// for: the spec's current name, plus the previously-active one if a rename
+// hasn't finished cleaning up yet. Shared by cleanup (deleting everything on
+// CR deletion) and reapOrphanedClusterRepo (deleting just the ClusterRepo
+// when the extension namespace disappears) — both need the same pair, since a
+// rename in flight leaves state under both names until the old one is swept.
+func extensionNames(ext *v1alpha1.InstallAIExtension) []string {
+	names := []string{ext.Spec.Extension.Name}
+	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
+		names = append(names, ext.Status.ActiveExtensionName)
+	}
+	return names
+}
+
 func (r *InstallAIExtensionReconciler) cleanup(
 	ctx context.Context,
 	ext *v1alpha1.InstallAIExtension,
@@ -158,11 +172,7 @@ func (r *InstallAIExtensionReconciler) cleanup(
 	namespace := r.ExtensionNamespace
 	var errs []error
 
-	names := []string{ext.Spec.Extension.Name}
-	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
-		names = append(names, ext.Status.ActiveExtensionName)
-	}
-
+	names := extensionNames(ext)
 	for _, name := range names {
 		if name == "" {
 			continue
