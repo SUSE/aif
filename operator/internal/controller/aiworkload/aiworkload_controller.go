@@ -93,6 +93,11 @@ var (
 // AIWorkloadReconciler reconciles AIWorkload objects.
 type AIWorkloadReconciler struct {
 	client.Client
+	// APIReader reads directly from the API server, bypassing the manager's
+	// cache. Used to poll App/Helm release-owned workload controllers so those
+	// types do not need cluster-wide informers (or `watch` RBAC) just to derive a
+	// phase. See helmManagedControllers.
+	APIReader         client.Reader
 	Scheme            *runtime.Scheme
 	OperatorNamespace string
 	// CatalogClient holds the current Rancher catalog client used to fetch charts
@@ -201,6 +206,14 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	l.Info("reconciled AIWorkload", "phase", w.Status.Phase)
+
+	// Nothing watches pod/controller readiness for App/Helm workloads (the
+	// operator only watches Helm release secrets), so poll to keep the phase
+	// current as pods settle, crash, or recover. Placed after pull-secret
+	// delivery and reconcileOperation so this requeue never short-circuits them.
+	if w.Spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployHelm && w.Spec.Source.App != nil {
+		return ctrl.Result{RequeueAfter: helmReadinessRequeue}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -240,12 +253,21 @@ func (r *AIWorkloadReconciler) reconcileHelmStatus(ctx context.Context, w *aipla
 	if err != nil {
 		return err
 	}
-	if exists {
-		w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseRunning
-	} else {
+	if !exists {
 		w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseUnknown
 		w.Status.ClusterStatuses = nil
+		return nil
 	}
+
+	// A present release secret only means Helm started; it says nothing about
+	// whether the deployed pods are actually running. Inspect the release's
+	// workload controllers so a workload whose pods cannot start (e.g. a NIM pod
+	// that will not fit in GPU memory) is reported Degraded rather than Running.
+	controllers, err := r.helmManagedControllers(ctx, w.Spec.TargetNamespace, w.Spec.Source.App.Release)
+	if err != nil {
+		return err
+	}
+	w.Status.Phase, _ = helmPhaseFromReadiness(controllers, w.CreationTimestamp.Time)
 	return nil
 }
 
