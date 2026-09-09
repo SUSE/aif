@@ -49,6 +49,24 @@ func (c *helmClient) install(
 	install.ReleaseName = spec.Name
 	install.Namespace = spec.Namespace
 	install.Version = spec.Version
+	// A ConfigMap the aif-ui chart also templates (aif-ui-config) can be created
+	// unowned by something other than this release — the operator's own self-heal,
+	// before any chart ever ran — and otherwise permanently blocks this install
+	// with "invalid ownership metadata" (SUSEAI-1039). TakeOwnership claims any
+	// pre-existing resource in the chart's manifest regardless of its current
+	// ownership, the same way blueprint.go already does for Fleet-installed charts
+	// colliding with pre-delivered Secrets.
+	//
+	// This buys more than that one ConfigMap: it covers every resource the chart
+	// templates, and adopting an object owned by another Helm release transfers
+	// deletion rights to this one. In practice we only ever point
+	// InstallAIExtension at the aif-ui chart, whose objects are release-scoped
+	// apart from aif-ui-config — but that is a deployment convention, not an
+	// invariant: the chart comes from the CR (spec.source.helm.chartURL, or
+	// spec.extension.name for the ClusterRepo path). Accepted deliberately; the
+	// narrower alternative, stamping ownership metadata onto the one ConfigMap
+	// ahead of the install, is what this replaced.
+	install.TakeOwnership = true
 	if spec.RepoURL != "" {
 		install.RepoURL = spec.RepoURL
 	}
@@ -129,6 +147,9 @@ func newUpgradeAction(cfg *action.Configuration, spec ReleaseSpec) *action.Upgra
 	up.Atomic = false
 	// Still meaningful with Wait off: it bounds chart hook execution.
 	up.Timeout = 10 * time.Minute
+	// See install's TakeOwnership comment (SUSEAI-1039) — the same adoption gap
+	// applies on upgrade.
+	up.TakeOwnership = true
 
 	return up
 }
@@ -186,6 +207,12 @@ func (c *helmClient) renderUpgrade(
 	up.Wait = false
 	up.Atomic = false
 	up.Timeout = 2 * time.Minute
+	// Helm's ownership check runs before the DryRun branch, so a dry run against
+	// an unowned resource fails exactly like a real upgrade would without this
+	// (SUSEAI-1039) — this is the pre-flight diff EnsureRelease uses to decide
+	// whether an upgrade is even needed, so without it the real upgrade below
+	// would never be reached at all.
+	up.TakeOwnership = true
 	if spec.RepoURL != "" {
 		up.RepoURL = spec.RepoURL
 	}
