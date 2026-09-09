@@ -45,6 +45,8 @@ import (
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
+
+	"dario.cat/mergo"
 )
 
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
@@ -257,6 +259,37 @@ func (r *AIWorkloadReconciler) retryEpochValue(w *aiplatformv1alpha1.AIWorkload)
 	return n
 }
 
+// resolveComponentValues merges an AIWorkload-level override (matched by
+// ComponentName == ChartName) onto a blueprint component's own baked-in
+// values. Overrides deep-merge onto the base (mergo.WithOverride: override
+// wins on scalars, nested maps merge key-by-key, slices replace wholesale) —
+// the same semantics Helm itself uses for layered -f values.yaml overrides.
+// Components with no matching override render exactly as they did before
+// this existed (base values only), which keeps every pre-existing Blueprint
+// install byte-identical.
+func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (map[string]any, error) {
+	vals := map[string]any{}
+	if c.Values != nil {
+		if err := json.Unmarshal(c.Values.Raw, &vals); err != nil {
+			return nil, fmt.Errorf("unmarshal blueprint values for %s: %w", c.ChartName, err)
+		}
+	}
+	for _, ov := range w.Spec.ComponentValues {
+		if ov.ComponentName != c.ChartName || ov.Values == nil {
+			continue
+		}
+		override := map[string]any{}
+		if err := json.Unmarshal(ov.Values.Raw, &override); err != nil {
+			return nil, fmt.Errorf("unmarshal component override for %s: %w", c.ChartName, err)
+		}
+		if err := mergo.Merge(&vals, override, mergo.WithOverride); err != nil {
+			return nil, fmt.Errorf("merge component override for %s: %w", c.ChartName, err)
+		}
+		break
+	}
+	return vals, nil
+}
+
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
 func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ctx context.Context,
@@ -314,9 +347,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	} else {
 		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
 	}
-	vals := map[string]any{}
-	if c.Values != nil {
-		_ = json.Unmarshal(c.Values.Raw, &vals)
+	vals, err := resolveComponentValues(w, c)
+	if err != nil {
+		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	// Per-component namespace (ai-factory's componentNamespace helper) lets a
 	// blueprint component override the workload-level TargetNamespace. The
@@ -897,9 +930,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	// mirrors ensureBlueprintHelmOp. Omitting this dropped every component value
 	// (including open-webui's global.tls) from the GitOps git file, so the chart
 	// rendered with defaults and the open-webui Ingress got an empty TLS host.
-	vals := map[string]any{}
-	if c.Values != nil {
-		_ = json.Unmarshal(c.Values.Raw, &vals)
+	vals, err := resolveComponentValues(w, c)
+	if err != nil {
+		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
