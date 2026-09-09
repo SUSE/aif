@@ -59,16 +59,23 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "rancher-ai-agent", ChartVersion: "109.0.1"}
 	vals := map[string]any{"replicaCount": int64(2)}
 	targets := []any{map[string]any{"clusterName": "local"}}
+	fingerprint := strings.Repeat("a", 64)
 
-	b, err := buildGitChartBundle("wl-agent", "cattle-ai-agent-system", "fp-1", tgz, c, vals, targets)
+	b, err := buildGitChartBundle("wl-agent", "cattle-ai-agent-system", fingerprint, tgz, c, vals, targets)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if b.GroupVersionKind() != bundleGVK {
 		t.Fatalf("wrong gvk: %v", b.GroupVersionKind())
 	}
-	if got := b.GetAnnotations()[chartFingerprintAnnotation]; got != "fp-1" {
-		t.Fatalf("fingerprint annotation = %q, want %q", got, "fp-1")
+	if got := b.GetAnnotations()[chartFingerprintAnnotation]; got != fingerprint {
+		t.Fatalf("fingerprint annotation = %q, want %q", got, fingerprint)
+	}
+	if got := b.GetLabels()[renderDigestLabel]; got != renderDigestLabelValue(fingerprint) {
+		t.Fatalf("render digest label = %q, want %q", got, renderDigestLabelValue(fingerprint))
+	}
+	if got := b.GetLabels()[renderDigestLabel]; len(got) > 63 {
+		t.Fatalf("render digest label is %d characters, exceeds Kubernetes' 63-character limit", len(got))
 	}
 	// helm.chart must point at the chart's top-level directory (not a tgz).
 	chart, _, _ := unstructured.NestedString(b.Object, "spec", "helm", "chart")

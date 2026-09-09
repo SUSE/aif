@@ -553,9 +553,15 @@ func TestNvidiaInjector_WritesBothPathShapes(t *testing.T) {
 		t.Errorf("image.pullSecrets = %#v, want [%q]", image["pullSecrets"], nvidiaImagePullSecretName)
 	}
 
-	// Must not touch global.
-	if _, ok := vals["global"]; ok {
-		t.Errorf("global key should not be set by nvidiaInjector, got %#v", vals["global"])
+	// The injector sets the scalar global.ngcImagePullSecretName but must never
+	// force the global.imagePullSecrets list shape — that belongs to the SUSE
+	// injector and NVIDIA charts read the scalar name instead.
+	global, _ := vals["global"].(map[string]any)
+	if _, ok := global["imagePullSecrets"]; ok {
+		t.Errorf("nvidiaInjector must not set global.imagePullSecrets, got %#v", global["imagePullSecrets"])
+	}
+	if got := global["ngcImagePullSecretName"]; got != nvidiaImagePullSecretName {
+		t.Errorf("global.ngcImagePullSecretName = %#v, want %q", got, nvidiaImagePullSecretName)
 	}
 }
 
@@ -711,6 +717,14 @@ func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecrets(t *testing.T) {
 			}},
 			want: []any{nvidiaImagePullSecretName},
 		},
+		{
+			// An explicit null must be treated as absent (mirrors the UI copy).
+			name: "operator.image.pullSecrets explicit null — creates list",
+			in: map[string]any{"operator": map[string]any{
+				"image": map[string]any{"pullSecrets": nil},
+			}},
+			want: []any{nvidiaImagePullSecretName},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -738,6 +752,19 @@ func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecretsLeavesUnexpected(t *
 	op, _ := vals["operator"].(map[string]any)
 	if got := op["image"]; got != "not-a-map" {
 		t.Errorf("expected operator.image string to be untouched, got %+v", got)
+	}
+}
+
+// TestInjectNvidiaPullSecretRefs_FlatListExplicitNull pins that an explicit null
+// at image.pullSecrets is treated the same as an absent key — the list is created.
+// Mirrors the UI copy so the operator and browser install paths never diverge.
+func TestInjectNvidiaPullSecretRefs_FlatListExplicitNull(t *testing.T) {
+	vals := map[string]any{"image": map[string]any{"pullSecrets": nil}}
+	injectNvidiaPullSecretRefs(vals)
+	img, _ := vals["image"].(map[string]any)
+	got, _ := img["pullSecrets"].([]any)
+	if len(got) != 1 || got[0] != nvidiaImagePullSecretName {
+		t.Errorf("image.pullSecrets = %#v, want [%q]", img["pullSecrets"], nvidiaImagePullSecretName)
 	}
 }
 
@@ -792,6 +819,29 @@ func TestDisableChartSecretCreation(t *testing.T) {
 			secret:  "ngc-secret",
 			wantKey: map[string]any{"create": false, "name": "user-override"},
 		},
+		{
+			// An empty-string name is the chart default that renders
+			// imagePullSecrets: [{name:""}] and suppresses SA injection → 403.
+			// It must be filled, not honored. Mirrors the UI copy.
+			name: "existing map with empty name → filled",
+			initial: map[string]any{
+				"imagePullSecret": map[string]any{"create": true, "name": ""},
+			},
+			key:     "imagePullSecret",
+			secret:  "ngc-secret",
+			wantKey: map[string]any{"create": false, "name": "ngc-secret"},
+		},
+		{
+			// A non-string name is unexpected author intent — leave it untouched
+			// (parity with the UI copy's strict undefined/null/'' check).
+			name: "existing map with non-string name → left untouched",
+			initial: map[string]any{
+				"imagePullSecret": map[string]any{"create": true, "name": 42},
+			},
+			key:     "imagePullSecret",
+			secret:  "ngc-secret",
+			wantKey: map[string]any{"create": false, "name": 42},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -812,9 +862,127 @@ func TestDisableChartSecretCreation(t *testing.T) {
 	}
 }
 
+// TestInjectNgcImagePullSecretName covers the scalar ngcImagePullSecretName key,
+// read by some NVIDIA charts at the top level and by others under global. The
+// injector sees override-only values, so it must set the key unconditionally when
+// absent, replace an empty-string default, honor a non-empty user override, and
+// leave any non-string value untouched.
+func TestInjectNgcImagePullSecretName(t *testing.T) {
+	const (
+		key        = "ngcImagePullSecretName"
+		globalKey  = "global"
+		userSecret = "user-secret"
+	)
+
+	globalMap := func(vals map[string]any) map[string]any {
+		g, _ := vals[globalKey].(map[string]any)
+		return g
+	}
+
+	tests := []struct {
+		name       string
+		in         map[string]any
+		wantTop    any // expected vals[key]; nil means key must be absent
+		wantGlobal any // expected vals.global[key]; nil means key must be absent
+		assert     func(t *testing.T, vals map[string]any)
+	}{
+		{
+			name:       "empty values — sets top-level and creates global",
+			in:         map[string]any{},
+			wantTop:    nvidiaImagePullSecretName,
+			wantGlobal: nvidiaImagePullSecretName,
+		},
+		{
+			name:       "top-level empty string default — replaced",
+			in:         map[string]any{key: ""},
+			wantTop:    nvidiaImagePullSecretName,
+			wantGlobal: nvidiaImagePullSecretName,
+		},
+		{
+			name:       "top-level non-empty user override — honored",
+			in:         map[string]any{key: userSecret},
+			wantTop:    userSecret,
+			wantGlobal: nvidiaImagePullSecretName,
+		},
+		{
+			name:       "top-level non-string — left untouched",
+			in:         map[string]any{key: 42},
+			wantTop:    42,
+			wantGlobal: nvidiaImagePullSecretName,
+		},
+		{
+			name:       "global present as map with empty string — set",
+			in:         map[string]any{globalKey: map[string]any{key: ""}},
+			wantTop:    nvidiaImagePullSecretName,
+			wantGlobal: nvidiaImagePullSecretName,
+		},
+		{
+			name:       "global present as map with user override — honored",
+			in:         map[string]any{globalKey: map[string]any{key: userSecret}},
+			wantTop:    nvidiaImagePullSecretName,
+			wantGlobal: userSecret,
+		},
+		{
+			name:    "global present but not a map — left untouched",
+			in:      map[string]any{globalKey: "not-a-map"},
+			wantTop: nvidiaImagePullSecretName,
+			assert: func(t *testing.T, vals map[string]any) {
+				if vals[globalKey] != "not-a-map" {
+					t.Errorf("global mutated despite non-map shape: %#v", vals[globalKey])
+				}
+			},
+		},
+		{
+			name: "global present with other keys — key added, siblings preserved",
+			in: map[string]any{globalKey: map[string]any{
+				"imagePullSecrets": []any{map[string]any{"name": "author-secret"}},
+			}},
+			wantTop:    nvidiaImagePullSecretName,
+			wantGlobal: nvidiaImagePullSecretName,
+			assert: func(t *testing.T, vals map[string]any) {
+				list, ok := globalMap(vals)["imagePullSecrets"].([]any)
+				if !ok || len(list) != 1 {
+					t.Errorf("global.imagePullSecrets clobbered: %#v", globalMap(vals)["imagePullSecrets"])
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			injectNgcImagePullSecretName(tc.in)
+
+			if got := tc.in[key]; got != tc.wantTop {
+				t.Errorf("vals[%q] = %#v, want %#v", key, got, tc.wantTop)
+			}
+			if tc.wantGlobal != nil {
+				if got := globalMap(tc.in)[key]; got != tc.wantGlobal {
+					t.Errorf("vals.global[%q] = %#v, want %#v", key, got, tc.wantGlobal)
+				}
+			}
+			if tc.assert != nil {
+				tc.assert(t, tc.in)
+			}
+		})
+	}
+}
+
+// TestInjectNvidiaPullSecretRefs_SetsNgcImagePullSecretName pins that the scalar
+// ngcImagePullSecretName key is wired by the shared entrypoint used on every
+// install path.
+func TestInjectNvidiaPullSecretRefs_SetsNgcImagePullSecretName(t *testing.T) {
+	vals := map[string]any{}
+	injectNvidiaPullSecretRefs(vals)
+	if got := vals["ngcImagePullSecretName"]; got != nvidiaImagePullSecretName {
+		t.Errorf("ngcImagePullSecretName = %#v, want %q", got, nvidiaImagePullSecretName)
+	}
+	g, _ := vals["global"].(map[string]any)
+	if got := g["ngcImagePullSecretName"]; got != nvidiaImagePullSecretName {
+		t.Errorf("global.ngcImagePullSecretName = %#v, want %q", got, nvidiaImagePullSecretName)
+	}
+}
+
 // equalAnyStringSlice compares two []any treating each element as a string.
-// Used by the operator.image.pullSecrets tests. Add at the bottom of the
-// test file if not already present.
+// Used by the operator.image.pullSecrets tests.
 func equalAnyStringSlice(a, b []any) bool {
 	if len(a) != len(b) {
 		return false

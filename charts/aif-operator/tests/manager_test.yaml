@@ -1,0 +1,157 @@
+suite: manager deployment — image, args, and environment wiring
+templates:
+  - templates/manager/manager.yaml
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: image is assembled from registry, repository, and tag
+    set:
+      manager.image.tag: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/suse/aif-operator:1.2.3
+
+  - it: an empty image tag falls back to the chart appVersion
+    set:
+      manager.image.tag: ""
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/suse/aif-operator:9.9.9
+
+  - it: global.imageRegistry overrides the per-image registry
+    set:
+      global.imageRegistry: registry.suse.com
+      manager.image.tag: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: registry.suse.com/suse/aif-operator:1.2.3
+
+  - it: an empty registry yields a bare repository with no leading slash
+    set:
+      manager.image.registry: ""
+      manager.image.tag: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: suse/aif-operator:1.2.3
+
+  - it: metrics enabled binds the metrics port
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=:8443
+
+  - it: metrics disabled binds address zero rather than dropping the flag
+    set:
+      metrics.enable: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=0
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-bind-address=:8443
+
+  - it: the api port drives both the bind address and the container port
+    set:
+      api.port: 9090
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --api-bind-address=:9090
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 9090
+
+  - it: leader election is on by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+
+  - it: allowedRegistryHosts is passed as a single comma-joined flag
+    set:
+      manager.allowedRegistryHosts:
+        - harbor.example.com
+        - ghcr.io
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --allowed-registry-hosts=harbor.example.com,ghcr.io
+
+  - it: the insecure registry TLS flag is absent unless explicitly enabled
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --allow-insecure-registry-tls
+
+  - it: the insecure registry TLS flag appears when enabled
+    set:
+      manager.allowInsecureRegistryTLS: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --allow-insecure-registry-tls
+
+  - it: the operator learns its namespace from the downward API
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OPERATOR_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  - it: the operator is told its own service name, the extensions namespace, and the chart version
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OPERATOR_SERVICE
+            value: aif-operator
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: EXTENSION_NAMESPACE
+            value: cattle-ui-plugin-system
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CHART_VERSION
+            value: 9.9.9
+
+  - it: the deployment runs under the chart's own service account
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: aif-operator
+
+  - it: probes render by default and drop their enabled key
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe.enabled
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.enabled
+
+  - it: probes can be switched off independently
+    set:
+      manager.probes.liveness.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe
+      - exists:
+          path: spec.template.spec.containers[0].readinessProbe

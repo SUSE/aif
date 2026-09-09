@@ -228,8 +228,16 @@ func TestBothSourceKindsTimeOutAPendingRelease(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reconcile error = %v", err)
 			}
-			if result.RequeueAfter != 0 {
-				t.Errorf("RequeueAfter = %v, want 0; the wait is over", result.RequeueAfter)
+			// Over as a wait, not as a CR: see TestHandlePendingRelease_TimesOutAndNamesTheManualFix.
+			// The invariant is the drop from the in-flight poll to the health-check
+			// cadence, not that polling stops outright.
+			if result.RequeueAfter != healthCheckInterval {
+				t.Errorf("RequeueAfter = %v, want %v; the wait is over",
+					result.RequeueAfter, healthCheckInterval)
+			}
+			if result.RequeueAfter <= pendingReleaseRequeue {
+				t.Errorf("RequeueAfter = %v, want slower than the %v in-flight poll",
+					result.RequeueAfter, pendingReleaseRequeue)
 			}
 			if tt.ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 				t.Errorf("Phase = %s, want Failed", tt.ext.Status.Phase)

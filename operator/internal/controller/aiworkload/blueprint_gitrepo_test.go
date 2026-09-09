@@ -2,11 +2,14 @@ package aiworkload
 
 import (
 	"context"
+	"encoding/json"
 	stderrors "errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	apixv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -89,6 +92,69 @@ func TestEnsureBlueprintHelmOp_GitRepoEmitsBundle(t *testing.T) {
 	ho.SetGroupVersionKind(helmOpGVK)
 	if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "fleet-local", Name: "wl-agent"}, ho); err == nil {
 		t.Fatal("did not expect a HelmOp for a git-backed component")
+	}
+}
+
+func TestEnsureBlueprintGitFile_GitRepoPublishesMixedTargetsToBothFleetWorkspaces(t *testing.T) {
+	ctx := context.Background()
+	remoteURL := newBlueprintGitOpsRemote(t)
+	scheme := gitRepoTestScheme()
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+		},
+	}
+	repo := repoObj("rancher-charts", map[string]any{
+		"gitRepo": "https://git.rancher.io/charts", "gitBranch": "release-v2.14",
+	})
+	workload := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "aif-operator"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetClusters: []string{"local", "c-downstream"},
+		},
+	}
+	tgz := makeChartTgz(t, map[string]string{
+		"rancher-ai-agent/Chart.yaml":        "apiVersion: v2\nname: rancher-ai-agent\nversion: 109.0.1\n",
+		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
+	})
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings, repo, workload).Build()
+	holder := rancher.NewHolder()
+	holder.Set(fakeCatalog{tgz: tgz})
+	r := &AIWorkloadReconciler{
+		Client:            cl,
+		Scheme:            scheme,
+		CatalogClient:     holder,
+		OperatorNamespace: "aif-operator",
+	}
+	const bundleName = "wl-agent"
+	const filePath = "workloads/wl-agent.yaml"
+
+	if _, err := r.ensureBlueprintGitFile(ctx, workload, gitComponent(), bundleName); err != nil {
+		t.Fatalf("ensureBlueprintGitFile: %v", err)
+	}
+	documents := strings.Split(readBlueprintGitOpsFile(t, remoteURL, filePath), "\n---\n")
+	if len(documents) != 2 {
+		t.Fatalf("want two Fleet workspace documents, got %d", len(documents))
+	}
+	wantNamespaces := map[string]bool{"fleet-local": true, "fleet-default": true}
+	for _, document := range documents {
+		var object map[string]any
+		if err := json.Unmarshal([]byte(document), &object); err != nil {
+			t.Fatalf("decode mixed-target Bundle: %v", err)
+		}
+		namespace, _, _ := unstructured.NestedString(object, "metadata", "namespace")
+		if !wantNamespaces[namespace] {
+			t.Fatalf("unexpected Fleet namespace %q", namespace)
+		}
+		delete(wantNamespaces, namespace)
+		targets, found, err := unstructured.NestedSlice(object, "spec", "targets")
+		if err != nil || !found || len(targets) != 1 {
+			t.Fatalf("%s targets: found=%v err=%v targets=%v", namespace, found, err, targets)
+		}
+	}
+	if len(wantNamespaces) != 0 {
+		t.Fatalf("missing Fleet workspaces: %v", wantNamespaces)
 	}
 }
 

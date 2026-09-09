@@ -56,6 +56,10 @@ func TestDesiredHelmOpKeys_GitOps(t *testing.T) {
 	if len(ds) != 1 || ds[0].Namespace != "fleet-default" || ds[0].ExpectedClusters != 2 {
 		t.Fatalf("gitops downstream-only: want fleet-default/2, got %+v", ds)
 	}
+	mixed := desiredHelmOpKeys("wl", []string{"local", "c-a", "c-b"}, comps("a"), aiplatformv1alpha1.AIWorkloadDeployGitOps)
+	if len(mixed) != 2 || mixed[0].Namespace != "fleet-default" || mixed[0].ExpectedClusters != 2 || mixed[1].Namespace != "fleet-local" || mixed[1].ExpectedClusters != 1 {
+		t.Fatalf("gitops mixed: want fleet-default/2 and fleet-local/1, got %+v", mixed)
+	}
 }
 
 func TestDesiredHelmOpKeys_ReleaseName(t *testing.T) {

@@ -1,0 +1,102 @@
+suite: helpers — naming, labels, and image pull secrets
+templates:
+  - templates/api-service.yaml
+  - templates/manager/manager.yaml
+  - templates/metrics/controller-manager-metrics-service.yaml
+# Pinned so the release workflow's version rewrites cannot break these assertions.
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: fullname is the chart name and deliberately ignores the release name
+    template: templates/api-service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aif-operator
+
+  - it: nameOverride changes the generated name
+    template: templates/api-service.yaml
+    set:
+      nameOverride: custom-op
+    asserts:
+      - equal:
+          path: metadata.name
+          value: custom-op
+
+  - it: fullnameOverride wins over nameOverride
+    template: templates/api-service.yaml
+    set:
+      nameOverride: custom-op
+      fullnameOverride: pinned-name
+    asserts:
+      - equal:
+          path: metadata.name
+          value: pinned-name
+
+  - it: common labels carry the control-plane marker and chart metadata
+    template: templates/api-service.yaml
+    asserts:
+      - equal:
+          path: metadata.labels
+          value:
+            app.kubernetes.io/version: "9.9.9"
+            helm.sh/chart: aif-operator-9.9.9
+            app.kubernetes.io/name: aif-operator
+            app.kubernetes.io/instance: my-release
+            app.kubernetes.io/managed-by: Helm
+            control-plane: controller-manager
+
+  # A Deployment's spec.selector is immutable. Adding a key here turns a routine
+  # `helm upgrade` into a failure that only shows up against an existing release,
+  # so the set of selector labels is pinned exactly rather than spot-checked.
+  - it: selector labels stay at exactly two keys
+    template: templates/api-service.yaml
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: aif-operator
+            app.kubernetes.io/instance: my-release
+
+  - it: serviceName appends the suffix when the base name is short
+    template: templates/metrics/controller-manager-metrics-service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aif-operator-metrics
+
+  - it: serviceName truncates a long base name so the suffix still fits in 63 chars
+    template: templates/metrics/controller-manager-metrics-service.yaml
+    set:
+      fullnameOverride: aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee
+    asserts:
+      - equal:
+          path: metadata.name
+          value: aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeee-metrics
+      - matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+
+  - it: imagePullSecrets merges global and manager entries, accepting strings and maps
+    template: templates/manager/manager.yaml
+    set:
+      global.imagePullSecrets:
+        - global-secret
+      manager.imagePullSecrets:
+        - name: manager-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.imagePullSecrets
+          value:
+            - name: global-secret
+            - name: manager-secret
+
+  - it: imagePullSecrets is omitted entirely when none are configured
+    template: templates/manager/manager.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.imagePullSecrets

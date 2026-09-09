@@ -62,11 +62,9 @@ export interface AppStoreModule extends StoreModule<AppState, SuseAIState> {
   };
   
   actions: {
-    fetchAllApps: (context: ActionContext<AppState, SuseAIState>, payload?: { force?: boolean }) => Promise<void>;
     fetchApp: (context: ActionContext<AppState, SuseAIState>, appId: string) => Promise<AppSummary>;
     searchApps: (context: ActionContext<AppState, SuseAIState>, query: string) => Promise<AppSummary[]>;
     updateFilters: (context: ActionContext<AppState, SuseAIState>, filters: Partial<AppState['filters']>) => void;
-    refreshApps: (context: ActionContext<AppState, SuseAIState>) => Promise<void>;
     clearCache: (context: ActionContext<AppState, SuseAIState>) => void;
   };
 }

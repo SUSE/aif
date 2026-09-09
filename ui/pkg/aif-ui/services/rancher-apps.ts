@@ -1,5 +1,4 @@
 import yaml from 'js-yaml';
-import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from './app-collection';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
 function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
@@ -44,6 +43,7 @@ import type {
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { MANAGED_REPO_LABEL } from './app-collection';
 
 /* ============================== logging helpers - CLEANED UP ============================== */
 // Legacy logging functions - replaced with proper logger
@@ -748,7 +748,13 @@ export async function inferClusterRepoForChart(
   chartName: string,
   preferVersion?: string
 ): Promise<string | null> {
-  const repos = await listClusterRepos($store);
+  // Scope to operator-managed repos only: without this gate the install path
+  // would resolve a chart from ANY ClusterRepo on the cluster (first name match),
+  // bypassing the provenance contract that fetchManagedRepos enforces for
+  // discovery. An unmanaged repo publishing a like-named chart must never be
+  // chosen as an install source.
+  const repos = (await listClusterRepos($store))
+    .filter((r) => r?.metadata?.labels?.[MANAGED_REPO_LABEL] === 'true');
   let best: string | null = null;
 
   for (const r of repos) {
@@ -769,139 +775,6 @@ export async function inferClusterRepoForChart(
   }
   return best;
 }
-
-
-function clusterRepoNameFromUrl(repoUrl: string): string {
-  const KNOWN: Record<string, string> = {
-    [APP_COLLECTION_REPO_URL]:    'application-collection',
-    [SUSE_REGISTRY_REPO_URL]:     'suse-ai-registry',
-    [NVIDIA_REPO_URL]:            'nvidia',
-    [NVIDIA_BLUEPRINT_REPO_URL]:  'nvidia-blueprints',
-  };
-  return KNOWN[repoUrl] ?? repoUrl
-    .replace(/^oci:\/\//, '')
-    .replace(/[^a-z0-9]+/gi, '-')
-    .toLowerCase()
-    .replace(/^-|-$/g, '');
-}
-
-async function upsertBasicAuthSecret(
-  $store: Dispatchable,
-  namespace: string,
-  name: string,
-  username: string,
-  password: string,
-  cacerts?: string,
-): Promise<void> {
-  const stringData: Record<string, string> = { username, password };
-  if (cacerts) stringData.cacerts = cacerts;
-
-  const secretBody = {
-    apiVersion: 'v1',
-    kind:       'Secret',
-    metadata:   { name, namespace },
-    type:       'kubernetes.io/basic-auth',
-    stringData,
-  };
-  try {
-    const res = await $store.dispatch('rancher/request', {
-      url:     `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
-      timeout: TIMEOUT_VALUES.CLUSTER,
-    });
-    const existing = res?.data || res;
-    await $store.dispatch('rancher/request', {
-      url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets/${name}`,
-      method: 'PUT',
-      data:   { ...secretBody, metadata: { ...secretBody.metadata, resourceVersion: existing?.metadata?.resourceVersion } },
-      timeout: TIMEOUT_VALUES.MUTATION,
-    });
-  } catch {
-    await $store.dispatch('rancher/request', {
-      url:    `/k8s/clusters/local/api/v1/namespaces/${namespace}/secrets`,
-      method: 'POST',
-      data:   secretBody,
-      timeout: TIMEOUT_VALUES.MUTATION,
-    });
-  }
-}
-
-export async function ensureClusterRepo(
-  $store: Dispatchable,
-  ociUrl: string,
-  credentials?: { username: string; password: string; cacerts?: string },
-  preferredName?: string,
-): Promise<string> {
-  const repos = await listClusterRepos($store);
-  const existing = preferredName
-    ? repos.find((r) => r?.metadata?.name === preferredName)
-    : repos.find((r) => (r?.spec?.url || r?.spec?.ociRepo || '') === ociUrl);
-  const name = preferredName || existing?.metadata?.name || clusterRepoNameFromUrl(ociUrl);
-
-  let clientSecret: { name: string; namespace: string } | undefined;
-  if (credentials) {
-    const secretName = `${name}-auth`;
-    await upsertBasicAuthSecret(
-      $store,
-      'cattle-system',
-      secretName,
-      credentials.username,
-      credentials.password,
-      credentials.cacerts,
-    );
-    clientSecret = { name: secretName, namespace: 'cattle-system' };
-  }
-
-  if (existing) {
-    // Keep stable logical aliases pointed at the selected mirror when switching
-    // between connected and air-gapped modes. Also attach credentials when the
-    // existing repo did not have the desired auth Secret.
-    const currentUrl = existing.spec?.url || existing.spec?.ociRepo || '';
-    const urlChanged = currentUrl !== ociUrl;
-    const secretChanged = clientSecret && existing.spec?.clientSecret?.name !== clientSecret.name;
-    if (urlChanged || secretChanged) {
-      const res = await $store.dispatch('rancher/request', {
-        url:     `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
-        timeout: TIMEOUT_VALUES.CLUSTER,
-      });
-      const full = res?.data || res;
-      const spec = { ...full.spec, url: ociUrl };
-      if (clientSecret) spec.clientSecret = clientSecret;
-      await $store.dispatch('rancher/request', {
-        url:    `/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos/${name}`,
-        method: 'PUT',
-        data:   { ...full, spec },
-        timeout: TIMEOUT_VALUES.MUTATION,
-      });
-    }
-    return name;
-  }
-
-  // Create the ClusterRepo
-  const spec: any = { url: ociUrl };
-  if (clientSecret) spec.clientSecret = clientSecret;
-  await $store.dispatch('rancher/request', {
-    url:    '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos',
-    method: 'POST',
-    data:   { apiVersion: 'catalog.cattle.io/v1', kind: 'ClusterRepo', metadata: { name }, spec },
-    timeout: TIMEOUT_VALUES.MUTATION,
-  });
-
-  // Poll until indexed (up to 60 s)
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 2000));
-    try {
-      const fresh = await listClusterRepos($store);
-      const created = fresh.find((r: any) => r?.metadata?.name === name);
-      if (!created) continue;
-      const ready = (created?.status?.conditions || []).some((c: any) =>
-        ['OCIDownloaded', 'Downloaded', 'FollowerDownloaded'].includes(c.type) && c.status === 'True'
-      );
-      if (ready) return name;
-    } catch { /* retry */ }
-  }
-  return name;
-}
-
 
 async function findHelmReleaseObjects(
   $store: Dispatchable,
@@ -1160,10 +1033,122 @@ export async function listServiceAccounts(
   clusterId: string,
   namespace: string
 ): Promise<string[]> {
-  const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000`;
+  // Match the operator's ownership boundary: Helm-managed ServiceAccounts plus
+  // the namespace default. The selector avoids transferring unrelated accounts.
+  const selector = encodeURIComponent('app.kubernetes.io/managed-by=Helm');
+  const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts?limit=5000&labelSelector=${selector}`;
   const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
-  const items = (res?.data?.items || res?.data || []) as ServiceAccount[];
-  return items.map(sa => sa?.metadata?.name).filter(Boolean);
+  const responseItems = res?.data?.items ?? res?.items ?? res?.data ?? [];
+  const items = Array.isArray(responseItems) ? responseItems as ServiceAccount[] : [];
+  const names = items
+    .map(sa => sa?.metadata?.name)
+    .filter((name): name is string => typeof name === 'string' && name.length > 0);
+
+  return [...new Set(['default', ...names])];
+}
+
+interface RancherHttpErrorShape {
+  _status?: unknown;
+  code?: unknown;
+  data?: unknown;
+  message?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+  response?: { data?: unknown; status?: unknown };
+}
+
+// rancher/request rejects with the parsed response body and attaches the HTTP
+// status as a non-enumerable `_status`. Kubernetes and Norman use other fields.
+// Ignore non-HTTP numeric codes such as DOMException.code and transport status 0.
+// TODO: replace this local parser when Rancher HTTP status extraction is consolidated.
+function rancherHttpStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+
+  const candidate = error as RancherHttpErrorShape;
+  const rawStatuses = [
+    candidate._status,
+    candidate.code,
+    candidate.status,
+    candidate.statusCode,
+    candidate.response?.status,
+  ];
+
+  for (const rawStatus of rawStatuses) {
+    const trimmed = typeof rawStatus === 'string' ? rawStatus.trim() : '';
+    const status = /^\d{3}$/.test(trimmed) ? Number(trimmed) : rawStatus;
+    if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) {
+      return status;
+    }
+  }
+
+  return undefined;
+}
+
+function rancherDataMessage(data: unknown): string | undefined {
+  if (typeof data === 'string') return data;
+  if (typeof data !== 'object' || data === null) return undefined;
+
+  const candidate = data as { error?: unknown; message?: unknown };
+  if (typeof candidate.message === 'string') return candidate.message;
+  if (typeof candidate.error === 'string') return candidate.error;
+
+  return undefined;
+}
+
+function rancherErrorMessage(error: unknown): string | undefined {
+  const simpleMessage: unknown = handleSimpleError(error, '');
+  let message = typeof simpleMessage === 'string' && simpleMessage.trim() ? simpleMessage : undefined;
+
+  if (!message && typeof error === 'object' && error !== null) {
+    const candidate = error as RancherHttpErrorShape;
+    message = rancherDataMessage(candidate.data) ??
+      rancherDataMessage(candidate.response?.data) ??
+      rancherDataMessage(candidate);
+  }
+
+  if (!message) return undefined;
+
+  const trimmed = message.trim();
+  return trimmed ? trimmed.slice(0, 1_000) : undefined;
+}
+
+const SERVICE_ACCOUNT_LIST_ATTEMPTS = 5;
+const SERVICE_ACCOUNT_PATCH_ATTEMPTS = 5;
+const SERVICE_ACCOUNT_RETRY_BASE_DELAY_MS = 200;
+const SERVICE_ACCOUNT_RETRY_MAX_DELAY_MS = 2_000;
+
+function serviceAccountRetryDelay(attempt: number): number {
+  const exponential = Math.min(
+    SERVICE_ACCOUNT_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+    SERVICE_ACCOUNT_RETRY_MAX_DELAY_MS,
+  );
+  const jitter = Math.floor(Math.random() * Math.max(1, exponential / 4));
+
+  return exponential + jitter;
+}
+
+function isRetryableServiceAccountListFailure(error: unknown): boolean {
+  const status = rancherHttpStatus(error);
+  return status === undefined || status === 408 || status === 429 || status >= 500;
+}
+
+async function listServiceAccountsWithRetry(
+  $store: Dispatchable,
+  clusterId: string,
+  namespace: string,
+): Promise<string[]> {
+  for (let attempt = 1; attempt <= SERVICE_ACCOUNT_LIST_ATTEMPTS; attempt++) {
+    try {
+      return await listServiceAccounts($store, clusterId, namespace);
+    } catch (e) {
+      if (!isRetryableServiceAccountListFailure(e) || attempt === SERVICE_ACCOUNT_LIST_ATTEMPTS) {
+        throw e;
+      }
+      await new Promise(resolve => setTimeout(resolve, serviceAccountRetryDelay(attempt)));
+    }
+  }
+
+  throw new Error('ServiceAccount discovery retry loop exhausted unexpectedly');
 }
 
 export async function ensureServiceAccountPullSecret(
@@ -1172,33 +1157,50 @@ export async function ensureServiceAccountPullSecret(
   namespace: string,
   saName: string,
   secretName: string
-) {
+): Promise<void> {
   const base = `/k8s/clusters/${encodeURIComponent(clusterId)}/api/v1/namespaces/${encodeURIComponent(namespace)}/serviceaccounts`;
   const url  = `${base}/${encodeURIComponent(saName)}`;
 
-  try {
-    const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
-    const sa  = (cur?.data ?? cur) || {};
-    const rv  = sa?.metadata?.resourceVersion;
+  for (let attempt = 1; attempt <= SERVICE_ACCOUNT_PATCH_ATTEMPTS; attempt++) {
+    try {
+      const cur = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.CLUSTER });
+      const sa = ((cur?.data ?? cur) || {}) as Partial<ServiceAccount>;
+      const rv = sa.metadata?.resourceVersion;
 
-    const orig = Array.isArray(sa.imagePullSecrets) ? sa.imagePullSecrets.slice() : [];
-    const has  = orig.some((e: { name?: string }) => e?.name === secretName);
-    const next = has ? orig : [...orig, { name: secretName }];
+      // A successful Kubernetes GET must include resourceVersion. Without it we
+      // cannot prove that the list below reflects current state, and an
+      // unconditional merge patch could replace an administrator-managed list.
+      if (!rv) {
+        throw new Error(`Refusing to update ServiceAccount ${namespace}/${saName}: GET response is missing metadata.resourceVersion`);
+      }
 
-    await $store.dispatch('rancher/request', {
-      url, method: 'PUT',
-      data: {
-        apiVersion: 'v1',
-        kind: 'ServiceAccount',
-        metadata: { name: saName, namespace, resourceVersion: rv },
-        secrets: sa.secrets,
-        automountServiceAccountToken: sa.automountServiceAccountToken,
-        imagePullSecrets: next
-      },
-      timeout: TIMEOUT_VALUES.MUTATION
-    });
-  } catch (e) {
-    try { console.warn('[SUSE-AI] could not update ServiceAccount imagePullSecrets', { namespace, saName, e }); } catch {}
+      const orig = Array.isArray(sa.imagePullSecrets) ? sa.imagePullSecrets.slice() : [];
+      const has = orig.some(entry => entry?.name === secretName);
+      if (has) return;
+
+      // JSON Merge Patch replaces arrays wholesale, so send the complete
+      // read/merged list. resourceVersion preserves Kubernetes' optimistic-
+      // concurrency protection around that replacement.
+      const patch = {
+        metadata:         { resourceVersion: rv },
+        imagePullSecrets: [...orig, { name: secretName }],
+      };
+
+      await $store.dispatch('rancher/request', {
+        url,
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/merge-patch+json' },
+        data: patch,
+        timeout: TIMEOUT_VALUES.MUTATION
+      });
+      return;
+    } catch (e) {
+      if (rancherHttpStatus(e) === 409 && attempt < SERVICE_ACCOUNT_PATCH_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, serviceAccountRetryDelay(attempt)));
+        continue;
+      }
+      throw e;
+    }
   }
 }
 
@@ -1207,13 +1209,42 @@ export async function ensurePullSecretOnAllSAs(
   clusterId: string,
   namespace: string,
   secretName: string
-) {
-  const sas = await listServiceAccounts($store, clusterId, namespace);
+): Promise<void> {
+  let sas: string[];
+  try {
+    sas = await listServiceAccountsWithRetry($store, clusterId, namespace);
+  } catch (e) {
+    logger.warn('ServiceAccount discovery failed; falling back to default', {
+      component: 'RancherApps',
+      action:    'discover service accounts',
+      data:      {
+        namespace,
+        status:  rancherHttpStatus(e),
+        message: rancherErrorMessage(e),
+      },
+    });
+    sas = ['default'];
+  }
+
   for (const saName of sas) {
     try {
       await ensureServiceAccountPullSecret($store, clusterId, namespace, saName, secretName);
     } catch (e) {
-      try { console.warn('[SUSE-AI] SA attach failed', { namespace, saName, e }); } catch {}
+      // The default SA can be absent briefly while a namespace is terminating,
+      // and a listed chart SA can disappear before its GET. Neither should
+      // prevent remaining ServiceAccounts from converging.
+      const status = rancherHttpStatus(e);
+      if (status === 404) continue;
+      logger.warn('ServiceAccount pull-secret attachment failed', {
+        component: 'RancherApps',
+        action:    'attach image pull secret',
+        data:      {
+          namespace,
+          serviceAccount: saName,
+          status,
+          message: rancherErrorMessage(e),
+        },
+      });
     }
   }
 }

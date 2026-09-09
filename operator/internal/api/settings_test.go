@@ -212,6 +212,7 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 	h := newSettingsHandler(c, "aif-operator")
 
 	body := `{"spec":{` +
+		`"fleet":{"caBundleSecretRef":{"name":"git-ca","key":"ca.crt"}},` +
 		`"applicationCollection":{"caBundleSecretRef":{"name":"appco-ca","key":"ca.crt"}},` +
 		`"suseRegistry":{"caBundleSecretRef":{"name":"suse-ca","key":"bundle.pem"}},` +
 		`"nvidia":{"caBundleSecretRef":{"name":"nvidia-ca","key":"tls-ca"}}}}`
@@ -233,6 +234,7 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 		got  *aiplatformv1alpha1.SecretKeyRef
 		want aiplatformv1alpha1.SecretKeyRef
 	}{
+		{"Fleet Git", stored.Spec.Fleet.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"}},
 		{"application collection", stored.Spec.ApplicationCollection.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"}},
 		{"SUSE registry", stored.Spec.SUSERegistry.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "suse-ca", Key: "bundle.pem"}},
 		{"NVIDIA", stored.Spec.Nvidia.CABundleSecretRef, aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "tls-ca"}},
@@ -711,6 +713,41 @@ func TestValidateCredentials_OverrideRefsBeforeSave(t *testing.T) {
 	}
 }
 
+func TestValidateCredentials_EndpointOverrideBeforeSave(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ov-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("ou")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ov-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("op")},
+	}
+	c := newSettingsFakeClient(t, sampleCR(), userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryFn
+	defer func() { probeRegistryFn = orig }()
+	gotHost := ""
+	probeRegistryFn = func(_ context.Context, host, _, _ string, _ []byte) credcheck.Result {
+		gotHost = host
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "authenticated"}
+	}
+
+	body := `{"targets":["suseRegistry"],"overrides":{"suseRegistry":{"url":"oci://harbor.airgap.test/charts","userSecretRef":{"name":"ov-user","key":"username"},"tokenSecretRef":{"name":"ov-token","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if gotHost != "harbor.airgap.test" {
+		t.Fatalf("probe host=%q want harbor.airgap.test", gotHost)
+	}
+}
+
 func TestValidateCredentials_RancherCatalogOKFromSaved(t *testing.T) {
 	const ns = "aif-operator"
 	tokenSecret := &corev1.Secret{
@@ -990,6 +1027,37 @@ func TestValidateCredentials_GitAuthClassification(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if len(resp.Results) != 1 || resp.Results[0].Status != statusFailed {
 		t.Fatalf("want failed (auth), got %+v", resp.Results)
+	}
+}
+
+func TestValidateCredentials_GitHTTPSCredentialOverrideWithoutUsername(t *testing.T) {
+	const ns = "aif-operator"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+	}
+	credential := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-credential", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("secret-token")},
+	}
+	c := newSettingsFakeClient(t, cr, credential)
+	h := newSettingsHandler(c, ns)
+
+	orig := gitCheckAuthFn
+	defer func() { gitCheckAuthFn = orig }()
+	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error { return nil }
+
+	body := `{"targets":["gitops"],"overrides":{"gitops":{"repoURL":"https://git.example.com/repo.git","branch":"main","credSecretRef":{"name":"git-credential","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want ok, got %+v", resp.Results)
 	}
 }
 

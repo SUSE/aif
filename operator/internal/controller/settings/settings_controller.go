@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	stderrors "errors"
 	"fmt"
 	"net/url"
@@ -281,6 +282,7 @@ func (r *SettingsReconciler) isReferencedSettingsSecret(ctx context.Context, nam
 	}
 	refs := []*aiplatformv1alpha1.SecretKeyRef{
 		s.Spec.Fleet.CredSecretRef,
+		s.Spec.Fleet.CABundleSecretRef,
 		s.Spec.ApplicationCollection.UserSecretRef,
 		s.Spec.ApplicationCollection.TokenSecretRef,
 		s.Spec.ApplicationCollection.CABundleSecretRef,
@@ -306,13 +308,21 @@ const (
 	fleetGitRepoNamespace = "fleet-local"
 )
 
-// teamRepoMarkerLabel marks ClusterRepos the operator creates for NGC team
-// repos, so pruning can list-and-diff them by label (blueprint.go / pullsecrets.go
-// house pattern). Applied ONLY to team repos — never to the org/AC/SR/mirror
-// repos, which keep name-list pruning.
+// Provenance-label aliases. The literals live once in the credentials package
+// (credentials.TeamRepoLabel / ManagedRepoLabel), which the UI also mirrors;
+// these unexported names keep the reconciler's call sites terse. teamRepoMarker*
+// marks ONLY NGC team repos, so pruning can list-and-diff them by label
+// (blueprint.go / pullsecrets.go house pattern). managedRepoMarker* marks EVERY
+// ClusterRepo the operator creates (org/AC/SR/nvidia/blueprint/air-gap mirror +
+// team repos) and is the sole provenance signal the UI reads for dynamic-catalog
+// discovery, so an out-of-band ClusterRepo at a matching URL/host is never picked
+// up. (Do not reuse app.kubernetes.io/managed-by — it already carries value
+// "Helm" for Helm-owned objects the operator avoids.)
 const (
-	teamRepoMarkerLabel = "ai-factory.suse.com/nvidia-team-repo"
-	teamRepoMarkerValue = "true"
+	teamRepoMarkerLabel    = credentials.TeamRepoLabel
+	teamRepoMarkerValue    = credentials.LabelValueTrue
+	managedRepoMarkerLabel = credentials.ManagedRepoLabel
+	managedRepoMarkerValue = credentials.LabelValueTrue
 
 	// clusterRepoNameMax is the DNS-1123 label cap for a ClusterRepo name.
 	clusterRepoNameMax = 63
@@ -390,17 +400,30 @@ func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatfor
 	if branch == "" {
 		branch = "main"
 	}
+	if s.Spec.Fleet.CredSecretRef == nil && (s.Spec.Fleet.AuthType != "" || s.Spec.Fleet.Username != "") {
+		return fmt.Errorf("fleet.authType or fleet.username requires fleet.credSecretRef")
+	}
 
 	spec := map[string]any{
 		"repo":   s.Spec.Fleet.RepoURL,
 		"branch": branch,
-		"paths":  []any{"workloads"},
+		"paths":  []any{"blueprints", "workloads"},
 	}
 	if s.Spec.Fleet.CredSecretRef != nil {
 		if err := r.mirrorGitCredSecret(ctx, s); err != nil {
 			return fmt.Errorf("mirror git credential secret: %w", err)
 		}
 		spec["clientSecretName"] = s.Spec.Fleet.CredSecretRef.Name
+	}
+	if s.Spec.Fleet.CABundleSecretRef != nil {
+		caBundle, err := r.readGitCABundle(ctx, s.Namespace, s.Spec.Fleet.CABundleSecretRef)
+		if err != nil {
+			return err
+		}
+		// Fleet declares caBundle as []byte (OpenAPI format: byte). Because this
+		// controller applies an unstructured object, it must perform the JSON
+		// base64 encoding that a typed []byte field would receive automatically.
+		spec["caBundle"] = base64.StdEncoding.EncodeToString(caBundle)
 	}
 
 	gitRepo := &unstructured.Unstructured{
@@ -422,11 +445,33 @@ func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatfor
 	)
 }
 
-// mirrorGitCredSecret copies the git credential secret from the Settings namespace
-// into fleet-local in the format Fleet expects for HTTPS auth.
-// Fleet detects auth type from secret keys: it requires username+password
-// (kubernetes.io/basic-auth) for token/basic auth. A raw Opaque secret with a
-// single "token" key is misidentified as GitHub App auth.
+// readGitCABundle resolves an explicitly configured HTTPS Git CA. Invalid or
+// unreadable references are fatal: omitting the trust material would make
+// Fleet and AIF fail differently and could hide an unsafe configuration.
+func (r *SettingsReconciler) readGitCABundle(
+	ctx context.Context,
+	namespace string,
+	ref *aiplatformv1alpha1.SecretKeyRef,
+) ([]byte, error) {
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: ref.Name}, &secret); err != nil {
+		return nil, fmt.Errorf("read Git CA Secret %s/%s: %w", namespace, ref.Name, err)
+	}
+	caBundle, found := secret.Data[ref.Key]
+	if !found {
+		return nil, fmt.Errorf("git CA Secret %s/%s does not contain key %q", namespace, ref.Name, ref.Key)
+	}
+	pool := x509.NewCertPool()
+	if len(caBundle) == 0 || !pool.AppendCertsFromPEM(caBundle) {
+		return nil, fmt.Errorf("git CA Secret %s/%s key %q does not contain a PEM certificate", namespace, ref.Name, ref.Key)
+	}
+	return caBundle, nil
+}
+
+// mirrorGitCredSecret copies the Git credential from the Settings namespace
+// into fleet-local in the single HTTPS basic-auth shape Fleet understands. The
+// selected credential may be a password or personal access token; neither AIF
+// nor Fleet sends it as an HTTP Bearer token.
 func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	ref := s.Spec.Fleet.CredSecretRef
 
@@ -435,23 +480,27 @@ func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatf
 		return fmt.Errorf("read source secret %s/%s: %w", s.Namespace, ref.Name, err)
 	}
 
-	mirrorData := src.Data
-	mirrorType := src.Type
-
-	// For token and basic auth, Fleet requires kubernetes.io/basic-auth with
-	// username and password keys. Transform if the source is a raw token secret.
-	if s.Spec.Fleet.AuthType == "token" || s.Spec.Fleet.AuthType == "basic" {
-		token := src.Data[ref.Key]
-		username := src.Data["username"]
-		if len(username) == 0 {
-			username = []byte("token")
-		}
-		mirrorData = map[string][]byte{
-			"username": username,
-			"password": token,
-		}
-		mirrorType = corev1.SecretTypeBasicAuth
+	switch s.Spec.Fleet.AuthType {
+	case "", "token", "basic":
+		// token and basic are deprecated compatibility aliases. Fleet uses the
+		// same kubernetes.io/basic-auth Secret for both.
+	default:
+		return fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
 	}
+
+	password, found := src.Data[ref.Key]
+	if !found {
+		return fmt.Errorf("git credential Secret %s/%s does not contain key %q", s.Namespace, ref.Name, ref.Key)
+	}
+	if len(password) == 0 {
+		return fmt.Errorf("git credential must not be empty")
+	}
+	username := []byte(credentials.ResolveGitHTTPSUsername(s.Spec.Fleet.Username, src.Data))
+	mirrorData := map[string][]byte{
+		corev1.BasicAuthUsernameKey: username,
+		corev1.BasicAuthPasswordKey: password,
+	}
+	mirrorType := corev1.SecretTypeBasicAuth
 
 	// Check if the existing mirror has the wrong type — secret type is immutable,
 	// so we must delete and recreate rather than patch.
@@ -633,17 +682,37 @@ func (r *SettingsReconciler) forceUpdateClusterRepo(ctx context.Context, name st
 	return nil
 }
 
+// managedRepoSpec builds the ClusterRepo spec the operator owns via server-side
+// apply. Beyond spec.url it EXPLICITLY zeroes the alternate-source surface so that
+// when the operator adopts a pre-existing ClusterRepo squatting a canonical name
+// (applyClusterRepo patches with client.Apply + ForceOwnership and no adoption
+// guard, so fields absent from this object survive), SSA neutralizes any foreign
+// fields the squatter set — a git source, downgraded TLS, or a ServiceAccount —
+// rather than leaving them intact on a repo the operator then blesses as managed.
+// The operator never legitimately sets any of these on its repos, so forcing them
+// empty is a no-op for repos the operator itself created. The caller adds
+// spec.clientSecret.
+func managedRepoSpec(repoURL string) map[string]any {
+	return map[string]any{
+		"url":                     repoURL,
+		"gitRepo":                 "",
+		"gitBranch":               "",
+		"insecureSkipTLSVerify":   false,
+		"serviceAccount":          "",
+		"serviceAccountNamespace": "",
+	}
+}
+
 func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, clientSecretName string) error {
 	repo := &unstructured.Unstructured{
 		Object: map[string]any{
 			"apiVersion": "catalog.cattle.io/v1",
 			"kind":       "ClusterRepo",
 			"metadata": map[string]any{
-				"name": name,
+				"name":   name,
+				"labels": map[string]any{managedRepoMarkerLabel: managedRepoMarkerValue},
 			},
-			"spec": map[string]any{
-				"url": url,
-			},
+			"spec": managedRepoSpec(url),
 		},
 	}
 
@@ -760,9 +829,11 @@ func (r *SettingsReconciler) reconcileRegistryRepo(
 }
 
 // reconcileNvidiaRepos handles NVIDIA's two-mode topology: two stable logical
-// repos backed by one gated OCI mirror when registryEndpoints.nvidia is set
-// (air-gap), or the public NGC charts + blueprint pair otherwise. Either way it
-// prunes every NVIDIA repo + mirror when credentials are gone.
+// repos (nvidia for Apps, nvidia-blueprints for bundled Blueprints) backed by
+// one OCI mirror when registryEndpoints.nvidia is set (air-gap, created with or
+// without credentials), or the public NGC charts + blueprint pair otherwise
+// (connected mode). Connected mode tears all NVIDIA repos down without
+// credentials; an air-gap mirror may be anonymous.
 func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	nvUser, nvToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.Nvidia.UserSecretRef,
@@ -776,42 +847,47 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 
 	allNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
 
-	// Configured NVIDIA credentials are the signal that NVIDIA is in use. Without
-	// them, tear every NVIDIA repo + mirror back down.
-	if nvUser == nil || nvToken == nil {
+	// Air-gap (registryEndpoints.nvidia set): preserve BOTH stable logical repo
+	// names at the gated private mirror. Bundled Blueprints reference
+	// nvidia-blueprints while Apps use nvidia; collapsing them to one ClusterRepo
+	// makes the Blueprint charts unresolvable even when both live under the same
+	// mirrored OCI path. Supported WITH or WITHOUT credentials (an internal mirror
+	// may be anonymous), so this is evaluated BEFORE the no-creds teardown below —
+	// otherwise an intentionally unauthenticated mirror would be pruned instead of
+	// created.
+	if nvURL != "" {
+		// Team repos never belong in air-gap; prune them on the connected→air-gap
+		// switch (pruneTeamRepos preserves ngc-helm-auth, unused by the mirror).
 		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
 			return err
 		}
-		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
-	}
 
-	if nvURL != "" {
-		// Air-gap: preserve both stable logical repo names at the gated private
-		// mirror. Bundled Blueprints reference nvidia-blueprints while Apps use
-		// nvidia; collapsing them to one ClusterRepo makes the Blueprint charts
-		// unresolvable even when both live under the same mirrored OCI path.
-		secretName, changed, err := r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken, s.Spec.Nvidia.CABundleSecretRef)
-		if err != nil {
-			return err
-		}
-		if secretName == "" {
-			// Refs are set but unreadable: nothing to authenticate the private
-			// mirror with, so tear the repos down rather than create a broken one.
-			// Also prune team repos orphaned from a prior connected mode.
-			if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+		hasRefs := nvUser != nil && nvToken != nil
+		secretName := ""
+		changed := false
+		if hasRefs {
+			var err error
+			secretName, changed, err = r.applyRegistryAuthSecret(ctx, s.Namespace, credentials.AuthSecretNvidia, nvUser, nvToken, s.Spec.Nvidia.CABundleSecretRef)
+			if err != nil {
 				return err
 			}
-			return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+			if secretName == "" {
+				// Refs are set but unreadable: the admin intended authentication but
+				// we have nothing to authenticate with. Tear the repos + mirror down
+				// rather than create a repo that will 401 against a gated mirror.
+				return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+			}
+		} else {
+			// No refs at all: intentional anonymous mirror. Drop any stale auth secret.
+			if err := r.deleteAuthSecret(ctx, credentials.AuthSecretNvidia); err != nil {
+				return err
+			}
 		}
+
 		for _, name := range allNvidiaRepos {
 			if err := r.applyClusterRepo(ctx, name, nvURL, secretName); err != nil {
 				return err
 			}
-		}
-		// Prune team repos on the connected→air-gap switch, but PRESERVE
-		// ngc-helm-auth — the air-gap mirror still consumes it.
-		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
-			return err
 		}
 		if changed {
 			for _, name := range allNvidiaRepos {
@@ -823,13 +899,20 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		return nil
 	}
 
+	// Connected mode: NVIDIA credentials are the "in use" signal. Without them,
+	// tear every NVIDIA repo + mirror back down.
+	if nvUser == nil || nvToken == nil {
+		if err := r.pruneTeamRepos(ctx, map[string]bool{}); err != nil {
+			return err
+		}
+		return r.pruneRegistryRepos(ctx, credentials.AuthSecretNvidia, allNvidiaRepos)
+	}
+
 	// Connected: both NGC repos are PUBLIC — https://helm.ngc.nvidia.com/nvidia
 	// and .../nvidia/blueprint each serve their index anonymously. Create them
 	// WITHOUT a clientSecret: presenting a valid NGC key that is NOT entitled to a
 	// path makes NGC return 403, which Rancher surfaces as the misleading "no API
-	// version specified". Sending no credential restores public access (this also
-	// matches what the UI extension creates, so the two reconcilers agree instead
-	// of fighting over the blueprint repo's clientSecret).
+	// version specified". Sending no credential restores public access.
 	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoNvidia, credentials.DefaultNvidiaChartsURL, ""); err != nil {
 		return err
 	}
@@ -861,12 +944,13 @@ func (r *SettingsReconciler) applyTeamClusterRepo(ctx context.Context, name, ngc
 			"apiVersion": "catalog.cattle.io/v1",
 			"kind":       "ClusterRepo",
 			"metadata": map[string]any{
-				"name":   name,
-				"labels": map[string]any{teamRepoMarkerLabel: teamRepoMarkerValue},
+				"name": name,
+				"labels": map[string]any{
+					teamRepoMarkerLabel:    teamRepoMarkerValue,
+					managedRepoMarkerLabel: managedRepoMarkerValue,
+				},
 			},
-			"spec": map[string]any{
-				"url": ngcURL,
-			},
+			"spec": managedRepoSpec(ngcURL),
 		},
 	}
 	if clientSecretName != "" {

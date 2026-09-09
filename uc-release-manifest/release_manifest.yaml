@@ -87,19 +87,8 @@ components:
         namespace: "aif-operator"
         # will be application-collection when we finalize things
         repository: "ghcr"
-        values:
-          aiExtension:
-            enabled: false
         dependsOn:
           - name: "rancher"
-            type: "helm"
-      - chart: "aif-ui" 
-        version: "2.0.1"
-        namespace: "cattle-ui-plugin-system"
-        # will be application-collection when we finalize things
-        repository: "ghcr"
-        dependsOn:
-          - name: "aif-operator"
             type: "helm"
     repositories:
       # NOTE (fdegir): Repo is required for cert-manager

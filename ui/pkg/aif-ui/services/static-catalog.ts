@@ -1,5 +1,6 @@
 import type { AppCollectionItem } from './app-collection';
 import { getCatalog } from '../utils/operator-api';
+import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 
 /**
  * Fetch the static application catalog from the operator (GET /api/v1/catalog).
@@ -15,5 +16,8 @@ import { getCatalog } from '../utils/operator-api';
  */
 export async function fetchStaticCatalog(): Promise<AppCollectionItem[]> {
   const data = await getCatalog();
-  return Array.isArray(data) ? (data as AppCollectionItem[]) : [];
+  return Array.isArray(data) ? (data as AppCollectionItem[]).map((app) => ({
+    ...app,
+    logo_url: browserSafeCatalogLogo(app.logo_url),
+  })) : [];
 }

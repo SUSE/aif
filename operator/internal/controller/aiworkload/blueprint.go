@@ -925,60 +925,80 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
-	targets := append(append([]any{}, localTargets...), downstreamTargets...)
-	fleetNS := gitOpsFleetNamespace(w)
-
-	helmOpSpec := map[string]any{
-		// defaultNamespace (not namespace): targets the release namespace without
-		// forcing every resource into it. Fleet's strict `namespace` field rejects
-		// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
-		// operator/CRD-bearing charts.
-		"defaultNamespace": ns,
-		"helm":             helmSpec,
-		"targets":          targets,
-		// forceSyncGeneration lives at the HelmOp spec top level (not under spec.helm) —
-		// Fleet's HelmOp schema declares spec.forceSyncGeneration.
-		"forceSyncGeneration": epoch,
-		"labels": map[string]any{
-			renderDigestLabel: renderDigestLabelValue(digest),
-			workloadUIDLabel:  string(w.UID),
-		},
+	pairs := []struct {
+		namespace string
+		targets   []any
+	}{
+		{namespace: "fleet-local", targets: localTargets},
+		{namespace: "fleet-default", targets: downstreamTargets},
 	}
-	if repoInfo.ClientSecret != "" {
-		helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
-	}
+	objects := make([]map[string]any, 0, len(pairs))
+	for _, pair := range pairs {
+		if len(pair.targets) == 0 {
+			continue
+		}
+		if repoInfo.ClientSecret != "" {
+			if err := r.ensureFleetAuthSecret(ctx, pair.namespace, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err != nil {
+				return "", fmt.Errorf("sync auth secret to %s: %w", pair.namespace, err)
+			}
+		}
 
-	helmOpObj := map[string]any{
-		"apiVersion": "fleet.cattle.io/v1alpha1",
-		"kind":       "HelmOp",
-		"metadata": map[string]any{
-			"name":      bundleName,
-			"namespace": fleetNS,
+		helmOpSpec := map[string]any{
+			// defaultNamespace (not namespace): targets the release namespace without
+			// forcing every resource into it. Fleet's strict `namespace` field rejects
+			// any cluster-scoped resource (ClusterRole, CRD, webhook), which breaks
+			// operator/CRD-bearing charts.
+			"defaultNamespace": ns,
+			"helm":             helmSpec,
+			"targets":          pair.targets,
+			// forceSyncGeneration lives at the HelmOp spec top level (not under spec.helm) —
+			// Fleet's HelmOp schema declares spec.forceSyncGeneration.
+			"forceSyncGeneration": epoch,
 			"labels": map[string]any{
-				workloadUIDLabel: string(w.UID),
+				renderDigestLabel: renderDigestLabelValue(digest),
+				workloadUIDLabel:  string(w.UID),
 			},
-		},
-		"spec": helmOpSpec,
+		}
+		if repoInfo.ClientSecret != "" {
+			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+		}
+		objects = append(objects, map[string]any{
+			"apiVersion": "fleet.cattle.io/v1alpha1",
+			"kind":       "HelmOp",
+			"metadata": map[string]any{
+				"name":      bundleName,
+				"namespace": pair.namespace,
+				"labels": map[string]any{
+					workloadUIDLabel: string(w.UID),
+				},
+			},
+			"spec": helmOpSpec,
+		})
+	}
+	if len(objects) == 0 {
+		return "", fmt.Errorf("GitOps blueprint component %q has no target clusters", c.ChartName)
 	}
 
-	yamlBytes, err := json.MarshalIndent(helmOpObj, "", "  ")
+	content, err := marshalGitResources(objects)
 	if err != nil {
 		return "", err
-	}
-	content := string(yamlBytes)
-
-	newHash := gitManifestHash(content)
-	if w.Annotations[gitFileHashAnnotation(bundleName)] == newHash {
-		return digest, nil // unchanged — no republish
 	}
 	if err := r.publishBlueprintGitFile(ctx, w, bundleName, content); err != nil {
 		return "", err
 	}
-	metav1.SetMetaDataAnnotation(&w.ObjectMeta, gitFileHashAnnotation(bundleName), newHash)
-	if err := r.Update(ctx, w); err != nil {
-		return "", err
-	}
 	return digest, nil
+}
+
+func marshalGitResources(objects []map[string]any) (string, error) {
+	documents := make([]string, 0, len(objects))
+	for _, object := range objects {
+		data, err := json.MarshalIndent(object, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		documents = append(documents, string(data))
+	}
+	return strings.Join(documents, "\n---\n"), nil
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {
@@ -989,13 +1009,24 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 	}, &s); err != nil {
 		return fmt.Errorf("read settings: %w", err)
 	}
+	branch := s.Spec.Fleet.Branch
+	if branch == "" {
+		branch = "main"
+	}
+	publicationHash := gitManifestHash(s.Spec.Fleet.RepoURL + "\x00" + branch + "\x00" + content)
+	if w.Annotations[gitFileHashAnnotation(bundleName)] == publicationHash {
+		return nil
+	}
 	gc, err := igit.NewFromSettings(ctx, &s, r.OperatorNamespace, &controllerSecretReader{r.Client})
 	if err != nil {
 		return fmt.Errorf("init git client: %w", err)
 	}
 	filePath := "workloads/" + bundleName + ".yaml"
-	_, err = gc.WriteFile(ctx, filePath, content, "chore: deploy blueprint component "+bundleName)
-	return err
+	if _, err = gc.WriteFile(ctx, filePath, content, "chore: deploy blueprint component "+bundleName); err != nil {
+		return err
+	}
+	metav1.SetMetaDataAnnotation(&w.ObjectMeta, gitFileHashAnnotation(bundleName), publicationHash)
+	return r.Update(ctx, w)
 }
 
 // aggregateClusterStatuses derives ClusterStatuses from the component matrix by aggregating
@@ -1151,6 +1182,49 @@ func injectNvidiaPullSecretRefs(vals map[string]any) {
 	// string list nested two levels deep (operator -> image -> pullSecrets).
 	// Same conservative shape policy as image.pullSecrets above.
 	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets")
+
+	// Scalar name shape: some NVIDIA charts read a single string that names the
+	// pull secret to wire into pod specs, rather than a list.
+	injectNgcImagePullSecretName(vals)
+}
+
+// nvidiaNgcImagePullSecretNameKey is the scalar value key some NVIDIA charts read
+// to name the image pull secret wired into their pod specs. Its default is the
+// empty string, which renders a pod-level imagePullSecrets entry with an empty
+// name. A non-empty pod-level entry suppresses the ServiceAccount admission
+// controller's pull-secret injection (it fills only an empty list), so the empty
+// default cannot be rescued by the service-account merge and must be set here.
+// Unlike the object-shaped keys, this key is only ever a scalar string across the
+// surveyed charts, so setting it blindly is safe.
+const nvidiaNgcImagePullSecretNameKey = "ngcImagePullSecretName"
+
+// injectNgcImagePullSecretName sets the scalar pull-secret name at both the top
+// level and under global, since charts read one or the other (see
+// setScalarSecretName for the per-key rule). global is created when absent but
+// left alone if present with a non-map shape.
+func injectNgcImagePullSecretName(vals map[string]any) {
+	setScalarSecretName(vals, nvidiaNgcImagePullSecretNameKey)
+
+	switch global := vals["global"].(type) {
+	case nil:
+		vals["global"] = map[string]any{nvidiaNgcImagePullSecretNameKey: nvidiaImagePullSecretName}
+	case map[string]any:
+		setScalarSecretName(global, nvidiaNgcImagePullSecretNameKey)
+	}
+}
+
+// setScalarSecretName sets m[key] to the ngc-secret name when the key is absent
+// or an empty string (the chart default the injector cannot see), honors a
+// non-empty string override, and leaves any non-string value untouched.
+func setScalarSecretName(m map[string]any, key string) {
+	switch existing := m[key].(type) {
+	case nil:
+		m[key] = nvidiaImagePullSecretName
+	case string:
+		if existing == "" {
+			m[key] = nvidiaImagePullSecretName
+		}
+	}
 }
 
 // injectFlatPullSecretList adds nvidiaImagePullSecretName to a flat string
@@ -1235,8 +1309,12 @@ func containsString(list []any, s string) bool {
 //
 // Merge rules:
 //   - vals[key] absent or wrong shape → replace with {create:false, name}
-//   - vals[key] is a map → set create=false; only set name if absent (honor
-//     any explicit override from the user's values)
+//   - vals[key] is a map → set create=false; set name when it is absent, null, or
+//     an empty string (the chart default the injector cannot see), honor a
+//     non-empty author name, and leave any non-string value untouched. An empty
+//     name renders imagePullSecrets: [{name:""}] and defeats the operator-delivered
+//     Secret — the exact 403 this guards against. Kept in sync with the UI copy's
+//     disableNvidiaChartSecrets (ui/pkg/aif-ui/services/fleet-bundle.ts).
 func disableChartSecretCreation(vals map[string]any, key, name string) {
 	existing, ok := vals[key].(map[string]any)
 	if !ok {
@@ -1244,8 +1322,13 @@ func disableChartSecretCreation(vals map[string]any, key, name string) {
 		return
 	}
 	existing["create"] = false
-	if _, hasName := existing["name"]; !hasName {
+	switch v := existing["name"].(type) {
+	case nil: // absent key or explicit null
 		existing["name"] = name
+	case string:
+		if v == "" {
+			existing["name"] = name
+		}
 	}
 }
 

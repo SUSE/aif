@@ -38,6 +38,9 @@ suseai:
       sections:
         appCollection:
           title: SUSE Application Collection
+          endpoint:
+            label: Chart Repository (OCI)
+            placeholder: 'oci://dp.apps.rancher.io/charts'
           userSecretRef:
             label: Username Secret
             secretNameLabel: Secret Name
@@ -55,6 +58,9 @@ suseai:
             placeholder: 'ai, nlp, vision'
         suseRegistry:
           title: SUSE Registry
+          endpoint:
+            label: Chart Repository (OCI)
+            placeholder: 'oci://registry.suse.com/ai/charts'
           userSecretRef:
             label: Username Secret
             secretNameLabel: Secret Name
@@ -71,7 +77,10 @@ suseai:
             label: NIM Index Refresh (minutes)
         nvidia:
           title: NVIDIA AI Library
-          description: 'NGC credential used to pull gated NVIDIA images (nvcr.io), and — in air-gapped mode, when a mirrored NVIDIA chart repository is set under Registry Endpoints — to authenticate to that OCI chart repo. Username is conventionally “$oauthtoken”.'
+          description: 'NGC credentials pull gated NVIDIA images from nvcr.io. Leave the mirror empty to use the public NGC chart repositories; configure it only for a private OCI mirror. Username is conventionally “$oauthtoken”.'
+          endpoint:
+            label: Mirrored Chart Repository (OCI, optional)
+            placeholder: 'oci://registry.example.com/nvidia/charts'
           userSecretRef:
             label: Username Secret
             secretNameLabel: Secret Name
@@ -86,23 +95,25 @@ suseai:
             keyNameLabel: CA Bundle Key
         fleet:
           title: Fleet / GitOps
+          description: 'Git over HTTPS uses a username with either a password or personal access token. The username field is optional; if empty, the operator reads the username key from the selected credential Secret, then uses a generic token username. Servers using password authentication may require an explicit username. Leave the credential fields empty for a public repository.'
+          activationNotice: 'Applying a repository URL immediately creates a Fleet GitRepo and starts reconciliation. First prepare both the blueprints/ and workloads/ paths on the selected branch with Fleet-readable content. fleet.yaml is optional when a path already contains deployable manifests.'
           repoURL:
             label: Repository URL
             placeholder: 'https://github.com/org/repo.git'
           branch:
             label: Branch
             placeholder: main
-          authType:
-            label: Auth Type
-            options:
-              none: None
-              ssh: SSH
-              token: Token
-              basic: Basic
+          username:
+            label: HTTPS Username (optional)
+            placeholder: Git account or provider-specific username
           credSecretRef:
-            label: Git Credentials
+            label: Password or Personal Access Token (optional)
             secretNameLabel: Credential Secret
-            keyNameLabel: Secret Key
+            keyNameLabel: Password or Token Key
+          caBundleSecretRef:
+            label: HTTPS CA Bundle (optional)
+            secretNameLabel: CA Secret Name
+            keyNameLabel: CA Bundle Key
         rancherCatalog:
           title: Rancher API Access
           description: 'Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.'
@@ -207,7 +218,7 @@ suseai:
     manage: Manage Application
     noApps: No applications found
     loading: Loading applications and discovering installations...
-    repoWarningTitle: Some NVIDIA repositories couldn't be loaded
+    repoWarningTitle: Some repositories couldn't be loaded
     dismiss: Dismiss
     refresh: Refresh
     tileView: Tile View

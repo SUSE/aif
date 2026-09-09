@@ -17,7 +17,7 @@
           class="search-result"
           @click="addApp(app)"
         >
-          <img :src="app.logo_url || genericIcon" alt="" class="result-logo" @error="onImgError" />
+          <img :src="safeLogo(app.logo_url)" alt="" class="result-logo" @error="onImgError" />
           <div>
             <div class="result-name">{{ app.name }}</div>
             <div class="result-meta text-muted">{{ app.description?.slice(0, 60) }}</div>
@@ -90,8 +90,9 @@ import LabeledSelect from '@shell/components/form/LabeledSelect';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import { DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, getClusterRepoNameFromUrl } from '../../../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, resolveInstallRepoName } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
+import { browserSafeCatalogLogo } from '../../../utils/catalog-logo';
 
 const genericIcon = require('../../../assets/generic-app.svg');
 
@@ -114,11 +115,11 @@ const logoMap       = ref<Record<string, string>>({});
 // Combined catalog: SUSE AI Library + Nvidia Library (mirrors the Apps catalog selector).
 async function loadAllApps(): Promise<AppCollectionItem[]> {
   const settings = await fetchSettingsOrNull();
-  const [suseApps, nvidiaResult] = await Promise.all([
+  const [suseResult, nvidiaResult] = await Promise.all([
     fetchSuseAiApps(store, settings),
     fetchNvidiaApps(store, settings),
   ]);
-  return [...suseApps, ...nvidiaResult.apps];
+  return [...suseResult.apps, ...nvidiaResult.apps];
 }
 
 // Backfill logos and versions for components selected before this mount (navigate-back / edit flow).
@@ -132,7 +133,8 @@ onMounted(async () => {
     const logoUpdates: Record<string, string> = {};
     for (const comp of props.components) {
       const app = apps.find(a => a.slug_name === comp.chartName);
-      if (app?.logo_url) logoUpdates[comp.chartName] = app.logo_url;
+      const logo = browserSafeCatalogLogo(app?.logo_url);
+      if (logo) logoUpdates[comp.chartName] = logo;
     }
     if (Object.keys(logoUpdates).length) {
       logoMap.value = { ...logoMap.value, ...logoUpdates };
@@ -174,12 +176,11 @@ async function addApp(app: AppCollectionItem) {
 
   if (props.components.find(c => c.chartName === app.slug_name)) return;
 
-  // Resolve the cluster repo name from the app's repository URL
   let chartRepo = 'suse-ai';
   try {
-    if (app.repository_url) {
-      const repoName = await getClusterRepoNameFromUrl(store, app.repository_url);
-      if (repoName) chartRepo = repoName;
+    const repoName = await resolveInstallRepoName(store, app);
+    if (repoName) {
+      chartRepo = repoName;
     } else {
       const inferred = await inferClusterRepoForChart(store, app.slug_name);
       if (inferred) chartRepo = inferred;
@@ -196,8 +197,9 @@ async function addApp(app: AppCollectionItem) {
     versions = [];
   }
   versionMap.value = { ...versionMap.value, [app.slug_name]: versions };
-  if (app.logo_url) {
-    logoMap.value = { ...logoMap.value, [app.slug_name]: app.logo_url };
+  const logo = browserSafeCatalogLogo(app.logo_url);
+  if (logo) {
+    logoMap.value = { ...logoMap.value, [app.slug_name]: logo };
   }
 
   emit('update:components', [
@@ -286,6 +288,10 @@ function versionOptionsFor(chartName: string): { label: string; value: string }[
 
 function logoFor(chartName: string): string {
   return logoMap.value[chartName] || genericIcon;
+}
+
+function safeLogo(logo?: string): string {
+  return browserSafeCatalogLogo(logo) || genericIcon;
 }
 
 function onImgError(e: Event) {

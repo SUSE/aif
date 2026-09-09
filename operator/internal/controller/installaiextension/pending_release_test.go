@@ -210,8 +210,19 @@ func TestHandlePendingRelease_TimesOutAndNamesTheManualFix(t *testing.T) {
 	if !handled {
 		t.Fatal("handled = false, want the timeout owned here rather than reported as an install failure")
 	}
-	if result.RequeueAfter != 0 {
-		t.Errorf("RequeueAfter = %v, want 0 once the wait is given up on", result.RequeueAfter)
+	// The wait is given up on, but the CR is not abandoned: a release wedged
+	// pending is cleared by a human running `helm rollback`, and that produces no
+	// event this controller sees. What must not survive is the *fast* poll — the
+	// point of the bound is that a wedged release stops driving reconciles, and
+	// any interval down at pendingReleaseRequeue would mean it never did.
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("RequeueAfter = %v, want %v once the wait is given up on",
+			result.RequeueAfter, healthCheckInterval)
+	}
+	if result.RequeueAfter <= pendingReleaseRequeue {
+		t.Errorf("RequeueAfter = %v, want slower than the %v in-flight poll; the bound "+
+			"exists to stop a wedged release driving reconciles",
+			result.RequeueAfter, pendingReleaseRequeue)
 	}
 	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 		t.Errorf("phase = %q, want Failed", ext.Status.Phase)

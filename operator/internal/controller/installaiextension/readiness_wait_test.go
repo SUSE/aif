@@ -108,12 +108,25 @@ func releaseLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/instance": releaseName}
 }
 
+// readyDeployment is a Deployment that has finished rolling out its current
+// spec. Every count is set, not just ReadyReplicas: readiness means "the
+// applied revision is serving", so a status carrying a ready pod but no
+// updated replicas describes a rollout still in progress — and is not a state
+// the API server can produce in any case.
 func readyDeployment() *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: releaseName, Namespace: wiringNamespace, Labels: releaseLabels()},
-		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
-		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: releaseName, Namespace: wiringNamespace, Labels: releaseLabels(), Generation: 1,
+		},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+		Status: appsv1.DeploymentStatus{
+			ObservedGeneration: 1,
+			Replicas:           1,
+			UpdatedReplicas:    1,
+			ReadyReplicas:      1,
+			AvailableReplicas:  1,
+		},
 	}
 }
 
@@ -239,8 +252,18 @@ func TestReadinessWaitsAreBounded(t *testing.T) {
 				if err != nil {
 					t.Fatalf("reconcile error = %v", err)
 				}
-				if result.RequeueAfter != 0 {
-					t.Errorf("RequeueAfter = %v, want 0; the wait is over", result.RequeueAfter)
+				// The wait is over; the CR is not. A rollout that overran its bound can
+				// still finish, and nothing would tell the controller — so the pass
+				// drops to the health-check cadence rather than stopping. The bound's
+				// purpose survives intact: what it exists to prevent is this CR
+				// re-entering EnsureRelease every readinessRequeue forever.
+				if result.RequeueAfter != healthCheckInterval {
+					t.Errorf("RequeueAfter = %v, want %v; the wait is over",
+						result.RequeueAfter, healthCheckInterval)
+				}
+				if result.RequeueAfter <= readinessRequeue {
+					t.Errorf("RequeueAfter = %v, want slower than the %v readiness poll; "+
+						"the bound exists to stop that loop", result.RequeueAfter, readinessRequeue)
 				}
 				if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 					t.Errorf("Phase = %s, want Failed", ext.Status.Phase)
@@ -290,8 +313,17 @@ func TestServiceWaitSurvivesTheDeploymentMarkerBeingCleared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second pass error = %v", err)
 	}
-	if result.RequeueAfter != 0 {
-		t.Errorf("RequeueAfter = %v, want 0; the service wait is past its bound", result.RequeueAfter)
+	// Past its bound, so the pass drops to the health-check cadence. Had the
+	// marker been dropped and re-stamped, this would still be the readinessRequeue
+	// of a wait that had just started — which is what the assertion below rules
+	// out, and the reason 60s and 10s must not be conflated here.
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("RequeueAfter = %v, want %v; the service wait is past its bound",
+			result.RequeueAfter, healthCheckInterval)
+	}
+	if result.RequeueAfter == readinessRequeue {
+		t.Error("RequeueAfter is the readiness poll interval, so the service marker was " +
+			"cleared and re-stamped and the bound will never fire")
 	}
 	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 		t.Errorf("Phase = %s, want Failed", ext.Status.Phase)
@@ -316,6 +348,93 @@ func TestServiceMarkerIsClearedOnceTheServiceResolves(t *testing.T) {
 	cond := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeServiceReady)
 	if cond == nil || cond.Status != metav1.ConditionTrue {
 		t.Fatalf("ServiceReady = %+v, want True", cond)
+	}
+}
+
+// atRevision builds a Helm stub reporting a specific release revision, so a test
+// can say "the operator upgraded" without going near a real chart.
+func atRevision(revision int) func(string) (helmClient.HelmClient, error) {
+	return func(string) (helmClient.HelmClient, error) {
+		info := &helmClient.ReleaseInfo{
+			Version: requestedVersion, Status: helmClient.StatusDeployed, Revision: revision,
+		}
+		return &stubHelmClient{deployed: info, last: info}, nil
+	}
+}
+
+// TestANewRevisionRestartsTheReadinessClock covers the wait *after* a wait that
+// timed out.
+//
+// A timed-out marker is kept on purpose — clearing it in awaitReadiness would
+// restart the clock and flap the CR between Failed and waiting forever. But the
+// stamp then outlives the rollout it measured. Push a bad image tag, watch it
+// time out, fix the tag twenty minutes later: without this, the first pass over
+// the new rollout compares it against the *old* rollout's start and calls a
+// three-second-old deployment timed out. It then re-checks at
+// healthCheckInterval rather than readinessRequeue — six times slower — for the
+// whole of a rollout that is perfectly healthy.
+//
+// Deliberately asserted as a *fresh* wait rather than "not Failed": the point is
+// that the new rollout gets the full bound, not that the symptom is hidden.
+func TestANewRevisionRestartsTheReadinessClock(t *testing.T) {
+	ext := helmExtension()
+	ext.Status.HelmReleaseRevision = 1
+	backdate(ext, annotationWaitingSince, readinessTimeout+20*time.Minute)
+
+	// No Deployment seeded: the new rollout has not come up yet either, which is
+	// exactly the pass that used to be misjudged.
+	r := readinessReconciler(t, ext, interceptor.Funcs{})
+	r.helmClientFor = atRevision(2)
+
+	result, err := r.reconcileHelmSource(context.Background(), ext, wiringNamespace)
+	if err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	if result.RequeueAfter != readinessRequeue {
+		t.Errorf("RequeueAfter = %v, want %v; revision 2 is a different rollout from the "+
+			"one that timed out, and it is entitled to the full bound",
+			result.RequeueAfter, readinessRequeue)
+	}
+	cond := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeDeploymentReady)
+	if cond != nil && cond.Reason == reasonReadinessTimedOut {
+		t.Errorf("DeploymentReady = %+v; a rollout that just started was reported as having "+
+			"timed out, against the previous revision's clock", cond)
+	}
+	if started := r.getWaitingSince(ext, annotationWaitingSince); time.Since(started) > time.Minute {
+		t.Errorf("waiting-since = %v, want re-stamped to roughly now; the clock still "+
+			"belongs to the previous rollout", started)
+	}
+}
+
+// The other half: the same revision must still time out.
+//
+// Re-anchoring on a new revision is only safe if it cannot be reached by a
+// rollout that is simply stuck. Widen the trigger and the bound stops existing —
+// every pass looks like a fresh start and the CR requeues at readinessRequeue
+// forever, re-entering EnsureRelease six times a minute, which is the loop
+// awaitReadiness was written to stop.
+func TestTheSameRevisionStillTimesOut(t *testing.T) {
+	ext := helmExtension()
+	ext.Status.HelmReleaseRevision = 2
+	backdate(ext, annotationWaitingSince, readinessTimeout+20*time.Minute)
+
+	r := readinessReconciler(t, ext, interceptor.Funcs{})
+	r.helmClientFor = atRevision(2)
+
+	result, err := r.reconcileHelmSource(context.Background(), ext, wiringNamespace)
+	if err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("RequeueAfter = %v, want %v; nothing about this rollout changed",
+			result.RequeueAfter, healthCheckInterval)
+	}
+	cond := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeDeploymentReady)
+	if cond == nil || cond.Reason != reasonReadinessTimedOut {
+		t.Errorf("DeploymentReady = %+v, want %s; the wait really did exhaust",
+			cond, reasonReadinessTimedOut)
 	}
 }
 

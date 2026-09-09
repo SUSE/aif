@@ -584,16 +584,12 @@ const actions = {
       
       // Step 2: Discover repositories in parallel
       await dispatch('repositories/fetchRepositories');
-      
-      // Step 3: Discover apps
-      commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'discovering-apps' });
-      await dispatch('apps/fetchAllApps', { force: payload.force });
-      
-      // Step 4: Discover installations
+
+      // Step 3: Discover installations
       commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'discovering-installations' });
       await dispatch('installations/discoverInstallations', payload);
-      
-      // Step 5: Complete discovery
+
+      // Step 4: Complete discovery
       commit('UPDATE_DISCOVERY_PROGRESS', { stage: 'processing' });
       
       commit('COMPLETE_DISCOVERY');

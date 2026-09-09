@@ -137,6 +137,62 @@ func TestReconcileBlueprintStatus_MissingClusterRepo_FailsAfterGrace(t *testing.
 	}
 }
 
+func TestReconcileBlueprintStatus_ClusterRepoMovesWithoutBlueprintEdit(t *testing.T) {
+	scheme := clusterRepoErrorScheme(t)
+	w := newBlueprintWorkload(time.Now())
+	bp := newBlueprintCR("application-collection")
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(clusterRepoGVK)
+	repo.SetName("application-collection")
+	_ = unstructured.SetNestedField(repo.Object, "oci://public.example/charts", "spec", "url")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
+
+	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+		t.Fatalf("resolve public source: %v", err)
+	}
+	helmOpKey := types.NamespacedName{Namespace: "fleet-local", Name: blueprintBundleName(w.Name, "app")}
+	helmOp := &unstructured.Unstructured{}
+	helmOp.SetGroupVersionKind(helmOpGVK)
+	if err := c.Get(context.Background(), helmOpKey, helmOp); err != nil {
+		t.Fatalf("get public-source HelmOp: %v", err)
+	}
+	publicRepo, _, _ := unstructured.NestedString(helmOp.Object, "spec", "helm", "repo")
+	if publicRepo != "oci://public.example/charts/app" {
+		t.Fatalf("public repo = %q", publicRepo)
+	}
+
+	if err := c.Get(context.Background(), types.NamespacedName{Name: repo.GetName()}, repo); err != nil {
+		t.Fatalf("refresh ClusterRepo: %v", err)
+	}
+	_ = unstructured.SetNestedField(repo.Object, "oci://harbor.airgap.test/aif", "spec", "url")
+	if err := c.Update(context.Background(), repo); err != nil {
+		t.Fatalf("move ClusterRepo to private endpoint: %v", err)
+	}
+	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+		t.Fatalf("resolve private source: %v", err)
+	}
+
+	helmOp = &unstructured.Unstructured{}
+	helmOp.SetGroupVersionKind(helmOpGVK)
+	if err := c.Get(context.Background(), helmOpKey, helmOp); err != nil {
+		t.Fatalf("get private-source HelmOp: %v", err)
+	}
+	privateRepo, _, _ := unstructured.NestedString(helmOp.Object, "spec", "helm", "repo")
+	if privateRepo != "oci://harbor.airgap.test/aif/app" {
+		t.Fatalf("private repo = %q", privateRepo)
+	}
+
+	stored := &aiplatformv1alpha1.Blueprint{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: bp.Name}, stored); err != nil {
+		t.Fatalf("get stored Blueprint: %v", err)
+	}
+	component := stored.Spec.Components[0]
+	if component.ChartRepo != "application-collection" || component.ChartName != "app" || component.ChartVersion != "1.0.0" {
+		t.Fatalf("stored Blueprint changed when its ClusterRepo moved: %#v", component)
+	}
+}
+
 func TestReconcileBlueprintStatus_RepoPresent_SetsReadyTrue(t *testing.T) {
 	scheme := clusterRepoErrorScheme(t)
 	w := newBlueprintWorkload(time.Now())

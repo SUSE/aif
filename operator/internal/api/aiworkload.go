@@ -40,19 +40,6 @@ func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *ai
 	if isBlueprint && len(spec.TargetClusters) == 0 {
 		return fmt.Errorf("%w: Blueprint workloads require at least one target cluster", ErrInvalidInput)
 	}
-	if spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps {
-		hasLocal, hasDownstream := false, false
-		for _, c := range spec.TargetClusters {
-			if c == "local" {
-				hasLocal = true
-			} else {
-				hasDownstream = true
-			}
-		}
-		if hasLocal && hasDownstream {
-			return fmt.Errorf("%w: mixed local and downstream target clusters are not supported for GitOps workloads", ErrInvalidInput)
-		}
-	}
 	if existing != nil && existing.Spec.DeployStrategy != "" && existing.Spec.DeployStrategy != spec.DeployStrategy {
 		return fmt.Errorf("%w: deployStrategy is immutable", ErrInvalidInput)
 	}

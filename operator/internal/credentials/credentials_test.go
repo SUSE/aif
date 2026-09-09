@@ -170,3 +170,37 @@ func TestIsWellKnownSecret(t *testing.T) {
 		t.Fatal("random should not be well-known")
 	}
 }
+
+func TestResolveGitHTTPSUsername(t *testing.T) {
+	tests := []struct {
+		name       string
+		explicit   string
+		secretData map[string][]byte
+		want       string
+	}{
+		{
+			name:       "explicit value wins",
+			explicit:   "settings-user",
+			secretData: map[string][]byte{corev1.BasicAuthUsernameKey: []byte("secret-user")},
+			want:       "settings-user",
+		},
+		{
+			name:       "secret username is used",
+			secretData: map[string][]byte{corev1.BasicAuthUsernameKey: []byte("secret-user")},
+			want:       "secret-user",
+		},
+		{
+			name:       "credential-only secret uses default",
+			secretData: map[string][]byte{corev1.BasicAuthPasswordKey: []byte("secret-token")},
+			want:       credentials.DefaultGitHTTPSUsername,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := credentials.ResolveGitHTTPSUsername(tt.explicit, tt.secretData); got != tt.want {
+				t.Fatalf("ResolveGitHTTPSUsername() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

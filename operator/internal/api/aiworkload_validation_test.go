@@ -29,7 +29,7 @@ func TestValidateAIWorkloadSpec(t *testing.T) {
 	}{
 		{"blueprint no targets", spec(aiplatformv1alpha1.AIWorkloadDeployFleetBundle), nil, true},
 		{"blueprint one target", spec(aiplatformv1alpha1.AIWorkloadDeployFleetBundle, "local"), nil, false},
-		{"mixed gitops", spec(aiplatformv1alpha1.AIWorkloadDeployGitOps, "local", "c-x"), nil, true},
+		{"mixed gitops", spec(aiplatformv1alpha1.AIWorkloadDeployGitOps, "local", "c-x"), nil, false},
 		{"local-only gitops", spec(aiplatformv1alpha1.AIWorkloadDeployGitOps, "local"), nil, false},
 		{"downstream-only gitops", spec(aiplatformv1alpha1.AIWorkloadDeployGitOps, "c-a", "c-b"), nil, false},
 		{"mixed fleetbundle ok", spec(aiplatformv1alpha1.AIWorkloadDeployFleetBundle, "local", "c-x"), nil, false},

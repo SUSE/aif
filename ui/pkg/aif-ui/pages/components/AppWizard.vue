@@ -29,11 +29,11 @@ import {
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
-import { fetchSuseAiApps, getClusterRepoNameFromUrl, getLibraryFromRepoUrl } from '../../services/app-collection';
+import { fetchSuseAiApps, resolveInstallRepoName, getLibraryForClusterRepo, isManagedRepoName } from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
-import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets } from '../../services/fleet-bundle';
+import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets, injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import { crNameForCluster } from '../../utils/workload-name';
 import { readLibraryFilter, withLibraryFilter } from '../../utils/catalog-route';
@@ -336,7 +336,17 @@ function populateFromUrlParams() {
 async function initializeInstallMode() {
   if (!store) return;
 
-  // If repo is provided in query, use it
+  // A repo seeded from the ?repo= query param is UNTRUSTED input. Only honor it
+  // when it's an operator-managed repo; otherwise drop it and fall through to the
+  // scoped resolver (findRepoForApp → resolveInstallRepoName / inferClusterRepoForChart).
+  // Without this, a crafted ?repo=<unmanaged> would drive findChartInRepo against
+  // an unmanaged repo, bypassing the provenance contract the install path enforces.
+  if (form.value.chartRepo && !(await isManagedRepoName(store, form.value.chartRepo))) {
+    console.warn(`[SUSE-AI] Ignoring non-managed repo from query param: ${form.value.chartRepo}`);
+    form.value.chartRepo = '';
+  }
+
+  // If a (validated, managed) repo is set, use it
   if (form.value.chartRepo) {
     const guess = await findChartInRepo(store, REPO_CLUSTER, form.value.chartRepo, props.slug);
     if (guess) {
@@ -362,11 +372,11 @@ async function findRepoForApp(slug: string): Promise<string | null> {
   if (!store) return null;
 
   try {
-    const suseAiApps = await fetchSuseAiApps(store);
+    const { apps: suseAiApps } = await fetchSuseAiApps(store);
     const staticApp = suseAiApps.find(app => app.slug_name === slug);
 
-    if (staticApp?.repository_url) {
-      const clusterRepoName = await getClusterRepoNameFromUrl(store, staticApp.repository_url);
+    if (staticApp) {
+      const clusterRepoName = await resolveInstallRepoName(store, staticApp);
       if (clusterRepoName) return clusterRepoName;
     }
 
@@ -582,7 +592,7 @@ async function resolvePullSecretNames() {
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-    const library = getLibraryFromRepoUrl(chartRepoUrl);
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
 
     // NVIDIA charts don't have imagePullSecrets in their original values schema,
     // so we skip injecting them into the form values to avoid schema validation errors
@@ -947,7 +957,7 @@ async function performFleetBundleInstall() {
         targetNamespace:           form.value.namespace,
         targetClusterIds:          [clusterId],
         additionalPullSecretNames: extraPullSecretNames,
-        library:                   getLibraryFromRepoUrl(chartRepoUrl),
+        library:                   getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
       });
     }));
 
@@ -1011,7 +1021,7 @@ async function performGitOpsInstall() {
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds into the bundle values too (the SA's
     // imagePullSecrets are ignored once the chart sets pod-spec imagePullSecrets).
-    if (getLibraryFromRepoUrl(chartRepoUrl) === 'suse-ai') {
+    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1034,7 +1044,7 @@ async function performGitOpsInstall() {
           pullSecretNames,
           targetClusterIds: [clusterId],
           targetNamespace:  form.value.namespace,
-          library:          getLibraryFromRepoUrl(chartRepoUrl),
+          library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
         });
         await recordAIWorkload(bundleNamesByCluster, 'GitOps', clusterId, { phase: 'Pending', clusterStatuses: [] });
         results.push({ status: 'fulfilled', value: undefined });
@@ -1104,7 +1114,7 @@ async function recordAIWorkload(
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-    const vendor = getLibraryFromRepoUrl(chartRepoUrl) === 'nvidia' ? 'nvidia' : 'suse';
+    const vendor = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'nvidia' ? 'nvidia' : 'suse';
 
     const fleetBundleName = fleetBundleNamesByCluster[clusterId];
     const spec = {
@@ -1328,13 +1338,23 @@ async function installToCluster(
   const repos = await listClusterRepos(store);
   const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-  const library = getLibraryFromRepoUrl(chartRepoUrl);
+  const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
 
-  // Only add pull secrets to values for non-NVIDIA charts
+  // Non-NVIDIA charts get the pull secrets via the standard pod-spec paths.
   if (pullSecrets.length > 0 && library !== 'nvidia') {
     const secrets = pullSecrets.map(name => ({ name }));
     v.global = { ...(v.global || {}), imagePullSecrets: secrets };
     v.imagePullSecrets = secrets;
+  }
+
+  // NVIDIA charts reference the operator-delivered ngc-secret / ngc-api by name
+  // in their vendor-specific value shapes. Without this, team-repo NIM charts
+  // default to a hardcoded `nvcrimagepullsecret` that nothing creates and their
+  // pods ImagePullBackOff. Mirrors the Fleet path (createFleetBundle) and the
+  // operator's Blueprint path (blueprint.go injectNvidiaPullSecretRefs).
+  if (library === 'nvidia') {
+    disableNvidiaChartSecrets(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia');
   }
 
   if (pullSecrets.length > 0) {
@@ -1473,7 +1493,7 @@ async function performFleetBundleUpgrade() {
       targetNamespace:          form.value.namespace,
       targetClusterIds:         form.value.clusters,
       additionalPullSecretNames: extraPullSecretNames,
-      library:                  getLibraryFromRepoUrl(chartRepoUrl),
+      library:                  getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
     });
 
     updateAllProgress(100, 'Update scheduled — Fleet will reconcile to new version');
@@ -1533,7 +1553,7 @@ async function performGitOpsUpgrade() {
 
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds in too (see performGitOpsInstall).
-    if (getLibraryFromRepoUrl(chartRepoUrl) === 'suse-ai') {
+    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1548,7 +1568,7 @@ async function performGitOpsUpgrade() {
       pullSecretNames,
       targetClusterIds: form.value.clusters,
       targetNamespace:  form.value.namespace,
-      library:          getLibraryFromRepoUrl(chartRepoUrl),
+      library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
     });
 
     updateAllProgress(100, 'Changes committed to git — Fleet will sync and reconcile');
@@ -1665,7 +1685,7 @@ function previousStep() {
 <template>
   <div class="install-steps pt-20 outlet">
     <Loading v-if="loading" />
-    
+
     <div v-else class="custom-wizard">
       <!-- Fixed Header -->
       <div class="wizard-header">
@@ -1676,8 +1696,8 @@ function previousStep() {
       <!-- Fixed Step Navigation -->
       <div class="wizard-nav">
         <div class="steps-container">
-          <div 
-            v-for="(step, index) in wizardSteps" 
+          <div
+            v-for="(step, index) in wizardSteps"
             :key="step.name"
             class="step-item"
             :class="{

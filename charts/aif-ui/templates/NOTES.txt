@@ -9,3 +9,10 @@ Chart repository URL (for ClusterRepo / Rancher Extensions page):
 Verify the deployment:
   kubectl get deploy {{ include "aif-ui.fullname" . }} -n {{ .Release.Namespace }}
   kubectl get svc {{ include "aif-ui.serviceName" . }} -n {{ .Release.Namespace }}
+
+Kept on uninstall:
+  The aif-ui-config ConfigMap carries helm.sh/resource-policy: keep, so
+  `helm uninstall` leaves it behind on purpose — operator coordinates and
+  catalog settings then survive a reinstall instead of reverting to defaults.
+  To remove it as well:
+    kubectl delete configmap aif-ui-config -n {{ .Release.Namespace }}

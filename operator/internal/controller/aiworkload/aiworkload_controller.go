@@ -709,19 +709,46 @@ func (r *AIWorkloadReconciler) credentialSecretToAIWorkloads(ctx context.Context
 }
 
 // settingsToAIWorkloads re-enqueues every blueprint-sourced AIWorkload when
-// Settings changes. The Settings controller rebuilds the Rancher catalog client
-// (CatalogClient holder) from Settings.Spec.RancherCatalog at runtime; without
-// this watch, a git-backed workload that failed with CatalogClientNotConfigured
-// before the token was set would stay Failed until the next informer resync.
-// Only blueprint-sourced workloads can consume git-backed ClusterRepos, so
-// helm/app workloads are skipped; reconcile is idempotent so re-enqueuing the
-// rest is safe.
+// relevant Settings changes. Fleet changes can move the GitOps output to a new
+// private repository; RancherCatalog changes can make git-backed ClusterRepos
+// readable. Only Blueprint workloads consume either path.
 func (r *AIWorkloadReconciler) settingsToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.blueprintAIWorkloadRequests(ctx)
+}
+
+// blueprintDependencyToAIWorkloads requeues Blueprint-sourced workloads when
+// a Blueprint or backing ClusterRepo changes. ClusterRepo resolution happens
+// during every reconcile, so an administrator can move a stable repository
+// name to a private endpoint without modifying the Blueprint.
+func (r *AIWorkloadReconciler) blueprintDependencyToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.blueprintAIWorkloadRequests(ctx)
+}
+
+// clusterRepoToAIWorkloads requeues every workload whose chart is resolved
+// through a ClusterRepo. Blueprint workloads must rebuild their deployment
+// resource; App workloads must at least refresh the registry credentials that
+// the operator delivers to their target clusters.
+func (r *AIWorkloadReconciler) clusterRepoToAIWorkloads(ctx context.Context, _ client.Object) []reconcile.Request {
 	var list aiplatformv1alpha1.AIWorkloadList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}
-	var reqs []reconcile.Request
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		if list.Items[i].Spec.Source.Blueprint == nil && list.Items[i].Spec.Source.App == nil {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+	}
+	return reqs
+}
+
+func (r *AIWorkloadReconciler) blueprintAIWorkloadRequests(ctx context.Context) []reconcile.Request {
+	var list aiplatformv1alpha1.AIWorkloadList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for i := range list.Items {
 		if list.Items[i].Spec.Source.Blueprint == nil {
 			continue
@@ -759,6 +786,9 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	helmOp := &unstructured.Unstructured{}
 	helmOp.SetGroupVersionKind(helmOpGVK)
 
+	clusterRepo := &unstructured.Unstructured{}
+	clusterRepo.SetGroupVersionKind(clusterRepoGVK)
+
 	isHelmSecret := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		return obj.GetLabels()["owner"] == "helm"
 	})
@@ -773,25 +803,48 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return obj.GetNamespace() == r.OperatorNamespace && credentials.IsWellKnownSecret(obj.GetName())
 	})
 
-	// Settings carries far more than the catalog config, and every field of it
-	// is edited from the UI. Without this filter each unrelated edit (and each
-	// status write the Settings controller itself makes) re-enqueues every
-	// blueprint workload, which for git-backed components means re-downloading
-	// their charts from Rancher. Only spec.rancherCatalog can change the
-	// outcome of a git-chart reconcile, so that is all we react to.
-	catalogSettingsChanged := predicate.Funcs{
+	// Ignore unrelated settings and status writes. Fleet changes alter the
+	// GitOps publication destination; RancherCatalog changes alter access to
+	// charts indexed from git-backed ClusterRepos.
+	blueprintSettingsChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			oldS, ok1 := e.ObjectOld.(*aiplatformv1alpha1.Settings)
 			newS, ok2 := e.ObjectNew.(*aiplatformv1alpha1.Settings)
 			if !ok1 || !ok2 {
 				return true
 			}
-			return !reflect.DeepEqual(oldS.Spec.RancherCatalog, newS.Spec.RancherCatalog)
+			return !reflect.DeepEqual(oldS.Spec.Fleet, newS.Spec.Fleet) ||
+				!reflect.DeepEqual(oldS.Spec.RancherCatalog, newS.Spec.RancherCatalog)
 		},
 		CreateFunc:  func(event.CreateEvent) bool { return true },
 		DeleteFunc:  func(event.DeleteEvent) bool { return true },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
+
+	// ClusterRepo generation changes cover endpoint/auth/source edits. Git-backed
+	// repositories additionally publish the indexed revision in status.commit;
+	// that revision participates in the embedded Bundle fingerprint, so it must
+	// also trigger reconciliation even though it does not change generation.
+	clusterRepoChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+			oldRepo, oldOK := e.ObjectOld.(*unstructured.Unstructured)
+			newRepo, newOK := e.ObjectNew.(*unstructured.Unstructured)
+			if !oldOK || !newOK {
+				return true
+			}
+			oldCommit, _, _ := unstructured.NestedString(oldRepo.Object, "status", "commit")
+			newCommit, _, _ := unstructured.NestedString(newRepo.Object, "status", "commit")
+			return oldCommit != newCommit
+		},
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+
+	dependencyChanged := predicate.GenerationChangedPredicate{}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiplatformv1alpha1.AIWorkload{}).
@@ -803,6 +856,10 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.credentialSecretToAIWorkloads),
 			builder.WithPredicates(isCredentialSecret)).
 		Watches(&aiplatformv1alpha1.Settings{}, handler.EnqueueRequestsFromMapFunc(r.settingsToAIWorkloads),
-			builder.WithPredicates(catalogSettingsChanged)).
+			builder.WithPredicates(blueprintSettingsChanged)).
+		Watches(&aiplatformv1alpha1.Blueprint{}, handler.EnqueueRequestsFromMapFunc(r.blueprintDependencyToAIWorkloads),
+			builder.WithPredicates(dependencyChanged)).
+		Watches(clusterRepo, handler.EnqueueRequestsFromMapFunc(r.clusterRepoToAIWorkloads),
+			builder.WithPredicates(clusterRepoChanged)).
 		Complete(r)
 }

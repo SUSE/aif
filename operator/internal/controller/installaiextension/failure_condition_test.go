@@ -25,11 +25,18 @@ import (
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
 
-func TestSetTerminalFailure_MirrorsOntoReady(t *testing.T) {
+func TestSetFailureAndRetry_MirrorsOntoReady(t *testing.T) {
 	ext := &v1alpha1.InstallAIExtension{}
 	ext.Generation = 7
 
-	setTerminalFailure(ext, conditionTypeHelmInstalled, "InstallFailed", "boom")
+	result := setFailureAndRetry(ext, conditionTypeHelmInstalled, "InstallFailed", "boom")
+
+	// The recorded failure and the requeue are one decision, so the helper that
+	// makes it returns both. A caller that dropped the Result would silently
+	// restore the stuck-Failed behaviour this replaced.
+	if result.RequeueAfter != healthCheckInterval {
+		t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, healthCheckInterval)
+	}
 
 	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
 		t.Fatalf("phase = %q, want Failed", ext.Status.Phase)
@@ -51,11 +58,11 @@ func TestSetTerminalFailure_MirrorsOntoReady(t *testing.T) {
 	}
 }
 
-func TestSetTerminalFailure_ReadyCondTypeNotDuplicated(t *testing.T) {
+func TestSetFailureAndRetry_ReadyCondTypeNotDuplicated(t *testing.T) {
 	ext := &v1alpha1.InstallAIExtension{}
 	ext.Generation = 1
 
-	setTerminalFailure(ext, conditionTypeReady, "InvalidSpec", "bad spec")
+	setFailureAndRetry(ext, conditionTypeReady, "InvalidSpec", "bad spec")
 
 	// When the sub-condition IS Ready, there must be exactly one Ready condition.
 	count := 0

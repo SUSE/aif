@@ -198,14 +198,10 @@ type controllerSecretReader struct {
 	client client.Client
 }
 
-func (r *controllerSecretReader) ReadSecretKey(ctx context.Context, namespace, name, key string) (string, error) {
+func (r *controllerSecretReader) ReadSecret(ctx context.Context, namespace, name string) (map[string][]byte, error) {
 	var secret corev1.Secret
 	if err := r.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &secret); err != nil {
-		return "", fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+		return nil, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
 	}
-	val, ok := secret.Data[key]
-	if !ok {
-		return "", fmt.Errorf("key %q not found in secret %q", key, name)
-	}
-	return string(val), nil
+	return secret.Data, nil
 }
