@@ -5,22 +5,24 @@ import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
 import BlueprintInstallBasicInfoStep from './wizard/BlueprintInstallBasicInfoStep.vue';
 import TargetStep                    from './wizard/TargetStep.vue';
+import BlueprintCustomizeStep        from './wizard/BlueprintCustomizeStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
 import { crNameForCluster } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import type { Blueprint } from '../../types/blueprint-types';
-import type { AIWorkloadDeployStrategy } from '../../types/aiworkload-types';
+import type { AIWorkloadDeployStrategy, ComponentValueOverride } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
 
 interface Props {
   blueprintName:    string;
   blueprintVersion: string;
+  mode?:            'install' | 'manage';
 }
-const props   = defineProps<Props>();
+const props   = withDefaults(defineProps<Props>(), { mode: 'install' });
 const vm      = getCurrentInstance()!.proxy as any;
 const router  = vm.$router;
 const route   = vm.$route;
@@ -38,6 +40,7 @@ const workloadName = ref('');
 const namespace    = ref('');
 const clusters     = ref<string[]>([]);
 const deployType   = ref<AIWorkloadDeployStrategy>('FleetBundle');
+const componentValues = ref<ComponentValueOverride[]>([]);
 const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
 
 watch(fleetGitConfigured, (configured) => {
@@ -59,6 +62,7 @@ const CRED_LABELS: Record<RequiredCredential, string> = {
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),     ready: true },
   { label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),    ready: workloadName.value.trim() !== '' && namespace.value !== '' },
+  { label: t('suseai.wizard.steps.customize', 'Customize'),             ready: true },
   { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 },
 ]);
 
@@ -70,9 +74,14 @@ onMounted(async () => {
   try {
     const crName = blueprintCRName(props.blueprintName, props.blueprintVersion);
     blueprint.value = await getBlueprint(crName);
-    const slug = slugifyBlueprintName(props.blueprintName);
-    workloadName.value = slug;
-    namespace.value    = `${ slug }-system`;
+
+    if (props.mode === 'manage') {
+      await loadExistingWorkload();
+    } else {
+      const slug = slugifyBlueprintName(props.blueprintName);
+      workloadName.value = slug;
+      namespace.value    = `${ slug }-system`;
+    }
 
     try {
       // Resolve credentials the operator's way (spec refs + well-known secrets)
@@ -97,8 +106,27 @@ onMounted(async () => {
   await fetchFleetGitConfigured();
 });
 
+async function loadExistingWorkload() {
+  const query = route?.query || {};
+  const instanceName      = (query.instanceName as string) || '';
+  const instanceNamespace = (query.instanceNamespace as string) || '';
+  const { items } = await listAIWorkloads();
+  const workload = items.find(
+    (w) => w.metadata.name === instanceName && w.metadata.namespace === instanceNamespace,
+  );
+  if (!workload) {
+    error.value = `Deployment "${instanceName}" not found in namespace "${instanceNamespace}".`;
+    return;
+  }
+  workloadName.value    = workload.metadata.name;
+  namespace.value       = workload.metadata.namespace;
+  clusters.value        = workload.spec.targetClusters || [];
+  deployType.value      = (workload.spec.deployStrategy as AIWorkloadDeployStrategy) || 'FleetBundle';
+  componentValues.value = workload.spec.componentValues || [];
+}
+
 function nextStep() {
-  if (currentStep.value < 2 && wizardSteps.value[currentStep.value + 1].ready) currentStep.value++;
+  if (currentStep.value < 3 && wizardSteps.value[currentStep.value + 1].ready) currentStep.value++;
 }
 function previousStep() {
   if (currentStep.value > 0) currentStep.value--;
@@ -112,8 +140,32 @@ const DNS_LABEL = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
 async function onInstall() {
   if (!blueprint.value) return;
 
-  if (missingCreds.value.length > 0) {
+  if (missingCreds.value.length > 0 && props.mode === 'install') {
     error.value = `Missing credentials for: ${ missingCreds.value.map((c) => CRED_LABELS[c]).join(', ') }. Configure them in Settings before installing.`;
+    return;
+  }
+
+  if (props.mode === 'manage') {
+    submitting.value = true;
+    error.value      = null;
+    try {
+      await updateAIWorkload(namespace.value, workloadName.value, {
+        displayName: blueprint.value.spec.displayName,
+        source: {
+          sourceType: 'Blueprint',
+          blueprint: { name: props.blueprintName, version: props.blueprintVersion },
+        },
+        targetNamespace: namespace.value,
+        targetClusters:  clusters.value,
+        deployStrategy:  deployType.value,
+        componentValues: componentValues.value.length ? componentValues.value : undefined,
+      });
+      router.push({ name: `c-cluster-${ PRODUCT }-workloads`, params: { cluster } });
+    } catch (e: any) {
+      error.value = e?.message || 'Failed to save changes';
+    } finally {
+      submitting.value = false;
+    }
     return;
   }
 
@@ -179,6 +231,7 @@ async function onInstall() {
         targetNamespace: namespace.value,
         targetClusters:  [t.clusterId],
         deployStrategy:  deployType.value,
+        componentValues: componentValues.value.length ? componentValues.value : undefined,
       },
       { phase: 'Pending', clusterStatuses: [] },
     ),
@@ -217,7 +270,7 @@ function onProgressCancel() { showProgressModal.value = false; }
     <Loading v-if="loading" />
     <div v-else class="custom-wizard">
       <div class="wizard-header">
-        <h1>Install Blueprint</h1>
+        <h1>{{ props.mode === 'install' ? 'Install Blueprint' : 'Manage Blueprint Deployment' }}</h1>
         <p class="text-muted">{{ blueprint?.spec.displayName }} v{{ props.blueprintVersion }}</p>
       </div>
 
@@ -249,12 +302,13 @@ function onProgressCancel() { showProgressModal.value = false; }
             :workload-name="workloadName"
             :namespace="namespace"
             :components="blueprint?.spec.components || []"
+            :disabled="props.mode === 'manage'"
             @update:workload-name="workloadName = $event"
             @update:namespace="namespace = $event"
           />
           <TargetStep
             v-else-if="currentStep === 1"
-            mode="install"
+            :mode="props.mode"
             :clusters="clusters"
             :deploy-type="deployType"
             :helm-unsupported="true"
@@ -262,7 +316,14 @@ function onProgressCancel() { showProgressModal.value = false; }
             @update:clusters="clusters = $event"
             @update:deploy-type="deployType = $event"
           />
-          <div v-else-if="currentStep === 2">
+          <BlueprintCustomizeStep
+            v-else-if="currentStep === 2"
+            :components="blueprint?.spec.components || []"
+            :existing-values="componentValues"
+            :mode="props.mode"
+            @update:model-value="componentValues = $event"
+          />
+          <div v-else-if="currentStep === 3">
             <Banner
               v-if="missingCreds.length"
               color="error"
@@ -282,6 +343,7 @@ function onProgressCancel() { showProgressModal.value = false; }
               :deploy-type="deployType"
               :clusters="clusters"
               :components="blueprint?.spec.components || []"
+              :component-values="componentValues"
             />
           </div>
         </div>
@@ -292,7 +354,7 @@ function onProgressCancel() { showProgressModal.value = false; }
         <div class="flex-spacer" />
         <button class="btn role-secondary mr-10" @click="onCancel">Cancel</button>
         <button
-          v-if="currentStep < 2"
+          v-if="currentStep < 3"
           class="btn role-primary"
           :disabled="!wizardSteps[currentStep + 1]?.ready"
           @click="nextStep"
@@ -302,11 +364,11 @@ function onProgressCancel() { showProgressModal.value = false; }
         <button
           v-else
           class="btn role-primary"
-          :disabled="submitting || clusters.length === 0 || missingCreds.length > 0"
+          :disabled="submitting || clusters.length === 0 || (missingCreds.length > 0 && props.mode === 'install')"
           @click="onInstall"
         >
           <i v-if="submitting" class="icon icon-spinner icon-spin mr-5" />
-          Install
+          {{ props.mode === 'install' ? 'Install' : 'Save' }}
         </button>
       </div>
     </div>

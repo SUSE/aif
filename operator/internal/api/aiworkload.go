@@ -18,7 +18,9 @@ limitations under the License.
 package api
 
 import (
+	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -42,6 +44,39 @@ func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *ai
 	}
 	if existing != nil && existing.Spec.DeployStrategy != "" && existing.Spec.DeployStrategy != spec.DeployStrategy {
 		return fmt.Errorf("%w: deployStrategy is immutable", ErrInvalidInput)
+	}
+	return nil
+}
+
+// validateBlueprintComponentValues rejects ComponentValues entries whose
+// componentName doesn't match any component of the referenced Blueprint. A
+// typo'd or stale component name would otherwise silently no-op at render
+// time (the operator's resolveComponentValues skips unmatched entries
+// defensively, since reconcile loops must stay self-healing) — this catches
+// it here instead, at submit time, with a clear error.
+func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context, spec aiplatformv1alpha1.AIWorkloadSpec) error {
+	if spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint || len(spec.ComponentValues) == 0 {
+		return nil
+	}
+	if spec.Source.Blueprint == nil {
+		return nil
+	}
+	crName := blueprintCRName(spec.Source.Blueprint.Name, spec.Source.Blueprint.Version)
+	var bp aiplatformv1alpha1.Blueprint
+	if err := h.client.Get(ctx, client.ObjectKey{Name: crName}, &bp); err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("%w: blueprint %q not found", ErrInvalidInput, crName)
+		}
+		return err
+	}
+	known := make(map[string]bool, len(bp.Spec.Components))
+	for _, c := range bp.Spec.Components {
+		known[c.ChartName] = true
+	}
+	for _, ov := range spec.ComponentValues {
+		if !known[ov.ComponentName] {
+			return fmt.Errorf("%w: componentValues references unknown component %q", ErrInvalidInput, ov.ComponentName)
+		}
 	}
 	return nil
 }
@@ -107,6 +142,14 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 
 	if err := validateAIWorkloadSpec(body.Spec, nil); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	if err := h.validateBlueprintComponentValues(r.Context(), body.Spec); err != nil {
+		status := http.StatusUnprocessableEntity
+		if !stderrors.Is(err, ErrInvalidInput) {
+			status = http.StatusInternalServerError
+		}
+		writeError(w, status, err)
 		return
 	}
 
@@ -189,6 +232,14 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 
 	if err := validateAIWorkloadSpec(body.Spec, existing); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	if err := h.validateBlueprintComponentValues(r.Context(), body.Spec); err != nil {
+		status := http.StatusUnprocessableEntity
+		if !stderrors.Is(err, ErrInvalidInput) {
+			status = http.StatusInternalServerError
+		}
+		writeError(w, status, err)
 		return
 	}
 
