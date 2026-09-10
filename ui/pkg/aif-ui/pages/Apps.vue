@@ -299,10 +299,9 @@ import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem, ManagedRepo } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchCustomRepoApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, fetchStaticCatalogWithCustom, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { browserSafeCatalogLogo } from '../utils/catalog-logo';
-import { fetchStaticCatalog } from '../services/static-catalog';
 import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 
 export default defineComponent({
@@ -506,13 +505,18 @@ export default defineComponent({
         // Static catalog mode (opt-in): serve the bundled or remote catalog.
         isStaticMode.value = getUseStaticCatalog();
         if (isStaticMode.value) {
-          // Static mode: the operator serves the catalog (bundled or remote); there is
-          // no Settings-driven registry config to show. If the operator is unreachable,
-          // fetchStaticCatalog() throws and the page shows an error (no local fallback,
-          // since the bundled catalog now lives in the operator).
+          // Static mode: the operator serves the curated catalog (bundled or remote);
+          // there is no Settings-driven registry config to show. Admin-added custom
+          // ClusterRepos are overlaid on top (best-effort) so they still appear here —
+          // the operator provisions them regardless of catalog mode. If the operator is
+          // unreachable, fetchStaticCatalogWithCustom() throws and the page shows an
+          // error (no local fallback, since the bundled catalog lives in the operator);
+          // a custom-overlay failure is fail-soft and leaves the curated catalog intact.
           settingsData.value = null;
-          managedRepos.value = [];
-          items.value = await fetchStaticCatalog();
+          const staticResult = await fetchStaticCatalogWithCustom(store);
+          managedRepos.value = staticResult.managedRepos;
+          items.value = staticResult.apps;
+          catalogWarnings.value = buildWarnings(staticResult.failedRepos);
           return;
         }
 
@@ -527,14 +531,15 @@ export default defineComponent({
         ]);
         settingsData.value = settings;
         managedRepos.value = repos;
-        const [suseResult, nvidiaResult, curated] = await Promise.all([
+        const [suseResult, nvidiaResult, customResult, curated] = await Promise.all([
           fetchSuseAiApps(store, settings, repos),
           fetchNvidiaApps(store, settings, repos),
+          fetchCustomRepoApps(store, repos),
           fetchCuratedOverlayOrEmpty(),
         ]);
-        const discovered = [...suseResult.apps, ...nvidiaResult.apps];
+        const discovered = [...suseResult.apps, ...nvidiaResult.apps, ...customResult.apps];
         items.value = overlayCuratedMetadata(discovered, curated);
-        catalogWarnings.value = buildWarnings([...suseResult.failedRepos, ...nvidiaResult.failedRepos]);
+        catalogWarnings.value = buildWarnings([...suseResult.failedRepos, ...nvidiaResult.failedRepos, ...customResult.failedRepos]);
       } catch (err) {
         console.error('Failed to load apps:', err);
         throw err;

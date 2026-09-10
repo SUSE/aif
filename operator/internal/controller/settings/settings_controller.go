@@ -87,6 +87,11 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileCustomRepos(ctx, &s); err != nil {
+		l.Error(err, "failed to reconcile custom ClusterRepos")
+		return ctrl.Result{}, err
+	}
+
 	// Best-effort: rebuild the Rancher catalog client from the current config.
 	// Never fails the reconcile — a missing/invalid token just disables
 	// git-backed ClusterRepo support (surfaced on the affected AIWorkloads).
@@ -294,6 +299,10 @@ func (r *SettingsReconciler) isReferencedSettingsSecret(ctx context.Context, nam
 		s.Spec.Nvidia.CABundleSecretRef,
 		s.Spec.RancherCatalog.TokenSecretRef,
 		s.Spec.RancherCatalog.CABundleSecretRef,
+	}
+	for i := range s.Spec.CustomRepos {
+		cr := s.Spec.CustomRepos[i]
+		refs = append(refs, cr.UserSecretRef, cr.TokenSecretRef, cr.SSHKeySecretRef, cr.CABundleSecretRef)
 	}
 	for _, ref := range refs {
 		if ref != nil && ref.Name == name {
@@ -667,6 +676,110 @@ func (r *SettingsReconciler) registryAuthChanged(ctx context.Context, secretName
 		!bytes.Equal(existing.Data["cacerts"], caBundle)
 }
 
+// applyCABundleOnlySecret materializes an Opaque secret carrying only a CA
+// bundle (no credentials) for anonymous custom repos with a custom CA. Mirrors
+// applyRegistryAuthSecret's namespace handling and change-detection.
+func (r *SettingsReconciler) applyCABundleOnlySecret(
+	ctx context.Context,
+	ns string,
+	secretName string,
+	caBundleRef *aiplatformv1alpha1.SecretKeyRef,
+) (name string, changed bool, err error) {
+	caBundle, err := r.readRegistryCABundle(ctx, ns, caBundleRef)
+	if err != nil {
+		return "", false, err
+	}
+	if len(caBundle) == 0 {
+		return "", false, nil
+	}
+
+	changed = r.registryAuthChanged(ctx, secretName, "", "", caBundle)
+
+	for _, targetNS := range authSecretNamespaces {
+		mirror := &corev1.Secret{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: targetNS,
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{"cacerts": caBundle},
+		}
+		if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
+			if targetNS != "cattle-system" && errors.IsNotFound(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("apply CA-only secret %s/%s: %w", targetNS, secretName, err)
+		}
+	}
+
+	return secretName, changed, nil
+}
+
+// applyCustomRepoAuthSecret materializes the per-repo auth secret across the
+// registry auth namespaces. Basic auth reuses applyRegistryAuthSecret (username/
+// token + optional CA). SSH writes a kubernetes.io/ssh-auth secret. Anonymous
+// repos (no refs) materialize nothing and return an empty name. CA-only repos
+// (CABundleSecretRef set, no credentials) materialize a secret with only cacerts.
+func (r *SettingsReconciler) applyCustomRepoAuthSecret(ctx context.Context, ns string, repo aiplatformv1alpha1.CustomRepoSpec) (string, bool, error) {
+	secretName := credentials.CustomRepoAuthSecretName(repo.Name)
+	if repo.Type == "git" && repo.SSHKeySecretRef != nil {
+		return r.applySSHAuthSecret(ctx, ns, secretName, repo.SSHKeySecretRef)
+	}
+	if repo.UserSecretRef != nil && repo.TokenSecretRef != nil {
+		return r.applyRegistryAuthSecret(ctx, ns, secretName, repo.UserSecretRef, repo.TokenSecretRef, repo.CABundleSecretRef)
+	}
+	if repo.Type != "git" && repo.CABundleSecretRef != nil {
+		return r.applyCABundleOnlySecret(ctx, ns, secretName, repo.CABundleSecretRef)
+	}
+	return "", false, nil
+}
+
+// applySSHAuthSecret writes a kubernetes.io/ssh-auth mirror (key: ssh-privatekey)
+// across authSecretNamespaces from the referenced source key. Mirrors
+// applyRegistryAuthSecret's namespace handling: cattle-system is mandatory, the
+// Fleet workspaces are best-effort (skipped when absent).
+func (r *SettingsReconciler) applySSHAuthSecret(ctx context.Context, ns, secretName string, ref *aiplatformv1alpha1.SecretKeyRef) (string, bool, error) {
+	key, err := r.readSecretKey(ctx, ns, ref)
+	if err != nil {
+		return "", false, fmt.Errorf("read ssh key: %w", err)
+	}
+	if key == "" {
+		return "", false, nil
+	}
+	changed := r.sshAuthChanged(ctx, secretName, key)
+	for _, targetNS := range authSecretNamespaces {
+		mirror := &corev1.Secret{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNS},
+			Type:       corev1.SecretTypeSSHAuth,
+			Data:       map[string][]byte{corev1.SSHAuthPrivateKey: []byte(key)},
+		}
+		if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
+			if targetNS != "cattle-system" && errors.IsNotFound(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("apply ssh auth secret %s/%s: %w", targetNS, secretName, err)
+		}
+	}
+	return secretName, changed, nil
+}
+
+// sshAuthChanged reports whether the cattle-system ssh-auth mirror differs from
+// the freshly-read key. A missing mirror counts as changed; an unreadable one as
+// unchanged (mirrors registryAuthChanged).
+func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName, key string) bool {
+	var existing corev1.Secret
+	err := r.Get(ctx, types.NamespacedName{Namespace: "cattle-system", Name: secretName}, &existing)
+	if errors.IsNotFound(err) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	return string(existing.Data[corev1.SSHAuthPrivateKey]) != key
+}
+
 // forceUpdateClusterRepo bumps spec.forceUpdate to now (RFC3339Nano) so Rancher
 // re-reads the clientSecret and re-downloads the index. A plain merge patch
 // keeps forceUpdate out of the SSA-managed field set (applyClusterRepo owns
@@ -701,6 +814,28 @@ func managedRepoSpec(repoURL string) map[string]any {
 		"serviceAccount":          "",
 		"serviceAccountNamespace": "",
 	}
+}
+
+// customRepoSpecMap builds the ClusterRepo spec for a custom repo. Like
+// managedRepoSpec it zeroes the alternate-source surface, but per type: url-based
+// repos zero git fields; git repos zero url. Unlike the org repos, custom repos
+// may opt into insecureSkipTLSVerify.
+func customRepoSpecMap(repo aiplatformv1alpha1.CustomRepoSpec) map[string]any {
+	spec := map[string]any{
+		"url":                     "",
+		"gitRepo":                 "",
+		"gitBranch":               "",
+		"insecureSkipTLSVerify":   repo.InsecureSkipTLSVerify,
+		"serviceAccount":          "",
+		"serviceAccountNamespace": "",
+	}
+	if repo.Type == "git" {
+		spec["gitRepo"] = repo.GitRepo
+		spec["gitBranch"] = repo.GitBranch
+	} else {
+		spec["url"] = repo.URL
+	}
+	return spec
 }
 
 func (r *SettingsReconciler) applyClusterRepo(ctx context.Context, name, url, clientSecretName string) error {
@@ -1055,6 +1190,92 @@ func (r *SettingsReconciler) pruneTeamRepos(ctx context.Context, keep map[string
 			continue
 		}
 		if err := r.deleteClusterRepo(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reconcileCustomRepos provisions each admin-defined custom repo as a ClusterRepo
+// + auth secret, then prunes any custom-labeled ClusterRepo no longer desired.
+// Invalid entries are skipped (logged) so one bad repo never blocks the others.
+func (r *SettingsReconciler) reconcileCustomRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
+	l := log.FromContext(ctx)
+	keep := map[string]bool{}
+	extraLabels := map[string]string{credentials.CustomRepoLabel: credentials.LabelValueTrue}
+	var authErrors []error
+
+	for _, repo := range s.Spec.CustomRepos {
+		if err := credentials.ValidateCustomRepos([]aiplatformv1alpha1.CustomRepoSpec{repo}); err != nil {
+			l.Error(err, "skipping invalid custom repo", "name", repo.Name)
+			continue
+		}
+		name := credentials.CustomRepoResourceName(repo.Name)
+
+		secretName, changed, err := r.applyCustomRepoAuthSecret(ctx, s.Namespace, repo)
+		if err != nil {
+			l.Error(err, "custom repo auth secret failed; preserving existing repo", "name", repo.Name)
+			keep[name] = true
+			authErrors = append(authErrors, err)
+			continue
+		}
+
+		if err := r.applyCustomClusterRepo(ctx, name, repo, secretName, extraLabels); err != nil {
+			return err
+		}
+		if changed {
+			if err := r.forceUpdateClusterRepo(ctx, name); err != nil {
+				return err
+			}
+		}
+		keep[name] = true
+	}
+
+	if err := r.pruneCustomRepos(ctx, keep); err != nil {
+		return err
+	}
+	return stderrors.Join(authErrors...)
+}
+
+// applyCustomClusterRepo applies a custom repo's ClusterRepo using the git-aware
+// spec map and both marker labels.
+func (r *SettingsReconciler) applyCustomClusterRepo(ctx context.Context, name string, repo aiplatformv1alpha1.CustomRepoSpec, clientSecretName string, extraLabels map[string]string) error {
+	labels := map[string]any{managedRepoMarkerLabel: managedRepoMarkerValue}
+	for k, v := range extraLabels {
+		labels[k] = v
+	}
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "catalog.cattle.io/v1",
+			"kind":       "ClusterRepo",
+			"metadata":   map[string]any{"name": name, "labels": labels},
+			"spec":       customRepoSpecMap(repo),
+		},
+	}
+	if clientSecretName != "" {
+		_ = unstructured.SetNestedField(obj.Object, clientSecretName, "spec", "clientSecret", "name")
+		_ = unstructured.SetNestedField(obj.Object, "cattle-system", "spec", "clientSecret", "namespace")
+	}
+	return r.Patch(ctx, obj, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings"))
+}
+
+// pruneCustomRepos deletes every custom-labeled ClusterRepo not in keep, plus its
+// auth secret. Scoped strictly to CustomRepoLabel — never touches org/team repos.
+func (r *SettingsReconciler) pruneCustomRepos(ctx context.Context, keep map[string]bool) error {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList"})
+	if err := r.List(ctx, list, client.MatchingLabels{credentials.CustomRepoLabel: credentials.LabelValueTrue}); err != nil {
+		return fmt.Errorf("list custom ClusterRepos: %w", err)
+	}
+	for i := range list.Items {
+		name := list.Items[i].GetName()
+		if keep[name] {
+			continue
+		}
+		if err := r.deleteClusterRepo(ctx, name); err != nil {
+			return err
+		}
+		if err := r.deleteAuthSecret(ctx, name+"-auth"); err != nil {
 			return err
 		}
 	}

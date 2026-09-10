@@ -187,7 +187,7 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
   return { apps, failedRepos };
 }
 
-/** Shared repo→apps loader for fetchSuseAiApps / fetchNvidiaApps. Filters to ready
+/** Shared repo→apps loader for fetchSuseAiApps / fetchNvidiaApps / fetchCustomRepoApps. Filters to ready
  *  repos (reporting not-ready ones via failedRepos), fetches each repo's index in
  *  parallel, and dedups apps by slug_name with first-repo-in-`repos`-order winning,
  *  tagging each app with the repo's url/name and `library`. `repos` MUST already be
@@ -195,7 +195,7 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
 async function loadAppsFromRepos(
   $store: any,
   repos: ManagedRepo[],
-  library: 'suse-ai' | 'nvidia',
+  library: 'suse-ai' | 'nvidia' | 'custom',
   failedRepos: FailedRepo[],
 ): Promise<AppCollectionItem[]> {
   const readyRepos = repos.filter((r) => {
@@ -284,6 +284,53 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
   return { apps, failedRepos };
 }
 
+/** Fetch apps from operator-managed CUSTOM ClusterRepos (custom-repo label),
+ *  tagged library 'custom'. Same discovery/readiness contract as fetchSuseAiApps. */
+export async function fetchCustomRepoApps($store: any, managedRepos?: ManagedRepo[]): Promise<RepoAppsResult> {
+  const all = managedRepos ?? await fetchManagedRepos($store);
+  const managed = all
+    .filter(r => r.library === 'custom')
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const failedRepos: FailedRepo[] = [];
+  const apps = await loadAppsFromRepos($store, managed, 'custom', failedRepos);
+  return { apps, failedRepos };
+}
+
+/** Result of fetchStaticCatalogWithCustom: the merged app list, the custom repos
+ *  discovered this load (drives the libraries dropdown and hasRegistryConfigured),
+ *  and any per-repo discovery failures for the warning banner. */
+export interface StaticCatalogResult {
+  apps: AppCollectionItem[];
+  managedRepos: ManagedRepo[];
+  failedRepos: FailedRepo[];
+}
+
+/** Static-mode catalog with a best-effort overlay of admin-added custom repos.
+ *  The operator-served static catalog is the curated base and is returned as-is;
+ *  custom ClusterRepos — which the operator provisions regardless of catalog mode —
+ *  are discovered live and appended so they surface in static mode too. The overlay
+ *  is fail-soft: any custom-discovery failure (ClusterRepo list unreachable, RBAC
+ *  denial, timeout) returns the curated catalog alone. This deliberately differs
+ *  from dynamic mode, where such a failure is surfaced, because static mode must
+ *  never blank its curated catalog on a discovery fault. A static-catalog fetch
+ *  failure still propagates (static mode's contract is to show an error). */
+export async function fetchStaticCatalogWithCustom($store: any): Promise<StaticCatalogResult> {
+  const base = await fetchStaticCatalog();
+  try {
+    const repos = await fetchManagedRepos($store);
+    const custom = repos.filter(r => r.library === 'custom');
+    if (custom.length === 0) return { apps: base, managedRepos: [], failedRepos: [] };
+    const res = await fetchCustomRepoApps($store, repos);
+    return { apps: [...base, ...res.apps], managedRepos: custom, failedRepos: res.failedRepos };
+  } catch (e) {
+    logger.warn('Custom-repo overlay unavailable in static mode; serving curated catalog only', {
+      component: 'AppCollection',
+      data:      { error: String(e) },
+    });
+    return { apps: base, managedRepos: [], failedRepos: [] };
+  }
+}
+
 /** Single source of truth for the clusterrepos list endpoint. */
 export const CLUSTERREPOS_URL =
   '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000';
@@ -346,10 +393,14 @@ export const NVIDIA_TEAM_REPO_LABEL = 'ai-factory.suse.com/nvidia-team-repo';
  *  at a matching URL/host is never discovered. */
 export const MANAGED_REPO_LABEL = 'ai-factory.suse.com/managed-repo';
 
+/** Marks admin-defined custom ClusterRepos. Mirror of credentials.CustomRepoLabel.
+ *  Presence (with managed-repo=true) classifies the repo as the 'custom' library. */
+export const CUSTOM_REPO_LABEL = 'ai-factory.suse.com/custom-repo';
+
 export interface ManagedRepo {
   name: string;
   url: string;
-  library: 'suse-ai' | 'nvidia';
+  library: 'suse-ai' | 'nvidia' | 'custom';
   ready: boolean;
   message?: string;
 }
@@ -372,9 +423,10 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
       // Provenance gate: only operator-stamped repos, matched exactly.
       if (labels[MANAGED_REPO_LABEL] !== 'true') continue;
       // Classify by canonical name (prototype-safe) or team label.
-      let library: 'suse-ai' | 'nvidia' | undefined =
+      let library: 'suse-ai' | 'nvidia' | 'custom' | undefined =
         Object.prototype.hasOwnProperty.call(MANAGED_REPO_NAMES, name) ? MANAGED_REPO_NAMES[name] : undefined;
       if (!library && labels[NVIDIA_TEAM_REPO_LABEL] === 'true') library = 'nvidia';
+      if (!library && labels[CUSTOM_REPO_LABEL] === 'true') library = 'custom';
       if (!library) continue;
       const isReady = isRepoReady(repo);
       out.push({

@@ -79,7 +79,11 @@ const (
 const (
 	ManagedRepoLabel = "ai-factory.suse.com/managed-repo"
 	TeamRepoLabel    = "ai-factory.suse.com/nvidia-team-repo"
-	LabelValueTrue   = "true"
+	// CustomRepoLabel additionally marks admin-defined custom ClusterRepos so the
+	// reconciler can list-and-diff (prune) them in isolation from org/team repos.
+	// Custom repos also carry ManagedRepoLabel so the UI discovery path finds them.
+	CustomRepoLabel = "ai-factory.suse.com/custom-repo"
+	LabelValueTrue  = "true"
 )
 
 // Basic-auth secrets written to cattle-system for Rancher catalog / Fleet chart pulls.

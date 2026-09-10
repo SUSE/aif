@@ -594,9 +594,9 @@ async function resolvePullSecretNames() {
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
     const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
 
-    // NVIDIA charts don't have imagePullSecrets in their original values schema,
-    // so we skip injecting them into the form values to avoid schema validation errors
-    if (library === 'nvidia') {
+    // Only inject pull secrets for suse-ai library charts. Custom repos (library=undefined)
+    // and nvidia repos must not get auto-injected pull secrets.
+    if (library !== 'suse-ai') {
       return;
     }
 
@@ -1340,8 +1340,8 @@ async function installToCluster(
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
   const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
 
-  // Non-NVIDIA charts get the pull secrets via the standard pod-spec paths.
-  if (pullSecrets.length > 0 && library !== 'nvidia') {
+  // Only add pull secrets to values for suse-ai library charts
+  if (pullSecrets.length > 0 && library === 'suse-ai') {
     const secrets = pullSecrets.map(name => ({ name }));
     v.global = { ...(v.global || {}), imagePullSecrets: secrets };
     v.imagePullSecrets = secrets;
