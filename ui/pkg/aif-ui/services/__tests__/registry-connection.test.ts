@@ -224,6 +224,24 @@ describe('cleared form inputs do not silently authenticate saved configuration',
     expect(validateCredentials).not.toHaveBeenCalled();
   });
 
+  it('tests system trust when the CA selector emits its empty None reference', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ spec: { [TARGET]: { ...CONFIG, caBundleSecretRef: { name: 'saved-ca', key: 'ca.crt' } } } });
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: SUSE_REGISTRY_REPO_URL, chartName: 'qdrant', status: 'error', reason: 'tls', latencyMs: 1 }] });
+    const result = await checkRegistryConnection(storeWith(), TARGET, { ...CONFIG, caBundleSecretRef: { name: '', key: '' } }, 'qdrant');
+
+    expect(validateChartAccess).toHaveBeenCalledWith({ target: TARGET, configuration: CONFIG, chartName: 'qdrant' });
+    expect(validateCredentials).not.toHaveBeenCalled();
+    expect(result.authentication.status).toBe('skipped');
+    expect(result.chartAccess.results[0].reason).toBe('tls');
+    expect(result.chartRepositories.repositories[0].state).toBe('ready');
+  });
+
+  it('keeps a selected CA Secret incomplete until its key is selected', async () => {
+    const configuration = { ...CONFIG, caBundleSecretRef: { name: 'selected-ca', key: '' } };
+    await checkRegistryConnection(storeWith(), TARGET, configuration, 'qdrant');
+    expect(validateChartAccess).toHaveBeenCalledWith({ target: TARGET, configuration, chartName: 'qdrant' });
+  });
+
   it.each([
     ['applicationCollection', APP_COLLECTION_REPO_URL], ['suseRegistry', SUSE_REGISTRY_REPO_URL], ['nvidia', 'https://nvcr.io'],
   ] as [RegistryTarget, string][])('tests the connected default when the %s mirror is cleared', async (target, url) => {

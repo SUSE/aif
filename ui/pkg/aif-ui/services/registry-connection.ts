@@ -154,6 +154,15 @@ export async function checkRegistryConnection(store: Dispatchable, target: Regis
   chartAccess: { results: ChartAccessResult[]; error?: string };
   chartRepositories: RepositoryCheck;
 }> {
+  // Rancher's SecretSelector emits an object with no name for "None". Treat
+  // that as an explicit removal, while keeping named Secrets with missing keys
+  // incomplete so they cannot silently become anonymous/system-trust probes.
+  configuration = {
+    ...configuration,
+    userSecretRef: configuration.userSecretRef?.name ? configuration.userSecretRef : null,
+    tokenSecretRef: configuration.tokenSecretRef?.name ? configuration.tokenSecretRef : null,
+    caBundleSecretRef: configuration.caBundleSecretRef?.name ? configuration.caBundleSecretRef : null,
+  };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_VALUES.READ);
   const settingsRequest = getSettings(controller.signal).finally(() => clearTimeout(timer));
