@@ -220,12 +220,8 @@ jobs:
             ui/package-lock.json
             ui/pkg/aif-ui/package.json
             ui/pkg/aif-ui/package-lock.json
+            uc-release-manifest/release_manifest.yaml
           )
-          # The release manifest is bumped for prod releases only (see Bump step),
-          # so only stage it then — on dev/rc runs the file is unchanged.
-          if [[ "$KIND" == "prod" ]]; then
-            files+=(uc-release-manifest/release_manifest.yaml)
-          fi
           git add "${files[@]}"
           git commit -m "chore: release $VERSION"
           git push --force origin "$branch"
