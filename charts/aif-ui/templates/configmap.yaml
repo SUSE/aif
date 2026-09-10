@@ -2,6 +2,15 @@
 # (hardcoded), so install this chart in that namespace. Operator coordinates are
 # installation settings: Helm or the InstallAIExtension controller writes them
 # here and the UI discovers them automatically.
+#
+# resource-policy: keep — survives `helm uninstall` so operator coordinates and
+# catalog settings aren't lost across a reinstall. It keeps this release's own
+# ownership labels/annotations (Helm doesn't strip them on a kept object), so a
+# subsequent install adopts it with no extra help needed. Even when the release
+# identity changes, or the object was created unowned entirely (the aif-operator
+# self-heal leaves ownership metadata alone — SUSEAI-1039), the aif-operator's
+# own installs/upgrades set Helm's TakeOwnership, so they claim this object
+# regardless of its current state.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,6 +18,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aif-ui.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": keep
 data:
   operatorNamespace: {{ .Values.operator.namespace | quote }}
   operatorService:   {{ .Values.operator.service   | quote }}
