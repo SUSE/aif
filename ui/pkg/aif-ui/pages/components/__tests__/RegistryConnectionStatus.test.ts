@@ -23,9 +23,16 @@ const mounted: ReturnType<typeof mount>[] = [];
 
 function setup() {
   const repo = {
-    metadata: { name: 'suse-ai-registry', resourceVersion: '42', generation: 1, labels: { [MANAGED_REPO_LABEL]: 'true' } },
+    metadata: { name: 'suse-ai-registry', resourceVersion: '42', generation: 4, labels: { [MANAGED_REPO_LABEL]: 'true' } },
     spec: { url: SUSE_REGISTRY_REPO_URL },
-    status: { observedGeneration: 1, conditions: [{ type: 'OCIDownloaded', status: 'False', message: '401 Unauthorized' }] },
+    // SUSEAI-1089: FollowerDownloaded=True does not mean the OCI download worked.
+    status: {
+      observedGeneration: 4,
+      conditions: [
+        { type: 'FollowerDownloaded', status: 'True', message: '' },
+        { type: 'OCIDownloaded', status: 'False', message: 'error 401: Unauthorized' },
+      ],
+    },
   };
   const store = {
     dispatch: vi.fn(async (_action, request) => request.url === CLUSTERREPOS_URL ? { items: [repo] } : repo),
@@ -68,7 +75,7 @@ describe('Settings registry diagnostics', () => {
     expect(wrapper.text()).toContain('Authentication probe succeeded (chart access not verified) — registry.suse.com (1121 ms)');
     expect(wrapper.text()).toContain('Chart repositories (saved settings)');
     expect(wrapper.text()).toContain('suse-ai-registry — Failed');
-    expect(wrapper.text()).toContain('401 Unauthorized');
+    expect(wrapper.text()).toContain('error 401: Unauthorized');
     expect(wrapper.get('a').attributes('href')).toBe('/c/local/apps/catalog.cattle.io.clusterrepo/suse-ai-registry');
     expect(store.dispatch).toHaveBeenCalledTimes(1);
     expect(wrapper.get('[role="status"]').attributes('aria-busy')).toBe('false');
@@ -83,7 +90,7 @@ describe('Settings registry diagnostics', () => {
     expect(wrapper.text()).toContain('The form differs from saved settings.');
     expect(wrapper.text()).toContain('Repository status and Refresh use the saved configuration');
     expect(wrapper.text()).toContain(SUSE_REGISTRY_REPO_URL);
-    expect(wrapper.text()).toContain('401 Unauthorized');
+    expect(wrapper.text()).toContain('error 401: Unauthorized');
   });
 
   it('invalidates the authentication result when an input is edited after Test', async () => {
@@ -92,7 +99,7 @@ describe('Settings registry diagnostics', () => {
     await wrapper.setProps({ configuration: { ...configuration, tokenSecretRef: { name: 'different', key: 'token' } } });
     expect(wrapper.text()).toContain('The form changed since this test.');
     expect(wrapper.text()).not.toContain('Authentication probe succeeded');
-    expect(wrapper.text()).toContain('401 Unauthorized');
+    expect(wrapper.text()).toContain('error 401: Unauthorized');
     await runTest(wrapper);
     expect(wrapper.text()).not.toContain('The form changed since this test.');
     expect(wrapper.text()).toContain('Authentication probe succeeded');
@@ -149,15 +156,15 @@ describe('Settings registry diagnostics', () => {
     vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'suseRegistry', status: 'skipped', message: 'No credentials' }] });
     await runTest(wrapper);
     expect(wrapper.text()).toContain('Authentication not tested');
-    expect(wrapper.text()).toContain('401 Unauthorized');
+    expect(wrapper.text()).toContain('error 401: Unauthorized');
     expect(store.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('renders Rancher errors as text, never as HTML', async () => {
     const { wrapper, repo } = setup();
-    repo.status.conditions[0].message = '<img src=x onerror="alert(1)">';
+    repo.status.conditions[1].message = '<img src=x onerror="alert(1)">';
     await runTest(wrapper);
-    expect(wrapper.text()).toContain(repo.status.conditions[0].message);
+    expect(wrapper.text()).toContain(repo.status.conditions[1].message);
     expect(wrapper.find('img').exists()).toBe(false);
   });
 
@@ -171,7 +178,7 @@ describe('Settings registry diagnostics', () => {
     expect(wrapper.text()).toContain('suse-ai-registry — Pending');
     expect(wrapper.text()).toContain('Refresh requested for the saved repository.');
     expect(wrapper.text()).toContain('Test again to check its status.');
-    expect(wrapper.text()).not.toContain('401 Unauthorized');
+    expect(wrapper.text()).not.toContain('error 401: Unauthorized');
     expect(wrapper.text()).toContain('Authentication probe succeeded');
     expect(validateCredentials).toHaveBeenCalledTimes(1);
   });
@@ -183,7 +190,7 @@ describe('Settings registry diagnostics', () => {
     await wrapper.get('[aria-label="Refresh saved repository suse-ai-registry"]').trigger('click');
     await flushPromises();
     expect(wrapper.text()).toContain('Could not request repository refresh: suse-ai-registry: Forbidden');
-    expect(wrapper.text()).toContain('401 Unauthorized');
+    expect(wrapper.text()).toContain('error 401: Unauthorized');
     expect(wrapper.get('button').attributes('disabled')).toBeUndefined();
   });
 });

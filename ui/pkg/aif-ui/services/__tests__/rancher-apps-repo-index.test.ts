@@ -52,6 +52,21 @@ function expectNoIndexRequest(store: ReturnType<typeof makeStore>) {
 }
 
 describe('install wizard chart lookup', () => {
+  it.each(['kubeflow', 'litellm', 'qdrant'])('reports the SUSEAI-1089 download failure for %s despite a successful follower condition', async (chart) => {
+    // The reported ClusterRepo has no index ConfigMap and has both conditions.
+    const store = makeStore({
+      conditions: [
+        { type: 'FollowerDownloaded', status: 'True' },
+        { type: 'OCIDownloaded', status: 'False', message: 'error 401: Unauthorized' },
+      ],
+    }, { indexError: { message: 'configmaps "" not found' } });
+
+    await expect(findChartInRepo(store, 'local', REPO_NAME, chart)).rejects.toThrow(
+      `Chart repository "${REPO_NAME}" is not ready: error 401: Unauthorized`,
+    );
+    expectNoIndexRequest(store);
+  });
+
   it.each(['kubeflow', 'litellm', 'qdrant'])('reports a pending index for %s before requesting it', async (chart) => {
     const store = makeStore({ conditions: [{ type: 'OCIDownloaded', status: 'True' }] }, {
       indexError: { message: 'configmaps "" not found' },
