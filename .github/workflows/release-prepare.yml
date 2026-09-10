@@ -175,10 +175,6 @@ jobs:
           git status --porcelain
 
       - name: Bump release manifest
-        # Prod releases only — dev/rc runs skip this step entirely, leaving the
-        # manifest untouched. Runs on the same runner as the version bump, so the
-        # edit persists into the commit step below.
-        if: steps.validate.outputs.kind == 'prod'
         shell: bash
         run: |
           set -euo pipefail
