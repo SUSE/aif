@@ -5,11 +5,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import RegistryConnectionStatus from '../RegistryConnectionStatus.vue';
-import { getSettings, validateCredentials } from '../../../utils/operator-api';
+import { getSettings, validateCredentials, validateChartAccess } from '../../../utils/operator-api';
 import { CLUSTERREPOS_URL, MANAGED_REPO_LABEL } from '../../../services/app-collection';
 import { SUSE_REGISTRY_REPO_URL } from '../../../services/registry-endpoints';
 
-vi.mock('../../../utils/operator-api', () => ({ getSettings: vi.fn(), validateCredentials: vi.fn() }));
+vi.mock('../../../utils/operator-api', () => ({ getSettings: vi.fn(), validateCredentials: vi.fn(), validateChartAccess: vi.fn() }));
 
 const translations = yaml.load(readFileSync(path.resolve(__dirname, '../../../l10n/en-us.yaml'), 'utf8'));
 const configuration = {
@@ -61,18 +61,87 @@ async function runTest(wrapper: ReturnType<typeof mount>) {
 }
 
 beforeEach(() => {
+  vi.mocked(validateChartAccess).mockReset().mockResolvedValue({ results: [{ repositoryUrl: SUSE_REGISTRY_REPO_URL, chartName: 'qdrant', status: 'failed', reason: 'accessDenied', httpStatus: 401, latencyMs: 10 }] });
   vi.mocked(getSettings).mockReset().mockResolvedValue({ spec: { suseRegistry: configuration } });
   vi.mocked(validateCredentials).mockReset().mockResolvedValue({ results: [authenticated] });
 });
 afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()));
 
 describe('Settings registry diagnostics', () => {
+  it('shows chart access denial with actionable entitlement guidance even when login succeeds', async () => {
+    const { wrapper } = setup();
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain('Some checks failed.');
+    expect(wrapper.text()).toContain('Registry responded');
+    expect(wrapper.text()).toContain('Chart access failed (HTTP 401)');
+    expect(wrapper.text()).toContain('SUSE AI subscription entitlement');
+    expect(wrapper.text()).not.toContain('Sample chart access verified');
+    expect(validateChartAccess).toHaveBeenCalledWith({ target: 'suseRegistry', configuration, chartName: 'qdrant' });
+  });
+
+  it('uses mirror guidance without asserting a SUSE subscription problem', async () => {
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: 'oci://mirror.internal/team', chartName: 'qdrant', status: 'failed', reason: 'accessDenied', httpStatus: 403, latencyMs: 1 }] });
+    const { wrapper } = setup();
+    await wrapper.setProps({ configuration: { ...configuration, url: 'oci://mirror.internal/team' } });
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain('permission to read this chart repository');
+    expect(wrapper.text()).not.toContain('SUSE AI subscription entitlement');
+  });
+
+  it('invalidates direct access results when the sample chart changes', async () => {
+    const { wrapper } = setup();
+    await runTest(wrapper);
+    await wrapper.get('input').setValue('kubeflow');
+    expect(wrapper.text()).not.toContain('Chart access failed (HTTP 401)');
+    expect(wrapper.text()).toContain('Settings changed since the last test.');
+    await runTest(wrapper);
+    expect(validateChartAccess).toHaveBeenLastCalledWith(expect.objectContaining({ chartName: 'kubeflow' }));
+  });
+
+  it('does not mark an older operator as a successful chart check', async () => {
+    vi.mocked(validateChartAccess).mockRejectedValue({ status: 404 });
+    const { wrapper } = setup();
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain('Chart access checks require an updated AI Factory operator.');
+    expect(wrapper.text()).not.toContain('Sample chart access verified');
+  });
+
+  it('reports success only for accessible sample metadata and a current saved index', async () => {
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: SUSE_REGISTRY_REPO_URL, chartName: 'qdrant', version: '1.2.3', check: 'manifest', status: 'ok', latencyMs: 1 }] });
+    const { wrapper, repo } = setup();
+    Object.assign(repo.status, { indexConfigMapName: 'suse-index' });
+    repo.status.conditions[1].status = 'True';
+    repo.status.conditions[1].message = '';
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain("Sample chart access verified and Rancher's repository index is ready.");
+    expect(wrapper.text()).toContain('Chart metadata readable');
+    expect(wrapper.text()).toContain('qdrant — 1.2.3');
+    expect(wrapper.text()).toContain('This does not verify all charts, full downloads, or application container images.');
+
+    repo.metadata.generation++;
+    await runTest(wrapper);
+    expect(wrapper.text()).not.toContain('Sample chart access verified');
+    expect(wrapper.text()).toContain("Waiting for Rancher's repository index to become ready.");
+  });
+
+  it.each(['empty', 'unavailable'])('keeps verification incomplete when chart access is %s despite a healthy saved index', async (scenario) => {
+    if (scenario === 'empty') vi.mocked(validateChartAccess).mockResolvedValue({ results: [] });
+    else vi.mocked(validateChartAccess).mockRejectedValue({ status: 404 });
+    const { wrapper, repo } = setup();
+    Object.assign(repo.status, { indexConfigMapName: 'suse-index' });
+    repo.status.conditions[1].status = 'True';
+    repo.status.conditions[1].message = '';
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain('Verification is incomplete.');
+    expect(wrapper.text()).not.toContain('Sample chart access verified');
+  });
+
   it('renders successful authentication and the failing Rancher repository independently', async () => {
     const { wrapper, store } = setup();
     expect(store.dispatch).not.toHaveBeenCalled();
     await runTest(wrapper);
-    expect(wrapper.text()).toContain('Registry authentication (current form)');
-    expect(wrapper.text()).toContain('Authentication probe succeeded (chart access not verified) — registry.suse.com (1121 ms)');
+    expect(wrapper.text()).toContain('Registry connection (current form)');
+    expect(wrapper.text()).toContain('Registry responded (see chart access below) — registry.suse.com (1121 ms)');
     expect(wrapper.text()).toContain('Chart repositories (saved settings)');
     expect(wrapper.text()).toContain('suse-ai-registry — Failed');
     expect(wrapper.text()).toContain('error 401: Unauthorized');
@@ -98,11 +167,11 @@ describe('Settings registry diagnostics', () => {
     await runTest(wrapper);
     await wrapper.setProps({ configuration: { ...configuration, tokenSecretRef: { name: 'different', key: 'token' } } });
     expect(wrapper.text()).toContain('The form changed since this test.');
-    expect(wrapper.text()).not.toContain('Authentication probe succeeded');
+    expect(wrapper.text()).not.toContain('Registry responded');
     expect(wrapper.text()).toContain('error 401: Unauthorized');
     await runTest(wrapper);
     expect(wrapper.text()).not.toContain('The form changed since this test.');
-    expect(wrapper.text()).toContain('Authentication probe succeeded');
+    expect(wrapper.text()).toContain('Registry responded');
   });
 
   it('does not attach an in-flight authentication success to edited inputs', async () => {
@@ -115,7 +184,7 @@ describe('Settings registry diagnostics', () => {
     complete({ results: [authenticated] });
     await flushPromises();
     expect(wrapper.text()).toContain('The form changed since this test.');
-    expect(wrapper.text()).not.toContain('Authentication probe succeeded');
+    expect(wrapper.text()).not.toContain('Registry responded');
   });
 
   it('shows read permission errors instead of a false Missing status', async () => {
@@ -123,7 +192,7 @@ describe('Settings registry diagnostics', () => {
     store.dispatch.mockRejectedValue({ _status: 403, message: 'Forbidden' });
     await runTest(wrapper);
     expect(wrapper.text()).toContain('Could not read Rancher chart repositories: Forbidden');
-    expect(wrapper.text()).toContain('Authentication probe succeeded');
+    expect(wrapper.text()).toContain('Registry responded');
     expect(wrapper.text()).not.toContain('Missing');
     expect(wrapper.findAll('button')).toHaveLength(1);
   });
@@ -179,7 +248,7 @@ describe('Settings registry diagnostics', () => {
     expect(wrapper.text()).toContain('Refresh requested for the saved repository.');
     expect(wrapper.text()).toContain('Test again to check its status.');
     expect(wrapper.text()).not.toContain('error 401: Unauthorized');
-    expect(wrapper.text()).toContain('Authentication probe succeeded');
+    expect(wrapper.text()).toContain('Registry responded');
     expect(validateCredentials).toHaveBeenCalledTimes(1);
   });
 

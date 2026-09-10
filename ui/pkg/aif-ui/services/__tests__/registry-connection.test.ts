@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { getSettings, validateCredentials } from '../../utils/operator-api';
+import { getSettings, validateCredentials, validateChartAccess } from '../../utils/operator-api';
 import { CLUSTERREPOS_URL, MANAGED_REPO_LABEL, NVIDIA_TEAM_REPO_LABEL } from '../app-collection';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../registry-endpoints';
 import {
@@ -8,7 +8,7 @@ import {
 import type { RegistryConfiguration, RegistryTarget } from '../registry-connection';
 
 vi.mock('../../utils/operator-api', () => ({
-  getSettings: vi.fn(), validateCredentials: vi.fn(),
+  getSettings: vi.fn(), validateCredentials: vi.fn(), validateChartAccess: vi.fn(),
 }));
 
 const TARGET = 'suseRegistry';
@@ -41,6 +41,7 @@ function storeWith(items = [repo()]) {
 }
 
 beforeEach(() => {
+  vi.mocked(validateChartAccess).mockReset().mockResolvedValue({ results: [{ repositoryUrl: SUSE_REGISTRY_REPO_URL, chartName: 'qdrant', status: 'failed', reason: 'accessDenied', httpStatus: 401, latencyMs: 10 }] });
   vi.mocked(getSettings).mockReset().mockResolvedValue({ spec: { [TARGET]: CONFIG } });
   vi.mocked(validateCredentials).mockReset().mockResolvedValue({ results: [AUTHENTICATED] });
 });

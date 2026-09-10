@@ -11,6 +11,15 @@ suseai:
     manage: Manage
     repositories: Repositories
     settings: Settings
+  repositoryHealth:
+    title: Some chart repositories are unavailable
+    unknown: Chart repository status could not be checked
+    pending: The repository index is not ready yet.
+    guidance: Applications using these repositories may be unavailable. Open Settings and run Test to check chart access and repository status.
+    settings: Open Settings
+    unavailableApp: Repository unavailable
+    missingApp: Repository not configured
+    uncheckedApp: Repository status unknown
   pages:
     about:
       title: About
@@ -37,10 +46,10 @@ suseai:
         skipped: Not configured
       registryConnection:
         checking: Testing…
-        description: Test checks registry authentication and Rancher chart repositories separately. It does not save settings or refresh repositories.
-        authenticationLabel: Registry authentication (current form)
+        description: Test checks the registry connection, access to sample charts, and Rancher's repository status. It does not save settings or refresh repositories.
+        authenticationLabel: Registry connection (current form)
         repositoriesLabel: Chart repositories (saved settings)
-        formChanged: The form changed since this test. Test again to check authentication for these inputs.
+        formChanged: The form changed since this test. Test again to check access for these inputs.
         unsaved: The form differs from saved settings. Repository status and Refresh use the saved configuration, not these unsaved inputs. Apply changes, then Test again.
         settingsError: Could not read saved settings; repository status cannot be matched to the form
         settingsPending: The AI Factory operator has not finished applying the saved settings. Test again after reconciliation completes.
@@ -49,11 +58,41 @@ suseai:
         refreshLabel: 'Refresh saved repository {name}'
         refreshing: Requesting refresh…
         refreshError: Could not request repository refresh
+        summary:
+          failed: Some checks failed. Review the results below before deploying applications.
+          incomplete: Verification is incomplete. Review the results below.
+          changed: Settings changed since the last test. Test again.
+          unsaved: The sample chart is accessible with these inputs. Apply changes, then Test again to verify Rancher's saved configuration.
+          pending: The sample chart is accessible. Waiting for Rancher's repository index to become ready.
+          ready: Sample chart access verified and Rancher's repository index is ready.
         authentication:
-          ok: Authentication probe succeeded (chart access not verified)
+          ok: Registry responded (see chart access below)
           failed: Authentication probe failed
           error: Could not complete authentication probe
           skipped: Authentication not tested
+        chartAccess:
+          label: Chart access (current form)
+          sampleLabel: Chart to test
+          sampleHelp: Enter a chart available in this repository or private mirror. Leave empty to use the default sample. This field is only used by Test.
+          scope: Only the listed chart and version in each repository are checked. This does not verify all charts, full downloads, or application container images.
+          states:
+            manifest: Chart metadata readable
+            chartFile: Chart index and file accessible
+            failed: Chart access failed
+            error: Chart access could not be verified
+          reasons:
+            accessDenied: Access was denied. Check the selected credentials and their permission to read this chart repository.
+            suseAccessDenied: Access was denied. Check the selected credentials and their SUSE AI subscription entitlement. A registry login can succeed without permission to read these charts.
+            notFound: The sample chart or version was not found or is not visible to these credentials. Check the chart name and mirror contents; this result does not establish a missing entitlement.
+            invalidIndex: The server did not return a valid Helm chart index. Check the repository URL and access permissions in Settings; this response alone does not identify a credential problem.
+            invalidChart: The server did not return a valid Helm chart manifest. Check that this repository contains the selected chart.
+            configuration: Check the repository URL, chart name, and complete username and token Secret references. For an anonymous mirror, clear both credential references.
+            credentialsUnreadable: The operator could not read the selected credential Secret or key. Check the Secret references and operator permissions.
+            caUnreadable: The operator could not read the selected CA bundle. Check the CA Secret and key.
+            tls: The TLS certificate could not be verified. Check the repository certificate and selected CA bundle.
+            timeout: The chart access check timed out. Check connectivity to the configured repository and try again.
+            connectionFailed: The chart request could not be completed. Check connectivity, the repository URL, and the registry service.
+            outsideRepository: The chart index points to a different server. Chart access was not verified. Check that the mirror's index points to its mirrored chart files.
         states:
           ready: Ready
           pending: Pending

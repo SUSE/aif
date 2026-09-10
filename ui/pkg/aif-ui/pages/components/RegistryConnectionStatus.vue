@@ -19,6 +19,8 @@ export default {
       refreshError: '',
       result: null,
       testedFingerprint: '',
+      chartName: { applicationCollection: 'ollama', suseRegistry: 'qdrant', nvidia: 'aiq-aira' }[this.target] || '',
+      testedChartName: '',
       active: true,
     };
   },
@@ -28,7 +30,7 @@ export default {
       return registryConfigurationFingerprint(this.target, this.configuration);
     },
     formChanged() {
-      return this.fingerprint !== this.testedFingerprint;
+      return this.fingerprint !== this.testedFingerprint || this.chartName !== this.testedChartName;
     },
     unsaved() {
       const applied = this.result?.chartRepositories.appliedConfiguration;
@@ -37,6 +39,21 @@ export default {
     },
     busy() {
       return this.checking || !!this.refreshing;
+    },
+    sampleSelectable() {
+      return this.target !== 'nvidia' || !!this.configuration.url?.trim();
+    },
+    verificationSummary() {
+      if (this.formChanged) return 'changed';
+      const { authentication, chartAccess, chartRepositories } = this.result;
+      if (authentication.status === 'failed' || chartAccess.results.some(check => check.status === 'failed') ||
+          chartRepositories.repositories.some(repo => ['failed', 'missing'].includes(repo.state))) return 'failed';
+      if (authentication.status === 'error' || chartAccess.error || !chartAccess.results.length ||
+          chartAccess.results.some(check => check.status !== 'ok') || chartRepositories.error ||
+          chartRepositories.settingsError || !chartRepositories.repositories.length) return 'incomplete';
+      if (this.unsaved) return 'unsaved';
+      if (chartRepositories.settingsPending || chartRepositories.repositories.some(repo => repo.state !== 'ready')) return 'pending';
+      return 'ready';
     },
     authenticationText() {
       const result = this.result.authentication;
@@ -52,6 +69,11 @@ export default {
   },
 
   methods: {
+    chartAdvice(check) {
+      const reason = check.reason === 'accessDenied' && check.repositoryUrl === 'oci://registry.suse.com/ai/charts'
+        ? 'suseAccessDenied' : check.reason;
+      return this.t(`suseai.pages.settings.registryConnection.chartAccess.reasons.${reason}`);
+    },
     stateClass(state) {
       if (state === 'ok' || state === 'ready') return 'text-success';
       if (state === 'failed' || state === 'error' || state === 'missing') return 'text-error';
@@ -63,8 +85,9 @@ export default {
       this.result = null;
       this.refreshError = '';
       this.testedFingerprint = this.fingerprint;
+      this.testedChartName = this.chartName;
       try {
-        const result = await checkRegistryConnection(this.$store, this.target, JSON.parse(JSON.stringify(this.configuration)));
+        const result = await checkRegistryConnection(this.$store, this.target, JSON.parse(JSON.stringify(this.configuration)), this.sampleSelectable ? this.chartName : '');
         if (this.active) this.result = result;
       } finally {
         if (this.active) this.checking = false;
@@ -93,6 +116,11 @@ export default {
 
 <template>
   <div class="registry-connection mt-10">
+    <div v-if="sampleSelectable" class="mb-10">
+      <label :for="`${target}-test-chart`">{{ t('suseai.pages.settings.registryConnection.chartAccess.sampleLabel') }}</label>
+      <input :id="`${target}-test-chart`" v-model="chartName" type="text" :aria-describedby="`${target}-test-chart-help`" />
+      <p :id="`${target}-test-chart-help`" class="text-muted">{{ t('suseai.pages.settings.registryConnection.chartAccess.sampleHelp') }}</p>
+    </div>
     <button
       type="button"
       class="btn role-secondary"
@@ -110,6 +138,7 @@ export default {
       :aria-busy="busy"
     >
       <template v-if="result">
+        <p :class="stateClass(verificationSummary)"><strong>{{ t(`suseai.pages.settings.registryConnection.summary.${verificationSummary}`) }}</strong></p>
         <dl>
           <dt>{{ t('suseai.pages.settings.registryConnection.authenticationLabel') }}</dt>
           <dd>
@@ -118,6 +147,23 @@ export default {
               v-else
               :class="stateClass(result.authentication.status)"
             >{{ authenticationText }}</span>
+          </dd>
+          <dt>{{ t('suseai.pages.settings.registryConnection.chartAccess.label') }}</dt>
+          <dd>
+            <p v-if="formChanged">{{ t('suseai.pages.settings.registryConnection.formChanged') }}</p>
+            <template v-else>
+              <p class="text-muted">{{ t('suseai.pages.settings.registryConnection.chartAccess.scope') }}</p>
+              <p v-if="result.chartAccess.error" class="text-error">{{ result.chartAccess.error }}</p>
+              <ul>
+                <li v-for="check in result.chartAccess.results" :key="check.repositoryUrl" class="repository-result">
+                  <strong :class="stateClass(check.status)">{{ t(`suseai.pages.settings.registryConnection.chartAccess.states.${check.status === 'ok' ? check.check : check.status}`) }}</strong>
+                  <span v-if="check.httpStatus"> (HTTP {{ check.httpStatus }})</span>
+                  <div>{{ check.repositoryUrl }}</div>
+                  <div v-if="check.chartName">{{ check.chartName }}<span v-if="check.version"> — {{ check.version }}</span></div>
+                  <p v-if="check.reason">{{ chartAdvice(check) }}</p>
+                </li>
+              </ul>
+            </template>
           </dd>
           <dt>{{ t('suseai.pages.settings.registryConnection.repositoriesLabel') }}</dt>
           <dd>
@@ -187,6 +233,9 @@ export default {
 <style lang="scss" scoped>
 .registry-connection {
   overflow-wrap: anywhere;
+
+  label { display: block; margin-bottom: 6px; }
+  input { max-width: 400px; width: 100%; }
 
   dt {
     font-weight: bold;

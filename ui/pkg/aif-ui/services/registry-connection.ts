@@ -1,6 +1,6 @@
 import type { Dispatchable } from '../types/rancher-types';
-import { getSettings, validateCredentials } from '../utils/operator-api';
-import type { ValidateOverride, ValidateResult, ValidateResponse } from '../utils/operator-api';
+import { getSettings, validateCredentials, validateChartAccess } from '../utils/operator-api';
+import type { ValidateOverride, ValidateResult, ValidateResponse, ChartAccessResult } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import {
   CLUSTERREPOS_URL, MANAGED_REPO_LABEL, NVIDIA_TEAM_REPO_LABEL,
@@ -147,20 +147,26 @@ async function probeForm(target: RegistryTarget, configuration: RegistryConfigur
   return validateCredentials({ targets: [target], overrides: { [target]: { ...configuration, url } } });
 }
 
-/** Read-only: the form's authentication probe and Rancher's saved repositories
- * are independent checks. A failure of either must not hide the other's result. */
-export async function checkRegistryConnection(store: Dispatchable, target: RegistryTarget, configuration: RegistryConfiguration): Promise<{
+/** The form's authentication and chart access probes and Rancher's saved
+ * repositories are independent, read-only checks. Each keeps its own result. */
+export async function checkRegistryConnection(store: Dispatchable, target: RegistryTarget, configuration: RegistryConfiguration, chartName = ''): Promise<{
   authentication: ValidateResult;
+  chartAccess: { results: ChartAccessResult[]; error?: string };
   chartRepositories: RepositoryCheck;
 }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_VALUES.READ);
   const settingsRequest = getSettings(controller.signal).finally(() => clearTimeout(timer));
-  const [probe, settings, repos] = await Promise.allSettled([
+  const [probe, settings, repos, access] = await Promise.allSettled([
     probeForm(target, configuration, settingsRequest),
     settingsRequest,
     store.dispatch('rancher/request', { url: CLUSTERREPOS_URL, timeout: TIMEOUT_VALUES.READ }),
+    validateChartAccess({ target, configuration, chartName }),
   ]);
+  const chartAccess = access.status === 'fulfilled' && Array.isArray(access.value?.results) && access.value.results.length > 0
+    ? access.value : { results: [], error: access.status === 'rejected' && access.reason?.status === 404
+      ? 'Chart access checks require an updated AI Factory operator. Access has not been verified.'
+      : access.status === 'rejected' ? requestErrorMessage(access.reason) : 'No chart access result returned.' };
   const authentication: ValidateResult = probe.status === 'fulfilled'
     ? (probe.value.results || []).find(r => r.target === target) || { target, status: 'error', message: 'No authentication result returned.' }
     : { target, status: 'error', message: requestErrorMessage(probe.reason) };
@@ -179,13 +185,13 @@ export async function checkRegistryConnection(store: Dispatchable, target: Regis
   }
   if (repos.status === 'rejected') {
     chartRepositories.error = requestErrorMessage(repos.reason);
-    return { authentication, chartRepositories };
+    return { authentication, chartAccess, chartRepositories };
   }
   const body = repos.value?.data ?? repos.value;
   const items: ClusterRepo[] = body?.items ?? body;
   if (!Array.isArray(items)) {
     chartRepositories.error = 'Invalid ClusterRepo list response.';
-    return { authentication, chartRepositories };
+    return { authentication, chartAccess, chartRepositories };
   }
   const selected = items.filter(repo => repo?.metadata?.name && belongsToTarget(repo, target));
   const names = [...new Set([...REPO_NAMES[target], ...selected.map(repo => repo.metadata.name)])];
@@ -197,7 +203,7 @@ export async function checkRegistryConnection(store: Dispatchable, target: Regis
     return chartRepositories.settingsPending && status.state === 'ready'
       ? { ...status, state: 'pending', reason: 'reconciling' } : status;
   });
-  return { authentication, chartRepositories };
+  return { authentication, chartAccess, chartRepositories };
 }
 
 /** Explicit user action, equivalent to Rancher's Refresh. Re-read ownership and

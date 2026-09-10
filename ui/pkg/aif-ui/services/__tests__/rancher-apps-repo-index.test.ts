@@ -130,6 +130,11 @@ describe.each(lookups)('%s repository readiness', (_name, lookup) => {
 });
 
 describe('ready repository indexes', () => {
+  it('explains an index that disappears between the readiness check and index fetch', async () => {
+    const store = makeStore({ indexConfigMapName: 'repo-index' }, { indexError: { data: { message: 'configmaps "" not found' } } });
+    await expect(findChartInRepo(store, 'local', REPO_NAME, 'qdrant')).rejects.toThrow('Open AI Factory Settings and run Test');
+  });
+
   it.each([
     { name: 'direct', wrapped: false, indexPayload: INDEX },
     { name: 'wrapped', wrapped: true, indexPayload: { data: INDEX } },

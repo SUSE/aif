@@ -44,6 +44,7 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { isRepoReady, MANAGED_REPO_LABEL, repoNotReadyMessage } from './app-collection';
+import { repositoryFailureMessage } from './repository-health';
 
 /* ============================== logging helpers - CLEANED UP ============================== */
 // Legacy logging functions - replaced with proper logger
@@ -637,7 +638,7 @@ async function getRepoIndexLink($store: Dispatchable, repoName: string): Promise
   if (!isRepoReady(repo)) {
     const reason = repoNotReadyMessage(repo) || 'the repository index has not been downloaded yet.';
 
-    throw new Error(`Chart repository "${repoName}" is not ready: ${reason}`);
+    throw new Error(repositoryFailureMessage(repoName, reason));
   }
 
   const link = repo?.links?.index;
@@ -650,7 +651,16 @@ async function getRepoIndex($store: Dispatchable, repoName: string): Promise<Rep
   const indexLink = await getRepoIndexLink($store, repoName);
   if (!indexLink) return null;
 
-  const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: TIMEOUT_VALUES.READ });
+  let res;
+  try {
+    res = await $store.dispatch('rancher/request', { url: indexLink, timeout: TIMEOUT_VALUES.READ });
+  } catch (e: any) {
+    // The index can disappear after the metadata check. Preserve other failures.
+    if (/configmaps\s+""\s+not found/i.test(e?.message || e?.data?.message || '')) {
+      throw new Error(repositoryFailureMessage(repoName));
+    }
+    throw e;
+  }
   const payload = (res?.data ?? res);
   dbg('index payload', payload);
   if (typeof payload === 'string') return yaml.load(payload) as RepositoryIndex | null;
