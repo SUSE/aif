@@ -77,6 +77,16 @@ export function groupBlueprintsByFamily(items: Blueprint[]): Map<string, Bluepri
   return map;
 }
 
+// findBlueprint resolves the exact Blueprint CR backing an AIWorkload's blueprint
+// source: the family keyed by `name` (the blueprint-name label), then the entry
+// whose spec.version equals `version`. Returns null when the family or version is
+// absent — e.g. a custom blueprint or one not present in the loaded list.
+export function findBlueprint(items: Blueprint[], name: string, version: string): Blueprint | null {
+  if (!name || !version) return null;
+  const versions = groupBlueprintsByFamily(items).get(name) || [];
+  return versions.find((bp) => bp.spec.version === version) || null;
+}
+
 // latestVersion returns the semver-greatest CR from a family group (assumes group is sorted descending).
 export function latestVersion(versions: Blueprint[]): Blueprint {
   return versions[0];
