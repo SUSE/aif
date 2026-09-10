@@ -45,6 +45,7 @@ suseai:
         error: Could not reach endpoint
         skipped: Not configured
       registryConnection:
+        title: Verify repository access
         checking: Testing…
         description: Test checks the registry connection, access to sample charts, and repository status in Rancher. It does not save settings or refresh repositories.
         authenticationLabel: Registry connection (current form)

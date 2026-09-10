@@ -48,7 +48,10 @@ function setup() {
           return value.replace(/\{(\w+)\}/g, (_match, name) => args[name] ?? '');
         },
       },
-      stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } },
+      // Rancher registers these globally. This component supplies plain labels
+      // and escaped banner slots, so the HTML directives are not exercised here.
+      directives: { 'clean-html': {}, 'stripped-aria-label': {} },
+      stubs: { t: true, RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } },
     },
   });
   mounted.push(wrapper);
@@ -141,7 +144,8 @@ describe('Settings registry diagnostics', () => {
     expect(store.dispatch).not.toHaveBeenCalled();
     await runTest(wrapper);
     expect(wrapper.text()).toContain('Registry connection (current form)');
-    expect(wrapper.text()).toContain('Registry responded (see chart access below) — registry.suse.com (1121 ms)');
+    expect(wrapper.text()).toContain('Registry responded (see chart access below)');
+    expect(wrapper.text()).toContain('registry.suse.com (1121 ms)');
     expect(wrapper.text()).toContain('Chart repositories (saved settings)');
     expect(wrapper.text()).toContain('suse-ai-registry — Failed');
     expect(wrapper.text()).toContain('error 401: Unauthorized');
