@@ -144,7 +144,7 @@
                 <img :src="nvidiaLogo" alt="" class="tile-logo nvidia-logo--light" />
                 <img :src="nvidiaLogoDark" alt="" class="tile-logo nvidia-logo--dark" />
               </template>
-              <img v-else :src="logoFor(app)" alt="" @error="onImgError" class="tile-logo" />
+              <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="tile-logo" />
               <div class="tile-info">
                 <div class="tile-title-row">
                   <h3 class="tile-title">{{ app.name }}</h3>
@@ -210,7 +210,7 @@
                     <img :src="nvidiaLogo" alt="" class="table-logo nvidia-logo--light" />
                     <img :src="nvidiaLogoDark" alt="" class="table-logo nvidia-logo--dark" />
                   </template>
-                  <img v-else :src="logoFor(app)" alt="" @error="onImgError" class="table-logo" />
+                  <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="table-logo" />
                   <div class="name-info">
                     <div class="app-name">{{ app.name }}</div>
                     <div v-if="app.packaging_format || (app.labels && app.labels.length)" class="app-meta">
@@ -301,7 +301,7 @@ import type { AppCollectionItem, ManagedRepo } from '../services/app-collection'
 import AppLabels from '../formatters/AppLabels.vue';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
-import { browserSafeCatalogLogo } from '../utils/catalog-logo';
+import { resolveCatalogLogo, onCatalogLogoError } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from '../services/static-catalog';
 import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 
@@ -476,11 +476,11 @@ export default defineComponent({
     };
 
     const logoFor = (item: AppCollectionItem): string => {
-      return browserSafeCatalogLogo(item.logo_url) || require('../assets/generic-app.svg');
+      return resolveCatalogLogo(item) || require('../assets/generic-app.svg');
     };
 
-    const onImgError = (event: Event) => {
-      (event.target as HTMLImageElement).src = require('../assets/generic-app.svg');
+    const onImgError = (event: Event, item: AppCollectionItem) => {
+      onCatalogLogoError(event, item, require('../assets/generic-app.svg'));
     };
 
     const refresh = async () => {

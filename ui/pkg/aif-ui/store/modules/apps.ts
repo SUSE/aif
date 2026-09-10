@@ -7,7 +7,7 @@
 import { AppState } from '../types/state-types';
 import { AppSummary, AppInstallationInfo } from '../../types/app-types';
 import AppResource from '../../models/app/app-resource';
-import { browserSafeCatalogLogo } from '../../utils/catalog-logo';
+import { resolveCatalogLogo } from '../../utils/catalog-logo';
 
 // === Initial State ===
 function createInitialState(): AppState {
@@ -382,7 +382,7 @@ const actions = {
         name: app.name,
         displayName: app.display_name || app.name,
         description: app.description,
-        icon: browserSafeCatalogLogo(app.logo_url),
+        icon: resolveCatalogLogo(app),
         version: app.version,
         appVersion: app.app_version,
         category: app.category || 'Other',
