@@ -68,6 +68,9 @@ From the `ui/` directory:
 yarn build-pkg aif-ui --mode production
 ```
 
+Application logos are bundled for use in connected and air-gapped installations.
+See [catalog logo maintenance](scripts/README.md) to add or refresh the assets.
+
 ## Extension Catalog Container
 
 - The container packages SUSE AI Factory (Rancher UI Extension) into a single OCI container image.

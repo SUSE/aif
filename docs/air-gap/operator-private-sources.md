@@ -118,6 +118,18 @@ SSH is not part of this minimal contract. Supporting it safely requires an
 explicit private-key and known-hosts model; TLS or SSH host verification must
 not be disabled as a shortcut.
 
+## Catalog logos
+
+The extension ships a manifest of raster logos keyed by library and chart name.
+It uses inline raster logos from catalog metadata when available, with the
+bundled logo and then a placeholder as fallbacks. External or relative logo URLs
+do not trigger browser requests. Image decode failures also advance through the
+fallbacks. Private repository URLs do not affect the lookup, and the manifest
+works on the first page load without a pre-populated browser cache.
+
+Custom applications can supply inline raster logos or add a manifest entry;
+see [catalog logo maintenance](../../ui/scripts/README.md).
+
 ## Container images
 
 AIF does not rewrite image references in Blueprint values. The cluster must

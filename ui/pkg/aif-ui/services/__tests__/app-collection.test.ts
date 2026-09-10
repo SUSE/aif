@@ -12,6 +12,7 @@ vi.mock('../../utils/operator-api', () => ({
 }));
 
 import { getRegistryCredentials } from '../../utils/operator-api';
+import { resolveCatalogLogo } from '../../utils/catalog-logo';
 
 import {
   fetchManagedRepos,
@@ -22,6 +23,7 @@ import {
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
+  overlayCuratedMetadata,
 } from '../app-collection';
 
 type RawRepo = {
@@ -153,6 +155,42 @@ describe('fetchSuseAiApps', () => {
     grafana: [{ name: 'grafana', created: '2026-01-01T00:00:00Z' }], // dup: AC must win
     milvus:  [{ name: 'milvus',  created: '2026-01-01T00:00:00Z' }],
   };
+
+  it.each(['oci://dp.apps.rancher.io/charts', 'oci://harbor.internal/mirrors/appco'])(
+    'renders discovered chart logos without a curated overlay from %s', async (url) => {
+      const store = makeStore([
+        { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url }, status: ready() },
+      ], {
+        'application-collection': {
+          grafana: [{ name: 'grafana', icon: '/logos/grafana.png' }],
+          'new-app': [{ name: 'new-app', icon: 'https://external.example/new-app.png' }],
+        },
+      });
+      const { apps } = await fetchSuseAiApps(store);
+      const displayed = overlayCuratedMetadata(apps, []);
+      const grafana = displayed.find(app => app.slug_name === 'grafana')!;
+      expect(grafana.logo_url).toBeUndefined();
+      expect(resolveCatalogLogo(grafana)).toMatch(/^data:image\/png;base64,/);
+      expect(grafana.repository_url).toBe(url);
+      expect(resolveCatalogLogo(displayed.find(app => app.slug_name === 'new-app')!)).toBeUndefined();
+      expect(store.dispatch.mock.calls.map(call => call[1].url)).toEqual([
+        CLUSTERREPOS_URL,
+        'https://base/catalog.cattle.io.clusterrepos/application-collection?link=index',
+      ]);
+    },
+  );
+
+  it('preserves a supplied inline chart logo when the curated logo is a network URL', async () => {
+    const inline = 'data:image/png;base64,iVBORw0KGgo=';
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://mirror' }, status: ready() },
+    ], { 'application-collection': { ollama: [{ name: 'ollama', icon: inline }] } });
+    const { apps } = await fetchSuseAiApps(store);
+    const [app] = overlayCuratedMetadata(apps, [
+      { name: 'Ollama', slug_name: 'ollama', library: 'suse-ai', logo_url: 'https://apps.rancher.io/logos/ollama.png' },
+    ]);
+    expect(resolveCatalogLogo(app)).toBe(inline);
+  });
 
   // The operator API serializes an absent registry section as {} (value struct,
   // ineffective omitempty), so section presence is not a usable "active" signal.
