@@ -46,7 +46,7 @@ suseai:
         skipped: Not configured
       registryConnection:
         checking: Testing…
-        description: Test checks the registry connection, access to sample charts, and Rancher's repository status. It does not save settings or refresh repositories.
+        description: Test checks the registry connection, access to sample charts, and repository status in Rancher. It does not save settings or refresh repositories.
         authenticationLabel: Registry connection (current form)
         repositoriesLabel: Chart repositories (saved settings)
         formChanged: The form changed since this test. Test again to check access for these inputs.
@@ -62,9 +62,9 @@ suseai:
           failed: Some checks failed. Review the results below before deploying applications.
           incomplete: Verification is incomplete. Review the results below.
           changed: Settings changed since the last test. Test again.
-          unsaved: The sample chart is accessible with these inputs. Apply changes, then Test again to verify Rancher's saved configuration.
-          pending: The sample chart is accessible. Waiting for Rancher's repository index to become ready.
-          ready: Sample chart access verified and Rancher's repository index is ready.
+          unsaved: The sample chart is accessible with these inputs. Apply changes, then Test again to verify the saved configuration in Rancher.
+          pending: The sample chart is accessible. Waiting for the Rancher repository index to become ready.
+          ready: Sample chart access verified and the Rancher repository index is ready.
         authentication:
           ok: Registry responded (see chart access below)
           failed: Authentication probe failed

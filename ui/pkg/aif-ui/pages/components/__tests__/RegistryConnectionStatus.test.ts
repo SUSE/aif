@@ -113,7 +113,7 @@ describe('Settings registry diagnostics', () => {
     repo.status.conditions[1].status = 'True';
     repo.status.conditions[1].message = '';
     await runTest(wrapper);
-    expect(wrapper.text()).toContain("Sample chart access verified and Rancher's repository index is ready.");
+    expect(wrapper.text()).toContain('Sample chart access verified and the Rancher repository index is ready.');
     expect(wrapper.text()).toContain('Chart metadata readable');
     expect(wrapper.text()).toContain('qdrant — 1.2.3');
     expect(wrapper.text()).toContain('This does not verify all charts, full downloads, or application container images.');
@@ -121,7 +121,7 @@ describe('Settings registry diagnostics', () => {
     repo.metadata.generation++;
     await runTest(wrapper);
     expect(wrapper.text()).not.toContain('Sample chart access verified');
-    expect(wrapper.text()).toContain("Waiting for Rancher's repository index to become ready.");
+    expect(wrapper.text()).toContain('Waiting for the Rancher repository index to become ready.');
   });
 
   it.each(['empty', 'unavailable'])('keeps verification incomplete when chart access is %s despite a healthy saved index', async (scenario) => {
