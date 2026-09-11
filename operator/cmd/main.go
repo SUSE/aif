@@ -348,6 +348,7 @@ func main() {
 	}
 	if err := (&aiworkloadctrl.AIWorkloadReconciler{
 		Client:            mgr.GetClient(),
+		APIReader:         mgr.GetAPIReader(),
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
 		CatalogClient:     catalogHolder,

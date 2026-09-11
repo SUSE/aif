@@ -45,7 +45,7 @@ type DeploymentStatus struct {
 // The reader should be an uncached one when the caller has just applied a
 // change: a cached read can be served an entry from before the apply, which
 // describes the previous rollout completing and is indistinguishable from this
-// one completing. See rolloutIncomplete.
+// one completing. See RolloutIncomplete.
 func IsDeploymentReady(
 	ctx context.Context,
 	c client.Reader,
@@ -74,7 +74,7 @@ func IsDeploymentReady(
 	}
 
 	for _, d := range list.Items {
-		if reason := rolloutIncomplete(&d); reason != "" {
+		if reason := RolloutIncomplete(&d); reason != "" {
 			log.Info("Deployment not ready",
 				"deployment", d.Name,
 				"reason", reason,
@@ -99,7 +99,7 @@ func IsDeploymentReady(
 	}, nil
 }
 
-// rolloutIncomplete names why a Deployment has not finished rolling out the
+// RolloutIncomplete names why a Deployment has not finished rolling out the
 // revision currently in its spec, or returns "" once it has.
 //
 // This answers "is the version I just applied serving?", not "are some pods
@@ -124,7 +124,7 @@ func IsDeploymentReady(
 // DefaultReadinessTimeout rather than reported as the failure it is. Both end
 // in a retryable failure, so the difference is how long a wedged rollout takes
 // to surface, not whether it does — closing it is its own change.
-func rolloutIncomplete(d *appsv1.Deployment) string {
+func RolloutIncomplete(d *appsv1.Deployment) string {
 	// Until the deployment controller acts on the new spec, every count below
 	// still describes the revision being replaced. Checked first: without it the
 	// others read stale numbers and agree the rollout is done before it started.
