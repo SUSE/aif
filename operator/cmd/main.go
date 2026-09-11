@@ -31,6 +31,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -139,12 +140,29 @@ func managerOptions(
 				// operatorNamespace secrets; aiworkload controller needs Helm
 				// release secrets (owner=helm) from any target namespace.
 				&corev1.Secret{}: {},
-				// Restrict ConfigMap watch to the extension namespace — the namespaced
-				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
+				// Restrict ConfigMap watch to the extension namespace. The ClusterRole
+				// grants configmaps watch cluster-wide (needed for that namespace to
+				// survive its own deletion — see the RBAC consolidation), so this is
+				// no longer an RBAC boundary; it stays to keep the cache from holding
+				// every ConfigMap in the cluster for the sake of watching one.
 				&corev1.ConfigMap{}: {
 					Namespaces: map[string]cache.Config{
 						config.GetExtensionNamespace(): {},
 					},
+				},
+				// Scoped to exactly one object by name, not one namespace's worth of
+				// objects: Namespace is cluster-scoped, so there is no namespace to
+				// restrict this to the way ConfigMap is restricted above. Without the
+				// field selector this would cache every namespace in the cluster just
+				// to notice one of them appearing — the exact cost that kept
+				// checkPreconditions on an uncached point-read instead of a watch
+				// before this. Lets InstallAIExtensionReconciler notice the extension
+				// namespace being (re)created immediately, the same way its
+				// CustomResourceDefinition watch already does for Rancher's CRDs,
+				// instead of waiting out checkPreconditions's own backoff (up to 15
+				// minutes) after ExtensionNamespaceMissing.
+				&corev1.Namespace{}: {
+					Field: fields.OneTermEqualSelector("metadata.name", config.GetExtensionNamespace()),
 				},
 			},
 		},

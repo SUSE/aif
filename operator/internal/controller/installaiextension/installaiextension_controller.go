@@ -246,6 +246,11 @@ func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// list;watch here, unioned by controller-gen with aiworkload's create;get;patch
+// on the same resource: this reconciler only ever reads namespaces (the
+// extension namespace watch, field-selector-scoped to one name in
+// cmd/main.go), it never creates or patches one itself.
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=list;watch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=uiplugins,verbs=get;list;watch;create;update;patch;delete
@@ -1526,6 +1531,9 @@ func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Watches(&apiextensionsv1.CustomResourceDefinition{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueAllInstallAIExtensions),
 			builder.WithPredicates(catalogCRDBecameReady)).
+		Watches(&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueAllInstallAIExtensions),
+			builder.WithPredicates(r.extensionNamespaceCreated())).
 		Named("InstallAIExtension").
 		Complete(r)
 }
@@ -1579,11 +1587,39 @@ func crdEstablished(crd *apiextensionsv1.CustomResourceDefinition) bool {
 	return false
 }
 
+// extensionNamespaceCreated fires the moment the extension namespace exists,
+// so a reconcile blocked on ExtensionNamespaceMissing wakes up immediately
+// instead of waiting out checkPreconditions's own backoff (up to
+// maxFailureRetryInterval, 15 minutes) — the same reasoning as
+// catalogCRDBecameReady, for the other thing that gate blocks on. A method
+// rather than a package-level var like that predicate: it needs
+// r.ExtensionNamespace, decided at startup from a flag, not known until the
+// reconciler exists.
+//
+// Create only. Namespace has no readiness gate the way a CRD's Established
+// condition is one — it is usable the instant it exists — so there is no
+// transition to also watch for the way catalogCRDBecameReady watches Update.
+// Terminating is handled by the ordinary backoff path: it is not "gone", it
+// resolves into an actual Delete followed by a fresh Create once cleared, and
+// this predicate already reacts to that Create.
+func (r *InstallAIExtensionReconciler) extensionNamespaceCreated() predicate.Funcs {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return e.Object.GetName() == r.ExtensionNamespace
+		},
+		UpdateFunc:  func(event.UpdateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+	}
+}
+
 // enqueueAllInstallAIExtensions wakes every InstallAIExtension the moment a
-// watched CRD becomes ready, rather than leaving each CR to notice on its own
-// next backoff interval — up to maxFailureRetryInterval (15 minutes) later.
-// InstallAIExtension is cluster-scoped, so this lists once and enqueues every
-// object; there is normally exactly one, but nothing here assumes that.
+// dependency this operator does not own (a watched catalog CRD, the extension
+// namespace) becomes available, rather than leaving each CR to notice on its
+// own next backoff interval — up to maxFailureRetryInterval (15 minutes)
+// later. InstallAIExtension is cluster-scoped, so this lists once and
+// enqueues every object; there is normally exactly one, but nothing here
+// assumes that.
 func (r *InstallAIExtensionReconciler) enqueueAllInstallAIExtensions(
 	ctx context.Context, _ client.Object,
 ) []reconcile.Request {

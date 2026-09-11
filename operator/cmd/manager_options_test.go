@@ -19,7 +19,10 @@ package main
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/SUSE/aif-operator/internal/config"
 )
 
 // The shutdown timings in main_test.go all reason about constants. Constants
@@ -89,6 +92,42 @@ func TestLeaseReleaseBudgetFitsInsideTheLease(t *testing.T) {
 	if *opts.RenewDeadline >= *opts.LeaseDuration {
 		t.Errorf("RenewDeadline = %s, LeaseDuration = %s; client-go refuses this and the "+
 			"manager fails to start", *opts.RenewDeadline, *opts.LeaseDuration)
+	}
+}
+
+// Namespace is cluster-scoped, so unlike ConfigMap there is no namespace to
+// restrict its cache entry to — a bare &corev1.Namespace{}: {} would cache
+// every namespace in the cluster just to watch for one appearing. The field
+// selector is what keeps that from happening, so it is the one thing worth
+// pinning here: everything else about the entry (that it exists at all) a
+// missing-informer error would already catch at startup, but a missing field
+// selector fails silently — the watch still works, just at the cost this
+// entry exists to avoid.
+func TestNamespaceCacheIsScopedToTheExtensionNamespace(t *testing.T) {
+	opts := managerOptions(metricsserver.Options{}, nil, ":8081", true)
+
+	var found bool
+	for obj, cfg := range opts.Cache.ByObject {
+		if _, ok := obj.(*corev1.Namespace); !ok {
+			continue
+		}
+		found = true
+		if cfg.Field == nil {
+			t.Fatal("Namespace cache entry has no field selector; it would cache every " +
+				"namespace in the cluster to watch for one")
+		}
+		value, exact := cfg.Field.RequiresExactMatch("metadata.name")
+		if !exact {
+			t.Fatalf("Namespace cache field selector = %v, want an exact match on metadata.name",
+				cfg.Field)
+		}
+		if want := config.GetExtensionNamespace(); value != want {
+			t.Errorf("Namespace cache field selector matches metadata.name=%s, want %s", value, want)
+		}
+	}
+	if !found {
+		t.Fatal("no Cache.ByObject entry for *corev1.Namespace; the extension-namespace " +
+			"watch has no cache scoping configured at all")
 	}
 }
 

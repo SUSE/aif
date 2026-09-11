@@ -13,6 +13,13 @@ rules:
       - create
       - get
       - patch
+      # list+watch back the extension-namespace watch in SetupWithManager,
+      # field-selector-scoped in the manager's cache to just that one
+      # namespace by name — this grant is unavoidably cluster-wide (RBAC has
+      # no per-object-name scoping for list/watch), but what the operator
+      # actually caches and receives events for stays to that single object.
+      - list
+      - watch
   # The extension chart's own objects. Helm applies them under the operator's
   # ServiceAccount, so these are the operator's verbs. Cluster-scoped rather
   # than a Role in the extensions namespace: that namespace can be deleted out
