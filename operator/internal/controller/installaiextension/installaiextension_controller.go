@@ -29,15 +29,22 @@ import (
 
 	"helm.sh/helm/v3/pkg/cli"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/config"
@@ -103,6 +110,16 @@ const (
 	conditionTypeClusterRepo     = "ClusterRepoReady"
 	conditionTypeUIPlugin        = "UIPluginReady"
 )
+
+// catalogCRDNames are the Rancher UI Extensions CRDs this operator depends on
+// but does not own. Named once and shared by checkPreconditions (what gates a
+// reconcile) and the CustomResourceDefinition watch in SetupWithManager (what
+// wakes a blocked reconcile up as soon as they exist), so the two cannot name
+// a different set of CRDs by accident.
+var catalogCRDNames = []string{
+	"uiplugins.catalog.cattle.io",
+	"clusterrepos.catalog.cattle.io",
+}
 
 type InstallAIExtensionReconciler struct {
 	client.Client
@@ -228,7 +245,7 @@ func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=installaiextensions/finalizers,verbs=update
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=uiplugins,verbs=get;list;watch;create;update;patch;delete
@@ -476,11 +493,10 @@ func (r *InstallAIExtensionReconciler) checkPreconditions(
 ) (ctrl.Result, bool, error) {
 	// Most likely to be hit when the operator is installed before Rancher: the
 	// CRDs appear minutes later with no event to say so, so this retries rather
-	// than parking the CR until the informer's ~10h resync.
-	if err := r.rancherMgr.CheckCRDs(ctx, []string{
-		"uiplugins.catalog.cattle.io",
-		"clusterrepos.catalog.cattle.io",
-	}); err != nil {
+	// than parking the CR until the informer's ~10h resync. catalogCRDNames also
+	// names the watch in SetupWithManager that shortens that retry into a
+	// near-immediate reconcile once Rancher actually registers them.
+	if err := r.rancherMgr.CheckCRDs(ctx, catalogCRDNames); err != nil {
 		return r.setBlockedAndRetry(ext, "RancherUnavailable", fmt.Sprintf(
 			"Rancher UI Extensions API unavailable: %v. Restore Rancher UI "+
 				"Extensions support; the extension installs automatically once "+
@@ -1507,6 +1523,79 @@ func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	r.rancherMgr = rancher.NewManager(r.Client)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.InstallAIExtension{}).
+		Watches(&apiextensionsv1.CustomResourceDefinition{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueAllInstallAIExtensions),
+			builder.WithPredicates(catalogCRDBecameReady)).
 		Named("InstallAIExtension").
 		Complete(r)
+}
+
+// catalogCRDBecameReady fires on the two events that mean "a reconcile blocked
+// on RancherUnavailable might now succeed": the CRD showing up at all (Create;
+// cheap to act on even if it is not Established the instant the watch sees the
+// event, since checkPreconditions just re-fails and re-backs-off if it is not
+// really ready yet), or an already-existing CRD's Established condition
+// flipping to True (Update; covers the case where the watch's own cache lagged
+// behind the create). Anything else — an unrelated CRD, a delete, a status
+// update that is not the Established transition — is not this operator's
+// concern and would only add reconcile churn.
+var catalogCRDBecameReady = predicate.Funcs{
+	CreateFunc: func(e event.CreateEvent) bool {
+		return isCatalogCRD(e.Object)
+	},
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		if !isCatalogCRD(e.ObjectNew) {
+			return false
+		}
+		oldCRD, ok := e.ObjectOld.(*apiextensionsv1.CustomResourceDefinition)
+		if !ok {
+			return true
+		}
+		newCRD, ok := e.ObjectNew.(*apiextensionsv1.CustomResourceDefinition)
+		if !ok {
+			return true
+		}
+		return !crdEstablished(oldCRD) && crdEstablished(newCRD)
+	},
+	DeleteFunc:  func(event.DeleteEvent) bool { return false },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+}
+
+func isCatalogCRD(obj client.Object) bool {
+	for _, name := range catalogCRDNames {
+		if obj.GetName() == name {
+			return true
+		}
+	}
+	return false
+}
+
+func crdEstablished(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	for _, cond := range crd.Status.Conditions {
+		if cond.Type == apiextensionsv1.Established {
+			return cond.Status == apiextensionsv1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// enqueueAllInstallAIExtensions wakes every InstallAIExtension the moment a
+// watched CRD becomes ready, rather than leaving each CR to notice on its own
+// next backoff interval — up to maxFailureRetryInterval (15 minutes) later.
+// InstallAIExtension is cluster-scoped, so this lists once and enqueues every
+// object; there is normally exactly one, but nothing here assumes that.
+func (r *InstallAIExtensionReconciler) enqueueAllInstallAIExtensions(
+	ctx context.Context, _ client.Object,
+) []reconcile.Request {
+	var list v1alpha1.InstallAIExtensionList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: list.Items[i].Name},
+		})
+	}
+	return reqs
 }

@@ -150,6 +150,10 @@ rules:
     verbs:
       - get
       - list
+      # Watches for Rancher's catalog.cattle.io CRDs becoming Established, so a
+      # reconcile blocked on RancherUnavailable wakes up immediately instead of
+      # waiting out its backoff (up to 15 minutes).
+      - watch
   - apiGroups:
       - catalog.cattle.io
     resources:

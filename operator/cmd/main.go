@@ -30,6 +30,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -181,6 +182,14 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
+	// clientgoscheme covers client-go's typed clientset groups, which does not
+	// include apiextensions.k8s.io — CheckCRDs reads CRDs through its own
+	// separate typed clientset (internal/infra/rancher/preflight.go), which
+	// needs no scheme, but InstallAIExtensionReconciler's CustomResourceDefinition
+	// watch goes through the manager's cache, which does: without this,
+	// SetupWithManager's Watches call resolves no GVK for the type and the
+	// manager fails to start the moment it tries to.
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
