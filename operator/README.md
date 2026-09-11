@@ -1,5 +1,5 @@
 # SUSE AI Factory Operator
-SUSE AI Factory Operator is a Kubernetes controller that orchestrates the lifecycle and multi-cluster deployment of AI workloads, Blueprints. It supports flexible deployment strategies (Helm, Fleet Bundles, and GitOps) while handling complex registry authentication and credential injection.
+SUSE AI Factory Operator is a Kubernetes controller that orchestrates the lifecycle and multi-cluster deployment of AI workloads. It supports flexible deployment strategies (Helm, Fleet Bundles, and GitOps) while handling complex registry authentication and credential injection.
 
 ## Purpose
 This operator exists to:
