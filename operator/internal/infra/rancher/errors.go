@@ -16,7 +16,12 @@ limitations under the License.
 
 package rancher
 
-import "fmt"
+import (
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+)
 
 type DependencyNotReadyError struct {
 	Dependency string
@@ -24,4 +29,20 @@ type DependencyNotReadyError struct {
 
 func (e *DependencyNotReadyError) Error() string {
 	return fmt.Sprintf("dependency %q is not ready", e.Dependency)
+}
+
+// ignoreGone treats "nothing to delete" as success, whether that is because
+// the object was never there (NotFound) or because the CRD backing it is gone
+// (NoKindMatchError). client.IgnoreNotFound alone misses the second case: a
+// Delete against an unregistered GVK fails to resolve a REST mapping before it
+// ever reaches the API server, so it comes back as a meta.NoKindMatchError, not
+// a NotFound. Without this, deleting ClusterRepo/UIPlugin after Rancher's CRDs
+// are gone returns an error forever, and the finalizer that calls it can never
+// clear — the exact "resources dangling" failure mode for a CR, not just for
+// the object it was trying to remove.
+func ignoreGone(err error) error {
+	if err == nil || errors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return nil
+	}
+	return err
 }

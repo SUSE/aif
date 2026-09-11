@@ -29,9 +29,11 @@ import (
 
 	"helm.sh/helm/v3/pkg/cli"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -127,6 +129,12 @@ type InstallAIExtensionReconciler struct {
 	// --allowed-registry-hosts) to bound the CR-supplied chartURL and prevent
 	// credential exfiltration to an attacker-chosen registry (confused-deputy).
 	AllowedRegistryHosts []string
+	// Recorder surfaces the states an admin has to act on. A condition is only
+	// visible to someone who already suspects this CR and runs `kubectl
+	// describe`; an Event reaches `kubectl get events` and Rancher's own event
+	// stream, which is where someone looking at a broken UI actually starts.
+	// SetupWithManager fills this in, so nothing outside tests has to.
+	Recorder record.EventRecorder
 	// rancherMgr owns the Rancher-side objects. An interface for the same reason
 	// helmClientFor is a field: the failure branches behind these calls are
 	// recoverable ones the reconcile has to retry, and reaching them through the
@@ -223,9 +231,19 @@ func (r *InstallAIExtensionReconciler) registryHostAllowed(host, hostname string
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=catalog.cattle.io,resources=uiplugins,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=catalog.cattle.io,resources=uiplugins/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+
+// The extension chart's own objects. Helm applies these under the operator's
+// ServiceAccount, so the write verbs are the operator's, not the chart's — and
+// they are cluster-scoped rather than confined to a Role in
+// cattle-ui-plugin-system, because that namespace can be deleted out from under
+// us and would take the Role with it, leaving every reinstall Forbidden.
+// ReplicaSets are deliberately absent: the Deployment controller creates them,
+// the operator never does.
+// +kubebuilder:rbac:groups="",resources=configmaps;services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile translates shutdown out of the error channel before handing the
 // pass back to controller-runtime.
@@ -387,24 +405,20 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 	logger := log.FromContext(ctx)
 	namespace := r.ExtensionNamespace
 
+	// Preconditions before anything else, including the phase stamp: both
+	// cleanupStaleResources and the source reconcile below talk to the Rancher
+	// API and to the extension namespace, so running them first turns a missing
+	// Rancher or a deleted namespace into an opaque cleanup error instead of the
+	// diagnosis the admin actually needs.
+	if result, blocked, err := r.checkPreconditions(ctx, ext); err != nil || blocked {
+		return result, err
+	}
+
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseInstalling
 
 	if err := r.cleanupStaleResources(ctx, ext, namespace); err != nil {
 		logger.Error(err, "stale resource cleanup failed, retrying")
 		return ctrl.Result{}, err
-	}
-
-	// Through setFailureAndRetry like every other recoverable failure, and this
-	// is the one most likely to be hit: install the operator before Rancher and
-	// the CRDs appear minutes later, with no event to say so. A zero Result here
-	// left the CR Failed until the informer's ~10h resync — a first impression of
-	// the operator that never recovers on its own.
-	if err := r.rancherMgr.CheckCRDs(ctx, []string{
-		"uiplugins.catalog.cattle.io",
-		"clusterrepos.catalog.cattle.io",
-	}); err != nil {
-		return setFailureAndRetry(ext, conditionTypeReady,
-			"CRDsMissing", fmt.Sprintf("Rancher CRDs not found: %v", err)), nil
 	}
 
 	switch ext.Spec.Source.Kind {
@@ -440,6 +454,103 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 
 	logger.Info("reconciled successfully")
 	return ctrl.Result{RequeueAfter: healthCheckInterval}, nil
+}
+
+// checkPreconditions verifies the two things this operator depends on but does
+// not own, reporting each as Pending rather than attempting an install that can
+// only fail confusingly. It returns true when the reconcile must stop.
+//
+// Both belong to Rancher. The catalog.cattle.io CRDs arrive with Rancher's UI
+// Extensions support, and the extension namespace is created by Rancher — which
+// notably does NOT recreate it once deleted, so the message has to name the
+// action that does (a Rancher rollout restart, or a chart upgrade). Recreating
+// it here was considered and rejected: it is not ours to manage, and the charts
+// have always required it to pre-exist.
+//
+// CRDs are checked first because they are the root cause when both are missing
+// — an uninstalled Rancher takes the namespace with it, and "restore Rancher"
+// is the useful instruction, not "recreate this namespace".
+func (r *InstallAIExtensionReconciler) checkPreconditions(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+) (ctrl.Result, bool, error) {
+	// Most likely to be hit when the operator is installed before Rancher: the
+	// CRDs appear minutes later with no event to say so, so this retries rather
+	// than parking the CR until the informer's ~10h resync.
+	if err := r.rancherMgr.CheckCRDs(ctx, []string{
+		"uiplugins.catalog.cattle.io",
+		"clusterrepos.catalog.cattle.io",
+	}); err != nil {
+		return r.setBlockedAndRetry(ext, "RancherUnavailable", fmt.Sprintf(
+			"Rancher UI Extensions API unavailable: %v. Restore Rancher UI "+
+				"Extensions support; the extension installs automatically once "+
+				"the catalog.cattle.io CRDs are registered.", err)), true, nil
+	}
+
+	var ns corev1.Namespace
+	err := r.uncachedReader().Get(ctx, client.ObjectKey{Name: r.ExtensionNamespace}, &ns)
+	switch {
+	case apierrors.IsNotFound(err):
+		r.reapOrphanedClusterRepo(ctx, ext)
+		return r.setBlockedAndRetry(ext, "ExtensionNamespaceMissing", fmt.Sprintf(
+			"Namespace %s does not exist. Rancher owns this namespace and does "+
+				"not recreate it on its own: run `kubectl rollout restart "+
+				"deployment/rancher -n cattle-system`, or upgrade the Rancher "+
+				"chart. Installation resumes automatically once it is back.",
+			r.ExtensionNamespace)), true, nil
+
+	case err != nil:
+		// Could not tell either way. Surfacing the error hands the retry to
+		// controller-runtime's own backoff rather than asserting a diagnosis
+		// this pass has not earned.
+		return ctrl.Result{}, true, fmt.Errorf("get namespace %s: %w", r.ExtensionNamespace, err)
+
+	// A namespace on its way out accepts no new objects, and every write below
+	// would fail with a forbidden that names the wrong problem.
+	case !ns.DeletionTimestamp.IsZero():
+		return r.setBlockedAndRetry(ext, "ExtensionNamespaceTerminating", fmt.Sprintf(
+			"Namespace %s is terminating. Installation resumes automatically "+
+				"once it is gone and Rancher has recreated it (restart the "+
+				"Rancher deployment, or upgrade the Rancher chart).",
+			r.ExtensionNamespace)), true, nil
+	}
+
+	return ctrl.Result{}, false, nil
+}
+
+// reapOrphanedClusterRepo deletes this extension's ClusterRepo once its
+// namespace is confirmed gone, best-effort.
+//
+// UIPlugin is namespaced and is garbage-collected along with the namespace;
+// ClusterRepo is cluster-scoped and survives, left pointing at a Service URL
+// in a namespace that no longer exists. Rancher's Extensions page then shows a
+// broken, unreachable repo for the whole outage instead of "not installed".
+//
+// This is cleanup of the operator's own object, not management of Rancher's:
+// cleanupStaleResources already deletes the same ClusterRepo on a rename, and
+// EnsureClusterRepo already recreates it — with a fresh URL — on the first
+// successful pass after the namespace and release come back. Deleting it here
+// only shrinks the window where it dangles pointing nowhere; nothing about
+// recovery depends on this succeeding, so a failure is logged and swallowed
+// rather than turned into a second reason this pass is blocked.
+//
+// Both names cleanup() would delete: the current spec name, and the
+// previously-active one if a rename is still in flight and has not reached
+// cleanupStaleResources yet.
+func (r *InstallAIExtensionReconciler) reapOrphanedClusterRepo(
+	ctx context.Context, ext *v1alpha1.InstallAIExtension,
+) {
+	logger := log.FromContext(ctx)
+
+	for _, name := range extensionNames(ext) {
+		if name == "" {
+			continue
+		}
+		if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(name)); err != nil {
+			logger.Error(err, "failed to reap ClusterRepo for a missing extension namespace; "+
+				"it will be retried next pass", "extension", name)
+		}
+	}
 }
 
 // syncUIConfigMap writes the operator namespace and service name into the
@@ -911,6 +1022,50 @@ func setFailureAndRetry(ext *v1alpha1.InstallAIExtension, condType, reason, mess
 	return ctrl.Result{RequeueAfter: failureRetryInterval(ext)}
 }
 
+// setBlockedAndRetry reports a precondition this controller cannot satisfy
+// itself, on the same widening interval as setFailureAndRetry — the wait is on
+// Rancher or on an admin, so polling harder achieves nothing.
+//
+// The phase depends on whether this extension ever installed, because the same
+// cause means two different things. Never installed: Pending, the honest word
+// for a CR waiting on a dependency that has not arrived — Failed there sends an
+// admin hunting a bug in the operator instead of installing Rancher. Previously
+// installed: Failed, because the UI users were reaching is now gone, and
+// reporting a live outage as Pending describes it as a startup delay. The
+// reason and message are identical either way, so nothing is lost in
+// diagnosis; only the at-a-glance signal in `kubectl get installaiextension`
+// differs.
+//
+// ActiveExtensionName is the discriminator: it is written only on a successful
+// reconcile and never cleared, so it means "this did install once".
+func (r *InstallAIExtensionReconciler) setBlockedAndRetry(
+	ext *v1alpha1.InstallAIExtension, reason, message string,
+) ctrl.Result {
+	setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+		reason, message, ext.Generation)
+
+	if ext.Status.ActiveExtensionName != "" {
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+	} else {
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhasePending
+	}
+
+	r.event(ext, corev1.EventTypeWarning, reason, "%s", message)
+
+	return ctrl.Result{RequeueAfter: failureRetryInterval(ext)}
+}
+
+// event records a Kubernetes event, tolerating a nil Recorder (unit tests /
+// early boot). Mirrors AIWorkloadReconciler.event.
+func (r *InstallAIExtensionReconciler) event(
+	ext *v1alpha1.InstallAIExtension, eventtype, reason, msgFmt string, args ...any,
+) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(ext, eventtype, reason, msgFmt, args...)
+}
+
 // failureRetryInterval is how long to wait before looking at a failing CR again:
 // about as long as it has already been failing, never under healthCheckInterval,
 // never over maxFailureRetryInterval.
@@ -947,6 +1102,19 @@ func failureRetryInterval(ext *v1alpha1.InstallAIExtension) time.Duration {
 // unreachable in a running operator, where SetupWithManager is the only way a
 // reconciler is ever started.
 func (r *InstallAIExtensionReconciler) deploymentReader() client.Reader {
+	return r.uncachedReader()
+}
+
+// uncachedReader returns a reader that bypasses the manager's cache: APIReader
+// when SetupWithManager filled it in, the cached Client otherwise. See
+// deploymentReader for why the fallback is safe.
+//
+// Reading a Namespace through this rather than through the cached Client is
+// deliberate: a cached Get starts a cluster-wide Namespace informer, which
+// needs list and watch on every namespace in the cluster and holds them all in
+// memory. A single uncached Get needs only the `namespaces: get` the operator
+// already has.
+func (r *InstallAIExtensionReconciler) uncachedReader() client.Reader {
 	if r.APIReader != nil {
 		return r.APIReader
 	}
