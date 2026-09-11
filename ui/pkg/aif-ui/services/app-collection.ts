@@ -288,7 +288,7 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
 export const CLUSTERREPOS_URL =
   '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000';
 
-const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloaded'];
+export const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloaded'];
 
 /** A ClusterRepo is ready when its index is actually fetchable. Called by
  *  fetchManagedRepos (which stamps the result onto ManagedRepo.ready, consumed by
@@ -302,24 +302,32 @@ const READY_CONDITION_TYPES = ['FollowerDownloaded', 'OCIDownloaded', 'Downloade
  *  it also preserves the older-Rancher path that set the ConfigMap without a ready
  *  condition. */
 export function isRepoReady(repo: any): boolean {
+  if (repo?.spec?.enabled === false) return false;
   if (!repo?.status?.indexConfigMapName) return false;
+  if ((repo?.metadata?.generation ?? 0) > (repo?.status?.observedGeneration ?? 0)) return false;
   // A stale index can outlive a later download failure: if spec.url is changed to
   // a broken endpoint, indexConfigMapName keeps pointing at the PREVIOUS index
   // while OCIDownloaded/Downloaded flips to False. Serving that index would list
   // apps from a source the cluster is no longer configured to use, so treat any
-  // currently-failing download condition as not-ready (repoNotReadyMessage then
+  // failing or unknown download condition as not-ready (repoNotReadyMessage then
   // surfaces the reason).
   const conditions = repo?.status?.conditions || [];
   const failing = conditions.some(
-    (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status === 'False',
+    (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status !== 'True',
   );
   return !failing;
 }
 
 /** Human-readable reason a repo is not ready, from its failing download condition. */
 export function repoNotReadyMessage(repo: any): string | undefined {
+  if (repo?.spec?.enabled === false) return 'The repository is disabled.';
+  if ((repo?.metadata?.generation ?? 0) > (repo?.status?.observedGeneration ?? 0)) {
+    return 'Waiting for the latest repository configuration to be processed.';
+  }
   const conditions = repo?.status?.conditions || [];
   const failing = conditions.find(
+    (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status === 'False' && c?.message,
+  ) || conditions.find(
     (c: any) => READY_CONDITION_TYPES.includes(c?.type) && c?.status !== 'True' && c?.message,
   );
   return failing?.message || undefined;
@@ -365,7 +373,6 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
     const repos = res?.data?.items || res?.data || res?.items || [];
     const out: ManagedRepo[] = [];
     for (const repo of repos) {
-      if (repo?.spec?.enabled === false) continue;
       const name = repo?.metadata?.name || '';
       if (!name) continue;
       const labels = repo?.metadata?.labels || {};

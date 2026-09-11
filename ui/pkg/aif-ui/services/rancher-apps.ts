@@ -43,7 +43,8 @@ import type {
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
-import { MANAGED_REPO_LABEL } from './app-collection';
+import { isRepoReady, MANAGED_REPO_LABEL, repoNotReadyMessage } from './app-collection';
+import { repositoryFailureMessage } from './repository-health';
 
 /* ============================== logging helpers - CLEANED UP ============================== */
 // Legacy logging functions - replaced with proper logger
@@ -621,23 +622,28 @@ export async function discoverExistingInstall(
 
 async function getRepoIndexLink($store: Dispatchable, repoName: string): Promise<string | null> {
   const found = await getClusterContext($store, { repoName: repoName});
-  if (!found) {
+  if (!found?.baseApi) {
     logger.warn(`ClusterRepo "${repoName}" not found in any cluster`);
     return null;
   }
-  const { baseApi } = found
-  try {
-    const repo = encodeURIComponent(repoName);
+  const { baseApi } = found;
+  const url = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(repoName)}`;
+  const res = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+  const repo = res?.data ?? res;
 
-    const url = `${baseApi}/catalog.cattle.io.clusterrepos/${repo}`;
-    const res  = await $store.dispatch('rancher/request', { url, timeout: TIMEOUT_VALUES.READ });
+  // Static catalog entries and direct wizard links can reference an unready repo.
+  // Rancher's index link exists before its ConfigMap does; use the same readiness
+  // check as dynamic discovery so the wizard shows the download failure instead
+  // of requesting the index and surfacing `configmaps "" not found`.
+  if (!isRepoReady(repo)) {
+    const reason = repoNotReadyMessage(repo) || 'the repository index has not been downloaded yet.';
 
-    const link = res?.data?.links?.index || res?.links?.index;
-    log('repo index link:', link);
-    return link || null;
-  } catch {
-    return null;
+    throw new Error(repositoryFailureMessage(repoName, reason));
   }
+
+  const link = repo?.links?.index;
+  log('repo index link:', link);
+  return link || null;
 }
 
 async function getRepoIndex($store: Dispatchable, repoName: string): Promise<RepositoryIndex | null> {
@@ -645,7 +651,16 @@ async function getRepoIndex($store: Dispatchable, repoName: string): Promise<Rep
   const indexLink = await getRepoIndexLink($store, repoName);
   if (!indexLink) return null;
 
-  const res = await $store.dispatch('rancher/request', { url: indexLink, timeout: TIMEOUT_VALUES.READ });
+  let res;
+  try {
+    res = await $store.dispatch('rancher/request', { url: indexLink, timeout: TIMEOUT_VALUES.READ });
+  } catch (e: any) {
+    // The index can disappear after the metadata check. Preserve other failures.
+    if (/configmaps\s+""\s+not found/i.test(e?.message || e?.data?.message || '')) {
+      throw new Error(repositoryFailureMessage(repoName));
+    }
+    throw e;
+  }
   const payload = (res?.data ?? res);
   dbg('index payload', payload);
   if (typeof payload === 'string') return yaml.load(payload) as RepositoryIndex | null;

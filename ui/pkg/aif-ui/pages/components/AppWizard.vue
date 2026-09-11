@@ -288,7 +288,7 @@ onMounted(async () => {
     loadingNamespaces.value = true;
     await fetchAllNamespaces();
   } catch (e) {
-    error.value = `Failed to initialize: ${e.message || 'Unknown error'}`;
+    error.value = `Unable to load application: ${e.message || 'Check the chart repository in AI Factory Settings and try again.'}`;
   } finally {
     loadingNamespaces.value = false;
     loading.value = false;

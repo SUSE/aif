@@ -98,24 +98,7 @@
 
       <!-- Main content area - always present to avoid layout jumps -->
       <div class="main-content">
-        <!-- Non-fatal warning: managed repositories present but not contributing apps -->
-        <div v-if="catalogWarnings.length" class="catalog-warning-banner" role="status">
-          <i class="icon icon-warning" aria-hidden="true"></i>
-          <div class="catalog-warning-body">
-            <strong>{{ t('suseai.apps.repoWarningTitle', {}, true) }}</strong>
-            <ul>
-              <li v-for="(w, i) in catalogWarnings" :key="i">{{ w }}</li>
-            </ul>
-          </div>
-          <button
-            type="button"
-            class="btn btn-sm role-link catalog-warning-dismiss"
-            :aria-label="t('suseai.apps.dismiss', 'Dismiss')"
-            @click="dismissWarnings"
-          >
-            <i class="icon icon-close" aria-hidden="true"></i>
-          </button>
-        </div>
+        <RepositoryHealthBanner :repositories="managedRepos" :error="repositoryError" :messages="repositoryWarnings" />
         <!-- Results/Loading summary - fixed position to prevent jumps -->
         <div class="results-summary" aria-live="polite">
           <div v-if="filteredApps.length" class="results-text">
@@ -131,9 +114,10 @@
           <div
             v-for="app in filteredApps"
             :key="app.slug_name"
-            :class="['app-tile', 'clickable-tile']"
+            :class="['app-tile', { 'clickable-tile': !isUnavailable(app), 'unavailable-app': isUnavailable(app) }]"
             @click="onTileClick(app)"
-            :aria-label="`Install ${ app.name }`"
+            :aria-label="isUnavailable(app) ? `${app.name}: ${availabilityMessage(app)}` : `Install ${ app.name }`"
+            :aria-disabled="isUnavailable(app)"
             role="button"
             tabindex="0"
             @keydown.enter="onTileClick(app)"
@@ -168,6 +152,10 @@
 
             <div class="tile-content">
               <p class="tile-description">{{ app.description || '—' }}</p>
+              <div v-if="isUnavailable(app)" class="availability-message">
+                <strong>{{ availabilityMessage(app) }}</strong>
+                <router-link :to="settingsLink" aria-disabled="false" @click.stop @keydown.stop>{{ t('suseai.repositoryHealth.settings', 'Open Settings') }}</router-link>
+              </div>
             </div>
           </div>
           <div
@@ -195,9 +183,10 @@
               v-else
               v-for="app in filteredApps"
               :key="app.slug_name"
-              class="main-row clickable-row"
+              :class="['main-row', { 'clickable-row': !isUnavailable(app), 'unavailable-app': isUnavailable(app) }]"
               @click="onTileClick(app)"
-              :aria-label="`Install ${ app.name }`"
+              :aria-label="isUnavailable(app) ? `${app.name}: ${availabilityMessage(app)}` : `Install ${ app.name }`"
+              :aria-disabled="isUnavailable(app)"
               role="button"
               tabindex="0"
               @keydown.enter="onTileClick(app)"
@@ -226,6 +215,10 @@
               <!-- Description -->
               <td class="col-description">
                 <span class="list-description">{{ app.description || '—' }}</span>
+                <div v-if="isUnavailable(app)" class="availability-message">
+                  <strong>{{ availabilityMessage(app) }}</strong>
+                  <router-link :to="settingsLink" aria-disabled="false" @click.stop @keydown.stop>{{ t('suseai.repositoryHealth.settings', 'Open Settings') }}</router-link>
+                </div>
               </td>
 
               <!-- Actions -->
@@ -299,6 +292,12 @@ import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem, ManagedRepo } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
+import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
+import { appRepository, includeUnavailableApps } from '../services/repository-health';
+import { requestErrorMessage } from '../services/rancher-token';
+import nvidiaLogo from '../assets/nvidia-logo.svg';
+import nvidiaLogoDark from '../assets/nvidia-logo-light.svg';
+import genericLogo from '../assets/generic-app.svg';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { resolveCatalogLogo, onCatalogLogoError } from '../utils/catalog-logo';
@@ -308,7 +307,7 @@ import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 export default defineComponent({
   name: 'SuseAIApps',
 
-  components: { AppLabels },
+  components: { AppLabels, RepositoryHealthBanner },
 
   setup() {
     const vm = getCurrentInstance();
@@ -329,7 +328,8 @@ export default defineComponent({
     const sortBy = ref('supported'); // default: supported apps first
     const viewMode = ref('tiles');
     const items = ref<AppCollectionItem[]>([]);
-    const catalogWarnings = ref<string[]>([]);
+    const repositoryError = ref('');
+    const repositoryWarnings = ref<string[]>([]);
     const settingsData = ref<Record<string, any> | null | undefined>(undefined); // undefined=not loaded, null=no Settings CR, object=settings
     const managedRepos = ref<ManagedRepo[]>([]); // operator-managed ClusterRepos discovered this load; drives hasRegistryConfigured
     const isStaticMode = ref(false); // resolved from the operator config in loadApps; dynamic is the default
@@ -476,11 +476,11 @@ export default defineComponent({
     };
 
     const logoFor = (item: AppCollectionItem): string => {
-      return resolveCatalogLogo(item) || require('../assets/generic-app.svg');
+      return resolveCatalogLogo(item) || genericLogo;
     };
 
     const onImgError = (event: Event, item: AppCollectionItem) => {
-      onCatalogLogoError(event, item, require('../assets/generic-app.svg'));
+      onCatalogLogoError(event, item, genericLogo);
     };
 
     const refresh = async () => {
@@ -499,20 +499,23 @@ export default defineComponent({
     const loadApps = async () => {
       try {
         await loadOperatorConfig();
-        // Recomputed below in dynamic mode; cleared up front so no stale warnings
-        // survive a mode switch or an early error path.
-        catalogWarnings.value = [];
+        // Recheck repository availability on every load, in both catalog modes.
+        repositoryError.value = '';
+        repositoryWarnings.value = [];
 
         // Static catalog mode (opt-in): serve the bundled or remote catalog.
         isStaticMode.value = getUseStaticCatalog();
         if (isStaticMode.value) {
-          // Static mode: the operator serves the catalog (bundled or remote); there is
-          // no Settings-driven registry config to show. If the operator is unreachable,
-          // fetchStaticCatalog() throws and the page shows an error (no local fallback,
-          // since the bundled catalog now lives in the operator).
           settingsData.value = null;
-          managedRepos.value = [];
-          items.value = await fetchStaticCatalog();
+          const [catalog, repos] = await Promise.all([
+            fetchStaticCatalog(),
+            fetchManagedRepos(store).catch((e) => {
+              repositoryError.value = requestErrorMessage(e);
+              return [] as ManagedRepo[];
+            }),
+          ]);
+          managedRepos.value = repos;
+          items.value = catalog;
           return;
         }
 
@@ -523,7 +526,10 @@ export default defineComponent({
         // each would otherwise re-list the same clusterrepos endpoint (see fetchManagedRepos).
         const [settings, repos] = await Promise.all([
           fetchSettingsOrNull(),
-          fetchManagedRepos(store),
+          fetchManagedRepos(store).catch((e) => {
+            repositoryError.value = requestErrorMessage(e);
+            throw e;
+          }),
         ]);
         settingsData.value = settings;
         managedRepos.value = repos;
@@ -533,8 +539,13 @@ export default defineComponent({
           fetchCuratedOverlayOrEmpty(),
         ]);
         const discovered = [...suseResult.apps, ...nvidiaResult.apps];
-        items.value = overlayCuratedMetadata(discovered, curated);
-        catalogWarnings.value = buildWarnings([...suseResult.failedRepos, ...nvidiaResult.failedRepos]);
+        const failures = [...suseResult.failedRepos, ...nvidiaResult.failedRepos];
+        repositoryWarnings.value = buildWarnings(failures.filter(failure => !repos.some(repo => repo.url === failure.url)));
+        managedRepos.value = repos.map(repo => {
+          const failure = failures.find(item => item.url === repo.url);
+          return failure ? { ...repo, ready: false, message: failure.message } : repo;
+        });
+        items.value = includeUnavailableApps(overlayCuratedMetadata(discovered, curated), curated, managedRepos.value);
       } catch (err) {
         console.error('Failed to load apps:', err);
         throw err;
@@ -548,7 +559,17 @@ export default defineComponent({
         });
     };
 
+    const settingsLink = { name: 'c-cluster-suseai-settings', params: { cluster: currentClusterId } };
+    const isUnavailable = (app: AppCollectionItem) => loading.value || !!error.value || !!repositoryError.value || !appRepository(app, managedRepos.value)?.ready;
+    const availabilityMessage = (app: AppCollectionItem) => {
+      if (error.value || repositoryError.value || loading.value) return t('suseai.repositoryHealth.uncheckedApp', 'Repository status unknown');
+      const repo = appRepository(app, managedRepos.value);
+      if (!repo) return t('suseai.repositoryHealth.missingApp', 'Repository not configured');
+      return `${t('suseai.repositoryHealth.unavailableApp', 'Repository unavailable')}${repo.message ? `: ${repo.message}` : ''}`;
+    };
+
     const onTileClick = async (app: AppCollectionItem) => {
+      if (isUnavailable(app)) return;
       const route: RouteLocationRaw = {
         name:   `c-cluster-suseai-install`,
         params: {
@@ -559,17 +580,13 @@ export default defineComponent({
         query: withLibraryFilter({ n: app.name }, selectedRepo.value),
       };
 
-      const repoName = await resolveInstallRepoName(store, app);
+      const repoName = appRepository(app, managedRepos.value)?.name || await resolveInstallRepoName(store, app);
       if (repoName) {
         route.query = { ...route.query, repo: repoName };
       }
 
       await $router.push(route);
     };
-
-    // In-memory dismissal for the current page view only; re-running loadApps
-    // (navigation/refresh) recomputes catalogWarnings and may re-show the banner.
-    const dismissWarnings = () => { catalogWarnings.value = []; };
 
     // Initialize
     onMounted(() => {
@@ -594,7 +611,12 @@ export default defineComponent({
       repositoryOptions,
       viewMode,
       items,
-      catalogWarnings,
+      repositoryError,
+      repositoryWarnings,
+      managedRepos,
+      isUnavailable,
+      availabilityMessage,
+      settingsLink,
       filteredApps,
       settingsData,
       hasRegistryConfigured,
@@ -607,10 +629,9 @@ export default defineComponent({
       logoFor,
       onImgError,
       goToSettings,
-      dismissWarnings,
       t,
-      nvidiaLogo:      require('../assets/nvidia-logo.svg') as string,
-      nvidiaLogoDark: require('../assets/nvidia-logo-light.svg') as string,
+      nvidiaLogo,
+      nvidiaLogoDark,
     };
   }
 });
@@ -1324,19 +1345,18 @@ export default defineComponent({
   }
 }
 
-.catalog-warning-banner {
+.app-tile.unavailable-app,
+.list-view .table .main-row.unavailable-app {
+  background: var(--disabled-bg);
+  border-style: dashed;
+  cursor: default;
+}
+.availability-message {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  border: 1px solid var(--warning, #d1a300);
-  border-radius: 4px;
-  background: var(--warning-banner-bg, #fff8e1);
-
-  .catalog-warning-body { flex: 1; }
-  ul { margin: 4px 0 0; padding-left: 18px; }
-  .catalog-warning-dismiss { margin-left: auto; }
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
 }
 </style>
 
