@@ -47,6 +47,11 @@ spec:
                 exit 0
               fi
               echo "Deleting InstallAIExtension CR..."
+              # 300s here is deliberately well above cleanupTimeout (120s, in
+              # operator/internal/controller/installaiextension/finalizer.go): that is
+              # how long the operator's finalizer retries cleanup before giving up and
+              # removing itself anyway, so this wait normally succeeds long before its
+              # own timeout fires. Keep the two in sync if either changes.
               if ! kubectl delete installaiextension "$CR_NAME" --timeout=300s; then
                 echo "ERROR: Delete timed out. The operator finalizer did not complete cleanup."
                 echo "Remaining CR state:"

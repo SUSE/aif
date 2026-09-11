@@ -126,7 +126,12 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups="",resources=services;configmaps;persistentvolumeclaims,verbs=get;list;delete
-// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete
+// `patch` covers restartImagePullBackOffPods' bounce counter, which
+// incrementBounceCount writes onto the pod's controllerRef — usually the
+// ReplicaSet behind a Helm-installed Deployment. Previously only granted inside
+// the extensions namespace, so the cap silently failed to persist in every
+// other workload namespace.
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
