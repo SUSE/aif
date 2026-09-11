@@ -40,6 +40,16 @@ func (e *DependencyNotReadyError) Error() string {
 // are gone returns an error forever, and the finalizer that calls it can never
 // clear — the exact "resources dangling" failure mode for a CR, not just for
 // the object it was trying to remove.
+//
+// Deliberately does NOT also swallow Forbidden. A permissions gap the operator
+// cannot resolve on its own (its ClusterRole missing a verb, a webhook denying
+// the request) should surface and eventually stop the finalizer via
+// cleanupTimeout's bounded give-up, not retry forever pretending to succeed —
+// that would hide a real misconfiguration behind an object that looks deleted
+// but never was. The one Forbidden this can plausibly still hit is transient:
+// a freshly created ClusterRoleBinding whose grant hasn't propagated to the
+// API server's authorizer cache yet, which the bounded retry above this
+// resolves within its normal interval, not by ignoreGone treating it as success.
 func ignoreGone(err error) error {
 	if err == nil || errors.IsNotFound(err) || meta.IsNoMatchError(err) {
 		return nil

@@ -42,6 +42,13 @@ const (
 	// finalizer forever waiting for one. ignoreGone already closes the single
 	// most common cause (Rancher's CRDs are gone), so what reaches this bound is
 	// whatever that does not cover — this is the backstop, not the fix.
+	//
+	// Kept comfortably under the 300s `kubectl delete --timeout` in the chart's
+	// pre-delete cleanup Job (charts/aif-operator/templates/extension/extension-cleanup-job.yaml):
+	// that Job blocks `helm uninstall` on this finalizer actually clearing, so if
+	// this ever grows past that Job's timeout, `helm uninstall` starts failing
+	// even though cleanup would have finished moments later. Keep the two in
+	// sync if either changes.
 	cleanupTimeout = 120 * time.Second
 	// cleanupRetryInterval is deliberately fixed rather than widening like
 	// failureRetryInterval: the window is short (2 minutes) and deletion is not
