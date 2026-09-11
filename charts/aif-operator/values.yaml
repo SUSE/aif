@@ -244,6 +244,22 @@ aiExtension:
 defaultBlueprints:
   enabled: true
 
+# Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo that
+# syncs Blueprint CRs from the given repo/paths. The bundled default catalog is
+# always present and is NOT listed here. credSecretRef/caBundleSecretRef must
+# reference Secrets you pre-create in the operator namespace. Each catalog must
+# use a DISTINCT credSecretRef.name: the fleet-local credential mirror is keyed
+# by the source secret name, so two catalogs (or a catalog and the customer
+# Fleet repo) sharing a secret name but different keys would clobber each
+# other's mirror.
+blueprintCatalogs: []
+#  - name: partner-acme
+#    repoURL: https://github.com/acme/blueprints.git
+#    branch: main
+#    paths: [catalog/blueprints]
+#    credSecretRef:    {name: acme-git, key: token}
+#    caBundleSecretRef: {name: acme-ca, key: ca.crt}
+
 # CRD lifecycle. The chart ships its CRDs under Helm's standard crds/ directory,
 # so Helm natively installs them before it builds the release manifest (the
 # chart's own Blueprint/Settings/InstallAIExtension resources depend on that).

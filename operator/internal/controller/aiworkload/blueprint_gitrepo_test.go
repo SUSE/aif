@@ -102,7 +102,7 @@ func TestEnsureBlueprintGitFile_GitRepoPublishesMixedTargetsToBothFleetWorkspace
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: remoteURL, Branch: "main"}},
 		},
 	}
 	repo := repoObj("rancher-charts", map[string]any{

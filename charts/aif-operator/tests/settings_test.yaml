@@ -130,3 +130,37 @@ tests:
           value: suse-registry
       - notExists:
           path: spec.applicationCollection
+
+  - it: a blueprint catalog opens the spec block and renders its fields
+    set:
+      blueprintCatalogs:
+        - name: partner-acme
+          repoURL: https://github.com/acme/blueprints.git
+          branch: main
+          paths: [catalog/blueprints]
+          credSecretRef: {name: acme-git, key: token}
+          caBundleSecretRef: {name: acme-ca, key: ca.crt}
+    asserts:
+      - equal:
+          path: spec.blueprintCatalogs[0].name
+          value: partner-acme
+      - equal:
+          path: spec.blueprintCatalogs[0].repoURL
+          value: https://github.com/acme/blueprints.git
+      - equal:
+          path: spec.blueprintCatalogs[0].branch
+          value: main
+      - equal:
+          path: spec.blueprintCatalogs[0].paths
+          value: [catalog/blueprints]
+      - equal:
+          path: spec.blueprintCatalogs[0].credSecretRef
+          value: {name: acme-git, key: token}
+      - equal:
+          path: spec.blueprintCatalogs[0].caBundleSecretRef
+          value: {name: acme-ca, key: ca.crt}
+
+  - it: an empty blueprint catalog list does not open the spec block
+    asserts:
+      - notExists:
+          path: spec.blueprintCatalogs

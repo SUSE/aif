@@ -14,7 +14,8 @@ metadata:
           (and $credentials.nvidia.username $credentials.nvidia.password)
           (and $credentials.suseRegistry.username $credentials.suseRegistry.password)
           .Values.appCatalog.remoteUrl
-          $rc.token $rc.tokenSecret.name }}
+          $rc.token $rc.tokenSecret.name
+          .Values.blueprintCatalogs }}
 spec:
 {{- if .Values.appCatalog.remoteUrl }}
   appCatalog:
@@ -71,5 +72,26 @@ spec:
     userSecretRef:
       key: user
       name: suse-registry
+{{- end }}
+{{- if .Values.blueprintCatalogs }}
+  blueprintCatalogs:
+    {{- range .Values.blueprintCatalogs }}
+    - name: {{ .name | quote }}
+      {{- if .repoURL }}
+      repoURL: {{ .repoURL | quote }}
+      {{- end }}
+      {{- if .branch }}
+      branch: {{ .branch | quote }}
+      {{- end }}
+      {{- with .paths }}
+      paths: {{ toJson . }}
+      {{- end }}
+      {{- with .credSecretRef }}
+      credSecretRef: {name: {{ .name | quote }}, key: {{ .key | quote }}}
+      {{- end }}
+      {{- with .caBundleSecretRef }}
+      caBundleSecretRef: {name: {{ .name | quote }}, key: {{ .key | quote }}}
+      {{- end }}
+    {{- end }}
 {{- end }}
 {{- end }}

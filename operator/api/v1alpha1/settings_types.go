@@ -28,8 +28,11 @@ type SecretKeyRef struct {
 	Key string `json:"key"`
 }
 
-// FleetSettings configures Fleet GitOps integration.
-type FleetSettings struct {
+// GitRepoSource holds the common HTTPS-git connection fields reused by the customer
+// GitOps repo (FleetSettings) and each blueprint catalog. Extracting these keeps
+// the two from drifting apart. JSON tags are unchanged from the original
+// FleetSettings fields so stored objects round-trip identically after upgrade.
+type GitRepoSource struct {
 	// RepoURL is the Git repository URL.
 	// +optional
 	RepoURL string `json:"repoURL,omitempty"`
@@ -38,10 +41,7 @@ type FleetSettings struct {
 	// +optional
 	Branch string `json:"branch,omitempty"`
 	// AuthType is the legacy HTTPS credential selector.
-	// Deprecated: HTTPS Git credentials always use HTTP Basic authentication,
-	// with the configured credential as the password or personal access token.
-	// Existing token and basic values are accepted for compatibility; new
-	// clients should omit this field.
+	// Deprecated: HTTPS Git credentials always use HTTP Basic authentication.
 	// +kubebuilder:validation:Enum=token;basic
 	// +optional
 	AuthType string `json:"authType,omitempty"`
@@ -53,10 +53,33 @@ type FleetSettings struct {
 	// +optional
 	CredSecretRef *SecretKeyRef `json:"credSecretRef,omitempty"`
 	// CABundleSecretRef references a Secret containing the PEM CA bundle used
-	// to verify an HTTPS Git server. AIF and the generated Fleet GitRepo consume
-	// the same bundle so private Git has one trust configuration.
+	// to verify an HTTPS Git server.
 	// +optional
 	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
+}
+
+// FleetSettings configures Fleet GitOps integration for the customer's own
+// workloads/blueprints repo (distinct from blueprint catalogs).
+type FleetSettings struct {
+	GitRepoSource `json:",inline"`
+}
+
+// BlueprintCatalog is a git-sourced collection of Blueprint CR YAMLs. The
+// operator provisions one Fleet GitRepo per catalog. The bundled default
+// catalog is NOT represented here.
+type BlueprintCatalog struct {
+	// Name is the catalog identity: a DNS-1123 label used as the catalog label
+	// value and to derive the Fleet GitRepo name. The reserved value
+	// "suse-default" (the bundled catalog) is rejected by the API server via
+	// the reconciler's validation.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Name string `json:"name"`
+	// Paths are the repo folders scanned for Blueprint YAMLs. Defaults to
+	// ["blueprints"] when empty.
+	// +optional
+	Paths []string `json:"paths,omitempty"`
+	GitRepoSource `json:",inline"`
 }
 
 // ApplicationCollectionSettings configures SUSE Application Collection.
@@ -164,6 +187,12 @@ type SettingsSpec struct {
 	// charts from git-backed ClusterRepos.
 	// +optional
 	RancherCatalog RancherCatalogSettings `json:"rancherCatalog,omitempty"`
+	// BlueprintCatalogs is the list of git-sourced blueprint catalogs. The
+	// built-in bundled catalog is not represented here.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	BlueprintCatalogs []BlueprintCatalog `json:"blueprintCatalogs,omitempty"`
 }
 
 // RancherCatalogSettings configures the Rancher Steve catalog client used to

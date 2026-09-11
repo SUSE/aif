@@ -87,7 +87,7 @@ func TestEnsureBlueprintGitFile_PublishesMixedTargetsToBothFleetWorkspaces(t *te
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: remoteURL, Branch: "main"}},
 		},
 	}
 	source := repoObj("private-charts", map[string]any{"url": "oci://registry.example/charts"})
@@ -142,7 +142,7 @@ func TestEnsureBlueprintGitFile_TracksClusterRepoEndpointChange(t *testing.T) {
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: remoteURL, Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: remoteURL, Branch: "main"}},
 		},
 	}
 	sourceA := repoObj("source-a", map[string]any{"url": "oci://registry-a.example/charts"})
@@ -221,7 +221,7 @@ func TestEnsureBlueprintGitFile_RepublishesToChangedFleetRepository(t *testing.T
 	settings := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: firstRemote, Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: firstRemote, Branch: "main"}},
 		},
 	}
 	source := repoObj("private-charts", map[string]any{"url": "oci://registry.example/charts"})

@@ -82,6 +82,11 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileBlueprintCatalogs(ctx, &s); err != nil {
+		l.Error(err, "failed to reconcile blueprint catalogs")
+		return ctrl.Result{}, err
+	}
+
 	if err := r.reconcileClusterRepos(ctx, &s); err != nil {
 		l.Error(err, "failed to reconcile ClusterRepos")
 		return ctrl.Result{}, err
@@ -396,27 +401,106 @@ func (r *SettingsReconciler) reconcileFleetGitRepo(ctx context.Context, s *aipla
 }
 
 func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
-	branch := s.Spec.Fleet.Branch
+	return r.applyGitRepo(ctx, fleetGitRepoName, &s.Spec.Fleet.GitRepoSource, s.Namespace, []string{"blueprints", "workloads"}, nil)
+}
+
+func catalogGitRepoName(name string) string { return "blueprint-catalog-" + name }
+
+// reconcileBlueprintCatalogs applies one Fleet GitRepo per configured catalog
+// and prunes marker-labelled catalog GitRepos no longer desired. Deleting a
+// GitRepo makes Fleet garbage-collect that catalog's Blueprint CRs.
+func (r *SettingsReconciler) reconcileBlueprintCatalogs(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
+	// Validate every catalog name BEFORE applying any GitRepo. Rejecting a
+	// reserved name partway through the apply loop would leave earlier
+	// catalogs' GitRepos already applied — a partial mutation that then
+	// requeues forever since the same name still fails validation next time.
+	for i := range s.Spec.BlueprintCatalogs {
+		cat := &s.Spec.BlueprintCatalogs[i]
+		if cat.Name == aiplatformv1alpha1.BlueprintCatalogDefault {
+			return fmt.Errorf("catalog name %q is reserved for the bundled catalog", cat.Name)
+		}
+	}
+
+	keep := map[string]bool{}
+	for i := range s.Spec.BlueprintCatalogs {
+		cat := &s.Spec.BlueprintCatalogs[i]
+		paths := cat.Paths
+		if len(paths) == 0 {
+			paths = []string{"blueprints"}
+		}
+		name := catalogGitRepoName(cat.Name)
+		labels := map[string]any{
+			credentials.CatalogRepoLabel: credentials.LabelValueTrue,
+			managedRepoMarkerLabel:       managedRepoMarkerValue,
+		}
+		if err := r.applyGitRepo(ctx, name, &cat.GitRepoSource, s.Namespace, paths, labels); err != nil {
+			return fmt.Errorf("apply catalog %q: %w", cat.Name, err)
+		}
+		keep[name] = true
+	}
+	return r.pruneCatalogRepos(ctx, keep)
+}
+
+// pruneCatalogRepos deletes every catalog-marker-labelled Fleet GitRepo whose
+// name is not in keep. Mirrors pruneTeamRepos.
+func (r *SettingsReconciler) pruneCatalogRepos(ctx context.Context, keep map[string]bool) error {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "GitRepoList"})
+	if err := r.List(ctx, list, client.MatchingLabels{credentials.CatalogRepoLabel: credentials.LabelValueTrue}); err != nil {
+		return fmt.Errorf("list catalog GitRepos: %w", err)
+	}
+	for i := range list.Items {
+		name := list.Items[i].GetName()
+		if keep[name] {
+			continue
+		}
+		gr := &unstructured.Unstructured{}
+		gr.SetGroupVersionKind(fleetGitRepoGVK)
+		gr.SetName(name)
+		gr.SetNamespace(fleetGitRepoNamespace)
+		if err := client.IgnoreNotFound(r.Delete(ctx, gr)); err != nil {
+			return fmt.Errorf("prune catalog GitRepo %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// applyGitRepo server-side-applies a Fleet GitRepo named `name` in fleet-local
+// for the given git source and paths, wiring credentials/CA the same way for
+// the customer repo and blueprint catalogs. extraLabels are merged onto the
+// object (e.g. the catalog marker); pass nil for the customer repo.
+// srcNamespace is where the credential/CA Secrets referenced by src live — the
+// Settings object's own namespace (s.Namespace) for BOTH the customer repo and
+// catalogs, preserving the existing customer-repo behavior exactly.
+func (r *SettingsReconciler) applyGitRepo(
+	ctx context.Context,
+	name string,
+	src *aiplatformv1alpha1.GitRepoSource,
+	srcNamespace string,
+	paths []string,
+	extraLabels map[string]any,
+) error {
+	branch := src.Branch
 	if branch == "" {
 		branch = "main"
 	}
-	if s.Spec.Fleet.CredSecretRef == nil && (s.Spec.Fleet.AuthType != "" || s.Spec.Fleet.Username != "") {
+	if src.CredSecretRef == nil && (src.AuthType != "" || src.Username != "") {
 		return fmt.Errorf("fleet.authType or fleet.username requires fleet.credSecretRef")
 	}
 
 	spec := map[string]any{
-		"repo":   s.Spec.Fleet.RepoURL,
+		"repo":   src.RepoURL,
 		"branch": branch,
-		"paths":  []any{"blueprints", "workloads"},
+		"paths":  toAnySlice(paths),
 	}
-	if s.Spec.Fleet.CredSecretRef != nil {
-		if err := r.mirrorGitCredSecret(ctx, s); err != nil {
+	if src.CredSecretRef != nil {
+		if err := r.mirrorGitCredSecretRef(ctx, src, srcNamespace); err != nil {
 			return fmt.Errorf("mirror git credential secret: %w", err)
 		}
-		spec["clientSecretName"] = s.Spec.Fleet.CredSecretRef.Name
+		spec["clientSecretName"] = src.CredSecretRef.Name
 	}
-	if s.Spec.Fleet.CABundleSecretRef != nil {
-		caBundle, err := r.readGitCABundle(ctx, s.Namespace, s.Spec.Fleet.CABundleSecretRef)
+	if src.CABundleSecretRef != nil {
+		caBundle, err := r.readGitCABundle(ctx, srcNamespace, src.CABundleSecretRef)
 		if err != nil {
 			return err
 		}
@@ -426,23 +510,29 @@ func (r *SettingsReconciler) applyFleetGitRepo(ctx context.Context, s *aiplatfor
 		spec["caBundle"] = base64.StdEncoding.EncodeToString(caBundle)
 	}
 
-	gitRepo := &unstructured.Unstructured{
-		Object: map[string]any{
-			"apiVersion": "fleet.cattle.io/v1alpha1",
-			"kind":       "GitRepo",
-			"metadata": map[string]any{
-				"name":      fleetGitRepoName,
-				"namespace": fleetGitRepoNamespace,
-			},
-			"spec": spec,
-		},
+	meta := map[string]any{"name": name, "namespace": fleetGitRepoNamespace}
+	if len(extraLabels) > 0 {
+		meta["labels"] = extraLabels
 	}
-
+	gitRepo := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "fleet.cattle.io/v1alpha1",
+		"kind":       "GitRepo",
+		"metadata":   meta,
+		"spec":       spec,
+	}}
 	return r.Patch(ctx, gitRepo,
 		client.Apply,
 		client.ForceOwnership,
 		client.FieldOwner("aif-operator-settings"),
 	)
+}
+
+func toAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
 }
 
 // readGitCABundle resolves an explicitly configured HTTPS Git CA. Invalid or
@@ -468,34 +558,37 @@ func (r *SettingsReconciler) readGitCABundle(
 	return caBundle, nil
 }
 
-// mirrorGitCredSecret copies the Git credential from the Settings namespace
-// into fleet-local in the single HTTPS basic-auth shape Fleet understands. The
+// mirrorGitCredSecretRef copies the Git credential from srcNamespace into
+// fleet-local in the single HTTPS basic-auth shape Fleet understands. The
 // selected credential may be a password or personal access token; neither AIF
-// nor Fleet sends it as an HTTP Bearer token.
-func (r *SettingsReconciler) mirrorGitCredSecret(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
-	ref := s.Spec.Fleet.CredSecretRef
+// nor Fleet sends it as an HTTP Bearer token. Parameterized so blueprint
+// catalogs and the customer Fleet repo can mirror their own credential Secrets
+// through the same path. srcNamespace is where the credential Secret referenced
+// by src.CredSecretRef lives.
+func (r *SettingsReconciler) mirrorGitCredSecretRef(ctx context.Context, src *aiplatformv1alpha1.GitRepoSource, srcNamespace string) error {
+	ref := src.CredSecretRef
 
-	var src corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: ref.Name}, &src); err != nil {
-		return fmt.Errorf("read source secret %s/%s: %w", s.Namespace, ref.Name, err)
+	var srcSecret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: srcNamespace, Name: ref.Name}, &srcSecret); err != nil {
+		return fmt.Errorf("read source secret %s/%s: %w", srcNamespace, ref.Name, err)
 	}
 
-	switch s.Spec.Fleet.AuthType {
+	switch src.AuthType {
 	case "", "token", "basic":
 		// token and basic are deprecated compatibility aliases. Fleet uses the
 		// same kubernetes.io/basic-auth Secret for both.
 	default:
-		return fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", s.Spec.Fleet.AuthType)
+		return fmt.Errorf("unsupported fleet.authType %q; HTTPS Git credentials use username plus password or personal access token", src.AuthType)
 	}
 
-	password, found := src.Data[ref.Key]
+	password, found := srcSecret.Data[ref.Key]
 	if !found {
-		return fmt.Errorf("git credential Secret %s/%s does not contain key %q", s.Namespace, ref.Name, ref.Key)
+		return fmt.Errorf("git credential Secret %s/%s does not contain key %q", srcNamespace, ref.Name, ref.Key)
 	}
 	if len(password) == 0 {
 		return fmt.Errorf("git credential must not be empty")
 	}
-	username := []byte(credentials.ResolveGitHTTPSUsername(s.Spec.Fleet.Username, src.Data))
+	username := []byte(credentials.ResolveGitHTTPSUsername(src.Username, srcSecret.Data))
 	mirrorData := map[string][]byte{
 		corev1.BasicAuthUsernameKey: username,
 		corev1.BasicAuthPasswordKey: password,
