@@ -1,6 +1,5 @@
 # SUSE AI Factory Operator
-The SUSE AI Factory Operator is responsible for managing the lifecycles of SUSE AI Factory Rancher UI extension, as well the lifecycles of AI applications.
-
+SUSE AI Factory Operator is a Kubernetes controller that orchestrates the lifecycle and multi-cluster deployment of AI workloads, Blueprints. It supports flexible deployment strategies (Helm, Fleet Bundles, and GitOps) while handling complex registry authentication and credential injection.
 
 ## Purpose
 This operator exists to:
