@@ -62,8 +62,10 @@ func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T)
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: "aif"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				CredSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "git-creds", Key: "token"},
-				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					CredSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "git-creds", Key: "token"},
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				},
 			},
 			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
 				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"},

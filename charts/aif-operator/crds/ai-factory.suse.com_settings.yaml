@@ -111,16 +111,94 @@ spec:
                     - name
                     type: object
                 type: object
+              blueprintCatalogs:
+                description: |-
+                  BlueprintCatalogs is the list of git-sourced blueprint catalogs. The
+                  built-in bundled catalog is not represented here.
+                items:
+                  description: |-
+                    BlueprintCatalog is a git-sourced collection of Blueprint CR YAMLs. The
+                    operator provisions one Fleet GitRepo per catalog. The bundled default
+                    catalog is NOT represented here.
+                  properties:
+                    authType:
+                      description: |-
+                        AuthType is the legacy HTTPS credential selector.
+                        Deprecated: HTTPS Git credentials always use HTTP Basic authentication.
+                      enum:
+                      - token
+                      - basic
+                      type: string
+                    branch:
+                      default: main
+                      description: Branch is the Git branch to track.
+                      type: string
+                    caBundleSecretRef:
+                      description: |-
+                        CABundleSecretRef references a Secret containing the PEM CA bundle used
+                        to verify an HTTPS Git server.
+                      properties:
+                        key:
+                          description: Key is the key within the Secret.
+                          type: string
+                        name:
+                          description: Name is the Secret name.
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    credSecretRef:
+                      description: CredSecretRef references the Git credential secret.
+                      properties:
+                        key:
+                          description: Key is the key within the Secret.
+                          type: string
+                        name:
+                          description: Name is the Secret name.
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    name:
+                      description: |-
+                        Name is the catalog identity: a DNS-1123 label used as the catalog label
+                        value and to derive the Fleet GitRepo name. The reserved value
+                        "suse-default" (the bundled catalog) is rejected by the API server via
+                        the reconciler's validation.
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    paths:
+                      description: |-
+                        Paths are the repo folders scanned for Blueprint YAMLs. Defaults to
+                        ["blueprints"] when empty.
+                      items:
+                        type: string
+                      type: array
+                    repoURL:
+                      description: RepoURL is the Git repository URL.
+                      type: string
+                    username:
+                      description: |-
+                        Username optionally overrides the HTTPS Git username. When omitted, the
+                        operator uses the username key in the credential Secret, then "token".
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               fleet:
                 description: Fleet configures Fleet GitOps integration.
                 properties:
                   authType:
                     description: |-
                       AuthType is the legacy HTTPS credential selector.
-                      Deprecated: HTTPS Git credentials always use HTTP Basic authentication,
-                      with the configured credential as the password or personal access token.
-                      Existing token and basic values are accepted for compatibility; new
-                      clients should omit this field.
+                      Deprecated: HTTPS Git credentials always use HTTP Basic authentication.
                     enum:
                     - token
                     - basic
@@ -132,8 +210,7 @@ spec:
                   caBundleSecretRef:
                     description: |-
                       CABundleSecretRef references a Secret containing the PEM CA bundle used
-                      to verify an HTTPS Git server. AIF and the generated Fleet GitRepo consume
-                      the same bundle so private Git has one trust configuration.
+                      to verify an HTTPS Git server.
                     properties:
                       key:
                         description: Key is the key within the Secret.

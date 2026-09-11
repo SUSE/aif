@@ -72,8 +72,10 @@ func TestSettingsController_CreatesFleetGitRepo(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL: "https://github.com/example/ai-workloads",
-				Branch:  "main",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL: "https://github.com/example/ai-workloads",
+					Branch:  "main",
+				},
 			},
 		},
 	}
@@ -119,9 +121,11 @@ func TestSettingsController_FleetGitRepoUsesConfiguredPrivateCA(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:           "https://gitea.internal.example/aif.git",
-				Branch:            "main",
-				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:           "https://gitea.internal.example/aif.git",
+					Branch:            "main",
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				},
 			},
 		},
 	}
@@ -169,8 +173,10 @@ func TestSettingsController_RejectsInvalidFleetGitCA(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:           "https://gitea.internal.example/aif.git",
-				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:           "https://gitea.internal.example/aif.git",
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				},
 			},
 		},
 	}
@@ -197,8 +203,10 @@ func TestSettingsController_RejectsFleetGitAuthWithoutCredentials(t *testing.T) 
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:  "https://gitea.internal.example/aif.git",
-				AuthType: "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:  "https://gitea.internal.example/aif.git",
+					AuthType: "token",
+				},
 			},
 		},
 	}
@@ -262,11 +270,13 @@ func TestSettingsController_MirrorsGitHTTPSCredential(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:  "https://github.com/example/ai-workloads",
-				Username: "git-user",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:  "https://github.com/example/ai-workloads",
+					Username: "git-user",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  "token",
+					},
 				},
 			},
 		},
@@ -313,10 +323,12 @@ func TestSettingsController_MirrorsGitHTTPSUsernameFromSecret(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL: "https://github.com/example/ai-workloads",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  corev1.BasicAuthPasswordKey,
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL: "https://github.com/example/ai-workloads",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  corev1.BasicAuthPasswordKey,
+					},
 				},
 			},
 		},
@@ -357,10 +369,12 @@ func TestSettingsController_MirrorsGitHTTPSDefaultUsername(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL: "https://gitlab.example.com/example/ai-workloads",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL: "https://gitlab.example.com/example/ai-workloads",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  "token",
+					},
 				},
 			},
 		},
@@ -407,11 +421,13 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:  "https://github.com/example/ai-workloads",
-				AuthType: "token",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:  "https://github.com/example/ai-workloads",
+					AuthType: "token",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  "token",
+					},
 				},
 			},
 		},
