@@ -50,6 +50,7 @@ type Item struct {
 	LastUpdatedAt     string  `json:"last_updated_at,omitempty"`
 	PackagingFormat   string  `json:"packaging_format,omitempty"`
 	RepositoryURL     string  `json:"repository_url,omitempty"`
+	RepositoryName    string  `json:"repository_name,omitempty"`
 	Library           string  `json:"library,omitempty"`
 	Labels            []Label `json:"labels,omitempty"`
 }
@@ -130,6 +131,15 @@ func finalize(items []Item) []Item {
 		}
 		if it.PackagingFormat != "" && it.PackagingFormat != "HELM_CHART" && it.PackagingFormat != "CONTAINER" {
 			continue
+		}
+		// The public endpoint changes when NVIDIA is mirrored, but the logical
+		// ClusterRepo identity must not. Stamp the identity from the classified
+		// source URL when the catalog did not provide one explicitly. The UI uses
+		// this field for both static items and the curated overlay in dynamic mode.
+		if it.RepositoryName == "" && it.Library == "nvidia" {
+			if name, err := NGCClusterRepoName(it.RepositoryURL); err == nil {
+				it.RepositoryName = name
+			}
 		}
 		it.Labels = cleanLabels(it.Labels)
 		out = append(out, it)
