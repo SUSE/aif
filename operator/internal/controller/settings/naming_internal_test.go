@@ -1,6 +1,11 @@
 package settings
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/SUSE/aif-operator/internal/catalog"
+	"github.com/SUSE/aif-operator/internal/credentials"
+)
 
 func TestTeamClusterRepoName_Slugs(t *testing.T) {
 	cases := map[string]string{
@@ -26,5 +31,21 @@ func TestTeamClusterRepoName_RejectsNonNGCAndOrgCollisions(t *testing.T) {
 	// A path that would slug to an org ClusterRepo name must be rejected.
 	if _, err := teamClusterRepoName("https://helm.ngc.nvidia.com/nvidia"); err == nil {
 		t.Error("expected error for org-name collision (nvidia)")
+	}
+}
+
+func TestNGCOrgRepoNamesMatchCredentialConstants(t *testing.T) {
+	cases := map[string]string{
+		credentials.DefaultNvidiaChartsURL:    credentials.ClusterRepoNvidia,
+		credentials.DefaultNvidiaBlueprintURL: credentials.ClusterRepoNvidiaBlueprint,
+	}
+	for repoURL, want := range cases {
+		got, err := catalog.NGCClusterRepoName(repoURL)
+		if err != nil {
+			t.Fatalf("NGCClusterRepoName(%q): %v", repoURL, err)
+		}
+		if got != want {
+			t.Errorf("NGCClusterRepoName(%q) = %q, want credential constant %q", repoURL, got, want)
+		}
 	}
 }

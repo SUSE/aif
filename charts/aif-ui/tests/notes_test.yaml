@@ -30,6 +30,25 @@ tests:
       - matchRegexRaw:
           pattern: "kubectl get svc my-rel-aif-ui-svc -n cattle-ui-plugin-system"
 
+  # Helm never renders NOTES.txt on uninstall, so the only place to warn about
+  # the kept ConfigMap is here, at install/upgrade time. Helm's own uninstall
+  # output names the object but not how to remove it (SUSEAI-1039).
+  - it: names the kept ConfigMap and how to delete it
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "helm.sh/resource-policy: keep"
+      - matchRegexRaw:
+          pattern: "kubectl delete configmap aif-ui-config -n cattle-ui-plugin-system"
+
+  - it: points the delete command at the release namespace
+    template: templates/NOTES.txt
+    release:
+      namespace: other-ns
+    asserts:
+      - matchRegexRaw:
+          pattern: "kubectl delete configmap aif-ui-config -n other-ns"
+
   - it: tracks a custom service port
     template: templates/NOTES.txt
     set:

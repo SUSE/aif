@@ -5,11 +5,12 @@
 
 import SuseaiResource, { Action, ActionOpts } from '../base/suseai-resource';
 import { InstallationMixin, StateMixin, MetadataMixin, ResourceUtils, InstallationInfo } from '../base/resource-mixin';
-import { browserSafeCatalogLogo } from '../../utils/catalog-logo';
+import { resolveCatalogLogo } from '../../utils/catalog-logo';
 
 export interface AppResourceData {
   name: string;
   slug_name: string;
+  library?: string;
   description?: string;
   project_url?: string;
   documentation_url?: string;
@@ -48,6 +49,7 @@ export default class AppResource extends SuseaiResource {
   // App-specific properties
   public appName!: string;
   public slug_name!: string;
+  public library?: string;
   public description?: string;
   public project_url?: string;
   public documentation_url?: string;
@@ -191,7 +193,7 @@ export default class AppResource extends SuseaiResource {
    * Get app logo URL or placeholder
    */
   get logoUrl(): string {
-    return browserSafeCatalogLogo(this.logo_url) || this.getPlaceholderLogo();
+    return resolveCatalogLogo(this) || this.getPlaceholderLogo();
   }
 
   /**
@@ -622,6 +624,7 @@ export default class AppResource extends SuseaiResource {
     return {
       name: this.appName,
       slug_name: this.slug_name,
+      library: this.library,
       description: this.description,
       project_url: this.project_url,
       documentation_url: this.documentation_url,

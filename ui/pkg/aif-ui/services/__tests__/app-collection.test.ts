@@ -12,16 +12,19 @@ vi.mock('../../utils/operator-api', () => ({
 }));
 
 import { getRegistryCredentials } from '../../utils/operator-api';
+import { resolveCatalogLogo } from '../../utils/catalog-logo';
 
 import {
   fetchManagedRepos,
   fetchSuseAiApps,
   fetchNvidiaApps,
+  overlayCuratedMetadata,
   resolveInstallRepoName,
   isManagedRepoName,
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
+  overlayCuratedMetadata,
 } from '../app-collection';
 
 type RawRepo = {
@@ -153,6 +156,42 @@ describe('fetchSuseAiApps', () => {
     milvus:  [{ name: 'milvus',  created: '2026-01-01T00:00:00Z' }],
   };
 
+  it.each(['oci://dp.apps.rancher.io/charts', 'oci://harbor.internal/mirrors/appco'])(
+    'renders discovered chart logos without a curated overlay from %s', async (url) => {
+      const store = makeStore([
+        { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url }, status: ready() },
+      ], {
+        'application-collection': {
+          grafana: [{ name: 'grafana', icon: '/logos/grafana.png' }],
+          'new-app': [{ name: 'new-app', icon: 'https://external.example/new-app.png' }],
+        },
+      });
+      const { apps } = await fetchSuseAiApps(store);
+      const displayed = overlayCuratedMetadata(apps, []);
+      const grafana = displayed.find(app => app.slug_name === 'grafana')!;
+      expect(grafana.logo_url).toBeUndefined();
+      expect(resolveCatalogLogo(grafana)).toMatch(/^data:image\/png;base64,/);
+      expect(grafana.repository_url).toBe(url);
+      expect(resolveCatalogLogo(displayed.find(app => app.slug_name === 'new-app')!)).toBeUndefined();
+      expect(store.dispatch.mock.calls.map(call => call[1].url)).toEqual([
+        CLUSTERREPOS_URL,
+        'https://base/catalog.cattle.io.clusterrepos/application-collection?link=index',
+      ]);
+    },
+  );
+
+  it('preserves a supplied inline chart logo when the curated logo is a network URL', async () => {
+    const inline = 'data:image/png;base64,iVBORw0KGgo=';
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://mirror' }, status: ready() },
+    ], { 'application-collection': { ollama: [{ name: 'ollama', icon: inline }] } });
+    const { apps } = await fetchSuseAiApps(store);
+    const [app] = overlayCuratedMetadata(apps, [
+      { name: 'Ollama', slug_name: 'ollama', library: 'suse-ai', logo_url: 'https://apps.rancher.io/logos/ollama.png' },
+    ]);
+    expect(resolveCatalogLogo(app)).toBe(inline);
+  });
+
   // The operator API serializes an absent registry section as {} (value struct,
   // ineffective omitempty), so section presence is not a usable "active" signal.
   // The existence of a managed repo (which the operator creates only when creds
@@ -237,6 +276,44 @@ describe('fetchNvidiaApps', () => {
     const { apps, failedRepos } = await fetchNvidiaApps(store, { spec: {} });
     expect(apps).toEqual([]);
     expect(failedRepos).toEqual([]);
+  });
+
+  it('loads a shared NVIDIA mirror once and restores each app logical source alias', async () => {
+    const mirror = 'oci://registry.internal/nvidia';
+    const store = makeStore([
+      // Intentionally list a team alias first: endpoint dedup must still prefer
+      // the canonical nvidia repo when readiness is equal.
+      { metadata: { name: 'nim-nvidia', labels: { [MANAGED]: 'true', [NVIDIA_TEAM_REPO_LABEL]: 'true' } }, spec: { url: mirror }, status: ready() },
+      { metadata: { name: 'nvidia-blueprints', labels: { [MANAGED]: 'true' } }, spec: { url: mirror }, status: ready() },
+      { metadata: { name: 'nvidia', labels: { [MANAGED]: 'true' } }, spec: { url: mirror }, status: ready() },
+      { metadata: { name: 'nvidia-runai', labels: { [MANAGED]: 'true', [NVIDIA_TEAM_REPO_LABEL]: 'true' } }, spec: { url: mirror }, status: ready() },
+    ], { nvidia: { 'runai-installer': [{ name: 'runai-installer', created: '2026-01-01T00:00:00Z' }] } });
+
+    const { apps, failedRepos } = await fetchNvidiaApps(store, {
+      spec: { registryEndpoints: { nvidia: mirror } },
+    });
+    expect(failedRepos).toEqual([]);
+    expect(apps).toHaveLength(1);
+    expect(apps[0].repository_name).toBe('nvidia');
+
+    const indexRequests = store.dispatch.mock.calls
+      .map(call => (call[1] as { url: string }).url)
+      .filter((url: string) => url.includes('?link=index'));
+    expect(indexRequests).toEqual([
+      'https://base/catalog.cattle.io.clusterrepos/nvidia?link=index',
+    ]);
+
+    const enriched = overlayCuratedMetadata(apps, [{
+      name:            'Run:ai',
+      slug_name:       'runai-installer',
+      library:         'nvidia',
+      repository_url:  'https://helm.ngc.nvidia.com/nvidia/runai',
+      repository_name: 'nvidia-runai',
+    }]);
+    expect(enriched[0].repository_name).toBe('nvidia-runai');
+    // The effective URL remains live/mirrored; only the logical identity comes
+    // from the curated catalog.
+    expect(enriched[0].repository_url).toBe(mirror);
   });
 
   it('loads apps from an existing managed repo regardless of the (always-{}) settings section', async () => {
