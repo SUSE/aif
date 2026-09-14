@@ -17,7 +17,7 @@
           class="search-result"
           @click="addApp(app)"
         >
-          <img :src="safeLogo(app.logo_url)" alt="" class="result-logo" @error="onImgError" />
+          <img :src="logoFor(app)" alt="" class="result-logo" @error="onImgError($event, app)" />
           <div>
             <div class="result-name">{{ app.name }}</div>
             <div class="result-meta text-muted">{{ app.description?.slice(0, 60) }}</div>
@@ -37,7 +37,7 @@
         class="selected-tile"
       >
         <div class="tile-header">
-          <img :src="logoFor(comp.chartName)" alt="" class="tile-logo" @error="onImgError" />
+          <img :src="logoFor(appForComponent(comp))" alt="" class="tile-logo" @error="onImgError($event, appForComponent(comp))" />
           <div class="tile-name">{{ comp.chartName }}</div>
           <button class="btn-remove" type="button" :aria-label="t('suseai.wizard.form.removeApp', 'Remove application')" @click="removeApp(idx)">✕</button>
         </div>
@@ -90,9 +90,10 @@ import LabeledSelect from '@shell/components/form/LabeledSelect';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import { DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, resolveInstallRepoName } from '../../../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, resolveInstallRepoName, getLibraryForClusterRepo } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
-import { browserSafeCatalogLogo } from '../../../utils/catalog-logo';
+import { resolveCatalogLogo, onCatalogLogoError } from '../../../utils/catalog-logo';
+import type { CatalogLogo } from '../../../utils/catalog-logo';
 
 const genericIcon = require('../../../assets/generic-app.svg');
 
@@ -110,7 +111,6 @@ const searchQuery   = ref('');
 const searchResults = ref<AppCollectionItem[]>([]);
 const allApps       = ref<AppCollectionItem[]>([]);
 const versionMap    = ref<Record<string, string[]>>({});
-const logoMap       = ref<Record<string, string>>({});
 
 // Combined catalog: SUSE AI Library + Nvidia Library (mirrors the Apps catalog selector).
 async function loadAllApps(): Promise<AppCollectionItem[]> {
@@ -128,18 +128,8 @@ onMounted(async () => {
 
   // Logos — one fetch covers all components.
   try {
-    const apps = await loadAllApps();
-    allApps.value = apps;
-    const logoUpdates: Record<string, string> = {};
-    for (const comp of props.components) {
-      const app = apps.find(a => a.slug_name === comp.chartName);
-      const logo = browserSafeCatalogLogo(app?.logo_url);
-      if (logo) logoUpdates[comp.chartName] = logo;
-    }
-    if (Object.keys(logoUpdates).length) {
-      logoMap.value = { ...logoMap.value, ...logoUpdates };
-    }
-  } catch { /* generic icon fallback is fine */ }
+    allApps.value = await loadAllApps();
+  } catch { /* bundled logo or generic icon fallback is fine */ }
 
   // Versions — fetch per component in parallel.
   await Promise.allSettled(
@@ -197,10 +187,6 @@ async function addApp(app: AppCollectionItem) {
     versions = [];
   }
   versionMap.value = { ...versionMap.value, [app.slug_name]: versions };
-  const logo = browserSafeCatalogLogo(app.logo_url);
-  if (logo) {
-    logoMap.value = { ...logoMap.value, [app.slug_name]: logo };
-  }
 
   emit('update:components', [
     ...props.components,
@@ -286,16 +272,19 @@ function versionOptionsFor(chartName: string): { label: string; value: string }[
   return versionsFor(chartName).map(v => ({ label: v, value: v }));
 }
 
-function logoFor(chartName: string): string {
-  return logoMap.value[chartName] || genericIcon;
+function appForComponent(comp: BlueprintComponent): CatalogLogo {
+  return allApps.value.find(app => app.slug_name === comp.chartName && app.repository_name === comp.chartRepo) || {
+    slug_name: comp.chartName,
+    library: getLibraryForClusterRepo(comp.chartRepo, '') || (comp.vendor === 'suse' ? 'suse-ai' : comp.vendor),
+  };
 }
 
-function safeLogo(logo?: string): string {
-  return browserSafeCatalogLogo(logo) || genericIcon;
+function logoFor(app: CatalogLogo): string {
+  return resolveCatalogLogo(app) || genericIcon;
 }
 
-function onImgError(e: Event) {
-  (e.target as HTMLImageElement).src = genericIcon;
+function onImgError(event: Event, app: CatalogLogo) {
+  onCatalogLogoError(event, app, genericIcon);
 }
 </script>
 
