@@ -1,6 +1,9 @@
 name: AI Factory UI Extension CI
 
 on:
+  push:
+    branches: 
+      - 'main'
   pull_request:
     paths:
       - 'ui/**'
