@@ -24,7 +24,6 @@ import {
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
-  overlayCuratedMetadata,
 } from '../app-collection';
 
 type RawRepo = {
