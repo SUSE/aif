@@ -571,7 +571,7 @@ async function doRetry(w: AIWorkload) {
                       <span>Upgrade</span>
                     </button>
 
-                    <!-- Blueprint workload: Customize -->
+                    <!-- Blueprint workload: Manage -->
                     <button
                       v-if="w.spec.source.sourceType === 'Blueprint'"
                       class="btn btn-sm role-secondary"
@@ -580,7 +580,7 @@ async function doRetry(w: AIWorkload) {
                       type="button"
                     >
                       <i class="icon icon-edit" />
-                      Customize
+                      Manage
                     </button>
 
                     <!-- Blueprint workload: Roll Back -->

@@ -1,6 +1,5 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ t('suseai.wizard.sections.customize', 'Customize') }}</h2>
     <p class="text-muted mb-20">
       {{ t('suseai.wizard.sections.customizeDesc', "Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Leave a component untouched to keep the blueprint's defaults.") }}
     </p>
