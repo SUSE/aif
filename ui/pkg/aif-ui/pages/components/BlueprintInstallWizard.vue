@@ -75,7 +75,7 @@ const CRED_LABELS: Record<RequiredCredential, string> = {
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),     ready: true },
   { label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),    ready: workloadName.value.trim() !== '' && namespace.value !== '' },
-  { label: t('suseai.wizard.steps.customize', 'Customize'),             ready: true },
+  { label: t('suseai.wizard.steps.configuration', 'Configuration'),     ready: true },
   { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 && componentValuesValid.value },
 ]);
 
