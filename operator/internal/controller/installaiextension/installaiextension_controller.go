@@ -1537,6 +1537,16 @@ func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		r.APIReader = mgr.GetAPIReader()
 	}
 	r.rancherMgr = rancher.NewManager(r.Client)
+	// Both watches below trade a softer failure mode for speed: previously, a
+	// CheckCRDs/namespace-Get call missing RBAC surfaced as a visible Forbidden
+	// on the InstallAIExtension and retried. Now, since these two GVKs go
+	// through the manager's shared cache, a missing get/list/watch grant on
+	// customresourcedefinitions or namespaces (RBAC drift the chart's CI check
+	// is meant to prevent — see manager-role.yaml) instead fails the informer's
+	// initial sync, which is fatal to the whole manager after CacheSyncTimeout
+	// (2 minutes, cmd/main.go) — every controller crash-loops, not just this
+	// one. Accepted because these two grants are the same ones the CI guard
+	// keeps in sync, not because the failure mode is equivalent.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.InstallAIExtension{}).
 		Watches(&apiextensionsv1.CustomResourceDefinition{},

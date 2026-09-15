@@ -164,6 +164,17 @@ func managerOptions(
 				&corev1.Namespace{}: {
 					Field: fields.OneTermEqualSelector("metadata.name", config.GetExtensionNamespace()),
 				},
+				// Deliberately not scoped the way ConfigMap/Namespace are above: a
+				// field selector cannot OR together the two CRD names this actually
+				// needs (uiplugins/clusterrepos.catalog.cattle.io), and the watch's
+				// predicate (catalogCRDBecameReady) reads Status.Conditions, which
+				// rules out a metadata-only watch too. So this informer holds every
+				// CustomResourceDefinition in the cluster — potentially hundreds on a
+				// real Rancher/Fleet/cert-manager-style cluster — not just the two
+				// this operator cares about. Accepted the same way the ClusterRole's
+				// cluster-wide CRD read grant already is (see the chart's
+				// manager-role.yaml), rather than solved.
+				&apiextensionsv1.CustomResourceDefinition{}: {},
 			},
 		},
 		// Hand the lease back on the way out instead of letting the incoming
