@@ -201,12 +201,13 @@ func init() {
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
 	// clientgoscheme covers client-go's typed clientset groups, which does not
-	// include apiextensions.k8s.io — CheckCRDs reads CRDs through its own
-	// separate typed clientset (internal/infra/rancher/preflight.go), which
-	// needs no scheme, but InstallAIExtensionReconciler's CustomResourceDefinition
-	// watch goes through the manager's cache, which does: without this,
-	// SetupWithManager's Watches call resolves no GVK for the type and the
-	// manager fails to start the moment it tries to.
+	// include apiextensions.k8s.io. Two things need it registered here: without
+	// it, InstallAIExtensionReconciler's CustomResourceDefinition watch resolves
+	// no GVK for the type and the manager fails to start the moment
+	// SetupWithManager's Watches call tries to build the informer; and
+	// rancher.Manager.CheckCRDs reads CustomResourceDefinition through the same
+	// cached client (internal/infra/rancher/preflight.go), so it would fail the
+	// same way on every call.
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }

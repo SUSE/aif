@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -67,6 +68,13 @@ func readinessReconciler(
 	}
 	if err := appsv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add appsv1: %v", err)
+	}
+	// Registered so CheckCRDs fails for the reason it is meant to (a real
+	// NotFound on CustomResourceDefinition, wrapped into DependencyNotReadyError)
+	// rather than by coincidence, from the type not being in the scheme at all —
+	// see TestMissingRancherCRDsAreRetried.
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add apiextensionsv1: %v", err)
 	}
 	gv := schema.GroupVersion{Group: "catalog.cattle.io", Version: "v1"}
 	for _, kind := range []string{"ClusterRepo", "UIPlugin"} {

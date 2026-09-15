@@ -70,8 +70,8 @@ func (g *gateRancherManager) DeleteUIPlugin(context.Context, string, string) err
 
 // gateReconciler builds a reconciler whose Rancher preflight passes by default,
 // so a case reaches the namespace check instead of stopping at the CRD check
-// the way every other test in this package does (CheckCRDs dials the in-cluster
-// config, which does not exist under `go test`).
+// the way every other test in this package does (readinessReconciler's scheme
+// does not register CustomResourceDefinition, so CheckCRDs fails there).
 func gateReconciler(
 	t *testing.T,
 	ext *v1alpha1.InstallAIExtension,
