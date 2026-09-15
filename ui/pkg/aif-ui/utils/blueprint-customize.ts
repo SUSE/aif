@@ -55,3 +55,44 @@ export function diffComponentValues(
   }
   return overrides;
 }
+
+// seedComponentEnabled computes the starting per-component enabled state shown
+// in the Customize step, mirroring seedComponentValues: each component starts
+// enabled unless an existing override explicitly disabled it.
+export function seedComponentEnabled(
+  components: BlueprintComponent[],
+  existing: ComponentValueOverride[] = [],
+): Record<string, boolean> {
+  const overrideByName = new Map(existing.map((o) => [o.componentName, o]));
+  const seed: Record<string, boolean> = {};
+  for (const c of components) {
+    seed[c.chartName] = overrideByName.get(c.chartName)?.enabled ?? true;
+  }
+  return seed;
+}
+
+// diffComponentOverrides combines the values diff (diffComponentValues) with a
+// per-component enabled diff into the single ComponentValueOverride[] shape the
+// AIWorkload spec expects — one entry per component that changed either its
+// values or its enabled state, carrying only the field(s) that actually changed.
+export function diffComponentOverrides(
+  seedValues: Record<string, Record<string, any>>,
+  editedValues: Record<string, Record<string, any>>,
+  seedEnabled: Record<string, boolean>,
+  editedEnabled: Record<string, boolean>,
+): ComponentValueOverride[] {
+  const changedValues = new Map(diffComponentValues(seedValues, editedValues).map((o) => [o.componentName, o.values]));
+  const names = new Set([...Object.keys(seedEnabled), ...Object.keys(editedEnabled), ...changedValues.keys()]);
+  const overrides: ComponentValueOverride[] = [];
+  for (const name of names) {
+    const values = changedValues.get(name);
+    const enabledChanged = (seedEnabled[name] ?? true) !== (editedEnabled[name] ?? true);
+    if (values === undefined && !enabledChanged) continue;
+    overrides.push({
+      componentName: name,
+      ...(values !== undefined ? { values } : {}),
+      ...(enabledChanged ? { enabled: editedEnabled[name] } : {}),
+    });
+  }
+  return overrides;
+}

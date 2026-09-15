@@ -15,22 +15,27 @@
 
     <div class="review-section">
       <h3 class="section-title">{{ t('suseai.wizard.labels.components', 'Components') }} ({{ componentCount }})</h3>
-      <div v-for="comp in components" :key="comp.chartName" class="component-row">
+      <div v-for="comp in components" :key="comp.chartName" class="component-row" :class="{ 'is-excluded': excludedNames.has(comp.chartName) }">
         <span>{{ comp.chartName }}</span>
         <span class="text-muted">{{ comp.chartVersion }}</span>
-        <span v-if="comp.releaseName" class="comp-release text-muted">
-          {{ t('suseai.wizard.labels.releaseName', 'Release') }}: {{ comp.releaseName }}
+        <span v-if="excludedNames.has(comp.chartName)" class="badge-excluded">
+          {{ t('suseai.wizard.labels.excluded', 'Excluded') }}
         </span>
-        <span class="comp-target text-muted">
-          → {{ comp.targetNamespace || namespace }}
-          <template v-if="comp.targetNamespace">({{ t('suseai.wizard.labels.fixedNamespace', 'fixed') }})</template>
-        </span>
+        <template v-else>
+          <span v-if="comp.releaseName" class="comp-release text-muted">
+            {{ t('suseai.wizard.labels.releaseName', 'Release') }}: {{ comp.releaseName }}
+          </span>
+          <span class="comp-target text-muted">
+            → {{ comp.targetNamespace || namespace }}
+            <template v-if="comp.targetNamespace">({{ t('suseai.wizard.labels.fixedNamespace', 'fixed') }})</template>
+          </span>
+        </template>
       </div>
     </div>
 
-    <div v-if="componentValues && componentValues.length" class="review-section">
-      <h3 class="section-title">{{ t('suseai.wizard.labels.customized', 'Customized') }} ({{ componentValues.length }})</h3>
-      <div v-for="ov in componentValues" :key="ov.componentName" class="component-row">
+    <div v-if="customizedValues.length" class="review-section">
+      <h3 class="section-title">{{ t('suseai.wizard.labels.customized', 'Customized') }} ({{ customizedValues.length }})</h3>
+      <div v-for="ov in customizedValues" :key="ov.componentName" class="component-row">
         <span>{{ ov.componentName }}</span>
       </div>
     </div>
@@ -38,6 +43,7 @@
 </template>
 
 <script lang="ts" setup>
+import { computed } from 'vue';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 import { useT } from '../../../composables/useT';
@@ -53,9 +59,17 @@ interface Props {
   components:        BlueprintComponent[];
   componentValues?:  ComponentValueOverride[];
 }
-defineProps<Props>();
+const props = defineProps<Props>();
 
 const t = useT();
+
+const excludedNames = computed(() => new Set(
+  (props.componentValues || []).filter((ov) => ov.enabled === false).map((ov) => ov.componentName),
+));
+// customizedValues excludes entries with no values (only toggled enabled) and entries for an
+// excluded component — both already show up as the "Excluded" badge above, and re-listing an
+// excluded component here as "Customized" is misleading: it won't deploy, edited values or not.
+const customizedValues = computed(() => (props.componentValues || []).filter((ov) => ov.values !== undefined && ov.enabled !== false));
 </script>
 
 <style lang="scss" scoped>
@@ -72,6 +86,11 @@ const t = useT();
   display: flex; gap: 16px; padding: 6px 0; border-bottom: 1px solid var(--border);
   &:last-child { border-bottom: none; }
   .comp-target { margin-left: auto; }
+  &.is-excluded { opacity: 0.6; }
+}
+.badge-excluded {
+  margin-left: auto; font-size: 11px; font-weight: 600; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 10px; padding: 2px 8px;
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

@@ -49,11 +49,13 @@ func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *ai
 }
 
 // validateBlueprintComponentValues rejects ComponentValues entries whose
-// componentName doesn't match any component of the referenced Blueprint. A
-// typo'd or stale component name would otherwise silently no-op at render
-// time (the operator's resolveComponentValues skips unmatched entries
-// defensively, since reconcile loops must stay self-healing) — this catches
-// it here instead, at submit time, with a clear error.
+// componentName doesn't match any component of the referenced Blueprint, and
+// rejects a spec that disables every component (a workload that deploys
+// nothing is a user error, not a valid state). A typo'd or stale component
+// name would otherwise silently no-op at render time (the operator's
+// resolveComponentValues skips unmatched entries defensively, since reconcile
+// loops must stay self-healing) — this catches it here instead, at submit
+// time, with a clear error.
 func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context, spec aiplatformv1alpha1.AIWorkloadSpec) error {
 	if spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint || len(spec.ComponentValues) == 0 {
 		return nil
@@ -78,7 +80,32 @@ func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context
 			return fmt.Errorf("%w: componentValues references unknown component %q", ErrInvalidInput, ov.ComponentName)
 		}
 	}
+	enabledCount := 0
+	for _, c := range bp.Spec.Components {
+		if effectiveComponentEnabled(spec.ComponentValues, c.ChartName) {
+			enabledCount++
+		}
+	}
+	if enabledCount == 0 {
+		return fmt.Errorf("%w: at least one component must remain enabled", ErrInvalidInput)
+	}
 	return nil
+}
+
+// effectiveComponentEnabled resolves whether a component is enabled the same way the
+// controller's isComponentEnabled does: first matching override wins, no match or a nil
+// Enabled defaults to enabled. Two or more overrides for the same componentName aren't
+// rejected as invalid input elsewhere, so this must agree with the controller's own
+// resolution — otherwise the validator could reject (or accept) a spec based on a
+// different override than the one the controller actually applies.
+func effectiveComponentEnabled(overrides []aiplatformv1alpha1.ComponentValueOverride, chartName string) bool {
+	for _, ov := range overrides {
+		if ov.ComponentName != chartName {
+			continue
+		}
+		return ov.Enabled == nil || *ov.Enabled
+	}
+	return true
 }
 
 // AIWorkloadHandler serves AIWorkload CRUD endpoints.

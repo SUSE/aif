@@ -25,6 +25,9 @@ export interface AIWorkloadSource {
 export interface ComponentValueOverride {
   componentName: string;
   values?:       Record<string, any>;
+  // Enabled controls whether this Blueprint component is deployed at all.
+  // Defaults to true (omitted/undefined == enabled).
+  enabled?:      boolean;
 }
 
 export interface AIWorkloadSpec {
