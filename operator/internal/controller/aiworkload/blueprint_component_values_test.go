@@ -107,6 +107,91 @@ func TestResolveComponentValues(t *testing.T) {
 	})
 }
 
+func boolPtr(b bool) *bool { return &b }
+
+func TestIsComponentEnabled(t *testing.T) {
+	t.Run("no override defaults to enabled", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{}
+		if !isComponentEnabled(w, "milvus") {
+			t.Error("want enabled with no override")
+		}
+	})
+
+	t.Run("override with Enabled=nil defaults to enabled", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{ComponentName: "milvus", Values: rawJSON(t, map[string]any{"replicas": float64(3)})},
+				},
+			},
+		}
+		if !isComponentEnabled(w, "milvus") {
+			t.Error("want enabled when override sets Values but leaves Enabled nil")
+		}
+	})
+
+	t.Run("Enabled=false disables the matching component", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{ComponentName: "milvus", Enabled: boolPtr(false)},
+				},
+			},
+		}
+		if isComponentEnabled(w, "milvus") {
+			t.Error("want disabled")
+		}
+	})
+
+	t.Run("Enabled=false for a different component is ignored", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{ComponentName: "open-webui", Enabled: boolPtr(false)},
+				},
+			},
+		}
+		if !isComponentEnabled(w, "milvus") {
+			t.Error("want enabled — override targets a different component")
+		}
+	})
+}
+
+func TestFilterEnabledComponents(t *testing.T) {
+	components := []aiplatformv1alpha1.BlueprintComponent{
+		{ChartName: "milvus"},
+		{ChartName: "open-webui"},
+		{ChartName: "litellm"},
+	}
+
+	t.Run("no overrides keeps every component", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{}
+		got := filterEnabledComponents(w, components)
+		if len(got) != 3 {
+			t.Fatalf("got %d components, want 3", len(got))
+		}
+	})
+
+	t.Run("disabling one component excludes only that one", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{ComponentName: "open-webui", Enabled: boolPtr(false)},
+				},
+			},
+		}
+		got := filterEnabledComponents(w, components)
+		var names []string
+		for _, c := range got {
+			names = append(names, c.ChartName)
+		}
+		want := []string{"milvus", "litellm"}
+		if !reflect.DeepEqual(names, want) {
+			t.Errorf("got %v want %v", names, want)
+		}
+	})
+}
+
 func TestEnsureBlueprintHelmOp_AppliesComponentValueOverride(t *testing.T) {
 	r := newRepoFakeClient(t)
 	w := &aiplatformv1alpha1.AIWorkload{

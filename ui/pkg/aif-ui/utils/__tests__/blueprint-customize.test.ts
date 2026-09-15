@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { deepMergeValues, seedComponentValues, diffComponentValues } from '../blueprint-customize';
+import {
+  deepMergeValues, seedComponentValues, diffComponentValues,
+  seedComponentEnabled, diffComponentOverrides,
+} from '../blueprint-customize';
 import type { BlueprintComponent } from '../../types/blueprint-types';
 
 describe('deepMergeValues', () => {
@@ -64,5 +67,54 @@ describe('diffComponentValues', () => {
     const seed = { milvus: { a: 1, b: 2 } };
     const edited = { milvus: { b: 2, a: 1 } };
     expect(diffComponentValues(seed, edited)).toEqual([]);
+  });
+});
+
+describe('seedComponentEnabled', () => {
+  it('defaults every component to enabled when there is no existing override', () => {
+    const components = [comp('milvus'), comp('open-webui')];
+    expect(seedComponentEnabled(components)).toEqual({ milvus: true, 'open-webui': true });
+  });
+
+  it('seeds false from an existing override that disabled a component', () => {
+    const components = [comp('milvus'), comp('open-webui')];
+    const existing = [{ componentName: 'milvus', enabled: false }];
+    expect(seedComponentEnabled(components, existing)).toEqual({ milvus: false, 'open-webui': true });
+  });
+});
+
+describe('diffComponentOverrides', () => {
+  it('returns no overrides when nothing changed', () => {
+    const seedValues = { milvus: { replicas: 1 } };
+    const seedEnabled = { milvus: true };
+    expect(diffComponentOverrides(seedValues, seedValues, seedEnabled, seedEnabled)).toEqual([]);
+  });
+
+  it('emits only enabled when a component is disabled with no value edits', () => {
+    const values = { milvus: { replicas: 1 } };
+    const seedEnabled = { milvus: true };
+    const editedEnabled = { milvus: false };
+    expect(diffComponentOverrides(values, values, seedEnabled, editedEnabled)).toEqual([
+      { componentName: 'milvus', enabled: false },
+    ]);
+  });
+
+  it('emits only values when values change with enabled untouched', () => {
+    const seedValues = { milvus: { replicas: 1 } };
+    const editedValues = { milvus: { replicas: 3 } };
+    const enabled = { milvus: true };
+    expect(diffComponentOverrides(seedValues, editedValues, enabled, enabled)).toEqual([
+      { componentName: 'milvus', values: { replicas: 3 } },
+    ]);
+  });
+
+  it('emits both fields when a component is disabled and its values were also edited', () => {
+    const seedValues = { milvus: { replicas: 1 } };
+    const editedValues = { milvus: { replicas: 3 } };
+    const seedEnabled = { milvus: true };
+    const editedEnabled = { milvus: false };
+    expect(diffComponentOverrides(seedValues, editedValues, seedEnabled, editedEnabled)).toEqual([
+      { componentName: 'milvus', values: { replicas: 3 }, enabled: false },
+    ]);
   });
 });

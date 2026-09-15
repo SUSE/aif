@@ -41,6 +41,8 @@ const namespace    = ref('');
 const clusters     = ref<string[]>([]);
 const deployType   = ref<AIWorkloadDeployStrategy>('FleetBundle');
 const componentValues = ref<ComponentValueOverride[]>([]);
+const componentValuesValid = ref(true);
+const runningComponentNames = ref<string[]>([]);
 const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
 
 watch(fleetGitConfigured, (configured) => {
@@ -52,7 +54,18 @@ watch(fleetGitConfigured, (configured) => {
 const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
-const missingCreds = ref<RequiredCredential[]>([]);
+const registryCreds = ref<any>(null);
+// missingCreds recomputes as componentValues changes so excluding a component
+// (e.g. the only one that needs NVIDIA credentials) drops its credential
+// requirement immediately, instead of freezing the mount-time component list.
+const missingCreds = computed(() => {
+  if (!registryCreds.value) return [];
+  const enabledComponents = (blueprint.value?.spec.components || []).filter((c) => {
+    const override = componentValues.value.find((ov) => ov.componentName === c.chartName);
+    return override?.enabled !== false;
+  });
+  return missingCredentialsForBlueprint(enabledComponents, registryCreds.value);
+});
 const CRED_LABELS: Record<RequiredCredential, string> = {
   applicationCollection: 'Application Collection',
   suseRegistry:          'SUSE Registry',
@@ -63,7 +76,7 @@ const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),     ready: true },
   { label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),    ready: workloadName.value.trim() !== '' && namespace.value !== '' },
   { label: t('suseai.wizard.steps.customize', 'Customize'),             ready: true },
-  { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 },
+  { label: t('suseai.wizard.steps.review', 'Review'),                   ready: clusters.value.length > 0 && componentValuesValid.value },
 ]);
 
 const missingCredsLabel = computed(() =>
@@ -86,16 +99,12 @@ onMounted(async () => {
     try {
       // Resolve credentials the operator's way (spec refs + well-known secrets)
       // so the pre-flight matches what the operator can actually create.
-      const registryCreds = await getRegistryCredentials();
-      missingCreds.value = missingCredentialsForBlueprint(
-        blueprint.value?.spec.components || [],
-        registryCreds,
-      );
+      registryCreds.value = await getRegistryCredentials();
     } catch (e) {
       // If credentials can't be read, don't block — the operator status is the
       // backstop. Log for diagnosis.
       console.warn('[SUSE-AI] Pre-flight credential check skipped (credentials unavailable):', e);
-      missingCreds.value = [];
+      registryCreds.value = null;
     }
   } catch (e: any) {
     error.value = e?.message || 'Failed to load blueprint';
@@ -123,6 +132,7 @@ async function loadExistingWorkload() {
   clusters.value        = workload.spec.targetClusters || [];
   deployType.value      = (workload.spec.deployStrategy as AIWorkloadDeployStrategy) || 'FleetBundle';
   componentValues.value = workload.spec.componentValues || [];
+  runningComponentNames.value = Array.from(new Set((workload.status?.componentStatuses || []).map((s) => s.componentName)));
 }
 
 function nextStep() {
@@ -320,8 +330,10 @@ function onProgressCancel() { showProgressModal.value = false; }
             v-else-if="currentStep === 2"
             :components="blueprint?.spec.components || []"
             :existing-values="componentValues"
+            :running-components="runningComponentNames"
             :mode="props.mode"
             @update:model-value="componentValues = $event"
+            @update:valid="componentValuesValid = $event"
           />
           <div v-else-if="currentStep === 3">
             <Banner
