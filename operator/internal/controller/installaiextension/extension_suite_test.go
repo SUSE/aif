@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -60,6 +61,14 @@ var _ = BeforeSuite(func() {
 
 	var err error
 	err = aiplatformv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Mirrors cmd/main.go's init(): the CustomResourceDefinition watch in
+	// SetupWithManager needs this registered in whatever scheme the manager
+	// uses, or the watch's GVK never resolves and the manager fails at Start.
+	// See the "SetupWithManager" Describe block's CRD-watch spec for the
+	// regression this guards against.
+	err = apiextensionsv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -62,6 +63,12 @@ func wiringReconcilerWith(
 	scheme := kruntime.NewScheme()
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
+	}
+	// Registered so CheckCRDs fails for the reason it is meant to (a real
+	// NotFound on CustomResourceDefinition, wrapped into DependencyNotReadyError)
+	// rather than by coincidence, from the type not being in the scheme at all.
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add apiextensionsv1: %v", err)
 	}
 	// ClusterRepo is reconciled as unstructured against the live cluster, so the
 	// fake client needs the GVK to route it.

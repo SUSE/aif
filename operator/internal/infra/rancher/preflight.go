@@ -20,31 +20,35 @@ import (
 	"context"
 
 	logging "github.com/SUSE/aif-operator/internal/logging"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	"k8s.io/client-go/rest"
+	"k8s.io/apimachinery/pkg/types"
 )
 
+// CheckCRDs reads through m.client — the same cached client every other
+// Manager method already uses — rather than dialling a fresh in-cluster
+// config and a separate typed clientset the way this used to. That old path
+// only ever worked inside a real pod (rest.InClusterConfig hard-fails
+// anywhere else), which made this the one Manager method that could never be
+// exercised under go test, envtest included: every existing test that needs
+// CheckCRDs to pass stubs out the whole rancherManager interface instead of
+// running the real thing.
+//
+// Reading through the cache also means this now shares the exact informer
+// InstallAIExtensionReconciler's CustomResourceDefinition watch already
+// maintains (operator/internal/controller/installaiextension), instead of
+// making a live API call every reconcile — cheaper, and the two mechanisms
+// can no longer observe different answers from each other. The trade is that
+// a CRD's presence is now only as fresh as that informer: if it ever silently
+// stopped receiving events without controller-runtime treating that as fatal,
+// this would keep returning its last known answer rather than re-verifying
+// against the API server on every call the way the old implementation did.
 func (m *Manager) CheckCRDs(ctx context.Context, crds []string) error {
 	log := logging.FromContext(ctx, "rancher.preflight")
 
-	cfg, err := rest.InClusterConfig()
-	if err != nil {
-		return err
-	}
-
-	clientset, err := apiextensionsclient.NewForConfig(cfg)
-	if err != nil {
-		return err
-	}
-
 	for _, crd := range crds {
-		_, err := clientset.
-			ApiextensionsV1().
-			CustomResourceDefinitions().
-			Get(ctx, crd, metav1.GetOptions{})
+		var obj apiextensionsv1.CustomResourceDefinition
+		err := m.client.Get(ctx, types.NamespacedName{Name: crd}, &obj)
 
 		if err != nil {
 			if apierrors.IsNotFound(err) {

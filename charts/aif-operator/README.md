@@ -465,3 +465,35 @@ kubectl get svc -n aif-operator
 kubectl get crd installaiextensions.ai-factory.suse.com
 ```
 * Re-apply CRDs manually if required
+
+### InstallAIExtension stuck on Pending (or Failed) after the extension namespace is deleted
+
+The operator depends on two things it does not manage: the extension namespace
+(`cattle-ui-plugin-system` by default) and Rancher's UI Extensions CRDs
+(`clusterrepos.catalog.cattle.io`, `uiplugins.catalog.cattle.io`). If either is
+deleted — most commonly by deleting the namespace directly, or by removing
+Rancher — the operator reports the cause instead of guessing at a fix, and
+waits rather than retrying blindly:
+
+```bash
+kubectl describe installaiextension -n aif-operator
+```
+
+Check the `Ready` condition's reason (and the matching Warning event) against:
+
+* **`ExtensionNamespaceMissing` / `ExtensionNamespaceTerminating`** — the
+  extension namespace is gone. **Rancher owns this namespace and does not
+  recreate it on its own.** Restore it with either:
+  ```bash
+  kubectl rollout restart deployment/rancher -n cattle-system
+  ```
+  or by upgrading the Rancher chart. Any `ClusterRepo` left pointing at the
+  deleted namespace is cleaned up automatically in the meantime — no manual
+  cleanup needed on the Rancher side.
+* **`RancherUnavailable`** — Rancher's UI Extensions API is not registered
+  (the CRDs above are missing). Reinstall or restore Rancher's UI Extensions
+  support.
+
+Both cases resolve themselves: installation resumes automatically on the next
+reconcile once the missing dependency is back, with no action needed on the
+`InstallAIExtension` resource itself.

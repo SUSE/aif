@@ -85,9 +85,10 @@ func TestReconcile_ClearsTheMarkerWhenThePassNeverReachedTheRelease(t *testing.T
 	r := wiringReconciler(t, ext, pendingStub())
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ext)}
 
-	// CheckCRDs dials the in-cluster API config, which does not exist under `go
-	// test`, so the pass fails the Rancher preflight and returns above the Helm
-	// call — the same shape as a real cluster missing the CRDs.
+	// wiringReconciler's scheme does not register CustomResourceDefinition, so
+	// CheckCRDs fails to resolve it and the pass fails the Rancher preflight and
+	// returns above the Helm call — the same shape as a real cluster missing the
+	// CRDs.
 	if _, err := r.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("reconcile error = %v, want nil", err)
 	}
@@ -145,7 +146,7 @@ func TestInReleasePendingWait(t *testing.T) {
 	}{
 		{reason: reasonReleasePending, want: true},
 		{reason: reasonReleasePendingTimedOut, want: true},
-		{reason: "CRDsMissing", want: false},
+		{reason: "RancherUnavailable", want: false},
 		{reason: "InvalidSpec", want: false},
 		{reason: "Installed", want: false},
 	}

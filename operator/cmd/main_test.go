@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+
 	"github.com/SUSE/aif-operator/internal/infra/helm"
 )
 
@@ -121,5 +124,27 @@ func TestHelmGraceExpiresBeforeTheDrainGivesUp(t *testing.T) {
 		t.Errorf("helm.ShutdownGrace = %s, drain = %s; the grace must expire while the "+
 			"manager is still waiting, or the write is killed instead of cancelled",
 			helm.ShutdownGrace, managerGracefulShutdownTimeout)
+	}
+}
+
+// InstallAIExtensionReconciler.SetupWithManager watches CustomResourceDefinition
+// so a reconcile blocked on RancherUnavailable wakes up the moment Rancher's
+// CRDs appear, instead of waiting out its own backoff. controller-runtime does
+// not resolve a Watches() source's GVK against the scheme until the manager
+// actually starts building the informer — well after SetupWithManager itself
+// returns — so a scheme missing this registration looks fine at every call site
+// and only fails once a real operator tries to start.
+//
+// This has to run against the package's own `scheme` var, populated by this
+// package's init() exactly as production builds it. A test built on
+// k8s.io/client-go/kubernetes/scheme's global Scheme instead would not catch a
+// missing registration here even if init() were reverted: something else
+// linked into that global via its own init() already registers this type
+// there, independent of anything this package does.
+func TestSchemeResolvesTheCatalogCRDWatchType(t *testing.T) {
+	if _, err := apiutil.GVKForObject(&apiextensionsv1.CustomResourceDefinition{}, scheme); err != nil {
+		t.Errorf("apiutil.GVKForObject(CustomResourceDefinition) = %v, want no error; "+
+			"without this registered, the manager fails to start the moment it tries to "+
+			"build the InstallAIExtension CRD watch's informer", err)
 	}
 }

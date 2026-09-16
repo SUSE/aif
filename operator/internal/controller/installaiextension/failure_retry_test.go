@@ -79,19 +79,22 @@ func TestMissingRancherCRDsAreRetried(t *testing.T) {
 		t.Fatalf("reconcile error = %v", err)
 	}
 
-	// Guards the test as much as the code: CheckCRDs dials the in-cluster config,
-	// which does not exist under `go test`, so the preflight fails the same shape
-	// a cluster without Rancher does. Asserting the reason means that if it ever
-	// stops failing, the pass falls through to the Helm stub and this reports a
-	// different reason — rather than passing green on a branch it never entered.
+	// Guards the test as much as the code: CheckCRDs reads CustomResourceDefinition
+	// through the reconciler's client, and readinessReconciler's scheme does not
+	// register that type, so the preflight fails the same shape a cluster without
+	// Rancher does. Asserting the reason means that if it ever stops failing, the
+	// pass falls through to the Helm stub and this reports a different reason —
+	// rather than passing green on a branch it never entered.
 	ready := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
-	if ready == nil || ready.Reason != "CRDsMissing" {
-		t.Fatalf("Ready condition = %+v, want reason CRDsMissing; the pass did not reach "+
+	if ready == nil || ready.Reason != "RancherUnavailable" {
+		t.Fatalf("Ready condition = %+v, want reason RancherUnavailable; the pass did not reach "+
 			"the preflight branch this test covers", ready)
 	}
 
-	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
-		t.Errorf("Phase = %s, want Failed; the CRDs really are missing", ext.Status.Phase)
+	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhasePending {
+		t.Errorf("Phase = %s, want Pending; Rancher being absent is not a failure of this "+
+			"operator, and Failed sends the admin hunting for a bug instead of installing "+
+			"Rancher", ext.Status.Phase)
 	}
 	if result.RequeueAfter != healthCheckInterval {
 		t.Errorf("RequeueAfter = %v, want %v; Rancher installing its CRDs produces no event, "+

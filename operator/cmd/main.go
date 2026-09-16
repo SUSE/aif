@@ -30,6 +30,8 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -138,13 +140,41 @@ func managerOptions(
 				// operatorNamespace secrets; aiworkload controller needs Helm
 				// release secrets (owner=helm) from any target namespace.
 				&corev1.Secret{}: {},
-				// Restrict ConfigMap watch to the extension namespace — the namespaced
-				// Role in cattle-ui-plugin-system grants watch; the ClusterRole does not.
+				// Restrict ConfigMap watch to the extension namespace. The ClusterRole
+				// grants configmaps watch cluster-wide (needed for that namespace to
+				// survive its own deletion — see the RBAC consolidation), so this is
+				// no longer an RBAC boundary; it stays to keep the cache from holding
+				// every ConfigMap in the cluster for the sake of watching one.
 				&corev1.ConfigMap{}: {
 					Namespaces: map[string]cache.Config{
 						config.GetExtensionNamespace(): {},
 					},
 				},
+				// Scoped to exactly one object by name, not one namespace's worth of
+				// objects: Namespace is cluster-scoped, so there is no namespace to
+				// restrict this to the way ConfigMap is restricted above. Without the
+				// field selector this would cache every namespace in the cluster just
+				// to notice one of them appearing — the exact cost that kept
+				// checkPreconditions on an uncached point-read instead of a watch
+				// before this. Lets InstallAIExtensionReconciler notice the extension
+				// namespace being (re)created immediately, the same way its
+				// CustomResourceDefinition watch already does for Rancher's CRDs,
+				// instead of waiting out checkPreconditions's own backoff (up to 15
+				// minutes) after ExtensionNamespaceMissing.
+				&corev1.Namespace{}: {
+					Field: fields.OneTermEqualSelector("metadata.name", config.GetExtensionNamespace()),
+				},
+				// Deliberately not scoped the way ConfigMap/Namespace are above: a
+				// field selector cannot OR together the two CRD names this actually
+				// needs (uiplugins/clusterrepos.catalog.cattle.io), and the watch's
+				// predicate (catalogCRDBecameReady) reads Status.Conditions, which
+				// rules out a metadata-only watch too. So this informer holds every
+				// CustomResourceDefinition in the cluster — potentially hundreds on a
+				// real Rancher/Fleet/cert-manager-style cluster — not just the two
+				// this operator cares about. Accepted the same way the ClusterRole's
+				// cluster-wide CRD read grant already is (see the chart's
+				// manager-role.yaml), rather than solved.
+				&apiextensionsv1.CustomResourceDefinition{}: {},
 			},
 		},
 		// Hand the lease back on the way out instead of letting the incoming
@@ -181,6 +211,15 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
+	// clientgoscheme covers client-go's typed clientset groups, which does not
+	// include apiextensions.k8s.io. Two things need it registered here: without
+	// it, InstallAIExtensionReconciler's CustomResourceDefinition watch resolves
+	// no GVK for the type and the manager fails to start the moment
+	// SetupWithManager's Watches call tries to build the informer; and
+	// rancher.Manager.CheckCRDs reads CustomResourceDefinition through the same
+	// cached client (internal/infra/rancher/preflight.go), so it would fail the
+	// same way on every call.
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -328,6 +367,7 @@ func main() {
 		ReadinessTimeout:         deploymentReadinessTimeout,
 		AllowInsecureRegistryTLS: allowInsecureRegistryTLS,
 		AllowedRegistryHosts:     allowedHosts,
+		Recorder:                 mgr.GetEventRecorderFor("installaiextension-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
