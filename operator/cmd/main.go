@@ -328,6 +328,7 @@ func main() {
 		ReadinessTimeout:         deploymentReadinessTimeout,
 		AllowInsecureRegistryTLS: allowInsecureRegistryTLS,
 		AllowedRegistryHosts:     allowedHosts,
+		Recorder:                 mgr.GetEventRecorderFor("installaiextension-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)

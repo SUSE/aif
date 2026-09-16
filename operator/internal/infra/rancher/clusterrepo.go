@@ -28,7 +28,6 @@ import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // annotationSyncedVersion records the extension version for which the operator
@@ -147,7 +146,7 @@ func (m *Manager) DeleteClusterRepo(ctx context.Context, name string) error {
 	repo.SetKind("ClusterRepo")
 	repo.SetName(name)
 
-	if err := m.client.Delete(ctx, repo); client.IgnoreNotFound(err) != nil {
+	if err := ignoreGone(m.client.Delete(ctx, repo)); err != nil {
 		log.Error(err, "Failed to delete ClusterRepo")
 		return err
 	}

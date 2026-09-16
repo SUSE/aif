@@ -8,11 +8,16 @@ rules:
   - ""
   resources:
   - configmaps
-  - persistentvolumeclaims
+  - secrets
+  - services
   verbs:
+  - create
   - delete
   - get
   - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - ""
   resources:
@@ -31,24 +36,19 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods
-  - services
+  - persistentvolumeclaims
   verbs:
   - delete
   - get
   - list
-  - watch
 - apiGroups:
   - ""
   resources:
-  - secrets
+  - pods
   verbs:
-  - create
   - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
@@ -109,19 +109,24 @@ rules:
   - delete
   - get
   - list
+  - patch
 - apiGroups:
   - apps
   resources:
   - deployments
   verbs:
+  - create
   - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - catalog.cattle.io
   resources:
   - clusterrepos
+  - uiplugins
   verbs:
   - create
   - delete
@@ -134,6 +139,7 @@ rules:
   - catalog.cattle.io
   resources:
   - clusterrepos/status
+  - uiplugins/status
   verbs:
   - get
   - patch

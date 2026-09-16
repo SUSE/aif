@@ -18,14 +18,17 @@ package rancher
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
@@ -197,5 +200,52 @@ func TestEnsureClusterRepo_GitSourceSetsRepoAndForceUpdate(t *testing.T) {
 	}
 	if got := repo.GetAnnotations()[annotationSyncedVersion]; got != "1.0.0" {
 		t.Fatalf("expected synced-version annotation %q, got %q", "1.0.0", got)
+	}
+}
+
+// The scenario this exists for: Rancher's catalog.cattle.io CRDs are gone
+// (uninstalled along with Rancher, or the namespace that held them deleted),
+// so a Delete against ClusterRepo cannot even resolve a REST mapping and comes
+// back a meta.NoKindMatchError. Before ignoreGone, DeleteClusterRepo returned
+// that error forever, and the finalizer calling it could never clear.
+func TestDeleteClusterRepo_ToleratesMissingCRD(t *testing.T) {
+	scheme := newClusterRepoTestScheme(t)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				return &meta.NoKindMatchError{
+					GroupKind:        schema.GroupKind{Group: "catalog.cattle.io", Kind: "ClusterRepo"},
+					SearchedVersions: []string{"v1"},
+				}
+			},
+		}).
+		Build()
+	m := NewManager(c)
+
+	if err := m.DeleteClusterRepo(context.Background(), "my-plugin"); err != nil {
+		t.Fatalf("DeleteClusterRepo returned %v, want nil; the CRD being gone means there is "+
+			"nothing left to delete", err)
+	}
+}
+
+// A delete failing for any other reason must still surface — only a gone CRD
+// or a gone object counts as success.
+func TestDeleteClusterRepo_SurfacesOtherErrors(t *testing.T) {
+	scheme := newClusterRepoTestScheme(t)
+	wantErr := "admission webhook denied the request"
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				return errors.New(wantErr)
+			},
+		}).
+		Build()
+	m := NewManager(c)
+
+	err := m.DeleteClusterRepo(context.Background(), "my-plugin")
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("DeleteClusterRepo error = %v, want %q", err, wantErr)
 	}
 }

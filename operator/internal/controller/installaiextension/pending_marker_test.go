@@ -145,7 +145,7 @@ func TestInReleasePendingWait(t *testing.T) {
 	}{
 		{reason: reasonReleasePending, want: true},
 		{reason: reasonReleasePendingTimedOut, want: true},
-		{reason: "CRDsMissing", want: false},
+		{reason: "RancherUnavailable", want: false},
 		{reason: "InvalidSpec", want: false},
 		{reason: "Installed", want: false},
 	}

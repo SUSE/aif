@@ -24,7 +24,6 @@ import (
 	logging "github.com/SUSE/aif-operator/internal/logging"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (m *Manager) EnsureUIPlugin(
@@ -96,7 +95,7 @@ func (m *Manager) DeleteUIPlugin(ctx context.Context, name string, namespace str
 	ui.SetName(name)
 	ui.SetNamespace(namespace)
 
-	if err := m.client.Delete(ctx, ui); client.IgnoreNotFound(err) != nil {
+	if err := ignoreGone(m.client.Delete(ctx, ui)); err != nil {
 		log.Error(err, "Failed to delete UIPlugin")
 		return err
 	}

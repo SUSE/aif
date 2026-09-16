@@ -13,23 +13,43 @@ rules:
       - create
       - get
       - patch
+  # The extension chart's own objects. Helm applies them under the operator's
+  # ServiceAccount, so these are the operator's verbs. Cluster-scoped rather
+  # than a Role in the extensions namespace: that namespace can be deleted out
+  # from under us and would take the Role with it, leaving every reinstall
+  # Forbidden with no way back.
+  #
+  # `watch` is also required by installaiextension_controller's reconciler
+  # cache. Without it the controller-runtime informer for *v1.Service fails to
+  # start and hot-loops the kube-apiserver with rejected watch requests.
   - apiGroups:
       - ""
     resources:
       - configmaps
-      - persistentvolumeclaims
       - services
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumeclaims
     verbs:
       - delete
       - get
       - list
-      # `watch` is required by installaiextension_controller's reconciler cache
-      # (kubebuilder marker on services is get;list;watch). Without it, the
-      # operator's controller-runtime informer for *v1.Service fails to start
-      # and hot-loops the kube-apiserver with rejected watch requests. Verb
-      # also applies to configmaps + PVCs in this rule, harmless — both
-      # already have list permission, so watch adds no extra read surface.
-      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
   - apiGroups:
       - ""
     resources:
@@ -71,14 +91,22 @@ rules:
       - delete
       - get
       - list
+      # restartImagePullBackOffPods stores its bounce counter as an annotation
+      # on the pod's controllerRef — usually the ReplicaSet behind a
+      # Helm-installed Deployment. Only the extensions-namespace Role used to
+      # grant this, so the cap silently failed to persist anywhere else.
+      - patch
   - apiGroups:
       - apps
     resources:
       - deployments
     verbs:
+      - create
       - delete
       - get
       - list
+      - patch
+      - update
       - watch
   - apiGroups:
       - rbac.authorization.k8s.io
@@ -138,6 +166,26 @@ rules:
       - catalog.cattle.io
     resources:
       - clusterrepos/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - catalog.cattle.io
+    resources:
+      - uiplugins
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - catalog.cattle.io
+    resources:
+      - uiplugins/status
     verbs:
       - get
       - patch
@@ -244,86 +292,3 @@ rules:
       - patch
       - watch
 
----
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  labels:
-    {{- include "aif-operator.labels" . | nindent 4 }}
-  name: {{ include "aif-operator.fullname" . }}
-  namespace: {{ include "aif-operator.extensionsNamespace" . }}
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - services
-      - secrets
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-      - replicasets
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
-  - apiGroups:
-      - catalog.cattle.io
-    resources:
-      - uiplugins
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - catalog.cattle.io
-    resources:
-      - uiplugins/status
-    verbs:
-      - get
-      - patch
-      - update
