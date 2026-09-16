@@ -139,11 +139,7 @@ jobs:
               "\n  name: kubectl\n"
           ' charts/aif-operator/Chart.yaml
 
-          # update the BuildTag in Chart.yaml. Matches the exact previous
-          # version via old_re (same pattern the values.yaml edits below use)
-          # rather than guessing at pre-release suffix conventions (-rc.N,
-          # -dev.N, ...) — anything else left unmatched, such as -%RELEASE%
-          # on the templated tag, is untouched automatically.
+          # update the BuildTag in Chart.yaml
           sed -i -E "s|^(#\!BuildTag: charts/aif-operator:)${old_re}|\1${VERSION}|" charts/aif-operator/Chart.yaml
 
           # operator values: own image tag + lockstep aif-ui/extension version refs.
@@ -161,8 +157,7 @@ jobs:
             .annotations."helm.sh/images" = "- image: ghcr.io/suse/aif-ui:" + strenv(VERSION) + "\n  name: aif-ui\n"
           ' charts/aif-ui/Chart.yaml
 
-          # update BuildTag in Chart.yaml — see the operator chart's BuildTag
-          # sed above for why this matches old_re rather than a suffix regex.
+          # update BuildTag in Chart.yaml
           sed -i -E "s|^(#\!BuildTag: charts/aif-ui:)${old_re}|\1${VERSION}|" charts/aif-ui/Chart.yaml
 
           # ui packages (root version + package-lock root entries only)
