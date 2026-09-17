@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credcheck"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -140,6 +141,38 @@ func TestChartAccessUsesSelectedMirrorCredentialsAndCA(t *testing.T) {
 	h.validateChartAccess(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"target":"suseRegistry","configuration":{"url":"oci://mirror.internal/different-prefix","userSecretRef":{"name":"mirror","key":"user"},"tokenSecretRef":{"name":"mirror","key":"token"},"caBundleSecretRef":{"name":"mirror","key":"ca"}}}`)))
 	if w.Code != http.StatusOK || !called {
 		t.Fatalf("probe did not run: code=%d", w.Code)
+	}
+}
+
+func TestChartAccessProbesCatalogSampleChartPerSource(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ngc", Namespace: "aif-operator"}, Data: map[string][]byte{"username": []byte("$oauthtoken"), "password": []byte("key")}}
+	h := NewSettingsHandler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build(), "aif-operator")
+	original := probeChartFn
+	t.Cleanup(func() { probeChartFn = original })
+	var mutex sync.Mutex
+	charts := map[string]string{}
+	probeChartFn = func(_ context.Context, endpoint, chart, _, _ string, _ []byte) credcheck.ChartResult {
+		mutex.Lock()
+		charts[endpoint] = chart
+		mutex.Unlock()
+		return credcheck.ChartResult{RepositoryURL: endpoint, Status: "ok"}
+	}
+	w := httptest.NewRecorder()
+	h.validateChartAccess(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"target":"nvidia","configuration":{"url":"","userSecretRef":{"name":"ngc","key":"username"},"tokenSecretRef":{"name":"ngc","key":"password"}}}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("body=%s", w.Body.String())
+	}
+	// A gated team repo must be sampled with a supported chart it actually serves,
+	// not an alphabetically-first non-catalog chart that spuriously 403s.
+	runai := "https://helm.ngc.nvidia.com/nvidia/runai"
+	want := catalog.RepresentativeChart(runai)
+	if want == "" {
+		t.Fatal("test precondition: bundled catalog has no runai chart")
+	}
+	if charts[runai] != want {
+		t.Errorf("runai sampled %q, want catalog chart %q", charts[runai], want)
 	}
 }
 

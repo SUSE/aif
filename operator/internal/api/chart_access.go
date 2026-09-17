@@ -109,19 +109,21 @@ func chartProbeSources(req chartAccessRequest) ([]chartProbeSource, error) {
 			endpoint = credentials.DefaultApplicationCollectionURL
 		}
 		if chart == "" {
-			chart = "ollama"
+			chart = representativeChart(endpoint, "ollama")
 		}
 	case "suseRegistry":
 		if endpoint == "" {
 			endpoint = credentials.DefaultSUSERegistryURL
 		}
 		if chart == "" {
-			chart = "qdrant"
+			chart = representativeChart(endpoint, "qdrant")
 		}
 	case "nvidia":
 		if endpoint == "" {
 			// Match the Settings controller's connected topology and auth policy.
 			// Only the embedded, classified catalog can select NGC token recipients.
+			// Each source samples a supported catalog chart it actually serves, so a
+			// gated repo is not judged by a chart the customer is not entitled to.
 			sources := []chartProbeSource{
 				{url: "https://helm.ngc.nvidia.com/nvidia"},
 				{url: "https://helm.ngc.nvidia.com/nvidia/blueprint"},
@@ -133,10 +135,13 @@ func chartProbeSources(req chartAccessRequest) ([]chartProbeSource, error) {
 			for _, u := range teams.Gated {
 				sources = append(sources, chartProbeSource{url: u, authenticated: true})
 			}
+			for i := range sources {
+				sources[i].chart = catalog.RepresentativeChart(sources[i].url)
+			}
 			return sources, nil
 		}
 		if chart == "" {
-			chart = "aiq-aira"
+			chart = representativeChart(endpoint, "aiq-aira")
 		}
 	default:
 		return nil, fmt.Errorf("%w: unknown chart registry target", ErrInvalidInput)
@@ -144,6 +149,16 @@ func chartProbeSources(req chartAccessRequest) ([]chartProbeSource, error) {
 	// An explicit mirror is the only source, even when it is empty or rejects
 	// access. Do not append an upstream namespace or fall back to public NGC.
 	return []chartProbeSource{{url: endpoint, chart: chart, authenticated: true}}, nil
+}
+
+// representativeChart names a supported catalog chart served by endpoint, so the
+// probe reflects a chart the customer is entitled to install. An air-gap mirror
+// endpoint has no catalog entry; fallback is a well-known sample for that target.
+func representativeChart(endpoint, fallback string) string {
+	if chart := catalog.RepresentativeChart(endpoint); chart != "" {
+		return chart
+	}
+	return fallback
 }
 
 func (h *SettingsHandler) chartProbeCredentials(ctx context.Context, config *chartAccessConfiguration) (user, password string, caPEM []byte, reason string) {
