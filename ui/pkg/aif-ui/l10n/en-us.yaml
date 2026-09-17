@@ -141,6 +141,60 @@ suseai:
             keyNameLabel: Secret Key
           insecureSkipVerify:
             label: Skip TLS verification (development only)
+        customRepos:
+          title: Custom Repositories
+          description: 'Add custom Helm, OCI, or Git chart repositories to make additional applications available in the Apps catalog. Each repository is provisioned as a ClusterRepo and appears in the catalog after indexing completes.'
+          addTitle: Add Repository
+          editTitle: Edit Repository
+          table:
+            name: Name
+            type: Type
+            location: Location
+            actions: Actions
+          fields:
+            name:
+              label: Repository Name
+              placeholder: 'my-charts'
+            displayName:
+              label: Display Name (optional)
+              placeholder: 'My Custom Charts'
+            type:
+              label: Repository Type
+            url:
+              label: Repository URL
+              placeholderHelm: 'https://example.com/charts'
+              placeholderOci: 'oci://example.com/charts'
+            gitRepo:
+              label: Git Repository URL
+              placeholder: 'https://github.com/org/repo.git'
+            gitBranch:
+              label: Git Branch
+              placeholder: main
+            userSecretRef:
+              label: Username Secret (optional)
+              secretNameLabel: Secret Name
+              keyNameLabel: Secret Key
+            tokenSecretRef:
+              label: Token/Password Secret (optional)
+              secretNameLabel: Secret Name
+              keyNameLabel: Secret Key
+            sshKeySecretRef:
+              label: SSH Private Key Secret (optional)
+              secretNameLabel: Secret Name
+              keyNameLabel: Secret Key
+            caBundleSecretRef:
+              label: CA Bundle Secret (optional)
+              secretNameLabel: Secret Name
+              keyNameLabel: Secret Key
+            insecureSkipTLSVerify:
+              label: Skip TLS verification (development only)
+          actions:
+            add: Add Repository
+            edit: Edit
+            delete: Delete
+            save: Save
+            cancel: Cancel
+            test: Test
   apps:
     title: Apps
     backToApps: Back to Apps
