@@ -384,7 +384,7 @@
       "slug_name": "doca-argus",
       "description": "A Helm chart for deploying DOCA Argus service that utilizes Bluefield DPU for real-time, hardware-level memory forensics, ensuring robust, integrated security for AI workloads and microservices without impacting performance or requiring host agents.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-07-02T06:23:47.526Z",
+      "last_updated_at": "2026-09-07T13:21:58.911Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -1109,21 +1109,6 @@
       "description": "Helm Chart for NVIDIA NIM for Text Embedding - llama-nemotron-embed-300m-v2",
       "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
       "last_updated_at": "2026-03-04T19:30:44.905Z",
-      "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
-      "labels": [
-        {
-          "code": "supported",
-          "name": "Supported"
-        }
-      ]
-    },
-    {
-      "name": "NVIDIA NIM for Text Embedding",
-      "slug_name": "nvidia-nim-llama-nemotron-embed-vl-1b-v2",
-      "description": "Helm Chart for NVIDIA NIM for Multimodal Embedding - llama-nemotron-embed-vl-1b-v2",
-      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
-      "last_updated_at": "2026-08-03T19:36:31.880Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
       "labels": [

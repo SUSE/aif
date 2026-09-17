@@ -47,6 +47,16 @@ Application Collection, SUSE Registry, or NVIDIA Settings section. Changes to a
 chart-sourced workloads. Blueprint deployments rebuild their chart reference;
 App workloads refresh the pull secrets managed by the operator.
 
+NVIDIA uses more than the two organization-level repositories. NVAIE apps may
+come from team paths such as `nvidia/runai`, `nvidia/omniverse`, or `nim/nvidia`.
+The operator derives a stable `ClusterRepo` alias for every such source from the
+bundled catalog. In connected mode each alias points at its public NGC path; in
+private mode all of those aliases point at `registryEndpoints.nvidia`. The
+private endpoint is therefore an aggregate chart mirror and must contain the
+names and versions from every supported NVIDIA source. Preserving the aliases is
+what keeps existing `AIWorkload.spec.source.app.chartRepo` references valid when
+switching between connected and private modes.
+
 The extension also classifies the well-known sources by their stable
 `ClusterRepo` names rather than by public URL patterns. This keeps vendor-specific
 pull-secret behavior intact after an endpoint moves to a private mirror, and

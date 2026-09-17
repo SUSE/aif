@@ -76,3 +76,44 @@ func TestApplyTeamClusterRepo_StampsBothLabels(t *testing.T) {
 		t.Errorf("team repo missing team-repo label, got labels=%v", labels)
 	}
 }
+
+func TestApplyTeamClusterRepo_CredentialHostGuardAndMirrorException(t *testing.T) {
+	s := runtime.NewScheme()
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	}, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList",
+	}, &unstructured.UnstructuredList{})
+
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &SettingsReconciler{Client: c, Scheme: s}
+	const mirrorURL = "oci://registry.internal/nvidia"
+
+	// The connected-mode helper must never send the NGC token to another host.
+	if err := r.applyTeamClusterRepo(context.Background(), "nvidia-omniverse", mirrorURL, credentials.AuthSecretNvidia); err == nil {
+		t.Fatal("applyTeamClusterRepo unexpectedly attached NGC credentials to a non-NGC URL")
+	}
+
+	// The mirror-specific helper accepts the administrator-configured endpoint,
+	// stamps both provenance labels, and attaches the private mirror credential.
+	if err := r.applyMirroredTeamClusterRepo(context.Background(), "nvidia-omniverse", mirrorURL, credentials.AuthSecretNvidia); err != nil {
+		t.Fatalf("applyMirroredTeamClusterRepo: %v", err)
+	}
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "nvidia-omniverse"}, repo); err != nil {
+		t.Fatalf("get mirrored team ClusterRepo: %v", err)
+	}
+	if got, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); got != mirrorURL {
+		t.Errorf("mirror URL = %q, want %q", got, mirrorURL)
+	}
+	if got, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); got != credentials.AuthSecretNvidia {
+		t.Errorf("clientSecret = %q, want %q", got, credentials.AuthSecretNvidia)
+	}
+	if repo.GetLabels()[managedRepoMarkerLabel] != managedRepoMarkerValue || repo.GetLabels()[teamRepoMarkerLabel] != teamRepoMarkerValue {
+		t.Errorf("mirrored alias missing provenance labels: %v", repo.GetLabels())
+	}
+}

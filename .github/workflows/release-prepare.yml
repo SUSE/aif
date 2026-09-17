@@ -140,7 +140,7 @@ jobs:
           ' charts/aif-operator/Chart.yaml
 
           # update the BuildTag in Chart.yaml
-          sed -i -E "s|^(#\!BuildTag: charts/aif-operator:)[0-9\.]+(-rc\.[0-9]+)?|\1${VERSION}|" charts/aif-operator/Chart.yaml
+          sed -i -E "s|^(#\!BuildTag: charts/aif-operator:)${old_re}|\1${VERSION}|" charts/aif-operator/Chart.yaml
 
           # operator values: own image tag + lockstep aif-ui/extension version refs.
           # Use sed, not yq — yq strips blank lines and re-indents this file, which
@@ -158,7 +158,7 @@ jobs:
           ' charts/aif-ui/Chart.yaml
 
           # update BuildTag in Chart.yaml
-          sed -i -E "s|^(#\!BuildTag: charts/aif-ui:)[0-9\.]+(-rc\.[0-9]+)?|\1${VERSION}|" charts/aif-ui/Chart.yaml
+          sed -i -E "s|^(#\!BuildTag: charts/aif-ui:)${old_re}|\1${VERSION}|" charts/aif-ui/Chart.yaml
 
           # ui packages (root version + package-lock root entries only)
           bump_json() {
