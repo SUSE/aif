@@ -59,6 +59,7 @@ func (h *SettingsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/settings", h.putSettings)
 	mux.HandleFunc("GET /api/v1/settings/registry-credentials", h.getRegistryCredentials)
 	mux.HandleFunc("POST /api/v1/settings/validate-credentials", h.validateCredentials)
+	mux.HandleFunc("POST /api/v1/settings/validate-chart-access", h.validateChartAccess)
 	mux.HandleFunc("POST /api/v1/git/publish", h.publishToGit)
 }
 

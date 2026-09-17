@@ -5,6 +5,7 @@ import Loading          from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import { Checkbox }     from '@components/Form/Checkbox';
 import SecretSelector   from '@shell/components/form/SecretSelector';
+import RegistryConnectionStatus from './components/RegistryConnectionStatus.vue';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
 import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
 import {
@@ -40,6 +41,7 @@ export default {
     LabeledInput,
     Checkbox,
     SecretSelector,
+    RegistryConnectionStatus,
   },
 
   async fetch() {
@@ -70,6 +72,7 @@ export default {
       fetchErrorMessage: null,
       errors:            [],
       mode:              'edit',
+      settingsRevision:  0,
       tokenState:      { expiresAt: '', tokenName: '', configured: false, loaded: false },
       authorizeError:  '',
       showAdvanced:    { rancherCatalog: false },
@@ -81,9 +84,6 @@ export default {
         rancherCatalog: false,
       },
       testResults: {
-        applicationCollection: null,
-        suseRegistry:          null,
-        nvidia:                null,
         gitops:                null,
         rancherCatalog:        null,
       },
@@ -278,6 +278,9 @@ export default {
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
+        // Discard diagnostics of the previous saved configuration, including any
+        // checks still in flight when Apply was clicked.
+        this.settingsRevision++;
         buttonDone(true);
 
         return true;
@@ -293,10 +296,18 @@ export default {
       return !!(ref && ref.name && ref.key);
     },
 
-    // canTest gates the per-section Test button so it only fires with inputs the
-    // probe can actually use. Registries need both secret name+key on each ref;
-    // gitops needs a repoURL. Authentication is optional for an anonymous
-    // repository; HTTPS CA trust is tested when configured.
+    registryConfiguration(target) {
+      const section = this.spec[target];
+      return {
+        url: this.spec.registryEndpoints[target],
+        userSecretRef: section.userSecretRef,
+        tokenSecretRef: section.tokenSecretRef,
+        caBundleSecretRef: section.caBundleSecretRef,
+      };
+    },
+
+    // Registry checks live in RegistryConnectionStatus; these remaining probes
+    // only need a Git URL or a complete Rancher API token reference.
     canTest(target) {
       if (target === 'gitops') {
         return !!this.spec.fleet.repoURL;
@@ -306,8 +317,7 @@ export default {
       if (target === 'rancherCatalog') {
         return this.secretRefComplete(this.spec.rancherCatalog.tokenSecretRef);
       }
-      const sec = this.spec[target];
-      return this.secretRefComplete(sec?.userSecretRef) && this.secretRefComplete(sec?.tokenSecretRef);
+      return false;
     },
 
     async runTest(target, override, buttonDone) {
@@ -536,21 +546,11 @@ export default {
             </div>
           </div>
 
-          <div class="row mt-10">
-            <div class="col span-12">
-              <AsyncButton
-                mode="edit"
-                :action-label="t('suseai.pages.settings.test.button')"
-                :disabled="!canTest('applicationCollection')"
-                @click="cb => runTest('applicationCollection', { url: spec.registryEndpoints.applicationCollection, userSecretRef: spec.applicationCollection.userSecretRef, tokenSecretRef: spec.applicationCollection.tokenSecretRef, caBundleSecretRef: spec.applicationCollection.caBundleSecretRef }, cb)"
-              />
-              <span
-                v-if="testResults.applicationCollection"
-                :class="testResultClass('applicationCollection')"
-                class="ml-10"
-              >{{ testResultText('applicationCollection') }}</span>
-            </div>
-          </div>
+          <RegistryConnectionStatus
+            :key="`applicationCollection-${settingsRevision}`"
+            target="applicationCollection"
+            :configuration="registryConfiguration('applicationCollection')"
+          />
         </div>
       </div>
 
@@ -650,21 +650,11 @@ export default {
             </div>
           </div>
 
-          <div class="row mt-10">
-            <div class="col span-12">
-              <AsyncButton
-                mode="edit"
-                :action-label="t('suseai.pages.settings.test.button')"
-                :disabled="!canTest('suseRegistry')"
-                @click="cb => runTest('suseRegistry', { url: spec.registryEndpoints.suseRegistry, userSecretRef: spec.suseRegistry.userSecretRef, tokenSecretRef: spec.suseRegistry.tokenSecretRef, caBundleSecretRef: spec.suseRegistry.caBundleSecretRef }, cb)"
-              />
-              <span
-                v-if="testResults.suseRegistry"
-                :class="testResultClass('suseRegistry')"
-                class="ml-10"
-              >{{ testResultText('suseRegistry') }}</span>
-            </div>
-          </div>
+          <RegistryConnectionStatus
+            :key="`suseRegistry-${settingsRevision}`"
+            target="suseRegistry"
+            :configuration="registryConfiguration('suseRegistry')"
+          />
         </div>
       </div>
 
@@ -751,21 +741,11 @@ export default {
             </div>
           </div>
 
-          <div class="row mt-10">
-            <div class="col span-12">
-              <AsyncButton
-                mode="edit"
-                :action-label="t('suseai.pages.settings.test.button')"
-                :disabled="!canTest('nvidia')"
-                @click="cb => runTest('nvidia', { url: spec.registryEndpoints.nvidia, userSecretRef: spec.nvidia.userSecretRef, tokenSecretRef: spec.nvidia.tokenSecretRef, caBundleSecretRef: spec.nvidia.caBundleSecretRef }, cb)"
-              />
-              <span
-                v-if="testResults.nvidia"
-                :class="testResultClass('nvidia')"
-                class="ml-10"
-              >{{ testResultText('nvidia') }}</span>
-            </div>
-          </div>
+          <RegistryConnectionStatus
+            :key="`nvidia-${settingsRevision}`"
+            target="nvidia"
+            :configuration="registryConfiguration('nvidia')"
+          />
         </div>
       </div>
 

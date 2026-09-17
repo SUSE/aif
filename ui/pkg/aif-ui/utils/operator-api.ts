@@ -1,8 +1,8 @@
 import { operatorFetch } from './operator-config';
 import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryCredentials } from '../types/aiworkload-types';
 
-export function getSettings(): Promise<any> {
-  return operatorFetch('/api/v1/settings');
+export function getSettings(signal?: AbortSignal): Promise<any> {
+  return operatorFetch('/api/v1/settings', { signal });
 }
 
 export function putSettings(spec: any): Promise<any> {
@@ -137,6 +137,29 @@ export interface ValidateResult {
 
 export interface ValidateResponse {
   results: ValidateResult[];
+}
+
+export interface ChartAccessResult {
+  repositoryUrl: string;
+  chartName?: string;
+  version?: string;
+  check?: 'manifest' | 'chartFile';
+  status: 'ok' | 'failed' | 'error';
+  reason?: string;
+  httpStatus?: number;
+  latencyMs: number;
+}
+
+export function validateChartAccess(body: {
+  target: string;
+  configuration: Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef'>;
+  chartName?: string;
+}): Promise<{ results: ChartAccessResult[] }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+  return operatorFetch('/api/v1/settings/validate-chart-access', {
+    method: 'POST', body: JSON.stringify(body), signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
 }
 
 export function validateCredentials(body: ValidateRequest, timeoutMs = 20000): Promise<ValidateResponse> {
