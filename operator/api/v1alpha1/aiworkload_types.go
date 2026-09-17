@@ -111,7 +111,8 @@ type AIWorkloadSource struct {
 	Blueprint *BlueprintSource `json:"blueprint,omitempty"`
 }
 
-// ComponentValueOverride holds per-component Helm value overrides.
+// ComponentValueOverride holds per-component customizations: Helm value
+// overrides and/or an enable/disable toggle.
 type ComponentValueOverride struct {
 	// ComponentName matches source.app.chartName (App) or a Blueprint component name.
 	// +kubebuilder:validation:MinLength=1
@@ -119,6 +120,13 @@ type ComponentValueOverride struct {
 	// Values are the Helm values for this component.
 	// +optional
 	Values *apixv1.JSON `json:"values,omitempty"`
+	// Enabled controls whether this Blueprint component is deployed at all.
+	// Defaults to true (nil == enabled) so every AIWorkload created before this
+	// field existed keeps deploying every component unchanged. Only meaningful
+	// for Blueprint-sourced workloads; ignored for App sources, which have no
+	// component list to select from.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // AIWorkloadSpec defines the desired state of AIWorkload.

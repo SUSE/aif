@@ -55,16 +55,27 @@ spec:
             description: AIWorkloadSpec defines the desired state of AIWorkload.
             properties:
               componentValues:
-                description: ComponentValues holds per-component Helm value overrides.
+                description: |-
+                  ComponentValues holds per-component customizations: Helm value
+                  overrides and/or an enable/disable toggle.
                 items:
-                  description: ComponentValueOverride holds per-component Helm value
-                    overrides.
+                  description: |-
+                    ComponentValueOverride holds per-component customizations: Helm value
+                    overrides and/or an enable/disable toggle.
                   properties:
                     componentName:
                       description: ComponentName matches source.app.chartName (App)
                         or a Blueprint component name.
                       minLength: 1
                       type: string
+                    enabled:
+                      description: |-
+                        Enabled controls whether this Blueprint component is deployed at all.
+                        Defaults to true (nil == enabled) so every AIWorkload created before this
+                        field existed keeps deploying every component unchanged. Only meaningful
+                        for Blueprint-sourced workloads; ignored for App sources, which have no
+                        component list to select from.
+                      type: boolean
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
