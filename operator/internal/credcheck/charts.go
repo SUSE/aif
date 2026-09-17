@@ -83,11 +83,19 @@ func ProbeChart(ctx context.Context, repositoryURL, chartName, username, passwor
 	}
 	httpClient := &http.Client{
 		Transport: transport,
-		// A redirect must not send credentials to another origin or downgrade TLS.
-		// An OCI bearer realm is handled separately by the registry protocol.
+		// A redirect must not downgrade TLS or forward credentials to another
+		// origin. Cross-origin redirects are allowed, though: a Helm chart or an
+		// OCI blob download commonly 302s to object storage or a CDN on a
+		// different host, so refusing them reports a working repository as broken.
+		// The registry credential is dropped before leaving the requested origin
+		// (the Go client also strips Authorization on a cross-host redirect); an
+		// OCI bearer realm is handled separately by the registry protocol.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 || req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
-				return errors.New("chart probe redirect leaves the requested origin")
+			if len(via) >= 10 || req.URL.Scheme != "https" {
+				return errors.New("chart probe redirect downgrades TLS or exceeds the redirect limit")
+			}
+			if req.URL.Host != via[0].URL.Host {
+				req.Header.Del("Authorization")
 			}
 			return nil
 		},

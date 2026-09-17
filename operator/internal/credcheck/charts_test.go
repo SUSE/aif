@@ -187,6 +187,40 @@ func TestProbeChartNeverFollowsMirrorIndexToPublicSource(t *testing.T) {
 	}
 }
 
+func TestProbeChartHTTPSFollowsCDNRedirectWithoutForwardingCredentials(t *testing.T) {
+	var cdnAuthorization string
+	var cdnRanged bool
+	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cdnAuthorization = r.Header.Get("Authorization")
+		cdnRanged = r.Header.Get("Range") == "bytes=0-0"
+		w.WriteHeader(http.StatusPartialContent)
+	}))
+	defer cdn.Close()
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/team/index.yaml":
+			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  runai:\n    - version: 1.2.3\n      urls: [runai-1.2.3.tgz]\n"))
+		case "/team/runai-1.2.3.tgz":
+			// A working repository commonly 302s a chart download to object storage.
+			http.Redirect(w, r, cdn.URL+"/blobs/runai-1.2.3.tgz", http.StatusFound)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	}))
+	defer origin.Close()
+	ca := append(testChartCA(origin), testChartCA(cdn)...)
+	result := ProbeChart(context.Background(), origin.URL+"/team", "runai", "user", "key", ca)
+	if result.Status != "ok" || result.Check != "chartFile" {
+		t.Fatalf("result=%+v", result)
+	}
+	if !cdnRanged {
+		t.Error("range request not preserved across redirect")
+	}
+	if cdnAuthorization != "" {
+		t.Fatalf("registry credential forwarded off origin: %q", cdnAuthorization)
+	}
+}
+
 func TestProbeChartTrustTimeoutAndInputErrors(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer server.Close()
