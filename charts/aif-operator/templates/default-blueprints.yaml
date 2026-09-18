@@ -12,9 +12,11 @@ Gated by defaultBlueprints.enabled.
 {{- if .Values.defaultBlueprints.enabled }}
 {{- range $path, $_ := .Files.Glob "files/blueprints/*.yaml" }}
 {{- $bp := $.Files.Get $path | fromYaml }}
+{{- if eq (index $bp "kind") "Blueprint" }}
 {{- $common := include "aif-operator.labels" $ | fromYaml }}
 {{- $_ := set $bp "metadata" (merge (dict "labels" (merge (dict "ai-factory.suse.com/source" "bundled" "ai-factory.suse.com/catalog" "suse-default") $common)) (index $bp "metadata" | default dict)) }}
 ---
 {{ toYaml $bp }}
+{{- end }}
 {{- end }}
 {{- end }}

@@ -60,6 +60,7 @@ type SettingsReconciler struct {
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=gitrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=catalogs,verbs=get;list;watch
 
 func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
@@ -427,13 +428,24 @@ func catalogGitRepoName(name string) string { return "blueprint-catalog-" + name
 // GitRepo makes Fleet garbage-collect that catalog's Blueprint CRs.
 func (r *SettingsReconciler) reconcileBlueprintCatalogs(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	// Validate every catalog name BEFORE applying any GitRepo. Rejecting a
-	// reserved name partway through the apply loop would leave earlier
+	// colliding name partway through the apply loop would leave earlier
 	// catalogs' GitRepos already applied — a partial mutation that then
 	// requeues forever since the same name still fails validation next time.
+	//
+	// Reject a catalog name that collides with an ACTIVE Helm-managed Catalog
+	// (the bundled default). This guards the CR-name collision between Helm-owned
+	// and Fleet-owned resources; disabling defaultBlueprints removes the Helm
+	// Catalog and frees the name for a git import (swappable default).
 	for i := range s.Spec.BlueprintCatalogs {
 		cat := &s.Spec.BlueprintCatalogs[i]
-		if cat.Name == aiplatformv1alpha1.BlueprintCatalogDefault {
-			return fmt.Errorf("catalog name %q is reserved for the bundled catalog", cat.Name)
+		var existing aiplatformv1alpha1.Catalog
+		err := r.Get(ctx, types.NamespacedName{Name: cat.Name}, &existing)
+		if err == nil && existing.Labels["app.kubernetes.io/managed-by"] == "Helm" {
+			return fmt.Errorf("catalog name %q collides with an active bundled (Helm-managed) catalog; "+
+				"disable defaultBlueprints to import it from git, or choose another name", cat.Name)
+		}
+		if err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("check catalog name %q: %w", cat.Name, err)
 		}
 	}
 

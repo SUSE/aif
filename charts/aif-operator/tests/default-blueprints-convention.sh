@@ -14,6 +14,12 @@ namever() { echo "$1" | sed -E 's/\+.*$//; s/\./-/g'; }
 
 shopt -s nullglob
 for f in "$DIR"/*.yaml; do
+  # The colocated bundled Catalog file lives in this same folder (Fleet syncs
+  # it alongside the blueprints on a git swap) but isn't a Blueprint, so it
+  # doesn't follow blueprint naming conventions. Skip it.
+  k="$(yq '.kind' "$f")"
+  [ "$k" = "Blueprint" ] || continue
+
   # The rendering template (fromYaml) reads only the first document in a file,
   # so a multi-document file would silently drop blueprints. Reject it here.
   docs="$(yq ea 'documentIndex' "$f" | tail -1)"

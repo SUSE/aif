@@ -1,0 +1,100 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: catalogs.ai-factory.suse.com
+spec:
+  group: ai-factory.suse.com
+  names:
+    kind: Catalog
+    listKind: CatalogList
+    plural: catalogs
+    shortNames:
+    - bpcatalog
+    singular: catalog
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.displayName
+      name: Display Name
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Catalog is a branded, membership-bearing collection of blueprints.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              CatalogSpec is the branding + membership of a blueprint catalog. It is
+              UI-consumed data; the operator runs no reconcile logic on it.
+            properties:
+              blueprints:
+                description: Blueprints is the catalog's membership list (many-to-many).
+                items:
+                  description: |-
+                    CatalogMember references one blueprint family (by its blueprint-name label)
+                    offered by a catalog, with per-membership curation. A blueprint listed by
+                    multiple catalogs belongs to all of them (many-to-many).
+                  properties:
+                    category:
+                      type: string
+                    featured:
+                      type: boolean
+                    name:
+                      description: Name matches a Blueprint's ai-factory.suse.com/blueprint-name
+                        (family) label.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              categories:
+                items:
+                  type: string
+                type: array
+              description:
+                type: string
+              displayName:
+                type: string
+              icon:
+                description: 'Icon is a URL or data: URI (data: keeps it air-gap friendly).'
+                type: string
+              maintainer:
+                description: CatalogMaintainer identifies who maintains a catalog.
+                properties:
+                  name:
+                    type: string
+                  url:
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}
