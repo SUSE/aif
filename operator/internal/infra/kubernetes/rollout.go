@@ -33,6 +33,14 @@ import (
 // The generation check mirrors RolloutIncomplete's (ObservedGeneration <
 // Generation) rather than kubectl's extra ObservedGeneration == 0 clause, so the
 // two sibling helpers reason about a stale spec identically.
+//
+// Two update strategies are handled the way kubectl does. A partitioned
+// RollingUpdate only rolls pods with an ordinal at or above the partition, so
+// UpdateRevision never converges to CurrentRevision and a naive revision compare
+// would report such a StatefulSet as forever rolling; it is complete once the
+// pods above the partition carry the new revision. An OnDelete StatefulSet is not
+// updated by the controller at all (pods roll only when deleted by hand), so
+// there is no rollout to track and the ready-replica check alone decides it.
 func StatefulSetRolloutIncomplete(s *appsv1.StatefulSet) string {
 	if s.Status.ObservedGeneration < s.Generation {
 		return "waiting for the statefulset spec update to be observed"
@@ -46,11 +54,29 @@ func StatefulSetRolloutIncomplete(s *appsv1.StatefulSet) string {
 		return fmt.Sprintf("%d of %d pods are ready", s.Status.ReadyReplicas, desired)
 	}
 
-	// A RollingUpdate is only complete once every pod runs the update revision.
-	// Until then CurrentRevision still names the revision being replaced and its
-	// pods keep ReadyReplicas at the desired value, masking the incomplete roll.
-	if s.Spec.UpdateStrategy.Type == appsv1.RollingUpdateStatefulSetStrategyType &&
-		s.Status.UpdateRevision != "" &&
+	if s.Spec.UpdateStrategy.Type != appsv1.RollingUpdateStatefulSetStrategyType {
+		// OnDelete: the controller does not roll pods, so ready replicas are the
+		// only signal available. Anything else would strand the workload Degraded.
+		return ""
+	}
+
+	// A partitioned rollout only ever updates the pods with an ordinal >= the
+	// partition, so it is complete once that many pods carry the new revision —
+	// CurrentRevision deliberately never catches up to UpdateRevision here.
+	if ru := s.Spec.UpdateStrategy.RollingUpdate; ru != nil && ru.Partition != nil {
+		want := s.Status.Replicas - *ru.Partition
+		if s.Status.UpdatedReplicas < want {
+			return fmt.Sprintf("waiting for partitioned rollout to finish: %d of %d new pods updated",
+				s.Status.UpdatedReplicas, want)
+		}
+		return ""
+	}
+
+	// A non-partitioned RollingUpdate is only complete once every pod runs the
+	// update revision. Until then CurrentRevision still names the revision being
+	// replaced and its pods keep ReadyReplicas at the desired value, masking the
+	// incomplete roll.
+	if s.Status.UpdateRevision != "" &&
 		s.Status.UpdateRevision != s.Status.CurrentRevision {
 		return fmt.Sprintf("waiting for the rolling update to complete: %d of %d pods updated",
 			s.Status.UpdatedReplicas, desired)
@@ -68,11 +94,18 @@ func StatefulSetRolloutIncomplete(s *appsv1.StatefulSet) string {
 //
 // A DaemonSet scheduled onto zero nodes (DesiredNumberScheduled == 0) has
 // nothing to roll out and is reported ready, matching kubectl.
+//
+// An OnDelete DaemonSet is not rolled by the controller (pods update only when
+// deleted by hand), so UpdatedNumberScheduled may trail DesiredNumberScheduled
+// indefinitely; the revision-progress check is skipped for it. Availability still
+// applies regardless of strategy — a pod that is scheduled but not available is
+// not ready either way.
 func DaemonSetRolloutIncomplete(d *appsv1.DaemonSet) string {
 	if d.Status.ObservedGeneration < d.Generation {
 		return "waiting for the daemonset spec update to be observed"
 	}
-	if d.Status.UpdatedNumberScheduled < d.Status.DesiredNumberScheduled {
+	if d.Spec.UpdateStrategy.Type == appsv1.RollingUpdateDaemonSetStrategyType &&
+		d.Status.UpdatedNumberScheduled < d.Status.DesiredNumberScheduled {
 		return fmt.Sprintf("%d of %d pods have been updated to the new revision",
 			d.Status.UpdatedNumberScheduled, d.Status.DesiredNumberScheduled)
 	}

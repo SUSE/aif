@@ -21,6 +21,12 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+)
+
+const (
+	revOld = "rev-old"
+	revNew = "rev-new"
 )
 
 // TestStatefulSetRolloutIncomplete pins the readiness contract for the
@@ -29,6 +35,7 @@ import (
 // its desired value, so a check that only counted ready pods would report a
 // broken upgrade as complete.
 func TestStatefulSetRolloutIncomplete(t *testing.T) {
+	rolling := appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType}
 	tests := []struct {
 		name      string
 		sts       *appsv1.StatefulSet
@@ -36,14 +43,14 @@ func TestStatefulSetRolloutIncomplete(t *testing.T) {
 	}{
 		{
 			name: "spec update not yet observed is not ready",
-			sts: statefulSet(2, 1, appsv1.StatefulSetSpec{Replicas: ptr(1)}, appsv1.StatefulSetStatus{
+			sts: statefulSet(2, 1, appsv1.StatefulSetSpec{Replicas: ptr.To[int32](1)}, appsv1.StatefulSetStatus{
 				ReadyReplicas: 1,
 			}),
 			wantReady: false,
 		},
 		{
 			name: "fewer ready than desired is not ready",
-			sts: statefulSet(1, 1, appsv1.StatefulSetSpec{Replicas: ptr(1)}, appsv1.StatefulSetStatus{
+			sts: statefulSet(1, 1, appsv1.StatefulSetSpec{Replicas: ptr.To[int32](1)}, appsv1.StatefulSetStatus{
 				ReadyReplicas: 0,
 			}),
 			wantReady: false,
@@ -53,25 +60,19 @@ func TestStatefulSetRolloutIncomplete(t *testing.T) {
 			// revision has not rolled out — ReadyReplicas alone would call this done.
 			name: "rolling update in progress with old pod ready is not ready",
 			sts: statefulSet(1, 1,
-				appsv1.StatefulSetSpec{
-					Replicas:       ptr(1),
-					UpdateStrategy: appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType},
-				},
+				appsv1.StatefulSetSpec{Replicas: ptr.To[int32](1), UpdateStrategy: rolling},
 				appsv1.StatefulSetStatus{
 					ReadyReplicas:   1,
 					UpdatedReplicas: 0,
-					CurrentRevision: "rev-old",
-					UpdateRevision:  "rev-new",
+					CurrentRevision: revOld,
+					UpdateRevision:  revNew,
 				}),
 			wantReady: false,
 		},
 		{
 			name: "rolling update complete is ready",
 			sts: statefulSet(1, 1,
-				appsv1.StatefulSetSpec{
-					Replicas:       ptr(1),
-					UpdateStrategy: appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType},
-				},
+				appsv1.StatefulSetSpec{Replicas: ptr.To[int32](1), UpdateStrategy: rolling},
 				appsv1.StatefulSetStatus{
 					ReadyReplicas:   1,
 					UpdatedReplicas: 1,
@@ -81,8 +82,69 @@ func TestStatefulSetRolloutIncomplete(t *testing.T) {
 			wantReady: true,
 		},
 		{
+			// A partitioned rollout deliberately leaves the lower ordinals on the old
+			// revision, so UpdateRevision never converges to CurrentRevision. Once the
+			// pods above the partition are updated the roll is done; a plain revision
+			// compare would strand this StatefulSet not-ready forever.
+			name: "partitioned rollout with pods above partition updated is ready",
+			sts: statefulSet(1, 1,
+				appsv1.StatefulSetSpec{
+					Replicas: ptr.To[int32](3),
+					UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+						Type:          appsv1.RollingUpdateStatefulSetStrategyType,
+						RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: ptr.To[int32](2)},
+					},
+				},
+				appsv1.StatefulSetStatus{
+					Replicas:        3,
+					ReadyReplicas:   3,
+					UpdatedReplicas: 1, // ordinal 2 only; ordinals 0-1 held back by the partition
+					CurrentRevision: revOld,
+					UpdateRevision:  revNew,
+				}),
+			wantReady: true,
+		},
+		{
+			name: "partitioned rollout with pods above partition not yet updated is not ready",
+			sts: statefulSet(1, 1,
+				appsv1.StatefulSetSpec{
+					Replicas: ptr.To[int32](3),
+					UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+						Type:          appsv1.RollingUpdateStatefulSetStrategyType,
+						RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: ptr.To[int32](2)},
+					},
+				},
+				appsv1.StatefulSetStatus{
+					Replicas:        3,
+					ReadyReplicas:   3,
+					UpdatedReplicas: 0,
+					CurrentRevision: revOld,
+					UpdateRevision:  revNew,
+				}),
+			wantReady: false,
+		},
+		{
+			// OnDelete pods roll only when deleted by hand, so UpdateRevision staying
+			// ahead of CurrentRevision is normal, not a stuck rollout. Ready replicas
+			// are the only signal; treating the revision gap as incomplete would strand
+			// every OnDelete StatefulSet Degraded.
+			name: "on-delete with ready pods is ready despite revision gap",
+			sts: statefulSet(1, 1,
+				appsv1.StatefulSetSpec{
+					Replicas:       ptr.To[int32](1),
+					UpdateStrategy: appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType},
+				},
+				appsv1.StatefulSetStatus{
+					ReadyReplicas:   1,
+					UpdatedReplicas: 0,
+					CurrentRevision: revOld,
+					UpdateRevision:  revNew,
+				}),
+			wantReady: true,
+		},
+		{
 			name: "fresh install with a ready pod is ready",
-			sts: statefulSet(0, 0, appsv1.StatefulSetSpec{Replicas: ptr(1)}, appsv1.StatefulSetStatus{
+			sts: statefulSet(0, 0, appsv1.StatefulSetSpec{Replicas: ptr.To[int32](1)}, appsv1.StatefulSetStatus{
 				ReadyReplicas: 1,
 			}),
 			wantReady: true,
@@ -151,6 +213,21 @@ func TestDaemonSetRolloutIncomplete(t *testing.T) {
 			}),
 			wantReady: true,
 		},
+		{
+			// OnDelete pods update only when deleted by hand, so a lagging
+			// UpdatedNumberScheduled is expected, not a stuck rollout. As long as the
+			// scheduled pods are available the DaemonSet is ready.
+			name: "on-delete with lagging updates but all available is ready",
+			ds: func() *appsv1.DaemonSet {
+				d := daemonSet(1, appsv1.DaemonSetStatus{
+					ObservedGeneration:     1,
+					DesiredNumberScheduled: 3, UpdatedNumberScheduled: 1, NumberAvailable: 3,
+				})
+				d.Spec.UpdateStrategy.Type = appsv1.OnDeleteDaemonSetStrategyType
+				return d
+			}(),
+			wantReady: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -173,11 +250,15 @@ func statefulSet(gen, observedGen int64, spec appsv1.StatefulSetSpec, status app
 	}
 }
 
+// daemonSet builds a RollingUpdate DaemonSet — the strategy the API server
+// defaults to and the one the readiness check tracks revision progress for.
+// Cases that need OnDelete override Spec.UpdateStrategy.Type themselves.
 func daemonSet(gen int64, status appsv1.DaemonSetStatus) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Generation: gen},
-		Status:     status,
+		Spec: appsv1.DaemonSetSpec{
+			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{Type: appsv1.RollingUpdateDaemonSetStrategyType},
+		},
+		Status: status,
 	}
 }
-
-func ptr(i int32) *int32 { return &i }

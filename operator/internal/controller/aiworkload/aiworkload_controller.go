@@ -21,6 +21,8 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -249,38 +251,93 @@ func (r *AIWorkloadReconciler) reconcileHelmStatus(ctx context.Context, w *aipla
 	if w.Spec.Source.App == nil {
 		return nil
 	}
-	exists, err := r.helmReleaseExists(ctx, w.Spec.TargetNamespace, w.Spec.Source.App.Release)
+	state, err := r.helmReleaseStatus(ctx, w.Spec.TargetNamespace, w.Spec.Source.App.Release)
 	if err != nil {
 		return err
 	}
-	if !exists {
+	if !state.exists {
 		w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseUnknown
 		w.Status.ClusterStatuses = nil
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionUnknown,
+			"ReleaseNotFound", "No Helm release found for this workload yet", w.Generation)
 		return nil
 	}
 
-	// A present release secret only means Helm started; it says nothing about
-	// whether the deployed pods are actually running. Inspect the release's
-	// workload controllers so a workload whose pods cannot start (e.g. a NIM pod
-	// that will not fit in GPU memory) is reported Degraded rather than Running.
+	// The newest release revision's own status label closes the gap a controller
+	// scan alone leaves open: a Helm install that failed outright can leave no
+	// workload controllers at all, which the scan would read as "nothing
+	// not-ready" and report Running. Trust Helm's own verdict first.
+	switch {
+	case strings.HasPrefix(state.status, "pending"):
+		w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhasePending
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"ReleasePending", "Helm release operation in progress", w.Generation)
+		return nil
+	case state.status == "failed":
+		w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseDegraded
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"ReleaseFailed", "Helm release install or upgrade failed", w.Generation)
+		return nil
+	}
+
+	// A deployed release only means Helm applied the manifest; inspect the pods so
+	// a workload that cannot actually start (e.g. a NIM pod that will not fit in
+	// GPU memory) is reported Degraded rather than Running.
 	controllers, err := r.helmManagedControllers(ctx, w.Spec.TargetNamespace, w.Spec.Source.App.Release)
 	if err != nil {
 		return err
 	}
-	w.Status.Phase, _ = helmPhaseFromReadiness(controllers, w.CreationTimestamp.Time)
+	phase, reason, msg, err := r.classifyHelmPhase(ctx, w.Spec.TargetNamespace, controllers)
+	if err != nil {
+		return err
+	}
+	w.Status.Phase = phase
+	condStatus := metav1.ConditionFalse
+	if phase == aiplatformv1alpha1.AIWorkloadPhaseRunning {
+		condStatus = metav1.ConditionTrue
+	}
+	setCondition(&w.Status.Conditions, conditionTypeReady, condStatus, reason, truncateForCondition(msg), w.Generation)
 	return nil
 }
 
-// helmReleaseExists returns true when at least one Helm release secret exists for the given release.
-func (r *AIWorkloadReconciler) helmReleaseExists(ctx context.Context, namespace, releaseName string) (bool, error) {
+// helmReleaseState is the existence and newest-revision status of a Helm release,
+// read from its release secrets' labels.
+type helmReleaseState struct {
+	exists bool
+	// status is the Helm release status label of the highest-versioned release
+	// secret: deployed, failed, pending-install, pending-upgrade, superseded, …
+	// Empty when no secret carries a parseable version/status label.
+	status string
+}
+
+// helmReleaseStatus reports whether a Helm release exists and the status of its
+// newest revision. Helm records each revision as a Secret labelled owner=helm,
+// name=<release>, version=<n>, status=<state>; the highest version is the current
+// revision.
+func (r *AIWorkloadReconciler) helmReleaseStatus(ctx context.Context, namespace, releaseName string) (helmReleaseState, error) {
 	var list corev1.SecretList
 	if err := r.List(ctx, &list,
 		client.InNamespace(namespace),
 		client.MatchingLabels{"owner": "helm", "name": releaseName},
 	); err != nil {
-		return false, err
+		return helmReleaseState{}, err
 	}
-	return len(list.Items) > 0, nil
+	if len(list.Items) == 0 {
+		return helmReleaseState{}, nil
+	}
+	newest := -1
+	status := ""
+	for i := range list.Items {
+		v, err := strconv.Atoi(list.Items[i].Labels["version"])
+		if err != nil {
+			continue
+		}
+		if v > newest {
+			newest = v
+			status = list.Items[i].Labels["status"]
+		}
+	}
+	return helmReleaseState{exists: true, status: status}, nil
 }
 
 // appUninstaller is the subset of the Rancher catalog client the deletion path
@@ -303,11 +360,11 @@ func (r *AIWorkloadReconciler) handleHelmRelease(ctx context.Context, w *aiplatf
 	l := log.FromContext(ctx)
 	ns, release := w.Spec.TargetNamespace, w.Spec.Source.App.Release
 
-	exists, err := r.helmReleaseExists(ctx, ns, release)
+	state, err := r.helmReleaseStatus(ctx, ns, release)
 	if err != nil {
 		return false, ctrl.Result{}, err
 	}
-	if !exists {
+	if !state.exists {
 		return true, ctrl.Result{}, nil // release gone — safe to finalize
 	}
 
@@ -799,6 +856,16 @@ func (r *AIWorkloadReconciler) allAIWorkloadRequests(ctx context.Context) []reco
 // ── Manager setup ─────────────────────────────────────────────────────────────
 
 func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Wire the uncached reader here rather than leaving it to the caller, so the
+	// controllerReader() fallback to the cached Client can only ever be hit by a
+	// hand-built reconciler in a test. In a running operator that fallback would
+	// silently start cluster-wide informers for every Deployment/StatefulSet/
+	// DaemonSet (and need `watch` RBAC) — exactly what reading through APIReader
+	// exists to avoid. Left untouched when the caller supplied one (a test seam).
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
+	}
+
 	bd := &unstructured.Unstructured{}
 	bd.SetGroupVersionKind(bundleDeploymentGVK)
 
