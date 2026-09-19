@@ -414,13 +414,25 @@ export default defineComponent({
     // ── Computed ───────────────────────────────────────────────────────────────
     const families = computed(() => groupBlueprintsByFamily(blueprints.value));
 
+    const bundledFamilies = computed<Set<string>>(() => {
+      const s = new Set<string>();
+      for (const [family, versions] of families.value.entries()) {
+        if (versions.some(isBundled)) s.add(family);
+      }
+      return s;
+    });
+    const hasRealDefaultCatalog = computed(() => catalogs.value.some(c => c.metadata.name === CATALOG_DEFAULT_NAME));
+    const syntheticDefault = computed(() => bundledFamilies.value.size > 0 && !hasRealDefaultCatalog.value);
+
     const catalogOptions = computed(() => [
       { value: '', label: t('suseai.pages.blueprints.catalog.all', 'All catalogs') },
+      ...(syntheticDefault.value ? [{ value: CATALOG_DEFAULT_NAME, label: t('suseai.pages.blueprints.catalog.suseBlueprints', 'SUSE Blueprints') }] : []),
       ...catalogs.value.map(c => ({ value: c.metadata.name, label: catalogDisplayName(c) })),
     ]);
 
     const selectedCatalogFamilies = computed<Set<string> | null>(() => {
       if (!selectedCatalog.value) return null;
+      if (syntheticDefault.value && selectedCatalog.value === CATALOG_DEFAULT_NAME) return bundledFamilies.value;
       const cat = catalogs.value.find(c => c.metadata.name === selectedCatalog.value);
       return cat ? familiesInCatalog(cat) : null;
     });
@@ -510,13 +522,19 @@ export default defineComponent({
       } catch {
         catalogs.value = [];
       }
-      if (!catalogDefaultApplied && catalogs.value.length > 0) {
-        catalogDefaultApplied = true;
-        if (catalogs.value.some(c => c.metadata.name === CATALOG_DEFAULT_NAME)) {
-          selectedCatalog.value = CATALOG_DEFAULT_NAME;
-        }
-      }
     }
+
+    // The synthetic "SUSE Blueprints" option depends on blueprints, which may load
+    // after catalogs — so default selection watches catalogOptions instead of firing
+    // once inside loadCatalogs. catalogDefaultApplied still guards it to a single
+    // application, so a later manual selection is never overridden.
+    watch(catalogOptions, (opts) => {
+      if (catalogDefaultApplied) return;
+      if (opts.some(o => o.value === CATALOG_DEFAULT_NAME)) {
+        catalogDefaultApplied = true;
+        selectedCatalog.value = CATALOG_DEFAULT_NAME;
+      }
+    }, { immediate: true });
 
     // ── Data loading ───────────────────────────────────────────────────────────
     async function refresh() {

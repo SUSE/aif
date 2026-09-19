@@ -8,7 +8,9 @@ import SecretSelector   from '@shell/components/form/SecretSelector';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
 import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
 import { listCatalogs } from '../utils/catalog-api';
+import { listBlueprints } from '../utils/blueprint-api';
 import { CATALOG_DEFAULT_NAME } from '../types/catalog-types';
+import { BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
 import {
   resolveRegistryEndpoints,
   registryEndpointOverrides,
@@ -65,16 +67,11 @@ export default {
     }
 
     try {
-      const cl = await listCatalogs();
-      const def = (cl.items || []).find((c) => c.metadata.name === CATALOG_DEFAULT_NAME);
+      const [cl, bl] = await Promise.all([listCatalogs(), listBlueprints()]);
+      const hasGitDefault = (cl.items || []).some((c) => c.metadata.name === CATALOG_DEFAULT_NAME);
+      const hasBundled    = (bl.items || []).some((b) => b.metadata.labels?.[BLUEPRINT_SOURCE_LABEL] === BLUEPRINT_SOURCE_BUNDLED);
 
-      if (!def) {
-        this.defaultCatalogStatus = 'disabled';
-      } else if (def.metadata.labels?.['app.kubernetes.io/managed-by'] === 'Helm') {
-        this.defaultCatalogStatus = 'bundled';
-      } else {
-        this.defaultCatalogStatus = 'git';
-      }
+      this.defaultCatalogStatus = hasGitDefault ? 'git' : hasBundled ? 'bundled' : 'disabled';
     } catch {
       this.defaultCatalogStatus = 'unknown';
     }

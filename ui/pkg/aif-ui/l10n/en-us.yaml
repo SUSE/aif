@@ -173,6 +173,7 @@ suseai:
     blueprints:
       catalog:
         all: All catalogs
+        suseBlueprints: SUSE Blueprints
   apps:
     title: Apps
     backToApps: Back to Apps
