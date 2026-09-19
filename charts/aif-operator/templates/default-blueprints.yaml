@@ -7,9 +7,10 @@ app.kubernetes.io/managed-by=Helm) plus the source=bundled and
 catalog=suse-default marker labels so future git-source logic can recognize
 Helm-managed defaults and their originating catalog. The markers and the
 author's labels win over the common set on any key conflict.
-Gated by defaultBlueprints.enabled.
+Gated by defaultBlueprints.enabled and not gitSourced (git-sourced default is a
+Fleet GitRepo instead; see default-catalog-gitrepo.yaml).
 */ -}}
-{{- if .Values.defaultBlueprints.enabled }}
+{{- if and .Values.defaultBlueprints.enabled (not .Values.defaultBlueprints.gitSourced) }}
 {{- range $path, $_ := .Files.Glob "files/blueprints/*.yaml" }}
 {{- $bp := $.Files.Get $path | fromYaml }}
 {{- if eq (index $bp "kind") "Blueprint" }}

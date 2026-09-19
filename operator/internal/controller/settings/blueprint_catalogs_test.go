@@ -68,37 +68,14 @@ func TestReconcile_CreatesCatalogGitRepos(t *testing.T) {
 	}
 }
 
-func TestReconcile_RejectsNameCollidingWithHelmCatalog(t *testing.T) {
-	s := newScheme(t)
-	const ns = "suse-ai-system"
-	helmCat := &aiplatformv1alpha1.Catalog{}
-	helmCat.Name = "suse-default"
-	helmCat.Labels = map[string]string{"app.kubernetes.io/managed-by": "Helm"}
-	cr := &aiplatformv1alpha1.Settings{
-		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
-		Spec: aiplatformv1alpha1.SettingsSpec{
-			BlueprintCatalogs: []aiplatformv1alpha1.BlueprintCatalog{
-				{Name: "suse-default", GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: "https://git.example/x"}},
-			},
-		},
-	}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, helmCat).
-		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
-	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
-	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns}}); err == nil {
-		t.Fatal("expected error: name collides with an active Helm-managed Catalog")
-	}
-}
-
-func TestReconcile_AllowsNameWhenNoHelmCatalog(t *testing.T) {
+func TestReconcile_RejectsReservedCatalogName(t *testing.T) {
 	s := newScheme(t)
 	const ns = "suse-ai-system"
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			BlueprintCatalogs: []aiplatformv1alpha1.BlueprintCatalog{
-				{Name: "suse-default", GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: "https://git.example/x"}},
+				{Name: aiplatformv1alpha1.BlueprintCatalogDefault, GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: "https://git.example/x"}},
 			},
 		},
 	}
@@ -106,8 +83,8 @@ func TestReconcile_AllowsNameWhenNoHelmCatalog(t *testing.T) {
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
 	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns}}); err != nil {
-		t.Fatalf("expected suse-default to be importable when no Helm Catalog exists: %v", err)
+		NamespacedName: types.NamespacedName{Name: "settings", Namespace: ns}}); err == nil {
+		t.Fatal("expected error: suse-default is reserved for the default catalog")
 	}
 }
 

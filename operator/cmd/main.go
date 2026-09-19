@@ -374,6 +374,7 @@ func main() {
 	api.NewBlueprintHandler(mgr.GetClient()).Register(mux)
 	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(mux)
 	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(mux)
+	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(mux)
 	srv := &http.Server{Addr: apiBindAddr, Handler: api.Chain(mux)}
 
 	ctx := ctrl.SetupSignalHandler()

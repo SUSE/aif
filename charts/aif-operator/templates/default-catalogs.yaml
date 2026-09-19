@@ -7,8 +7,11 @@ author's metadata wins on any conflict. Gated by defaultBlueprints.enabled.
 WARNING: Bundled Catalog files under files/blueprints/ must NOT set
 app.kubernetes.io/managed-by — it is injected as "Helm" here, and the Settings
 swappable-default guard depends on this value to detect unauthorized overrides.
+
+Gated by defaultBlueprints.enabled and not gitSourced (git-sourced default is a
+Fleet GitRepo instead; see default-catalog-gitrepo.yaml).
 */ -}}
-{{- if .Values.defaultBlueprints.enabled }}
+{{- if and .Values.defaultBlueprints.enabled (not .Values.defaultBlueprints.gitSourced) }}
 {{- range $path, $_ := .Files.Glob "files/blueprints/*.yaml" }}
 {{- $cat := $.Files.Get $path | fromYaml }}
 {{- if eq (index $cat "kind") "Catalog" }}

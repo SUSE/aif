@@ -1,0 +1,22 @@
+{{- /*
+Git-sourced default catalog: a Fleet GitRepo syncing the default blueprints and
+their colocated Catalog CR from the configured public git source. Helm-managed
+(app.kubernetes.io/managed-by=Helm via common labels). Deliberately does NOT
+carry the operator's ai-factory.suse.com/blueprint-catalog-repo prune marker, so
+the Settings controller's pruneCatalogRepos never deletes it. Rendered only when
+the default catalog is enabled AND git-sourced; on a switch back to bundled (or
+disable) Helm removes it and Fleet garbage-collects the synced blueprints.
+*/ -}}
+{{- if and .Values.defaultBlueprints.enabled .Values.defaultBlueprints.gitSourced }}
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: blueprint-catalog-suse-default
+  namespace: fleet-local
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  repo: {{ .Values.defaultBlueprints.git.repoURL | quote }}
+  branch: {{ .Values.defaultBlueprints.git.branch | quote }}
+  paths: {{ toJson .Values.defaultBlueprints.git.paths }}
+{{- end }}
