@@ -116,13 +116,14 @@ describe('fetchManagedRepos', () => {
     expect(managed).toEqual([]);
   });
 
-  it('excludes disabled repos and reports readiness/message', async () => {
+  it('keeps disabled repos visible as unavailable and reports download failures', async () => {
     const store = makeStore([
       { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac', enabled: false }, status: ready() },
       { metadata: { name: 'nvidia', labels: { [MANAGED]: 'true' } }, spec: { url: 'https://helm.ngc.nvidia.com/nvidia' }, status: notReady('index download failed') },
     ]);
     const managed = await fetchManagedRepos(store);
     expect(managed).toEqual([
+      { name: 'application-collection', url: 'oci://ac', library: 'suse-ai', ready: false, message: 'The repository is disabled.' },
       { name: 'nvidia', url: 'https://helm.ngc.nvidia.com/nvidia', library: 'nvidia', ready: false, message: 'index download failed' },
     ]);
   });

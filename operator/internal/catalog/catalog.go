@@ -158,6 +158,38 @@ func finalize(items []Item) []Item {
 	return out
 }
 
+// supportedLabelCode marks a catalog entry NVIDIA (NVAIE) certifies as supported.
+const supportedLabelCode = "supported"
+
+// RepresentativeChart returns a sample chart slug served by repositoryURL, for a
+// chart-access probe. It prefers a supported entry so the probe reflects a chart
+// a customer is entitled to install, and otherwise falls back to the repo's first
+// bundled entry. Entries are consulted in the bundled catalog's deterministic
+// (library, name) order, so the result is stable. It returns "" when no bundled
+// entry serves the repository (e.g. an unknown air-gap mirror), leaving the
+// caller to choose its own fallback.
+func RepresentativeChart(repositoryURL string) string {
+	want := strings.TrimRight(strings.TrimSpace(repositoryURL), "/")
+	if want == "" {
+		return ""
+	}
+	fallback := ""
+	for _, it := range Bundled() {
+		if strings.TrimRight(strings.TrimSpace(it.RepositoryURL), "/") != want {
+			continue
+		}
+		if fallback == "" {
+			fallback = it.SlugName
+		}
+		for _, l := range it.Labels {
+			if l.Code == supportedLabelCode {
+				return it.SlugName
+			}
+		}
+	}
+	return fallback
+}
+
 // cleanLabels drops labels that carry neither a code nor a name; returns nil when
 // none remain so the JSON `omitempty` tag keeps absent labels absent.
 func cleanLabels(labels []Label) []Label {
