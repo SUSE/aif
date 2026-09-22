@@ -285,6 +285,7 @@ suseai:
       configuration: Configuration
       selectApps: Select Applications
       review: Review
+      customize: Customize
     review:
       readonlyNotice: Configuration preview (read-only)
     form:
@@ -336,6 +337,8 @@ suseai:
       blueprintDetails: Blueprint Details
       configureApps: Configure Applications
       configureAppsDesc: Set default Helm values for each application in this blueprint.
+      customize: Customize
+      customizeDesc: Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Leave a component untouched to keep the blueprint's defaults.
       configuration: Configuration
       reviewInstall: Review & Install
       reviewCreate: Review & Create
@@ -351,6 +354,14 @@ suseai:
       namespace: Namespace
       releaseName: Release
       fixedNamespace: fixed
+      customized: Customized
+      includeComponent: Include
+      componentExcluded: Excluded — this component will not be deployed.
+      excluded: Excluded
+    errors:
+      allComponentsDisabled: At least one component must remain enabled.
+    warnings:
+      excludingRunningComponent: This component is currently deployed — excluding it will remove its resources on the next sync.
   repositories:
     title: Repositories
     add: Add Repository
