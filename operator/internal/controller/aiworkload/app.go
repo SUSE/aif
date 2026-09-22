@@ -59,6 +59,18 @@ func (r *AIWorkloadReconciler) reconcileAppPullSecrets(
 		return nil
 	}
 
+	// Skip the ClusterRepo resolve + injector run once this namespace's secrets
+	// are already recorded. The App/Helm readiness poll re-enters this path every
+	// 30s, and re-injecting each time is wasted work: the recorded names are
+	// re-materialised (with current credential content) and re-applied by
+	// deliverPullSecrets on every reconcile, so a credential rotation still
+	// propagates without re-running the injector here.
+	for _, d := range w.Status.PullSecretDeliveries {
+		if d.Namespace == w.Spec.TargetNamespace && len(d.Names) > 0 {
+			return nil
+		}
+	}
+
 	// Resolve the ClusterRepo for the chart so the suseInjector can
 	// pick up the repo's own basic-auth credentials when assembling the
 	// combined pull secret. The nvidiaInjector ignores repoInfo (it

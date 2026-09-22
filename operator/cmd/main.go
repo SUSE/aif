@@ -302,7 +302,16 @@ func main() {
 
 	operatorNamespace := config.GetOperatorNamespace()
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(),
+	restConfig := ctrl.GetConfigOrDie()
+	// Bound how fast the operator can hit the API server. Left unset,
+	// controller-runtime disables the client-side rate limiter (QPS=-1) and leans
+	// entirely on server-side API Priority and Fairness; a finite QPS/Burst adds a
+	// client-side brake so a busy reconcile loop — e.g. App/Helm workloads polling
+	// pod readiness every 30s across many namespaces — cannot flood the apiserver.
+	restConfig.QPS = 50
+	restConfig.Burst = 100
+
+	mgr, err := ctrl.NewManager(restConfig,
 		managerOptions(metricsServerOptions, webhookServer, probeAddr, enableLeaderElection))
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -347,7 +356,8 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&aiworkloadctrl.AIWorkloadReconciler{
-		Client:            mgr.GetClient(),
+		Client: mgr.GetClient(),
+		// APIReader is wired by SetupWithManager (mgr.GetAPIReader()); see there.
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
 		CatalogClient:     catalogHolder,
