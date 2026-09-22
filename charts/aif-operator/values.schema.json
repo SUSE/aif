@@ -26,7 +26,38 @@
           },
           "description": "Image pull Secrets for operator, helper Job, and managed UI Pods.",
           "default": []
-        }
+        },
+	"kubectl": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "registry": {
+                  "type": "string",
+                  "default": "registry.suse.com"
+                },
+                "repository": {
+                  "type": "string",
+                  "default": "suse/kubectl"
+                },
+                "tag": {
+                  "type": "string",
+                  "default": "1.35"
+                },
+                "pullPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "Always",
+                    "IfNotPresent",
+                    "Never"
+                  ],
+                  "default": "IfNotPresent"
+                }
+              }
+            }
+	  }
+	}
       }
     },
     "nameOverride": {

@@ -236,10 +236,13 @@ CLEANUP_REPOSITORY="$(yq -er '.aiExtension.cleanup.image.repository' "${OPERATOR
 CLEANUP_TAG="$(yq -er '.aiExtension.cleanup.image.tag' "${OPERATOR_CHART}/values.yaml")"
 CRD_REPOSITORY="$(yq -er '.crds.image.repository' "${OPERATOR_CHART}/values.yaml")"
 CRD_TAG="$(yq -er '.crds.image.tag' "${OPERATOR_CHART}/values.yaml")"
+KUBECTL_REPOSITORY="$(yq -er '.global.kubectl.image.repository' "${OPERATOR_CHART}/values.yaml")"
+KUBECTL_TAG="$(yq -er '.global.kubectl.image.tag' "${OPERATOR_CHART}/values.yaml")"
 
 assert_image_present "${TMP_ROOT}/operator-combined.yaml" "${PRIVATE_REGISTRY}/${OPERATOR_REPOSITORY}:${OPERATOR_TAG}" "operator manager"
 assert_image_present "${TMP_ROOT}/operator-combined.yaml" "${PRIVATE_REGISTRY}/${CLEANUP_REPOSITORY}:${CLEANUP_TAG}" "extension cleanup hook"
 assert_image_present "${TMP_ROOT}/operator-combined.yaml" "${PRIVATE_REGISTRY}/${CRD_REPOSITORY}:${CRD_TAG}" "CRD apply hook"
+assert_image_present "${TMP_ROOT}/operator-combined.yaml" "${PRIVATE_REGISTRY}/${KUBECTL_REPOSITORY}:${KUBECTL_TAG}" "kubectl job hook"
 assert_image_present "${TMP_ROOT}/ui-managed.yaml" "${PRIVATE_REGISTRY}/${UI_REPOSITORY}:${UI_TAG}" "managed UI"
 assert_image_present "${TMP_ROOT}/ui-standalone.yaml" "${PRIVATE_REGISTRY}/${UI_REPOSITORY}:${UI_TAG}" "standalone UI"
 
