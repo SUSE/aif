@@ -1550,5 +1550,29 @@
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     }
+  ],
+  "openshell": [
+    {
+      "name": "OpenShell",
+      "slug_name": "helm-chart",
+      "description": "A runtime environment for autonomous agents on Kubernetes.",
+      "project_url": "https://github.com/NVIDIA/OpenShell",
+      "source_code_url": "https://github.com/NVIDIA/OpenShell",
+      "logo_url": "https://github.com/NVIDIA/OpenShell/raw/main/docs/brand/assets/openshell-avatar-512.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "oci://ghcr.io/nvidia/openshell/helm-chart",
+      "repository_name": "openshell"
+    },
+    {
+      "name": "OpenShell Workspace",
+      "slug_name": "openshell-workspace",
+      "description": "Namespace-scoped prerequisites for OpenShell Kubernetes sandboxes.",
+      "project_url": "https://github.com/NVIDIA/OpenShell",
+      "source_code_url": "https://github.com/NVIDIA/OpenShell",
+      "logo_url": "https://github.com/NVIDIA/OpenShell/raw/main/docs/brand/assets/openshell-avatar-512.png",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "oci://ghcr.io/nvidia/openshell/openshell-workspace",
+      "repository_name": "openshell-workspace"
+    }
   ]
 }

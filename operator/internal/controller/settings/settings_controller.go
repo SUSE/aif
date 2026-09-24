@@ -801,6 +801,27 @@ func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aipla
 		return err
 	}
 
+	// OpenShell repos are public, anonymous OCI Helm repos under
+	// ghcr.io/nvidia/openshell. They carry no credentials, so they are applied
+	// WITHOUT a clientSecret; applyClusterRepo stamps only ManagedRepoLabel (not
+	// TeamRepoLabel), so the NVIDIA team-repo prune never touches them. Like the
+	// App Collection and SUSE Registry repos above, their URL follows
+	// registryEndpoints: the public ghcr.io defaults when connected, or the
+	// administrator-configured OpenShell mirror in an air-gapped install (both
+	// aliases point at the single aggregate mirror, mirroring the NVIDIA topology).
+	openshellURL := credentials.DefaultOpenshellURL
+	openshellWorkspaceURL := credentials.DefaultOpenshellWorkspaceURL
+	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.OpenShell != "" {
+		openshellURL = s.Spec.RegistryEndpoints.OpenShell
+		openshellWorkspaceURL = s.Spec.RegistryEndpoints.OpenShell
+	}
+	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoOpenshell, openshellURL, ""); err != nil {
+		return err
+	}
+	if err := r.applyClusterRepo(ctx, credentials.ClusterRepoOpenshellWorkspace, openshellWorkspaceURL, ""); err != nil {
+		return err
+	}
+
 	return r.reconcileNvidiaRepos(ctx, s)
 }
 

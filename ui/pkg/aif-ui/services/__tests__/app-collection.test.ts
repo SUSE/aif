@@ -98,6 +98,18 @@ describe('fetchManagedRepos', () => {
     ]);
   });
 
+  it('classifies the public OpenShell repos by canonical name (managed-label only, no team label)', async () => {
+    const store = makeStore([
+      { metadata: { name: 'openshell', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ghcr.io/nvidia/openshell/helm-chart' }, status: ready() },
+      { metadata: { name: 'openshell-workspace', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ghcr.io/nvidia/openshell/openshell-workspace' }, status: ready() },
+    ]);
+    const managed = await fetchManagedRepos(store);
+    expect(managed.map(r => [r.name, r.library])).toEqual([
+      ['openshell', 'openshell'],
+      ['openshell-workspace', 'openshell'],
+    ]);
+  });
+
   it('excludes a canonical-named repo that lacks the provenance label', async () => {
     const store = makeStore([
       { metadata: { name: 'application-collection' }, spec: { url: 'oci://ac' }, status: ready() }, // no label

@@ -132,6 +132,10 @@ export function getLibraryForClusterRepo(
   if (repoName === 'nvidia' || repoName === 'nvidia-blueprints') {
     return 'nvidia';
   }
+  // OpenShell repos are intentionally not classified here: this result drives
+  // install-time pull-secret handling (suse-ai / nvidia), and the public,
+  // anonymous OpenShell repos need none. Their catalog/tab identity comes from
+  // the static catalog's `library` field, not from this function.
   return getLibraryFromRepoUrl(repoUrl);
 }
 
@@ -354,14 +358,19 @@ export function repoNotReadyMessage(repo: any): string | undefined {
   return failing?.message || undefined;
 }
 
-/** Fixed ClusterRepo names the operator creates for each SUSE/NVIDIA registry.
- *  Mirror of operator/internal/credentials/credentials.go. These names (plus the
- *  team-repo label below) are the provenance signal for operator-managed repos. */
-export const MANAGED_REPO_NAMES: Record<string, 'suse-ai' | 'nvidia'> = {
+/** Fixed ClusterRepo names the operator creates for each SUSE/NVIDIA/OpenShell
+ *  registry. Mirror of operator/internal/credentials/credentials.go. These names
+ *  (plus the team-repo label below) are the provenance signal for operator-managed
+ *  repos. The OpenShell repos are public and carry only the managed-repo label, so
+ *  this map is their sole classification signal — they surface in static-catalog
+ *  mode only (there is no dynamic-mode fetcher for the openshell library). */
+export const MANAGED_REPO_NAMES: Record<string, 'suse-ai' | 'nvidia' | 'openshell'> = {
   'application-collection': 'suse-ai',
   'suse-ai-registry':       'suse-ai',
   'nvidia':                 'nvidia',
   'nvidia-blueprints':      'nvidia',
+  'openshell':              'openshell',
+  'openshell-workspace':    'openshell',
 };
 
 /** Label the operator stamps on NVIDIA team ClusterRepos. Mirror of
@@ -378,7 +387,7 @@ export const MANAGED_REPO_LABEL = 'ai-factory.suse.com/managed-repo';
 export interface ManagedRepo {
   name: string;
   url: string;
-  library: 'suse-ai' | 'nvidia';
+  library: 'suse-ai' | 'nvidia' | 'openshell';
   ready: boolean;
   message?: string;
 }
@@ -400,7 +409,7 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
       // Provenance gate: only operator-stamped repos, matched exactly.
       if (labels[MANAGED_REPO_LABEL] !== 'true') continue;
       // Classify by canonical name (prototype-safe) or team label.
-      let library: 'suse-ai' | 'nvidia' | undefined =
+      let library: 'suse-ai' | 'nvidia' | 'openshell' | undefined =
         Object.prototype.hasOwnProperty.call(MANAGED_REPO_NAMES, name) ? MANAGED_REPO_NAMES[name] : undefined;
       if (!library && labels[NVIDIA_TEAM_REPO_LABEL] === 'true') library = 'nvidia';
       if (!library) continue;

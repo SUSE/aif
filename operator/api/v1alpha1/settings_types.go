@@ -128,6 +128,12 @@ type RegistryEndpointsSettings struct {
 	// require node-level registry redirection (e.g. containerd hosts.toml) in a true air-gap.
 	// +optional
 	Nvidia string `json:"nvidia,omitempty"`
+	// OpenShell is the OCI URL of a mirrored OpenShell chart repository for air-gapped installs
+	// (e.g. oci://registry.example.com/openshell). When empty, OpenShell charts are pulled from the
+	// public ghcr.io/nvidia/openshell repositories; when set, both stable OpenShell ClusterRepo
+	// aliases are pointed at this aggregate mirror URL so existing App source references remain valid.
+	// +optional
+	OpenShell string `json:"openshell,omitempty"`
 }
 
 // AppCatalogSettings configures the static application catalog served to the UI.

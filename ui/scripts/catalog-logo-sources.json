@@ -81,5 +81,9 @@
     "vault": "https://apps.rancher.io/logos/vault.png",
     "velero": "https://apps.rancher.io/logos/velero.png",
     "vllm": "https://apps.rancher.io/logos/vllm.png"
+  },
+  "openshell": {
+    "helm-chart": "https://github.com/NVIDIA/OpenShell/raw/main/docs/brand/assets/openshell-avatar-512.png",
+    "openshell-workspace": "https://github.com/NVIDIA/OpenShell/raw/main/docs/brand/assets/openshell-avatar-512.png"
   }
 }

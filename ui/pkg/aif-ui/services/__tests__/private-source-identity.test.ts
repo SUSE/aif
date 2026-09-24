@@ -19,6 +19,12 @@ describe('private source identity', () => {
       'nvidia-blueprints',
       'oci://harbor.airgap.test/mirrors/nvidia',
     )).toBe('nvidia');
+    // OpenShell repos are deliberately unclassified here (no install-time
+    // pull-secret handling); their library identity comes from the static catalog.
+    expect(getLibraryForClusterRepo(
+      'openshell',
+      'oci://ghcr.io/nvidia/openshell/helm-chart',
+    )).toBeUndefined();
   });
 
   it('extracts a registry host, including a private port, from OCI URLs', () => {
