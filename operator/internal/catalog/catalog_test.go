@@ -154,6 +154,37 @@ func TestNormalize_NoLabelsField(t *testing.T) {
 	}
 }
 
+func TestNormalize_DefaultInstanceNameAndNamespace(t *testing.T) {
+	raw := []byte(`[
+		{"name":"OpenShell","slug_name":"helm-chart","library":"openshell","default_instance_name":"  openshell  ","default_namespace":"  openshell  "},
+		{"name":"Invalid","slug_name":"invalid","library":"custom","default_instance_name":"INVALID_NAME!","default_namespace":"kube-system"},
+		{"name":"Milvus","slug_name":"milvus","library":"suse-ai"}
+	]`)
+	got := Normalize(raw)
+	m := slugs(got)
+	osItem := m["helm-chart"]
+	if osItem.DefaultInstanceName != "openshell" {
+		t.Errorf("default_instance_name = %q, want openshell", osItem.DefaultInstanceName)
+	}
+	if osItem.DefaultNamespace != "openshell" {
+		t.Errorf("default_namespace = %q, want openshell", osItem.DefaultNamespace)
+	}
+	invalidItem := m["invalid"]
+	if invalidItem.DefaultInstanceName != "" {
+		t.Errorf("invalid default_instance_name = %q, want empty (rejected invalid DNS-1123)", invalidItem.DefaultInstanceName)
+	}
+	if invalidItem.DefaultNamespace != "" {
+		t.Errorf("invalid default_namespace = %q, want empty (rejected reserved namespace)", invalidItem.DefaultNamespace)
+	}
+	milvusItem := m["milvus"]
+	if milvusItem.DefaultInstanceName != "" {
+		t.Errorf("milvus default_instance_name = %q, want empty", milvusItem.DefaultInstanceName)
+	}
+	if milvusItem.DefaultNamespace != "" {
+		t.Errorf("milvus default_namespace = %q, want empty", milvusItem.DefaultNamespace)
+	}
+}
+
 // RepresentativeChart returns a stable, supported sample chart actually served by
 // a repository, and "" for a repository absent from the bundled catalog.
 func TestRepresentativeChart(t *testing.T) {

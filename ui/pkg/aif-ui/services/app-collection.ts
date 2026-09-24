@@ -21,6 +21,8 @@ export interface AppLabel {
 export interface AppCollectionItem {
   name: string;
   slug_name: string;
+  default_instance_name?: string;
+  default_namespace?: string;
   description?: string;
   project_url?: string;
   documentation_url?: string;
@@ -546,8 +548,10 @@ export function overlayCuratedMetadata(
     return {
       ...app,
       // curated wins
-      labels:              c.labels ?? app.labels,
-      documentation_url:   c.documentation_url  || app.documentation_url,
+      labels:                c.labels ?? app.labels,
+      default_instance_name: c.default_instance_name || app.default_instance_name,
+      default_namespace:     c.default_namespace || app.default_namespace,
+      documentation_url:     c.documentation_url  || app.documentation_url,
       reference_guide_url: c.reference_guide_url || app.reference_guide_url,
       changelog_url:       c.changelog_url       || app.changelog_url,
       logo_url:            browserSafeCatalogLogo(c.logo_url) || browserSafeCatalogLogo(app.logo_url),
@@ -589,4 +593,34 @@ export function buildWarnings(failedRepos: FailedRepo[]): string[] {
       : 'could not be loaded';
     return r.message ? `${r.url}: ${reason} — ${r.message}` : `${r.url}: ${reason}`;
   });
+}
+
+/**
+ * Default instance (Helm release) name for an application being installed.
+ * Prefers the catalog item's `default_instance_name`, falling back to `slug`.
+ */
+export function defaultInstanceName(
+  slug: string,
+  hint?: { default_instance_name?: string } | null
+): string {
+  if (hint && typeof hint === 'object' && hint.default_instance_name) {
+    return hint.default_instance_name;
+  }
+  return slug;
+}
+
+export const defaultReleaseName = defaultInstanceName;
+
+/**
+ * Default target namespace for an application being installed.
+ * Prefers the catalog item's `default_namespace`, falling back to `${slug}-system`.
+ */
+export function defaultNamespace(
+  slug: string,
+  hint?: { default_namespace?: string } | null
+): string {
+  if (hint && typeof hint === 'object' && hint.default_namespace) {
+    return hint.default_namespace;
+  }
+  return `${slug}-system`;
 }

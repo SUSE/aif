@@ -481,3 +481,36 @@ func TestSyncNVAIE_Idempotent(t *testing.T) {
 		t.Fatal("second run produced a different document (not idempotent)")
 	}
 }
+
+func TestSyncNVAIE_PreservesOpenshellDefaults(t *testing.T) {
+	catWithOpenshell := `{
+  "suse-ai": [],
+  "nvidia": [],
+  "openshell": [
+    {
+      "name": "OpenShell",
+      "slug_name": "helm-chart",
+      "default_instance_name": "openshell",
+      "default_namespace": "openshell",
+      "repository_url": "oci://ghcr.io/nvidia/openshell/helm-chart"
+    }
+  ]
+}`
+	out, _, _, err := syncNVAIE([]byte(catWithOpenshell), nil, overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc catalogDoc
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Openshell) != 1 {
+		t.Fatalf("openshell entries = %d, want 1", len(doc.Openshell))
+	}
+	if doc.Openshell[0].DefaultInstanceName != "openshell" {
+		t.Errorf("default_instance_name = %q, want openshell", doc.Openshell[0].DefaultInstanceName)
+	}
+	if doc.Openshell[0].DefaultNamespace != "openshell" {
+		t.Errorf("default_namespace = %q, want openshell", doc.Openshell[0].DefaultNamespace)
+	}
+}
