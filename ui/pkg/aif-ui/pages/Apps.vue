@@ -342,6 +342,7 @@ export default defineComponent({
     const LIBRARY_LABELS: Record<string, string> = {
       'suse-ai':      'SUSE AI Library',
       'nvidia':       'NVIDIA AI Library',
+      'openshell':    'OpenShell Library',
       [OTHER_LIBRARY]: 'Other',
     };
     const PREFERRED_ORDER = ['suse-ai', 'nvidia'];

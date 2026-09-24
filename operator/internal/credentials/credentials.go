@@ -60,6 +60,8 @@ const (
 	DefaultSUSERegistryURL          = "oci://registry.suse.com/ai/charts"
 	DefaultNvidiaChartsURL          = "https://helm.ngc.nvidia.com/nvidia"
 	DefaultNvidiaBlueprintURL       = "https://helm.ngc.nvidia.com/nvidia/blueprint"
+	DefaultOpenshellURL             = "oci://ghcr.io/nvidia/openshell/helm-chart"
+	DefaultOpenshellWorkspaceURL    = "oci://ghcr.io/nvidia/openshell/openshell-workspace"
 )
 
 // ClusterRepo names align with pkg/aif-ui/services/app-collection.ts.
@@ -68,6 +70,8 @@ const (
 	ClusterRepoSUSERegistry          = "suse-ai-registry"
 	ClusterRepoNvidia                = "nvidia"
 	ClusterRepoNvidiaBlueprint       = "nvidia-blueprints"
+	ClusterRepoOpenshell             = "openshell"
+	ClusterRepoOpenshellWorkspace    = "openshell-workspace"
 )
 
 // Provenance labels stamped on operator-created ClusterRepos. Single source of

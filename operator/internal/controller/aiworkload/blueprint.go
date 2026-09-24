@@ -324,6 +324,26 @@ func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alph
 }
 
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
+// ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Fleet
+// treats helm.repo as the full OCI chart path and appends the version tag, so
+// the operator hands it "<registry>/<namespace>/<chart>". A namespace-style OCI
+// repo needs the chart name appended — e.g. App Collection's
+// oci://dp.apps.rancher.io/charts + chart "milvus" -> .../charts/milvus.
+//
+// Some publishers instead give each chart its own OCI repository, so the
+// ClusterRepo URL already terminates at the chart (e.g. OpenShell's
+// oci://ghcr.io/nvidia/openshell/helm-chart, whose Chart.yaml name is
+// "helm-chart"). Blindly appending the chart name there doubles the trailing
+// segment (.../helm-chart/helm-chart) and the pull is denied. Skip the append
+// when the URL already ends in the chart segment so both layouts resolve.
+func ociChartRef(repoURL, chartName string) string {
+	trimmed := strings.TrimSuffix(repoURL, "/")
+	if chartName == "" || strings.HasSuffix(trimmed, "/"+chartName) {
+		return trimmed
+	}
+	return trimmed + "/" + chartName
+}
+
 func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
@@ -378,7 +398,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["repo"] = repoInfo.URL
 		helmSpec["chart"] = c.ChartName
 	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
+		helmSpec["repo"] = ociChartRef(repoInfo.URL, c.ChartName)
 	}
 	vals, err := resolveComponentValues(w, c)
 	if err != nil {
@@ -956,7 +976,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		helmSpec["repo"] = repoInfo.URL
 		helmSpec["chart"] = c.ChartName
 	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
+		helmSpec["repo"] = ociChartRef(repoInfo.URL, c.ChartName)
 	}
 
 	// Load the blueprint component's own values BEFORE injecting pull secrets —

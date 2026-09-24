@@ -647,6 +647,39 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 	if pubSecret, found, _ := unstructured.NestedString(pubRepo.Object, "spec", "clientSecret", "name"); found && pubSecret != "" {
 		t.Errorf("public nvidia ClusterRepo must be anonymous, got clientSecret = %q", pubSecret)
 	}
+
+	// OpenShell is a public OCI repo created anonymously (no clientSecret). With no
+	// registryEndpoints.openshell mirror configured (connected mode), it points at
+	// the public ghcr.io default.
+	openshellRepo := &unstructured.Unstructured{}
+	openshellRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoOpenshell}, openshellRepo); err != nil {
+		t.Fatalf("expected openshell ClusterRepo: %v", err)
+	}
+	if osURL, _, _ := unstructured.NestedString(openshellRepo.Object, "spec", "url"); osURL != credentials.DefaultOpenshellURL {
+		t.Errorf("openshell ClusterRepo url = %q, want %q", osURL, credentials.DefaultOpenshellURL)
+	}
+	if osSecret, found, _ := unstructured.NestedString(openshellRepo.Object, "spec", "clientSecret", "name"); found && osSecret != "" {
+		t.Errorf("openshell ClusterRepo must be anonymous, got clientSecret = %q", osSecret)
+	}
+
+	// OpenShell Workspace is a sibling public OCI repo, also created anonymously
+	// and pointing at its public ghcr.io default in connected mode.
+	openshellWsRepo := &unstructured.Unstructured{}
+	openshellWsRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoOpenshellWorkspace}, openshellWsRepo); err != nil {
+		t.Fatalf("expected openshell-workspace ClusterRepo: %v", err)
+	}
+	if wsURL, _, _ := unstructured.NestedString(openshellWsRepo.Object, "spec", "url"); wsURL != credentials.DefaultOpenshellWorkspaceURL {
+		t.Errorf("openshell-workspace ClusterRepo url = %q, want %q", wsURL, credentials.DefaultOpenshellWorkspaceURL)
+	}
+	if wsSecret, found, _ := unstructured.NestedString(openshellWsRepo.Object, "spec", "clientSecret", "name"); found && wsSecret != "" {
+		t.Errorf("openshell-workspace ClusterRepo must be anonymous, got clientSecret = %q", wsSecret)
+	}
 }
 
 // registerClusterRepoTypes teaches the fake client about the unstructured
@@ -1244,6 +1277,44 @@ func TestSettingsController_AirGapUnauthenticatedMirrorCreated(t *testing.T) {
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); !apierrors.IsNotFound(err) {
 		t.Errorf("expected no ngc-helm-auth for anonymous mirror, got err=%v", err)
+	}
+}
+
+// The OpenShell repos are public and anonymous, but like the App Collection and
+// SUSE Registry repos their URL follows registryEndpoints. When
+// registryEndpoints.openshell is set (air-gap), both aliases point at the single
+// aggregate mirror instead of the public ghcr.io defaults, and stay anonymous.
+func TestSettingsController_AirGapRepointsOpenShellReposAtMirror(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	const mirrorURL = "oci://registry.internal/openshell"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+				OpenShell: mirrorURL,
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, name := range []string{credentials.ClusterRepoOpenshell, credentials.ClusterRepoOpenshellWorkspace} {
+		repo := getClusterRepo(t, c, name)
+		if url, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); url != mirrorURL {
+			t.Errorf("air-gap %s URL = %q, want mirror %q", name, url, mirrorURL)
+		}
+		if sec, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && sec != "" {
+			t.Errorf("air-gap %s must stay anonymous, got clientSecret %q", name, sec)
+		}
 	}
 }
 
