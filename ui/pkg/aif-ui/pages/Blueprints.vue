@@ -17,6 +17,19 @@
           </div>
 
           <select
+            v-model="selectedCatalog"
+            class="sort-select form-control-sm"
+          >
+            <option
+              v-for="opt in catalogOptions"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </option>
+          </select>
+
+          <select
             v-model="sortBy"
             class="sort-select form-control-sm"
           >
@@ -350,10 +363,12 @@ import {
   listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion, sourceFor,
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
+import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/catalog-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
-import { type Blueprint, BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
+import { type Blueprint, BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED, FLEET_BUNDLE_NAME_LABEL } from '../types/blueprint-types';
+import { type BlueprintCatalog, CATALOG_DEFAULT_NAME } from '../types/catalog-types';
 import { PRODUCT } from '../config/suseai';
 import { useT } from '../composables/useT';
 
@@ -375,6 +390,9 @@ export default defineComponent({
     const blueprints      = ref<Blueprint[]>([]);
     const selectedVersions = ref<Record<string, string>>({});
     const showDeprecated  = ref(false);
+    const catalogs         = ref<BlueprintCatalog[]>([]);
+    const selectedCatalog  = ref<string>('');
+    let catalogDefaultApplied = false;
 
     // Global Administrator check — true only when the current user has globalRoleName === 'admin'.
     const isAdmin = ref(false);
@@ -388,6 +406,13 @@ export default defineComponent({
       return bp.metadata.labels?.[BLUEPRINT_SOURCE_LABEL] === BLUEPRINT_SOURCE_BUNDLED;
     }
 
+    // Mirrors the backend's isManagedBlueprint: bundled or Fleet-synced
+    // blueprints are re-created on the next Helm upgrade / Fleet sync, so a
+    // direct delete is a confusing no-op the API rejects with 403.
+    function isManagedBlueprint(bp: Blueprint): boolean {
+      return isBundled(bp) || !!bp.metadata.labels?.[FLEET_BUNDLE_NAME_LABEL];
+    }
+
     function visibleVersionsFor(versions: Blueprint[]): Blueprint[] {
       if (showDeprecated.value) return versions;
       return versions.filter(bp => !isDeprecated(bp));
@@ -396,9 +421,33 @@ export default defineComponent({
     // ── Computed ───────────────────────────────────────────────────────────────
     const families = computed(() => groupBlueprintsByFamily(blueprints.value));
 
+    const bundledFamilies = computed<Set<string>>(() => {
+      const s = new Set<string>();
+      for (const [family, versions] of families.value.entries()) {
+        if (versions.some(isBundled)) s.add(family);
+      }
+      return s;
+    });
+    const hasRealDefaultCatalog = computed(() => catalogs.value.some(c => c.metadata.name === CATALOG_DEFAULT_NAME));
+    const syntheticDefault = computed(() => bundledFamilies.value.size > 0 && !hasRealDefaultCatalog.value);
+
+    const catalogOptions = computed(() => [
+      { value: '', label: t('suseai.pages.blueprints.catalog.all', 'All catalogs') },
+      ...(syntheticDefault.value ? [{ value: CATALOG_DEFAULT_NAME, label: t('suseai.pages.blueprints.catalog.suseBlueprints', 'SUSE Blueprints') }] : []),
+      ...catalogs.value.map(c => ({ value: c.metadata.name, label: catalogDisplayName(c) })),
+    ]);
+
+    const selectedCatalogFamilies = computed<Set<string> | null>(() => {
+      if (!selectedCatalog.value) return null;
+      if (syntheticDefault.value && selectedCatalog.value === CATALOG_DEFAULT_NAME) return bundledFamilies.value;
+      const cat = catalogs.value.find(c => c.metadata.name === selectedCatalog.value);
+      return cat ? familiesInCatalog(cat) : null;
+    });
+
     const filteredFamilies = computed(() => {
       const q = search.value.toLowerCase();
-      return [...families.value.entries()].filter(([, versions]) => {
+      return [...families.value.entries()].filter(([family, versions]) => {
+        if (selectedCatalogFamilies.value && !selectedCatalogFamilies.value.has(family)) return false;
         // When not showing deprecated, hide families that have no visible versions.
         if (!showDeprecated.value && visibleVersionsFor(versions).length === 0) return false;
         if (!q) return true;
@@ -473,6 +522,27 @@ export default defineComponent({
       return isDeprecated(bp) ? `v${ bp.spec.version } (deprecated)` : `v${ bp.spec.version }`;
     }
 
+    async function loadCatalogs() {
+      try {
+        const cl = await listCatalogs();
+        catalogs.value = cl.items || [];
+      } catch {
+        catalogs.value = [];
+      }
+    }
+
+    // The synthetic "SUSE Blueprints" option depends on blueprints, which may load
+    // after catalogs — so default selection watches catalogOptions instead of firing
+    // once inside loadCatalogs. catalogDefaultApplied still guards it to a single
+    // application, so a later manual selection is never overridden.
+    watch(catalogOptions, (opts) => {
+      if (catalogDefaultApplied) return;
+      if (opts.some(o => o.value === CATALOG_DEFAULT_NAME)) {
+        catalogDefaultApplied = true;
+        selectedCatalog.value = CATALOG_DEFAULT_NAME;
+      }
+    }, { immediate: true });
+
     // ── Data loading ───────────────────────────────────────────────────────────
     async function refresh() {
       loading.value = true;
@@ -486,6 +556,7 @@ export default defineComponent({
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];
+        await loadCatalogs();
         const updates: Record<string, string> = {};
         for (const [family, versions] of groupBlueprintsByFamily(blueprints.value).entries()) {
           const current = selectedVersions.value[family];
@@ -519,6 +590,7 @@ export default defineComponent({
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];
+        await loadCatalogs();
         const updates: Record<string, string> = {};
         for (const [family, versions] of groupBlueprintsByFamily(blueprints.value).entries()) {
           const current = selectedVersions.value[family];
@@ -691,8 +763,9 @@ export default defineComponent({
           { action: 'edit',      label: 'Edit',      enabled: true },
           { action: 'deprecate', label: isSelectedDeprecated(family, versions) ? 'Undeprecate' : 'Deprecate', enabled: true },
         );
-        // Bundled blueprints ship with the product and must not be deleted from the GUI.
-        if (!isBundled(selectedVersion(family, versions))) {
+        // Bundled and Fleet-managed blueprints are re-created on the next sync
+        // and must not be deleted from the GUI.
+        if (!isManagedBlueprint(selectedVersion(family, versions))) {
           actions.push(
             { divider: true, label: '', enabled: true },
             { action: 'delete', label: 'Delete', enabled: true },
@@ -761,6 +834,7 @@ export default defineComponent({
       loading, error, operatorError, retryConnection,
       search, sortBy, sortedFamiliesWithSource, families, selectedVersions,
       showDeprecated, isAdmin,
+      catalogs, selectedCatalog, catalogOptions,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
       nvidiaLogo, nvidiaLogoDark, suseLogo, suseLogoDark,

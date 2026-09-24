@@ -8,6 +8,10 @@ import SecretSelector   from '@shell/components/form/SecretSelector';
 import RegistryConnectionStatus from './components/RegistryConnectionStatus.vue';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
 import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
+import { listCatalogs } from '../utils/catalog-api';
+import { listBlueprints } from '../utils/blueprint-api';
+import { CATALOG_DEFAULT_NAME } from '../types/catalog-types';
+import { BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
 import {
   resolveRegistryEndpoints,
   registryEndpointOverrides,
@@ -28,6 +32,7 @@ function createEmptySpec() {
     nvidia:                { userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null },
     rancherCatalog:        { url: '', tokenSecretRef: null, caBundleSecretRef: null, insecureSkipVerify: false },
     registryEndpoints:     resolveRegistryEndpoints(),
+    blueprintCatalogs:     [],
   };
 }
 
@@ -62,6 +67,16 @@ export default {
         this.loaded            = true;
       }
     }
+
+    try {
+      const [cl, bl] = await Promise.all([listCatalogs(), listBlueprints()]);
+      const hasGitDefault = (cl.items || []).some((c) => c.metadata.name === CATALOG_DEFAULT_NAME);
+      const hasBundled    = (bl.items || []).some((b) => b.metadata.labels?.[BLUEPRINT_SOURCE_LABEL] === BLUEPRINT_SOURCE_BUNDLED);
+
+      this.defaultCatalogStatus = hasGitDefault ? 'git' : hasBundled ? 'bundled' : 'disabled';
+    } catch {
+      this.defaultCatalogStatus = 'unknown';
+    }
   },
 
   data() {
@@ -69,6 +84,7 @@ export default {
       loaded:            false,
       notFound:          false,
       spec:              createEmptySpec(),
+      defaultCatalogStatus: 'unknown',
       fetchErrorMessage: null,
       errors:            [],
       mode:              'edit',
@@ -82,6 +98,7 @@ export default {
         suseRegistry:   false,
         nvidia:         false,
         rancherCatalog: false,
+        blueprintCatalogs: false,
       },
       testResults: {
         gitops:                null,
@@ -93,6 +110,17 @@ export default {
   computed: {
     settingsNamespace() {
       return getOperatorNamespace();
+    },
+
+    defaultCatalogStatusLabel() {
+      const keys = {
+        bundled:  'statusBundled',
+        git:      'statusGit',
+        disabled: 'statusDisabled',
+      };
+      const key = keys[this.defaultCatalogStatus] || 'statusUnknown';
+
+      return this.t(`suseai.pages.settings.sections.blueprintCatalogs.default.${ key }`);
     },
 
     categoriesString: {
@@ -183,6 +211,16 @@ export default {
       }
       s.registryEndpoints = resolveRegistryEndpoints(crdSpec.registryEndpoints);
 
+      s.blueprintCatalogs = (crdSpec.blueprintCatalogs || []).map((c) => ({
+        name:              c.name || '',
+        path:              (c.paths || []).join(', '),
+        repoURL:           c.repoURL || '',
+        branch:            c.branch || 'main',
+        credSecretRef:     c.credSecretRef || null,
+        caBundleSecretRef: c.caBundleSecretRef || null,
+        testResult:        null,
+      }));
+
       return s;
     },
 
@@ -245,11 +283,53 @@ export default {
         out.registryEndpoints = endpointOverrides;
       }
 
+      const cats = (spec.blueprintCatalogs || [])
+        .filter((c) => c.name || c.repoURL)
+        .map((c) => {
+          const o = { name: c.name };
+
+          if (c.repoURL) o.repoURL = c.repoURL;
+          if (c.branch) o.branch = c.branch;
+          const paths = (c.path || '').split(',').map((p) => p.trim()).filter(Boolean);
+          if (paths.length) o.paths = paths;
+          if (c.credSecretRef?.name) o.credSecretRef = c.credSecretRef;
+          if (c.caBundleSecretRef?.name) o.caBundleSecretRef = c.caBundleSecretRef;
+
+          return o;
+        });
+
+      if (cats.length) out.blueprintCatalogs = cats;
+
       return out;
     },
 
     toggle(section) {
       this.expanded[section] = !this.expanded[section];
+    },
+
+    addCatalog() {
+      this.spec.blueprintCatalogs.push({
+        name: '', path: '', repoURL: '', branch: 'main', credSecretRef: null, caBundleSecretRef: null, testResult: null,
+      });
+    },
+
+    removeCatalog(index) {
+      this.spec.blueprintCatalogs.splice(index, 1);
+    },
+
+    async runCatalogTest(row, buttonDone) {
+      try {
+        const resp = await validateCredentials({
+          targets:   ['gitops'],
+          overrides: { gitops: { repoURL: row.repoURL, branch: row.branch, credSecretRef: row.credSecretRef, caBundleSecretRef: row.caBundleSecretRef } },
+        });
+
+        row.testResult = (resp.results || []).find((r) => r.target === 'gitops') || null;
+        buttonDone(!!row.testResult && row.testResult.status !== 'failed' && row.testResult.status !== 'error');
+      } catch (e) {
+        row.testResult = { target: 'gitops', status: 'error', message: e?.message || String(e) };
+        buttonDone(false);
+      }
     },
 
     openSection(section) {
@@ -334,8 +414,10 @@ export default {
       }
     },
 
-    testResultText(target) {
-      const r = this.testResults[target];
+    // Shared by the keyed testResults sections above and the per-row
+    // blueprintCatalogs list below, which keeps its result on the row itself
+    // instead of in testResults.
+    resultText(r) {
       if (!r) return '';
       const label = this.t(`suseai.pages.settings.test.${ r.status }`);
       if (r.status === 'ok') {
@@ -344,10 +426,17 @@ export default {
       return r.message ? `${ label }: ${ r.message }` : label;
     },
 
-    testResultClass(target) {
-      const r = this.testResults[target];
+    resultClass(r) {
       if (!r) return '';
       return r.status === 'ok' ? 'text-success' : (r.status === 'skipped' ? 'text-muted' : 'text-error');
+    },
+
+    testResultText(target) {
+      return this.resultText(this.testResults[target]);
+    },
+
+    testResultClass(target) {
+      return this.resultClass(this.testResults[target]);
     },
 
     // Reads the expiry annotations off the token Secret so the section can show
@@ -851,6 +940,149 @@ export default {
               >{{ testResultText('gitops') }}</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Blueprint Catalogs -->
+      <div id="blueprintCatalogs" class="box mt-10">
+        <div
+          class="accordion-header"
+          role="button"
+          tabindex="0"
+          @click="toggle('blueprintCatalogs')"
+          @keydown.space.enter.prevent="toggle('blueprintCatalogs')"
+        >
+          <i :class="expanded.blueprintCatalogs ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+          <h2>{{ t('suseai.pages.settings.sections.blueprintCatalogs.title') }}</h2>
+        </div>
+
+        <div
+          v-if="expanded.blueprintCatalogs"
+          class="mt-15"
+        >
+          <div class="row mb-15">
+            <div class="col span-12">
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.blueprintCatalogs.default.title') }}
+              </p>
+              <p>{{ defaultCatalogStatusLabel }}</p>
+              <p class="text-muted mt-5">
+                {{ t('suseai.pages.settings.sections.blueprintCatalogs.default.helmNote') }}
+              </p>
+            </div>
+          </div>
+
+          <h3 class="mt-20">
+            {{ t('suseai.pages.settings.sections.blueprintCatalogs.custom.title') }}
+          </h3>
+
+          <div
+            v-for="(cat, index) in spec.blueprintCatalogs"
+            :key="index"
+            class="box mb-10"
+          >
+            <div class="row mb-10">
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="cat.name"
+                  :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.name.label')"
+                  :mode="mode"
+                />
+              </div>
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="cat.repoURL"
+                  :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.repoURL.label')"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+
+            <div class="row mb-10">
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="cat.branch"
+                  :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.branch.label')"
+                  :mode="mode"
+                />
+              </div>
+              <div class="col span-5">
+                <LabeledInput
+                  v-model:value="cat.path"
+                  :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.path.label')"
+                  :mode="mode"
+                />
+              </div>
+              <div class="col span-1 trash-col">
+                <button
+                  type="button"
+                  class="btn role-secondary"
+                  :aria-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.remove')"
+                  @click="removeCatalog(index)"
+                >
+                  <i class="icon icon-trash" />
+                </button>
+              </div>
+            </div>
+
+            <p class="text-label mb-5">
+              {{ t('suseai.pages.settings.sections.blueprintCatalogs.custom.credSecretRef.label') }}
+            </p>
+            <div class="row mb-15">
+              <div class="col span-8">
+                <SecretSelector
+                  :value="toSelectorValue(cat.credSecretRef)"
+                  :namespace="settingsNamespace"
+                  :show-key-selector="true"
+                  :secret-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.credSecretRef.secretNameLabel')"
+                  :key-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.credSecretRef.keyNameLabel')"
+                  :mode="mode"
+                  @update:value="cat.credSecretRef = fromSelectorValue($event)"
+                />
+              </div>
+            </div>
+
+            <p class="text-label mb-5">
+              {{ t('suseai.pages.settings.sections.blueprintCatalogs.custom.caBundleSecretRef.label') }}
+            </p>
+            <div class="row mb-15">
+              <div class="col span-8">
+                <SecretSelector
+                  :value="toSelectorValue(cat.caBundleSecretRef)"
+                  :namespace="settingsNamespace"
+                  :show-key-selector="true"
+                  :secret-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.caBundleSecretRef.secretNameLabel')"
+                  :key-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.caBundleSecretRef.keyNameLabel')"
+                  :mode="mode"
+                  @update:value="cat.caBundleSecretRef = fromSelectorValue($event)"
+                />
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col span-12">
+                <AsyncButton
+                  mode="edit"
+                  :action-label="t('suseai.pages.settings.test.button')"
+                  :disabled="!cat.repoURL"
+                  @click="cb => runCatalogTest(cat, cb)"
+                />
+                <span
+                  v-if="cat.testResult"
+                  :class="resultClass(cat.testResult)"
+                  class="ml-10"
+                >{{ resultText(cat.testResult) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="btn role-secondary"
+            @click="addCatalog()"
+          >
+            {{ t('suseai.pages.settings.sections.blueprintCatalogs.custom.add') }}
+          </button>
         </div>
       </div>
 

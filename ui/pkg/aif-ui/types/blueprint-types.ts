@@ -45,6 +45,9 @@ export const BLUEPRINT_NAME_LABEL    = 'ai-factory.suse.com/blueprint-name';
 // Distinct from spec.source (the BlueprintOrigin vendor enum SUSE/Nvidia/Custom).
 export const BLUEPRINT_SOURCE_LABEL   = 'ai-factory.suse.com/source';
 export const BLUEPRINT_SOURCE_BUNDLED = 'bundled';
+// Label Fleet stamps on Blueprints it syncs from a catalog GitRepo. Mirrors
+// the operator's isManagedBlueprint check (blueprint.go).
+export const FLEET_BUNDLE_NAME_LABEL = 'fleet.cattle.io/bundle-name';
 
 export const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/;
 

@@ -1,0 +1,14 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: BlueprintCatalog
+metadata:
+  name: suse-default
+spec:
+  displayName: SUSE Blueprints
+  description: Blueprints bundled with SUSE AI Factory.
+  categories: [rag, inference, agents]
+  blueprints:
+    - name: simple-chatbot-with-rag
+    - name: simple-chatbot-with-rag-vllm
+    - name: suse-inference-endpoint
+    - name: nvidia-rag-minimal
+    - name: nvidia-aiq-with-rag

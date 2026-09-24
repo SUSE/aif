@@ -39,9 +39,11 @@ func (r internalMapReader) ReadSecret(_ context.Context, namespace, name string)
 func TestNewFromSettingsLegacyTokenAuthDefaultsUsername(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
-		RepoURL:       "https://git.example.test/org/repo.git",
-		AuthType:      tokenAuth,
-		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: tokenAuth},
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+			RepoURL:       "https://git.example.test/org/repo.git",
+			AuthType:      tokenAuth,
+			CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: tokenAuth},
+		},
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
@@ -58,9 +60,11 @@ func TestNewFromSettingsLegacyTokenAuthDefaultsUsername(t *testing.T) {
 func TestNewFromSettingsHTTPSCredentialsUseExplicitUsername(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
-		RepoURL:       "https://git.example.test/org/repo.git",
-		Username:      "alice",
-		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "password"},
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+			RepoURL:       "https://git.example.test/org/repo.git",
+			Username:      "alice",
+			CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "password"},
+		},
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
@@ -80,8 +84,10 @@ func TestNewFromSettingsHTTPSCredentialsUseExplicitUsername(t *testing.T) {
 func TestNewFromSettingsHTTPSCredentialsReadUsernameFromSecret(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
-		RepoURL:       "https://git.example.test/org/repo.git",
-		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "password"},
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+			RepoURL:       "https://git.example.test/org/repo.git",
+			CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "password"},
+		},
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
@@ -101,8 +107,10 @@ func TestNewFromSettingsHTTPSCredentialsReadUsernameFromSecret(t *testing.T) {
 func TestNewFromSettingsHTTPSCredentialsDefaultUsername(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
-		RepoURL:       "https://git.example.test/org/repo.git",
-		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "token"},
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+			RepoURL:       "https://git.example.test/org/repo.git",
+			CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "token"},
+		},
 	}
 
 	client, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
@@ -119,9 +127,11 @@ func TestNewFromSettingsHTTPSCredentialsDefaultUsername(t *testing.T) {
 func TestNewFromSettingsRejectsUnsupportedSSH(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
-		RepoURL:       "ssh://git@git.example.test/org/repo.git",
-		AuthType:      "ssh",
-		CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "ssh-privatekey"},
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+			RepoURL:       "ssh://git@git.example.test/org/repo.git",
+			AuthType:      "ssh",
+			CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-auth", Key: "ssh-privatekey"},
+		},
 	}
 
 	_, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{
@@ -135,8 +145,10 @@ func TestNewFromSettingsRejectsUnsupportedSSH(t *testing.T) {
 func TestNewFromSettingsRejectsUsernameWithoutCredentials(t *testing.T) {
 	s := &aiplatformv1alpha1.Settings{}
 	s.Spec.Fleet = aiplatformv1alpha1.FleetSettings{
-		RepoURL:  "https://git.example.test/org/repo.git",
-		Username: "alice",
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+			RepoURL:  "https://git.example.test/org/repo.git",
+			Username: "alice",
+		},
 	}
 
 	_, err := NewFromSettings(context.Background(), s, "aif-operator", internalMapReader{})

@@ -239,10 +239,31 @@ aiExtension:
 
 # Default blueprints bundled with the chart. When enabled, the curated Blueprint
 # CRs under files/blueprints/ are created on install and reconciled on upgrade.
-# Disable to manage blueprints exclusively through other means (e.g. a future
-# git source) without the chart re-creating its defaults.
+# Disable to manage blueprints exclusively through other means without the
+# chart re-creating its defaults.
 defaultBlueprints:
   enabled: true
+  # When true, the default blueprints (and their catalog) are synced by Fleet
+  # from the git source below instead of the chart-bundled files. Default false
+  # = bundled (shipped in the chart, air-gap friendly). Switching this is a
+  # deliberate Helm-time change; partner catalogs are managed at runtime instead.
+  gitSourced: false
+  git:
+    repoURL: https://github.com/SUSE/aif.git
+    branch: main
+    paths: [charts/aif-operator/files/blueprints]
+
+# Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo that
+# syncs Blueprint CRs from the given repo/paths. The bundled default catalog is
+# always present and is NOT listed here. credSecretRef/caBundleSecretRef must
+# reference Secrets you pre-create in the operator namespace.
+blueprintCatalogs: []
+#  - name: partner-acme
+#    repoURL: https://github.com/acme/blueprints.git
+#    branch: main
+#    paths: [catalog/blueprints]
+#    credSecretRef:    {name: acme-git, key: token}
+#    caBundleSecretRef: {name: acme-ca, key: ca.crt}
 
 # CRD lifecycle. The chart ships its CRDs under Helm's standard crds/ directory,
 # so Helm natively installs them before it builds the release manifest (the
