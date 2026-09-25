@@ -11,6 +11,7 @@ export default defineConfig({
       '@shell': fileURLToPath(new URL('./node_modules/@rancher/shell', import.meta.url)),
       '@components': fileURLToPath(new URL('./node_modules/@rancher/shell/rancher-components', import.meta.url)),
     },
+    extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json', '.vue'],
   },
   test: {
     environment: 'node',

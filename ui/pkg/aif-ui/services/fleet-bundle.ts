@@ -29,7 +29,7 @@ const SUSE_AI_COMBINED_PULL_SECRET = 'suse-ai-pull-combined';
 // withCombinedPullSecret guarantees the operator-managed combined pull secret is
 // referenced (first, de-duplicated) for suse-ai charts. No-op for other
 // libraries so NVIDIA / custom / generic charts keep their existing handling.
-function withCombinedPullSecret(names: string[], library?: 'suse-ai' | 'nvidia' | 'custom'): string[] {
+function withCombinedPullSecret(names: string[], library?: 'suse-ai' | 'nvidia'): string[] {
   if (library !== 'suse-ai') {
     return names;
   }
@@ -52,7 +52,7 @@ export interface FleetBundleParams {
   targetNamespace:         string;
   targetClusterIds:        string[];
   additionalPullSecretNames?: string[]; // pre-created pull secrets for extra registries (e.g. subchart registries)
-  library?:                'suse-ai' | 'nvidia' | 'custom'; // library source to determine imagePullSecrets handling
+  library?:                'suse-ai' | 'nvidia'; // library source to determine imagePullSecrets handling
 }
 
 // BUNDLE_NAME_MAX is the K8s metadata.name (DNS-1123 label) limit a Fleet
@@ -227,7 +227,7 @@ export function buildFleetBundleYAML(params: {
   pullSecretNames:  string[];
   targetClusterIds: string[];
   targetNamespace:  string;
-  library?:         'suse-ai' | 'nvidia' | 'custom';
+  library?:         'suse-ai' | 'nvidia';
 }): string {
   const targets = params.targetClusterIds.map(id =>
     id === 'local'
@@ -239,11 +239,14 @@ export function buildFleetBundleYAML(params: {
 
   const values = JSON.parse(JSON.stringify(params.values));
   const pullSecretNames = withCombinedPullSecret(params.pullSecretNames, params.library);
-  if (pullSecretNames.length > 0 && params.library !== 'nvidia') {
-    // Non-NVIDIA charts get the combined pull secret via the standard pod-spec
+  if (pullSecretNames.length > 0 && params.library === 'suse-ai') {
+    // Only suse-ai charts get the combined pull secret via the standard pod-spec
     // paths. NVIDIA charts are handled by injectNvidiaPullSecretRefs below, which
     // references the operator-delivered ngc-secret (not the combined secret) in
-    // the vendor-specific value shapes those charts actually read.
+    // the vendor-specific value shapes those charts actually read. Custom repos
+    // are not part of this operator-managed pull-secret machinery: their chart
+    // pull auth comes from the ClusterRepo clientSecret (helmSecretName), and no
+    // pod-spec imagePullSecrets are injected on their behalf.
     const secrets = pullSecretNames.map(name => ({ name }));
     values.global = { ...(values.global || {}), imagePullSecrets: secrets };
     values.imagePullSecrets = secrets;
@@ -453,9 +456,12 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   return params.bundleName;
 }
 
-function addPullSecretsToValues(values: Record<string, any>, names: string[], library?: 'suse-ai' | 'nvidia' | 'custom'): Record<string, any> {
+function addPullSecretsToValues(values: Record<string, any>, names: string[], library?: 'suse-ai' | 'nvidia'): Record<string, any> {
   const effective = withCombinedPullSecret(names, library);
-  if (effective.length === 0 || library === 'nvidia') return values;
+  // Only suse-ai charts receive operator-managed pod-spec imagePullSecrets here.
+  // NVIDIA is handled by injectNvidiaPullSecretRefs; custom repos are out of the
+  // operator-managed pull-secret machinery (chart pull auth via helmSecretName).
+  if (effective.length === 0 || library !== 'suse-ai') return values;
   const secrets = effective.map(name => ({ name }));
   return {
     ...values,
@@ -473,7 +479,7 @@ function addPullSecretsToValues(values: Record<string, any>, names: string[], li
 //
 // Mutates `values` in place. Safe to call on any vendor; pass library to
 // gate it to NVIDIA charts only.
-export function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-ai' | 'nvidia' | 'custom'): void {
+export function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
   if (library !== 'nvidia') return;
   for (const [key, fallbackName] of [
     ['imagePullSecret', 'ngc-secret'],
@@ -525,7 +531,7 @@ function isPlainObject(v: any): v is Record<string, any> {
 // it to NVIDIA charts only. Sets the scalar global.ngcImagePullSecretName but
 // never forces the global.imagePullSecrets list shape (owned by the non-nvidia
 // code).
-export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia' | 'custom'): void {
+export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
   if (library !== 'nvidia') return;
   const name = NVIDIA_IMAGE_PULL_SECRET_NAME;
 
