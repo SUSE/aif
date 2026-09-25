@@ -284,7 +284,7 @@ export default {
       }
 
       const cats = (spec.blueprintCatalogs || [])
-        .filter((c) => c.name || c.repoURL)
+        .filter((c) => c.name)
         .map((c) => {
           const o = { name: c.name };
 

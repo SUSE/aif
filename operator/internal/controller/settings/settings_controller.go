@@ -233,8 +233,16 @@ func (r *SettingsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiplatformv1alpha1.Settings{}).
 		Watches(gitRepo, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-			// Only react to the GitRepo we manage.
-			if obj.GetName() != fleetGitRepoName || obj.GetNamespace() != fleetGitRepoNamespace {
+			if obj.GetNamespace() != fleetGitRepoNamespace {
+				return nil
+			}
+			// React to the primary fleet GitRepo and any catalog GitRepo
+			// (identified by the catalog-repo label) so that external deletion
+			// of either is healed on the next reconcile.
+			name := obj.GetName()
+			labels := obj.GetLabels()
+			isCatalog := labels[credentials.CatalogRepoLabel] == credentials.LabelValueTrue
+			if name != fleetGitRepoName && !isCatalog {
 				return nil
 			}
 			return r.allSettingsRequests(ctx)
@@ -472,6 +480,12 @@ func (r *SettingsReconciler) reconcileBlueprintCatalogs(ctx context.Context, s *
 			continue
 		}
 
+		if cat.RepoURL == "" {
+			err := fmt.Errorf("catalog %q has no repoURL configured", cat.Name)
+			l.Error(err, "skipping blueprint catalog")
+			errs = append(errs, err)
+			continue
+		}
 		paths := cat.Paths
 		if len(paths) == 0 {
 			paths = []string{"blueprints"}

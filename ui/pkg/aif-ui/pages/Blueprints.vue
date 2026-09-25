@@ -527,7 +527,8 @@ export default defineComponent({
         const cl = await listCatalogs();
         catalogs.value = cl.items || [];
       } catch {
-        catalogs.value = [];
+        // Preserve the existing catalog list on transient errors so the active
+        // filter is not silently cleared. An empty initial load still starts at [].
       }
     }
 
