@@ -9,6 +9,14 @@ global:
   # value takes precedence for the UI, including an intentionally empty list.
   imagePullSecrets: []
 
+  # kubectl image, used by jobs that needs kubectl
+  kubectl:
+    image:
+      registry: registry.suse.com
+      repository: suse/kubectl
+      tag: "1.35"
+      pullPolicy: IfNotPresent
+
 nameOverride: ""
 fullnameOverride: ""
 
