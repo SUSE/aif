@@ -33,6 +33,8 @@ import (
 
 var probeChartFn = credcheck.ProbeChart
 
+const targetCustomRepo = "customRepo"
+
 type chartAccessConfiguration struct {
 	URL               string                           `json:"url"`
 	UserSecretRef     *aiplatformv1alpha1.SecretKeyRef `json:"userSecretRef"`
@@ -93,6 +95,10 @@ func (h *SettingsHandler) validateChartAccess(w http.ResponseWriter, r *http.Req
 			if source.authenticated {
 				u, p = user, password
 			}
+			if source.chart == "" {
+				results[i] = credcheck.ChartResult{RepositoryURL: source.url, ChartName: "", Status: "skipped", Reason: "noSampleChart"}
+				return
+			}
 			results[i] = probeChartFn(ctx, source.url, source.chart, u, p, caPEM)
 		}()
 	}
@@ -143,6 +149,19 @@ func chartProbeSources(req chartAccessRequest) ([]chartProbeSource, error) {
 		if chart == "" {
 			chart = representativeChart(endpoint, "aiq-aira")
 		}
+	case targetCustomRepo:
+		if endpoint == "" {
+			return nil, fmt.Errorf("%w: custom repository URL is required", ErrInvalidInput)
+		}
+		if reason := unsafeProbeTarget(endpoint); reason != "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidInput, reason)
+		}
+		if chart == "" {
+			// Chart access is optional for custom repos: with no sample chart there
+			// is nothing to probe. Surface a skipped result rather than an error.
+			return []chartProbeSource{{url: endpoint, chart: "", authenticated: true}}, nil
+		}
+		return []chartProbeSource{{url: endpoint, chart: chart, authenticated: true}}, nil
 	default:
 		return nil, fmt.Errorf("%w: unknown chart registry target", ErrInvalidInput)
 	}
