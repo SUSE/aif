@@ -204,3 +204,71 @@ func TestChartAccessUnreadableNGCKeyDoesNotBlockPublicSources(t *testing.T) {
 		t.Fatalf("public and gated sources were not distinguished: %s", w.Body.String())
 	}
 }
+
+func TestChartAccessCustomRepoProbesFormEndpoint(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = aiplatformv1alpha1.AddToScheme(scheme)
+	h := NewSettingsHandler(fake.NewClientBuilder().WithScheme(scheme).Build(), "aif-operator")
+	original := probeChartFn
+	t.Cleanup(func() { probeChartFn = original })
+	var gotEndpoint, gotChart string
+	probeChartFn = func(_ context.Context, endpoint, chart, _, _ string, _ []byte) credcheck.ChartResult {
+		gotEndpoint, gotChart = endpoint, chart
+		return credcheck.ChartResult{RepositoryURL: endpoint, ChartName: chart, Status: "ok"}
+	}
+	w := httptest.NewRecorder()
+	h.validateChartAccess(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-chart-access", strings.NewReader(`{"target":"customRepo","chartName":"node-exporter","configuration":{"url":"https://charts.example.com"}}`)))
+	if gotEndpoint != "https://charts.example.com" || gotChart != "node-exporter" {
+		t.Fatalf("probed endpoint=%q chart=%q", gotEndpoint, gotChart)
+	}
+	var response struct {
+		Results []credcheck.ChartResult `json:"results"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) != 1 || response.Results[0].Status != "ok" {
+		t.Fatalf("results = %+v", response.Results)
+	}
+}
+
+func TestChartAccessCustomRepoSkipsWhenNoSampleChart(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = aiplatformv1alpha1.AddToScheme(scheme)
+	h := NewSettingsHandler(fake.NewClientBuilder().WithScheme(scheme).Build(), "aif-operator")
+	original := probeChartFn
+	t.Cleanup(func() { probeChartFn = original })
+	probeChartFn = func(context.Context, string, string, string, string, []byte) credcheck.ChartResult {
+		t.Fatal("probe must not run without a sample chart")
+		return credcheck.ChartResult{}
+	}
+	w := httptest.NewRecorder()
+	h.validateChartAccess(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-chart-access", strings.NewReader(`{"target":"customRepo","configuration":{"url":"https://charts.example.com"}}`)))
+	var response struct {
+		Results []credcheck.ChartResult `json:"results"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) != 1 || response.Results[0].Status != "skipped" {
+		t.Fatalf("results = %+v", response.Results)
+	}
+}
+
+func TestChartAccessCustomRepoRejectsSSRFTarget(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = aiplatformv1alpha1.AddToScheme(scheme)
+	h := NewSettingsHandler(fake.NewClientBuilder().WithScheme(scheme).Build(), "aif-operator")
+	w := httptest.NewRecorder()
+	h.validateChartAccess(w, httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-chart-access", strings.NewReader(`{"target":"customRepo","chartName":"x","configuration":{"url":"http://127.0.0.1:8080"}}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "host is not allowed") {
+		t.Fatalf("expected SSRF rejection, got: %s", body)
+	}
+}
