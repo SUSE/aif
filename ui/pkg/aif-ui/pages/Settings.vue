@@ -1,6 +1,8 @@
 <script>
 import AsyncButton      from '@shell/components/AsyncButton';
+import AppModal         from '@shell/components/AppModal';
 import { Banner }       from '@components/Banner';
+import { BadgeState }   from '@components/BadgeState';
 import Loading          from '@shell/components/Loading';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import { Checkbox }     from '@components/Form/Checkbox';
@@ -39,7 +41,9 @@ export default {
 
   components: {
     AsyncButton,
+    AppModal,
     Banner,
+    BadgeState,
     Loading,
     LabeledInput,
     Checkbox,
@@ -54,6 +58,7 @@ export default {
       const data = await getSettings();
 
       this.spec   = this.buildSpec(data.spec);
+      this.syncCustomRepoExpanded();
       this.loaded = true;
       await this.loadTokenState();
     } catch (e) {
@@ -81,21 +86,21 @@ export default {
       authorizeError:  '',
       showAdvanced:    { rancherCatalog: false },
       expanded:          {
+        repositories:   true,
         fleet:          false,
         appCollection:  true,
         suseRegistry:   false,
         nvidia:         false,
         rancherCatalog: false,
-        customRepos:    false,
       },
       testResults: {
         gitops:                null,
         rancherCatalog:        null,
-        customRepo:            null,
       },
-      editingRepo:      null,
-      editingIndex:     -1,
-      customRepoError:  '',
+      // Per-repo accordion state, index-aligned with spec.customRepos.
+      customRepoExpanded: [],
+      // Delete-confirmation modal for a custom repo.
+      deleteRepoModal: { show: false, index: -1, label: '' },
     };
   },
 
@@ -266,6 +271,10 @@ export default {
     },
 
     openSection(section) {
+      const repoChildren = ['appCollection', 'suseRegistry', 'nvidia'];
+      if (repoChildren.includes(section)) {
+        this.expanded.repositories = true;
+      }
       this.expanded[section] = true;
       this.$nextTick(() => {
         document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -288,9 +297,18 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
+
+        const customRepoError = this.validateCustomRepos();
+        if (customRepoError) {
+          this.errors = [customRepoError];
+          buttonDone(false);
+          return false;
+        }
+
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
+        this.syncCustomRepoExpanded();
         // Discard diagnostics of the previous saved configuration, including any
         // checks still in flight when Apply was clicked.
         this.settingsRevision++;
@@ -435,70 +453,74 @@ export default {
       }
     },
 
+    // Keeps the per-repo accordion state aligned with spec.customRepos, starting
+    // collapsed. Called whenever spec is (re)loaded from the operator.
+    syncCustomRepoExpanded() {
+      this.customRepoExpanded = (this.spec.customRepos || []).map(() => false);
+    },
+
+    toggleCustomRepo(index) {
+      this.customRepoExpanded[index] = !this.customRepoExpanded[index];
+    },
+
+    // Custom repos bind their fields directly to spec, like the built-in repos,
+    // and persist with the page's Save button. Add appends a blank, auto-expanded
+    // repo; Delete removes it in place.
     addCustomRepo() {
-      this.editingRepo = emptyCustomRepo();
-      this.editingIndex = -1;
-      this.customRepoError = '';
+      this.spec.customRepos.push(emptyCustomRepo());
+      this.customRepoExpanded.push(true);
     },
 
-    editCustomRepo(index) {
-      this.editingRepo = { ...this.spec.customRepos[index] };
-      this.editingIndex = index;
-      this.customRepoError = '';
+    // Opens the delete-confirmation modal for a custom repo. Removal is
+    // deferred until the user confirms, then applied locally (persisted on Save).
+    confirmDeleteRepo(index) {
+      const repo = this.spec.customRepos[index] || {};
+      const label = repo.displayName || repo.name || this.t('suseai.pages.settings.sections.customRepos.newRepo');
+
+      this.deleteRepoModal = { show: true, index, label };
     },
 
-    saveCustomRepo() {
-      if (!this.editingRepo) return;
-
-      const existingNames = this.spec.customRepos
-        .filter((_, i) => i !== this.editingIndex)
-        .map((r) => r.name);
-
-      const error = validateCustomRepoForm(this.editingRepo, existingNames);
-      if (error) {
-        this.customRepoError = error;
-        return;
-      }
-
-      if (this.editingIndex >= 0) {
-        this.spec.customRepos.splice(this.editingIndex, 1, this.editingRepo);
-      } else {
-        this.spec.customRepos.push(this.editingRepo);
-      }
-
-      this.editingRepo = null;
-      this.editingIndex = -1;
-      this.customRepoError = '';
+    closeDeleteRepoModal() {
+      this.deleteRepoModal = { show: false, index: -1, label: '' };
     },
 
     removeCustomRepo(index) {
       this.spec.customRepos.splice(index, 1);
-      if (this.editingIndex === index) {
-        this.editingRepo = null;
-        this.editingIndex = -1;
-        this.customRepoError = '';
-      }
+      this.customRepoExpanded.splice(index, 1);
+      this.closeDeleteRepoModal();
     },
 
-    testCustomRepo(buttonDone) {
-      if (!this.editingRepo) {
-        buttonDone(false);
-        return;
+    // Validates every custom repo before the page Save reaches the operator.
+    // Returns the first error (prefixed with the offending repo's label) and
+    // expands that repo so the user can fix it; null when all are valid.
+    validateCustomRepos() {
+      const repos = this.spec.customRepos || [];
+      for (let i = 0; i < repos.length; i++) {
+        const otherNames = repos.filter((_, j) => j !== i).map((r) => r.name);
+        const error = validateCustomRepoForm(repos[i], otherNames);
+        if (error) {
+          this.customRepoExpanded[i] = true;
+          const label = repos[i].displayName || repos[i].name || `#${ i + 1 }`;
+          return `${ label }: ${ error }`;
+        }
       }
+      return null;
+    },
 
-      const override = {
-        type:                 this.editingRepo.type,
-        url:                  this.editingRepo.url,
-        gitRepo:              this.editingRepo.gitRepo,
-        branch:               this.editingRepo.gitBranch,
-        userSecretRef:        this.editingRepo.userSecretRef,
-        tokenSecretRef:       this.editingRepo.tokenSecretRef,
-        caBundleSecretRef:    this.editingRepo.caBundleSecretRef,
-        credSecretRef:        this.editingRepo.sshKeySecretRef,
-        insecureSkipVerify:   this.editingRepo.insecureSkipTLSVerify,
+    // Maps the custom repo edit form to RegistryConnectionStatus's configuration
+    // shape: git repos have no chart index to authenticate a `url` against.
+    customRepoConfiguration(form) {
+      return {
+        type: form.type,
+        url: form.type === 'git' ? '' : form.url,
+        gitRepo: form.gitRepo,
+        branch: form.gitBranch,
+        userSecretRef: form.userSecretRef,
+        tokenSecretRef: form.tokenSecretRef,
+        credSecretRef: form.sshKeySecretRef,
+        caBundleSecretRef: form.caBundleSecretRef,
+        insecureSkipVerify: form.insecureSkipTLSVerify,
       };
-
-      this.runTest('customRepo', override, buttonDone);
     },
   },
 };
@@ -531,23 +553,37 @@ export default {
         :label="err"
       />
 
-      <!-- SUSE Application Collection -->
-      <div class="box mt-10">
+      <!-- Repositories -->
+      <div class="box mt-10" data-testid="section-repositories">
         <div
           class="accordion-header"
           role="button"
           tabindex="0"
-          @click="toggle('appCollection')"
-          @keydown.space.enter.prevent="toggle('appCollection')"
+          @click="toggle('repositories')"
+          @keydown.space.enter.prevent="toggle('repositories')"
         >
-          <i :class="expanded.appCollection ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-          <h2>{{ t('suseai.pages.settings.sections.appCollection.title') }}</h2>
+          <i :class="expanded.repositories ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+          <h2>{{ t('suseai.pages.settings.sections.repositories.title') }}</h2>
         </div>
 
-        <div
-          v-if="expanded.appCollection"
-          class="mt-15"
-        >
+        <div v-if="expanded.repositories" class="repositories-group">
+          <!-- SUSE Application Collection -->
+          <div class="box mt-10" data-testid="section-appCollection">
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggle('appCollection')"
+              @keydown.space.enter.prevent="toggle('appCollection')"
+            >
+              <i :class="expanded.appCollection ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ t('suseai.pages.settings.sections.appCollection.title') }}</h2>
+            </div>
+
+            <div
+              v-if="expanded.appCollection"
+              class="mt-15"
+            >
           <div class="row mb-15">
             <div class="col span-8">
               <LabeledInput
@@ -630,26 +666,26 @@ export default {
             target="applicationCollection"
             :configuration="registryConfiguration('applicationCollection')"
           />
-        </div>
-      </div>
+            </div>
+          </div>
 
-      <!-- SUSE Registry -->
-      <div class="box mt-10">
-        <div
-          class="accordion-header"
-          role="button"
-          tabindex="0"
-          @click="toggle('suseRegistry')"
-          @keydown.space.enter.prevent="toggle('suseRegistry')"
-        >
-          <i :class="expanded.suseRegistry ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-          <h2>{{ t('suseai.pages.settings.sections.suseRegistry.title') }}</h2>
-        </div>
+          <!-- SUSE Registry -->
+          <div class="box mt-10" data-testid="section-suseRegistry">
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggle('suseRegistry')"
+              @keydown.space.enter.prevent="toggle('suseRegistry')"
+            >
+              <i :class="expanded.suseRegistry ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ t('suseai.pages.settings.sections.suseRegistry.title') }}</h2>
+            </div>
 
-        <div
-          v-if="expanded.suseRegistry"
-          class="mt-15"
-        >
+            <div
+              v-if="expanded.suseRegistry"
+              class="mt-15"
+            >
           <div class="row mb-15">
             <div class="col span-8">
               <LabeledInput
@@ -734,26 +770,26 @@ export default {
             target="suseRegistry"
             :configuration="registryConfiguration('suseRegistry')"
           />
-        </div>
-      </div>
+            </div>
+          </div>
 
-      <!-- NVIDIA -->
-      <div class="box mt-10">
-        <div
-          class="accordion-header"
-          role="button"
-          tabindex="0"
-          @click="toggle('nvidia')"
-          @keydown.space.enter.prevent="toggle('nvidia')"
-        >
-          <i :class="expanded.nvidia ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-          <h2>{{ t('suseai.pages.settings.sections.nvidia.title') }}</h2>
-        </div>
+          <!-- NVIDIA -->
+          <div class="box mt-10" data-testid="section-nvidia">
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggle('nvidia')"
+              @keydown.space.enter.prevent="toggle('nvidia')"
+            >
+              <i :class="expanded.nvidia ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ t('suseai.pages.settings.sections.nvidia.title') }}</h2>
+            </div>
 
-        <div
-          v-if="expanded.nvidia"
-          class="mt-15"
-        >
+            <div
+              v-if="expanded.nvidia"
+              class="mt-15"
+            >
           <p class="text-muted mb-15">
             {{ t('suseai.pages.settings.sections.nvidia.description') }}
           </p>
@@ -825,11 +861,268 @@ export default {
             target="nvidia"
             :configuration="registryConfiguration('nvidia')"
           />
+            </div>
+          </div>
+
+          <!-- Custom Repositories: one accordion per repo, styled like the built-ins -->
+          <div
+            v-for="(repo, i) in spec.customRepos"
+            :key="i"
+            class="box mt-10"
+            :data-testid="`section-customRepo-${i}`"
+          >
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggleCustomRepo(i)"
+              @keydown.space.enter.prevent="toggleCustomRepo(i)"
+            >
+              <i :class="customRepoExpanded[i] ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ repo.displayName || repo.name || t('suseai.pages.settings.sections.customRepos.newRepo') }}</h2>
+              <BadgeState
+                color="bg-info"
+                :label="t('suseai.pages.settings.sections.customRepos.badge')"
+              />
+            </div>
+
+            <div
+              v-if="customRepoExpanded[i]"
+              class="mt-15"
+            >
+
+            <div class="row mb-10">
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="repo.name"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.name.label')"
+                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.name.placeholder')"
+                  :mode="mode"
+                />
+              </div>
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="repo.displayName"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.displayName.label')"
+                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.displayName.placeholder')"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+
+            <div class="row mb-10">
+              <div class="col span-4">
+                <LabeledSelect
+                  v-model:value="repo.type"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.type.label')"
+                  :options="[
+                    { label: 'Helm', value: 'helm' },
+                    { label: 'OCI', value: 'oci' },
+                    { label: 'Git', value: 'git' }
+                  ]"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+
+            <div
+              v-if="repo.type === 'git'"
+              class="row mb-15"
+            >
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="repo.gitRepo"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.gitRepo.label')"
+                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.gitRepo.placeholder')"
+                  :mode="mode"
+                />
+              </div>
+              <div class="col span-6">
+                <LabeledInput
+                  v-model:value="repo.gitBranch"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.gitBranch.label')"
+                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.gitBranch.placeholder')"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+
+            <div
+              v-if="repo.type !== 'git'"
+              class="row mb-15"
+            >
+              <div class="col span-8">
+                <LabeledInput
+                  v-model:value="repo.url"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.url.label')"
+                  :placeholder="repo.type === 'oci' ? t('suseai.pages.settings.sections.customRepos.fields.url.placeholderOci') : t('suseai.pages.settings.sections.customRepos.fields.url.placeholderHelm')"
+                  :mode="mode"
+                />
+              </div>
+            </div>
+
+            <template v-if="repo.type === 'git'">
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.customRepos.fields.sshKeySecretRef.label') }}
+              </p>
+              <div class="row mb-15">
+                <div class="col span-8">
+                  <SecretSelector
+                    :value="toSelectorValue(repo.sshKeySecretRef)"
+                    :namespace="settingsNamespace"
+                    :show-key-selector="true"
+                    :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.sshKeySecretRef.secretNameLabel')"
+                    :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.sshKeySecretRef.keyNameLabel')"
+                    :mode="mode"
+                    @update:value="repo.sshKeySecretRef = fromSelectorValue($event)"
+                  />
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.customRepos.fields.userSecretRef.label') }}
+              </p>
+              <div class="row mb-15">
+                <div class="col span-8">
+                  <SecretSelector
+                    :value="toSelectorValue(repo.userSecretRef)"
+                    :namespace="settingsNamespace"
+                    :show-key-selector="true"
+                    :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.userSecretRef.secretNameLabel')"
+                    :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.userSecretRef.keyNameLabel')"
+                    :mode="mode"
+                    @update:value="repo.userSecretRef = fromSelectorValue($event)"
+                  />
+                </div>
+              </div>
+
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.customRepos.fields.tokenSecretRef.label') }}
+              </p>
+              <div class="row mb-15">
+                <div class="col span-8">
+                  <SecretSelector
+                    :value="toSelectorValue(repo.tokenSecretRef)"
+                    :namespace="settingsNamespace"
+                    :show-key-selector="true"
+                    :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.tokenSecretRef.secretNameLabel')"
+                    :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.tokenSecretRef.keyNameLabel')"
+                    :mode="mode"
+                    @update:value="repo.tokenSecretRef = fromSelectorValue($event)"
+                  />
+                </div>
+              </div>
+            </template>
+
+            <p class="text-label mb-5">
+              {{ t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.label') }}
+            </p>
+            <div class="row mb-15">
+              <div class="col span-8">
+                <SecretSelector
+                  :value="toSelectorValue(repo.caBundleSecretRef)"
+                  :namespace="settingsNamespace"
+                  :show-key-selector="true"
+                  :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.secretNameLabel')"
+                  :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.keyNameLabel')"
+                  :mode="mode"
+                  @update:value="repo.caBundleSecretRef = fromSelectorValue($event)"
+                />
+                <p class="text-muted mt-5">
+                  {{ t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.help') }}
+                </p>
+              </div>
+            </div>
+
+            <div class="row mb-10">
+              <div class="col span-12">
+                <Checkbox
+                  v-model:value="repo.insecureSkipTLSVerify"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.insecureSkipTLSVerify.label')"
+                  :mode="mode"
+                />
+                <Banner
+                  v-if="repo.insecureSkipTLSVerify"
+                  color="warning"
+                  class="mt-5"
+                  :label="t('suseai.pages.settings.sections.customRepos.fields.insecureSkipTLSVerify.warning')"
+                />
+              </div>
+            </div>
+
+            <RegistryConnectionStatus
+              :target="'customRepo'"
+              :configuration="customRepoConfiguration(repo)"
+              :repo-name="`custom-${repo.name}`"
+            />
+
+            <div class="row mt-10 mb-10">
+              <div class="col span-12">
+                <button
+                  type="button"
+                  :data-testid="`delete-custom-repo-${i}`"
+                  class="btn role-secondary"
+                  @click="confirmDeleteRepo(i)"
+                >
+                  {{ t('suseai.pages.settings.sections.customRepos.actions.deleteRepo') }}
+                </button>
+              </div>
+            </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            data-testid="add-custom-repo"
+            class="btn role-secondary mt-10"
+            @click="addCustomRepo"
+          >
+            {{ t('suseai.pages.settings.sections.customRepos.actions.add') }}
+          </button>
         </div>
       </div>
 
+      <!-- Custom repo delete confirmation -->
+      <AppModal
+        v-if="deleteRepoModal.show"
+        :click-to-close="true"
+        :width="480"
+        @close="closeDeleteRepoModal"
+      >
+        <div class="modal-body">
+          <h3>{{ t('suseai.pages.settings.sections.customRepos.deleteModal.title') }}</h3>
+          <p>
+            {{ t('suseai.pages.settings.sections.customRepos.deleteModal.prompt') }}
+            <strong>{{ deleteRepoModal.label }}</strong>?
+          </p>
+          <p class="text-muted">
+            {{ t('suseai.pages.settings.sections.customRepos.deleteModal.note') }}
+          </p>
+          <div class="modal-buttons">
+            <button
+              type="button"
+              data-testid="cancel-delete-custom-repo"
+              class="btn role-secondary"
+              @click="closeDeleteRepoModal"
+            >
+              {{ t('suseai.pages.settings.sections.customRepos.deleteModal.cancel') }}
+            </button>
+            <button
+              type="button"
+              data-testid="confirm-delete-custom-repo"
+              class="btn role-primary"
+              @click="removeCustomRepo(deleteRepoModal.index)"
+            >
+              {{ t('suseai.pages.settings.sections.customRepos.deleteModal.confirm') }}
+            </button>
+          </div>
+        </div>
+      </AppModal>
+
       <!-- Fleet / GitOps -->
-      <div class="box mt-10">
+      <div class="box mt-10" data-testid="section-fleet">
         <div
           class="accordion-header"
           role="button"
@@ -1082,287 +1375,6 @@ export default {
         </div>
       </div>
 
-      <!-- Custom Repositories -->
-      <div class="box mt-10">
-        <div
-          class="accordion-header"
-          role="button"
-          tabindex="0"
-          @click="toggle('customRepos')"
-          @keydown.space.enter.prevent="toggle('customRepos')"
-        >
-          <i :class="expanded.customRepos ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-          <h2>{{ t('suseai.pages.settings.sections.customRepos.title') }}</h2>
-        </div>
-
-        <div
-          v-if="expanded.customRepos"
-          class="mt-15"
-        >
-          <p class="text-muted mb-15">
-            {{ t('suseai.pages.settings.sections.customRepos.description') }}
-          </p>
-
-          <table
-            v-if="spec.customRepos.length > 0"
-            class="custom-repos-table mb-15"
-          >
-            <thead>
-              <tr>
-                <th>{{ t('suseai.pages.settings.sections.customRepos.table.name') }}</th>
-                <th>{{ t('suseai.pages.settings.sections.customRepos.table.type') }}</th>
-                <th>{{ t('suseai.pages.settings.sections.customRepos.table.location') }}</th>
-                <th>{{ t('suseai.pages.settings.sections.customRepos.table.actions') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="(repo, i) in spec.customRepos"
-                :key="i"
-              >
-                <td>{{ repo.displayName || repo.name }}</td>
-                <td>{{ repo.type.toUpperCase() }}</td>
-                <td>
-                  <template v-if="repo.type === 'git'">
-                    {{ repo.gitRepo }} ({{ repo.gitBranch }})
-                  </template>
-                  <template v-else>
-                    {{ repo.url }}
-                  </template>
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    class="btn btn-sm role-link mr-5"
-                    @click="editCustomRepo(i)"
-                  >
-                    {{ t('suseai.pages.settings.sections.customRepos.actions.edit') }}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-sm role-link"
-                    @click="removeCustomRepo(i)"
-                  >
-                    {{ t('suseai.pages.settings.sections.customRepos.actions.delete') }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          <button
-            v-if="!editingRepo"
-            type="button"
-            class="btn role-secondary mb-15"
-            @click="addCustomRepo"
-          >
-            {{ t('suseai.pages.settings.sections.customRepos.actions.add') }}
-          </button>
-
-          <div
-            v-if="editingRepo"
-            class="edit-form"
-          >
-            <h3 class="mb-10">
-              {{ editingIndex >= 0 ? t('suseai.pages.settings.sections.customRepos.editTitle') : t('suseai.pages.settings.sections.customRepos.addTitle') }}
-            </h3>
-
-            <Banner
-              v-if="customRepoError"
-              color="error"
-              :label="customRepoError"
-              class="mb-10"
-            />
-
-            <div class="row mb-10">
-              <div class="col span-6">
-                <LabeledInput
-                  v-model:value="editingRepo.name"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.name.label')"
-                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.name.placeholder')"
-                  :mode="mode"
-                />
-              </div>
-              <div class="col span-6">
-                <LabeledInput
-                  v-model:value="editingRepo.displayName"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.displayName.label')"
-                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.displayName.placeholder')"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-
-            <div class="row mb-10">
-              <div class="col span-4">
-                <LabeledSelect
-                  v-model:value="editingRepo.type"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.type.label')"
-                  :options="[
-                    { label: 'Helm', value: 'helm' },
-                    { label: 'OCI', value: 'oci' },
-                    { label: 'Git', value: 'git' }
-                  ]"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-
-            <div
-              v-if="editingRepo.type === 'git'"
-              class="row mb-15"
-            >
-              <div class="col span-6">
-                <LabeledInput
-                  v-model:value="editingRepo.gitRepo"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.gitRepo.label')"
-                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.gitRepo.placeholder')"
-                  :mode="mode"
-                />
-              </div>
-              <div class="col span-6">
-                <LabeledInput
-                  v-model:value="editingRepo.gitBranch"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.gitBranch.label')"
-                  :placeholder="t('suseai.pages.settings.sections.customRepos.fields.gitBranch.placeholder')"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-
-            <div
-              v-if="editingRepo.type !== 'git'"
-              class="row mb-15"
-            >
-              <div class="col span-8">
-                <LabeledInput
-                  v-model:value="editingRepo.url"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.url.label')"
-                  :placeholder="editingRepo.type === 'oci' ? t('suseai.pages.settings.sections.customRepos.fields.url.placeholderOci') : t('suseai.pages.settings.sections.customRepos.fields.url.placeholderHelm')"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-
-            <template v-if="editingRepo.type === 'git'">
-              <p class="text-label mb-5">
-                {{ t('suseai.pages.settings.sections.customRepos.fields.sshKeySecretRef.label') }}
-              </p>
-              <div class="row mb-15">
-                <div class="col span-8">
-                  <SecretSelector
-                    :value="toSelectorValue(editingRepo.sshKeySecretRef)"
-                    :namespace="settingsNamespace"
-                    :show-key-selector="true"
-                    :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.sshKeySecretRef.secretNameLabel')"
-                    :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.sshKeySecretRef.keyNameLabel')"
-                    :mode="mode"
-                    @update:value="editingRepo.sshKeySecretRef = fromSelectorValue($event)"
-                  />
-                </div>
-              </div>
-            </template>
-
-            <template v-else>
-              <p class="text-label mb-5">
-                {{ t('suseai.pages.settings.sections.customRepos.fields.userSecretRef.label') }}
-              </p>
-              <div class="row mb-15">
-                <div class="col span-8">
-                  <SecretSelector
-                    :value="toSelectorValue(editingRepo.userSecretRef)"
-                    :namespace="settingsNamespace"
-                    :show-key-selector="true"
-                    :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.userSecretRef.secretNameLabel')"
-                    :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.userSecretRef.keyNameLabel')"
-                    :mode="mode"
-                    @update:value="editingRepo.userSecretRef = fromSelectorValue($event)"
-                  />
-                </div>
-              </div>
-
-              <p class="text-label mb-5">
-                {{ t('suseai.pages.settings.sections.customRepos.fields.tokenSecretRef.label') }}
-              </p>
-              <div class="row mb-15">
-                <div class="col span-8">
-                  <SecretSelector
-                    :value="toSelectorValue(editingRepo.tokenSecretRef)"
-                    :namespace="settingsNamespace"
-                    :show-key-selector="true"
-                    :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.tokenSecretRef.secretNameLabel')"
-                    :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.tokenSecretRef.keyNameLabel')"
-                    :mode="mode"
-                    @update:value="editingRepo.tokenSecretRef = fromSelectorValue($event)"
-                  />
-                </div>
-              </div>
-            </template>
-
-            <p class="text-label mb-5">
-              {{ t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.label') }}
-            </p>
-            <div class="row mb-15">
-              <div class="col span-8">
-                <SecretSelector
-                  :value="toSelectorValue(editingRepo.caBundleSecretRef)"
-                  :namespace="settingsNamespace"
-                  :show-key-selector="true"
-                  :secret-name-label="t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.secretNameLabel')"
-                  :key-name-label="t('suseai.pages.settings.sections.customRepos.fields.caBundleSecretRef.keyNameLabel')"
-                  :mode="mode"
-                  @update:value="editingRepo.caBundleSecretRef = fromSelectorValue($event)"
-                />
-              </div>
-            </div>
-
-            <div class="row mb-10">
-              <div class="col span-12">
-                <Checkbox
-                  v-model:value="editingRepo.insecureSkipTLSVerify"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.insecureSkipTLSVerify.label')"
-                  :mode="mode"
-                />
-              </div>
-            </div>
-
-            <div class="row mt-10 mb-10">
-              <div class="col span-12 custom-repo-actions">
-                <div class="custom-repo-actions__test">
-                  <AsyncButton
-                    mode="edit"
-                    :action-label="t('suseai.pages.settings.sections.customRepos.actions.test')"
-                    :disabled="editingRepo && editingRepo.type === 'git'"
-                    @click="testCustomRepo"
-                  />
-                  <span
-                    v-if="testResults.customRepo"
-                    :class="testResultClass('customRepo')"
-                    class="ml-10"
-                  >{{ testResultText('customRepo') }}</span>
-                </div>
-                <div class="custom-repo-actions__save">
-                  <button
-                    type="button"
-                    class="btn role-primary mr-5"
-                    @click="saveCustomRepo"
-                  >
-                    {{ t('suseai.pages.settings.sections.customRepos.actions.save') }}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn role-secondary"
-                    @click="editingRepo = null; editingIndex = -1; customRepoError = ''"
-                  >
-                    {{ t('suseai.pages.settings.sections.customRepos.actions.cancel') }}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="footer-bar">
         <AsyncButton
           :action-label="t('suseai.pages.settings.apply')"
@@ -1374,6 +1386,10 @@ export default {
 </template>
 
 <style lang="scss" scoped>
+.repositories-group {
+  padding-left: 12px;
+}
+
 .footer-bar {
   display: flex;
   justify-content: flex-end;
@@ -1383,12 +1399,7 @@ export default {
 .custom-repo-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-
-  &__test {
-    display: flex;
-    align-items: center;
-  }
+  justify-content: flex-end;
 
   &__save {
     display: flex;
@@ -1418,35 +1429,19 @@ export default {
   padding: 15px;
 }
 
-.trash-col {
-  display: flex;
-  align-items: flex-end;
-  padding-bottom: 4px;
-}
+.modal-body {
+  padding: 20px;
 
-.custom-repos-table {
-  width: 100%;
-  border-collapse: collapse;
-
-  th, td {
-    padding: 10px;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
+  h3 {
+    margin: 0 0 10px;
   }
 
-  th {
-    font-weight: 600;
-  }
-
-  tbody tr:hover {
-    background-color: var(--nav-hover);
+  .modal-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    margin-top: 20px;
   }
 }
 
-.edit-form {
-  border: 1px solid var(--border);
-  border-radius: var(--border-radius);
-  padding: 15px;
-  background-color: var(--body-bg);
-}
 </style>

@@ -36,11 +36,10 @@ export interface AppCollectionItem {
   // names for static-catalog items so mirror endpoint changes do not change app
   // identity. Other static items fall back to URL resolution at install time.
   repository_name?: string;
-  // 'suse-ai' and 'nvidia' are the built-in libraries; a remote catalog may define
-  // its own library values, which the UI groups dynamically. `string & Record<never, never>`
-  // keeps autocomplete for the built-ins while allowing arbitrary strings (the plain
-  // `string & {}` form trips @typescript-eslint/ban-types).
-  library?: 'suse-ai' | 'nvidia' | (string & Record<never, never>);
+  // 'suse-ai' and 'nvidia' are the built-in libraries; custom repos use their ClusterRepo name.
+  // `string & Record<never, never>` keeps autocomplete for the built-ins while allowing arbitrary
+  // strings (the plain `string & {}` form trips @typescript-eslint/ban-types).
+  library?: string;
   // Program/support designations (from the static catalog). Absent in dynamic
   // repo-discovery mode.
   labels?: AppLabel[];
@@ -200,7 +199,7 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
 async function loadAppsFromRepos(
   $store: any,
   repos: ManagedRepo[],
-  library: 'suse-ai' | 'nvidia' | 'custom',
+  library: string | ((repo: ManagedRepo) => string),
   failedRepos: FailedRepo[],
 ): Promise<AppCollectionItem[]> {
   const readyRepos = repos.filter((r) => {
@@ -228,7 +227,8 @@ async function loadAppsFromRepos(
     }
     for (const a of apps) {
       if (!appMap.has(a.slug_name)) {
-        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library });
+        const lib = typeof library === 'function' ? library(repo) : library;
+        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library: lib });
       }
     }
   }
@@ -317,43 +317,8 @@ export async function fetchCustomRepoApps($store: any, managedRepos?: ManagedRep
     .filter(r => r.library === 'custom')
     .sort((a, b) => a.name.localeCompare(b.name));
   const failedRepos: FailedRepo[] = [];
-  const apps = await loadAppsFromRepos($store, managed, 'custom', failedRepos);
+  const apps = await loadAppsFromRepos($store, managed, (repo) => repo.name, failedRepos);
   return { apps, failedRepos };
-}
-
-/** Result of fetchStaticCatalogWithCustom: the merged app list, the custom repos
- *  discovered this load (drives the libraries dropdown and hasRegistryConfigured),
- *  and any per-repo discovery failures for the warning banner. */
-export interface StaticCatalogResult {
-  apps: AppCollectionItem[];
-  managedRepos: ManagedRepo[];
-  failedRepos: FailedRepo[];
-}
-
-/** Static-mode catalog with a best-effort overlay of admin-added custom repos.
- *  The operator-served static catalog is the curated base and is returned as-is;
- *  custom ClusterRepos — which the operator provisions regardless of catalog mode —
- *  are discovered live and appended so they surface in static mode too. The overlay
- *  is fail-soft: any custom-discovery failure (ClusterRepo list unreachable, RBAC
- *  denial, timeout) returns the curated catalog alone. This deliberately differs
- *  from dynamic mode, where such a failure is surfaced, because static mode must
- *  never blank its curated catalog on a discovery fault. A static-catalog fetch
- *  failure still propagates (static mode's contract is to show an error). */
-export async function fetchStaticCatalogWithCustom($store: any): Promise<StaticCatalogResult> {
-  const base = await fetchStaticCatalog();
-  try {
-    const repos = await fetchManagedRepos($store);
-    const custom = repos.filter(r => r.library === 'custom');
-    if (custom.length === 0) return { apps: base, managedRepos: [], failedRepos: [] };
-    const res = await fetchCustomRepoApps($store, repos);
-    return { apps: [...base, ...res.apps], managedRepos: custom, failedRepos: res.failedRepos };
-  } catch (e) {
-    logger.warn('Custom-repo overlay unavailable in static mode; serving curated catalog only', {
-      component: 'AppCollection',
-      data:      { error: String(e) },
-    });
-    return { apps: base, managedRepos: [], failedRepos: [] };
-  }
 }
 
 /** Single source of truth for the clusterrepos list endpoint. */
@@ -441,6 +406,7 @@ export interface ManagedRepo {
   library: 'suse-ai' | 'nvidia' | 'openshell' | 'custom';
   ready: boolean;
   message?: string;
+  displayName?: string;
 }
 
 /** List the operator-managed ClusterRepos (by provenance label), classified by
@@ -468,10 +434,11 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
       const isReady = isRepoReady(repo);
       out.push({
         name,
-        url:     repo?.spec?.url || repo?.spec?.gitRepo || '',
+        url:         repo?.spec?.url || repo?.spec?.gitRepo || '',
         library,
-        ready:   isReady,
-        message: isReady ? undefined : repoNotReadyMessage(repo),
+        ready:       isReady,
+        message:     isReady ? undefined : repoNotReadyMessage(repo),
+        displayName: repo?.metadata?.annotations?.['ai-factory.suse.com/display-name'] || undefined,
       });
     }
     return out;
@@ -524,7 +491,10 @@ export async function fetchAppsFromRepositoryResult(
 
   try {
     const indexUrl = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(repoName)}?link=index`;
-    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.READ });
+    // A repository index can be several MB (large public repos carry thousands of
+    // chart versions); the 8s hot-path READ budget is not enough to fetch and parse
+    // it through the Rancher proxy, so give the index its own wider timeout.
+    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.CATALOG_INDEX });
     const indexData = res?.data || res;
     const entries = indexData?.entries || {};
 

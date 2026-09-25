@@ -76,11 +76,13 @@ suseai:
           sampleLabel: Chart to test
           sampleHelp: Enter a chart available in this repository or private mirror. Leave empty to use the default sample. This field is only used by Test.
           scope: Only the listed chart and version in each repository are checked. This does not verify all charts, full downloads, or application container images.
+          notApplicable: Chart access checks do not apply to git repositories.
           states:
             manifest: Chart metadata readable
             chartFile: Chart index and file accessible
             failed: Chart access failed
             error: Chart access could not be verified
+            skipped: Chart access check skipped
           reasons:
             accessDenied: Access was denied. Check the selected credentials and their permission to read this chart repository.
             suseAccessDenied: Access was denied. Check the selected credentials and their SUSE AI subscription entitlement. A registry login can succeed without permission to read these charts.
@@ -94,6 +96,7 @@ suseai:
             timeout: The chart access check timed out. Check connectivity to the configured repository and try again.
             connectionFailed: The chart request could not be completed. Check connectivity, the repository URL, and the registry service.
             outsideRepository: The chart index points to a different server. Chart access was not verified. Check that the mirror's index points to its mirrored chart files.
+            noSampleChart: No chart was provided to test, so chart access was not checked. Enter a chart name above to verify access.
         states:
           ready: Ready
           pending: Pending
@@ -108,6 +111,8 @@ suseai:
           downloadFailed: Rancher could not download the chart repository index. Check the error below and open the repository in Rancher for details.
           refreshRequested: Refresh requested for the saved repository. The download has not been verified; Test again to check its status.
       sections:
+        repositories:
+          title: Repositories
         appCollection:
           title: SUSE Application Collection
           endpoint:
@@ -214,15 +219,14 @@ suseai:
           insecureSkipVerify:
             label: Skip TLS verification (development only)
         customRepos:
-          title: Custom Repositories
-          description: 'Add custom Helm, OCI, or Git chart repositories to make additional applications available in the Apps catalog. Each repository is provisioned as a ClusterRepo and appears in the catalog after indexing completes.'
-          addTitle: Add Repository
-          editTitle: Edit Repository
-          table:
-            name: Name
-            type: Type
-            location: Location
-            actions: Actions
+          newRepo: New repository
+          badge: Custom
+          deleteModal:
+            title: Delete repository
+            prompt: Are you sure you want to delete
+            note: The change takes effect when you save the settings.
+            cancel: Cancel
+            confirm: Delete
           fields:
             name:
               label: Repository Name
@@ -258,15 +262,13 @@ suseai:
               label: CA Bundle Secret (optional)
               secretNameLabel: Secret Name
               keyNameLabel: Secret Key
+              help: 'For repositories served with a private or self-signed certificate, reference a secret holding the PEM-encoded CA bundle. This is the secure alternative to skipping TLS verification.'
             insecureSkipTLSVerify:
               label: Skip TLS verification (development only)
+              warning: 'Disabling TLS verification exposes chart and image pulls to man-in-the-middle attacks. Never enable this in production — supply a CA Bundle Secret instead.'
           actions:
             add: Add Repository
-            edit: Edit
-            delete: Delete
-            save: Save
-            cancel: Cancel
-            test: Test
+            deleteRepo: Delete repository
   apps:
     title: Apps
     backToApps: Back to Apps

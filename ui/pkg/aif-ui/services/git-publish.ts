@@ -15,7 +15,7 @@ export interface GitPublishParams {
   pullSecretNames:  string[];
   targetClusterIds: string[];
   targetNamespace:  string;
-  library?:         'suse-ai' | 'nvidia' | 'custom';
+  library?:         'suse-ai' | 'nvidia';
 }
 
 // publishToFleetGit builds the Fleet Bundle YAML and commits it to the git repo

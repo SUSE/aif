@@ -21,7 +21,6 @@ import {
   fetchNvidiaApps,
   overlayCuratedMetadata,
   fetchCustomRepoApps,
-  fetchStaticCatalogWithCustom,
   resolveInstallRepoName,
   isManagedRepoName,
   CLUSTERREPOS_URL,
@@ -31,7 +30,7 @@ import {
 } from '../app-collection';
 
 type RawRepo = {
-  metadata: { name: string; labels?: Record<string, string> };
+  metadata: { name: string; labels?: Record<string, string>; annotations?: Record<string, string> };
   spec: { url?: string; gitRepo?: string; enabled?: boolean };
   status?: { conditions?: Array<{ type: string; status: string; message?: string }>; indexConfigMapName?: string };
 };
@@ -188,6 +187,24 @@ describe('fetchManagedRepos', () => {
     ]);
     expect(await isManagedRepoName(store, 'custom-acme')).toBe(true);
   });
+
+  it('fetchManagedRepos reads the display-name annotation for custom repos', async () => {
+    const store = makeStore([
+      {
+        metadata: {
+          name: 'custom-prom',
+          labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' },
+          annotations: { 'ai-factory.suse.com/display-name': 'Prometheus Community' },
+        },
+        spec: { url: 'https://prometheus-community.github.io/helm-charts' },
+        status: ready(),
+      },
+    ]);
+    const repos = await fetchManagedRepos(store);
+    const custom = repos.find(r => r.name === 'custom-prom');
+    expect(custom?.library).toBe('custom');
+    expect(custom?.displayName).toBe('Prometheus Community');
+  });
 });
 
 describe('fetchCustomRepoApps', () => {
@@ -199,7 +216,7 @@ describe('fetchCustomRepoApps', () => {
     ], { 'custom-acme': customEntries });
     const { apps, failedRepos } = await fetchCustomRepoApps(store);
     expect(apps.map(a => a.slug_name)).toEqual(['grafana']);
-    expect(apps[0].library).toBe('custom');
+    expect(apps[0].library).toBe('custom-acme');
     expect(failedRepos).toEqual([]);
   });
 
@@ -220,55 +237,18 @@ describe('fetchCustomRepoApps', () => {
     expect(apps).toEqual([]);
     expect(failedRepos).toEqual([]);
   });
-});
 
-describe('fetchStaticCatalogWithCustom', () => {
-  const staticItem = { slug_name: 'suse-ai-thing', name: 'Thing', library: 'suse-ai' };
-  const customEntries = { grafana: [{ name: 'grafana', created: '2026-01-01T00:00:00Z' }] };
-
-  it('appends live custom-repo apps to the static catalog base', async () => {
-    (getCatalog as any).mockResolvedValueOnce([staticItem]);
+  it('fetchCustomRepoApps stamps each app with its own repo name as library', async () => {
+    const promEntries = { 'node-exporter': [{ name: 'node-exporter', created: '2026-01-01T00:00:00Z' }] };
+    const internalEntries = { widget: [{ name: 'widget', created: '2026-01-01T00:00:00Z' }] };
     const store = makeStore([
-      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
-    ], { 'custom-acme': customEntries });
+      { metadata: { name: 'custom-prom', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'u1' }, status: ready() },
+      { metadata: { name: 'custom-internal', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'u2' }, status: ready() },
+    ], { 'custom-prom': promEntries, 'custom-internal': internalEntries });
 
-    const { apps, managedRepos, failedRepos } = await fetchStaticCatalogWithCustom(store);
-
-    expect(apps.map(a => a.slug_name)).toEqual(['suse-ai-thing', 'grafana']);
-    expect(apps.find(a => a.slug_name === 'grafana')?.library).toBe('custom');
-    expect(managedRepos.map(r => r.name)).toEqual(['custom-acme']);
-    expect(failedRepos).toEqual([]);
-  });
-
-  it('returns the static base unchanged when no custom repos exist', async () => {
-    (getCatalog as any).mockResolvedValueOnce([staticItem]);
-    const store = makeStore([
-      // a managed but non-custom repo must not be overlaid in static mode
-      { metadata: { name: 'suse-ai-registry', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://sr' }, status: ready() },
-    ]);
-
-    const { apps, managedRepos, failedRepos } = await fetchStaticCatalogWithCustom(store);
-
-    expect(apps.map(a => a.slug_name)).toEqual(['suse-ai-thing']);
-    expect(managedRepos).toEqual([]);
-    expect(failedRepos).toEqual([]);
-  });
-
-  it('is fail-soft: a ClusterRepo-list failure leaves the curated catalog intact', async () => {
-    (getCatalog as any).mockResolvedValueOnce([staticItem]);
-    const store = { dispatch: vi.fn(async () => { throw new Error('rbac denied'); }) };
-
-    const { apps, managedRepos, failedRepos } = await fetchStaticCatalogWithCustom(store);
-
-    expect(apps.map(a => a.slug_name)).toEqual(['suse-ai-thing']);
-    expect(managedRepos).toEqual([]);
-    expect(failedRepos).toEqual([]);
-  });
-
-  it('propagates a static-catalog failure (static mode must show an error)', async () => {
-    (getCatalog as any).mockRejectedValueOnce(new Error('operator down'));
-    const store = makeStore([]);
-    await expect(fetchStaticCatalogWithCustom(store)).rejects.toThrow('operator down');
+    const { apps } = await fetchCustomRepoApps(store);
+    expect(apps.find(a => a.slug_name === 'node-exporter')?.library).toBe('custom-prom');
+    expect(apps.find(a => a.slug_name === 'widget')?.library).toBe('custom-internal');
   });
 });
 
