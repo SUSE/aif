@@ -22,7 +22,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -619,6 +621,21 @@ func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatf
 func (h *SettingsHandler) validateCustomRepo(ctx context.Context, ov validateOverride) validateResult {
 	res := validateResult{Target: "customRepo"}
 
+	// The Test path dereferences form-supplied secret refs and sends them to a
+	// form-supplied host, so it must reject the same unsafe inputs putSettings
+	// does before saving: credentials embedded in the URL, and hosts on the
+	// cluster's own link-local/loopback/metadata ranges (SSRF from the operator's
+	// in-cluster vantage point).
+	probeURL := ov.URL
+	if ov.Type == "git" {
+		probeURL = ov.GitRepo
+	}
+	if msg := unsafeProbeTarget(probeURL); msg != "" {
+		res.Status = statusError
+		res.Message = msg
+		return res
+	}
+
 	if ov.Type == "git" {
 		if ov.GitRepo == "" {
 			res.Status = statusSkipped
@@ -643,8 +660,10 @@ func (h *SettingsHandler) validateCustomRepo(ctx context.Context, ov validateOve
 			res.Status = statusFailed
 			res.Message = err.Error()
 		default:
+			// Generic message: do not leak transport-level detail that would let the
+			// Test fingerprint internal hosts (see unsafeProbeTarget).
 			res.Status = statusError
-			res.Message = err.Error()
+			res.Message = "repository unreachable"
 		}
 		return res
 	}
@@ -691,7 +710,40 @@ func (h *SettingsHandler) validateCustomRepo(ctx context.Context, ov validateOve
 	res.LatencyMs = time.Since(start).Milliseconds()
 	res.Status = string(probe.Status)
 	res.Message = probe.Message
+	if probe.Status == credcheck.StatusError {
+		// Collapse transport-level detail (x509 vs DNS vs connection-refused vs
+		// timeout) to one message so the Test cannot fingerprint internal hosts.
+		res.Message = "repository unreachable or its TLS certificate could not be verified"
+	}
 	return res
+}
+
+// unsafeProbeTarget reports why a probe target must be rejected, or "" if it is
+// allowed. It blocks credentials embedded in the URL and hosts that resolve to a
+// literal loopback/link-local/metadata address, which the in-cluster operator
+// could otherwise be coerced into probing (SSRF). Hostnames are not resolved here
+// (proportionate: the collapsed error message removes the response oracle).
+func unsafeProbeTarget(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return "invalid url"
+	}
+	if u.User != nil {
+		return "url must not embed credentials (user:password@host); use a secret ref"
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return "host is not allowed"
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return "host is not allowed"
+		}
+	}
+	return ""
 }
 
 func savedRegistryRefs(

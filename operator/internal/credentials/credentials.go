@@ -91,6 +91,11 @@ const (
 	CatalogRepoLabel = "ai-factory.suse.com/blueprint-catalog-repo"
 )
 
+// DisplayNameAnnotation carries a custom repo's human-friendly name onto its
+// ClusterRepo so UI discovery (which lists ClusterRepos) can label it without a
+// separate Settings read. Value is the CustomRepoSpec.DisplayName verbatim.
+const DisplayNameAnnotation = "ai-factory.suse.com/display-name"
+
 // Basic-auth secrets written to cattle-system for Rancher catalog / Fleet chart pulls.
 const (
 	AuthSecretApplicationCollection = "application-collection-auth"
