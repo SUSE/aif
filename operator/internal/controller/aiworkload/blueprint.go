@@ -82,6 +82,7 @@ type clusterRepoInfo struct {
 	Commit         string   // git repos only: status.commit, the indexed revision
 	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
 	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
+	Custom         bool     // repo carries the custom-repo marker label (admin-defined ClusterRepo)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -408,7 +409,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// blueprint component override the workload-level TargetNamespace. The
 	// injector and the HelmOp's defaultNamespace below both consume this.
 	ns := componentNamespace(w, c)
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -693,6 +694,29 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 	default:
 		return &suseInjector{r: r}
 	}
+}
+
+// injectorForRepo picks the pull-secret injector for a chart, gating on the
+// resolved repo first. Custom (admin-defined) repos get the noop injector so no
+// operator-managed pull secret is created, referenced in values, or merged onto
+// ServiceAccounts: the UI classifies every non-NVIDIA app as vendor "suse", so
+// without this a custom-repo app would fall through to the suseInjector and be
+// pulled with SUSE registry credentials. Non-custom repos keep the vendor-based
+// selection.
+func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo) secretInjector {
+	if repoInfo.Custom {
+		return &noopInjector{}
+	}
+	return r.injectorFor(vendor)
+}
+
+// noopInjector delivers no pull secrets and leaves chart values untouched. Used
+// for custom repos, whose image pulls rely on the repo's own credentials rather
+// than the operator's registry pull-secret machinery.
+type noopInjector struct{}
+
+func (n *noopInjector) Apply(_ context.Context, _ cluster.Client, _ string, _ clusterRepoInfo, _ map[string]any, _ bool) ([]string, error) {
+	return nil, nil
 }
 
 // ensureCombinedPullSecret creates (or updates) a single kubernetes.io/dockerconfigjson secret
@@ -988,7 +1012,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -1198,6 +1222,12 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		clientSecretNS = "cattle-system"
 	}
 	info := clusterRepoInfo{ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
+	// A custom (admin-defined) repo is out of the operator's pull-secret
+	// machinery: its chart pull auth comes from the ClusterRepo clientSecret/
+	// helmSecretName, and its images must not be pulled with SUSE registry
+	// credentials. The marker label is the single source of truth (mirrors the
+	// Fleet-bundle path, which scopes the combined pull secret to suse-ai only).
+	info.Custom = cr.GetLabels()[credentials.CustomRepoLabel] == credentials.LabelValueTrue
 
 	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
 	if url == "" {

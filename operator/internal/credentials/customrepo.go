@@ -18,6 +18,7 @@ package credentials
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -37,6 +38,13 @@ func CustomRepoResourceName(name string) string { return customRepoNamePrefix + 
 
 // CustomRepoAuthSecretName is the materialized basic-auth/ssh-auth secret name.
 func CustomRepoAuthSecretName(name string) string { return customRepoNamePrefix + name + "-auth" }
+
+// IsCustomRepoResourceName reports whether a ClusterRepo name was minted by
+// CustomRepoResourceName (i.e. carries the "custom-" prefix). Used to guard
+// pruning so a mislabeled built-in repo is never deleted.
+func IsCustomRepoResourceName(name string) bool {
+	return strings.HasPrefix(name, customRepoNamePrefix) && len(name) > len(customRepoNamePrefix)
+}
 
 // IsReservedRepoName reports whether name collides with a canonical repo name.
 func IsReservedRepoName(name string) bool {
@@ -77,12 +85,23 @@ func ValidateCustomRepos(repos []aiplatformv1alpha1.CustomRepoSpec) error {
 			if r.GitRepo != "" || r.GitBranch != "" {
 				return fmt.Errorf("customRepos[%d]: helm repo must not set git fields", i)
 			}
+			if err := rejectURLUserinfo(i, r.URL); err != nil {
+				return err
+			}
+			// Reject basic auth over cleartext http: SetBasicAuth would put the
+			// password on the wire in the clear. Anonymous http is still allowed.
+			if strings.HasPrefix(r.URL, "http://") && (r.UserSecretRef != nil || r.TokenSecretRef != nil) {
+				return fmt.Errorf("customRepos[%d]: basic-auth credentials require https (refusing to send them over cleartext http)", i)
+			}
 		case "oci":
 			if !strings.HasPrefix(r.URL, "oci://") {
 				return fmt.Errorf("customRepos[%d]: oci url must start with oci://", i)
 			}
 			if r.GitRepo != "" || r.GitBranch != "" {
 				return fmt.Errorf("customRepos[%d]: oci repo must not set git fields", i)
+			}
+			if err := rejectURLUserinfo(i, r.URL); err != nil {
+				return err
 			}
 		case "git":
 			if r.GitRepo == "" || r.GitBranch == "" {
@@ -91,9 +110,51 @@ func ValidateCustomRepos(repos []aiplatformv1alpha1.CustomRepoSpec) error {
 			if r.URL != "" {
 				return fmt.Errorf("customRepos[%d]: git repo must not set url", i)
 			}
+			// Only reject userinfo for http(s) git URLs; scp-like syntax
+			// (git@host:path) is not a parseable URL and carries no password.
+			if strings.HasPrefix(r.GitRepo, "http://") || strings.HasPrefix(r.GitRepo, "https://") {
+				if err := rejectURLUserinfo(i, r.GitRepo); err != nil {
+					return err
+				}
+			}
 		default:
 			return fmt.Errorf("customRepos[%d]: unknown type %q (want helm|oci|git)", i, r.Type)
 		}
+
+		if err := validateCustomRepoAuth(i, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCustomRepoAuth enforces the credential-shape invariants: basic-auth
+// user and token are set together or not at all; an SSH key is git-only and
+// mutually exclusive with basic auth.
+func validateCustomRepoAuth(i int, r aiplatformv1alpha1.CustomRepoSpec) error {
+	if (r.UserSecretRef == nil) != (r.TokenSecretRef == nil) {
+		return fmt.Errorf("customRepos[%d]: userSecretRef and tokenSecretRef must be set together", i)
+	}
+	if r.SSHKeySecretRef != nil {
+		if r.Type != "git" {
+			return fmt.Errorf("customRepos[%d]: sshKeySecretRef is only valid for git repositories", i)
+		}
+		if r.UserSecretRef != nil || r.TokenSecretRef != nil {
+			return fmt.Errorf("customRepos[%d]: sshKeySecretRef is mutually exclusive with basic auth", i)
+		}
+	}
+	return nil
+}
+
+// rejectURLUserinfo fails when a URL embeds credentials (https://user:pass@host),
+// which would be written verbatim into a cluster-scoped ClusterRepo in cleartext.
+func rejectURLUserinfo(i int, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("customRepos[%d]: invalid url %q: %w", i, rawURL, err)
+	}
+	if u.User != nil {
+		return fmt.Errorf("customRepos[%d]: url must not embed credentials (user:password@host); use a secret ref", i)
 	}
 	return nil
 }

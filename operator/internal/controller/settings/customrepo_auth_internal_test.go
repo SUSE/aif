@@ -154,29 +154,13 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 		}
 	})
 
-	t.Run("CAOnly", func(t *testing.T) {
-		// Generate a valid self-signed certificate for the test
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("generate key: %v", err)
-		}
-		tmpl := &x509.Certificate{
-			SerialNumber: big.NewInt(1),
-			Subject:      pkix.Name{CommonName: "test-ca"},
-			NotBefore:    time.Now().Add(-time.Hour),
-			NotAfter:     time.Now().Add(time.Hour),
-			IsCA:         true,
-			KeyUsage:     x509.KeyUsageCertSign,
-		}
-		certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-		if err != nil {
-			t.Fatalf("create certificate: %v", err)
-		}
-		caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-
+	t.Run("CAOnlyMaterializesNoSecret", func(t *testing.T) {
+		// A CA-only (anonymous + CABundleSecretRef) repo no longer materializes an
+		// auth secret: Rancher reads the CA from ClusterRepo.spec.caBundle (set by
+		// applyCustomClusterRepo), not from a clientSecret cacerts key.
 		caSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "ca-bundle", Namespace: ns},
-			Data:       map[string][]byte{"ca.crt": caPEM},
+			Data:       map[string][]byte{"ca.crt": []byte(testCAPEM(t))},
 		}
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(caSecret).Build()
 		r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
@@ -191,31 +175,115 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 		if err != nil {
 			t.Fatalf("applyCustomRepoAuthSecret: %v", err)
 		}
-		expectedName := credentials.CustomRepoAuthSecretName("ca-only")
-		if name != expectedName {
-			t.Errorf("returned name = %q, want %q", name, expectedName)
+		if name != "" {
+			t.Errorf("CA-only repo returned name = %q, want empty (CA lives on spec.caBundle)", name)
 		}
-		if !changed {
-			t.Errorf("expected changed=true on first write")
+		if changed {
+			t.Errorf("CA-only repo returned changed=true, want false")
 		}
 
 		var mirror corev1.Secret
-		if err := c.Get(context.Background(), types.NamespacedName{
-			Name: expectedName, Namespace: "cattle-system",
-		}, &mirror); err != nil {
-			t.Fatalf("expected mirror in cattle-system: %v", err)
-		}
-		if mirror.Type != corev1.SecretTypeOpaque {
-			t.Errorf("secret type = %q, want %q", mirror.Type, corev1.SecretTypeOpaque)
-		}
-		if string(mirror.Data["cacerts"]) != string(caPEM) {
-			t.Errorf("cacerts mismatch")
-		}
-		if _, hasUser := mirror.Data["username"]; hasUser {
-			t.Errorf("CA-only secret should not have username field")
-		}
-		if _, hasPass := mirror.Data["password"]; hasPass {
-			t.Errorf("CA-only secret should not have password field")
+		err = c.Get(context.Background(), types.NamespacedName{
+			Name: credentials.CustomRepoAuthSecretName("ca-only"), Namespace: "cattle-system",
+		}, &mirror)
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("expected no auth secret for CA-only repo, got err=%v", err)
 		}
 	})
+
+	t.Run("AuthModeSwitchRecreatesSecret", func(t *testing.T) {
+		// Secret.type is immutable; switching basic-auth -> ssh-auth must delete and
+		// recreate rather than wedge on an "field is immutable" apply error.
+		sshKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nk\n-----END OPENSSH PRIVATE KEY-----"
+		creds := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "src", Namespace: ns},
+			Data:       map[string][]byte{"user": []byte("u"), "token": []byte("t"), "ssh-privatekey": []byte(sshKey)},
+		}
+		c := fake.NewClientBuilder().WithScheme(s).WithObjects(creds).Build()
+		r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+		expectedName := credentials.CustomRepoAuthSecretName("switch")
+
+		basic := aiplatformv1alpha1.CustomRepoSpec{
+			Name:           "switch",
+			Type:           "helm",
+			UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "src", Key: "user"},
+			TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "src", Key: "token"},
+		}
+		if _, _, err := r.applyCustomRepoAuthSecret(context.Background(), ns, basic); err != nil {
+			t.Fatalf("apply basic-auth: %v", err)
+		}
+
+		ssh := aiplatformv1alpha1.CustomRepoSpec{
+			Name:            "switch",
+			Type:            "git",
+			SSHKeySecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "src", Key: "ssh-privatekey"},
+		}
+		if _, _, err := r.applyCustomRepoAuthSecret(context.Background(), ns, ssh); err != nil {
+			t.Fatalf("apply ssh-auth over basic-auth: %v", err)
+		}
+
+		var mirror corev1.Secret
+		if err := c.Get(context.Background(), types.NamespacedName{Name: expectedName, Namespace: "cattle-system"}, &mirror); err != nil {
+			t.Fatalf("expected recreated mirror: %v", err)
+		}
+		if mirror.Type != corev1.SecretTypeSSHAuth {
+			t.Errorf("secret type = %q, want %q after switch", mirror.Type, corev1.SecretTypeSSHAuth)
+		}
+	})
+
+	t.Run("ClearingCredentialsDeletesSecret", func(t *testing.T) {
+		creds := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "src", Namespace: ns},
+			Data:       map[string][]byte{"user": []byte("u"), "token": []byte("t")},
+		}
+		c := fake.NewClientBuilder().WithScheme(s).WithObjects(creds).Build()
+		r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+		expectedName := credentials.CustomRepoAuthSecretName("drop")
+
+		basic := aiplatformv1alpha1.CustomRepoSpec{
+			Name:           "drop",
+			Type:           "helm",
+			UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "src", Key: "user"},
+			TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "src", Key: "token"},
+		}
+		if _, _, err := r.applyCustomRepoAuthSecret(context.Background(), ns, basic); err != nil {
+			t.Fatalf("apply basic-auth: %v", err)
+		}
+
+		anon := aiplatformv1alpha1.CustomRepoSpec{Name: "drop", Type: "helm"}
+		name, changed, err := r.applyCustomRepoAuthSecret(context.Background(), ns, anon)
+		if err != nil {
+			t.Fatalf("apply anonymous: %v", err)
+		}
+		if name != "" || changed {
+			t.Errorf("clearing creds returned name=%q changed=%v, want empty/false", name, changed)
+		}
+		var mirror corev1.Secret
+		err = c.Get(context.Background(), types.NamespacedName{Name: expectedName, Namespace: "cattle-system"}, &mirror)
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("expected auth secret deleted after clearing creds, got err=%v", err)
+		}
+	})
+}
+
+// testCAPEM returns a valid self-signed CA certificate in PEM form.
+func testCAPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-ca"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+		KeyUsage:     x509.KeyUsageCertSign,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
 }
