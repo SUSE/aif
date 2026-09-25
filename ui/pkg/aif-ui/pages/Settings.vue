@@ -11,6 +11,7 @@ import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-conf
 import { listCatalogs } from '../utils/catalog-api';
 import { listBlueprints } from '../utils/blueprint-api';
 import { CATALOG_DEFAULT_NAME } from '../types/catalog-types';
+import { validateCatalogName } from '../validators/catalog';
 import { BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
 import {
   resolveRegistryEndpoints,
@@ -87,6 +88,7 @@ export default {
       defaultCatalogStatus: 'unknown',
       fetchErrorMessage: null,
       errors:            [],
+      saveAttempted:     false,
       mode:              'edit',
       settingsRevision:  0,
       tokenState:      { expiresAt: '', tokenName: '', configured: false, loaded: false },
@@ -219,6 +221,7 @@ export default {
         credSecretRef:     c.credSecretRef || null,
         caBundleSecretRef: c.caBundleSecretRef || null,
         testResult:        null,
+        touched:           false,
       }));
 
       return s;
@@ -309,12 +312,54 @@ export default {
 
     addCatalog() {
       this.spec.blueprintCatalogs.push({
-        name: '', path: '', repoURL: '', branch: 'main', credSecretRef: null, caBundleSecretRef: null, testResult: null,
+        name: '', path: '', repoURL: '', branch: 'main', credSecretRef: null, caBundleSecretRef: null, testResult: null, touched: false,
       });
     },
 
     removeCatalog(index) {
       this.spec.blueprintCatalogs.splice(index, 1);
+    },
+
+    catalogNameError(cat, index) {
+      const name = cat?.name;
+      const otherNames = (this.spec?.blueprintCatalogs || [])
+        .filter((_, i) => i !== index)
+        .map((c) => c.name);
+
+      const hasOtherContent = !!(
+        cat?.repoURL?.trim() ||
+        cat?.path?.trim() ||
+        (cat?.branch && cat?.branch !== 'main') ||
+        cat?.credSecretRef?.name ||
+        cat?.caBundleSecretRef?.name
+      );
+
+      if (!name?.trim() && !hasOtherContent && !cat?.touched && !this.saveAttempted) {
+        return '';
+      }
+
+      const res = validateCatalogName(name, otherNames);
+      if (res.valid) {
+        return '';
+      }
+
+      const key = `suseai.pages.settings.sections.blueprintCatalogs.custom.name.${ res.code }`;
+      return this.t(key, { name: CATALOG_DEFAULT_NAME }, res.error);
+    },
+
+    validateBlueprintCatalogs() {
+      const catalogs = this.spec?.blueprintCatalogs || [];
+      const errors = [];
+
+      catalogs.forEach((cat, index) => {
+        const err = this.catalogNameError(cat, index);
+        if (err) {
+          const identifier = (cat?.name || '').trim() || `#${ index + 1 }`;
+          errors.push(`${ this.t('suseai.pages.settings.sections.blueprintCatalogs.title') } (${ identifier }): ${ err }`);
+        }
+      });
+
+      return errors;
     },
 
     async runCatalogTest(row, buttonDone) {
@@ -355,9 +400,20 @@ export default {
     async save(buttonDone) {
       try {
         this.errors = [];
+        this.saveAttempted = true;
+
+        const catalogErrors = this.validateBlueprintCatalogs();
+        if (catalogErrors.length > 0) {
+          this.errors = catalogErrors;
+          this.openSection('blueprintCatalogs');
+          buttonDone(false);
+          return false;
+        }
+
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec);
+        this.saveAttempted = false;
         // Discard diagnostics of the previous saved configuration, including any
         // checks still in flight when Apply was clicked.
         this.settingsRevision++;
@@ -986,8 +1042,18 @@ export default {
                 <LabeledInput
                   v-model:value="cat.name"
                   :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.name.label')"
+                  :status="catalogNameError(cat, index) ? 'error' : undefined"
                   :mode="mode"
+                  required
+                  @update:value="cat.touched = true"
+                  @blur="cat.touched = true"
                 />
+                <p
+                  v-if="catalogNameError(cat, index)"
+                  class="field-error"
+                >
+                  {{ catalogNameError(cat, index) }}
+                </p>
               </div>
               <div class="col span-6">
                 <LabeledInput
@@ -1278,5 +1344,12 @@ export default {
   display: flex;
   align-items: flex-end;
   padding-bottom: 4px;
+}
+
+.field-error {
+  color: var(--error);
+  font-size: 12px;
+  line-height: 16px;
+  margin: 4px 0 0;
 }
 </style>

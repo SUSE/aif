@@ -201,6 +201,11 @@ suseai:
             remove: Remove catalog
             name:
               label: Name
+              required: Catalog name is required
+              tooLong: Catalog name must be 40 characters or less
+              invalid: Catalog name must be lowercase alphanumeric and hyphens only, and must start and end with an alphanumeric character
+              reserved: '"{name}" is reserved for the default catalog'
+              duplicate: Catalog name must be unique
             path:
               label: Paths (comma-separated)
             repoURL:
