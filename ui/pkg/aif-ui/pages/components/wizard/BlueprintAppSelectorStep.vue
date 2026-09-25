@@ -90,7 +90,7 @@ import LabeledSelect from '@shell/components/form/LabeledSelect';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import { DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../../types/blueprint-types';
 import type { AppCollectionItem } from '../../../services/app-collection';
-import { fetchSuseAiApps, fetchNvidiaApps, fetchSettingsOrNull, resolveInstallRepoName, getLibraryForClusterRepo } from '../../../services/app-collection';
+import { fetchSuseAiApps, fetchNvidiaApps, fetchCustomRepoApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, getLibraryForClusterRepo } from '../../../services/app-collection';
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
 import { resolveCatalogLogo, onCatalogLogoError } from '../../../utils/catalog-logo';
 import type { CatalogLogo } from '../../../utils/catalog-logo';
@@ -112,14 +112,18 @@ const searchResults = ref<AppCollectionItem[]>([]);
 const allApps       = ref<AppCollectionItem[]>([]);
 const versionMap    = ref<Record<string, string[]>>({});
 
-// Combined catalog: SUSE AI Library + Nvidia Library (mirrors the Apps catalog selector).
+// Combined catalog: SUSE AI Library + Nvidia Library + admin-defined custom repos
+// (mirrors the Apps catalog selector). Managed repos are fetched once and threaded
+// into every fetcher so all three share a single ClusterRepo lookup.
 async function loadAllApps(): Promise<AppCollectionItem[]> {
   const settings = await fetchSettingsOrNull();
-  const [suseResult, nvidiaResult] = await Promise.all([
-    fetchSuseAiApps(store, settings),
-    fetchNvidiaApps(store, settings),
+  const repos    = await fetchManagedRepos(store);
+  const [suseResult, nvidiaResult, customResult] = await Promise.all([
+    fetchSuseAiApps(store, settings, repos),
+    fetchNvidiaApps(store, settings, repos),
+    fetchCustomRepoApps(store, repos),
   ]);
-  return [...suseResult.apps, ...nvidiaResult.apps];
+  return [...suseResult.apps, ...nvidiaResult.apps, ...customResult.apps];
 }
 
 // Backfill logos and versions for components selected before this mount (navigate-back / edit flow).

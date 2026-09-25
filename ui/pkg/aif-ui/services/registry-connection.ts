@@ -3,7 +3,7 @@ import { getSettings, validateCredentials, validateChartAccess } from '../utils/
 import type { ValidateOverride, ValidateResult, ValidateResponse, ChartAccessResult } from '../utils/operator-api';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import {
-  CLUSTERREPOS_URL, MANAGED_REPO_LABEL, NVIDIA_TEAM_REPO_LABEL,
+  CLUSTERREPOS_URL, MANAGED_REPO_LABEL, NVIDIA_TEAM_REPO_LABEL, CUSTOM_REPO_LABEL,
   READY_CONDITION_TYPES, isRepoReady, repoNotReadyMessage,
 } from './app-collection';
 import {
@@ -11,13 +11,18 @@ import {
 } from './registry-endpoints';
 import { requestErrorMessage } from './rancher-token';
 
-export type RegistryTarget = 'applicationCollection' | 'suseRegistry' | 'nvidia';
-export type RegistryConfiguration = Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef'>;
+export type RegistryTarget = 'applicationCollection' | 'suseRegistry' | 'nvidia' | 'customRepo';
+export type RegistryConfiguration = Pick<ValidateOverride,
+  'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef' |
+  'type' | 'gitRepo' | 'branch' | 'credSecretRef' | 'insecureSkipVerify'>;
 
+// customRepo has no canonical name: each one is identified by its own
+// `custom-<name>` ClusterRepo, resolved separately in customRepositoryCheck.
 const REPO_NAMES: Record<RegistryTarget, string[]> = {
   applicationCollection: ['application-collection'],
   suseRegistry:          ['suse-ai-registry'],
   nvidia:                ['nvidia', 'nvidia-blueprints'],
+  customRepo:            [],
 };
 const REPO_API = CLUSTERREPOS_URL.split('?')[0];
 const REPO_PAGE = '/c/local/apps/catalog.cattle.io.clusterrepo';
@@ -29,7 +34,7 @@ interface ClusterRepo {
     generation?: number;
     resourceVersion?: string;
   };
-  spec?: { url?: string; enabled?: boolean; forceUpdate?: string };
+  spec?: { url?: string; gitRepo?: string; enabled?: boolean; forceUpdate?: string };
   status?: {
     indexConfigMapName?: string;
     observedGeneration?: number;
@@ -62,6 +67,16 @@ function normalizedUrl(url: string): string {
 
 /** Compare endpoint and Secret references, never fetch or expose Secret values. */
 export function registryConfigurationFingerprint(target: RegistryTarget, configuration: RegistryConfiguration): string {
+  // customRepo has no connected-mode default endpoint to resolve against, and
+  // may carry Git/credential fields the built-in targets never use.
+  if (target === 'customRepo') {
+    return JSON.stringify([
+      configuration.type || '', normalizedUrl(configuration.url || ''), configuration.gitRepo || '', configuration.branch || '',
+      !!configuration.insecureSkipVerify,
+      ...[configuration.userSecretRef, configuration.tokenSecretRef, configuration.caBundleSecretRef, configuration.credSecretRef]
+        .map(ref => [ref?.name || '', ref?.key || '']),
+    ]);
+  }
   const url = resolveRegistryEndpoints({ [target]: configuration.url?.trim() })[target];
   return JSON.stringify([
     normalizedUrl(url),
@@ -73,6 +88,10 @@ export function registryConfigurationFingerprint(target: RegistryTarget, configu
 function belongsToTarget(repo: ClusterRepo, target: RegistryTarget): boolean {
   if (Object.values(REPO_NAMES).some(names => names.includes(repo.metadata.name))) {
     return REPO_NAMES[target].includes(repo.metadata.name);
+  }
+  if (target === 'customRepo') {
+    return repo.metadata.labels?.[MANAGED_REPO_LABEL] === 'true' &&
+      repo.metadata.labels?.[CUSTOM_REPO_LABEL] === 'true';
   }
   return (
     target === 'nvidia' && repo.metadata.labels?.[NVIDIA_TEAM_REPO_LABEL] === 'true' &&
@@ -91,7 +110,7 @@ function expectedUrl(target: RegistryTarget, name: string, configuration?: Regis
 function repositoryStatus(name: string, repo?: ClusterRepo, endpoint?: string): ChartRepositoryStatus {
   const result: ChartRepositoryStatus = {
     name,
-    url: repo?.spec?.url || '',
+    url: repo?.spec?.url || repo?.spec?.gitRepo || '',
     link: repo ? `${REPO_PAGE}/${encodeURIComponent(name)}` : REPO_PAGE,
     state: 'missing',
     reason: 'missing',
@@ -123,6 +142,13 @@ function repositoryStatus(name: string, repo?: ClusterRepo, endpoint?: string): 
 
 async function probeForm(target: RegistryTarget, configuration: RegistryConfiguration, settings: ReturnType<typeof getSettings>): Promise<ValidateResponse> {
   const skipped = (message: string): ValidateResponse => ({ results: [{ target, status: 'skipped', message }] });
+  if (target === 'customRepo') {
+    // Custom repos may be anonymous (public helm/oci) or authenticate with a Git
+    // SSH key instead of a username/token pair. There is no saved CA-removal or
+    // connected-mode default to reconcile, so always probe with the form as given
+    // and let the operator's own validation report missing/partial credentials.
+    return validateCredentials({ targets: [target], overrides: { [target]: { ...configuration } } });
+  }
   if (![configuration.userSecretRef, configuration.tokenSecretRef].every(ref => ref?.name && ref?.key)) {
     return skipped('Select a complete username and token Secret reference to test authentication.');
   }
@@ -147,9 +173,66 @@ async function probeForm(target: RegistryTarget, configuration: RegistryConfigur
   return validateCredentials({ targets: [target], overrides: { [target]: { ...configuration, url } } });
 }
 
+/** Applied configuration and readiness for a single `custom-<name>` ClusterRepo.
+ * Unlike the built-in targets, a customRepo target has no canonical name(s) to
+ * fan out over: it is identified entirely by `repoName`. */
+function customRepositoryCheck(
+  settings: PromiseSettledResult<Awaited<ReturnType<typeof getSettings>>>,
+  repos: PromiseSettledResult<unknown>,
+  repoName: string,
+): RepositoryCheck {
+  const out: RepositoryCheck = { repositories: [] };
+  if (settings.status === 'fulfilled') {
+    out.settingsPending = (settings.value?.metadata?.generation ?? 0) >
+      (settings.value?.status?.observedGeneration ?? 0);
+    const list = settings.value?.spec?.customRepos ?? [];
+    const applied = list.find((c: { name?: string }) => `custom-${ c.name }` === repoName);
+    // Mirror customRepoConfiguration()'s form shape so an unchanged saved repo
+    // fingerprints identically. A bare { url } dropped type (always set on the
+    // form), the git endpoint, and every secret ref, so the fingerprints never
+    // matched and `unsaved` fired on every Test even without edits.
+    out.appliedConfiguration = applied ? {
+      type:              applied.type || 'helm',
+      url:               applied.type === 'git' ? '' : (applied.url || ''),
+      gitRepo:           applied.gitRepo || '',
+      branch:            applied.gitBranch || '',
+      userSecretRef:     applied.userSecretRef || null,
+      tokenSecretRef:    applied.tokenSecretRef || null,
+      credSecretRef:     applied.sshKeySecretRef || null,
+      caBundleSecretRef: applied.caBundleSecretRef || null,
+      insecureSkipVerify: !!applied.insecureSkipTLSVerify,
+    } : null;
+  } else if (settings.reason?.status === 404) {
+    out.appliedConfiguration = null;
+  } else {
+    out.settingsError = requestErrorMessage(settings.reason);
+  }
+  if (repos.status === 'rejected') {
+    out.error = requestErrorMessage(repos.reason);
+    return out;
+  }
+  const body = (repos.value as { data?: unknown })?.data ?? repos.value;
+  const items: ClusterRepo[] = (body as { items?: ClusterRepo[] })?.items ?? (body as ClusterRepo[]);
+  if (!Array.isArray(items)) {
+    out.error = 'Invalid ClusterRepo list response.';
+    return out;
+  }
+  const repo = items.find(r => r?.metadata?.name === repoName);
+  // Compare against the live repo's endpoint — url for helm/oci, gitRepo for git
+  // (where appliedConfiguration.url is intentionally empty, matching the form).
+  const appliedEndpoint = out.appliedConfiguration?.url || out.appliedConfiguration?.gitRepo || undefined;
+  const status = repositoryStatus(repoName, repo, appliedEndpoint);
+  out.repositories = [
+    out.settingsPending && status.state === 'ready' ? { ...status, state: 'pending' as const, reason: 'reconciling' as const } : status,
+  ];
+  return out;
+}
+
 /** The form's authentication and chart access probes and Rancher's saved
  * repositories are independent, read-only checks. Each keeps its own result. */
-export async function checkRegistryConnection(store: Dispatchable, target: RegistryTarget, configuration: RegistryConfiguration, chartName = ''): Promise<{
+export async function checkRegistryConnection(
+  store: Dispatchable, target: RegistryTarget, configuration: RegistryConfiguration, chartName = '', repoName = '',
+): Promise<{
   authentication: ValidateResult;
   chartAccess: { results: ChartAccessResult[]; error?: string };
   chartRepositories: RepositoryCheck;
@@ -179,6 +262,9 @@ export async function checkRegistryConnection(store: Dispatchable, target: Regis
   const authentication: ValidateResult = probe.status === 'fulfilled'
     ? (probe.value.results || []).find(r => r.target === target) || { target, status: 'error', message: 'No authentication result returned.' }
     : { target, status: 'error', message: requestErrorMessage(probe.reason) };
+  if (target === 'customRepo') {
+    return { authentication, chartAccess, chartRepositories: customRepositoryCheck(settings, repos, repoName) };
+  }
   const chartRepositories: RepositoryCheck = { repositories: [] };
   if (settings.status === 'fulfilled') {
     const spec = settings.value?.spec || {};

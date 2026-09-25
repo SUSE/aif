@@ -154,6 +154,10 @@ export const NOTIFICATION_DURATION = {
 export const TIMEOUT_VALUES = {
   SHORT: 5000,        // 5 seconds
   READ: 8000,         // 8 seconds - hot-path reads (lists, discovery, catalog lookups)
+  CATALOG_INDEX: 30000, // 30 seconds - a single repository index can be multiple MB
+                        // (large public repos have thousands of chart versions), served
+                        // as JSON through the Rancher proxy; the 8s READ budget is not
+                        // enough to download and parse it, so use a wider one here only.
   CLUSTER: 10000,     // 10 seconds - reads proxied through Rancher to a downstream cluster
   MUTATION: 20000,    // 20 seconds - write operations (install, upgrade, delete, secret upsert)
   MEDIUM: 30000,      // 30 seconds

@@ -9,9 +9,10 @@ vi.mock('../../utils/cluster-operations', () => ({
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn(async () => null),
   getRegistryCredentials: vi.fn(async () => ({})),
+  getCatalog: vi.fn(async () => []),
 }));
 
-import { getRegistryCredentials } from '../../utils/operator-api';
+import { getRegistryCredentials, getCatalog } from '../../utils/operator-api';
 import { resolveCatalogLogo } from '../../utils/catalog-logo';
 
 import {
@@ -19,15 +20,17 @@ import {
   fetchSuseAiApps,
   fetchNvidiaApps,
   overlayCuratedMetadata,
+  fetchCustomRepoApps,
   resolveInstallRepoName,
   isManagedRepoName,
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
+  CUSTOM_REPO_LABEL,
 } from '../app-collection';
 
 type RawRepo = {
-  metadata: { name: string; labels?: Record<string, string> };
+  metadata: { name: string; labels?: Record<string, string>; annotations?: Record<string, string> };
   spec: { url?: string; gitRepo?: string; enabled?: boolean };
   status?: { conditions?: Array<{ type: string; status: string; message?: string }>; indexConfigMapName?: string };
 };
@@ -158,6 +161,94 @@ describe('fetchManagedRepos', () => {
       dispatch: vi.fn(async () => { throw new Error('boom'); }),
     };
     await expect(fetchManagedRepos(store)).rejects.toThrow('boom');
+  });
+
+  it('classifies a custom-labeled repo as library "custom"', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ]);
+    const managed = await fetchManagedRepos(store);
+    expect(managed).toEqual([
+      { name: 'custom-acme', url: 'oci://custom', library: 'custom', ready: true, message: undefined },
+    ]);
+  });
+
+  it('excludes a repo labeled only custom-repo (missing managed-repo)', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ]);
+    const managed = await fetchManagedRepos(store);
+    expect(managed).toEqual([]);
+  });
+
+  it('isManagedRepoName returns true for a custom-labeled repo', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ]);
+    expect(await isManagedRepoName(store, 'custom-acme')).toBe(true);
+  });
+
+  it('fetchManagedRepos reads the display-name annotation for custom repos', async () => {
+    const store = makeStore([
+      {
+        metadata: {
+          name: 'custom-prom',
+          labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' },
+          annotations: { 'ai-factory.suse.com/display-name': 'Prometheus Community' },
+        },
+        spec: { url: 'https://prometheus-community.github.io/helm-charts' },
+        status: ready(),
+      },
+    ]);
+    const repos = await fetchManagedRepos(store);
+    const custom = repos.find(r => r.name === 'custom-prom');
+    expect(custom?.library).toBe('custom');
+    expect(custom?.displayName).toBe('Prometheus Community');
+  });
+});
+
+describe('fetchCustomRepoApps', () => {
+  const customEntries = { grafana: [{ name: 'grafana', created: '2026-01-01T00:00:00Z' }] };
+
+  it('loads apps from ready custom repos', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ], { 'custom-acme': customEntries });
+    const { apps, failedRepos } = await fetchCustomRepoApps(store);
+    expect(apps.map(a => a.slug_name)).toEqual(['grafana']);
+    expect(apps[0].library).toBe('custom-acme');
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('reports a not-ready custom repo via failedRepos', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: notReady('boom') },
+    ]);
+    const { apps, failedRepos } = await fetchCustomRepoApps(store);
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([
+      { url: 'oci://custom', reason: 'not-ready', message: 'boom' },
+    ]);
+  });
+
+  it('returns empty when no custom repos exist', async () => {
+    const store = makeStore([]);
+    const { apps, failedRepos } = await fetchCustomRepoApps(store);
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('fetchCustomRepoApps stamps each app with its own repo name as library', async () => {
+    const promEntries = { 'node-exporter': [{ name: 'node-exporter', created: '2026-01-01T00:00:00Z' }] };
+    const internalEntries = { widget: [{ name: 'widget', created: '2026-01-01T00:00:00Z' }] };
+    const store = makeStore([
+      { metadata: { name: 'custom-prom', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'u1' }, status: ready() },
+      { metadata: { name: 'custom-internal', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'u2' }, status: ready() },
+    ], { 'custom-prom': promEntries, 'custom-internal': internalEntries });
+
+    const { apps } = await fetchCustomRepoApps(store);
+    expect(apps.find(a => a.slug_name === 'node-exporter')?.library).toBe('custom-prom');
+    expect(apps.find(a => a.slug_name === 'widget')?.library).toBe('custom-internal');
   });
 });
 
@@ -481,7 +572,7 @@ describe('isManagedRepoName (untrusted ?repo= guard)', () => {
 
 describe('cross-language label constants (drift pins)', () => {
   // These literals are ALSO defined in Go — operator/internal/credentials/credentials.go
-  // (ManagedRepoLabel / TeamRepoLabel). They are tied only by convention, so pin the
+  // (ManagedRepoLabel / TeamRepoLabel / CustomRepoLabel). They are tied only by convention, so pin the
   // exact strings on this side: a rename here shows up as a red diff, and the Go side
   // has a matching pin (settings_label_internal_test.go). Change BOTH together.
   it('MANAGED_REPO_LABEL matches the Go ManagedRepoLabel literal', () => {
@@ -489,5 +580,8 @@ describe('cross-language label constants (drift pins)', () => {
   });
   it('NVIDIA_TEAM_REPO_LABEL matches the Go TeamRepoLabel literal', () => {
     expect(NVIDIA_TEAM_REPO_LABEL).toBe('ai-factory.suse.com/nvidia-team-repo');
+  });
+  it('CUSTOM_REPO_LABEL matches the Go CustomRepoLabel literal', () => {
+    expect(CUSTOM_REPO_LABEL).toBe('ai-factory.suse.com/custom-repo');
   });
 });

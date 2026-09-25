@@ -36,11 +36,10 @@ export interface AppCollectionItem {
   // names for static-catalog items so mirror endpoint changes do not change app
   // identity. Other static items fall back to URL resolution at install time.
   repository_name?: string;
-  // 'suse-ai' and 'nvidia' are the built-in libraries; a remote catalog may define
-  // its own library values, which the UI groups dynamically. `string & Record<never, never>`
-  // keeps autocomplete for the built-ins while allowing arbitrary strings (the plain
-  // `string & {}` form trips @typescript-eslint/ban-types).
-  library?: 'suse-ai' | 'nvidia' | (string & Record<never, never>);
+  // 'suse-ai' and 'nvidia' are the built-in libraries; custom repos use their ClusterRepo name.
+  // `string & Record<never, never>` keeps autocomplete for the built-ins while allowing arbitrary
+  // strings (the plain `string & {}` form trips @typescript-eslint/ban-types).
+  library?: string;
   // Program/support designations (from the static catalog). Absent in dynamic
   // repo-discovery mode.
   labels?: AppLabel[];
@@ -192,7 +191,7 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
   return { apps, failedRepos };
 }
 
-/** Shared repo→apps loader for fetchSuseAiApps / fetchNvidiaApps. Filters to ready
+/** Shared repo→apps loader for fetchSuseAiApps / fetchNvidiaApps / fetchCustomRepoApps. Filters to ready
  *  repos (reporting not-ready ones via failedRepos), fetches each repo's index in
  *  parallel, and dedups apps by slug_name with first-repo-in-`repos`-order winning,
  *  tagging each app with the repo's url/name and `library`. `repos` MUST already be
@@ -200,7 +199,7 @@ export async function fetchSuseAiApps($store: any, _settings?: any | null, manag
 async function loadAppsFromRepos(
   $store: any,
   repos: ManagedRepo[],
-  library: 'suse-ai' | 'nvidia',
+  library: string | ((repo: ManagedRepo) => string),
   failedRepos: FailedRepo[],
 ): Promise<AppCollectionItem[]> {
   const readyRepos = repos.filter((r) => {
@@ -228,7 +227,8 @@ async function loadAppsFromRepos(
     }
     for (const a of apps) {
       if (!appMap.has(a.slug_name)) {
-        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library });
+        const lib = typeof library === 'function' ? library(repo) : library;
+        appMap.set(a.slug_name, { ...a, repository_url: repo.url, repository_name: repo.name, library: lib });
       }
     }
   }
@@ -309,6 +309,18 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
   return { apps, failedRepos };
 }
 
+/** Fetch apps from operator-managed CUSTOM ClusterRepos (custom-repo label),
+ *  tagged library 'custom'. Same discovery/readiness contract as fetchSuseAiApps. */
+export async function fetchCustomRepoApps($store: any, managedRepos?: ManagedRepo[]): Promise<RepoAppsResult> {
+  const all = managedRepos ?? await fetchManagedRepos($store);
+  const managed = all
+    .filter(r => r.library === 'custom')
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const failedRepos: FailedRepo[] = [];
+  const apps = await loadAppsFromRepos($store, managed, (repo) => repo.name, failedRepos);
+  return { apps, failedRepos };
+}
+
 /** Single source of truth for the clusterrepos list endpoint. */
 export const CLUSTERREPOS_URL =
   '/k8s/clusters/local/apis/catalog.cattle.io/v1/clusterrepos?limit=1000';
@@ -384,12 +396,17 @@ export const NVIDIA_TEAM_REPO_LABEL = 'ai-factory.suse.com/nvidia-team-repo';
  *  at a matching URL/host is never discovered. */
 export const MANAGED_REPO_LABEL = 'ai-factory.suse.com/managed-repo';
 
+/** Marks admin-defined custom ClusterRepos. Mirror of credentials.CustomRepoLabel.
+ *  Presence (with managed-repo=true) classifies the repo as the 'custom' library. */
+export const CUSTOM_REPO_LABEL = 'ai-factory.suse.com/custom-repo';
+
 export interface ManagedRepo {
   name: string;
   url: string;
-  library: 'suse-ai' | 'nvidia' | 'openshell';
+  library: 'suse-ai' | 'nvidia' | 'openshell' | 'custom';
   ready: boolean;
   message?: string;
+  displayName?: string;
 }
 
 /** List the operator-managed ClusterRepos (by provenance label), classified by
@@ -409,17 +426,19 @@ export async function fetchManagedRepos($store: any): Promise<ManagedRepo[]> {
       // Provenance gate: only operator-stamped repos, matched exactly.
       if (labels[MANAGED_REPO_LABEL] !== 'true') continue;
       // Classify by canonical name (prototype-safe) or team label.
-      let library: 'suse-ai' | 'nvidia' | 'openshell' | undefined =
+      let library: 'suse-ai' | 'nvidia' | 'openshell' | 'custom' | undefined =
         Object.prototype.hasOwnProperty.call(MANAGED_REPO_NAMES, name) ? MANAGED_REPO_NAMES[name] : undefined;
       if (!library && labels[NVIDIA_TEAM_REPO_LABEL] === 'true') library = 'nvidia';
+      if (!library && labels[CUSTOM_REPO_LABEL] === 'true') library = 'custom';
       if (!library) continue;
       const isReady = isRepoReady(repo);
       out.push({
         name,
-        url:     repo?.spec?.url || repo?.spec?.gitRepo || '',
+        url:         repo?.spec?.url || repo?.spec?.gitRepo || '',
         library,
-        ready:   isReady,
-        message: isReady ? undefined : repoNotReadyMessage(repo),
+        ready:       isReady,
+        message:     isReady ? undefined : repoNotReadyMessage(repo),
+        displayName: repo?.metadata?.annotations?.['ai-factory.suse.com/display-name'] || undefined,
       });
     }
     return out;
@@ -472,7 +491,10 @@ export async function fetchAppsFromRepositoryResult(
 
   try {
     const indexUrl = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(repoName)}?link=index`;
-    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.READ });
+    // A repository index can be several MB (large public repos carry thousands of
+    // chart versions); the 8s hot-path READ budget is not enough to fetch and parse
+    // it through the Rancher proxy, so give the index its own wider timeout.
+    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.CATALOG_INDEX });
     const indexData = res?.data || res;
     const entries = indexData?.entries || {};
 

@@ -118,7 +118,9 @@ export interface ValidateOverride {
   /** @deprecated HTTPS Git credentials always use username plus password/PAT. */
   authType?:          string;
   username?:          string;
+  type?:              string;
   url?:               string;
+  gitRepo?:           string;
   insecureSkipVerify?: boolean;
 }
 
@@ -155,10 +157,23 @@ export function validateChartAccess(body: {
   configuration: Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef'>;
   chartName?: string;
 }): Promise<{ results: ChartAccessResult[] }> {
+  // The endpoint rejects unknown fields, so post only the four it accepts.
+  // Callers may hand us a richer form object (custom repos add type, gitRepo,
+  // branch, credSecretRef, insecureSkipVerify); those must not reach the wire.
+  const {
+    url, userSecretRef, tokenSecretRef, caBundleSecretRef,
+  } = body.configuration;
+  const payload = {
+    target:        body.target,
+    configuration: {
+      url, userSecretRef, tokenSecretRef, caBundleSecretRef,
+    },
+    chartName: body.chartName,
+  };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000);
   return operatorFetch('/api/v1/settings/validate-chart-access', {
-    method: 'POST', body: JSON.stringify(body), signal: controller.signal,
+    method: 'POST', body: JSON.stringify(payload), signal: controller.signal,
   }).finally(() => clearTimeout(timer));
 }
 

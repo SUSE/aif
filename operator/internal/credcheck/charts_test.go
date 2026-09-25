@@ -221,6 +221,34 @@ func TestProbeChartHTTPSFollowsCDNRedirectWithoutForwardingCredentials(t *testin
 	}
 }
 
+func TestProbeChartHTTPSAllowsCrossHostChartForPublicRepo(t *testing.T) {
+	var cdnAuthorization string
+	var cdnHit bool
+	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cdnHit = true
+		cdnAuthorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer cdn.Close()
+	// A public repository commonly serves its index from one host while hosting
+	// the chart tarballs on a release host, i.e. a different origin.
+	repo := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  grafana:\n    - version: 1.2.3\n      urls: [" + cdn.URL + "/releases/grafana-1.2.3.tgz]\n"))
+	}))
+	defer repo.Close()
+	ca := append(testChartCA(repo), testChartCA(cdn)...)
+	result := ProbeChart(context.Background(), repo.URL+"/charts", "grafana", "", "", ca)
+	if result.Status != "ok" || result.Check != "chartFile" {
+		t.Fatalf("result=%+v", result)
+	}
+	if !cdnHit {
+		t.Error("cross-host chart file was not fetched for a public repository")
+	}
+	if cdnAuthorization != "" {
+		t.Fatalf("credential sent cross-host: %q", cdnAuthorization)
+	}
+}
+
 func TestProbeChartTrustTimeoutAndInputErrors(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer server.Close()
