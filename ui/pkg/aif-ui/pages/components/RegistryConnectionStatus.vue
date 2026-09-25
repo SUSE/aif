@@ -15,6 +15,7 @@ export default {
   props: {
     target: { type: String, required: true },
     configuration: { type: Object, required: true },
+    repoName: { type: String, default: '' },
   },
 
   data() {
@@ -46,6 +47,7 @@ export default {
       return this.checking || !!this.refreshing;
     },
     sampleSelectable() {
+      if (this.target === 'customRepo') return this.configuration.type !== 'git';
       return this.target !== 'nvidia' || !!this.configuration.url?.trim();
     },
     verificationSummary() {
@@ -96,7 +98,10 @@ export default {
       this.testedFingerprint = this.fingerprint;
       this.testedChartName = this.chartName;
       try {
-        const result = await checkRegistryConnection(this.$store, this.target, JSON.parse(JSON.stringify(this.configuration)), this.sampleSelectable ? this.chartName : '');
+        const result = await checkRegistryConnection(
+          this.$store, this.target, JSON.parse(JSON.stringify(this.configuration)),
+          this.sampleSelectable ? this.chartName : '', this.repoName,
+        );
         if (this.active) this.result = result;
       } finally {
         if (this.active) this.checking = false;
@@ -201,43 +206,48 @@ export default {
           <div class="verification-check">
             <dt>{{ t('suseai.pages.settings.registryConnection.chartAccess.label') }}</dt>
             <dd>
-              <p v-if="formChanged">
-                {{ t('suseai.pages.settings.registryConnection.formChanged') }}
+              <p v-if="!sampleSelectable">
+                {{ t('suseai.pages.settings.registryConnection.chartAccess.notApplicable') }}
               </p>
               <template v-else>
-                <p class="text-deemphasized mb-10">
-                  {{ t('suseai.pages.settings.registryConnection.chartAccess.scope') }}
+                <p v-if="formChanged">
+                  {{ t('suseai.pages.settings.registryConnection.formChanged') }}
                 </p>
-                <Banner
-                  v-if="result.chartAccess.error"
-                  color="error"
-                >
-                  {{ result.chartAccess.error }}
-                </Banner>
-                <ul>
-                  <li
-                    v-for="check in result.chartAccess.results"
-                    :key="check.repositoryUrl"
-                    class="repository-result"
+                <template v-else>
+                  <p class="text-deemphasized mb-10">
+                    {{ t('suseai.pages.settings.registryConnection.chartAccess.scope') }}
+                  </p>
+                  <Banner
+                    v-if="result.chartAccess.error"
+                    color="error"
                   >
-                    <BadgeState
-                      :color="stateColor(check.status)"
-                      :label="chartStateLabel(check)"
-                    />
-                    <div class="text-deemphasized mt-5">
-                      {{ check.repositoryUrl }}
-                    </div>
-                    <div v-if="check.chartName">
-                      {{ check.chartName }}<span v-if="check.version"> — {{ check.version }}</span>
-                    </div>
-                    <p
-                      v-if="check.reason"
-                      class="mt-10"
+                    {{ result.chartAccess.error }}
+                  </Banner>
+                  <ul>
+                    <li
+                      v-for="check in result.chartAccess.results"
+                      :key="check.repositoryUrl"
+                      class="repository-result"
                     >
-                      {{ chartAdvice(check) }}
-                    </p>
-                  </li>
-                </ul>
+                      <BadgeState
+                        :color="stateColor(check.status)"
+                        :label="chartStateLabel(check)"
+                      />
+                      <div class="text-deemphasized mt-5">
+                        {{ check.repositoryUrl }}
+                      </div>
+                      <div v-if="check.chartName">
+                        {{ check.chartName }}<span v-if="check.version"> — {{ check.version }}</span>
+                      </div>
+                      <p
+                        v-if="check.reason"
+                        class="mt-10"
+                      >
+                        {{ chartAdvice(check) }}
+                      </p>
+                    </li>
+                  </ul>
+                </template>
               </template>
             </dd>
           </div>

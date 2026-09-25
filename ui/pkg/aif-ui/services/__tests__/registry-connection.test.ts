@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { getSettings, validateCredentials, validateChartAccess } from '../../utils/operator-api';
-import { CLUSTERREPOS_URL, MANAGED_REPO_LABEL, NVIDIA_TEAM_REPO_LABEL } from '../app-collection';
+import { CLUSTERREPOS_URL, MANAGED_REPO_LABEL, NVIDIA_TEAM_REPO_LABEL, CUSTOM_REPO_LABEL } from '../app-collection';
 import { APP_COLLECTION_REPO_URL, SUSE_REGISTRY_REPO_URL, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL } from '../registry-endpoints';
 import {
   checkRegistryConnection, refreshChartRepository, registryConfigurationFingerprint,
@@ -326,5 +326,150 @@ describe('explicit repository Refresh', () => {
     expect((await checkRegistryConnection(store, TARGET, CONFIG)).chartRepositories.repositories[0].state).toBe('pending');
     item.status.observedGeneration = item.metadata.generation;
     expect((await checkRegistryConnection(store, TARGET, CONFIG)).chartRepositories.repositories[0].state).toBe('ready');
+  });
+});
+
+describe('customRepo target', () => {
+  const REPO_NAME = 'custom-prom';
+  const REPO_URL = 'https://charts.example.com';
+  const CUSTOM_CONFIG: RegistryConfiguration = {
+    type: 'helm', url: REPO_URL, userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null,
+  };
+
+  function customRepo(name = REPO_NAME, url = REPO_URL) {
+    const item = repo(name, url);
+    item.metadata.labels[CUSTOM_REPO_LABEL] = 'true';
+    return item;
+  }
+
+  it('probes with the full override and reads the custom-<name> ClusterRepo', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: REPO_URL, chartName: 'x', status: 'ok', check: 'manifest', latencyMs: 5 }] });
+    vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', url: REPO_URL }] } });
+    const store = storeWith([customRepo()]);
+
+    const result = await checkRegistryConnection(store, 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
+
+    expect(result.authentication.status).toBe('ok');
+    expect(result.chartAccess.results[0].status).toBe('ok');
+    expect(result.chartRepositories.repositories.map((r) => r.name)).toEqual([REPO_NAME]);
+    expect(result.chartRepositories.repositories[0].state).toBe('ready');
+    expect(result.chartRepositories.appliedConfiguration).toEqual({
+      type: 'helm', url: REPO_URL, gitRepo: '', branch: '', insecureSkipVerify: false,
+      userSecretRef: null, tokenSecretRef: null, credSecretRef: null, caBundleSecretRef: null,
+    });
+    expect(validateCredentials).toHaveBeenCalledWith({ targets: ['customRepo'], overrides: { customRepo: CUSTOM_CONFIG } });
+  });
+
+  it('applied fingerprint matches an unchanged saved helm repo so `unsaved` stays false', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [] });
+    vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{
+      name: 'prom', type: 'helm', url: REPO_URL,
+      userSecretRef: { name: 'prom-auth', key: 'username' }, tokenSecretRef: { name: 'prom-auth', key: 'password' },
+    }] } });
+    const formConfig: RegistryConfiguration = {
+      type: 'helm', url: REPO_URL, gitRepo: '', branch: '', insecureSkipVerify: false,
+      userSecretRef: { name: 'prom-auth', key: 'username' }, tokenSecretRef: { name: 'prom-auth', key: 'password' },
+      caBundleSecretRef: null, credSecretRef: null,
+    };
+    const result = await checkRegistryConnection(storeWith([customRepo()]), 'customRepo', formConfig, 'x', REPO_NAME);
+
+    expect(registryConfigurationFingerprint('customRepo', result.chartRepositories.appliedConfiguration!))
+      .toBe(registryConfigurationFingerprint('customRepo', formConfig));
+  });
+
+  it('runs the auth probe even with no credentials (anonymous helm repo)', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [] });
+    vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [] } });
+    const store = { dispatch: vi.fn().mockResolvedValue({ data: { items: [] } }) };
+    const cfg: RegistryConfiguration = { type: 'helm', url: REPO_URL, userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null };
+
+    const result = await checkRegistryConnection(store, 'customRepo', cfg, '', 'custom-x');
+
+    expect(validateCredentials).toHaveBeenCalledWith({ targets: ['customRepo'], overrides: { customRepo: cfg } });
+    expect(result.authentication.status).toBe('ok');
+  });
+
+  it('reports the specific custom repository as missing when it has not been created yet', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', url: REPO_URL }] } });
+    const store = storeWith([]);
+    const result = await checkRegistryConnection(store, 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
+    expect(result.chartRepositories.repositories).toEqual([expect.objectContaining({ name: REPO_NAME, state: 'missing' })]);
+  });
+
+  it('does not match a different custom repository at the same URL', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', url: REPO_URL }] } });
+    const store = storeWith([customRepo('custom-other', REPO_URL)]);
+    const result = await checkRegistryConnection(store, 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
+    expect(result.chartRepositories.repositories).toEqual([expect.objectContaining({ name: REPO_NAME, state: 'missing' })]);
+  });
+
+  it('distinguishes absent saved configuration (null) from an unreadable one (undefined)', async () => {
+    vi.mocked(getSettings).mockRejectedValue({ status: 404 });
+    const result = await checkRegistryConnection(storeWith([customRepo()]), 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
+    expect(result.chartRepositories.appliedConfiguration).toBeNull();
+    expect(result.chartRepositories.settingsError).toBeUndefined();
+  });
+
+  it('does not break the built-in suseRegistry target after the customRepo branch was added', async () => {
+    const result = await checkRegistryConnection(storeWith(), TARGET, CONFIG);
+    expect(result.authentication).toEqual(AUTHENTICATED);
+    expect(result.chartRepositories.repositories[0].state).toBe('ready');
+  });
+
+  describe('git-backed custom repositories', () => {
+    const GIT_URL = 'https://git.example.com/team/charts.git';
+    const GIT_CONFIG: RegistryConfiguration = {
+      type: 'git', gitRepo: GIT_URL, url: '', userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null,
+    };
+
+    function gitCustomRepo(name = REPO_NAME, gitUrl = GIT_URL) {
+      return {
+        metadata: { name, labels: { [MANAGED_REPO_LABEL]: 'true', [CUSTOM_REPO_LABEL]: 'true' }, generation: 2, resourceVersion: '42' },
+        spec: { url: '', gitRepo: gitUrl, enabled: true, forceUpdate: '' },
+        status: {
+          indexConfigMapName: 'repository-index', observedGeneration: 2,
+          conditions: [{ type: 'OCIDownloaded', status: 'True', message: '' }],
+        },
+      };
+    }
+
+    it('reports a healthy git custom repository as ready, comparing the gitRepo endpoint rather than the always-empty url field', async () => {
+      vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', gitRepo: GIT_URL }] } });
+      const store = storeWith([gitCustomRepo()]);
+
+      const result = await checkRegistryConnection(store, 'customRepo', GIT_CONFIG, 'x', REPO_NAME);
+
+      expect(result.chartRepositories.repositories).toEqual([expect.objectContaining({ name: REPO_NAME, state: 'ready' })]);
+    });
+
+    it('applied fingerprint matches an unchanged saved git repo so `unsaved` stays false', async () => {
+      vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', type: 'git', gitRepo: GIT_URL, gitBranch: 'main' }] } });
+      const formConfig: RegistryConfiguration = {
+        type: 'git', url: '', gitRepo: GIT_URL, branch: 'main', insecureSkipVerify: false,
+        userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null, credSecretRef: null,
+      };
+      const result = await checkRegistryConnection(storeWith([gitCustomRepo()]), 'customRepo', formConfig, 'x', REPO_NAME);
+
+      expect(registryConfigurationFingerprint('customRepo', result.chartRepositories.appliedConfiguration!))
+        .toBe(registryConfigurationFingerprint('customRepo', formConfig));
+      expect(result.chartRepositories.repositories).toEqual([expect.objectContaining({ name: REPO_NAME, state: 'ready' })]);
+    });
+  });
+
+  describe('belongsToTarget for customRepo', () => {
+    it('recognizes a ClusterRepo carrying both the managed and custom labels', async () => {
+      const item = customRepo();
+      const store = { dispatch: vi.fn().mockResolvedValue(item) };
+      await expect(refreshChartRepository(store, 'customRepo', REPO_NAME)).resolves.toMatchObject({ state: 'pending', reason: 'refreshRequested' });
+    });
+
+    it('does not recognize a ClusterRepo missing the custom label', async () => {
+      const item = repo(REPO_NAME);
+      const store = { dispatch: vi.fn().mockResolvedValue(item) };
+      await expect(refreshChartRepository(store, 'customRepo', REPO_NAME)).rejects.toThrow('Only an enabled');
+    });
   });
 });
