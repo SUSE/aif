@@ -63,6 +63,27 @@ async function runTest(wrapper: ReturnType<typeof mount>) {
   await flushPromises();
 }
 
+function mountRCS(props: { target: string; configuration: Record<string, unknown> }) {
+  const store = { dispatch: vi.fn(async (_action, request) => request.url === CLUSTERREPOS_URL ? { items: [] } : {}) };
+  const wrapper = mount(RegistryConnectionStatus, {
+    props,
+    global: {
+      mocks: {
+        $store: store,
+        t: (key: string, args: Record<string, string> = {}) => {
+          const value = key.split('.').reduce<any>((current, part) => current?.[part], translations);
+          if (typeof value !== 'string') throw new Error(`Missing translation: ${key}`);
+          return value.replace(/\{(\w+)\}/g, (_match, name) => args[name] ?? '');
+        },
+      },
+      directives: { 'clean-html': {}, 'stripped-aria-label': {} },
+      stubs: { t: true, RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } },
+    },
+  });
+  mounted.push(wrapper);
+  return wrapper;
+}
+
 beforeEach(() => {
   vi.mocked(validateChartAccess).mockReset().mockResolvedValue({ results: [{ repositoryUrl: SUSE_REGISTRY_REPO_URL, chartName: 'qdrant', status: 'failed', reason: 'accessDenied', httpStatus: 401, latencyMs: 10 }] });
   vi.mocked(getSettings).mockReset().mockResolvedValue({ spec: { suseRegistry: configuration } });
@@ -265,5 +286,18 @@ describe('Settings registry diagnostics', () => {
     expect(wrapper.text()).toContain('Could not request repository refresh: suse-ai-registry: Forbidden');
     expect(wrapper.text()).toContain('error 401: Unauthorized');
     expect(wrapper.get('button').attributes('disabled')).toBeUndefined();
+  });
+});
+
+describe('Settings registry diagnostics - customRepo target', () => {
+  it('customRepo target starts with an empty sample chart and runs auth+chart-access', async () => {
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'helm', url: 'https://charts.example.com' } });
+    expect((wrapper.vm as any).chartName).toBe('');
+    expect((wrapper.vm as any).sampleSelectable).toBe(true);
+  });
+
+  it('git custom repo hides chart access (N/A)', async () => {
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'git', gitRepo: 'https://git.example.com/x.git' } });
+    expect((wrapper.vm as any).sampleSelectable).toBe(false);
   });
 });
