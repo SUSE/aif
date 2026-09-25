@@ -330,6 +330,61 @@
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "gitSourced": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, the default blueprints (and their catalog) are synced by Fleet from git instead of the chart-bundled files."
+        },
+        "git": {
+          "type": "object",
+          "properties": {
+            "repoURL": {
+              "type": "string",
+              "default": "https://github.com/SUSE/aif.git"
+            },
+            "branch": {
+              "type": "string",
+              "default": "main"
+            },
+            "paths": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["charts/aif-operator/files/blueprints"]
+            }
+          }
+        }
+      }
+    },
+    "blueprintCatalogs": {
+      "type": "array",
+      "default": [],
+      "description": "Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo syncing Blueprint CRs from the given repo/paths.",
+      "items": {
+        "type": "object",
+        "required": ["name", "repoURL"],
+        "properties": {
+          "name": { "type": "string" },
+          "repoURL": { "type": "string" },
+          "branch": { "type": "string", "default": "main" },
+          "paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "credSecretRef": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "key": { "type": "string" }
+            }
+          },
+          "caBundleSecretRef": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "key": { "type": "string" }
+            }
+          }
         }
       }
     },

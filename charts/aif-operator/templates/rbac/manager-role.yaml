@@ -165,6 +165,14 @@ rules:
   - apiGroups:
       - ai-factory.suse.com
     resources:
+      - blueprintcatalogs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
       - blueprints
     verbs:
       - get

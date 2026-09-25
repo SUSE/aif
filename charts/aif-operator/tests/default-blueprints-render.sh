@@ -17,6 +17,10 @@ echo "Blueprint CRs rendered: $bp_count"
 bad="$(echo "$out_true" | yq ea '[select(.kind == "Blueprint" and .metadata.labels."ai-factory.suse.com/source" != "bundled")] | length')"
 [ "$bad" -eq 0 ] || { echo "FAIL: $bad Blueprint(s) missing source=bundled label"; fail=1; }
 
+# Every rendered Blueprint must carry catalog: suse-default.
+missing="$(echo "$out_true" | yq ea 'select(.kind=="Blueprint") | select(.metadata.labels."ai-factory.suse.com/catalog" != "suse-default") | .metadata.name')"
+[ -z "$missing" ] || { echo "FAIL: blueprints missing catalog=suse-default label: $missing"; fail=1; }
+
 echo "== enabled=false =="
 out_false="$(helm template t "$CHART_DIR" --set defaultBlueprints.enabled=false)"
 bp_count_false="$(echo "$out_false" | yq ea '[select(.kind == "Blueprint")] | length')"

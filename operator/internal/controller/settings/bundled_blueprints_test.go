@@ -51,6 +51,7 @@ func TestBundledBlueprintChartReposAreSettingsManaged(t *testing.T) {
 		credentials.ClusterRepoNvidiaBlueprint:       true,
 	}
 	type blueprint struct {
+		Kind string `json:"kind"`
 		Spec struct {
 			Components []struct {
 				ChartRepo string `json:"chartRepo"`
@@ -66,6 +67,12 @@ func TestBundledBlueprintChartReposAreSettingsManaged(t *testing.T) {
 		var bp blueprint
 		if err := yaml.Unmarshal(contents, &bp); err != nil {
 			t.Fatalf("parse %s: %v", filepath.Base(path), err)
+		}
+		// The colocated bundled BlueprintCatalog file lives in this same folder
+		// (Fleet syncs it alongside the blueprints on a git swap) but has no
+		// components; skip it.
+		if bp.Kind != "Blueprint" {
+			continue
 		}
 		if len(bp.Spec.Components) == 0 {
 			t.Errorf("%s has no components", filepath.Base(path))

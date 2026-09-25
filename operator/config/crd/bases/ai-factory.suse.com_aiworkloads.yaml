@@ -55,9 +55,7 @@ spec:
             description: AIWorkloadSpec defines the desired state of AIWorkload.
             properties:
               componentValues:
-                description: |-
-                  ComponentValues holds per-component customizations: Helm value
-                  overrides and/or an enable/disable toggle.
+                description: ComponentValues holds per-component Helm value overrides.
                 items:
                   description: |-
                     ComponentValueOverride holds per-component customizations: Helm value

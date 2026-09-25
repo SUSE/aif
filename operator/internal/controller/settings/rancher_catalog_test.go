@@ -62,8 +62,10 @@ func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T)
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: "aif"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				CredSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "git-creds", Key: "token"},
-				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					CredSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "git-creds", Key: "token"},
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				},
 			},
 			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
 				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "appco-ca", Key: "ca.crt"},
@@ -79,6 +81,13 @@ func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T)
 				TokenSecretRef:    &aiplatformv1alpha1.SecretKeyRef{Name: "rc-token", Key: "token"},
 				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "rc-ca", Key: "ca.crt"},
 			},
+			BlueprintCatalogs: []aiplatformv1alpha1.BlueprintCatalogSource{{
+				Name: "partner-acme",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					CredSecretRef:     &aiplatformv1alpha1.SecretKeyRef{Name: "acme-git-creds", Key: "token"},
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "acme-git-ca", Key: "ca.crt"},
+				},
+			}},
 		},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings).Build()
@@ -97,6 +106,8 @@ func TestEnqueueSettingsForSecret_MatchesReferencedSettingsSecrets(t *testing.T)
 		{"SUSE explicit credentials", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "suse-creds", Namespace: "aif"}}, true},
 		{"SUSE CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "suse-ca", Namespace: "aif"}}, true},
 		{"NVIDIA CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "nvidia-ca", Namespace: "aif"}}, true},
+		{"catalog credential", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "acme-git-creds", Namespace: "aif"}}, true},
+		{"catalog CA bundle", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "acme-git-ca", Namespace: "aif"}}, true},
 		{"unrelated secret", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "nope", Namespace: "aif"}}, false},
 		{"right name wrong namespace", &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "rc-token", Namespace: "other"}}, false},
 	}
