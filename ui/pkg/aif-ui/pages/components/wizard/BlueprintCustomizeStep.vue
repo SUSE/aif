@@ -19,7 +19,7 @@
         />
         <span class="panel-title">{{ comp.chartName }}</span>
         <span class="panel-meta text-muted">{{ comp.chartVersion }}</span>
-        <span v-if="touchedNames.has(comp.chartName)" class="badge-customized">
+        <span v-if="customizedNames.has(comp.chartName)" class="badge-customized">
           {{ t('suseai.wizard.labels.customized', 'Customized') }}
         </span>
         <i :class="['icon', expandedPanels.has(idx) ? 'icon-chevron-up' : 'icon-chevron-down']" />
@@ -48,7 +48,7 @@
           :mode="mode"
           :in-store="'cluster'"
           @update:values="onValuesUpdate(comp.chartName, $event)"
-          @values-edited="() => onValuesUpdate(comp.chartName, editedValues[comp.chartName] || {})"
+          @load-defaults="onValuesUpdate(comp.chartName, JSON.parse(JSON.stringify(blueprintDefaults[comp.chartName] || {})))"
         />
       </div>
     </div>
@@ -61,13 +61,14 @@ import { useT } from '../../../composables/useT';
 import { Banner } from '@components/Banner';
 import { Checkbox } from '@components/Form/Checkbox';
 import ValuesStep from './ValuesStep.vue';
-import { seedComponentValues, diffComponentValues, seedComponentEnabled, diffComponentOverrides } from '../../../utils/blueprint-customize';
+import { seedComponentValues, seedComponentEnabled, diffComponentOverrides, customizedComponentNames, resolveInitialFormState } from '../../../utils/blueprint-customize';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 
 interface Props {
   components:      BlueprintComponent[];
   existingValues?: ComponentValueOverride[];
+  modelValue?:     ComponentValueOverride[];
   // Chart names with a status entry on the existing AIWorkload (manage mode
   // only) — i.e. currently deployed. Used only to decide whether to show the
   // "excluding this will remove it" warning; empty in install mode, where
@@ -103,19 +104,31 @@ const loadingMap          = ref<Record<string, boolean>>({});
 const questionsLoadingMap = ref<Record<string, boolean>>({});
 const versionInfoMap      = ref<Record<string, any>>({});
 
-// seed/seedEnabled are the read-once starting points (blueprint defaults deep-merged
-// with any existing override) — never mutated after setup. editedValues/editedEnabled
-// are the live form state, initialized from the seeds and updated as the user edits.
-const seed = seedComponentValues(props.components, props.existingValues || []);
-const seedEnabled = seedComponentEnabled(props.components, props.existingValues || []);
-const editedValues = ref<Record<string, Record<string, any>>>(
-  Object.fromEntries(Object.entries(seed).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))])),
-);
-const editedEnabled = ref<Record<string, boolean>>({ ...seedEnabled });
+// blueprintDefaults / blueprintEnabled represent the immutable blueprint definition
+// to diff against. AIWorkload.spec.componentValues holds the deltas from this baseline.
+const blueprintDefaults = computed(() => seedComponentValues(props.components, []));
+const blueprintEnabled  = computed(() => seedComponentEnabled(props.components, []));
 
-const touchedNames = computed(() => new Set(
-  diffComponentOverrides(seed, editedValues.value, seedEnabled, editedEnabled.value).map((o) => o.componentName),
-));
+// Resolve starting form state from any in-progress modelValue overrides or initial existing overrides.
+const initialFormState = resolveInitialFormState(
+  props.components,
+  props.existingValues || [],
+  props.modelValue,
+);
+const editedValues = ref<Record<string, Record<string, any>>>(
+  Object.fromEntries(Object.entries(initialFormState.values).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))])),
+);
+const editedEnabled = ref<Record<string, boolean>>({ ...initialFormState.enabled });
+
+// customizedNames surfaces the "Customized" badge only on enabled components whose
+// values differ from the blueprint definition. Excluded components are not customized.
+const customizedNames = computed(() =>
+  customizedComponentNames(
+    blueprintDefaults.value,
+    editedValues.value,
+    editedEnabled.value,
+  ),
+);
 const allDisabled = computed(() => props.components.length > 0 && props.components.every((c) => !editedEnabled.value[c.chartName]));
 
 watch(allDisabled, (v) => emit('update:valid', !v), { immediate: true });
@@ -158,7 +171,7 @@ async function loadChartInfo(chartName: string, chartRepo: string, chartVersion:
 }
 
 function emitOverrides() {
-  emit('update:modelValue', diffComponentOverrides(seed, editedValues.value, seedEnabled, editedEnabled.value));
+  emit('update:modelValue', diffComponentOverrides(blueprintDefaults.value, editedValues.value, blueprintEnabled.value, editedEnabled.value));
 }
 
 function onValuesUpdate(chartName: string, newValues: Record<string, any>) {

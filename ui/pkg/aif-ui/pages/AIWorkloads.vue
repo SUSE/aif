@@ -516,9 +516,18 @@ async function doRetry(w: AIWorkload) {
 
                 <!-- Source -->
                 <td class="col-source">
-                  <span class="source-type-badge" :class="w.spec.source.sourceType === 'App' ? 'source-app' : 'source-blueprint'">
-                    {{ w.spec.source.sourceType }}
-                  </span>
+                  <div class="source-badges">
+                    <span class="source-type-badge" :class="w.spec.source.sourceType === 'App' ? 'source-app' : 'source-blueprint'">
+                      {{ w.spec.source.sourceType }}
+                    </span>
+                    <span
+                      v-if="w.status?.customized && w.spec.source.sourceType === 'Blueprint'"
+                      class="badge-customized"
+                      :title="t('suseai.workloads.customizedTooltip', 'Workload configuration deviates from the default blueprint definition')"
+                    >
+                      {{ t('suseai.wizard.labels.customized', 'Customized') }}
+                    </span>
+                  </div>
                   <div class="source-name">{{ workloadSource(w) }}{{ workloadVersion(w) !== '—' ? '-' + workloadVersion(w) : '' }}</div>
                 </td>
 
@@ -833,6 +842,13 @@ async function doRetry(w: AIWorkload) {
 
 // Source column
 .col-source {
+  .source-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+
   .source-type-badge {
     display: inline-block;
     padding: 2px 7px;
@@ -841,10 +857,20 @@ async function doRetry(w: AIWorkload) {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin-bottom: 3px;
 
     &.source-app       { background: var(--info-banner-bg);    color: var(--info);    }
     &.source-blueprint { background: var(--accent-btn);        color: var(--body-text); border: 1px solid var(--border); }
+  }
+
+  .badge-customized {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    border-radius: 10px;
+    padding: 1px 6px;
+    line-height: 14px;
   }
 
   .source-name { font-size: 12px; color: var(--muted); font-family: monospace; }

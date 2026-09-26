@@ -350,3 +350,163 @@ func TestEnsureBlueprintGitChartBundle_AppliesComponentValueOverride(t *testing.
 		t.Errorf("replicas: found=%v err=%v value=%v (want 1, untouched sibling key must survive the merge)", found, err, replicas)
 	}
 }
+
+func TestIsWorkloadCustomized(t *testing.T) {
+	bp := &aiplatformv1alpha1.Blueprint{
+		Spec: aiplatformv1alpha1.BlueprintSpec{
+			Components: []aiplatformv1alpha1.BlueprintComponent{
+				{
+					ChartName: "milvus",
+					Values:    rawJSON(t, map[string]any{"replicas": float64(1), "persistence": map[string]any{"size": "10Gi"}}),
+				},
+				{
+					ChartName: "open-webui",
+					Values:    rawJSON(t, map[string]any{"port": float64(8080)}),
+				},
+			},
+		},
+	}
+
+	t.Run("no overrides returns customized=false", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{}
+		got, err := isWorkloadCustomized(w, bp)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != false {
+			t.Errorf("got %v, want false", got)
+		}
+	})
+
+	t.Run("component value override returns customized=true", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{
+						ComponentName: "milvus",
+						Values:        rawJSON(t, map[string]any{"replicas": float64(5)}),
+					},
+				},
+			},
+		}
+		got, err := isWorkloadCustomized(w, bp)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != true {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+
+	t.Run("component value override with identical values returns customized=false", func(t *testing.T) {
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{
+						ComponentName: "milvus",
+						Values:        rawJSON(t, map[string]any{"replicas": float64(1)}),
+					},
+				},
+			},
+		}
+		got, err := isWorkloadCustomized(w, bp)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != false {
+			t.Errorf("got %v, want false", got)
+		}
+	})
+
+	t.Run("component excluded (enabled=false) returns customized=true", func(t *testing.T) {
+		f := false
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{
+						ComponentName: "open-webui",
+						Enabled:       &f,
+					},
+				},
+			},
+		}
+		got, err := isWorkloadCustomized(w, bp)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != true {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+
+	t.Run("component explicitly enabled (enabled=true) with no value diff returns customized=false", func(t *testing.T) {
+		tr := true
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{
+						ComponentName: "open-webui",
+						Enabled:       &tr,
+					},
+				},
+			},
+		}
+		got, err := isWorkloadCustomized(w, bp)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != false {
+			t.Errorf("got %v, want false", got)
+		}
+	})
+	t.Run("component with nil blueprint values and no override returns customized=false", func(t *testing.T) {
+		bpNilValues := &aiplatformv1alpha1.Blueprint{
+			Spec: aiplatformv1alpha1.BlueprintSpec{
+				Components: []aiplatformv1alpha1.BlueprintComponent{
+					{
+						ChartName: "bare-component",
+						Values:    nil,
+					},
+				},
+			},
+		}
+		w := &aiplatformv1alpha1.AIWorkload{}
+		got, err := isWorkloadCustomized(w, bpNilValues)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != false {
+			t.Errorf("got %v, want false", got)
+		}
+	})
+
+	t.Run("component with nil blueprint values and value override returns customized=true", func(t *testing.T) {
+		bpNilValues := &aiplatformv1alpha1.Blueprint{
+			Spec: aiplatformv1alpha1.BlueprintSpec{
+				Components: []aiplatformv1alpha1.BlueprintComponent{
+					{
+						ChartName: "bare-component",
+						Values:    nil,
+					},
+				},
+			},
+		}
+		w := &aiplatformv1alpha1.AIWorkload{
+			Spec: aiplatformv1alpha1.AIWorkloadSpec{
+				ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{
+					{
+						ComponentName: "bare-component",
+						Values:        rawJSON(t, map[string]any{"custom": "setting"}),
+					},
+				},
+			},
+		}
+		got, err := isWorkloadCustomized(w, bpNilValues)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != true {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+}

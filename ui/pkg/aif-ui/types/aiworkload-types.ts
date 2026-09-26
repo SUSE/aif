@@ -86,6 +86,7 @@ export interface AIWorkloadStatus {
   deployedSource?:     DeployedSourceSnapshot;
   componentStatuses?:  AIWorkloadComponentStatus[];
   activeOperation?:    AIWorkloadOperation;
+  customized?:         boolean;
 }
 
 export interface AIWorkload {
