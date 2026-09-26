@@ -286,6 +286,10 @@ type AIWorkloadStatus struct {
 	// RenderBaselines correlates HelmOp Accepted=False to the current render attempt, keyed by HelmOpUID.
 	// +optional
 	RenderBaselines []RenderBaseline `json:"renderBaselines,omitempty"`
+	// Customized indicates whether the workload's effective configuration
+	// (Helm value overrides or excluded components) deviates from the Blueprint defaults.
+	// +optional
+	Customized bool `json:"customized,omitempty"`
 }
 
 // +kubebuilder:object:root=true

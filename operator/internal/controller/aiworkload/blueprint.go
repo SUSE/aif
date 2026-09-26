@@ -23,6 +23,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash/fnv"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -249,6 +250,12 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// Reconcile completed without error: clear any prior Ready=False (e.g. a
 	// transient ClusterRepoNotReady) so the condition recovers alongside the
 	// phase. Phase reflects rollout state; Ready reflects reconcile success.
+	customized, err := isWorkloadCustomized(w, &bp)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	w.Status.Customized = customized
+
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
 	return ctrl.Result{}, nil
 }
@@ -264,6 +271,39 @@ func (r *AIWorkloadReconciler) retryEpochValue(w *aiplatformv1alpha1.AIWorkload)
 		return 0
 	}
 	return n
+}
+
+// isWorkloadCustomized evaluates whether an AIWorkload has configuration drift
+// relative to its Blueprint defaults (either via component exclusions or Helm value overrides).
+func isWorkloadCustomized(w *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alpha1.Blueprint) (bool, error) {
+	if bp == nil {
+		return false, nil
+	}
+	// Check for component exclusions
+	for _, c := range bp.Spec.Components {
+		if !isComponentEnabled(w, c.ChartName) {
+			return true, nil
+		}
+	}
+
+	// Check if any component's resolved values differ from the blueprint defaults
+	for _, c := range bp.Spec.Components {
+		var base map[string]any
+		if c.Values != nil && len(c.Values.Raw) > 0 {
+			base = make(map[string]any)
+			if err := json.Unmarshal(c.Values.Raw, &base); err != nil {
+				return false, fmt.Errorf("unmarshal blueprint base values for %s: %w", c.ChartName, err)
+			}
+		}
+		resolved, err := resolveComponentValues(w, c)
+		if err != nil {
+			return false, fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
+		}
+		if (len(base) > 0 || len(resolved) > 0) && !reflect.DeepEqual(base, resolved) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // filterEnabledComponents returns the subset of a Blueprint's components that are enabled for

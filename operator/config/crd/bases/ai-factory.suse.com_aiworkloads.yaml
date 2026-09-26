@@ -348,6 +348,11 @@ spec:
                   - type
                   type: object
                 type: array
+              customized:
+                description: |-
+                  Customized indicates whether the workload's effective configuration
+                  (Helm value overrides or excluded components) deviates from the Blueprint defaults.
+                type: boolean
               deployedSource:
                 description: DeployedSource is the last certified (proven deployed+healthy)
                   blueprint version.

@@ -40,6 +40,7 @@ const workloadName = ref('');
 const namespace    = ref('');
 const clusters     = ref<string[]>([]);
 const deployType   = ref<AIWorkloadDeployStrategy>('FleetBundle');
+const initialComponentValues = ref<ComponentValueOverride[]>([]);
 const componentValues = ref<ComponentValueOverride[]>([]);
 const componentValuesValid = ref(true);
 const runningComponentNames = ref<string[]>([]);
@@ -94,6 +95,8 @@ onMounted(async () => {
       const slug = slugifyBlueprintName(props.blueprintName);
       workloadName.value = slug;
       namespace.value    = `${ slug }-system`;
+      initialComponentValues.value = [];
+      componentValues.value = [];
     }
 
     try {
@@ -131,7 +134,9 @@ async function loadExistingWorkload() {
   namespace.value       = workload.metadata.namespace;
   clusters.value        = workload.spec.targetClusters || [];
   deployType.value      = (workload.spec.deployStrategy as AIWorkloadDeployStrategy) || 'FleetBundle';
-  componentValues.value = workload.spec.componentValues || [];
+  const existing = workload.spec.componentValues || [];
+  initialComponentValues.value = JSON.parse(JSON.stringify(existing));
+  componentValues.value = JSON.parse(JSON.stringify(existing));
   runningComponentNames.value = Array.from(new Set((workload.status?.componentStatuses || []).map((s) => s.componentName)));
 }
 
@@ -329,7 +334,8 @@ function onProgressCancel() { showProgressModal.value = false; }
           <BlueprintCustomizeStep
             v-else-if="currentStep === 2"
             :components="blueprint?.spec.components || []"
-            :existing-values="componentValues"
+            :existing-values="initialComponentValues"
+            :model-value="componentValues"
             :running-components="runningComponentNames"
             :mode="props.mode"
             @update:model-value="componentValues = $event"
