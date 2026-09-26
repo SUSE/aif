@@ -25,7 +25,7 @@ func TestLoadOverrides_Invalid(t *testing.T) {
 }
 
 func TestApply_OverwritesOnlyPinnedFields(t *testing.T) {
-	ov, err := loadOverrides([]byte(`{"gpu-operator":{"description":"pinned","project_url":"https://example.test"}}`))
+	ov, err := loadOverrides([]byte(`{"gpu-operator":{"description":"pinned","project_url":"https://example.test","default_instance_name":"custom-inst","default_namespace":"custom-ns"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,12 @@ func TestApply_OverwritesOnlyPinnedFields(t *testing.T) {
 	}
 	if item.ProjectURL != "https://example.test" {
 		t.Fatalf("ProjectURL = %q", item.ProjectURL)
+	}
+	if item.DefaultInstanceName != "custom-inst" {
+		t.Fatalf("DefaultInstanceName = %q, want custom-inst", item.DefaultInstanceName)
+	}
+	if item.DefaultNamespace != "custom-ns" {
+		t.Fatalf("DefaultNamespace = %q, want custom-ns", item.DefaultNamespace)
 	}
 	// Fields absent from the override object stay at their derived values.
 	if item.Name != gpuOperatorName {

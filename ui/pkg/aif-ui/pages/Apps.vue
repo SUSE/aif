@@ -585,6 +585,12 @@ export default defineComponent({
       if (repoName) {
         route.query = { ...route.query, repo: repoName };
       }
+      if (app.default_instance_name) {
+        route.query = { ...route.query, defaultInstanceName: app.default_instance_name };
+      }
+      if (app.default_namespace) {
+        route.query = { ...route.query, defaultNamespace: app.default_namespace };
+      }
 
       await $router.push(route);
     };

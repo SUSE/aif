@@ -234,3 +234,6 @@ interface ValidationWarning {
   message: string;
   suggestion?: string;
 }
+
+// Re-export domain-level defaults for backward compatibility
+export { defaultInstanceName, defaultReleaseName, defaultNamespace } from '../services/app-collection';

@@ -15,12 +15,16 @@ import { getRegistryCredentials } from '../../utils/operator-api';
 import { resolveCatalogLogo } from '../../utils/catalog-logo';
 
 import {
+  type AppCollectionItem,
   fetchManagedRepos,
   fetchSuseAiApps,
   fetchNvidiaApps,
   overlayCuratedMetadata,
   resolveInstallRepoName,
   isManagedRepoName,
+  defaultInstanceName,
+  defaultReleaseName,
+  defaultNamespace,
   CLUSTERREPOS_URL,
   NVIDIA_TEAM_REPO_LABEL,
   MANAGED_REPO_LABEL,
@@ -202,6 +206,38 @@ describe('fetchSuseAiApps', () => {
       { name: 'Ollama', slug_name: 'ollama', library: 'suse-ai', logo_url: 'https://apps.rancher.io/logos/ollama.png' },
     ]);
     expect(resolveCatalogLogo(app)).toBe(inline);
+  });
+
+  it('overlays curated default_instance_name and default_namespace', () => {
+    const discovered: AppCollectionItem[] = [
+      { name: 'helm-chart', slug_name: 'helm-chart', library: 'openshell' },
+    ];
+    const [app] = overlayCuratedMetadata(discovered, [
+      {
+        name:                  'OpenShell',
+        slug_name:             'helm-chart',
+        library:               'openshell',
+        default_instance_name: 'openshell',
+        default_namespace:     'openshell',
+      },
+    ]);
+    expect(app.default_instance_name).toBe('openshell');
+    expect(app.default_namespace).toBe('openshell');
+  });
+
+  describe('catalog-driven deployment defaults', () => {
+    it('uses catalog item default_instance_name when present, otherwise slug', () => {
+      expect(defaultInstanceName('helm-chart', { default_instance_name: 'openshell' })).toBe('openshell');
+      expect(defaultReleaseName('helm-chart', { default_instance_name: 'openshell' })).toBe('openshell');
+      expect(defaultInstanceName('qdrant')).toBe('qdrant');
+      expect(defaultInstanceName('helm-chart')).toBe('helm-chart');
+    });
+
+    it('uses catalog item default_namespace when present, otherwise ${slug}-system', () => {
+      expect(defaultNamespace('helm-chart', { default_namespace: 'openshell' })).toBe('openshell');
+      expect(defaultNamespace('qdrant')).toBe('qdrant-system');
+      expect(defaultNamespace('helm-chart')).toBe('helm-chart-system');
+    });
   });
 
   // The operator API serializes an absent registry section as {} (value struct,

@@ -377,7 +377,7 @@ func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alph
 // segment (.../helm-chart/helm-chart) and the pull is denied. Skip the append
 // when the URL already ends in the chart segment so both layouts resolve.
 func ociChartRef(repoURL, chartName string) string {
-	trimmed := strings.TrimSuffix(repoURL, "/")
+	trimmed := strings.TrimRight(repoURL, "/")
 	if chartName == "" || strings.HasSuffix(trimmed, "/"+chartName) {
 		return trimmed
 	}
