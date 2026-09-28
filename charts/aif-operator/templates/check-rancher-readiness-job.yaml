@@ -12,7 +12,6 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 1
-  activeDeadlineSeconds: 300
   ttlSecondsAfterFinished: 60
   template:
     spec:
@@ -29,14 +28,24 @@ spec:
             - |
               set -eu
 
+              # kubectl wait exits non-zero on transient API errors (network
+              # hiccups, apiserver restarts, broken watches), so retry until it
+              # succeeds. Total wait time is bounded by the installer (helm --timeout).
+              retry_wait() {
+                until kubectl wait --timeout=30s "$@"; do
+                  echo "kubectl wait $* failed, retrying in 5s ..."
+                  sleep 5
+                done
+              }
+
               wait_for_crd() {
                 crd="$1"
 
                 echo "Waiting for CRD $crd to be created ..."
-                kubectl wait --for=create --timeout=-1s "crd/$crd"
+                retry_wait --for=create "crd/$crd"
 
                 echo "Waiting for CRD $crd to become Established ..."
-                kubectl wait --for=condition=Established --timeout=-1s "crd/$crd"
+                retry_wait --for=condition=Established "crd/$crd"
               }
 
               echo "Wait indefinitely for Rancher CRDs to be created and established ..."
@@ -48,6 +57,6 @@ spec:
               wait_for_crd uiplugins.catalog.cattle.io
 
               echo "Wait indefinitely for namespace cattle-ui-plugin-system to be created ..."
-              kubectl wait --for=create --timeout=-1s namespace/cattle-ui-plugin-system
+              retry_wait --for=create namespace/cattle-ui-plugin-system
 
               echo "Rancher CRDs and namespace are ready."
