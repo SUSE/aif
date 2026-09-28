@@ -288,7 +288,7 @@
       "slug_name": "control-plane",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-08-10T16:30:12.726Z",
+      "last_updated_at": "2026-09-23T19:48:26.632Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
@@ -579,21 +579,6 @@
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
-      "name": "GPU Operator",
-      "slug_name": "gpu-operator",
-      "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
-      "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
-      "last_updated_at": "2026-08-21T13:49:44.086Z",
-      "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
-      "labels": [
-        {
-          "code": "supported",
-          "name": "Supported"
-        }
-      ]
-    },
-    {
       "name": "Harbor Reef Operator",
       "slug_name": "harbor-reef-operator",
       "description": "Minimal Kubernetes operator to revert Harbor cache images to upstream on image pull errors.",
@@ -746,7 +731,7 @@
       "slug_name": "network-operator",
       "description": "NVIDIA Network Operator Helm Chart provides an easy way to install, configure and manage the lifecycle of NVIDIA Mellanox network operator.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-Network-Operator.png",
-      "last_updated_at": "2026-09-01T07:35:35.479Z",
+      "last_updated_at": "2026-09-23T18:14:45.369Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -1400,7 +1385,7 @@
       "slug_name": "runai-cluster",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-08-10T14:56:37.578Z",
+      "last_updated_at": "2026-09-23T19:44:41.443Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
