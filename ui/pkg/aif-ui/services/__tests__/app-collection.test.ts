@@ -14,6 +14,7 @@ vi.mock('../../utils/operator-api', () => ({
 
 import { getRegistryCredentials, getCatalog } from '../../utils/operator-api';
 import { resolveCatalogLogo } from '../../utils/catalog-logo';
+import { TIMEOUT_VALUES } from '../../utils/constants';
 
 import {
   fetchManagedRepos,
@@ -68,7 +69,7 @@ function staleIndex(message: string): RawRepo['status'] {
 // index entries for `?link=index` requests. Index is keyed by repo name.
 function makeStore(repos: RawRepo[], indexByRepo: Record<string, any> = {}) {
   return {
-    dispatch: vi.fn(async (_action: string, { url }: { url: string }) => {
+    dispatch: vi.fn(async (_action: string, { url }: { url: string; timeout?: number }) => {
       if (url === CLUSTERREPOS_URL) return { data: { items: repos } };
       const m = url.match(/clusterrepos\/([^?]+)\?link=index/);
       if (m) {
@@ -238,6 +239,15 @@ describe('fetchCustomRepoApps', () => {
     expect(apps.find(a => a.slug_name === 'node-exporter')?.library).toBe('custom-prom');
     expect(apps.find(a => a.slug_name === 'widget')?.library).toBe('custom-internal');
   });
+
+  it('gives custom repo indexes the wider CATALOG_INDEX timeout', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-acme', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://custom' }, status: ready() },
+    ], { 'custom-acme': customEntries });
+    await fetchCustomRepoApps(store);
+    const indexCall = store.dispatch.mock.calls.find(call => call[1].url.includes('?link=index'));
+    expect(indexCall?.[1].timeout).toBe(TIMEOUT_VALUES.CATALOG_INDEX);
+  });
 });
 
 describe('fetchSuseAiApps', () => {
@@ -270,6 +280,15 @@ describe('fetchSuseAiApps', () => {
       ]);
     },
   );
+
+  it('keeps built-in repo indexes on the hot-path READ timeout', async () => {
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://dp.apps.rancher.io/charts' }, status: ready() },
+    ], { 'application-collection': acEntries });
+    await fetchSuseAiApps(store);
+    const indexCall = store.dispatch.mock.calls.find(call => call[1].url.includes('?link=index'));
+    expect(indexCall?.[1].timeout).toBe(TIMEOUT_VALUES.READ);
+  });
 
   it('preserves a supplied inline chart logo when the curated logo is a network URL', async () => {
     const inline = 'data:image/png;base64,iVBORw0KGgo=';

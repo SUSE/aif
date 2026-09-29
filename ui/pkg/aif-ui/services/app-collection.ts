@@ -197,6 +197,7 @@ async function loadAppsFromRepos(
   repos: ManagedRepo[],
   library: string | ((repo: ManagedRepo) => string),
   failedRepos: FailedRepo[],
+  indexTimeout: number = TIMEOUT_VALUES.READ,
 ): Promise<AppCollectionItem[]> {
   const readyRepos = repos.filter((r) => {
     if (!r.ready) {
@@ -207,7 +208,7 @@ async function loadAppsFromRepos(
   });
 
   const perRepo = await Promise.all(readyRepos.map(async (r) => {
-    const { apps, error } = await fetchAppsFromRepositoryResult($store, r.name);
+    const { apps, error } = await fetchAppsFromRepositoryResult($store, r.name, indexTimeout);
     return { repo: r, apps, error };
   }));
 
@@ -313,7 +314,9 @@ export async function fetchCustomRepoApps($store: any, managedRepos?: ManagedRep
     .filter(r => r.library === 'custom')
     .sort((a, b) => a.name.localeCompare(b.name));
   const failedRepos: FailedRepo[] = [];
-  const apps = await loadAppsFromRepos($store, managed, (repo) => repo.name, failedRepos);
+  // Custom repos can be large third-party repositories, so their index gets the
+  // wider CATALOG_INDEX budget; built-in repos stay on the hot-path READ budget.
+  const apps = await loadAppsFromRepos($store, managed, (repo) => repo.name, failedRepos, TIMEOUT_VALUES.CATALOG_INDEX);
   return { apps, failedRepos };
 }
 
@@ -472,6 +475,7 @@ export async function isManagedRepoName($store: any, name: string): Promise<bool
 export async function fetchAppsFromRepositoryResult(
   $store: any,
   repoName: string,
+  timeout: number = TIMEOUT_VALUES.READ,
 ): Promise<{ apps: AppCollectionItem[]; error?: unknown }> {
   const found = await getClusterContext($store, { repoName });
   if (!found) {
@@ -482,10 +486,7 @@ export async function fetchAppsFromRepositoryResult(
 
   try {
     const indexUrl = `${baseApi}/catalog.cattle.io.clusterrepos/${encodeURIComponent(repoName)}?link=index`;
-    // A repository index can be several MB (large public repos carry thousands of
-    // chart versions); the 8s hot-path READ budget is not enough to fetch and parse
-    // it through the Rancher proxy, so give the index its own wider timeout.
-    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout: TIMEOUT_VALUES.CATALOG_INDEX });
+    const res = await $store.dispatch('rancher/request', { url: indexUrl, timeout });
     const indexData = res?.data || res;
     const entries = indexData?.entries || {};
 
