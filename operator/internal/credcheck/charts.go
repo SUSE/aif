@@ -65,7 +65,7 @@ func ProbeChart(ctx context.Context, repositoryURL, chartName, username, passwor
 
 	u, err := url.Parse(repositoryURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		(u.Scheme != "oci" && u.Scheme != "https") {
+		(u.Scheme != "oci" && u.Scheme != schemeHTTPS) {
 		result.Reason = "configuration"
 		return
 	}
@@ -92,7 +92,7 @@ func ProbeChart(ctx context.Context, repositoryURL, chartName, username, passwor
 		// (the Go client also strips Authorization on a cross-host redirect); an
 		// OCI bearer realm is handled separately by the registry protocol.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 || req.URL.Scheme != "https" {
+			if len(via) >= 10 || req.URL.Scheme != schemeHTTPS {
 				return errors.New("chart probe redirect downgrades TLS or exceeds the redirect limit")
 			}
 			if req.URL.Host != via[0].URL.Host {
@@ -237,7 +237,7 @@ func probeHTTPSChart(ctx context.Context, client *http.Client, u *url.URL, usern
 	// chart tarballs on a release host or CDN. An authenticated private mirror
 	// must serve its own chart files, so a cross-host reference there is a
 	// misconfiguration, and a registry credential is never sent off-origin.
-	if chartURL.Scheme != "https" || chartURL.User != nil || (chartURL.Host != u.Host && authenticated) {
+	if chartURL.Scheme != schemeHTTPS || chartURL.User != nil || (chartURL.Host != u.Host && authenticated) {
 		result.Reason = "outsideRepository"
 		return nil
 	}
@@ -289,7 +289,7 @@ func chartHTTPFailure(result *ChartResult, status int) bool {
 	case http.StatusNotFound:
 		result.Status, result.Reason = "failed", "notFound"
 	default:
-		result.Status, result.Reason = "error", "connectionFailed"
+		result.Status, result.Reason = "error", reasonConnectionFailed
 	}
 	return true
 }
@@ -306,6 +306,6 @@ func classifyChartError(result *ChartResult, err error) {
 		result.Reason = "tls"
 	default:
 		// Do not return remote response bodies/errors which may echo credentials.
-		result.Reason = "connectionFailed"
+		result.Reason = reasonConnectionFailed
 	}
 }

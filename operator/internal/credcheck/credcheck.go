@@ -50,6 +50,11 @@ type Result struct {
 
 const probeTimeout = 10 * time.Second
 
+const (
+	schemeHTTPS            = "https"
+	reasonConnectionFailed = "connectionFailed"
+)
+
 // ProbeRegistry checks that (username, password) authenticate against the
 // registry at host, following the Docker Registry v2 bearer-token handshake.
 func ProbeRegistry(ctx context.Context, host, username, password string) Result {
@@ -75,7 +80,7 @@ func ProbeRegistryWithCAAndInsecure(ctx context.Context, host, username, passwor
 		return *res
 	}
 	defer client.CloseIdleConnections()
-	return probe(ctx, client, "https", host, username, password)
+	return probe(ctx, client, schemeHTTPS, host, username, password)
 }
 
 // guardedClient builds a probe client with the SSRF guard (see guardedTransport),

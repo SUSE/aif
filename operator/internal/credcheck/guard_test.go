@@ -218,7 +218,7 @@ func TestProbeChartRefusesRedirectIntoPrivateOrMetadata(t *testing.T) {
 			}))
 			defer origin.Close()
 			result := ProbeChart(context.Background(), origin.URL+"/charts", "sample", "", "", testChartCA(origin))
-			if result.Status != "error" || result.Reason != "connectionFailed" {
+			if result.Status != "error" || result.Reason != reasonConnectionFailed {
 				t.Fatalf("redirect followed: %+v", result)
 			}
 		})

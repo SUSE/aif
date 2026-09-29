@@ -124,7 +124,7 @@ func checkProbeRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
-	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+	if via[0].URL.Scheme == schemeHTTPS && req.URL.Scheme != schemeHTTPS {
 		return errors.New("redirect downgrades TLS")
 	}
 	if req.URL.Host != via[0].URL.Host {
