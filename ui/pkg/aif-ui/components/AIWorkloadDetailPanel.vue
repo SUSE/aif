@@ -30,9 +30,9 @@ const props = defineProps<{
   clusters:  ClusterInfo[];
 }>();
 
-// The page passes onManage/onUpgrade through the slide-in props, so the footer
-// action runs the same flow as the matching row action.
-const emit = defineEmits(['manage', 'upgrade']);
+// The page passes onManage through the slide-in props, so the footer action runs
+// the same flow as the row's Manage button.
+const emit = defineEmits(['manage']);
 
 const t = useT();
 
@@ -64,13 +64,20 @@ const fleetBundles  = computed(() => w.value.spec.fleetBundleNames || []);
 const helmRelease   = computed(() => (isBlueprint.value ? '' : appSource.value?.release || ''));
 const hasUnderlying = computed(() => fleetBundles.value.length > 0 || !!helmRelease.value);
 
+// Blueprint components switched off via componentValues[].enabled=false. The
+// operator doesn't deploy them, so they're listed but flagged as excluded.
+const excludedNames = computed(() => new Set(
+  (w.value.spec.componentValues || []).filter((override) => override.enabled === false).map((override) => override.componentName),
+));
+
 const objectRows = computed(() => {
   const components = props.blueprint?.spec.components || [];
   const objects = isBlueprint.value ? components : (appSource.value ? [appSource.value] : []);
 
   return objects.map((object, index) => ({
     ...object,
-    _key: `${ object.chartName }/${ object.chartVersion }/${ index }`,
+    excluded: isBlueprint.value && excludedNames.value.has(object.chartName),
+    _key:     `${ object.chartName }/${ object.chartVersion }/${ index }`,
   }));
 });
 
@@ -97,10 +104,11 @@ const objectHeaders = computed(() => [
   },
 ]);
 
-// Only overrides that actually set values are worth showing.
-const overrides = computed(() =>
-  (w.value.spec.componentValues || []).filter((override) => override.values && Object.keys(override.values).length > 0),
-);
+// Only overrides that actually set values are worth showing, and an excluded
+// component's values never deploy, so they're left out too.
+const overrides = computed(() => (w.value.spec.componentValues || []).filter((override) => override.enabled !== false &&
+  override.values && Object.keys(override.values).length > 0,
+));
 
 const clusterStatuses   = computed(() => w.value.status?.clusterStatuses || []);
 const readyMessage      = computed(() => workloadStatusMessage(w.value));
@@ -142,19 +150,13 @@ const workloadObject = computed(() => {
   };
 });
 
-// Mirrors the row actions: Manage is only enabled for a Running App workload,
-// while every Blueprint workload can be upgraded.
-const primaryAction = computed<{ label: string; event: 'manage' | 'upgrade' } | null>(() => {
-  if (isBlueprint.value) {
-    return { label: t('suseai.pages.workloads.detail.upgrade', 'Upgrade'), event: 'upgrade' };
-  }
+// Manage is the equivalent of Rancher's "Edit Config". Mirrors the row's Manage
+// button: an App workload must be Running, and a Blueprint workload can't have an
+// operation in flight. Like Rancher, the button is hidden rather than disabled.
+const canManage = computed(() => (isBlueprint.value ? w.value.status?.activeOperation?.state !== 'InProgress' : phase.value === 'Running'));
 
-  return phase.value === 'Running' ? { label: t('suseai.pages.workloads.detail.manage', 'Manage'), event: 'manage' } : null;
-});
-
-function runPrimaryAction() {
-  if (!primaryAction.value) return;
-  emit(primaryAction.value.event);
+function manage() {
+  emit('manage');
   close();
 }
 
@@ -367,7 +369,17 @@ function clusterName(clusterId: string): string {
                   :table-actions="false"
                   :row-actions="false"
                   :search="false"
-                />
+                >
+                  <template #cell:chartName="{ row }">
+                    {{ row.chartName }}
+                    <BadgeState
+                      v-if="row.excluded"
+                      class="ml-5"
+                      color="badge-disabled"
+                      :label="t('suseai.wizard.labels.excluded', 'Excluded')"
+                    />
+                  </template>
+                </SortableTable>
                 <p
                   v-else
                   class="text-muted"
@@ -466,12 +478,12 @@ function clusterName(clusterId: string): string {
 
     <template #additional-actions>
       <RcButton
-        v-if="primaryAction"
+        v-if="canManage"
         variant="primary"
         size="large"
-        @click="runPrimaryAction"
+        @click="manage"
       >
-        {{ primaryAction.label }}
+        {{ t('suseai.pages.workloads.detail.manage', 'Manage') }}
       </RcButton>
     </template>
   </Drawer>

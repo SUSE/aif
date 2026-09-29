@@ -128,9 +128,9 @@ function openDetailPanel(w: AIWorkload) {
       workload:  w,
       blueprint,
       clusters:  clusters.value,
-      // Listeners for the drawer's footer action, which closes the drawer itself.
-      onManage:  () => onManage(w),
-      onUpgrade: () => openUpgradeModal(w),
+      // Listener for the drawer's footer Manage action, which closes the drawer
+      // itself. Same target as the row's Manage button for each source type.
+      onManage:  () => (w.spec.source.sourceType === 'App' ? onManage(w) : onCustomize(w)),
     },
     width:              'wide',
     height:             'full',

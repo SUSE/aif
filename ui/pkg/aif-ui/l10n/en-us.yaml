@@ -269,7 +269,6 @@ suseai:
         noBlueprint: Blueprint details are not available for this workload.
         message: Message
         manage: Manage
-        upgrade: Upgrade
     blueprints:
       catalog:
         all: All catalogs
