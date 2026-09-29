@@ -60,6 +60,8 @@ const (
 	DefaultSUSERegistryURL          = "oci://registry.suse.com/ai/charts"
 	DefaultNvidiaChartsURL          = "https://helm.ngc.nvidia.com/nvidia"
 	DefaultNvidiaBlueprintURL       = "https://helm.ngc.nvidia.com/nvidia/blueprint"
+	DefaultOpenshellURL             = "oci://ghcr.io/nvidia/openshell/helm-chart"
+	DefaultOpenshellWorkspaceURL    = "oci://ghcr.io/nvidia/openshell/openshell-workspace"
 )
 
 // ClusterRepo names align with pkg/aif-ui/services/app-collection.ts.
@@ -68,6 +70,8 @@ const (
 	ClusterRepoSUSERegistry          = "suse-ai-registry"
 	ClusterRepoNvidia                = "nvidia"
 	ClusterRepoNvidiaBlueprint       = "nvidia-blueprints"
+	ClusterRepoOpenshell             = "openshell"
+	ClusterRepoOpenshellWorkspace    = "openshell-workspace"
 )
 
 // Provenance labels stamped on operator-created ClusterRepos. Single source of
@@ -80,6 +84,11 @@ const (
 	ManagedRepoLabel = "ai-factory.suse.com/managed-repo"
 	TeamRepoLabel    = "ai-factory.suse.com/nvidia-team-repo"
 	LabelValueTrue   = "true"
+
+	// CatalogRepoLabel marks Fleet GitRepos the operator creates for blueprint
+	// catalogs, so pruning can list-and-diff them without touching the customer
+	// Fleet repo. Value is always LabelValueTrue.
+	CatalogRepoLabel = "ai-factory.suse.com/blueprint-catalog-repo"
 )
 
 // Basic-auth secrets written to cattle-system for Rancher catalog / Fleet chart pulls.

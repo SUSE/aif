@@ -60,6 +60,37 @@ func TestIsNGCURL(t *testing.T) {
 	}
 }
 
+func TestNGCClusterRepoName(t *testing.T) {
+	cases := map[string]string{
+		"https://helm.ngc.nvidia.com/nvidia":                      "nvidia",
+		"https://helm.ngc.nvidia.com/nvidia/blueprint/":           "nvidia-blueprints",
+		"https://helm.ngc.nvidia.com/nvidia/omniverse":            "nvidia-omniverse",
+		"https://helm.ngc.nvidia.com/nim/nvidia":                  "nim-nvidia",
+		"https://helm.ngc.nvidia.com/some/unclassified-team-repo": "some-unclassified-team-repo",
+	}
+	for in, want := range cases {
+		got, err := NGCClusterRepoName(in)
+		if err != nil {
+			t.Fatalf("NGCClusterRepoName(%q): %v", in, err)
+		}
+		if got != want {
+			t.Errorf("NGCClusterRepoName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNGCClusterRepoNameRejectsNonNGCAndExcludedPaths(t *testing.T) {
+	for _, in := range []string{
+		"oci://registry.internal/nvidia",
+		"https://example.com/nvidia/omniverse",
+		"https://helm.ngc.nvidia.com/nim/snowflake",
+	} {
+		if _, err := NGCClusterRepoName(in); err == nil {
+			t.Errorf("NGCClusterRepoName(%q) unexpectedly succeeded", in)
+		}
+	}
+}
+
 func toSet(xs []string) map[string]bool {
 	m := make(map[string]bool, len(xs))
 	for _, x := range xs {

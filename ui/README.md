@@ -1,6 +1,6 @@
 # SUSE AI Factory Rancher UI extension
 
-SUSE AI Factory Rancher UI extension provides a unified interface for managing AI applications in Rancher-managed clusters.
+SUSE AI Factory Rancher UI extension provides a unified Graphical User Interface (GUI) for managing AI applications in Rancher-managed clusters. It provides the user interface for browsing the AI application catalog, configuring and deploying workloads, blueprints, and managing the application settings.
 
 > **Note:** This extension requires an active [SUSE AI Factory](https://www.suse.com/products/ai/) subscription to access the application catalog.
 
@@ -67,6 +67,9 @@ From the `ui/` directory:
 ```bash
 yarn build-pkg aif-ui --mode production
 ```
+
+Application logos are bundled for use in connected and air-gapped installations.
+See [catalog logo maintenance](scripts/README.md) to add or refresh the assets.
 
 ## Extension Catalog Container
 

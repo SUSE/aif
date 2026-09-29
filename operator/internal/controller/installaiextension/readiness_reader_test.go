@@ -46,7 +46,7 @@ func justAppliedDeployment() *appsv1.Deployment {
 // served an informer entry that predates the apply — and that entry is a
 // perfectly consistent picture of a rollout that finished, because the
 // *previous* one did. Generation matches ObservedGeneration, one replica is
-// updated and available, so every condition in rolloutIncomplete passes and the
+// updated and available, so every condition in RolloutIncomplete passes and the
 // CR reports the new version Installed while only the old pod is serving.
 //
 // No consistency check inside the object can catch this; nothing in the stale

@@ -302,6 +302,22 @@ function onManage(w: AIWorkload) {
   });
 }
 
+// ── Customize (Blueprint) ────────────────────────────────────────────────────
+function onCustomize(w: AIWorkload) {
+  router.push({
+    name:   `c-cluster-${ PRODUCT }-blueprint-manage`,
+    params: { cluster },
+    query:  {
+      name:              w.spec.source.blueprint?.name || '',
+      version:           w.spec.source.blueprint?.version || '',
+      instanceName:      w.metadata.name,
+      instanceNamespace: w.metadata.namespace,
+      instanceCluster:   w.spec.targetClusters?.[0] || 'local',
+      deployStrategy:    w.spec.deployStrategy || 'FleetBundle',
+    },
+  });
+}
+
 // ── Upgrade (Blueprint) ────────────────────────────────────────────────────────
 function openUpgradeModal(w: AIWorkload) {
   upgradeModal.workload         = w;
@@ -498,9 +514,18 @@ async function doRetry(w: AIWorkload) {
 
                 <!-- Source -->
                 <td class="col-source">
-                  <span class="source-type-badge" :class="w.spec.source.sourceType === 'App' ? 'source-app' : 'source-blueprint'">
-                    {{ w.spec.source.sourceType }}
-                  </span>
+                  <div class="source-badges">
+                    <span class="source-type-badge" :class="w.spec.source.sourceType === 'App' ? 'source-app' : 'source-blueprint'">
+                      {{ w.spec.source.sourceType }}
+                    </span>
+                    <span
+                      v-if="w.status?.customized && w.spec.source.sourceType === 'Blueprint'"
+                      class="badge-customized"
+                      :title="t('suseai.workloads.customizedTooltip', 'Workload configuration deviates from the default blueprint definition')"
+                    >
+                      {{ t('suseai.wizard.labels.customized', 'Customized') }}
+                    </span>
+                  </div>
                   <div class="source-name">{{ workloadSource(w) }}{{ workloadVersion(w) !== '—' ? '-' + workloadVersion(w) : '' }}</div>
                 </td>
 
@@ -559,6 +584,18 @@ async function doRetry(w: AIWorkload) {
                     >
                       <i class="icon icon-upload" />
                       <span>Upgrade</span>
+                    </button>
+
+                    <!-- Blueprint workload: Manage -->
+                    <button
+                      v-if="w.spec.source.sourceType === 'Blueprint'"
+                      class="btn btn-sm role-secondary"
+                      :disabled="w.status?.activeOperation?.state === 'InProgress'"
+                      @click="onCustomize(w)"
+                      type="button"
+                    >
+                      <i class="icon icon-edit" />
+                      Manage
                     </button>
 
                     <!-- Blueprint workload: Roll Back -->
@@ -811,6 +848,13 @@ async function doRetry(w: AIWorkload) {
 
 // Source column
 .col-source {
+  .source-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+  }
+
   .source-type-badge {
     display: inline-block;
     padding: 2px 7px;
@@ -819,10 +863,20 @@ async function doRetry(w: AIWorkload) {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin-bottom: 3px;
 
     &.source-app       { background: var(--info-banner-bg);    color: var(--info);    }
     &.source-blueprint { background: var(--accent-btn);        color: var(--body-text); border: 1px solid var(--border); }
+  }
+
+  .badge-customized {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    border-radius: 10px;
+    padding: 1px 6px;
+    line-height: 14px;
   }
 
   .source-name { font-size: 12px; color: var(--muted); font-family: monospace; }

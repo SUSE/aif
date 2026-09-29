@@ -107,3 +107,50 @@ func TestResolveClusterRepo_NoSource(t *testing.T) {
 		t.Fatal("expected error for repo with no url/ociRepo/gitRepo")
 	}
 }
+
+func TestOCIChartRef(t *testing.T) {
+	cases := []struct {
+		name    string
+		repoURL string
+		chart   string
+		want    string
+	}{
+		{
+			name:    "namespace-style repo appends chart segment",
+			repoURL: "oci://dp.apps.rancher.io/charts",
+			chart:   "milvus",
+			want:    "oci://dp.apps.rancher.io/charts/milvus",
+		},
+		{
+			name:    "single-chart repo already ends in chart name is not doubled",
+			repoURL: "oci://ghcr.io/nvidia/openshell/helm-chart",
+			chart:   "helm-chart",
+			want:    "oci://ghcr.io/nvidia/openshell/helm-chart",
+		},
+		{
+			name:    "single-chart workspace repo is not doubled",
+			repoURL: "oci://ghcr.io/nvidia/openshell/openshell-workspace",
+			chart:   "openshell-workspace",
+			want:    "oci://ghcr.io/nvidia/openshell/openshell-workspace",
+		},
+		{
+			name:    "trailing slash is normalized before appending",
+			repoURL: "oci://dp.apps.rancher.io/charts/",
+			chart:   "milvus",
+			want:    "oci://dp.apps.rancher.io/charts/milvus",
+		},
+		{
+			name:    "empty chart name leaves the repo URL untouched",
+			repoURL: "oci://ghcr.io/nvidia/openshell/helm-chart",
+			chart:   "",
+			want:    "oci://ghcr.io/nvidia/openshell/helm-chart",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ociChartRef(tc.repoURL, tc.chart); got != tc.want {
+				t.Errorf("ociChartRef(%q, %q) = %q, want %q", tc.repoURL, tc.chart, got, tc.want)
+			}
+		})
+	}
+}

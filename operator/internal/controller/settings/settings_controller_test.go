@@ -72,8 +72,10 @@ func TestSettingsController_CreatesFleetGitRepo(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL: "https://github.com/example/ai-workloads",
-				Branch:  "main",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL: "https://github.com/example/ai-workloads",
+					Branch:  "main",
+				},
 			},
 		},
 	}
@@ -119,9 +121,11 @@ func TestSettingsController_FleetGitRepoUsesConfiguredPrivateCA(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:           "https://gitea.internal.example/aif.git",
-				Branch:            "main",
-				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:           "https://gitea.internal.example/aif.git",
+					Branch:            "main",
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				},
 			},
 		},
 	}
@@ -169,8 +173,10 @@ func TestSettingsController_RejectsInvalidFleetGitCA(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:           "https://gitea.internal.example/aif.git",
-				CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:           "https://gitea.internal.example/aif.git",
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				},
 			},
 		},
 	}
@@ -197,8 +203,10 @@ func TestSettingsController_RejectsFleetGitAuthWithoutCredentials(t *testing.T) 
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:  "https://gitea.internal.example/aif.git",
-				AuthType: "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:  "https://gitea.internal.example/aif.git",
+					AuthType: "token",
+				},
 			},
 		},
 	}
@@ -262,11 +270,13 @@ func TestSettingsController_MirrorsGitHTTPSCredential(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:  "https://github.com/example/ai-workloads",
-				Username: "git-user",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:  "https://github.com/example/ai-workloads",
+					Username: "git-user",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  "token",
+					},
 				},
 			},
 		},
@@ -284,7 +294,7 @@ func TestSettingsController_MirrorsGitHTTPSCredential(t *testing.T) {
 
 	var mirror corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "git-creds", Namespace: "fleet-local",
+		Name: "suse-ai-fleet-repo-cred", Namespace: "fleet-local",
 	}, &mirror); err != nil {
 		t.Fatalf("expected mirror secret in fleet-local: %v", err)
 	}
@@ -313,10 +323,12 @@ func TestSettingsController_MirrorsGitHTTPSUsernameFromSecret(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL: "https://github.com/example/ai-workloads",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  corev1.BasicAuthPasswordKey,
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL: "https://github.com/example/ai-workloads",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  corev1.BasicAuthPasswordKey,
+					},
 				},
 			},
 		},
@@ -334,7 +346,7 @@ func TestSettingsController_MirrorsGitHTTPSUsernameFromSecret(t *testing.T) {
 
 	var mirror corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "git-creds", Namespace: "fleet-local",
+		Name: "suse-ai-fleet-repo-cred", Namespace: "fleet-local",
 	}, &mirror); err != nil {
 		t.Fatalf("expected mirror secret in fleet-local: %v", err)
 	}
@@ -357,10 +369,12 @@ func TestSettingsController_MirrorsGitHTTPSDefaultUsername(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL: "https://gitlab.example.com/example/ai-workloads",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL: "https://gitlab.example.com/example/ai-workloads",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  "token",
+					},
 				},
 			},
 		},
@@ -378,7 +392,7 @@ func TestSettingsController_MirrorsGitHTTPSDefaultUsername(t *testing.T) {
 
 	var mirror corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "git-creds", Namespace: "fleet-local",
+		Name: "suse-ai-fleet-repo-cred", Namespace: "fleet-local",
 	}, &mirror); err != nil {
 		t.Fatalf("expected mirror secret in fleet-local: %v", err)
 	}
@@ -399,7 +413,7 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 	}
 	// Stale mirror with wrong type already exists in fleet-local
 	staleSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: "fleet-local"},
+		ObjectMeta: metav1.ObjectMeta{Name: "suse-ai-fleet-repo-cred", Namespace: "fleet-local"},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{"token": []byte("oldtoken")},
 	}
@@ -407,11 +421,13 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "suse-ai-system"},
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			Fleet: aiplatformv1alpha1.FleetSettings{
-				RepoURL:  "https://github.com/example/ai-workloads",
-				AuthType: "token",
-				CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
-					Name: "git-creds",
-					Key:  "token",
+				GitRepoSource: aiplatformv1alpha1.GitRepoSource{
+					RepoURL:  "https://github.com/example/ai-workloads",
+					AuthType: "token",
+					CredSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-creds",
+						Key:  "token",
+					},
 				},
 			},
 		},
@@ -429,7 +445,7 @@ func TestSettingsController_MirrorsGitCredSecret_TypeChangeRecreates(t *testing.
 
 	var mirror corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "git-creds", Namespace: "fleet-local",
+		Name: "suse-ai-fleet-repo-cred", Namespace: "fleet-local",
 	}, &mirror); err != nil {
 		t.Fatalf("expected mirror secret in fleet-local after type change: %v", err)
 	}
@@ -646,6 +662,39 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 	}
 	if pubSecret, found, _ := unstructured.NestedString(pubRepo.Object, "spec", "clientSecret", "name"); found && pubSecret != "" {
 		t.Errorf("public nvidia ClusterRepo must be anonymous, got clientSecret = %q", pubSecret)
+	}
+
+	// OpenShell is a public OCI repo created anonymously (no clientSecret). With no
+	// registryEndpoints.openshell mirror configured (connected mode), it points at
+	// the public ghcr.io default.
+	openshellRepo := &unstructured.Unstructured{}
+	openshellRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoOpenshell}, openshellRepo); err != nil {
+		t.Fatalf("expected openshell ClusterRepo: %v", err)
+	}
+	if osURL, _, _ := unstructured.NestedString(openshellRepo.Object, "spec", "url"); osURL != credentials.DefaultOpenshellURL {
+		t.Errorf("openshell ClusterRepo url = %q, want %q", osURL, credentials.DefaultOpenshellURL)
+	}
+	if osSecret, found, _ := unstructured.NestedString(openshellRepo.Object, "spec", "clientSecret", "name"); found && osSecret != "" {
+		t.Errorf("openshell ClusterRepo must be anonymous, got clientSecret = %q", osSecret)
+	}
+
+	// OpenShell Workspace is a sibling public OCI repo, also created anonymously
+	// and pointing at its public ghcr.io default in connected mode.
+	openshellWsRepo := &unstructured.Unstructured{}
+	openshellWsRepo.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
+	})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoOpenshellWorkspace}, openshellWsRepo); err != nil {
+		t.Fatalf("expected openshell-workspace ClusterRepo: %v", err)
+	}
+	if wsURL, _, _ := unstructured.NestedString(openshellWsRepo.Object, "spec", "url"); wsURL != credentials.DefaultOpenshellWorkspaceURL {
+		t.Errorf("openshell-workspace ClusterRepo url = %q, want %q", wsURL, credentials.DefaultOpenshellWorkspaceURL)
+	}
+	if wsSecret, found, _ := unstructured.NestedString(openshellWsRepo.Object, "spec", "clientSecret", "name"); found && wsSecret != "" {
+		t.Errorf("openshell-workspace ClusterRepo must be anonymous, got clientSecret = %q", wsSecret)
 	}
 }
 
@@ -1046,48 +1095,94 @@ func TestSettingsController_PrunesOrphanTeamRepo(t *testing.T) {
 	}
 }
 
-// Switching to air-gap deletes team repos, preserves ngc-helm-auth, and keeps
-// both stable org/Blueprint repo identities backed by the private mirror.
-func TestSettingsController_AirGapKeepsStableNvidiaRepoAliases(t *testing.T) {
+// Switching from connected NGC to an air-gap mirror preserves every catalog-
+// derived team repo identity and repoints it, along with the org/Blueprint
+// aliases, at the private mirror. AIWorkloads pin chartRepo by name, so deleting
+// or renaming any of these aliases would break a later upgrade or redeploy.
+func TestSettingsController_AirGapPreservesAllNvidiaRepoAliases(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
 	const ns = "aif-operator"
 	const mirrorURL = "oci://registry.internal/nvidia"
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
-		Spec: aiplatformv1alpha1.SettingsSpec{
-			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: mirrorURL},
-		},
 	}
 	nvidia := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "nvidia", Namespace: ns},
 		Data:       map[string][]byte{"user": []byte("$oauthtoken"), "token": []byte("nvapi-test")},
 	}
-	staleTeam := &unstructured.Unstructured{}
-	staleTeam.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	staleTeam.SetName("nvidia-cuopt")
-	staleTeam.SetLabels(map[string]string{teamRepoLabel: markerValueTrue})
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, nvidia, staleTeam).
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, nvidia).
 		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
 	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+
+	// First reconcile in connected mode and capture the catalog-derived logical
+	// identities before changing the endpoint.
 	if _, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
 	}); err != nil {
-		t.Fatalf("reconcile: %v", err)
+		t.Fatalf("connected reconcile: %v", err)
 	}
-	// Team repo deleted.
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "nvidia-cuopt"}, got); !apierrors.IsNotFound(err) {
-		t.Errorf("expected team repo pruned in air-gap, got err=%v", err)
+	teams := catalog.ClassifyNGCTeamRepos()
+	expectedTeamNames := make(map[string]string, len(teams.Public)+len(teams.Gated))
+	gatedURLs := make(map[string]bool, len(teams.Gated))
+	for _, u := range teams.Gated {
+		gatedURLs[u] = true
 	}
+	for _, u := range append(teams.Public, teams.Gated...) {
+		name, err := catalog.NGCClusterRepoName(u)
+		if err != nil {
+			t.Fatalf("derive ClusterRepo name for %q: %v", u, err)
+		}
+		expectedTeamNames[name] = u
+		repo := getClusterRepo(t, c, name)
+		if gotURL, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); gotURL != u {
+			t.Errorf("connected %s URL=%q want %q", name, gotURL, u)
+		}
+	}
+	if len(expectedTeamNames) == 0 {
+		t.Fatal("precondition: bundled catalog yielded no NVIDIA team repos")
+	}
+
+	// An obsolete operator-owned team alias should still be pruned in mirror mode.
+	orphan := &unstructured.Unstructured{}
+	orphan.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	orphan.SetName("nvidia-gone-from-catalog")
+	orphan.SetLabels(map[string]string{teamRepoLabel: markerValueTrue})
+	if err := c.Create(context.Background(), orphan); err != nil {
+		t.Fatalf("create orphan team repo: %v", err)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &stored); err != nil {
+		t.Fatalf("get Settings before mode switch: %v", err)
+	}
+	stored.Spec.RegistryEndpoints = &aiplatformv1alpha1.RegistryEndpointsSettings{Nvidia: mirrorURL}
+	if err := c.Update(context.Background(), &stored); err != nil {
+		t.Fatalf("switch Settings to mirror: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("mirror reconcile: %v", err)
+	}
+
+	gotOrphan := &unstructured.Unstructured{}
+	gotOrphan.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: orphan.GetName()}, gotOrphan); !apierrors.IsNotFound(err) {
+		t.Errorf("expected obsolete team repo pruned in air-gap, got err=%v", err)
+	}
+
 	// ngc-helm-auth preserved in cattle-system (air-gap mirror needs it).
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); err != nil {
 		t.Errorf("air-gap must preserve ngc-helm-auth: %v", err)
 	}
 
-	for _, name := range []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint} {
+	allExpectedNames := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
+	for name := range expectedTeamNames {
+		allExpectedNames = append(allExpectedNames, name)
+	}
+	for _, name := range allExpectedNames {
 		repo := getClusterRepo(t, c, name)
 		url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
 		if url != mirrorURL {
@@ -1098,8 +1193,53 @@ func TestSettingsController_AirGapKeepsStableNvidiaRepoAliases(t *testing.T) {
 		if secretName != credentials.AuthSecretNvidia || secretNamespace != "cattle-system" {
 			t.Errorf("%s clientSecret=%s/%s want cattle-system/%s", name, secretNamespace, secretName, credentials.AuthSecretNvidia)
 		}
-		if forceUpdate, _, _ := unstructured.NestedString(repo.Object, "spec", "forceUpdate"); forceUpdate == "" {
-			t.Errorf("%s was not force-updated after the initial mirror credential write", name)
+		if repo.GetLabels()[managedRepoLabel] != markerValueTrue {
+			t.Errorf("%s missing managed-repo label, got labels=%v", name, repo.GetLabels())
+		}
+		if _, isTeam := expectedTeamNames[name]; isTeam && repo.GetLabels()[teamRepoLabel] != markerValueTrue {
+			t.Errorf("team alias %s missing team-repo label, got labels=%v", name, repo.GetLabels())
+		}
+	}
+
+	// Switching back to connected mode must keep the same names, restore each
+	// public source URL, and restore the source-specific authentication model.
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &stored); err != nil {
+		t.Fatalf("get Settings before connected switch: %v", err)
+	}
+	stored.Spec.RegistryEndpoints = nil
+	if err := c.Update(context.Background(), &stored); err != nil {
+		t.Fatalf("switch Settings back to connected: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("connected restore reconcile: %v", err)
+	}
+
+	fixedURLs := map[string]string{
+		credentials.ClusterRepoNvidia:          credentials.DefaultNvidiaChartsURL,
+		credentials.ClusterRepoNvidiaBlueprint: credentials.DefaultNvidiaBlueprintURL,
+	}
+	for name, wantURL := range fixedURLs {
+		repo := getClusterRepo(t, c, name)
+		if gotURL, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); gotURL != wantURL {
+			t.Errorf("restored %s URL=%q want %q", name, gotURL, wantURL)
+		}
+		if secret, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && secret != "" {
+			t.Errorf("restored org alias %s must be anonymous, got clientSecret %q", name, secret)
+		}
+	}
+	for name, wantURL := range expectedTeamNames {
+		repo := getClusterRepo(t, c, name)
+		if gotURL, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); gotURL != wantURL {
+			t.Errorf("restored %s URL=%q want %q", name, gotURL, wantURL)
+		}
+		secret, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+		if gatedURLs[wantURL] && secret != credentials.AuthSecretNvidia {
+			t.Errorf("restored gated alias %s clientSecret=%q want %q", name, secret, credentials.AuthSecretNvidia)
+		}
+		if !gatedURLs[wantURL] && secret != "" {
+			t.Errorf("restored public alias %s must be anonymous, got clientSecret %q", name, secret)
 		}
 	}
 }
@@ -1126,21 +1266,71 @@ func TestSettingsController_AirGapUnauthenticatedMirrorCreated(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	// The mirror exists, is labeled, points at the private URL, and is anonymous.
-	nv := getClusterRepo(t, c, credentials.ClusterRepoNvidia)
-	if nv.GetLabels()[managedRepoLabel] != markerValueTrue {
-		t.Errorf("air-gap mirror missing managed-repo label, got labels=%v", nv.GetLabels())
+	// Both canonical aliases and every catalog-derived team alias exist, point at
+	// the private URL, and remain anonymous.
+	teams := catalog.ClassifyNGCTeamRepos()
+	expectedNames := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
+	for _, u := range append(teams.Public, teams.Gated...) {
+		name, err := catalog.NGCClusterRepoName(u)
+		if err != nil {
+			t.Fatalf("derive ClusterRepo name for %q: %v", u, err)
+		}
+		expectedNames = append(expectedNames, name)
 	}
-	if url, _, _ := unstructured.NestedString(nv.Object, "spec", "url"); url != "oci://registry.internal/nvidia" {
-		t.Errorf("air-gap mirror url = %q, want oci://registry.internal/nvidia", url)
-	}
-	if sec, found, _ := unstructured.NestedString(nv.Object, "spec", "clientSecret", "name"); found && sec != "" {
-		t.Errorf("unauthenticated air-gap mirror must have no clientSecret, got %q", sec)
+	for _, name := range expectedNames {
+		repo := getClusterRepo(t, c, name)
+		if repo.GetLabels()[managedRepoLabel] != markerValueTrue {
+			t.Errorf("air-gap alias %s missing managed-repo label, got labels=%v", name, repo.GetLabels())
+		}
+		if url, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); url != "oci://registry.internal/nvidia" {
+			t.Errorf("air-gap alias %s URL = %q, want oci://registry.internal/nvidia", name, url)
+		}
+		if sec, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && sec != "" {
+			t.Errorf("unauthenticated air-gap alias %s must have no clientSecret, got %q", name, sec)
+		}
 	}
 	// No auth secret should be written for an anonymous mirror.
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.AuthSecretNvidia, Namespace: "cattle-system"}, &authSec); !apierrors.IsNotFound(err) {
 		t.Errorf("expected no ngc-helm-auth for anonymous mirror, got err=%v", err)
+	}
+}
+
+// The OpenShell repos are public and anonymous, but like the App Collection and
+// SUSE Registry repos their URL follows registryEndpoints. When
+// registryEndpoints.openshell is set (air-gap), both aliases point at the single
+// aggregate mirror instead of the public ghcr.io defaults, and stay anonymous.
+func TestSettingsController_AirGapRepointsOpenShellReposAtMirror(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+	const mirrorURL = "oci://registry.internal/openshell"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+				OpenShell: mirrorURL,
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, name := range []string{credentials.ClusterRepoOpenshell, credentials.ClusterRepoOpenshellWorkspace} {
+		repo := getClusterRepo(t, c, name)
+		if url, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); url != mirrorURL {
+			t.Errorf("air-gap %s URL = %q, want mirror %q", name, url, mirrorURL)
+		}
+		if sec, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && sec != "" {
+			t.Errorf("air-gap %s must stay anonymous, got clientSecret %q", name, sec)
+		}
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash/fnv"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,8 @@ import (
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
+
+	"dario.cat/mergo"
 )
 
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
@@ -121,8 +124,10 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// by desiredHelmOpKeys/cleanup/certification alike — so a version change that adds, removes,
 	// renames, or reorders components never desynchronizes the render names from the desired set
 	// (the stale FleetBundleNames[i] index is intentionally NOT used for rendering).
+	enabledComponents := filterEnabledComponents(w, bp.Spec.Components)
+
 	expectedDigests := map[string]string{}
-	for _, c := range bp.Spec.Components {
+	for _, c := range enabledComponents {
 		var digest string
 		var err error
 		switch w.Spec.DeployStrategy {
@@ -214,7 +219,12 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	w.Status.ObservedGeneration = w.Generation
 
 	// Step 4: cleanup stale HelmOps, then build component matrix, set phase, and certify.
-	keys := desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, bp.Spec.Components, w.Spec.DeployStrategy)
+	// Uses enabledComponents (not bp.Spec.Components): a component the user disabled via
+	// ComponentValues.Enabled=false is simply absent from the desired set, so
+	// cleanupStaleHelmOps below tears down its HelmOp/Bundle the same way it already
+	// handles a component removed by a blueprint version change — no separate deletion
+	// path needed.
+	keys := desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, enabledComponents, w.Spec.DeployStrategy)
 	if err := r.cleanupStaleHelmOps(ctx, w, keys); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -240,6 +250,12 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// Reconcile completed without error: clear any prior Ready=False (e.g. a
 	// transient ClusterRepoNotReady) so the condition recovers alongside the
 	// phase. Phase reflects rollout state; Ready reflects reconcile success.
+	customized, err := isWorkloadCustomized(w, &bp)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	w.Status.Customized = customized
+
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
 	return ctrl.Result{}, nil
 }
@@ -257,7 +273,117 @@ func (r *AIWorkloadReconciler) retryEpochValue(w *aiplatformv1alpha1.AIWorkload)
 	return n
 }
 
+// isWorkloadCustomized evaluates whether an AIWorkload has configuration drift
+// relative to its Blueprint defaults (either via component exclusions or Helm value overrides).
+func isWorkloadCustomized(w *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alpha1.Blueprint) (bool, error) {
+	if bp == nil {
+		return false, nil
+	}
+	// Check for component exclusions
+	for _, c := range bp.Spec.Components {
+		if !isComponentEnabled(w, c.ChartName) {
+			return true, nil
+		}
+	}
+
+	// Check if any component's resolved values differ from the blueprint defaults
+	for _, c := range bp.Spec.Components {
+		var base map[string]any
+		if c.Values != nil && len(c.Values.Raw) > 0 {
+			base = make(map[string]any)
+			if err := json.Unmarshal(c.Values.Raw, &base); err != nil {
+				return false, fmt.Errorf("unmarshal blueprint base values for %s: %w", c.ChartName, err)
+			}
+		}
+		resolved, err := resolveComponentValues(w, c)
+		if err != nil {
+			return false, fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
+		}
+		if (len(base) > 0 || len(resolved) > 0) && !reflect.DeepEqual(base, resolved) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// filterEnabledComponents returns the subset of a Blueprint's components that are enabled for
+// this AIWorkload. A component is disabled only when an override matches it by ChartName AND
+// explicitly sets Enabled=false; no matching override (or Enabled left nil) keeps the component
+// enabled, so every AIWorkload predating this field deploys every component exactly as before.
+func filterEnabledComponents(w *aiplatformv1alpha1.AIWorkload, components []aiplatformv1alpha1.BlueprintComponent) []aiplatformv1alpha1.BlueprintComponent {
+	enabled := make([]aiplatformv1alpha1.BlueprintComponent, 0, len(components))
+	for _, c := range components {
+		if isComponentEnabled(w, c.ChartName) {
+			enabled = append(enabled, c)
+		}
+	}
+	return enabled
+}
+
+// isComponentEnabled reports whether a Blueprint component (by ChartName) should be deployed,
+// per resolveComponentValues' override-matching convention (first match wins).
+func isComponentEnabled(w *aiplatformv1alpha1.AIWorkload, chartName string) bool {
+	for _, ov := range w.Spec.ComponentValues {
+		if ov.ComponentName != chartName {
+			continue
+		}
+		return ov.Enabled == nil || *ov.Enabled
+	}
+	return true
+}
+
+// resolveComponentValues merges an AIWorkload-level override (matched by
+// ComponentName == ChartName) onto a blueprint component's own baked-in
+// values. Overrides deep-merge onto the base (mergo.WithOverride: override
+// wins on scalars, nested maps merge key-by-key, slices replace wholesale) —
+// the same semantics Helm itself uses for layered -f values.yaml overrides.
+// Components with no matching override render exactly as they did before
+// this existed (base values only), which keeps every pre-existing Blueprint
+// install byte-identical.
+func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (map[string]any, error) {
+	vals := map[string]any{}
+	if c.Values != nil {
+		if err := json.Unmarshal(c.Values.Raw, &vals); err != nil {
+			return nil, fmt.Errorf("unmarshal blueprint values for %s: %w", c.ChartName, err)
+		}
+	}
+	for _, ov := range w.Spec.ComponentValues {
+		if ov.ComponentName != c.ChartName || ov.Values == nil {
+			continue
+		}
+		override := map[string]any{}
+		if err := json.Unmarshal(ov.Values.Raw, &override); err != nil {
+			return nil, fmt.Errorf("unmarshal component override for %s: %w", c.ChartName, err)
+		}
+		if err := mergo.Merge(&vals, override, mergo.WithOverride); err != nil {
+			return nil, fmt.Errorf("merge component override for %s: %w", c.ChartName, err)
+		}
+		break
+	}
+	return vals, nil
+}
+
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
+// ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Fleet
+// treats helm.repo as the full OCI chart path and appends the version tag, so
+// the operator hands it "<registry>/<namespace>/<chart>". A namespace-style OCI
+// repo needs the chart name appended — e.g. App Collection's
+// oci://dp.apps.rancher.io/charts + chart "milvus" -> .../charts/milvus.
+//
+// Some publishers instead give each chart its own OCI repository, so the
+// ClusterRepo URL already terminates at the chart (e.g. OpenShell's
+// oci://ghcr.io/nvidia/openshell/helm-chart, whose Chart.yaml name is
+// "helm-chart"). Blindly appending the chart name there doubles the trailing
+// segment (.../helm-chart/helm-chart) and the pull is denied. Skip the append
+// when the URL already ends in the chart segment so both layouts resolve.
+func ociChartRef(repoURL, chartName string) string {
+	trimmed := strings.TrimSuffix(repoURL, "/")
+	if chartName == "" || strings.HasSuffix(trimmed, "/"+chartName) {
+		return trimmed
+	}
+	return trimmed + "/" + chartName
+}
+
 func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
@@ -312,11 +438,11 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["repo"] = repoInfo.URL
 		helmSpec["chart"] = c.ChartName
 	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
+		helmSpec["repo"] = ociChartRef(repoInfo.URL, c.ChartName)
 	}
-	vals := map[string]any{}
-	if c.Values != nil {
-		_ = json.Unmarshal(c.Values.Raw, &vals)
+	vals, err := resolveComponentValues(w, c)
+	if err != nil {
+		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	// Per-component namespace (ai-factory's componentNamespace helper) lets a
 	// blueprint component override the workload-level TargetNamespace. The
@@ -890,16 +1016,16 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		helmSpec["repo"] = repoInfo.URL
 		helmSpec["chart"] = c.ChartName
 	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
+		helmSpec["repo"] = ociChartRef(repoInfo.URL, c.ChartName)
 	}
 
 	// Load the blueprint component's own values BEFORE injecting pull secrets —
 	// mirrors ensureBlueprintHelmOp. Omitting this dropped every component value
 	// (including open-webui's global.tls) from the GitOps git file, so the chart
 	// rendered with defaults and the open-webui Ingress got an empty TLS host.
-	vals := map[string]any{}
-	if c.Values != nil {
-		_ = json.Unmarshal(c.Values.Raw, &vals)
+	vals, err := resolveComponentValues(w, c)
+	if err != nil {
+		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
 	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))

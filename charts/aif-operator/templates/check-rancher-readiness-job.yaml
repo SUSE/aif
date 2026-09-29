@@ -1,0 +1,62 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aif-operator.fullname" . }}-check-rancher-readiness
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-50"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: {{ include "aif-operator.fullname" . }}-check-rancher-readiness
+      restartPolicy: Never
+      {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: check-rancher-readiness
+          image: "{{ with (coalesce .Values.global.imageRegistry .Values.global.kubectl.image.registry) }}{{ . }}/{{ end }}{{ .Values.global.kubectl.image.repository }}:{{ .Values.global.kubectl.image.tag }}"
+          imagePullPolicy: {{ .Values.global.kubectl.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+
+              # kubectl wait exits non-zero on transient API errors (network
+              # hiccups, apiserver restarts, broken watches), so retry until it
+              # succeeds. Total wait time is bounded by the installer (helm --timeout).
+              retry_wait() {
+                until kubectl wait --timeout=30s "$@"; do
+                  echo "kubectl wait $* failed, retrying in 5s ..."
+                  sleep 5
+                done
+              }
+
+              wait_for_crd() {
+                crd="$1"
+
+                echo "Waiting for CRD $crd to be created ..."
+                retry_wait --for=create "crd/$crd"
+
+                echo "Waiting for CRD $crd to become Established ..."
+                retry_wait --for=condition=Established "crd/$crd"
+              }
+
+              echo "Wait indefinitely for Rancher CRDs to be created and established ..."
+
+              wait_for_crd bundles.fleet.cattle.io
+              wait_for_crd gitrepos.fleet.cattle.io
+              wait_for_crd bundledeployments.fleet.cattle.io
+              wait_for_crd clusterrepos.catalog.cattle.io
+              wait_for_crd uiplugins.catalog.cattle.io
+
+              echo "Wait indefinitely for namespace cattle-ui-plugin-system to be created ..."
+              retry_wait --for=create namespace/cattle-ui-plugin-system
+
+              echo "Rancher CRDs and namespace are ready."

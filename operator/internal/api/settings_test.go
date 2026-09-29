@@ -1005,7 +1005,7 @@ func TestValidateCredentials_GitAuthClassification(t *testing.T) {
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: "https://git.example.com/repo.git", Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: "https://git.example.com/repo.git", Branch: "main"}},
 		},
 	}
 	c := newSettingsFakeClient(t, cr)
@@ -1132,7 +1132,7 @@ func TestValidateCredentials_GitNetworkError(t *testing.T) {
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			Fleet: aiplatformv1alpha1.FleetSettings{RepoURL: "https://git.example.com/repo.git", Branch: "main"},
+			Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: "https://git.example.com/repo.git", Branch: "main"}},
 		},
 	}
 	c := newSettingsFakeClient(t, cr)

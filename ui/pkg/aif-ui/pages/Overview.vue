@@ -14,6 +14,10 @@ import { PRODUCT, PAGE_TYPES }              from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
+import { fetchManagedRepos } from '../services/app-collection';
+import type { ManagedRepo } from '../services/app-collection';
+import { requestErrorMessage } from '../services/rancher-token';
+import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
 
 const vm      = getCurrentInstance()!.proxy as any;
 const router  = vm.$router;
@@ -26,6 +30,8 @@ const operatorError   = ref<string | null>(null);
 const workloads  = ref<AIWorkload[]>([]);
 const blueprints = ref<Blueprint[]>([]);
 const clusters   = ref<ClusterInfo[]>([]);
+const repositories = ref<ManagedRepo[]>([]);
+const repositoryError = ref('');
 
 // ── Computed stats ─────────────────────────────────────────────────────────────
 const totalWorkloads   = computed(() => workloads.value.length);
@@ -103,6 +109,7 @@ async function refresh() {
       listAIWorkloads(),
       listBlueprints().catch(() => ({ items: [] as Blueprint[] })),
       getClusters(vm.$store).catch(() => [] as ClusterInfo[]),
+      refreshRepositoryHealth(),
     ]);
     workloads.value  = wlResult.items || [];
     blueprints.value = bpResult.items || [];
@@ -111,6 +118,16 @@ async function refresh() {
     error.value = e?.message || 'Failed to load overview data';
   } finally {
     loading.value = false;
+  }
+}
+
+async function refreshRepositoryHealth() {
+  try {
+    repositories.value = await fetchManagedRepos(vm.$store);
+    repositoryError.value = '';
+  } catch (e) {
+    repositories.value = [];
+    repositoryError.value = requestErrorMessage(e);
   }
 }
 
@@ -125,7 +142,7 @@ async function retryConnection() {
 async function silentRefresh() {
   if (loading.value) return;
   try {
-    const wlResult = await listAIWorkloads();
+    const [wlResult] = await Promise.all([listAIWorkloads(), refreshRepositoryHealth()]);
     workloads.value = wlResult.items || [];
   } catch { /* ignore */ }
 }
@@ -166,6 +183,7 @@ onUnmounted(() => {
       <Loading v-if="loading" />
 
       <template v-else-if="!operatorError">
+        <RepositoryHealthBanner :repositories="repositories" :error="repositoryError" />
         <!-- ── Summary cards ─────────────────────────────────────────────── -->
         <section class="summary-grid">
           <CountBox

@@ -47,10 +47,32 @@ Application Collection, SUSE Registry, or NVIDIA Settings section. Changes to a
 chart-sourced workloads. Blueprint deployments rebuild their chart reference;
 App workloads refresh the pull secrets managed by the operator.
 
+NVIDIA uses more than the two organization-level repositories. NVAIE apps may
+come from team paths such as `nvidia/runai`, `nvidia/omniverse`, or `nim/nvidia`.
+The operator derives a stable `ClusterRepo` alias for every such source from the
+bundled catalog. In connected mode each alias points at its public NGC path; in
+private mode all of those aliases point at `registryEndpoints.nvidia`. The
+private endpoint is therefore an aggregate chart mirror and must contain the
+names and versions from every supported NVIDIA source. Preserving the aliases is
+what keeps existing `AIWorkload.spec.source.app.chartRepo` references valid when
+switching between connected and private modes.
+
 The extension also classifies the well-known sources by their stable
 `ClusterRepo` names rather than by public URL patterns. This keeps vendor-specific
 pull-secret behavior intact after an endpoint moves to a private mirror, and
 credentials are written only for the host of the effective `ClusterRepo` URL.
+
+Settings **Test** uses that same endpoint indirection and the current form's
+credential and CA references. With a private endpoint configured, direct chart
+checks target only that mirror; they do not fall back to a public chart source.
+Select a **Chart to test** that exists in the mirror, since a deliberately partial
+mirror may not contain the default sample. A missing sample is distinct from an
+access denial. NVIDIA mirror mode checks the mirror instead of the public NGC
+repositories, including when the mirror is intentionally anonymous.
+
+Direct chart access and Rancher's saved repository readiness are separate results.
+Reading a sample manifest or accessing a chart file does not verify the complete
+mirrored chart inventory, full downloads, or container image availability.
 
 ## Blueprint and GitOps Git source
 
@@ -105,6 +127,18 @@ the new destination.
 SSH is not part of this minimal contract. Supporting it safely requires an
 explicit private-key and known-hosts model; TLS or SSH host verification must
 not be disabled as a shortcut.
+
+## Catalog logos
+
+The extension ships a manifest of raster logos keyed by library and chart name.
+It uses inline raster logos from catalog metadata when available, with the
+bundled logo and then a placeholder as fallbacks. External or relative logo URLs
+do not trigger browser requests. Image decode failures also advance through the
+fallbacks. Private repository URLs do not affect the lookup, and the manifest
+works on the first page load without a pre-populated browser cache.
+
+Custom applications can supply inline raster logos or add a manifest entry;
+see [catalog logo maintenance](../../ui/scripts/README.md).
 
 ## Container images
 

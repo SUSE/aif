@@ -1,6 +1,9 @@
 package catalog
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func slugs(items []Item) map[string]Item {
 	m := make(map[string]Item, len(items))
@@ -23,6 +26,37 @@ func TestBundled(t *testing.T) {
 		if it.Name == "" || it.SlugName == "" || it.Library == "" {
 			t.Fatalf("invalid bundled item: %+v", it)
 		}
+		if it.Library == "nvidia" && IsNGCURL(it.RepositoryURL) {
+			want, err := NGCClusterRepoName(it.RepositoryURL)
+			if err != nil {
+				t.Fatalf("derive bundled NVIDIA item %q repository name: %v", it.SlugName, err)
+			}
+			if it.RepositoryName != want {
+				t.Fatalf("bundled NVIDIA item %q repository_name=%q want %q", it.SlugName, it.RepositoryName, want)
+			}
+		}
+	}
+}
+
+func TestNormalize_StampsStableNGCRepositoryNames(t *testing.T) {
+	raw := []byte(`{"nvidia":[
+		{"name":"Org","slug_name":"org","repository_url":"https://helm.ngc.nvidia.com/nvidia"},
+		{"name":"Team","slug_name":"team","repository_url":"https://helm.ngc.nvidia.com/nvidia/omniverse"},
+		{"name":"Explicit","slug_name":"explicit","repository_url":"https://helm.ngc.nvidia.com/nim/nvidia","repository_name":"admin-selected"},
+		{"name":"Private","slug_name":"private","repository_url":"oci://registry.internal/nvidia"}
+	]}`)
+	m := slugs(Normalize(raw))
+	if got := m["org"].RepositoryName; got != "nvidia" {
+		t.Errorf("org repository_name = %q, want nvidia", got)
+	}
+	if got := m["team"].RepositoryName; got != "nvidia-omniverse" {
+		t.Errorf("team repository_name = %q, want nvidia-omniverse", got)
+	}
+	if got := m["explicit"].RepositoryName; got != "admin-selected" {
+		t.Errorf("explicit repository_name = %q, want admin-selected", got)
+	}
+	if got := m["private"].RepositoryName; got != "" {
+		t.Errorf("private repository_name = %q, want empty", got)
 	}
 }
 
@@ -117,5 +151,64 @@ func TestNormalize_NoLabelsField(t *testing.T) {
 	got := Normalize(raw)
 	if len(got) != 1 || got[0].Labels != nil {
 		t.Fatalf("want nil labels, got %+v", got[0].Labels)
+	}
+}
+
+// RepresentativeChart returns a stable, supported sample chart actually served by
+// a repository, and "" for a repository absent from the bundled catalog.
+func TestRepresentativeChart(t *testing.T) {
+	if got := RepresentativeChart(""); got != "" {
+		t.Fatalf("empty URL: want \"\", got %q", got)
+	}
+	if got := RepresentativeChart("oci://mirror.internal/unknown"); got != "" {
+		t.Fatalf("unknown repo: want \"\", got %q", got)
+	}
+
+	norm := func(u string) string { return strings.TrimRight(strings.TrimSpace(u), "/") }
+	supported := func(it Item) bool {
+		for _, l := range it.Labels {
+			if l.Code == supportedLabelCode {
+				return true
+			}
+		}
+		return false
+	}
+	byRepo := map[string][]Item{}
+	for _, it := range Bundled() {
+		if u := norm(it.RepositoryURL); u != "" {
+			byRepo[u] = append(byRepo[u], it)
+		}
+	}
+
+	for repo, items := range byRepo {
+		got := RepresentativeChart(repo)
+		if got == "" {
+			t.Errorf("%s: representative chart is empty", repo)
+			continue
+		}
+		if withSlash := RepresentativeChart(repo + "/"); withSlash != got {
+			t.Errorf("%s: not slash-insensitive: %q vs %q", repo, got, withSlash)
+		}
+		var pick *Item
+		for i := range items {
+			if items[i].SlugName == got {
+				pick = &items[i]
+				break
+			}
+		}
+		if pick == nil {
+			t.Errorf("%s: picked %q which the repo does not serve", repo, got)
+			continue
+		}
+		anySupported := false
+		for _, it := range items {
+			if supported(it) {
+				anySupported = true
+				break
+			}
+		}
+		if anySupported && !supported(*pick) {
+			t.Errorf("%s: picked unsupported %q while a supported chart exists", repo, got)
+		}
 	}
 }

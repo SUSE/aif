@@ -88,10 +88,20 @@ func TestCatalog_NoRemote_ReturnsBundled(t *testing.T) {
 	defer restore()
 	rec := doGet(mux)
 	assertBundled(t, rec)
+	foundTeamRepo := false
 	for _, it := range decodeItems(t, rec.Body.Bytes()) {
 		if it.Library == "" {
 			t.Fatalf("bundled item %q has no library", it.SlugName)
 		}
+		if it.RepositoryURL == "https://helm.ngc.nvidia.com/nvidia/runai" {
+			foundTeamRepo = true
+			if it.RepositoryName != "nvidia-runai" {
+				t.Fatalf("NVAIE item %q repository_name=%q want nvidia-runai", it.SlugName, it.RepositoryName)
+			}
+		}
+	}
+	if !foundTeamRepo {
+		t.Fatal("bundled catalog has no nvidia/runai item to verify repository_name serialization")
 	}
 }
 

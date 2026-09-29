@@ -170,9 +170,10 @@ func (h *BlueprintHandler) deleteBlueprint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if bp.Labels[aiplatformv1alpha1.BlueprintSourceLabel] == aiplatformv1alpha1.BlueprintSourceBundled {
+	if isManagedBlueprint(&bp) {
 		writeError(w, http.StatusForbidden, fmt.Errorf(
-			"%w: blueprint %q is bundled with the product and cannot be deleted", ErrForbidden, name))
+			"%w: blueprint %q is managed by the product or a catalog and cannot be deleted here; "+
+				"remove or edit the catalog in git (or disable defaultBlueprints for bundled ones)", ErrForbidden, name))
 		return
 	}
 
@@ -250,6 +251,19 @@ func (h *BlueprintHandler) updateBlueprint(w http.ResponseWriter, r *http.Reques
 
 	bp.ManagedFields = nil
 	writeJSON(w, http.StatusOK, &bp)
+}
+
+// isManagedBlueprint reports whether a blueprint is re-created by Helm or Fleet
+// if deleted, making a direct delete a confusing no-op. Bundled blueprints carry
+// source=bundled (Helm); catalog blueprints carry Fleet's bundle-name label.
+func isManagedBlueprint(bp *aiplatformv1alpha1.Blueprint) bool {
+	if bp.Labels[aiplatformv1alpha1.BlueprintSourceLabel] == aiplatformv1alpha1.BlueprintSourceBundled {
+		return true
+	}
+	if _, ok := bp.Labels["fleet.cattle.io/bundle-name"]; ok {
+		return true
+	}
+	return false
 }
 
 // Compile-time guard: BlueprintHandler satisfies Handler.

@@ -389,3 +389,34 @@ func TestDeleteBlueprint_Bundled_Returns403(t *testing.T) {
 		t.Fatalf("expected blueprint to still exist (200), got %d: %s", w2.Code, w2.Body.String())
 	}
 }
+
+func TestDeleteBlueprint_FleetOwned_Returns403(t *testing.T) {
+	s := kruntime.NewScheme()
+	if err := aiplatformv1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	fleetOwned := &aiplatformv1alpha1.Blueprint{}
+	fleetOwned.Name = "acme-rag-1-0-0"
+	fleetOwned.Labels = map[string]string{
+		"fleet.cattle.io/bundle-name": "blueprint-catalog-acme-blueprints",
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(fleetOwned).Build()
+	mux := http.NewServeMux()
+	NewBlueprintHandler(c).Register(mux)
+
+	// Delete is rejected with 403.
+	req := httptest.NewRequest("DELETE", "/api/v1/blueprints/acme-rag-1-0-0", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// The blueprint still exists.
+	req2 := httptest.NewRequest("GET", "/api/v1/blueprints/acme-rag-1-0-0", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected blueprint to still exist (200), got %d: %s", w2.Code, w2.Body.String())
+	}
+}

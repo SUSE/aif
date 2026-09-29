@@ -93,6 +93,15 @@ export default [
     meta:      { product: PRODUCT, category: 'blueprint-install' }
   },
 
+  // Blueprint manage wizard (edit an existing Blueprint-sourced deployment's
+  // customize values)
+  {
+    name:      `c-cluster-${ PRODUCT }-blueprint-manage`,
+    path:      `/c/:cluster/${ PRODUCT }/${ PAGE_TYPES.BLUEPRINTS }/manage`,
+    component: () => import('./pages/BlueprintManage.vue'),
+    meta:      { product: PRODUCT, category: 'blueprint-manage' }
+  },
+
   // AI Workloads page - all deployed workloads across Apps and Blueprints
   {
     name:      `c-cluster-${ PRODUCT }-${ PAGE_TYPES.WORKLOADS }`,

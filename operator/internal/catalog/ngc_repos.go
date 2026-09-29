@@ -17,15 +17,21 @@ limitations under the License.
 package catalog
 
 import (
+	"fmt"
 	"net/url"
 	"sort"
 	"strings"
+
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // NGCHost is the single NGC Helm registry host. Only URLs on this host are ever
 // considered for team-repo provisioning or auth attachment (security invariant
 // S1: never attach the NGC token to a URL off this host).
 const NGCHost = "helm.ngc.nvidia.com"
+
+// Rancher ClusterRepo names are DNS-1123 labels.
+const ngcClusterRepoNameMax = 63
 
 // Org repos are provisioned by existing operator code (anonymous) and must be
 // excluded from the dynamic team sets.
@@ -140,6 +146,51 @@ func IsNGCURL(u string) bool {
 		return false
 	}
 	return parsed.Scheme == "https" && parsed.Host == NGCHost
+}
+
+// NGCClusterRepoName returns the stable operator-managed ClusterRepo identity
+// for a classified NGC repository URL. Org repositories keep their historical
+// aliases; team repositories derive a deterministic DNS-1123 name from the URL
+// path. Unknown paths can still be named because connected provisioning treats
+// them as anonymous (the security fail-safe); excluded paths are rejected.
+func NGCClusterRepoName(ngcURL string) (string, error) {
+	normalized := strings.TrimRight(strings.TrimSpace(ngcURL), "/")
+	if !IsNGCURL(normalized) {
+		return "", fmt.Errorf("not an NGC URL: %q", ngcURL)
+	}
+
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("parse NGC URL %q: %w", ngcURL, err)
+	}
+
+	switch ClassifyNGCPath(parsed.Path) {
+	case NGCPathOrg:
+		switch parsed.Path {
+		case "/nvidia":
+			return "nvidia", nil
+		case "/nvidia/blueprint":
+			return "nvidia-blueprints", nil
+		default:
+			return "", fmt.Errorf("NGC org path %q has no stable ClusterRepo alias", parsed.Path)
+		}
+	case NGCPathPublic, NGCPathGated, NGCPathUnknown:
+		name := naming.TruncateDNS1123Label(
+			naming.Slugify(strings.TrimPrefix(parsed.Path, "/")),
+			ngcClusterRepoNameMax,
+		)
+		if name == "" {
+			return "", fmt.Errorf("empty ClusterRepo slug for NGC URL %q", ngcURL)
+		}
+		if name == "nvidia" || name == "nvidia-blueprints" {
+			return "", fmt.Errorf("NGC team slug %q collides with an org repo name", name)
+		}
+		return name, nil
+	case NGCPathExcluded:
+		return "", fmt.Errorf("NGC path %q is excluded", parsed.Path)
+	default:
+		return "", fmt.Errorf("NGC path %q is unclassified", parsed.Path)
+	}
 }
 
 // classifyNGCTeamRepos is the internal classification logic, exposed for testing

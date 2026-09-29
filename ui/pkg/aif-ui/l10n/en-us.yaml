@@ -11,6 +11,15 @@ suseai:
     manage: Manage
     repositories: Repositories
     settings: Settings
+  repositoryHealth:
+    title: Some chart repositories are unavailable
+    unknown: Chart repository status could not be checked
+    pending: The repository index is not ready yet.
+    guidance: Applications using these repositories may be unavailable. Open Settings and run Test to check chart access and repository status.
+    settings: Open Settings
+    unavailableApp: Repository unavailable
+    missingApp: Repository not configured
+    uncheckedApp: Repository status unknown
   pages:
     about:
       title: About
@@ -35,6 +44,69 @@ suseai:
         failed: Authentication failed
         error: Could not reach endpoint
         skipped: Not configured
+      registryConnection:
+        title: Verify repository access
+        checking: Testing…
+        description: Test checks the registry connection, access to sample charts, and repository status in Rancher. It does not save settings or refresh repositories.
+        authenticationLabel: Registry connection (current form)
+        repositoriesLabel: Chart repositories (saved settings)
+        formChanged: The form changed since this test. Test again to check access for these inputs.
+        unsaved: The form differs from saved settings. Repository status and Refresh use the saved configuration, not these unsaved inputs. Apply changes, then Test again.
+        settingsError: Could not read saved settings; repository status cannot be matched to the form
+        settingsPending: The AI Factory operator has not finished applying the saved settings. Test again after reconciliation completes.
+        repositoriesError: Could not read Rancher chart repositories
+        refresh: Refresh
+        refreshLabel: 'Refresh saved repository {name}'
+        refreshing: Requesting refresh…
+        refreshError: Could not request repository refresh
+        summary:
+          failed: Some checks failed. Review the results below before deploying applications.
+          incomplete: Verification is incomplete. Review the results below.
+          changed: Settings changed since the last test. Test again.
+          unsaved: The sample chart is accessible with these inputs. Apply changes, then Test again to verify the saved configuration in Rancher.
+          pending: The sample chart is accessible. Waiting for the Rancher repository index to become ready.
+          ready: Sample chart access verified and the Rancher repository index is ready.
+        authentication:
+          ok: Registry responded (see chart access below)
+          failed: Authentication probe failed
+          error: Could not complete authentication probe
+          skipped: Authentication not tested
+        chartAccess:
+          label: Chart access (current form)
+          sampleLabel: Chart to test
+          sampleHelp: Enter a chart available in this repository or private mirror. Leave empty to use the default sample. This field is only used by Test.
+          scope: Only the listed chart and version in each repository are checked. This does not verify all charts, full downloads, or application container images.
+          states:
+            manifest: Chart metadata readable
+            chartFile: Chart index and file accessible
+            failed: Chart access failed
+            error: Chart access could not be verified
+          reasons:
+            accessDenied: Access was denied. Check the selected credentials and their permission to read this chart repository.
+            suseAccessDenied: Access was denied. Check the selected credentials and their SUSE AI subscription entitlement. A registry login can succeed without permission to read these charts.
+            notFound: The sample chart or version was not found or is not visible to these credentials. Check the chart name and mirror contents; this result does not establish a missing entitlement.
+            invalidIndex: The server did not return a valid Helm chart index. Check the repository URL and access permissions in Settings; this response alone does not identify a credential problem.
+            invalidChart: The server did not return a valid Helm chart manifest. Check that this repository contains the selected chart.
+            configuration: Check the repository URL, chart name, and complete username and token Secret references. For an anonymous mirror, clear both credential references.
+            credentialsUnreadable: The operator could not read the selected credential Secret or key. Check the Secret references and operator permissions.
+            caUnreadable: The operator could not read the selected CA bundle. Check the CA Secret and key.
+            tls: The TLS certificate could not be verified. Check the repository certificate and selected CA bundle.
+            timeout: The chart access check timed out. Check connectivity to the configured repository and try again.
+            connectionFailed: The chart request could not be completed. Check connectivity, the repository URL, and the registry service.
+            outsideRepository: The chart index points to a different server. Chart access was not verified. Check that the mirror's index points to its mirrored chart files.
+        states:
+          ready: Ready
+          pending: Pending
+          failed: Failed
+          missing: Missing
+        reasons:
+          missing: No repository exists with this name. Apply the registry settings and check that the AI Factory operator creates it.
+          unmanaged: This repository is not managed by AI Factory. Check its ownership in Rancher; it cannot be refreshed here.
+          disabled: This repository is disabled. Check its configuration in Rancher.
+          reconciling: Waiting for the saved configuration or refresh to be processed. Test again to check its status.
+          indexPending: The repository index is not ready yet. Test again, or open the repository in Rancher for details.
+          downloadFailed: Rancher could not download the chart repository index. Check the error below and open the repository in Rancher for details.
+          refreshRequested: Refresh requested for the saved repository. The download has not been verified; Test again to check its status.
       sections:
         appCollection:
           title: SUSE Application Collection
@@ -114,6 +186,40 @@ suseai:
             label: HTTPS CA Bundle (optional)
             secretNameLabel: CA Secret Name
             keyNameLabel: CA Bundle Key
+        blueprintCatalogs:
+          title: Blueprint Catalogs
+          default:
+            title: Default Catalog
+            helmNote: 'The default catalog is configured via Helm values (defaultBlueprints.enabled / defaultBlueprints.gitSourced).'
+            statusBundled: Bundled
+            statusGit: Git-Sourced
+            statusDisabled: Disabled
+            statusUnknown: Unknown
+          custom:
+            title: Custom Catalogs
+            add: Add Catalog
+            remove: Remove catalog
+            name:
+              label: Name
+              required: Catalog name is required
+              tooLong: Catalog name must be 40 characters or less
+              invalid: Catalog name must be lowercase alphanumeric and hyphens only, and must start and end with an alphanumeric character
+              reserved: '"{name}" is reserved for the default catalog'
+              duplicate: Catalog name must be unique
+            path:
+              label: Paths (comma-separated)
+            repoURL:
+              label: Repository URL
+            branch:
+              label: Branch
+            credSecretRef:
+              label: Password or Personal Access Token (optional)
+              secretNameLabel: Credential Secret
+              keyNameLabel: Password or Token Key
+            caBundleSecretRef:
+              label: HTTPS CA Bundle (optional)
+              secretNameLabel: CA Secret Name
+              keyNameLabel: CA Bundle Key
         rancherCatalog:
           title: Rancher API Access
           description: 'Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.'
@@ -164,6 +270,10 @@ suseai:
         message: Message
         manage: Manage
         upgrade: Upgrade
+    blueprints:
+      catalog:
+        all: All catalogs
+        suseBlueprints: SUSE Blueprints
   apps:
     title: Apps
     backToApps: Back to Apps
@@ -236,6 +346,7 @@ suseai:
       configuration: Configuration
       selectApps: Select Applications
       review: Review
+      customize: Customize
     review:
       readonlyNotice: Configuration preview (read-only)
     form:
@@ -287,6 +398,8 @@ suseai:
       blueprintDetails: Blueprint Details
       configureApps: Configure Applications
       configureAppsDesc: Set default Helm values for each application in this blueprint.
+      customize: Customize
+      customizeDesc: Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Leave a component untouched to keep the blueprint's defaults.
       configuration: Configuration
       reviewInstall: Review & Install
       reviewCreate: Review & Create
@@ -302,6 +415,14 @@ suseai:
       namespace: Namespace
       releaseName: Release
       fixedNamespace: fixed
+      customized: Customized
+      includeComponent: Include
+      componentExcluded: Excluded — this component will not be deployed.
+      excluded: Excluded
+    errors:
+      allComponentsDisabled: At least one component must remain enabled.
+    warnings:
+      excludingRunningComponent: This component is currently deployed — excluding it will remove its resources on the next sync.
   repositories:
     title: Repositories
     add: Add Repository
@@ -353,6 +474,7 @@ suseai:
       deleteSuccess: Deleted successfully
       confirmDelete: Are you sure you want to delete this item?
   workloads:
+    customizedTooltip: Workload configuration deviates from the default blueprint definition
     openInRancher: Open in Rancher
     viewApp: Open app in Rancher
     viewNamespace: View namespace in Rancher

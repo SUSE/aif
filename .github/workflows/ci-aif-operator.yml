@@ -1,6 +1,11 @@
 name: AI Factory Operator CI
 
 on:
+  push:
+    branches: 
+      - 'main'
+    paths:
+      - 'operator/**'
   pull_request:
     paths:
       - 'operator/**'

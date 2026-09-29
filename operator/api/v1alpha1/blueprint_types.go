@@ -30,6 +30,12 @@ const (
 	// distinct from spec.source (the BlueprintOrigin vendor enum SUSE/Nvidia/Custom).
 	BlueprintSourceLabel   = "ai-factory.suse.com/source"
 	BlueprintSourceBundled = "bundled"
+
+	// BlueprintCatalogLabel records which catalog a Blueprint belongs to.
+	// Bundled blueprints carry BlueprintCatalogDefault; git-sourced blueprints
+	// are grouped by their catalog name.
+	BlueprintCatalogLabel   = "ai-factory.suse.com/catalog"
+	BlueprintCatalogDefault = "suse-default"
 )
 
 // ComponentVendor selects the secret-injection profile for a Blueprint

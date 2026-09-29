@@ -8,3 +8,9 @@ declare module '@shell/components/*';
 // Side-effect CSS imports (e.g. `import './style/brand.css'`) carry no value
 // for the type system; webpack handles them at build time.
 declare module '*.css';
+
+// SVG imports resolve to asset URLs in both webpack and the Vue test runner.
+declare module '*.svg' {
+  const url: string;
+  export default url;
+}
