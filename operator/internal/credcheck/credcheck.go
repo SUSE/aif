@@ -66,24 +66,37 @@ func ProbeRegistryWithCA(ctx context.Context, host, username, password string, c
 
 // ProbeRegistryWithCAAndInsecure is ProbeRegistryWithCA with optional TLS verification skip.
 func ProbeRegistryWithCAAndInsecure(ctx context.Context, host, username, password string, caPEM []byte, insecureSkipVerify bool) Result {
-	client := http.DefaultClient
+	u, err := url.Parse("https://" + host)
+	if err != nil || u.Hostname() == "" {
+		return Result{Status: StatusError, Message: "invalid registry host"}
+	}
+	client, res := guardedClient(ctx, u.Hostname(), caPEM, insecureSkipVerify)
+	if res != nil {
+		return *res
+	}
+	defer client.CloseIdleConnections()
+	return probe(ctx, client, "https", host, username, password)
+}
+
+// guardedClient builds a probe client with the SSRF guard (see guardedTransport),
+// the redirect policy, and optional CA trust / TLS verification skip.
+func guardedClient(ctx context.Context, originHost string, caPEM []byte, insecureSkipVerify bool) (*http.Client, *Result) {
+	transport := guardedTransport(ctx, originHost)
 	if len(caPEM) > 0 || insecureSkipVerify {
 		pool, err := x509.SystemCertPool()
 		if err != nil || pool == nil {
 			pool = x509.NewCertPool()
 		}
 		if len(caPEM) > 0 && !pool.AppendCertsFromPEM(caPEM) {
-			return Result{Status: StatusError, Message: "CA bundle does not contain a valid PEM certificate"}
+			return nil, &Result{Status: StatusError, Message: "CA bundle does not contain a valid PEM certificate"}
 		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.TLSClientConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			RootCAs:            pool,
 			InsecureSkipVerify: insecureSkipVerify,
 		}
-		client = &http.Client{Transport: transport}
 	}
-	return probe(ctx, client, "https", host, username, password)
+	return &http.Client{Transport: transport, CheckRedirect: checkProbeRedirect}, nil
 }
 
 func probe(ctx context.Context, client *http.Client, scheme, host, username, password string) Result {
@@ -227,23 +240,15 @@ func statusMessage(code int) string {
 // its index.yaml. Returns OK if the index is served (HTTP 200), failed for
 // auth rejection (401/403), or error for transport/DNS/timeout failures.
 func ProbeHelmIndex(ctx context.Context, repoURL, username, password string, caPEM []byte, insecureSkipVerify bool) Result {
-	client := http.DefaultClient
-	if len(caPEM) > 0 || insecureSkipVerify {
-		pool, err := x509.SystemCertPool()
-		if err != nil || pool == nil {
-			pool = x509.NewCertPool()
-		}
-		if len(caPEM) > 0 && !pool.AppendCertsFromPEM(caPEM) {
-			return Result{Status: StatusError, Message: "CA bundle does not contain a valid PEM certificate"}
-		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			RootCAs:            pool,
-			InsecureSkipVerify: insecureSkipVerify,
-		}
-		client = &http.Client{Transport: transport}
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Hostname() == "" {
+		return Result{Status: StatusError, Message: "invalid repository url"}
 	}
+	client, res := guardedClient(ctx, u.Hostname(), caPEM, insecureSkipVerify)
+	if res != nil {
+		return *res
+	}
+	defer client.CloseIdleConnections()
 
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()

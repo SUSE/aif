@@ -719,10 +719,12 @@ func (h *SettingsHandler) validateCustomRepo(ctx context.Context, ov validateOve
 }
 
 // unsafeProbeTarget reports why a probe target must be rejected, or "" if it is
-// allowed. It blocks credentials embedded in the URL and hosts that resolve to a
-// literal loopback/link-local/metadata address, which the in-cluster operator
-// could otherwise be coerced into probing (SSRF). Hostnames are not resolved here
-// (proportionate: the collapsed error message removes the response oracle).
+// allowed. It is an early input check with a clear message: it blocks credentials
+// embedded in the URL and literal loopback/link-local/metadata hosts. Private
+// address space is allowed on purpose, since on-prem and air-gap mirrors live
+// there. The enforcing SSRF control is the credcheck dial guard, which re-checks
+// the resolved IP of every connection (redirect hops, bearer realms, DNS
+// rebinding) and keeps a public repository out of private address space.
 func unsafeProbeTarget(rawURL string) string {
 	if rawURL == "" {
 		return ""

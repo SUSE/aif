@@ -69,7 +69,7 @@ func ProbeChart(ctx context.Context, repositoryURL, chartName, username, passwor
 		result.Reason = "configuration"
 		return
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := guardedTransport(ctx, u.Hostname())
 	defer transport.CloseIdleConnections()
 	if len(caPEM) > 0 {
 		pool, _ := x509.SystemCertPool()

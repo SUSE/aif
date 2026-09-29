@@ -1377,3 +1377,35 @@ func TestValidateCustomRepo_AnonymousProbe(t *testing.T) {
 		t.Fatalf("probe got host=%q, want public.example.com", got.host)
 	}
 }
+
+func TestUnsafeProbeTarget(t *testing.T) {
+	blocked := []string{
+		"https://user:pass@repo.example.com",
+		"https://localhost/charts",
+		"https://127.0.0.1/charts",
+		"https://[::1]/charts",
+		"https://[::ffff:127.0.0.1]/charts",
+		"http://169.254.169.254/latest/meta-data",
+		"https://[fe80::1]/charts",
+	}
+	for _, u := range blocked {
+		if unsafeProbeTarget(u) == "" {
+			t.Errorf("unsafeProbeTarget(%q) allowed, want rejected", u)
+		}
+	}
+	// Private address space is allowed: on-prem and air-gap mirrors live there.
+	// The credcheck dial guard keeps a public repository out of it.
+	allowed := []string{
+		"",
+		"https://charts.example.com/stable",
+		"oci://10.0.0.5/charts",
+		"https://192.168.1.10:8443/charts",
+		"https://172.16.0.1/charts",
+		"https://[fd00::1]/charts",
+	}
+	for _, u := range allowed {
+		if msg := unsafeProbeTarget(u); msg != "" {
+			t.Errorf("unsafeProbeTarget(%q)=%q, want allowed", u, msg)
+		}
+	}
+}
