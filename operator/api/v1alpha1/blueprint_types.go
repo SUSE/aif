@@ -116,6 +116,11 @@ type BlueprintSpec struct {
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
+	// Icon is a URL or data: URI for a partner logo (data: keeps it air-gap friendly).
+	// +optional
+	// +kubebuilder:validation:MaxLength=32768
+	// +kubebuilder:validation:Pattern=`^(data:image\/(png|gif|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+|https?:\/\/.+)$`
+	Icon string `json:"icon,omitempty"`
 	// Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
 	// To leave the source unset, omit the field entirely; the enum does not
 	// include the empty string, so setting `source: ""` will fail admission.

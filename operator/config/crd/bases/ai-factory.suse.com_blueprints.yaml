@@ -126,6 +126,11 @@ spec:
                   all versions.
                 minLength: 1
                 type: string
+              icon:
+                description: 'Icon is a URL or data: URI for a partner logo (data: keeps it air-gap friendly).'
+                maxLength: 32768
+                pattern: ^(data:image\/(png|gif|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+|https?:\/\/.+)$
+                type: string
               source:
                 description: |-
                   Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).

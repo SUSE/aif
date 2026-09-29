@@ -35,6 +35,21 @@ export async function updateBlueprintDeprecated(name: string, deprecated: boolea
   });
 }
 
+// blueprintIcon safely extracts a partner/vendor logo from the blueprint.
+// Supports safe base64 data URIs (e.g. data:image/png;base64,... or data:image/svg+xml;base64,...)
+// and standard http/https URLs while rejecting dangerous schemes like javascript:.
+export function blueprintIcon(bp?: Blueprint | null): string | undefined {
+  const icon = bp?.spec.icon?.trim();
+  if (!icon) return undefined;
+  if (/^data:image\/(?:png|gif|jpeg|webp|svg\+xml);base64,[a-z0-9+/=]+$/i.test(icon)) {
+    return icon;
+  }
+  if (/^https?:\/\//i.test(icon)) {
+    return icon;
+  }
+  return undefined;
+}
+
 // sourceFor returns the blueprint's source for display purposes.
 // Blueprints created before this field existed have spec.source === undefined
 // and are treated as 'Custom'.

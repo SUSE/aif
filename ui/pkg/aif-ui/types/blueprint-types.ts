@@ -20,6 +20,7 @@ export interface BlueprintSpec {
   displayName:  string;
   version:      string;
   description?: string;
+  icon?:        string;
   source?:      BlueprintOrigin;
   deprecated?:  boolean;
   components:   BlueprintComponent[];
