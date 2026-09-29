@@ -22,6 +22,7 @@ package catalog
 import (
 	_ "embed"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -38,21 +39,23 @@ type Label struct {
 
 // Item is a single application catalog entry (mirrors the UI's AppCollectionItem).
 type Item struct {
-	Name              string  `json:"name"`
-	SlugName          string  `json:"slug_name"`
-	Description       string  `json:"description,omitempty"`
-	ProjectURL        string  `json:"project_url,omitempty"`
-	DocumentationURL  string  `json:"documentation_url,omitempty"`
-	ReferenceGuideURL string  `json:"reference_guide_url,omitempty"`
-	SourceCodeURL     string  `json:"source_code_url,omitempty"`
-	LogoURL           string  `json:"logo_url,omitempty"`
-	ChangelogURL      string  `json:"changelog_url,omitempty"`
-	LastUpdatedAt     string  `json:"last_updated_at,omitempty"`
-	PackagingFormat   string  `json:"packaging_format,omitempty"`
-	RepositoryURL     string  `json:"repository_url,omitempty"`
-	RepositoryName    string  `json:"repository_name,omitempty"`
-	Library           string  `json:"library,omitempty"`
-	Labels            []Label `json:"labels,omitempty"`
+	Name                string  `json:"name"`
+	SlugName            string  `json:"slug_name"`
+	DefaultInstanceName string  `json:"default_instance_name,omitempty"`
+	DefaultNamespace    string  `json:"default_namespace,omitempty"`
+	Description         string  `json:"description,omitempty"`
+	ProjectURL          string  `json:"project_url,omitempty"`
+	DocumentationURL    string  `json:"documentation_url,omitempty"`
+	ReferenceGuideURL   string  `json:"reference_guide_url,omitempty"`
+	SourceCodeURL       string  `json:"source_code_url,omitempty"`
+	LogoURL             string  `json:"logo_url,omitempty"`
+	ChangelogURL        string  `json:"changelog_url,omitempty"`
+	LastUpdatedAt       string  `json:"last_updated_at,omitempty"`
+	PackagingFormat     string  `json:"packaging_format,omitempty"`
+	RepositoryURL       string  `json:"repository_url,omitempty"`
+	RepositoryName      string  `json:"repository_name,omitempty"`
+	Library             string  `json:"library,omitempty"`
+	Labels              []Label `json:"labels,omitempty"`
 }
 
 // bundled is normalized once at startup from the embedded default catalog.
@@ -123,6 +126,22 @@ func parse(raw []byte) []Item {
 	return out
 }
 
+var dns1123LabelRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+func isValidDNS1123Label(s string, maxLen int) bool {
+	if len(s) == 0 || len(s) > maxLen {
+		return false
+	}
+	return dns1123LabelRE.MatchString(s)
+}
+
+var reservedNamespaces = map[string]bool{
+	"kube-system":     true,
+	"kube-public":     true,
+	"kube-node-lease": true,
+	"default":         true,
+}
+
 func finalize(items []Item) []Item {
 	out := make([]Item, 0, len(items))
 	for _, it := range items {
@@ -131,6 +150,14 @@ func finalize(items []Item) []Item {
 		}
 		if it.PackagingFormat != "" && it.PackagingFormat != "HELM_CHART" && it.PackagingFormat != "CONTAINER" {
 			continue
+		}
+		it.DefaultInstanceName = strings.TrimSpace(it.DefaultInstanceName)
+		if it.DefaultInstanceName != "" && !isValidDNS1123Label(it.DefaultInstanceName, 53) {
+			it.DefaultInstanceName = ""
+		}
+		it.DefaultNamespace = strings.TrimSpace(it.DefaultNamespace)
+		if it.DefaultNamespace != "" && (!isValidDNS1123Label(it.DefaultNamespace, 63) || reservedNamespaces[it.DefaultNamespace]) {
+			it.DefaultNamespace = ""
 		}
 		// The public endpoint changes when NVIDIA is mirrored, but the logical
 		// ClusterRepo identity must not. Stamp the identity from the classified

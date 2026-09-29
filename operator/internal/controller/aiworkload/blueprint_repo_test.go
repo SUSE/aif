@@ -140,6 +140,12 @@ func TestOCIChartRef(t *testing.T) {
 			want:    "oci://dp.apps.rancher.io/charts/milvus",
 		},
 		{
+			name:    "multiple trailing slashes are normalized before appending",
+			repoURL: "oci://dp.apps.rancher.io/charts//",
+			chart:   "milvus",
+			want:    "oci://dp.apps.rancher.io/charts/milvus",
+		},
+		{
 			name:    "empty chart name leaves the repo URL untouched",
 			repoURL: "oci://ghcr.io/nvidia/openshell/helm-chart",
 			chart:   "",

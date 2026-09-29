@@ -139,6 +139,27 @@ export function registryHostFromRepoURL(repoURL: string): string {
   }
 }
 
+// ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Fleet
+// treats spec.helm.repo as the full OCI chart path and appends the version tag,
+// so it wants "<registry>/<namespace>/<chart>". A namespace-style OCI repo needs
+// the chart name appended — e.g. App Collection's oci://dp.apps.rancher.io/charts
+// + chart "milvus" -> .../charts/milvus.
+//
+// Some publishers instead give each chart its own OCI repository, so the
+// ClusterRepo URL already terminates at the chart (e.g. OpenShell's
+// oci://ghcr.io/nvidia/openshell/helm-chart, whose Chart.yaml name is
+// "helm-chart"). Blindly appending the chart name there doubles the trailing
+// segment (.../helm-chart/helm-chart) and the pull is denied. Skip the append
+// when the URL already ends in the chart segment so both layouts resolve.
+// Mirrors the operator's ociChartRef (blueprint.go) for the App deploy paths.
+export function ociChartRef(repoURL: string, chartName: string): string {
+  const trimmed = repoURL.replace(/\/+$/, '');
+  if (!chartName || trimmed.endsWith(`/${ chartName }`)) {
+    return trimmed;
+  }
+  return `${ trimmed }/${ chartName }`;
+}
+
 // Read a kubernetes.io/basic-auth secret and return decoded credentials.
 async function readAuthSecret(store: any, ref: ClientSecretRef): Promise<{ username: string; password: string } | null> {
   try {
@@ -261,7 +282,7 @@ export function buildFleetBundleYAML(params: {
     helm: {
       ...(isOCI ? {} : { chart: params.chartName }),
       version:     params.chartVersion,
-      repo:        isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl,
+      repo:        isOCI ? ociChartRef(params.chartRepoUrl, params.chartName) : params.chartRepoUrl,
       // releaseName uses the user's `release` (not the Fleet bundleName) so
       // chart sub-resources templated as `{{ .Release.Name }}-foo` fit under
       // the 63-char DNS-label limit even when bundleName approaches its own
@@ -379,7 +400,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   }
 
   const isOCI   = params.chartRepoUrl.startsWith('oci://');
-  const ociRepo = isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl;
+  const ociRepo = isOCI ? ociChartRef(params.chartRepoUrl, params.chartName) : params.chartRepoUrl;
   const helmSpec: Record<string, any> = {
     ...(isOCI ? {} : { chart: params.chartName }),
     version:     params.chartVersion,

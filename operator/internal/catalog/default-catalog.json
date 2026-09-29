@@ -1555,6 +1555,8 @@
     {
       "name": "OpenShell",
       "slug_name": "helm-chart",
+      "default_instance_name": "openshell-gw",
+      "default_namespace": "openshell",
       "description": "A runtime environment for autonomous agents on Kubernetes.",
       "project_url": "https://github.com/NVIDIA/OpenShell",
       "source_code_url": "https://github.com/NVIDIA/OpenShell",

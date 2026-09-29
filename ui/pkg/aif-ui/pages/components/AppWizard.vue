@@ -29,7 +29,15 @@ import {
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
-import { fetchSuseAiApps, resolveInstallRepoName, getLibraryForClusterRepo, isManagedRepoName } from '../../services/app-collection';
+import {
+  fetchSuseAiApps,
+  fetchCuratedOverlayOrEmpty,
+  resolveInstallRepoName,
+  getLibraryForClusterRepo,
+  isManagedRepoName,
+  defaultInstanceName,
+  defaultNamespace,
+} from '../../services/app-collection';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
@@ -92,8 +100,8 @@ const PKEY = `${props.mode}.${props.slug}`;
 const TTL = 1000 * 60 * 60;
 
 const form = ref<WizardForm>({
-  release:      props.slug,
-  namespace:    `${ props.slug }-system`,
+  release:      defaultInstanceName(props.slug),
+  namespace:    defaultNamespace(props.slug),
   clusters:     [],
   chartRepo:    '',
   chartName:    props.slug,
@@ -117,7 +125,7 @@ const versionOptions = computed(() =>
 
 async function fetchAllNamespaces() {
   if (!store) return;
-  const desiredDefault = `${props.slug}-system`;
+  const desiredDefault = form.value.namespace || defaultNamespace(props.slug);
   namespaceOptions.value = await fetchUserNamespaces(store, desiredDefault);
   if (isInstallMode.value) {
     form.value.namespace = desiredDefault;
@@ -311,17 +319,19 @@ async function initializeWizard() {
 
 function populateFromUrlParams() {
   const query = route?.query || {};
+  const queryDefaultInstance = (query.defaultInstanceName as string) || '';
+  const queryDefaultNs = (query.defaultNamespace as string) || '';
 
   if (isInstallMode.value) {
     // For install mode, use simple pre-population
-    form.value.release = props.slug;
-    form.value.namespace = `${props.slug}-system`;
+    form.value.release = queryDefaultInstance || defaultInstanceName(props.slug);
+    form.value.namespace = queryDefaultNs || defaultNamespace(props.slug);
     form.value.chartRepo = query.repo as string || '';
     form.value.chartName = props.slug;
   } else {
     // For manage mode, get from URL path parameters
-    form.value.release = query.instanceName as string || props.slug;
-    form.value.namespace = query.instanceNamespace as string || `${props.slug}-system`;
+    form.value.release = query.instanceName as string || queryDefaultInstance || defaultInstanceName(props.slug);
+    form.value.namespace = query.instanceNamespace as string || queryDefaultNs || defaultNamespace(props.slug);
     const instanceCluster = query.instanceCluster as string || '';
     if (instanceCluster) {
       form.value.clusters = [instanceCluster];
@@ -335,6 +345,25 @@ function populateFromUrlParams() {
 
 async function initializeInstallMode() {
   if (!store) return;
+
+  // If defaults were not provided via URL query params, resolve static catalog defaults
+  const query = route?.query || {};
+  if (!query.defaultInstanceName || !query.defaultNamespace) {
+    try {
+      const catalog = await fetchCuratedOverlayOrEmpty();
+      const catalogApp = catalog.find(app => app.slug_name === props.slug);
+      if (catalogApp) {
+        if (!query.defaultInstanceName && catalogApp.default_instance_name && (!form.value.release || form.value.release === props.slug)) {
+          form.value.release = catalogApp.default_instance_name;
+        }
+        if (!query.defaultNamespace && catalogApp.default_namespace && (!form.value.namespace || form.value.namespace === `${props.slug}-system`)) {
+          form.value.namespace = catalogApp.default_namespace;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to resolve catalog defaults for app:', e);
+    }
+  }
 
   // A repo seeded from the ?repo= query param is UNTRUSTED input. Only honor it
   // when it's an operator-managed repo; otherwise drop it and fall through to the
