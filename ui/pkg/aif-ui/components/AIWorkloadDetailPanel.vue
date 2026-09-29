@@ -1,26 +1,38 @@
 <script lang="ts" setup>
-import { computed, getCurrentInstance } from 'vue';
-import yaml from 'js-yaml';
-import { Accordion } from '@components/Accordion';
+import { computed, getCurrentInstance, ref } from 'vue';
 import { BadgeState } from '@components/BadgeState';
 import { Banner } from '@components/Banner';
-import RcTag from '@components/Pill/RcTag/RcTag.vue';
+import { LabeledInput } from '@components/Form/LabeledInput';
+import RcButton from '@components/RcButton/RcButton.vue';
 import Drawer from '@shell/components/Drawer/Chrome.vue';
 import DrawerCard from '@shell/components/Drawer/DrawerCard.vue';
+import LabeledSelect from '@shell/components/form/LabeledSelect';
 import SortableTable from '@shell/components/SortableTable';
+import StateDot from '@shell/components/StateDot/index.vue';
 import Tabbed from '@shell/components/Tabbed/index.vue';
 import Tab from '@shell/components/Tabbed/Tab.vue';
+import YamlEditor, { EDITOR_MODES } from '@shell/components/YamlEditor';
+import { _VIEW } from '@shell/config/query-params';
 import { useT } from '../composables/useT';
-import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
+import { phaseBadgeColor, phaseBadgeIcon, phaseColor, workloadStatusMessage } from '../utils/workload-status';
 import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import type { ClusterInfo } from '../types/rancher-types';
+
+// Laid out like the shell's ResourceDetailDrawer ("Show Configuration"): a Config
+// tab holding the view-mode form, a YAML tab, and a Close + primary action footer.
+// AIWorkloads come from the operator API rather than a Steve model, so the
+// drawer's building blocks are reused here instead of the drawer itself.
 
 const props = defineProps<{
   workload:  AIWorkload;
   blueprint: Blueprint | null;
   clusters:  ClusterInfo[];
 }>();
+
+// The page passes onManage/onUpgrade through the slide-in props, so the footer
+// action runs the same flow as the matching row action.
+const emit = defineEmits(['manage', 'upgrade']);
 
 const t = useT();
 
@@ -37,36 +49,24 @@ const isBlueprint = computed(() => w.value.spec.source.sourceType === 'Blueprint
 const displayName = computed(() => w.value.spec.displayName || w.value.metadata.name);
 const phase       = computed(() => w.value.status?.phase || 'Pending');
 
-const sourceName = computed(() => {
-  const source = w.value.spec.source;
+const title = computed(() => store?.getters['i18n/t']?.('suseai.pages.workloads.detail.title', { name: displayName.value }) ||
+  `${ displayName.value } (AI Workload) - Details`);
 
-  return source.sourceType === 'App' ? (source.app?.chartName || '—') : (source.blueprint?.name || '—');
-});
+const appSource   = computed(() => w.value.spec.source.app || null);
+const sourceName  = computed(() => (isBlueprint.value ? w.value.spec.source.blueprint?.name : appSource.value?.chartName) || '');
+const version     = computed(() => (isBlueprint.value ? w.value.spec.source.blueprint?.version : appSource.value?.chartVersion) || '');
+const description = computed(() => (isBlueprint.value ? props.blueprint?.spec.description?.trim() || '' : ''));
 
-const version = computed(() => {
-  const source = w.value.spec.source;
+const targetClusters       = computed(() => w.value.spec.targetClusters || []);
+const targetClusterOptions = computed(() => targetClusters.value.map((id) => ({ label: clusterName(id), value: id })));
 
-  return source.sourceType === 'App' ? (source.app?.chartVersion || '—') : (source.blueprint?.version || '—');
-});
-
-const description       = computed(() => (isBlueprint.value ? props.blueprint?.spec.description || '' : ''));
-const components        = computed(() => props.blueprint?.spec.components || []);
-const appSource         = computed(() => w.value.spec.source.app || null);
-const clusterStatuses   = computed(() => w.value.status?.clusterStatuses || []);
-const readyMessage      = computed(() => workloadStatusMessage(w.value));
-const hasStatus         = computed(() => clusterStatuses.value.length > 0 || !!readyMessage.value);
-const statusBannerColor = computed(() => phase.value === 'Failed' ? 'error' : 'warning');
-
-// Only overrides that actually set values are worth showing.
-const overrides = computed(() =>
-  (w.value.spec.componentValues || []).filter((override) => override.values && Object.keys(override.values).length > 0),
-);
 const fleetBundles  = computed(() => w.value.spec.fleetBundleNames || []);
-const helmRelease   = computed(() => (w.value.spec.source.sourceType === 'App' ? appSource.value?.release || '' : ''));
+const helmRelease   = computed(() => (isBlueprint.value ? '' : appSource.value?.release || ''));
 const hasUnderlying = computed(() => fleetBundles.value.length > 0 || !!helmRelease.value);
 
 const objectRows = computed(() => {
-  const objects = isBlueprint.value ? components.value : (appSource.value ? [appSource.value] : []);
+  const components = props.blueprint?.spec.components || [];
+  const objects = isBlueprint.value ? components : (appSource.value ? [appSource.value] : []);
 
   return objects.map((object, index) => ({
     ...object,
@@ -82,19 +82,30 @@ const objectHeaders = computed(() => [
     sort:  'chartName',
   },
   {
-    name:  'chartVersion',
-    label: t('suseai.common.labels.version', 'Version'),
-    value: 'chartVersion',
-    sort:  'chartVersion',
-    width: 160,
+    name:        'chartVersion',
+    label:       t('suseai.common.labels.version', 'Version'),
+    value:       'chartVersion',
+    sort:        'chartVersion',
+    dashIfEmpty: true,
   },
   {
-    name:  'chartRepo',
-    label: t('suseai.wizard.labels.repository', 'Repository'),
-    value: 'chartRepo',
-    sort:  'chartRepo',
+    name:        'chartRepo',
+    label:       t('suseai.wizard.labels.repository', 'Repository'),
+    value:       'chartRepo',
+    sort:        'chartRepo',
+    dashIfEmpty: true,
   },
 ]);
+
+// Only overrides that actually set values are worth showing.
+const overrides = computed(() =>
+  (w.value.spec.componentValues || []).filter((override) => override.values && Object.keys(override.values).length > 0),
+);
+
+const clusterStatuses   = computed(() => w.value.status?.clusterStatuses || []);
+const readyMessage      = computed(() => workloadStatusMessage(w.value));
+const hasStatus         = computed(() => clusterStatuses.value.length > 0 || !!readyMessage.value);
+const statusBannerColor = computed(() => (phase.value === 'Failed' ? 'error' : 'warning'));
 
 const statusHeaders = computed(() => [
   {
@@ -119,208 +130,294 @@ const statusHeaders = computed(() => [
   },
 ]);
 
-function clusterName(clusterId: string): string {
-  return props.clusters.find((cluster) => cluster.id === clusterId)?.name || clusterId;
+// Items from a typed list come back without apiVersion/kind; fill them in so
+// the YAML tab reads like `kubectl get -o yaml`.
+const workloadObject = computed(() => {
+  const { apiVersion, kind, ...rest } = w.value;
+
+  return {
+    apiVersion: apiVersion || 'ai-factory.suse.com/v1alpha1',
+    kind:       kind || 'AIWorkload',
+    ...rest,
+  };
+});
+
+// Mirrors the row actions: Manage is only enabled for a Running App workload,
+// while every Blueprint workload can be upgraded.
+const primaryAction = computed<{ label: string; event: 'manage' | 'upgrade' } | null>(() => {
+  if (isBlueprint.value) {
+    return { label: t('suseai.pages.workloads.detail.upgrade', 'Upgrade'), event: 'upgrade' };
+  }
+
+  return phase.value === 'Running' ? { label: t('suseai.pages.workloads.detail.manage', 'Manage'), event: 'manage' } : null;
+});
+
+function runPrimaryAction() {
+  if (!primaryAction.value) return;
+  emit(primaryAction.value.event);
+  close();
 }
 
-function dumpYaml(values: Record<string, any> | undefined): string {
-  try {
-    return yaml.dump(values || {}, { indent: 2, lineWidth: -1 });
-  } catch {
-    return JSON.stringify(values ?? {}, null, 2);
-  }
+// CodeMirror measures nothing while its tab is hidden, so refresh on show, as
+// the shell's YamlTab does.
+type Refreshable = { refresh: () => void };
+
+const yamlEditor    = ref<Refreshable | null>(null);
+const valuesEditors = ref<Refreshable[]>([]);
+
+function refreshYamlEditor() {
+  yamlEditor.value?.refresh();
+}
+
+function refreshValuesEditors() {
+  valuesEditors.value.forEach((editor) => editor?.refresh());
+}
+
+function clusterName(clusterId: string): string {
+  return props.clusters.find((cluster) => cluster.id === clusterId)?.name || clusterId;
 }
 </script>
 
 <template>
   <Drawer
-    :aria-target="w.metadata.name"
-    :remove-footer="true"
+    :aria-target="displayName"
     @close="close"
   >
     <template #title>
-      <div class="wl-title">
-        <span class="wl-title__name">{{ displayName }}</span>
-        <BadgeState
-          :color="phaseBadgeColor(phase)"
-          :icon="phaseBadgeIcon(phase)"
-          :label="phase"
-        />
-      </div>
+      <StateDot
+        :color="phaseColor(phase)"
+        class="mmr-3"
+      />
+      {{ title }}
     </template>
 
     <template #body>
       <Tabbed
-        default-tab="overview"
+        default-tab="config-tab"
         :use-hash="false"
         :show-extension-tabs="false"
         :remove-borders="true"
       >
         <Tab
-          name="overview"
-          :label="t('suseai.pages.workloads.detail.overview', 'Overview')"
-          :count="false"
-          :weight="400"
+          name="config-tab"
+          :label="t('suseai.pages.workloads.detail.tabs.config', 'Config')"
+          :weight="3"
         >
-          <div class="wl-card-stack">
-            <DrawerCard>
-              <h3>{{ t('suseai.pages.workloads.detail.overview', 'Overview') }}</h3>
+          <DrawerCard>
+            <div class="row mb-20">
+              <div class="col span-4">
+                <LabeledInput
+                  :value="w.metadata.namespace"
+                  :mode="_VIEW"
+                  :label="t('suseai.common.labels.namespace', 'Namespace')"
+                />
+              </div>
+              <div class="col span-4">
+                <LabeledInput
+                  :value="w.metadata.name"
+                  :mode="_VIEW"
+                  :label="t('suseai.common.labels.name', 'Name')"
+                />
+              </div>
+              <div class="col span-4">
+                <LabeledInput
+                  :value="w.spec.displayName"
+                  :mode="_VIEW"
+                  :label="t('suseai.pages.workloads.detail.displayName', 'Display Name')"
+                />
+              </div>
+            </div>
 
-              <div class="wl-details-grid">
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.common.labels.name', 'Name') }}</div>
-                  <div class="wl-detail-value monospace">{{ w.metadata.name }}</div>
+            <Tabbed
+              :side-tabs="true"
+              :use-hash="false"
+              :show-extension-tabs="false"
+            >
+              <Tab
+                name="general"
+                :label="t('suseai.pages.workloads.detail.tabs.general', 'General')"
+                :weight="3"
+              >
+                <h3>{{ t('suseai.pages.workloads.detail.source', 'Source') }}</h3>
+                <div class="row mb-20">
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="w.spec.source.sourceType"
+                      :mode="_VIEW"
+                      :label="t('suseai.pages.workloads.detail.sourceType', 'Source Type')"
+                    />
+                  </div>
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="sourceName"
+                      :mode="_VIEW"
+                      :label="isBlueprint ? t('suseai.wizard.labels.blueprint', 'Blueprint') : t('suseai.wizard.labels.chart', 'Chart')"
+                    />
+                  </div>
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="version"
+                      :mode="_VIEW"
+                      :label="t('suseai.common.labels.version', 'Version')"
+                    />
+                  </div>
                 </div>
-
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.common.labels.namespace', 'Namespace') }}</div>
-                  <div class="wl-detail-value monospace">{{ w.metadata.namespace }}</div>
+                <div
+                  v-if="appSource"
+                  class="row mb-20"
+                >
+                  <div class="col span-8">
+                    <LabeledInput
+                      :value="appSource.chartRepo"
+                      :mode="_VIEW"
+                      :label="t('suseai.wizard.labels.repository', 'Repository')"
+                    />
+                  </div>
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="appSource.release"
+                      :mode="_VIEW"
+                      :label="t('suseai.pages.workloads.detail.releaseName', 'Release Name')"
+                    />
+                  </div>
                 </div>
-
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.common.labels.status', 'Status') }}</div>
-                  <div class="wl-detail-value">
-                    <BadgeState
-                      :color="phaseBadgeColor(phase)"
-                      :icon="phaseBadgeIcon(phase)"
-                      :label="phase"
+                <div
+                  v-if="description"
+                  class="row mb-20"
+                >
+                  <div class="col span-12">
+                    <LabeledInput
+                      :value="description"
+                      type="multiline"
+                      :mode="_VIEW"
+                      :label="t('suseai.common.labels.description', 'Description')"
                     />
                   </div>
                 </div>
 
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.pages.workloads.detail.source', 'Source') }}</div>
-                  <div class="wl-detail-value wl-inline-value">
-                    <RcTag type="inactive">{{ w.spec.source.sourceType }}</RcTag>
-                    <span>{{ sourceName }}</span>
+                <h3>{{ t('suseai.pages.workloads.detail.target', 'Target') }}</h3>
+                <div class="row mb-20">
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="w.spec.deployStrategy || 'Helm'"
+                      :mode="_VIEW"
+                      :label="t('suseai.pages.workloads.detail.deployStrategy', 'Deploy Strategy')"
+                    />
+                  </div>
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="w.spec.targetNamespace"
+                      :mode="_VIEW"
+                      :label="t('suseai.pages.workloads.detail.targetNamespace', 'Target Namespace')"
+                    />
+                  </div>
+                </div>
+                <div class="row mb-20">
+                  <div class="col span-12">
+                    <LabeledSelect
+                      :value="targetClusters"
+                      :options="targetClusterOptions"
+                      :multiple="true"
+                      :mode="_VIEW"
+                      :label="t('suseai.pages.workloads.detail.targetClusters', 'Target Clusters')"
+                    />
                   </div>
                 </div>
 
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.common.labels.version', 'Version') }}</div>
-                  <div class="wl-detail-value monospace">{{ version }}</div>
-                </div>
-
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.pages.workloads.detail.deployStrategy', 'Deploy strategy') }}</div>
-                  <div class="wl-detail-value">{{ w.spec.deployStrategy || 'Helm' }}</div>
-                </div>
-
-                <div class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.pages.workloads.detail.targetNamespace', 'Target namespace') }}</div>
-                  <div class="wl-detail-value monospace">{{ w.spec.targetNamespace || '—' }}</div>
-                </div>
-
-                <div class="wl-detail-field wl-detail-field--wide">
-                  <div class="text-label">{{ t('suseai.pages.workloads.detail.targetClusters', 'Target clusters') }}</div>
-                  <div
-                    v-if="w.spec.targetClusters?.length"
-                    class="wl-detail-value wl-tag-list"
-                  >
-                    <RcTag
-                      v-for="clusterId in w.spec.targetClusters"
-                      :key="clusterId"
-                      type="inactive"
-                      :title="clusterId"
+                <template v-if="hasUnderlying">
+                  <h3>{{ t('suseai.pages.workloads.detail.underlyingResources', 'Underlying Resources') }}</h3>
+                  <div class="row">
+                    <div
+                      v-if="fleetBundles.length"
+                      class="col span-8"
                     >
-                      {{ clusterName(clusterId) }}
-                    </RcTag>
-                  </div>
-                  <div v-else class="wl-detail-value text-muted">—</div>
-                </div>
-              </div>
-            </DrawerCard>
-
-            <DrawerCard v-if="description">
-              <h3>{{ t('suseai.pages.workloads.detail.blueprintDescription', 'Blueprint description') }}</h3>
-              <p class="wl-description">{{ description }}</p>
-            </DrawerCard>
-
-            <DrawerCard v-if="hasUnderlying">
-              <h3>{{ t('suseai.pages.workloads.detail.underlyingResources', 'Underlying resources') }}</h3>
-
-              <div class="wl-details-grid">
-                <div v-if="fleetBundles.length" class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.pages.workloads.detail.fleetBundles', 'Fleet bundles') }}</div>
-                  <div class="wl-detail-value wl-tag-list">
-                    <RcTag
-                      v-for="bundle in fleetBundles"
-                      :key="bundle"
-                      type="inactive"
+                      <LabeledSelect
+                        :value="fleetBundles"
+                        :options="fleetBundles"
+                        :multiple="true"
+                        :mode="_VIEW"
+                        :label="t('suseai.pages.workloads.detail.fleetBundles', 'Fleet Bundles')"
+                      />
+                    </div>
+                    <div
+                      v-if="helmRelease"
+                      class="col span-4"
                     >
-                      <span class="monospace">{{ bundle }}</span>
-                    </RcTag>
+                      <LabeledInput
+                        :value="helmRelease"
+                        :mode="_VIEW"
+                        :label="t('suseai.pages.workloads.detail.helmRelease', 'Helm Release')"
+                      />
+                    </div>
                   </div>
+                </template>
+              </Tab>
+
+              <Tab
+                name="applications"
+                :label="t('suseai.wizard.labels.applications', 'Applications')"
+                :weight="2"
+              >
+                <SortableTable
+                  v-if="objectRows.length"
+                  :headers="objectHeaders"
+                  :rows="objectRows"
+                  key-field="_key"
+                  default-sort-by="chartName"
+                  :table-actions="false"
+                  :row-actions="false"
+                  :search="false"
+                />
+                <p
+                  v-else
+                  class="text-muted"
+                >
+                  {{ t('suseai.pages.workloads.detail.noBlueprint', 'Blueprint details are not available for this workload.') }}
+                </p>
+              </Tab>
+
+              <Tab
+                v-if="overrides.length"
+                name="values"
+                :label="t('suseai.pages.workloads.detail.tabs.values', 'Values')"
+                :weight="1"
+                @active="refreshValuesEditors"
+              >
+                <div
+                  v-for="(override, index) in overrides"
+                  :key="override.componentName"
+                  :class="{ 'mt-20': index > 0 }"
+                >
+                  <h3>{{ override.componentName }}</h3>
+                  <YamlEditor
+                    ref="valuesEditors"
+                    :value="override.values"
+                    :as-object="true"
+                    :editor-mode="EDITOR_MODES.VIEW_CODE"
+                    :mode="_VIEW"
+                  />
                 </div>
-
-                <div v-if="helmRelease" class="wl-detail-field">
-                  <div class="text-label">{{ t('suseai.pages.workloads.detail.helmRelease', 'Helm release') }}</div>
-                  <div class="wl-detail-value monospace">{{ helmRelease }}</div>
-                </div>
-              </div>
-            </DrawerCard>
-          </div>
-        </Tab>
-
-        <Tab
-          name="objects"
-          :label="t('suseai.wizard.labels.applications', 'Applications')"
-          :count="objectRows.length"
-          :weight="300"
-        >
-          <DrawerCard>
-            <h3>{{ t('suseai.pages.workloads.detail.objects', 'Objects being created') }}</h3>
-            <p class="text-muted">
-              {{ t('suseai.pages.workloads.detail.objectsHint', 'Charts this workload deploys to the target cluster(s).') }}
-            </p>
-
-            <SortableTable
-              v-if="objectRows.length"
-              class="wl-table"
-              :headers="objectHeaders"
-              :rows="objectRows"
-              key-field="_key"
-              default-sort-by="chartName"
-              :table-actions="false"
-              :row-actions="false"
-              :search="false"
-              :overflow-x="true"
-            >
-              <template #cell:chartVersion="{ row }">
-                <span class="monospace">{{ row.chartVersion || '—' }}</span>
-              </template>
-              <template #cell:chartRepo="{ row }">
-                <span class="monospace">{{ row.chartRepo || '—' }}</span>
-              </template>
-            </SortableTable>
-
-            <p v-else class="text-muted wl-empty">
-              {{ t('suseai.pages.workloads.detail.noBlueprint', 'Blueprint details are not available for this workload.') }}
-            </p>
+              </Tab>
+            </Tabbed>
           </DrawerCard>
         </Tab>
 
         <Tab
           v-if="hasStatus"
-          name="status"
+          name="status-tab"
           :label="t('suseai.common.labels.status', 'Status')"
-          :count="clusterStatuses.length || false"
-          :weight="200"
+          :weight="2"
         >
           <DrawerCard>
-            <h3>{{ t('suseai.pages.workloads.detail.perClusterStatus', 'Per-cluster status') }}</h3>
-
             <Banner
               v-if="readyMessage"
+              class="mt-0"
               :color="statusBannerColor"
-              role="status"
             >
               {{ readyMessage }}
             </Banner>
-
             <SortableTable
               v-if="clusterStatuses.length"
-              :class="{ 'wl-table': readyMessage }"
               :headers="statusHeaders"
               :rows="clusterStatuses"
               key-field="clusterId"
@@ -333,7 +430,7 @@ function dumpYaml(values: Record<string, any> | undefined): string {
                 <div>{{ clusterName(row.clusterId) }}</div>
                 <div
                   v-if="clusterName(row.clusterId) !== row.clusterId"
-                  class="text-muted text-small monospace"
+                  class="text-muted text-small"
                 >
                   {{ row.clusterId }}
                 </div>
@@ -350,104 +447,47 @@ function dumpYaml(values: Record<string, any> | undefined): string {
         </Tab>
 
         <Tab
-          v-if="overrides.length"
-          name="configuration"
-          :label="t('suseai.wizard.sections.configuration', 'Configuration')"
-          :count="overrides.length"
-          :weight="100"
+          name="yaml-tab"
+          class="yaml-tab"
+          :label="t('suseai.pages.workloads.detail.tabs.yaml', 'YAML')"
+          :weight="1"
+          @active="refreshYamlEditor"
         >
-          <DrawerCard>
-            <h3>{{ t('suseai.pages.workloads.detail.componentValues', 'Configuration overrides') }}</h3>
-
-            <div class="wl-accordions">
-              <Accordion
-                v-for="override in overrides"
-                :key="override.componentName"
-                :title="override.componentName"
-              >
-                <template #header>
-                  <span class="monospace">{{ override.componentName }}</span>
-                </template>
-                <pre class="wl-yaml"><code>{{ dumpYaml(override.values) }}</code></pre>
-              </Accordion>
-            </div>
-          </DrawerCard>
+          <YamlEditor
+            ref="yamlEditor"
+            :value="workloadObject"
+            :as-object="true"
+            :editor-mode="EDITOR_MODES.VIEW_CODE"
+            :mode="_VIEW"
+          />
         </Tab>
       </Tabbed>
+    </template>
+
+    <template #additional-actions>
+      <RcButton
+        v-if="primaryAction"
+        variant="primary"
+        size="large"
+        @click="runPrimaryAction"
+      >
+        {{ primaryAction.label }}
+      </RcButton>
     </template>
   </Drawer>
 </template>
 
 <style lang="scss" scoped>
-.wl-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  width: 100%;
+// Same card treatment the shell's ResourceDetailDrawer YamlTab gives its editor.
+.yaml-tab {
+  :deep() .codemirror-container {
+    background-color: var(--body-bg);
+    border-radius: var(--border-radius-md);
+    padding: 16px;
 
-  &__name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    .CodeMirror, .CodeMirror-gutter {
+      background-color: var(--body-bg);
+    }
   }
-}
-
-.wl-card-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.wl-details-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 24px 32px;
-}
-
-.wl-detail-field {
-  min-width: 0;
-
-  &--wide {
-    grid-column: 1 / -1;
-  }
-}
-
-.wl-detail-value {
-  min-height: 24px;
-  margin-top: 6px;
-  line-height: 20px;
-  overflow-wrap: anywhere;
-}
-
-.wl-inline-value,
-.wl-tag-list {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.wl-description {
-  line-height: 20px;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.wl-table,
-.wl-empty {
-  margin-top: 16px;
-}
-
-.wl-accordions {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.wl-yaml {
-  margin: 0;
 }
 </style>

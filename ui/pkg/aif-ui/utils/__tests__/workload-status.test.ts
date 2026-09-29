@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../workload-status';
+import { phaseBadgeColor, phaseBadgeIcon, phaseColor, workloadStatusMessage } from '../workload-status';
 import type { AIWorkload } from '../../types/aiworkload-types';
 
 function wl(status?: AIWorkload['status']): AIWorkload {
@@ -12,8 +12,13 @@ function wl(status?: AIWorkload['status']): AIWorkload {
   } as AIWorkload;
 }
 
-describe('phaseBadgeColor / phaseBadgeIcon', () => {
+describe('phaseColor / phaseBadgeColor / phaseBadgeIcon', () => {
   it('maps known phases and defaults to info', () => {
+    expect(phaseColor('Running')).toBe('success');
+    expect(phaseColor('Degraded')).toBe('warning');
+    expect(phaseColor('Failed')).toBe('error');
+    expect(phaseColor(undefined)).toBe('info');
+
     expect(phaseBadgeColor('Running')).toBe('bg-success');
     expect(phaseBadgeColor('Degraded')).toBe('bg-warning');
     expect(phaseBadgeColor('Failed')).toBe('bg-error');
@@ -37,6 +42,15 @@ describe('workloadStatusMessage', () => {
     expect(
       workloadStatusMessage(wl({ clusterStatuses: [{ clusterId: 'c1', phase: 'Failed', message: 'boom' }] })),
     ).toBe('boom');
+  });
+
+  it('suppresses messages once the workload is Running', () => {
+    expect(
+      workloadStatusMessage(wl({
+        phase:           'Running',
+        clusterStatuses: [{ clusterId: 'c1', phase: 'Running', message: 'Helm install complete' }],
+      })),
+    ).toBe('');
   });
 
   it('returns empty string when there is nothing to surface', () => {

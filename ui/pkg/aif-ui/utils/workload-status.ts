@@ -3,13 +3,20 @@
 // surface the same failure message.
 import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
 
-export function phaseBadgeColor(phase: AIWorkloadPhase | string | undefined): string {
+// A subset of the shell's StateColor, so StateDot and BadgeState agree on a phase.
+export type PhaseColor = 'success' | 'warning' | 'error' | 'info';
+
+export function phaseColor(phase: AIWorkloadPhase | string | undefined): PhaseColor {
   switch (phase) {
-    case 'Running':  return 'bg-success';
-    case 'Degraded': return 'bg-warning';
-    case 'Failed':   return 'bg-error';
-    default:         return 'bg-info';
+    case 'Running':  return 'success';
+    case 'Degraded': return 'warning';
+    case 'Failed':   return 'error';
+    default:         return 'info';
   }
+}
+
+export function phaseBadgeColor(phase: AIWorkloadPhase | string | undefined): string {
+  return `bg-${ phaseColor(phase) }`;
 }
 
 export function phaseBadgeIcon(phase: AIWorkloadPhase | string | undefined): string {
@@ -24,8 +31,11 @@ export function phaseBadgeIcon(phase: AIWorkloadPhase | string | undefined): str
 // workloadStatusMessage returns a human-readable reason when a workload is not
 // healthy: the Ready=False condition message (set by the operator when a
 // ClusterRepo can't be resolved), falling back to the first non-empty
-// per-cluster message. Empty string when there's nothing to surface.
+// per-cluster message. Empty string when there's nothing to surface. Running
+// workloads suppress the message — the success text ("Helm install complete…")
+// is noise once the badge already says Running.
 export function workloadStatusMessage(w: AIWorkload): string {
+  if (w.status?.phase === 'Running') return '';
   const ready = (w.status?.conditions || []).find(
     (c: any) => c?.type === 'Ready' && c?.status === 'False',
   );

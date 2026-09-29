@@ -125,9 +125,12 @@ function openDetailPanel(w: AIWorkload) {
 
   shell.slideIn.open(AIWorkloadDetailPanel, {
     props: {
-      workload: w,
+      workload:  w,
       blueprint,
-      clusters: clusters.value,
+      clusters:  clusters.value,
+      // Listeners for the drawer's footer action, which closes the drawer itself.
+      onManage:  () => onManage(w),
+      onUpgrade: () => openUpgradeModal(w),
     },
     width:              'wide',
     height:             'full',
