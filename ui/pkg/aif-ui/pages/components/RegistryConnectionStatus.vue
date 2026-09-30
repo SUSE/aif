@@ -43,6 +43,13 @@ export default {
       return applied === null || (applied !== undefined &&
         this.fingerprint !== registryConfigurationFingerprint(this.target, applied));
     },
+    // The operator refuses private network addresses when testing an unsaved
+    // custom repo and reports it as a generic connection error.
+    privateNetworkHint() {
+      if (this.target !== 'customRepo' || this.formChanged || !this.unsaved) return false;
+      const { authentication, chartAccess } = this.result;
+      return authentication.status === 'error' || chartAccess.results.some(check => check.status === 'error');
+    },
     busy() {
       return this.checking || !!this.refreshing;
     },
@@ -176,6 +183,13 @@ export default {
         >
           <span>{{ t(`suseai.pages.settings.registryConnection.summary.${verificationSummary}`) }}</span>
         </Banner>
+        <p
+          v-if="privateNetworkHint"
+          class="text-deemphasized mb-10"
+          data-testid="private-network-hint"
+        >
+          {{ t('suseai.pages.settings.registryConnection.privateNetworkHint') }}
+        </p>
         <dl class="verification-checks">
           <div class="verification-check">
             <dt>{{ t('suseai.pages.settings.registryConnection.authenticationLabel') }}</dt>

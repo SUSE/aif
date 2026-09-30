@@ -48,6 +48,16 @@ describe('validateChartAccess', () => {
     expect(body.chartName).toBe('grafana');
   });
 
+  it('forwards the custom repo name so the operator can match the saved repo', async() => {
+    await validateChartAccess({
+      target:        'customRepo',
+      chartName:     'grafana',
+      configuration: { url: 'https://charts.internal', name: 'mirror' },
+    });
+
+    expect(postedBody().configuration.name).toBe('mirror');
+  });
+
   it('preserves secret references that the backend does accept', async() => {
     await validateChartAccess({
       target:        'customRepo',

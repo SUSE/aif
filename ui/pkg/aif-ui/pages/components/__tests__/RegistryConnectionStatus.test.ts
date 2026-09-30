@@ -63,7 +63,7 @@ async function runTest(wrapper: ReturnType<typeof mount>) {
   await flushPromises();
 }
 
-function mountRCS(props: { target: string; configuration: Record<string, unknown> }) {
+function mountRCS(props: { target: string; configuration: Record<string, unknown>; repoName?: string }) {
   const store = { dispatch: vi.fn(async (_action, request) => request.url === CLUSTERREPOS_URL ? { items: [] } : {}) };
   const wrapper = mount(RegistryConnectionStatus, {
     props,
@@ -299,5 +299,35 @@ describe('Settings registry diagnostics - customRepo target', () => {
   it('git custom repo hides chart access (N/A)', async () => {
     const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'git', gitRepo: 'https://git.example.com/x.git' } });
     expect((wrapper.vm as any).sampleSelectable).toBe(false);
+  });
+
+  describe('private network hint', () => {
+    const repoConfig = { name: 'mirror', type: 'helm', url: 'https://charts.internal' };
+    const unreachable = { target: 'customRepo', status: 'error' as const, message: 'repository unreachable' };
+
+    it('suggests saving first when an unsaved repository cannot be reached', async () => {
+      vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [] } });
+      vi.mocked(validateCredentials).mockResolvedValue({ results: [unreachable] });
+      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'custom-mirror' });
+      await runTest(wrapper);
+      expect(wrapper.find('[data-testid="private-network-hint"]').exists()).toBe(true);
+    });
+
+    it('stays hidden for a saved repository', async () => {
+      vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'mirror', type: 'helm', url: 'https://charts.internal' }] } });
+      vi.mocked(validateCredentials).mockResolvedValue({ results: [unreachable] });
+      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'custom-mirror' });
+      await runTest(wrapper);
+      expect(wrapper.find('[data-testid="private-network-hint"]').exists()).toBe(false);
+    });
+
+    it('stays hidden when the unsaved repository is reachable', async () => {
+      vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [] } });
+      vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
+      vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: 'https://charts.internal', status: 'ok', check: 'chartFile', latencyMs: 5 }] });
+      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'custom-mirror' });
+      await runTest(wrapper);
+      expect(wrapper.find('[data-testid="private-network-hint"]').exists()).toBe(false);
+    });
   });
 });

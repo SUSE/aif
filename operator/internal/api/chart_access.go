@@ -29,6 +29,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credcheck"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 var probeChartFn = credcheck.ProbeChart
@@ -40,6 +41,9 @@ type chartAccessConfiguration struct {
 	UserSecretRef     *aiplatformv1alpha1.SecretKeyRef `json:"userSecretRef"`
 	TokenSecretRef    *aiplatformv1alpha1.SecretKeyRef `json:"tokenSecretRef"`
 	CABundleSecretRef *aiplatformv1alpha1.SecretKeyRef `json:"caBundleSecretRef"`
+	// Name identifies the saved custom repo the form edits, if any; it decides
+	// whether the probe may reach private addresses.
+	Name string `json:"name,omitempty"`
 }
 
 type chartAccessRequest struct {
@@ -72,6 +76,15 @@ func (h *SettingsHandler) validateChartAccess(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	if req.Target == targetCustomRepo {
+		// Only a saved custom repo may be reached on a private address; see
+		// validateCustomRepo. An unreadable Settings CR means nothing is saved.
+		var s aiplatformv1alpha1.Settings
+		_ = h.client.Get(ctx, types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &s)
+		if !isSavedCustomRepo(&s, req.Configuration.Name, req.Configuration.URL) {
+			ctx = credcheck.DenyPrivateNetworks(ctx)
+		}
+	}
 	user, password, caPEM, configReason := h.chartProbeCredentials(ctx, req.Configuration)
 	results := make([]credcheck.ChartResult, len(sources))
 	var wg sync.WaitGroup
@@ -103,6 +116,12 @@ func (h *SettingsHandler) validateChartAccess(w http.ResponseWriter, r *http.Req
 		}()
 	}
 	wg.Wait()
+	// As in validateCredentials: a failed probe's latency is a port-scan oracle.
+	for i := range results {
+		if results[i].Status == statusError {
+			results[i].LatencyMs = 0
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 

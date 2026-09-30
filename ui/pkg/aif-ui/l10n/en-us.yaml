@@ -52,6 +52,7 @@ suseai:
         repositoriesLabel: Chart repositories (saved settings)
         formChanged: The form changed since this test. Test again to check access for these inputs.
         unsaved: The form differs from saved settings. Repository status and Refresh use the saved configuration, not these unsaved inputs. Apply changes, then Test again.
+        privateNetworkHint: Tests of unsaved repositories cannot reach private network addresses. If this repository is on a private network, apply changes, then Test again.
         settingsError: Could not read saved settings; repository status cannot be matched to the form
         settingsPending: The AI Factory operator has not finished applying the saved settings. Test again after reconciliation completes.
         repositoriesError: Could not read Rancher chart repositories

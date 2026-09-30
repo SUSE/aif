@@ -14,7 +14,7 @@ import { requestErrorMessage } from './rancher-token';
 export type RegistryTarget = 'applicationCollection' | 'suseRegistry' | 'nvidia' | 'customRepo';
 export type RegistryConfiguration = Pick<ValidateOverride,
   'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef' |
-  'type' | 'gitRepo' | 'branch' | 'credSecretRef' | 'insecureSkipVerify'>;
+  'type' | 'gitRepo' | 'branch' | 'credSecretRef' | 'insecureSkipVerify' | 'name'>;
 
 // customRepo has no canonical name: each one is identified by its own
 // `custom-<name>` ClusterRepo, resolved separately in customRepositoryCheck.

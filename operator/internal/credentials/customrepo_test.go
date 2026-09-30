@@ -50,6 +50,8 @@ func TestValidateCustomRepos(t *testing.T) {
 		{"oci wrong scheme", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "oci", URL: "https://x"}}, true},
 		{"git missing branch", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "git", GitRepo: "https://x"}}, true},
 		{"git with url", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "git", GitRepo: "https://x", GitBranch: "main", URL: "https://y"}}, true},
+		{"git http anonymous", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "git", GitRepo: "http://x/repo.git", GitBranch: "main"}}, false},
+		{"git http with basic auth", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "git", GitRepo: "http://x/repo.git", GitBranch: "main", UserSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "s", Key: "u"}, TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "s", Key: "t"}}}, true},
 		{"unknown type", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "svn", URL: "https://x"}}, true},
 		{"name too long", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a123456789012345678901234567890123456789012345678901234567", Type: "helm", URL: "https://x"}}, true},
 	}

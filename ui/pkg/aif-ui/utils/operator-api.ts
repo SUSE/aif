@@ -122,6 +122,9 @@ export interface ValidateOverride {
   url?:               string;
   gitRepo?:           string;
   insecureSkipVerify?: boolean;
+  /** Custom repo name. Only a saved repo (same name and URL) may be tested on a
+   * private network address. */
+  name?:              string;
 }
 
 export interface ValidateRequest {
@@ -154,19 +157,19 @@ export interface ChartAccessResult {
 
 export function validateChartAccess(body: {
   target: string;
-  configuration: Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef'>;
+  configuration: Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef' | 'name'>;
   chartName?: string;
 }): Promise<{ results: ChartAccessResult[] }> {
-  // The endpoint rejects unknown fields, so post only the four it accepts.
+  // The endpoint rejects unknown fields, so post only the ones it accepts.
   // Callers may hand us a richer form object (custom repos add type, gitRepo,
   // branch, credSecretRef, insecureSkipVerify); those must not reach the wire.
   const {
-    url, userSecretRef, tokenSecretRef, caBundleSecretRef,
+    url, userSecretRef, tokenSecretRef, caBundleSecretRef, name,
   } = body.configuration;
   const payload = {
     target:        body.target,
     configuration: {
-      url, userSecretRef, tokenSecretRef, caBundleSecretRef,
+      url, userSecretRef, tokenSecretRef, caBundleSecretRef, name,
     },
     chartName: body.chartName,
   };

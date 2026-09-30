@@ -88,11 +88,6 @@ func ValidateCustomRepos(repos []aiplatformv1alpha1.CustomRepoSpec) error {
 			if err := rejectURLUserinfo(i, r.URL); err != nil {
 				return err
 			}
-			// Reject basic auth over cleartext http: SetBasicAuth would put the
-			// password on the wire in the clear. Anonymous http is still allowed.
-			if strings.HasPrefix(r.URL, "http://") && (r.UserSecretRef != nil || r.TokenSecretRef != nil) {
-				return fmt.Errorf("customRepos[%d]: basic-auth credentials require https (refusing to send them over cleartext http)", i)
-			}
 		case "oci":
 			if !strings.HasPrefix(r.URL, "oci://") {
 				return fmt.Errorf("customRepos[%d]: oci url must start with oci://", i)
@@ -134,6 +129,11 @@ func ValidateCustomRepos(repos []aiplatformv1alpha1.CustomRepoSpec) error {
 func validateCustomRepoAuth(i int, r aiplatformv1alpha1.CustomRepoSpec) error {
 	if (r.UserSecretRef == nil) != (r.TokenSecretRef == nil) {
 		return fmt.Errorf("customRepos[%d]: userSecretRef and tokenSecretRef must be set together", i)
+	}
+	// Reject basic auth over cleartext http (helm url or git gitRepo): the
+	// password would be on the wire in the clear. Anonymous http is still allowed.
+	if r.UserSecretRef != nil && (strings.HasPrefix(r.URL, "http://") || strings.HasPrefix(r.GitRepo, "http://")) {
+		return fmt.Errorf("customRepos[%d]: basic-auth credentials require https (refusing to send them over cleartext http)", i)
 	}
 	if r.SSHKeySecretRef != nil {
 		if r.Type != "git" {

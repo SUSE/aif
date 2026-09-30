@@ -655,6 +655,7 @@ export default {
     // shape: git repos have no chart index to authenticate a `url` against.
     customRepoConfiguration(form) {
       return {
+        name: form.name,
         type: form.type,
         url: form.type === 'git' ? '' : form.url,
         gitRepo: form.gitRepo,

@@ -73,7 +73,7 @@ func classifyIP(ip netip.Addr) destClass {
 // Behind an HTTP(S) proxy the dial goes to the proxy, so the guard then only
 // sees the proxy address.
 func guardedTransport(ctx context.Context, originHost string) *http.Transport {
-	strict := originIsPublic(ctx, originHost)
+	strict := PrivateNetworksDenied(ctx) || originIsPublic(ctx, originHost)
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	dialer.Control = func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
@@ -97,6 +97,48 @@ func guardedTransport(ctx context.Context, originHost string) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = dialer.DialContext
 	return transport
+}
+
+type denyPrivateNetworksKey struct{}
+
+// DenyPrivateNetworks returns a context under which probes refuse private
+// destinations even when the repository host itself resolves to one. Use it for
+// an ad-hoc test of a repository that has not been saved: it has no legitimate
+// need to reach the cluster network, and allowing it would turn the test into an
+// internal port scanner.
+func DenyPrivateNetworks(ctx context.Context) context.Context {
+	return context.WithValue(ctx, denyPrivateNetworksKey{}, true)
+}
+
+func PrivateNetworksDenied(ctx context.Context) bool {
+	denied, _ := ctx.Value(denyPrivateNetworksKey{}).(bool)
+	return denied
+}
+
+// CheckHost applies the destination policy to every address host resolves to,
+// for probes whose transport cannot carry the dial-time guard (git). Forbidden
+// destinations are always refused; private ones only under DenyPrivateNetworks.
+// Unlike the dial-time guard it cannot see redirects or later DNS changes. A
+// host that does not resolve is allowed: the probe then fails on its own.
+func CheckHost(ctx context.Context, host string) error {
+	addrs := []netip.Addr{}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		addrs = append(addrs, ip)
+	} else if resolved, err := lookupNetIP(ctx, "ip", host); err == nil {
+		addrs = resolved
+	}
+	denyPrivate := PrivateNetworksDenied(ctx)
+	for _, addr := range addrs {
+		switch classifyDest(addr) {
+		case destForbidden:
+			return errBlockedDestination
+		case destPrivate:
+			if denyPrivate {
+				return errBlockedDestination
+			}
+		}
+	}
+	return nil
 }
 
 // originIsPublic reports whether host resolves only to public addresses. A host

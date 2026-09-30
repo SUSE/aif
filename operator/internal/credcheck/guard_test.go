@@ -170,6 +170,55 @@ func TestProbeHelmIndexAllowsPrivateMirror(t *testing.T) {
 	}
 }
 
+func TestProbeHelmIndexDenyPrivateNetworksRefusesPrivateMirror(t *testing.T) {
+	internal, hits := privateServer(t)
+	ctx := DenyPrivateNetworks(context.Background())
+	if res := ProbeHelmIndex(ctx, internal.URL, "", "", nil, false); res.Status != StatusError {
+		t.Fatalf("private origin reached under DenyPrivateNetworks: %+v", res)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("private destination was contacted")
+	}
+}
+
+func TestCheckHost(t *testing.T) {
+	orig := lookupNetIP
+	defer func() { lookupNetIP = orig }()
+	lookupNetIP = func(_ context.Context, _, host string) ([]netip.Addr, error) {
+		switch host {
+		case "public.example.com":
+			return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+		case "private.example.com":
+			return []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("10.0.0.5")}, nil
+		case "metadata.example.com":
+			return []netip.Addr{netip.MustParseAddr("169.254.169.254")}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	deny := DenyPrivateNetworks(context.Background())
+	cases := []struct {
+		name    string
+		ctx     context.Context
+		host    string
+		blocked bool
+	}{
+		{"public", deny, "public.example.com", false},
+		{"private allowed", context.Background(), "private.example.com", false},
+		{"private denied", deny, "private.example.com", true},
+		{"private literal denied", deny, "192.168.1.10", true},
+		{"forbidden always", context.Background(), "metadata.example.com", true},
+		{"forbidden literal", context.Background(), "169.254.169.254", true},
+		{"unresolvable allowed", deny, "missing.example.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := CheckHost(tc.ctx, tc.host); (err != nil) != tc.blocked {
+				t.Fatalf("CheckHost(%s)=%v want blocked=%v", tc.host, err, tc.blocked)
+			}
+		})
+	}
+}
+
 func TestProbeHelmIndexRefusesTLSDowngradeRedirect(t *testing.T) {
 	var plainHit atomic.Bool
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
