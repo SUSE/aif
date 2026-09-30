@@ -364,6 +364,38 @@ func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alph
 	return vals, nil
 }
 
+// ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Fleet
+// treats helm.repo as the full OCI chart path and appends the version tag, so
+// the operator hands it "<registry>/<namespace>/<chart>". A namespace-style OCI
+// repo needs the chart name appended, e.g. oci://registry.example.com/charts
+// with chart "app" -> oci://registry.example.com/charts/app.
+//
+// Some publishers instead give each chart its own OCI repository, so the
+// ClusterRepo URL already terminates at the chart (e.g.
+// oci://registry.example.com/project/app with chart "app"). Blindly appending
+// the chart name there doubles the trailing segment (.../app/app) and the pull
+// is denied. Skip the append when the URL already ends in the chart segment so
+// both layouts resolve.
+func ociChartRef(repoURL, chartName string) string {
+	trimmed := strings.TrimSuffix(repoURL, "/")
+	if chartName == "" || strings.HasSuffix(trimmed, "/"+chartName) {
+		return trimmed
+	}
+	return trimmed + "/" + chartName
+}
+
+// setHelmChartSource points a HelmOp helm spec at its chart. An HTTP repo takes
+// the repo URL plus a chart name; an OCI repo takes the full chart reference
+// in repo alone (see ociChartRef).
+func setHelmChartSource(helmSpec map[string]any, repoURL, chartName string, isOCI bool) {
+	if isOCI {
+		helmSpec["repo"] = ociChartRef(repoURL, chartName)
+		return
+	}
+	helmSpec["repo"] = repoURL
+	helmSpec["chart"] = chartName
+}
+
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
 func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ctx context.Context,
@@ -415,12 +447,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// belong to whichever workload uses them.
 		"takeOwnership": true,
 	}
-	if !isOCI {
-		helmSpec["repo"] = repoInfo.URL
-		helmSpec["chart"] = c.ChartName
-	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
-	}
+	setHelmChartSource(helmSpec, repoInfo.URL, c.ChartName, isOCI)
 	vals, err := resolveComponentValues(w, c)
 	if err != nil {
 		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
@@ -1016,12 +1043,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// "adopt operator-delivered pull secrets" need on the GitOps path.
 		"takeOwnership": true,
 	}
-	if !isOCI {
-		helmSpec["repo"] = repoInfo.URL
-		helmSpec["chart"] = c.ChartName
-	} else {
-		helmSpec["repo"] = repoInfo.URL + "/" + c.ChartName
-	}
+	setHelmChartSource(helmSpec, repoInfo.URL, c.ChartName, isOCI)
 
 	// Load the blueprint component's own values BEFORE injecting pull secrets —
 	// mirrors ensureBlueprintHelmOp. Omitting this dropped every component value

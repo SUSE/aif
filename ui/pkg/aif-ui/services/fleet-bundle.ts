@@ -131,6 +131,22 @@ async function readClusterRepoClientSecret(store: any, repoName: string): Promis
   return (await readClusterRepoAccess(store, repoName))?.clientSecret || null;
 }
 
+// ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Mirror
+// of the operator's ociChartRef (aiworkload/blueprint.go): Fleet treats
+// helm.repo as the full chart path, so a namespace-style repo gets the chart
+// name appended, while a single-chart repo whose URL already ends in the chart
+// name is used as-is (appending would double the last segment and the pull
+// would be denied).
+export function ociChartRef(repoURL: string, chartName: string): string {
+  const trimmed = repoURL.replace(/\/+$/, '');
+
+  if (!chartName || trimmed.endsWith(`/${ chartName }`)) {
+    return trimmed;
+  }
+
+  return `${ trimmed }/${ chartName }`;
+}
+
 export function registryHostFromRepoURL(repoURL: string): string {
   try {
     return new URL(repoURL).host;
@@ -264,7 +280,7 @@ export function buildFleetBundleYAML(params: {
     helm: {
       ...(isOCI ? {} : { chart: params.chartName }),
       version:     params.chartVersion,
-      repo:        isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl,
+      repo:        isOCI ? ociChartRef(params.chartRepoUrl, params.chartName) : params.chartRepoUrl,
       // releaseName uses the user's `release` (not the Fleet bundleName) so
       // chart sub-resources templated as `{{ .Release.Name }}-foo` fit under
       // the 63-char DNS-label limit even when bundleName approaches its own
@@ -382,7 +398,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   }
 
   const isOCI   = params.chartRepoUrl.startsWith('oci://');
-  const ociRepo = isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl;
+  const ociRepo = isOCI ? ociChartRef(params.chartRepoUrl, params.chartName) : params.chartRepoUrl;
   const helmSpec: Record<string, any> = {
     ...(isOCI ? {} : { chart: params.chartName }),
     version:     params.chartVersion,
