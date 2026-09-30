@@ -14,9 +14,8 @@ import (
 // "suse-ai" and "nvidia" and churn the file. Add a field here if a new library
 // is introduced.
 type catalogDoc struct {
-	SuseAI    []catalog.Item `json:"suse-ai"`
-	NVIDIA    []catalog.Item `json:"nvidia"`
-	Openshell []catalog.Item `json:"openshell"`
+	SuseAI []catalog.Item `json:"suse-ai"`
+	NVIDIA []catalog.Item `json:"nvidia"`
 }
 
 const supportedCode = "supported"
@@ -25,9 +24,8 @@ const supportedCode = "supported"
 // catalogDoc's json tags; used to reject any unknown library the round-trip
 // through catalogDoc would otherwise silently drop.
 const (
-	librarySuseAI    = "suse-ai"
-	libraryNVIDIA    = "nvidia"
-	libraryOpenshell = "openshell"
+	librarySuseAI = "suse-ai"
+	libraryNVIDIA = "nvidia"
 )
 
 // supportedLabel is the single chip every NVAIE entry carries.
@@ -97,7 +95,7 @@ func syncNVAIE(
 		return nil, nil, nil, fmt.Errorf("parse catalog keys: %w", err)
 	}
 	for k := range keys {
-		if k != librarySuseAI && k != libraryNVIDIA && k != libraryOpenshell {
+		if k != librarySuseAI && k != libraryNVIDIA {
 			return nil, nil, nil, fmt.Errorf(
 				"unrecognized top-level catalog library %q: add it to catalogDoc before regenerating", k)
 		}
