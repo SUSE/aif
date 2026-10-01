@@ -37,13 +37,16 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credcheck"
+	"github.com/SUSE/aif-operator/internal/credentials"
 	"github.com/SUSE/aif-operator/internal/git"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -432,6 +435,90 @@ func TestSettingsPut_InvalidCustomRepo_400(t *testing.T) {
 	}
 	if len(stored.Spec.CustomRepos) > 0 {
 		t.Errorf("invalid custom repo should not have been persisted, got %d repos", len(stored.Spec.CustomRepos))
+	}
+}
+
+var testClusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
+
+// newClusterRepo returns a ClusterRepo with the given labels.
+func newClusterRepo(name string, labels map[string]string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(testClusterRepoGVK)
+	u.SetName(name)
+	u.SetLabels(labels)
+	return u
+}
+
+// newSettingsFakeClientWithRepos is newSettingsFakeClient with the ClusterRepo
+// kind registered, so a test can seed existing ClusterRepos.
+func newSettingsFakeClientWithRepos(t *testing.T, objects ...client.Object) client.Client {
+	t.Helper()
+	s := newSettingsScheme(t)
+	s.AddKnownTypeWithName(testClusterRepoGVK, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(testClusterRepoGVK.GroupVersion().WithKind("ClusterRepoList"), &unstructured.UnstructuredList{})
+	return fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(objects...).
+		Build()
+}
+
+func putCustomRepo(t *testing.T, h http.Handler, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"spec":{"customRepos":[{"name":"` + name + `","type":"helm","url":"https://charts.example.com"}]}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// A custom repo's name is used verbatim as its ClusterRepo name, so saving one
+// whose name matches a ClusterRepo the custom-repo feature doesn't own must be
+// refused rather than taking that repo over.
+func TestSettingsPut_CustomRepoNameTakenByOtherClusterRepo_400(t *testing.T) {
+	foreign := newClusterRepo("partner-charts", map[string]string{"owner": "someone-else"})
+	c := newSettingsFakeClientWithRepos(t, sampleCR(), foreign)
+	h := newSettingsHandler(c, "aif-operator")
+
+	rec := putCustomRepo(t, h, "partner-charts")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 for a name taken by another ClusterRepo; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "already used by another chart repository") {
+		t.Errorf("body=%s, want the name-taken message", rec.Body)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after rejected PUT: %v", err)
+	}
+	if len(stored.Spec.CustomRepos) > 0 {
+		t.Errorf("custom repo with a taken name should not have been persisted, got %d repos", len(stored.Spec.CustomRepos))
+	}
+}
+
+// Re-saving an existing custom repo must succeed: its ClusterRepo carries the
+// custom-repo label, so it is not a collision.
+func TestSettingsPut_CustomRepoNameOwnedByCustomRepo_200(t *testing.T) {
+	own := newClusterRepo("partner-charts", map[string]string{
+		credentials.ManagedRepoLabel: credentials.LabelValueTrue,
+		credentials.CustomRepoLabel:  credentials.LabelValueTrue,
+	})
+	c := newSettingsFakeClientWithRepos(t, sampleCR(), own)
+	h := newSettingsHandler(c, "aif-operator")
+
+	if rec := putCustomRepo(t, h, "partner-charts"); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 when the ClusterRepo is already a custom repo; body=%s", rec.Code, rec.Body)
+	}
+}
+
+func TestSettingsPut_CustomRepoNewName_200(t *testing.T) {
+	c := newSettingsFakeClientWithRepos(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	if rec := putCustomRepo(t, h, "partner-charts"); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 for an unused name; body=%s", rec.Code, rec.Body)
 	}
 }
 

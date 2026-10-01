@@ -330,7 +330,7 @@ describe('explicit repository Refresh', () => {
 });
 
 describe('customRepo target', () => {
-  const REPO_NAME = 'custom-prom';
+  const REPO_NAME = 'prom';
   const REPO_URL = 'https://charts.example.com';
   const CUSTOM_CONFIG: RegistryConfiguration = {
     type: 'helm', url: REPO_URL, userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null,
@@ -342,7 +342,7 @@ describe('customRepo target', () => {
     return item;
   }
 
-  it('probes with the full override and reads the custom-<name> ClusterRepo', async () => {
+  it('probes with the full override and reads the repo ClusterRepo by its own name', async () => {
     vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
     vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: REPO_URL, chartName: 'x', status: 'ok', check: 'manifest', latencyMs: 5 }] });
     vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', url: REPO_URL }] } });
@@ -386,7 +386,7 @@ describe('customRepo target', () => {
     const store = { dispatch: vi.fn().mockResolvedValue({ data: { items: [] } }) };
     const cfg: RegistryConfiguration = { type: 'helm', url: REPO_URL, userSecretRef: null, tokenSecretRef: null, caBundleSecretRef: null };
 
-    const result = await checkRegistryConnection(store, 'customRepo', cfg, '', 'custom-x');
+    const result = await checkRegistryConnection(store, 'customRepo', cfg, '', 'x');
 
     expect(validateCredentials).toHaveBeenCalledWith({ targets: ['customRepo'], overrides: { customRepo: cfg } });
     expect(result.authentication.status).toBe('ok');
@@ -401,7 +401,7 @@ describe('customRepo target', () => {
 
   it('does not match a different custom repository at the same URL', async () => {
     vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'prom', url: REPO_URL }] } });
-    const store = storeWith([customRepo('custom-other', REPO_URL)]);
+    const store = storeWith([customRepo('other', REPO_URL)]);
     const result = await checkRegistryConnection(store, 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
     expect(result.chartRepositories.repositories).toEqual([expect.objectContaining({ name: REPO_NAME, state: 'missing' })]);
   });

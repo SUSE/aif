@@ -113,6 +113,19 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 		return
 	}
+	// A custom repo's name is its ClusterRepo name, so it must not match a
+	// ClusterRepo that Rancher, the operator or another tool already owns.
+	for i, repo := range body.Spec.CustomRepos {
+		taken, err := credentials.ClusterRepoNameTaken(r.Context(), h.client, credentials.CustomRepoResourceName(repo.Name))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if taken {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%w: customRepos[%d]: name %q is already used by another chart repository", ErrInvalidInput, i, repo.Name))
+			return
+		}
+	}
 
 	// The request spec is applied verbatim under a single field owner, so zero-value
 	// fields overwrite configured values (intentional — the Settings page round-trips

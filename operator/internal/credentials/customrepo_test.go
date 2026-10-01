@@ -17,18 +17,81 @@ limitations under the License.
 package credentials_test
 
 import (
+	"strings"
 	"testing"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
+const (
+	testRepoName   = "acme"
+	repoTypeHelm   = "helm"
+	placeholderURL = "https://x"
+)
+
 func TestCustomRepoResourceName(t *testing.T) {
-	if got := credentials.CustomRepoResourceName("acme"); got != "custom-acme" {
-		t.Fatalf("got %q, want custom-acme", got)
+	if got := credentials.CustomRepoResourceName(testRepoName); got != testRepoName {
+		t.Fatalf("got %q, want acme", got)
 	}
-	if got := credentials.CustomRepoAuthSecretName("acme"); got != "custom-acme-auth" {
-		t.Fatalf("got %q, want custom-acme-auth", got)
+	if got := credentials.CustomRepoAuthSecretName(testRepoName); got != testRepoName+"-custom-repo-auth" {
+		t.Fatalf("got %q, want acme-custom-repo-auth", got)
+	}
+}
+
+// A custom repo's auth secret must never take the name of a built-in registry
+// auth secret, whatever name the admin picks.
+func TestCustomRepoAuthSecretName_NeverMatchesBuiltIn(t *testing.T) {
+	for _, builtIn := range []string{
+		credentials.AuthSecretApplicationCollection,
+		credentials.AuthSecretSUSERegistry,
+		credentials.AuthSecretNvidia,
+	} {
+		name := strings.TrimSuffix(builtIn, "-auth")
+		if got := credentials.CustomRepoAuthSecretName(name); got == builtIn {
+			t.Fatalf("custom repo %q maps onto built-in auth secret %q", name, builtIn)
+		}
+	}
+}
+
+func TestIsReservedRepoName(t *testing.T) {
+	reserved := []string{
+		credentials.ClusterRepoApplicationCollection,
+		credentials.ClusterRepoSUSERegistry,
+		credentials.ClusterRepoNvidia,
+		credentials.ClusterRepoNvidiaBlueprint,
+		"rancher-charts",
+		"rancher-partner-charts",
+		"rancher-rke2-charts",
+	}
+	for _, name := range reserved {
+		if !credentials.IsReservedRepoName(name) {
+			t.Errorf("IsReservedRepoName(%q) = false, want true", name)
+		}
+	}
+	if credentials.IsReservedRepoName(testRepoName) {
+		t.Error("IsReservedRepoName(" + testRepoName + ") = true, want false")
+	}
+}
+
+// Team repo names are derived from the bundled catalog, so every one of them
+// must be reserved: a custom repo with the same name would take over the
+// operator-managed team ClusterRepo.
+func TestIsReservedRepoName_CatalogTeamRepos(t *testing.T) {
+	teams := catalog.ClassifyNGCTeamRepos()
+	urls := append(append([]string{}, teams.Public...), teams.Gated...)
+	if len(urls) == 0 {
+		t.Skip("bundled catalog references no team repos")
+	}
+	for _, u := range urls {
+		name, err := catalog.NGCClusterRepoName(u)
+		if err != nil {
+			continue
+		}
+		if !credentials.IsReservedRepoName(name) {
+			t.Errorf("team repo name %q (from %s) is not reserved", name, u)
+		}
 	}
 }
 
@@ -53,7 +116,9 @@ func TestValidateCustomRepos(t *testing.T) {
 		{"git http anonymous", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "git", GitRepo: "http://x/repo.git", GitBranch: "main"}}, false},
 		{"git http with basic auth", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "git", GitRepo: "http://x/repo.git", GitBranch: "main", UserSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "s", Key: "u"}, TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "s", Key: "t"}}}, true},
 		{"unknown type", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a", Type: "svn", URL: "https://x"}}, true},
-		{"name too long", []aiplatformv1alpha1.CustomRepoSpec{{Name: "a123456789012345678901234567890123456789012345678901234567", Type: "helm", URL: "https://x"}}, true},
+		{"reserved rancher name", []aiplatformv1alpha1.CustomRepoSpec{{Name: "rancher-charts", Type: repoTypeHelm, URL: placeholderURL}}, true},
+		{"name at the 63-char limit", []aiplatformv1alpha1.CustomRepoSpec{{Name: strings.Repeat("a", 63), Type: repoTypeHelm, URL: placeholderURL}}, false},
+		{"name too long", []aiplatformv1alpha1.CustomRepoSpec{{Name: strings.Repeat("a", 64), Type: repoTypeHelm, URL: placeholderURL}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -17,7 +17,7 @@ export type RegistryConfiguration = Pick<ValidateOverride,
   'type' | 'gitRepo' | 'branch' | 'credSecretRef' | 'insecureSkipVerify' | 'name'>;
 
 // customRepo has no canonical name: each one is identified by its own
-// `custom-<name>` ClusterRepo, resolved separately in customRepositoryCheck.
+// ClusterRepo (named after the repo), resolved separately in customRepositoryCheck.
 const REPO_NAMES: Record<RegistryTarget, string[]> = {
   applicationCollection: ['application-collection'],
   suseRegistry:          ['suse-ai-registry'],
@@ -173,7 +173,7 @@ async function probeForm(target: RegistryTarget, configuration: RegistryConfigur
   return validateCredentials({ targets: [target], overrides: { [target]: { ...configuration, url } } });
 }
 
-/** Applied configuration and readiness for a single `custom-<name>` ClusterRepo.
+/** Applied configuration and readiness for a single custom repo's ClusterRepo.
  * Unlike the built-in targets, a customRepo target has no canonical name(s) to
  * fan out over: it is identified entirely by `repoName`. */
 function customRepositoryCheck(
@@ -186,7 +186,7 @@ function customRepositoryCheck(
     out.settingsPending = (settings.value?.metadata?.generation ?? 0) >
       (settings.value?.status?.observedGeneration ?? 0);
     const list = settings.value?.spec?.customRepos ?? [];
-    const applied = list.find((c: { name?: string }) => `custom-${ c.name }` === repoName);
+    const applied = list.find((c: { name?: string }) => c.name === repoName);
     // Mirror customRepoConfiguration()'s form shape so an unchanged saved repo
     // fingerprints identically. A bare { url } dropped type (always set on the
     // form), the git endpoint, and every secret ref, so the fingerprints never

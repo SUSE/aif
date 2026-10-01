@@ -1423,6 +1423,22 @@ func (r *SettingsReconciler) reconcileCustomRepos(ctx context.Context, s *aiplat
 		}
 		name := credentials.CustomRepoResourceName(repo.Name)
 
+		// Never take over a ClusterRepo that something else owns. Checked before
+		// any auth secret is written, so a refused repo leaves nothing behind.
+		taken, err := credentials.ClusterRepoNameTaken(ctx, r.Client, name)
+		if err != nil {
+			l.Error(err, "custom repo name check failed; preserving existing repo", "name", repo.Name)
+			keep[name] = true
+			authErrors = append(authErrors, err)
+			continue
+		}
+		if taken {
+			err := fmt.Errorf("custom repo %q: a ClusterRepo with this name already exists and is not a custom repository", repo.Name)
+			l.Error(err, "skipping custom repo whose name is already taken", "name", repo.Name)
+			authErrors = append(authErrors, err)
+			continue
+		}
+
 		secretName, changed, err := r.applyCustomRepoAuthSecret(ctx, s.Namespace, repo)
 		if err != nil {
 			l.Error(err, "custom repo auth secret failed; preserving existing repo", "name", repo.Name)
@@ -1512,20 +1528,18 @@ func (r *SettingsReconciler) pruneCustomRepos(ctx context.Context, keep map[stri
 		if keep[name] {
 			continue
 		}
-		// Defense in depth: only ever delete repos that carry the operator's
-		// "custom-" name prefix. The label filter above should already exclude
-		// built-ins, but a hand-copied manifest or restore tool could stamp the
-		// custom label onto application-collection/nvidia/etc.; without this guard
-		// their ClusterRepo and shared auth secret would be pruned.
-		if !credentials.IsCustomRepoResourceName(name) {
+		// Defense in depth: never delete a repo the operator or Rancher manages.
+		// The label filter above should already exclude them, but a hand-copied
+		// manifest or restore tool could stamp the custom label onto one; without
+		// this guard its ClusterRepo would be pruned.
+		if credentials.IsReservedRepoName(name) {
 			continue
 		}
 		if err := r.deleteClusterRepo(ctx, name); err != nil {
 			return err
 		}
-		// The auth secret for ClusterRepo "custom-<x>" is "custom-<x>-auth"
-		// (== CustomRepoAuthSecretName("<x>")).
-		if err := r.deleteAuthSecret(ctx, name+"-auth"); err != nil {
+		// A custom repo's ClusterRepo name is its repo name.
+		if err := r.deleteAuthSecret(ctx, credentials.CustomRepoAuthSecretName(name)); err != nil {
 			return err
 		}
 	}

@@ -19,6 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+const metadataNameKey = "name"
+
 func TestCustomRepoSpecMap(t *testing.T) {
 	helm := customRepoSpecMap(aiplatformv1alpha1.CustomRepoSpec{Type: "helm", URL: "https://charts.example.com"})
 	if helm["url"] != "https://charts.example.com" || helm["gitRepo"] != "" || helm["gitBranch"] != "" {
@@ -35,7 +37,10 @@ func TestCustomRepoSpecMap(t *testing.T) {
 
 func TestReconcileCustomRepos_PreservesRepoOnAuthError(t *testing.T) {
 	s := newTestScheme(t)
-	const ns = "aif-operator"
+	const (
+		ns       = "aif-operator"
+		repoName = "myrepo"
+	)
 
 	// Pre-existing ClusterRepo with the custom-repo label
 	existingRepo := &unstructured.Unstructured{
@@ -43,7 +48,7 @@ func TestReconcileCustomRepos_PreservesRepoOnAuthError(t *testing.T) {
 			"apiVersion": "catalog.cattle.io/v1",
 			"kind":       "ClusterRepo",
 			"metadata": map[string]any{
-				"name": "custom-myrepo",
+				metadataNameKey: repoName,
 				"labels": map[string]any{
 					credentials.ManagedRepoLabel: credentials.LabelValueTrue,
 					credentials.CustomRepoLabel:  credentials.LabelValueTrue,
@@ -74,7 +79,7 @@ func TestReconcileCustomRepos_PreservesRepoOnAuthError(t *testing.T) {
 		Spec: aiplatformv1alpha1.SettingsSpec{
 			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{
 				{
-					Name:           "myrepo",
+					Name:           repoName,
 					Type:           "helm",
 					URL:            "https://charts.example.com",
 					UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "repo-creds", Key: "user"},
@@ -94,7 +99,7 @@ func TestReconcileCustomRepos_PreservesRepoOnAuthError(t *testing.T) {
 	repo.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
 	})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "custom-myrepo"}, &repo); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: repoName}, &repo); err != nil {
 		if apierrors.IsNotFound(err) {
 			t.Fatal("ClusterRepo should NOT be deleted on transient auth error")
 		}
@@ -132,7 +137,7 @@ func TestReconcileCustomRepos_SetsCABundleOnSpec(t *testing.T) {
 
 	repo := &unstructured.Unstructured{}
 	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "custom-privca"}, repo); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "privca"}, repo); err != nil {
 		t.Fatalf("Get ClusterRepo: %v", err)
 	}
 	got, found, err := unstructured.NestedString(repo.Object, "spec", "caBundle")
@@ -179,7 +184,7 @@ func TestReconcileCustomRepos_OmitsEmptyCABundle(t *testing.T) {
 
 	repo := &unstructured.Unstructured{}
 	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "custom-noca"}, repo); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "noca"}, repo); err != nil {
 		t.Fatalf("Get ClusterRepo: %v", err)
 	}
 	if _, found, _ := unstructured.NestedFieldNoCopy(repo.Object, "spec", "caBundle"); found {
@@ -194,7 +199,7 @@ func TestPruneCustomRepos_SkipsMislabeledBuiltIn(t *testing.T) {
 	// A built-in repo that was (incorrectly) stamped with the custom label, plus a
 	// genuine custom repo that is no longer desired.
 	builtIn := customLabeledRepo("application-collection")
-	stale := customLabeledRepo("custom-stale")
+	stale := customLabeledRepo("stale")
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(builtIn, stale).Build()
 	r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
 
@@ -210,9 +215,76 @@ func TestPruneCustomRepos_SkipsMislabeledBuiltIn(t *testing.T) {
 	}
 	staleGot := &unstructured.Unstructured{}
 	staleGot.SetGroupVersionKind(gvk)
-	err := c.Get(context.Background(), types.NamespacedName{Name: "custom-stale"}, staleGot)
+	err := c.Get(context.Background(), types.NamespacedName{Name: "stale"}, staleGot)
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("genuine custom repo should be pruned, got err=%v", err)
+	}
+}
+
+// A custom repo whose name matches a ClusterRepo the custom-repo feature
+// doesn't own must not take that repo over: the existing ClusterRepo keeps its
+// spec and labels, no auth secret is written, and the conflict is reported.
+func TestReconcileCustomRepos_RefusesNameTakenByOtherClusterRepo(t *testing.T) {
+	s := newTestScheme(t)
+	const (
+		ns        = "aif-operator"
+		takenName = "partner-charts"
+		authNS    = "cattle-system"
+	)
+
+	foreign := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "catalog.cattle.io/v1",
+			"kind":       "ClusterRepo",
+			"metadata": map[string]any{
+				metadataNameKey: takenName,
+				"labels":        map[string]any{"owner": "someone-else"},
+			},
+			"spec": map[string]any{"url": "https://partner.example.com/charts"},
+		},
+	}
+	creds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "repo-creds", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("robot"), "token": []byte("secret123")},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(foreign, creds).Build()
+	r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{{
+				Name:           takenName,
+				Type:           "helm",
+				URL:            "https://charts.example.com",
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "repo-creds", Key: "user"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "repo-creds", Key: "token"},
+			}},
+		},
+	}
+
+	if err := r.reconcileCustomRepos(context.Background(), settings); err == nil {
+		t.Fatal("expected an error reporting the taken name, got nil")
+	}
+
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: takenName}, got); err != nil {
+		t.Fatalf("existing ClusterRepo must survive, got err=%v", err)
+	}
+	if url, _, _ := unstructured.NestedString(got.Object, "spec", "url"); url != "https://partner.example.com/charts" {
+		t.Errorf("existing ClusterRepo url = %q, must not be overwritten", url)
+	}
+	if _, ok := got.GetLabels()[credentials.CustomRepoLabel]; ok {
+		t.Error("existing ClusterRepo must not be stamped with the custom-repo label")
+	}
+
+	var secret corev1.Secret
+	err := c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.CustomRepoAuthSecretName(takenName), Namespace: authNS,
+	}, &secret)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("no auth secret should be written for a refused repo, got err=%v", err)
 	}
 }
 
@@ -222,7 +294,7 @@ func customLabeledRepo(name string) *unstructured.Unstructured {
 			"apiVersion": "catalog.cattle.io/v1",
 			"kind":       "ClusterRepo",
 			"metadata": map[string]any{
-				"name": name,
+				metadataNameKey: name,
 				"labels": map[string]any{
 					credentials.ManagedRepoLabel: credentials.LabelValueTrue,
 					credentials.CustomRepoLabel:  credentials.LabelValueTrue,
@@ -245,13 +317,13 @@ func TestApplyCustomClusterRepo_StampsDisplayNameAnnotation(t *testing.T) {
 		Type:        "helm",
 		URL:         "https://prometheus-community.github.io/helm-charts",
 	}
-	if err := r.applyCustomClusterRepo(context.Background(), "custom-prometheus-community", repo, "", nil,
+	if err := r.applyCustomClusterRepo(context.Background(), "prometheus-community", repo, "", nil,
 		map[string]string{credentials.CustomRepoLabel: credentials.LabelValueTrue}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), client.ObjectKey{Name: "custom-prometheus-community"}, got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "prometheus-community"}, got); err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	if v := got.GetAnnotations()[credentials.DisplayNameAnnotation]; v != "Prometheus Community" {
@@ -266,13 +338,13 @@ func TestApplyCustomClusterRepo_OmitsDisplayNameAnnotationWhenEmpty(t *testing.T
 	r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
 
 	repo := aiplatformv1alpha1.CustomRepoSpec{Name: "internal", Type: "helm", URL: "https://charts.example.com"}
-	if err := r.applyCustomClusterRepo(context.Background(), "custom-internal", repo, "", nil,
+	if err := r.applyCustomClusterRepo(context.Background(), "internal", repo, "", nil,
 		map[string]string{credentials.CustomRepoLabel: credentials.LabelValueTrue}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), client.ObjectKey{Name: "custom-internal"}, got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "internal"}, got); err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	if _, ok := got.GetAnnotations()[credentials.DisplayNameAnnotation]; ok {

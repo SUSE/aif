@@ -1200,7 +1200,7 @@ export default {
             <RegistryConnectionStatus
               :target="'customRepo'"
               :configuration="customRepoConfiguration(repo)"
-              :repo-name="`custom-${repo.name}`"
+              :repo-name="repo.name"
             />
 
             <div class="row mt-10 mb-10">

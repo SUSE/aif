@@ -1439,7 +1439,7 @@ func TestReconcileCustomRepos_CreatesRepoAndAuth(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	repo := getClusterRepo(t, c, "custom-acme")
+	repo := getClusterRepo(t, c, "acme")
 	labels := repo.GetLabels()
 	if labels[managedRepoLabel] != markerValueTrue {
 		t.Errorf("expected managed-repo=true, got labels=%v", labels)
@@ -1452,8 +1452,8 @@ func TestReconcileCustomRepos_CreatesRepoAndAuth(t *testing.T) {
 		t.Errorf("url = %q, want https://charts.acme.test/repo", url)
 	}
 	secretName, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
-	if secretName != "custom-acme-auth" {
-		t.Errorf("clientSecret.name = %q, want custom-acme-auth", secretName)
+	if secretName != credentials.CustomRepoAuthSecretName("acme") {
+		t.Errorf("clientSecret.name = %q, want %q", secretName, credentials.CustomRepoAuthSecretName("acme"))
 	}
 	secretNS, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "namespace")
 	if secretNS != "cattle-system" {
@@ -1462,7 +1462,7 @@ func TestReconcileCustomRepos_CreatesRepoAndAuth(t *testing.T) {
 
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "custom-acme-auth", Namespace: "cattle-system",
+		Name: credentials.CustomRepoAuthSecretName("acme"), Namespace: "cattle-system",
 	}, &authSec); err != nil {
 		t.Fatalf("expected auth secret in cattle-system: %v", err)
 	}
@@ -1510,7 +1510,7 @@ func TestReconcileCustomRepos_Git(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	repo := getClusterRepo(t, c, "custom-git-charts")
+	repo := getClusterRepo(t, c, "git-charts")
 	gitRepo, _, _ := unstructured.NestedString(repo.Object, "spec", "gitRepo")
 	if gitRepo != "git@github.com:example/charts.git" {
 		t.Errorf("gitRepo = %q, want git@github.com:example/charts.git", gitRepo)
@@ -1583,7 +1583,7 @@ func TestReconcileCustomRepos_EditInPlace(t *testing.T) {
 		t.Fatalf("second reconcile: %v", err)
 	}
 
-	repo := getClusterRepo(t, c, "custom-acme")
+	repo := getClusterRepo(t, c, "acme")
 	url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
 	if url != "https://charts.acme.test/new-location" {
 		t.Errorf("after edit, url = %q, want https://charts.acme.test/new-location", url)
@@ -1651,7 +1651,7 @@ func TestReconcileCustomRepos_Prune(t *testing.T) {
 		t.Fatalf("first reconcile: %v", err)
 	}
 
-	_ = getClusterRepo(t, c, "custom-acme")
+	_ = getClusterRepo(t, c, "acme")
 
 	var updated aiplatformv1alpha1.Settings
 	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &updated); err != nil {
@@ -1670,15 +1670,15 @@ func TestReconcileCustomRepos_Prune(t *testing.T) {
 
 	customRepo := &unstructured.Unstructured{}
 	customRepo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "custom-acme"}, customRepo); !apierrors.IsNotFound(err) {
-		t.Errorf("expected custom-acme to be pruned, got err=%v", err)
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "acme"}, customRepo); !apierrors.IsNotFound(err) {
+		t.Errorf("expected the acme ClusterRepo to be pruned, got err=%v", err)
 	}
 
 	var authSec corev1.Secret
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: "custom-acme-auth", Namespace: "cattle-system",
+		Name: credentials.CustomRepoAuthSecretName("acme"), Namespace: "cattle-system",
 	}, &authSec); !apierrors.IsNotFound(err) {
-		t.Errorf("expected custom-acme-auth to be pruned, got err=%v", err)
+		t.Errorf("expected the acme auth secret to be pruned, got err=%v", err)
 	}
 
 	_ = getClusterRepo(t, c, credentials.ClusterRepoApplicationCollection)
@@ -1733,11 +1733,16 @@ func TestReconcileCustomRepos_InvalidSkipped(t *testing.T) {
 		t.Fatalf("reconcile should not fail on invalid entry: %v", err)
 	}
 
-	invalidRepo := &unstructured.Unstructured{}
-	invalidRepo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "custom-"}, invalidRepo); !apierrors.IsNotFound(err) {
-		t.Errorf("invalid repo should not be created, got err=%v", err)
+	custom := &unstructured.UnstructuredList{}
+	custom.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList"})
+	if err := c.List(context.Background(), custom, client.MatchingLabels{credentials.CustomRepoLabel: credentials.LabelValueTrue}); err != nil {
+		t.Fatalf("list custom ClusterRepos: %v", err)
 	}
-
-	_ = getClusterRepo(t, c, "custom-valid")
+	if len(custom.Items) != 1 || custom.Items[0].GetName() != "valid" {
+		names := make([]string, 0, len(custom.Items))
+		for _, item := range custom.Items {
+			names = append(names, item.GetName())
+		}
+		t.Errorf("custom ClusterRepos = %v, want only [valid]: the invalid entry must not be created", names)
+	}
 }

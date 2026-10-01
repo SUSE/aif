@@ -308,7 +308,7 @@ describe('Settings registry diagnostics - customRepo target', () => {
     it('suggests saving first when an unsaved repository cannot be reached', async () => {
       vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [] } });
       vi.mocked(validateCredentials).mockResolvedValue({ results: [unreachable] });
-      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'custom-mirror' });
+      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'mirror' });
       await runTest(wrapper);
       expect(wrapper.find('[data-testid="private-network-hint"]').exists()).toBe(true);
     });
@@ -316,7 +316,7 @@ describe('Settings registry diagnostics - customRepo target', () => {
     it('stays hidden for a saved repository', async () => {
       vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [{ name: 'mirror', type: 'helm', url: 'https://charts.internal' }] } });
       vi.mocked(validateCredentials).mockResolvedValue({ results: [unreachable] });
-      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'custom-mirror' });
+      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'mirror' });
       await runTest(wrapper);
       expect(wrapper.find('[data-testid="private-network-hint"]').exists()).toBe(false);
     });
@@ -325,7 +325,7 @@ describe('Settings registry diagnostics - customRepo target', () => {
       vi.mocked(getSettings).mockResolvedValue({ spec: { customRepos: [] } });
       vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
       vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: 'https://charts.internal', status: 'ok', check: 'chartFile', latencyMs: 5 }] });
-      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'custom-mirror' });
+      const wrapper = mountRCS({ target: 'customRepo', configuration: repoConfig, repoName: 'mirror' });
       await runTest(wrapper);
       expect(wrapper.find('[data-testid="private-network-hint"]').exists()).toBe(false);
     });

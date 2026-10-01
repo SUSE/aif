@@ -30,4 +30,15 @@ describe('custom-repos form helpers', () => {
     expect(validateCustomRepoForm({ ...emptyCustomRepo(), name: 'a', type: 'git', gitRepo: 'https://x', gitBranch: '' }, [])).toBeTruthy();
     expect(validateCustomRepoForm({ ...emptyCustomRepo(), name: 'a', type: 'helm', url: 'https://x' }, [])).toBeNull();
   });
+
+  it('reserves Rancher default repository names', () => {
+    for (const name of ['rancher-charts', 'rancher-partner-charts', 'rancher-rke2-charts']) {
+      expect(validateCustomRepoForm({ ...emptyCustomRepo(), name, type: 'helm', url: 'https://x' }, [])).toBeTruthy();
+    }
+  });
+
+  it('allows names up to the 63-character ClusterRepo name limit', () => {
+    expect(validateCustomRepoForm({ ...emptyCustomRepo(), name: 'a'.repeat(63), type: 'helm', url: 'https://x' }, [])).toBeNull();
+    expect(validateCustomRepoForm({ ...emptyCustomRepo(), name: 'a'.repeat(64), type: 'helm', url: 'https://x' }, [])).toBeTruthy();
+  });
 });

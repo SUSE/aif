@@ -17,42 +17,88 @@ limitations under the License.
 package credentials
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/catalog"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const customRepoNamePrefix = "custom-"
+// customRepoAuthSecretSuffix keeps custom-repo auth secrets apart from the
+// built-in registry auth secrets ("<repo>-auth") that share their namespaces.
+const customRepoAuthSecretSuffix = "-custom-repo-auth"
 
-// customRepoNameMax caps the user-supplied name so the derived ClusterRepo name
-// "custom-<name>" stays within the DNS-1123 label limit (63).
-const customRepoNameMax = 63 - len(customRepoNamePrefix)
+// customRepoNameMax is the DNS-1123 label limit: the name is used verbatim as
+// the ClusterRepo name.
+const customRepoNameMax = 63
 
 var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
-// CustomRepoResourceName is the ClusterRepo name for a custom repo.
-func CustomRepoResourceName(name string) string { return customRepoNamePrefix + name }
-
-// CustomRepoAuthSecretName is the materialized basic-auth/ssh-auth secret name.
-func CustomRepoAuthSecretName(name string) string { return customRepoNamePrefix + name + "-auth" }
-
-// IsCustomRepoResourceName reports whether a ClusterRepo name was minted by
-// CustomRepoResourceName (i.e. carries the "custom-" prefix). Used to guard
-// pruning so a mislabeled built-in repo is never deleted.
-func IsCustomRepoResourceName(name string) bool {
-	return strings.HasPrefix(name, customRepoNamePrefix) && len(name) > len(customRepoNamePrefix)
+// rancherDefaultRepoNames are the ClusterRepos Rancher provisions itself.
+var rancherDefaultRepoNames = map[string]bool{
+	"rancher-charts":         true,
+	"rancher-partner-charts": true,
+	"rancher-rke2-charts":    true,
 }
 
-// IsReservedRepoName reports whether name collides with a canonical repo name.
+// teamRepoNames is the set of NVIDIA team ClusterRepo names the operator derives
+// from the bundled catalog.
+var teamRepoNames = sync.OnceValue(func() map[string]bool {
+	teams := catalog.ClassifyNGCTeamRepos()
+	names := make(map[string]bool, len(teams.Public)+len(teams.Gated))
+	for _, u := range append(append([]string{}, teams.Public...), teams.Gated...) {
+		if name, err := catalog.NGCClusterRepoName(u); err == nil {
+			names[name] = true
+		}
+	}
+	return names
+})
+
+// CustomRepoResourceName is the ClusterRepo name for a custom repo: the
+// admin-supplied name, used as-is.
+func CustomRepoResourceName(name string) string { return name }
+
+// CustomRepoAuthSecretName is the materialized basic-auth/ssh-auth secret name.
+func CustomRepoAuthSecretName(name string) string { return name + customRepoAuthSecretSuffix }
+
+// IsReservedRepoName reports whether name belongs to a ClusterRepo that the
+// operator or Rancher manages: the canonical registry repos, the catalog-derived
+// NVIDIA team repos, and Rancher's default repos. A custom repo may not use such
+// a name, and the custom-repo prune never deletes one.
 func IsReservedRepoName(name string) bool {
 	switch name {
 	case ClusterRepoApplicationCollection, ClusterRepoSUSERegistry, ClusterRepoNvidia, ClusterRepoNvidiaBlueprint:
 		return true
 	}
-	return false
+	return rancherDefaultRepoNames[name] || teamRepoNames()[name]
+}
+
+// ClusterRepoNameTaken reports whether a ClusterRepo named name already exists
+// without the custom-repo label. Such a repo belongs to Rancher, the operator's
+// built-in repos or another tool, so a custom repo must not take it over. A
+// cluster that does not serve the ClusterRepo API has nothing to collide with.
+func ClusterRepoNameTaken(ctx context.Context, c client.Reader, name string) (bool, error) {
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	err := c.Get(ctx, client.ObjectKey{Name: name}, repo)
+	switch {
+	case err == nil:
+		return repo.GetLabels()[CustomRepoLabel] != LabelValueTrue, nil
+	case errors.IsNotFound(err), meta.IsNoMatchError(err), runtime.IsNotRegisteredError(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("look up ClusterRepo %q: %w", name, err)
+	}
 }
 
 // ValidateCustomRepos checks the custom-repo list for name and type/url/git
@@ -69,7 +115,7 @@ func ValidateCustomRepos(repos []aiplatformv1alpha1.CustomRepoSpec) error {
 		if !dns1123Label.MatchString(r.Name) {
 			return fmt.Errorf("customRepos[%d]: name %q must be a DNS-1123 label (lowercase alphanumeric and '-')", i, r.Name)
 		}
-		if IsReservedRepoName(r.Name) || IsReservedRepoName(CustomRepoResourceName(r.Name)) {
+		if IsReservedRepoName(r.Name) {
 			return fmt.Errorf("customRepos[%d]: name %q is reserved", i, r.Name)
 		}
 		if seen[r.Name] {

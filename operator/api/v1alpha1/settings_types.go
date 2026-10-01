@@ -228,12 +228,13 @@ type RancherCatalogSettings struct {
 }
 
 // CustomRepoSpec defines an admin-managed chart repository provisioned as a
-// catalog.cattle.io ClusterRepo named "custom-<name>". Credentials are always
+// catalog.cattle.io ClusterRepo with the same name. Credentials are always
 // referenced, never inlined. The operator materializes the referenced Secret
 // into the registry auth namespaces and links it via the ClusterRepo clientSecret.
 type CustomRepoSpec struct {
-	// Name is a DNS-1123 label, unique across custom repos, not colliding with a
-	// canonical repo name. The ClusterRepo is created as "custom-<name>".
+	// Name is a DNS-1123 label, unique across custom repos, used as the
+	// ClusterRepo name. It must not be a reserved repo name or match a
+	// ClusterRepo that is not a custom repo.
 	Name string `json:"name"`
 	// DisplayName is an optional human-friendly label shown in the UI.
 	// +optional

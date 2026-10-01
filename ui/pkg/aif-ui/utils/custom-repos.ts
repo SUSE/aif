@@ -16,11 +16,18 @@ export interface CustomRepoForm {
   insecureSkipTLSVerify: boolean;
 }
 
-// Mirror of operator/internal/credentials canonical repo names.
-export const RESERVED_REPO_NAMES = ['application-collection', 'suse-ai-registry', 'nvidia', 'nvidia-blueprints'];
+// Mirror of operator/internal/credentials reserved repo names: the canonical
+// registry repos and Rancher's default repos. The operator also reserves the
+// catalog-derived team repo names and refuses a name that another ClusterRepo
+// already uses, so those are reported when saving.
+export const RESERVED_REPO_NAMES = [
+  'application-collection', 'suse-ai-registry', 'nvidia', 'nvidia-blueprints',
+  'rancher-charts', 'rancher-partner-charts', 'rancher-rke2-charts',
+];
 
 const DNS1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
-const NAME_MAX = 56;
+// The name is used verbatim as the ClusterRepo name (a DNS-1123 label).
+const NAME_MAX = 63;
 
 export function emptyCustomRepo(): CustomRepoForm {
   return {
