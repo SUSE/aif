@@ -22,7 +22,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -104,6 +106,26 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	s.Name = settingsName
 	s.Namespace = h.namespace
 	s.Spec = body.Spec
+
+	// Validate custom repos before persisting. An invalid entry (reserved/duplicate
+	// name, type/scheme mismatch, git missing branch) must not be saved.
+	if err := credentials.ValidateCustomRepos(body.Spec.CustomRepos); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		return
+	}
+	// A custom repo's name is its ClusterRepo name, so it must not match a
+	// ClusterRepo that Rancher, the operator or another tool already owns.
+	for i, repo := range body.Spec.CustomRepos {
+		taken, err := credentials.ClusterRepoNameTaken(r.Context(), h.client, credentials.CustomRepoResourceName(repo.Name))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if taken {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%w: customRepos[%d]: name %q is already used by another chart repository", ErrInvalidInput, i, repo.Name))
+			return
+		}
+	}
 
 	// The request spec is applied verbatim under a single field owner, so zero-value
 	// fields overwrite configured values (intentional — the Settings page round-trips
@@ -299,9 +321,11 @@ func (h *SettingsHandler) publishToGit(w http.ResponseWriter, r *http.Request) {
 
 // Function seams so tests can stub the live network checks.
 var (
-	probeRegistryFn         = credcheck.ProbeRegistryWithCA
-	gitCheckAuthFn          = (*git.Client).CheckAuth
-	rancherCatalogCheckAuth = (*rancher.CatalogClient).CheckAuth
+	probeRegistryFn             = credcheck.ProbeRegistryWithCA
+	probeRegistryWithInsecureFn = credcheck.ProbeRegistryWithCAAndInsecure
+	probeHelmIndexFn            = credcheck.ProbeHelmIndex
+	gitCheckAuthFn              = (*git.Client).CheckAuth
+	rancherCatalogCheckAuth     = (*rancher.CatalogClient).CheckAuth
 )
 
 const (
@@ -325,6 +349,11 @@ type validateOverride struct {
 	CABundleSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"caBundleSecretRef,omitempty"`
 	URL                string                           `json:"url,omitempty"`
 	InsecureSkipVerify bool                             `json:"insecureSkipVerify,omitempty"`
+	// customRepo-specific overrides. Name identifies the saved entry the form
+	// edits, if any; it decides whether the test may reach private addresses.
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+	GitRepo string `json:"gitRepo,omitempty"`
 }
 
 type validateCredsRequest struct {
@@ -375,10 +404,19 @@ func (h *SettingsHandler) validateCredentials(w http.ResponseWriter, r *http.Req
 			resp.Results = append(resp.Results, h.validateRancherCatalog(r.Context(), &s, ov))
 		case "applicationCollection", "suseRegistry", "nvidia":
 			resp.Results = append(resp.Results, h.validateRegistry(r.Context(), target, &s, ov))
+		case "customRepo":
+			resp.Results = append(resp.Results, h.validateCustomRepo(r.Context(), &s, ov))
 		default:
 			resp.Results = append(resp.Results, validateResult{
 				Target: target, Status: statusSkipped, Message: "unknown target",
 			})
+		}
+	}
+	// A failed probe's latency separates an open port (fast) from a closed or
+	// filtered one (timeout), which would make the test a port-scan oracle.
+	for i := range resp.Results {
+		if resp.Results[i].Status == statusError {
+			resp.Results[i].LatencyMs = 0
 		}
 	}
 	writeJSON(w, http.StatusOK, &resp)
@@ -596,6 +634,197 @@ func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatf
 		res.Message = err.Error()
 	}
 	return res
+}
+
+// validateCustomRepo probes an ad-hoc custom repo from the form-supplied override.
+// oci probes the registry /v2/ endpoint; helm probes /index.yaml; git reuses the
+// git auth probe. The form is the source of truth for what is probed; the saved
+// Settings CR only decides whether the probe may reach private addresses.
+func (h *SettingsHandler) validateCustomRepo(ctx context.Context, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
+	res := validateResult{Target: "customRepo"}
+
+	// The Test path dereferences form-supplied secret refs and sends them to a
+	// form-supplied host, so it must reject the same unsafe inputs putSettings
+	// does before saving: credentials embedded in the URL, and hosts on the
+	// cluster's own link-local/loopback/metadata ranges (SSRF from the operator's
+	// in-cluster vantage point).
+	probeURL := ov.URL
+	if ov.Type == repoTypeGit {
+		probeURL = ov.GitRepo
+	}
+	if msg := unsafeProbeTarget(probeURL); msg != "" {
+		res.Status = statusError
+		res.Message = msg
+		return res
+	}
+	// Only a repository an admin already saved may be reached on a private
+	// address (on-prem and air-gap mirrors). An unsaved override has no such need.
+	if !isSavedCustomRepo(s, ov.Name, probeURL) {
+		ctx = credcheck.DenyPrivateNetworks(ctx)
+	}
+
+	if ov.Type == repoTypeGit {
+		if ov.GitRepo == "" {
+			res.Status = statusSkipped
+			res.Message = "not configured"
+			return res
+		}
+		// The git credential is sent as HTTP Basic auth; never over cleartext.
+		if ov.CredSecretRef != nil && strings.HasPrefix(ov.GitRepo, "http://") {
+			res.Status = statusError
+			res.Message = errCleartextCredentials
+			return res
+		}
+		// The git transport has no dial-time guard, so check the resolved host
+		// up front. Same generic message as an unreachable repository.
+		if u, err := neturl.Parse(ov.GitRepo); err == nil && u.Hostname() != "" {
+			if err := credcheck.CheckHost(ctx, u.Hostname()); err != nil {
+				res.Status = statusError
+				res.Message = msgRepoUnreachable
+				return res
+			}
+		}
+		tmp := &aiplatformv1alpha1.Settings{}
+		tmp.Spec.Fleet.RepoURL = ov.GitRepo
+		tmp.Spec.Fleet.Branch = ov.Branch
+		tmp.Spec.Fleet.CredSecretRef = ov.CredSecretRef
+		gc, err := git.NewFromSettings(ctx, tmp, h.namespace, settingsSecretReader{h.client})
+		if err != nil {
+			res.Status = statusError
+			res.Message = err.Error()
+			return res
+		}
+		switch err := gitCheckAuthFn(gc, ctx); {
+		case err == nil:
+			res.Status = statusOK
+			res.Message = "repository reachable"
+		case errors.Is(err, transport.ErrAuthenticationRequired), errors.Is(err, transport.ErrAuthorizationFailed):
+			res.Status = statusFailed
+			res.Message = err.Error()
+		default:
+			// Generic message: do not leak transport-level detail that would let the
+			// Test fingerprint internal hosts (see unsafeProbeTarget).
+			res.Status = statusError
+			res.Message = msgRepoUnreachable
+		}
+		return res
+	}
+
+	if ov.URL == "" {
+		res.Status = statusSkipped
+		res.Message = "not configured"
+		return res
+	}
+
+	var user, pass string
+	if secretRefComplete(ov.UserSecretRef) && secretRefComplete(ov.TokenSecretRef) {
+		// Same rule as saving: basic auth over cleartext http would put the
+		// password on the wire in the clear.
+		if strings.HasPrefix(ov.URL, "http://") {
+			res.Status = statusError
+			res.Message = errCleartextCredentials
+			return res
+		}
+		var err error
+		if user, err = h.readSecretKey(ctx, ov.UserSecretRef); err != nil {
+			res.Status = statusError
+			res.Message = "could not read credential: " + err.Error()
+			return res
+		}
+		if pass, err = h.readSecretKey(ctx, ov.TokenSecretRef); err != nil {
+			res.Status = statusError
+			res.Message = "could not read credential: " + err.Error()
+			return res
+		}
+	}
+	var caPEM []byte
+	if ov.CABundleSecretRef != nil {
+		ca, err := h.readSecretKey(ctx, ov.CABundleSecretRef)
+		if err != nil {
+			res.Status = statusError
+			res.Message = "could not read CA bundle: " + err.Error()
+			return res
+		}
+		caPEM = []byte(ca)
+	}
+
+	start := time.Now()
+	var probe credcheck.Result
+	if ov.Type == "helm" {
+		probe = probeHelmIndexFn(ctx, ov.URL, user, pass, caPEM, ov.InsecureSkipVerify)
+	} else {
+		res.Host = registryurl.Host(ov.URL)
+		probe = probeRegistryWithInsecureFn(ctx, res.Host, user, pass, caPEM, ov.InsecureSkipVerify)
+	}
+	res.LatencyMs = time.Since(start).Milliseconds()
+	res.Status = string(probe.Status)
+	res.Message = probe.Message
+	if probe.Status == credcheck.StatusError {
+		// Collapse transport-level detail (x509 vs DNS vs connection-refused vs
+		// timeout) to one message so the Test cannot fingerprint internal hosts.
+		res.Message = "repository unreachable or its TLS certificate could not be verified"
+	}
+	return res
+}
+
+// unsafeProbeTarget reports why a probe target must be rejected, or "" if it is
+// allowed. It is an early input check with a clear message: it blocks credentials
+// embedded in the URL and literal loopback/link-local/metadata hosts. Private
+// address space is allowed on purpose, since on-prem and air-gap mirrors live
+// there. The enforcing SSRF control is the credcheck dial guard, which re-checks
+// the resolved IP of every connection (redirect hops, bearer realms, DNS
+// rebinding) and keeps a public repository out of private address space.
+func unsafeProbeTarget(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return "invalid url"
+	}
+	if u.User != nil {
+		return "url must not embed credentials (user:password@host); use a secret ref"
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return "host is not allowed"
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return "host is not allowed"
+		}
+	}
+	return ""
+}
+
+const (
+	repoTypeGit             = "git"
+	msgRepoUnreachable      = "repository unreachable"
+	errCleartextCredentials = "basic-auth credentials require https (refusing to send them over cleartext http)"
+)
+
+// isSavedCustomRepo reports whether the saved Settings declare a custom repo
+// with this name at probeURL (its url, or gitRepo for git). A form that renamed
+// the repo or changed its address is unsaved.
+func isSavedCustomRepo(s *aiplatformv1alpha1.Settings, name, probeURL string) bool {
+	if s == nil || name == "" {
+		return false
+	}
+	for _, repo := range s.Spec.CustomRepos {
+		if repo.Name != name {
+			continue
+		}
+		saved := repo.URL
+		if repo.Type == repoTypeGit {
+			saved = repo.GitRepo
+		}
+		return saved != "" && normalizeRepoURL(saved) == normalizeRepoURL(probeURL)
+	}
+	return false
+}
+
+func normalizeRepoURL(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
 }
 
 func savedRegistryRefs(

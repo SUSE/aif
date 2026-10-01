@@ -194,6 +194,9 @@ type SettingsSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	BlueprintCatalogs []BlueprintCatalogSource `json:"blueprintCatalogs,omitempty"`
+	// CustomRepos are admin-defined chart repositories provisioned as ClusterRepos.
+	// +optional
+	CustomRepos []CustomRepoSpec `json:"customRepos,omitempty"`
 }
 
 // RancherCatalogSettings configures the Rancher Steve catalog client used to
@@ -222,6 +225,48 @@ type RancherCatalogSettings struct {
 	// only — do not use in production/air-gapped installs.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+}
+
+// CustomRepoSpec defines an admin-managed chart repository provisioned as a
+// catalog.cattle.io ClusterRepo with the same name. Credentials are always
+// referenced, never inlined. The operator materializes the referenced Secret
+// into the registry auth namespaces and links it via the ClusterRepo clientSecret.
+type CustomRepoSpec struct {
+	// Name is a DNS-1123 label, unique across custom repos, used as the
+	// ClusterRepo name. It must not be a reserved repo name or match a
+	// ClusterRepo that is not a custom repo.
+	Name string `json:"name"`
+	// DisplayName is an optional human-friendly label shown in the UI.
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+	// Type selects the repository source shape.
+	// +kubebuilder:validation:Enum=helm;oci;git
+	Type string `json:"type"`
+	// URL is the chart repository URL for helm (http/https) and oci (oci://).
+	// +optional
+	URL string `json:"url,omitempty"`
+	// GitRepo is the git clone URL for the git type.
+	// +optional
+	GitRepo string `json:"gitRepo,omitempty"`
+	// GitBranch is the git branch for the git type.
+	// +optional
+	GitBranch string `json:"gitBranch,omitempty"`
+	// UserSecretRef references the basic-auth username secret.
+	// +optional
+	UserSecretRef *SecretKeyRef `json:"userSecretRef,omitempty"`
+	// TokenSecretRef references the basic-auth password/token secret.
+	// +optional
+	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+	// SSHKeySecretRef references a Secret holding an SSH private key for git repos.
+	// Mutually exclusive with basic auth.
+	// +optional
+	SSHKeySecretRef *SecretKeyRef `json:"sshKeySecretRef,omitempty"`
+	// CABundleSecretRef references a Secret holding a PEM CA bundle.
+	// +optional
+	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
+	// InsecureSkipTLSVerify disables TLS verification for this repository.
+	// +optional
+	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
 }
 
 // SettingsStatus defines the observed state of Settings.

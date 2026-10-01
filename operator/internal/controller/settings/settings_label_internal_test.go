@@ -15,10 +15,10 @@ import (
 
 // TestProvenanceLabelLiterals pins the exact label strings the operator stamps.
 // These same strings are hard-coded on the UI side (ui/pkg/aif-ui/services/
-// app-collection.ts as MANAGED_REPO_LABEL / NVIDIA_TEAM_REPO_LABEL) and matched
-// there with a strict equality gate. The two sides are tied only by convention,
-// so a rename here would silently break discovery on the reader side. This test
-// is the Go half of the drift pin; app-collection.test.ts carries the TS half.
+// app-collection.ts as MANAGED_REPO_LABEL / NVIDIA_TEAM_REPO_LABEL / CUSTOM_REPO_LABEL)
+// and matched there with a strict equality gate. The two sides are tied only by
+// convention, so a rename here would silently break discovery on the reader side.
+// This test is the Go half of the drift pin; app-collection.test.ts carries the TS half.
 // If you change a literal, change BOTH and update both pins together.
 func TestProvenanceLabelLiterals(t *testing.T) {
 	if credentials.ManagedRepoLabel != "ai-factory.suse.com/managed-repo" {
@@ -26,6 +26,9 @@ func TestProvenanceLabelLiterals(t *testing.T) {
 	}
 	if credentials.TeamRepoLabel != "ai-factory.suse.com/nvidia-team-repo" {
 		t.Errorf("TeamRepoLabel drifted: %q", credentials.TeamRepoLabel)
+	}
+	if credentials.CustomRepoLabel != "ai-factory.suse.com/custom-repo" {
+		t.Errorf("CustomRepoLabel drifted: %q", credentials.CustomRepoLabel)
 	}
 	if credentials.LabelValueTrue != "true" {
 		t.Errorf("LabelValueTrue drifted: %q", credentials.LabelValueTrue)

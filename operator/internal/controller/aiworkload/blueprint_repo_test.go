@@ -107,3 +107,84 @@ func TestResolveClusterRepo_NoSource(t *testing.T) {
 		t.Fatal("expected error for repo with no url/ociRepo/gitRepo")
 	}
 }
+
+func TestOCIChartRef(t *testing.T) {
+	const (
+		chart           = "mychart"
+		namespaceRepo   = "oci://registry.example.com/charts"
+		singleChartRepo = "oci://registry.example.com/project/" + chart
+	)
+	cases := []struct {
+		name    string
+		repoURL string
+		chart   string
+		want    string
+	}{
+		{
+			name:    "namespace-style repo appends chart segment",
+			repoURL: namespaceRepo,
+			chart:   chart,
+			want:    namespaceRepo + "/" + chart,
+		},
+		{
+			name:    "single-chart repo already ending in chart name is not doubled",
+			repoURL: singleChartRepo,
+			chart:   chart,
+			want:    singleChartRepo,
+		},
+		{
+			name:    "last segment only partially matching chart name still appends",
+			repoURL: "oci://registry.example.com/project/my" + chart,
+			chart:   chart,
+			want:    "oci://registry.example.com/project/my" + chart + "/" + chart,
+		},
+		{
+			name:    "trailing slash is normalized before appending",
+			repoURL: namespaceRepo + "/",
+			chart:   chart,
+			want:    namespaceRepo + "/" + chart,
+		},
+		{
+			name:    "trailing slash on a single-chart repo is normalized",
+			repoURL: singleChartRepo + "/",
+			chart:   chart,
+			want:    singleChartRepo,
+		},
+		{
+			name:    "empty chart name leaves the repo URL untouched",
+			repoURL: singleChartRepo,
+			chart:   "",
+			want:    singleChartRepo,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ociChartRef(tc.repoURL, tc.chart); got != tc.want {
+				t.Errorf("ociChartRef(%q, %q) = %q, want %q", tc.repoURL, tc.chart, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetHelmChartSource(t *testing.T) {
+	const (
+		chart   = "mychart"
+		ociRepo = "oci://registry.example.com/project/" + chart
+		webRepo = "https://charts.example.com"
+	)
+
+	oci := map[string]any{}
+	setHelmChartSource(oci, ociRepo, chart, true)
+	if got := oci["repo"]; got != ociRepo {
+		t.Errorf("OCI single-chart repo = %v, want %q", got, ociRepo)
+	}
+	if _, ok := oci["chart"]; ok {
+		t.Errorf("OCI helm spec must not set chart, got %v", oci["chart"])
+	}
+
+	web := map[string]any{}
+	setHelmChartSource(web, webRepo, chart, false)
+	if web["repo"] != webRepo || web["chart"] != chart {
+		t.Errorf("HTTP helm spec = %v, want repo %q and chart %q", web, webRepo, chart)
+	}
+}

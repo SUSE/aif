@@ -28,7 +28,7 @@ const SUSE_AI_COMBINED_PULL_SECRET = 'suse-ai-pull-combined';
 
 // withCombinedPullSecret guarantees the operator-managed combined pull secret is
 // referenced (first, de-duplicated) for suse-ai charts. No-op for other
-// libraries so NVIDIA / generic charts keep their existing handling.
+// libraries so NVIDIA / custom / generic charts keep their existing handling.
 function withCombinedPullSecret(names: string[], library?: 'suse-ai' | 'nvidia'): string[] {
   if (library !== 'suse-ai') {
     return names;
@@ -129,6 +129,22 @@ async function readClusterRepoAccess(store: any, repoName: string): Promise<Clus
 
 async function readClusterRepoClientSecret(store: any, repoName: string): Promise<ClientSecretRef | null> {
   return (await readClusterRepoAccess(store, repoName))?.clientSecret || null;
+}
+
+// ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Mirror
+// of the operator's ociChartRef (aiworkload/blueprint.go): Fleet treats
+// helm.repo as the full chart path, so a namespace-style repo gets the chart
+// name appended, while a single-chart repo whose URL already ends in the chart
+// name is used as-is (appending would double the last segment and the pull
+// would be denied).
+export function ociChartRef(repoURL: string, chartName: string): string {
+  const trimmed = repoURL.replace(/\/+$/, '');
+
+  if (!chartName || trimmed.endsWith(`/${ chartName }`)) {
+    return trimmed;
+  }
+
+  return `${ trimmed }/${ chartName }`;
 }
 
 export function registryHostFromRepoURL(repoURL: string): string {
@@ -239,11 +255,14 @@ export function buildFleetBundleYAML(params: {
 
   const values = JSON.parse(JSON.stringify(params.values));
   const pullSecretNames = withCombinedPullSecret(params.pullSecretNames, params.library);
-  if (pullSecretNames.length > 0 && params.library !== 'nvidia') {
-    // Non-NVIDIA charts get the combined pull secret via the standard pod-spec
+  if (pullSecretNames.length > 0 && params.library === 'suse-ai') {
+    // Only suse-ai charts get the combined pull secret via the standard pod-spec
     // paths. NVIDIA charts are handled by injectNvidiaPullSecretRefs below, which
     // references the operator-delivered ngc-secret (not the combined secret) in
-    // the vendor-specific value shapes those charts actually read.
+    // the vendor-specific value shapes those charts actually read. Custom repos
+    // are not part of this operator-managed pull-secret machinery: their chart
+    // pull auth comes from the ClusterRepo clientSecret (helmSecretName), and no
+    // pod-spec imagePullSecrets are injected on their behalf.
     const secrets = pullSecretNames.map(name => ({ name }));
     values.global = { ...(values.global || {}), imagePullSecrets: secrets };
     values.imagePullSecrets = secrets;
@@ -261,7 +280,7 @@ export function buildFleetBundleYAML(params: {
     helm: {
       ...(isOCI ? {} : { chart: params.chartName }),
       version:     params.chartVersion,
-      repo:        isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl,
+      repo:        isOCI ? ociChartRef(params.chartRepoUrl, params.chartName) : params.chartRepoUrl,
       // releaseName uses the user's `release` (not the Fleet bundleName) so
       // chart sub-resources templated as `{{ .Release.Name }}-foo` fit under
       // the 63-char DNS-label limit even when bundleName approaches its own
@@ -379,7 +398,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   }
 
   const isOCI   = params.chartRepoUrl.startsWith('oci://');
-  const ociRepo = isOCI ? `${ params.chartRepoUrl }/${ params.chartName }` : params.chartRepoUrl;
+  const ociRepo = isOCI ? ociChartRef(params.chartRepoUrl, params.chartName) : params.chartRepoUrl;
   const helmSpec: Record<string, any> = {
     ...(isOCI ? {} : { chart: params.chartName }),
     version:     params.chartVersion,
@@ -455,7 +474,10 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
 
 function addPullSecretsToValues(values: Record<string, any>, names: string[], library?: 'suse-ai' | 'nvidia'): Record<string, any> {
   const effective = withCombinedPullSecret(names, library);
-  if (effective.length === 0 || library === 'nvidia') return values;
+  // Only suse-ai charts receive operator-managed pod-spec imagePullSecrets here.
+  // NVIDIA is handled by injectNvidiaPullSecretRefs; custom repos are out of the
+  // operator-managed pull-secret machinery (chart pull auth via helmSecretName).
+  if (effective.length === 0 || library !== 'suse-ai') return values;
   const secrets = effective.map(name => ({ name }));
   return {
     ...values,

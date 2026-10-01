@@ -240,3 +240,77 @@ func TestProbe_TokenRealmUnreachableIsError(t *testing.T) {
 		t.Fatalf("status=%q msg=%q want error", res.Status, res.Message)
 	}
 }
+
+// ProbeHelmIndex: 200 => ok.
+func TestProbeHelmIndex_OK(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("apiVersion: v1\nentries: {}\n"))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	res := ProbeHelmIndex(context.Background(), srv.URL, "", "", caPEM, false)
+	if res.Status != StatusOK {
+		t.Fatalf("status=%q msg=%q want ok", res.Status, res.Message)
+	}
+}
+
+// ProbeHelmIndex: 401/403 => failed.
+func TestProbeHelmIndex_AuthFailed(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			u, p, _ := r.BasicAuth()
+			if u != "user" || p != "pass" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	res := ProbeHelmIndex(context.Background(), srv.URL, "wrong", "creds", caPEM, false)
+	if res.Status != StatusFailed {
+		t.Fatalf("status=%q msg=%q want failed", res.Status, res.Message)
+	}
+}
+
+// ProbeHelmIndex: 404 => error.
+func TestProbeHelmIndex_NotFound(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	res := ProbeHelmIndex(context.Background(), srv.URL, "", "", caPEM, false)
+	if res.Status != StatusError {
+		t.Fatalf("status=%q msg=%q want error", res.Status, res.Message)
+	}
+}
+
+// ProbeHelmIndex: insecureSkipTLSVerify works.
+func TestProbeHelmIndex_InsecureSkipVerify(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	// No CA provided, but insecureSkipTLSVerify should allow connection to self-signed cert
+	res := ProbeHelmIndex(context.Background(), srv.URL, "", "", nil, true)
+	if res.Status != StatusOK {
+		t.Fatalf("status=%q msg=%q want ok with insecureSkipVerify", res.Status, res.Message)
+	}
+}

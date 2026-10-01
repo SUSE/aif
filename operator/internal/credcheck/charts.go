@@ -17,6 +17,7 @@ limitations under the License.
 package credcheck
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,10 +32,10 @@ import (
 	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"gopkg.in/yaml.v3"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/errcode"
-	"sigs.k8s.io/yaml"
 )
 
 // ChartResult describes only the resource actually checked. Success is not a
@@ -64,11 +65,11 @@ func ProbeChart(ctx context.Context, repositoryURL, chartName, username, passwor
 
 	u, err := url.Parse(repositoryURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		(u.Scheme != "oci" && u.Scheme != "https") {
+		(u.Scheme != "oci" && u.Scheme != schemeHTTPS) {
 		result.Reason = "configuration"
 		return
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := guardedTransport(ctx, u.Hostname())
 	defer transport.CloseIdleConnections()
 	if len(caPEM) > 0 {
 		pool, _ := x509.SystemCertPool()
@@ -91,7 +92,7 @@ func ProbeChart(ctx context.Context, repositoryURL, chartName, username, passwor
 		// (the Go client also strips Authorization on a cross-host redirect); an
 		// OCI bearer realm is handled separately by the registry protocol.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 || req.URL.Scheme != "https" {
+			if len(via) >= 10 || req.URL.Scheme != schemeHTTPS {
 				return errors.New("chart probe redirect downgrades TLS or exceeds the redirect limit")
 			}
 			if req.URL.Host != via[0].URL.Host {
@@ -192,13 +193,18 @@ func probeHTTPSChart(ctx context.Context, client *http.Client, u *url.URL, usern
 		return ctx.Err()
 	}
 	var index struct {
-		APIVersion string `json:"apiVersion"`
+		APIVersion string `yaml:"apiVersion"`
 		Entries    map[string][]struct {
-			Version string   `json:"version"`
-			URLs    []string `json:"urls"`
-		} `json:"entries"`
+			Version string   `yaml:"version"`
+			URLs    []string `yaml:"urls"`
+		} `yaml:"entries"`
 	}
-	if err != nil || yaml.Unmarshal(data, &index) != nil || index.APIVersion != "v1" {
+	// Decode straight into the struct with yaml.v3. Unlike sigs.k8s.io/yaml,
+	// which converts the whole document to an intermediate JSON representation,
+	// this is a single pass and avoids a large transient allocation spike when a
+	// public repository serves a multi-megabyte index (e.g. thousands of chart
+	// versions), which could otherwise exhaust the operator's memory limit.
+	if err != nil || yaml.NewDecoder(bytes.NewReader(data)).Decode(&index) != nil || index.APIVersion != "v1" {
 		result.Reason = "invalidIndex"
 		return nil
 	}
@@ -224,14 +230,24 @@ func probeHTTPSChart(ctx context.Context, client *http.Client, u *url.URL, usern
 		return nil
 	}
 	chartURL := base.ResolveReference(ref)
-	// Do not follow catalog-provided URLs out to a public registry from a mirror,
-	// or attach a registry credential to an unrelated chart host.
-	if chartURL.Scheme != "https" || chartURL.Host != u.Host || chartURL.User != nil {
+	authenticated := username != "" || password != ""
+	// The chart file must be reachable over HTTPS and carry no inline userinfo.
+	// A different host is allowed only for an unauthenticated (public) repository:
+	// public repos commonly serve their index from one host while hosting the
+	// chart tarballs on a release host or CDN. An authenticated private mirror
+	// must serve its own chart files, so a cross-host reference there is a
+	// misconfiguration, and a registry credential is never sent off-origin.
+	if chartURL.Scheme != schemeHTTPS || chartURL.User != nil || (chartURL.Host != u.Host && authenticated) {
 		result.Reason = "outsideRepository"
 		return nil
 	}
+	// Never attach the repository credential to a different host.
+	chartUser, chartPassword := username, password
+	if chartURL.Host != u.Host {
+		chartUser, chartPassword = "", ""
+	}
 	// Use GET with a one-byte Range to check the chart download permission.
-	resp, err = chartRequest(ctx, client, http.MethodGet, chartURL, username, password)
+	resp, err = chartRequest(ctx, client, http.MethodGet, chartURL, chartUser, chartPassword)
 	if err != nil {
 		return err
 	}
@@ -273,7 +289,7 @@ func chartHTTPFailure(result *ChartResult, status int) bool {
 	case http.StatusNotFound:
 		result.Status, result.Reason = "failed", "notFound"
 	default:
-		result.Status, result.Reason = "error", "connectionFailed"
+		result.Status, result.Reason = "error", reasonConnectionFailed
 	}
 	return true
 }
@@ -290,6 +306,6 @@ func classifyChartError(result *ChartResult, err error) {
 		result.Reason = "tls"
 	default:
 		// Do not return remote response bodies/errors which may echo credentials.
-		result.Reason = "connectionFailed"
+		result.Reason = reasonConnectionFailed
 	}
 }

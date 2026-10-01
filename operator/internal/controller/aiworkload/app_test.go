@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/credentials"
 )
 
 // newAppTestScheme builds a runtime.Scheme that knows about every type
@@ -207,6 +208,72 @@ func TestReconcileAppPullSecrets_DefaultVendorRoutesToSuseInjector(t *testing.T)
 	nvSec := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: nvidiaImagePullSecretName}, nvSec); err == nil {
 		t.Errorf("default vendor unexpectedly produced %q (NVIDIA path)", nvidiaImagePullSecretName)
+	}
+}
+
+// TestReconcileAppPullSecrets_CustomRepoSkipsInjection guards the custom-repo
+// gate: even with SUSE credentials configured and the workload defaulting to
+// vendor "suse", a chart from a custom-labeled ClusterRepo must get NO
+// operator-managed pull secret — no combined secret created, nothing recorded
+// on Status.PullSecretDeliveries (so nothing is later merged onto its
+// ServiceAccounts). Custom repos authenticate image pulls via their own repo
+// credentials.
+func TestReconcileAppPullSecrets_CustomRepoSkipsInjection(t *testing.T) {
+	const opNS = "aif-operator"
+	const targetNS = "myapp-ns"
+
+	scheme := newAppTestScheme(t)
+
+	// SUSE creds ARE configured: proves the skip is driven by the repo label,
+	// not by absent credentials.
+	settings := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: opNS},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "token"},
+			},
+		},
+	}
+	appcoSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: opNS},
+		Data:       map[string][]byte{"username": []byte("user@example.com"), "token": []byte("some-token")},
+	}
+	repo := newAppTestClusterRepo("custom-prometheus-community", "https://prometheus-community.github.io/helm-charts")
+	repo.SetLabels(map[string]string{credentials.CustomRepoLabel: credentials.LabelValueTrue})
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(settings, appcoSecret).
+		WithObjects(repo).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		ObjectMeta: metav1.ObjectMeta{Name: "wl", Namespace: "default"},
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: targetNS,
+			Source: aiplatformv1alpha1.AIWorkloadSource{
+				SourceType: aiplatformv1alpha1.AIWorkloadSourceApp,
+				App: &aiplatformv1alpha1.AppSource{
+					ChartRepo:    "custom-prometheus-community",
+					ChartName:    "alertmanager",
+					ChartVersion: "1.0.0",
+					Release:      "alertmanager",
+					// Vendor unset → CRD default "suse"; the custom-repo label must win.
+				},
+			},
+		},
+	}
+
+	if err := r.reconcileAppPullSecrets(context.Background(), w); err != nil {
+		t.Fatalf("reconcileAppPullSecrets: %v", err)
+	}
+
+	if len(w.Status.PullSecretDeliveries) != 0 {
+		t.Errorf("custom repo must record no pull-secret deliveries, got %+v", w.Status.PullSecretDeliveries)
+	}
+	combined := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: targetNS, Name: combinedPullSecretName}, combined); err == nil {
+		t.Errorf("custom repo unexpectedly produced combined pull secret %q", combinedPullSecretName)
 	}
 }
 
