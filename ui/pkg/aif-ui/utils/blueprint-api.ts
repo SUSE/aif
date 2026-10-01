@@ -1,4 +1,6 @@
-import type { Blueprint, BlueprintList, BlueprintOrigin, BlueprintSpec } from '../types/blueprint-types';
+import type {
+  Blueprint, BlueprintComponent, BlueprintList, BlueprintOrigin, BlueprintSpec,
+} from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
 import { operatorFetch } from './operator-config';
 
@@ -17,6 +19,25 @@ export function createBlueprint(spec: BlueprintSpec, blueprintName?: string): Pr
   });
 }
 
+// buildBlueprintSpec assembles the spec the wizard submits and reviews. Fields
+// the wizard has no step for (source, icon) come from the prefill so an Edit
+// keeps them; a new blueprint or a Copy (which prefills neither) gets Custom
+// with no icon.
+export function buildBlueprintSpec(
+  basicInfo: { displayName: string; version: string; description: string },
+  components: BlueprintComponent[],
+  prefill?: BlueprintSpec,
+): BlueprintSpec {
+  return {
+    displayName: basicInfo.displayName,
+    version:     basicInfo.version,
+    description: basicInfo.description || undefined,
+    icon:        prefill?.icon,
+    source:      prefill?.source ?? 'Custom',
+    components,
+  };
+}
+
 export function getBlueprint(name: string): Promise<Blueprint> {
   return operatorFetch(`/api/v1/blueprints/${ encodeURIComponent(name) }`);
 }
@@ -33,21 +54,6 @@ export async function updateBlueprintDeprecated(name: string, deprecated: boolea
     method: 'PUT',
     body:   JSON.stringify({ spec: { ...bp.spec, deprecated } }),
   });
-}
-
-// blueprintIcon safely extracts a partner/vendor logo from the blueprint.
-// Supports safe base64 data URIs (e.g. data:image/png;base64,... or data:image/svg+xml;base64,...)
-// and standard http/https URLs while rejecting dangerous schemes like javascript:.
-export function blueprintIcon(bp?: Blueprint | null): string | undefined {
-  const icon = bp?.spec.icon?.trim();
-  if (!icon) return undefined;
-  if (/^data:image\/(?:png|gif|jpeg|webp|svg\+xml);base64,[a-z0-9+/=]+$/i.test(icon)) {
-    return icon;
-  }
-  if (/^https?:\/\//i.test(icon)) {
-    return icon;
-  }
-  return undefined;
 }
 
 // sourceFor returns the blueprint's source for display purposes.

@@ -37,6 +37,8 @@ onMounted(async () => {
     try {
       const crName = blueprintCRName(copyFrom, copyVersion);
       const bp     = await getBlueprint(crName);
+      // A copy is a new Custom blueprint: source and icon are deliberately not
+      // carried over, so a copy can't inherit another publisher's branding.
       prefill.value = {
         displayName: `Copy of ${ bp.spec.displayName }`,
         version:     '1.0.0',

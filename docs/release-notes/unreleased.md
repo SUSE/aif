@@ -55,3 +55,27 @@ mirror and preserves both NVIDIA aliases instead of testing public team sources.
 Rancher to retry a saved repository download; it cannot grant registry permissions.
 After correcting credentials or mirror content, use Refresh and then Test again.
 Deploy the matching operator and extension versions to enable direct chart checks.
+
+## Blueprint partner icons and Partner source
+
+Blueprints accept two new optional `spec` values:
+
+- **`icon`:** a partner logo, shown next to the source badge on the Blueprints
+  page. It never replaces the badge. Only `https://` URLs and base64 raster
+  `data:` URIs (png, gif, jpeg, webp) are accepted, up to 16 KB. Plain `http://`
+  and SVG are rejected. The UI also skips icons that point at IP addresses or
+  internal names (such as `*.svc`, `*.local` or `metadata.google.internal`), and
+  hides the logo if it fails to load. Air-gapped installs should use `data:` URIs.
+- **`source: Partner`:** for blueprints published through the partner catalog.
+  Like every `source` value, it is declared by the blueprint author and is not
+  verified by the operator.
+
+Editing a blueprint keeps its icon and source. Copying a blueprint creates a
+Custom blueprint without an icon.
+
+Updating a blueprint with an invalid spec now returns HTTP 422 instead of 500.
+
+**Compatibility:** both fields need the Blueprint CRD shipped with this release,
+which the chart applies on upgrade. aif-operator 2.2.0 rejects `source: Partner`,
+so catalog authors must not use it until the minimum supported operator version
+includes this change.

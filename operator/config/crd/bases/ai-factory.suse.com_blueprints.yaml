@@ -127,18 +127,23 @@ spec:
                 minLength: 1
                 type: string
               icon:
-                description: 'Icon is a URL or data: URI for a partner logo (data: keeps it air-gap friendly).'
-                maxLength: 32768
-                pattern: ^(data:image\/(png|gif|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+|https?:\/\/.+)$
+                description: |-
+                  Icon is an optional partner logo: an https URL or a base64 raster data: URI
+                  (png, gif, jpeg, webp). Use a data: URI for air-gapped installs.
+                maxLength: 16384
+                pattern: ^(data:image\/(png|gif|jpeg|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s"'<>]+)$
                 type: string
               source:
                 description: |-
-                  Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+                  Source identifies where this blueprint came from: SUSE, Nvidia, Partner
+                  (for the partner catalog), or Custom. It is declared by the blueprint
+                  author and not verified by the operator.
                   To leave the source unset, omit the field entirely; the enum does not
                   include the empty string, so setting `source: ""` will fail admission.
                 enum:
                 - SUSE
                 - Nvidia
+                - Partner
                 - Custom
                 type: string
               version:

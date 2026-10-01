@@ -140,10 +140,8 @@
                 <div class="tile-meta">
                   <span class="tile-meta-item">{{ componentCount(versions, family) }} {{ componentCount(versions, family) === 1 ? 'app' : 'apps' }}</span>
                   <span class="tile-meta-sep">·</span>
-                  <BlueprintSourceBadge
-                    :source="source"
-                    :icon="icon"
-                  />
+                  <BlueprintSourceBadge :source="source" />
+                  <BlueprintPartnerLogo :icon="icon" />
                 </div>
               </div>
             </div>
@@ -304,10 +302,8 @@
         <div class="bp-detail-panel-header">
           <div class="bp-detail-panel-title-row">
             <span class="bp-detail-panel-title">{{ (families.get(detailPanel.family) ?? [])[0]?.spec.displayName ?? detailPanel.family }}</span>
-            <BlueprintSourceBadge
-              :source="detailPanelSource"
-              :icon="detailPanelIcon"
-            />
+            <BlueprintSourceBadge :source="detailPanelSource" />
+            <BlueprintPartnerLogo :icon="detailPanelIcon" />
           </div>
           <button
             class="btn role-link bp-detail-panel-close"
@@ -337,7 +333,7 @@ import ActionMenuShell from '@shell/components/ActionMenuShell';
 import AppModal from '@shell/components/AppModal';
 import { isAdminUser } from '@shell/store/type-map';
 import {
-  listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion, sourceFor, blueprintIcon,
+  listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion, sourceFor,
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
 import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/catalog-api';
@@ -345,6 +341,8 @@ import { checkOperatorConnection, getConnectionError } from '../utils/operator-c
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import BlueprintSourceBadge from '../components/BlueprintSourceBadge.vue';
+import BlueprintPartnerLogo from '../components/BlueprintPartnerLogo.vue';
+import { browserSafeBlueprintIcon } from '../utils/catalog-logo';
 import { type Blueprint, BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED, FLEET_BUNDLE_NAME_LABEL } from '../types/blueprint-types';
 import { type BlueprintCatalog, CATALOG_DEFAULT_NAME } from '../types/catalog-types';
 import { PRODUCT } from '../config/suseai';
@@ -359,7 +357,7 @@ interface BlueprintFamilyCard {
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, Checkbox, ActionMenuShell, AppModal, OperatorErrorBanner, BlueprintDetailPanel, BlueprintSourceBadge },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal, OperatorErrorBanner, BlueprintDetailPanel, BlueprintSourceBadge, BlueprintPartnerLogo },
   setup() {
     const vm        = getCurrentInstance()!.proxy as any;
     const $router   = vm.$router;
@@ -470,7 +468,7 @@ export default defineComponent({
         family,
         versions,
         source: sourceLabel(versions),
-        icon:   blueprintIcon(latestFor(versions)),
+        icon:   browserSafeBlueprintIcon(latestFor(versions)?.spec.icon),
       }))
     );
 
@@ -791,7 +789,7 @@ export default defineComponent({
     );
 
     const detailPanelIcon = computed(() =>
-      blueprintIcon(latestFor(families.value.get(detailPanel.family) ?? []))
+      browserSafeBlueprintIcon(latestFor(families.value.get(detailPanel.family) ?? [])?.spec.icon)
     );
 
     function openDetail(family: string, versions: Blueprint[]) {
@@ -922,7 +920,6 @@ export default defineComponent({
     border-top: 1px solid var(--border);
   }
 }
-
 .app-tile-filler { visibility: hidden; }
 .version-select {
   font-size: 12px;
@@ -1050,5 +1047,3 @@ export default defineComponent({
   transform: translateX(100%);
 }
 </style>
-
-

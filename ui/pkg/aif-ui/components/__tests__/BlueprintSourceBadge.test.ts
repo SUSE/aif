@@ -1,72 +1,57 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { mount } from "@vue/test-utils";
-import BlueprintSourceBadge from "../BlueprintSourceBadge.vue";
+import { describe, expect, it } from 'vitest';
+import { mount } from '@vue/test-utils';
+import BlueprintSourceBadge from '../BlueprintSourceBadge.vue';
 
-describe("BlueprintSourceBadge", () => {
-  it("renders text label for Custom source without icon", () => {
-    const wrapper = mount(BlueprintSourceBadge, {
-      props: { source: "Custom" },
-    });
-    expect(wrapper.text()).toContain("Custom");
-    expect(wrapper.find(".partner-logo").exists()).toBe(false);
-    expect(wrapper.attributes("aria-label")).toBe("Source: Custom");
+describe('BlueprintSourceBadge', () => {
+  it('renders the Custom text label in a Rancher Tag', () => {
+    const wrapper = mount(BlueprintSourceBadge, { props: { source: 'Custom' } });
+
+    expect(wrapper.classes()).toEqual(expect.arrayContaining(['tag', 'source-badge', 'source-badge--custom']));
+    expect(wrapper.text()).toBe('Custom');
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.attributes('aria-label')).toBe('Source: Custom');
   });
 
-  it("renders Nvidia dual logos when source is Nvidia and no icon", () => {
-    const wrapper = mount(BlueprintSourceBadge, {
-      props: { source: "Nvidia" },
-    });
-    expect(wrapper.find(".nvidia-logo--light").exists()).toBe(true);
-    expect(wrapper.find(".nvidia-logo--dark").exists()).toBe(true);
-    expect(wrapper.attributes("aria-label")).toBe("Source: Nvidia");
+  it('treats an empty source as Custom', () => {
+    const wrapper = mount(BlueprintSourceBadge, { props: { source: '' } });
+
+    expect(wrapper.text()).toBe('Custom');
+    expect(wrapper.classes()).toContain('source-badge--custom');
   });
 
-  it("renders SUSE dual logos when source is SUSE and no icon", () => {
-    const wrapper = mount(BlueprintSourceBadge, {
-      props: { source: "SUSE" },
-    });
-    expect(wrapper.find(".suse-logo--light").exists()).toBe(true);
-    expect(wrapper.find(".suse-logo--dark").exists()).toBe(true);
-    expect(wrapper.attributes("aria-label")).toBe("Source: SUSE");
+  it('renders both Nvidia theme logos', () => {
+    const wrapper = mount(BlueprintSourceBadge, { props: { source: 'Nvidia' } });
+
+    expect(wrapper.find('.nvidia-logo--light').exists()).toBe(true);
+    expect(wrapper.find('.nvidia-logo--dark').exists()).toBe(true);
+    expect(wrapper.attributes('aria-label')).toBe('Source: Nvidia');
   });
 
-  it("renders partner logo inside wrapper with aria-hidden and empty alt when icon is provided", () => {
-    const iconUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-    const wrapper = mount(BlueprintSourceBadge, {
-      props: { source: "Custom", icon: iconUri },
-    });
-    const img = wrapper.find(".partner-logo");
-    expect(img.exists()).toBe(true);
-    expect(img.attributes("src")).toBe(iconUri);
-    expect(img.attributes("alt")).toBe("");
-    expect(img.attributes("aria-hidden")).toBe("true");
-    expect(wrapper.find(".bp-source-badge__partner-logo-wrapper").exists()).toBe(true);
-    expect(wrapper.attributes("aria-label")).toBe("Source: Custom");
+  it('renders both SUSE theme logos', () => {
+    const wrapper = mount(BlueprintSourceBadge, { props: { source: 'SUSE' } });
+
+    expect(wrapper.find('.suse-logo--light').exists()).toBe(true);
+    expect(wrapper.find('.suse-logo--dark').exists()).toBe(true);
+    expect(wrapper.attributes('aria-label')).toBe('Source: SUSE');
   });
 
-  it("falls back to text label on image load error", async () => {
-    const iconUri = "https://example.com/invalid.png";
-    const wrapper = mount(BlueprintSourceBadge, {
-      props: { source: "Custom", icon: iconUri },
-    });
-    const img = wrapper.find(".partner-logo");
-    expect(img.exists()).toBe(true);
+  it('renders the Partner text label', () => {
+    const wrapper = mount(BlueprintSourceBadge, { props: { source: 'Partner' } });
 
-    await img.trigger("error");
-    expect(wrapper.find(".partner-logo").exists()).toBe(false);
-    expect(wrapper.text()).toContain("Custom");
+    expect(wrapper.classes()).toEqual(expect.arrayContaining(['tag', 'source-badge', 'source-badge--partner']));
+    expect(wrapper.text()).toBe('Partner');
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.attributes('aria-label')).toBe('Source: Partner');
   });
 
-  it("falls back to source logo on image load error when source is Nvidia", async () => {
-    const iconUri = "https://example.com/invalid.png";
+  it('has no icon prop: provenance is never replaced by a partner image', () => {
     const wrapper = mount(BlueprintSourceBadge, {
-      props: { source: "Nvidia", icon: iconUri },
+      props: { source: 'Custom' },
+      attrs: { icon: 'https://partner.example.com/suse-lookalike.png' },
     });
-    expect(wrapper.find(".partner-logo").exists()).toBe(true);
 
-    await wrapper.find(".partner-logo").trigger("error");
-    expect(wrapper.find(".partner-logo").exists()).toBe(false);
-    expect(wrapper.find(".nvidia-logo--light").exists()).toBe(true);
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.text()).toBe('Custom');
   });
 });

@@ -18,6 +18,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,17 +26,32 @@ import (
 	"testing"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func newBlueprintHandler(t *testing.T) http.Handler {
+func newBlueprintScheme(t *testing.T) *kruntime.Scheme {
 	t.Helper()
 	s := kruntime.NewScheme()
 	if err := aiplatformv1alpha1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	c := fake.NewClientBuilder().WithScheme(s).Build()
+	return s
+}
+
+func newBlueprintHandler(t *testing.T) http.Handler {
+	t.Helper()
+	return newBlueprintHandlerWithClient(t, fake.NewClientBuilder().WithScheme(newBlueprintScheme(t)).Build())
+}
+
+func newBlueprintHandlerWithClient(t *testing.T, c client.Client) http.Handler {
+	t.Helper()
 	mux := http.NewServeMux()
 	NewBlueprintHandler(c).Register(mux)
 	return mux
@@ -418,5 +434,30 @@ func TestDeleteBlueprint_FleetOwned_Returns403(t *testing.T) {
 	mux.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusOK {
 		t.Fatalf("expected blueprint to still exist (200), got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+// The fake client does not run CRD OpenAPI validation, so simulate the API
+// server rejecting the spec (e.g. an icon that fails the pattern).
+func TestUpdateBlueprint_InvalidSpec_Returns422(t *testing.T) {
+	existing := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: "acme-1-0-0"}}
+	c := fake.NewClientBuilder().WithScheme(newBlueprintScheme(t)).WithObjects(existing).WithInterceptorFuncs(interceptor.Funcs{
+		Update: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.UpdateOption) error {
+			return apierrors.NewInvalid(
+				schema.GroupKind{Group: "ai-factory.suse.com", Kind: "Blueprint"}, obj.GetName(),
+				field.ErrorList{field.Invalid(field.NewPath("spec", "icon"), "http://x", "should match pattern")},
+			)
+		},
+	}).Build()
+	h := newBlueprintHandlerWithClient(t, c)
+
+	body := `{"spec":{"displayName":"Acme","version":"1.0.0","icon":"http://x","components":[{"chartRepo":"suse-ai","chartName":"ollama","chartVersion":"1.0.0"}]}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/blueprints/acme-1-0-0", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
 	}
 }

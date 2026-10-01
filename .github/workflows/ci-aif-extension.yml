@@ -6,9 +6,11 @@ on:
       - 'main'
     paths:
       - 'ui/**'
+      - 'charts/aif-operator/crds/ai-factory.suse.com_blueprints.yaml'
   pull_request:
     paths:
       - 'ui/**'
+      - 'charts/aif-operator/crds/ai-factory.suse.com_blueprints.yaml'
 
 permissions:
   contents: read

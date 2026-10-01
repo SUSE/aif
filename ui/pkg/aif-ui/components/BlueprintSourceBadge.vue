@@ -1,21 +1,10 @@
 <template>
-  <span
+  <Tag
     class="source-badge"
-    :class="`source-badge--${ (source || 'custom').toLowerCase() }`"
-    :aria-label="`Source: ${ source || 'Custom' }`"
+    :class="`source-badge--${ label.toLowerCase() }`"
+    :aria-label="`Source: ${ label }`"
   >
-    <template v-if="hasCustomIcon">
-      <span class="bp-source-badge__partner-logo-wrapper">
-        <img
-          :src="icon"
-          alt=""
-          aria-hidden="true"
-          class="source-logo partner-logo"
-          @error="onImageError"
-        />
-      </span>
-    </template>
-    <template v-else-if="source === 'Nvidia'">
+    <template v-if="label === 'Nvidia'">
       <img
         :src="nvidiaLogo"
         alt=""
@@ -29,7 +18,7 @@
         class="source-logo nvidia-logo--dark"
       />
     </template>
-    <template v-else-if="source === 'SUSE'">
+    <template v-else-if="label === 'SUSE'">
       <img
         :src="suseLogo"
         alt=""
@@ -43,12 +32,15 @@
         class="source-logo suse-logo--dark"
       />
     </template>
-    <template v-else>{{ source || 'Custom' }}</template>
-  </span>
+    <template v-else>
+      {{ label }}
+    </template>
+  </Tag>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, watch } from 'vue';
+import { defineComponent, computed } from 'vue';
+import Tag from '@shell/components/Tag.vue';
 
 const nvidiaLogo     = require('../assets/nvidia-logo-horz.svg') as string;
 const nvidiaLogoDark = require('../assets/nvidia-logo-horz-light.svg') as string;
@@ -56,88 +48,46 @@ const suseLogo       = require('../assets/SUSE_Logo-hor_L_Green-pos_sRGB.svg') a
 const suseLogoDark   = require('../assets/SUSE_Logo-hor_L_Green-White-neg_sRGB.svg') as string;
 
 export default defineComponent({
-  name: 'BlueprintSourceBadge',
-  props: {
+  name:       'BlueprintSourceBadge',
+  components: { Tag },
+  props:      {
     source: {
       type:    String,
       default: 'Custom',
     },
-    icon: {
-      type:    String,
-      default: undefined,
-    },
   },
   setup(props) {
-    const imageError = ref(false);
-
-    watch(
-      () => props.icon,
-      () => {
-        imageError.value = false;
-      }
-    );
-
-    const hasCustomIcon = computed(() => Boolean(props.icon) && !imageError.value);
-
-    function onImageError() {
-      imageError.value = true;
-    }
+    const label = computed(() => props.source || 'Custom');
 
     return {
-      nvidiaLogo,
-      nvidiaLogoDark,
-      suseLogo,
-      suseLogoDark,
-      hasCustomIcon,
-      onImageError,
+      label, nvidiaLogo, nvidiaLogoDark, suseLogo, suseLogoDark,
     };
   },
 });
 </script>
 
 <style lang="scss" scoped>
-.source-badge {
+/* Tag supplies colors, radius and font size. `.tag.source-badge` outranks
+   Tag's own scoped `.tag` so the logo layout wins regardless of CSS order. */
+.tag.source-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 20px;
-  font-size: 12px;
-  line-height: 16px;
+  height: 20px;
   padding: 0 6px;
-  border-radius: var(--border-radius);
-  color: var(--tag-primary);
-  background: var(--tag-bg);
 
   .source-logo {
     height: 13px;
     width: auto;
-    max-width: 60px;
-    object-fit: contain;
-  }
-
-  .bp-source-badge__partner-logo-wrapper {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 3px;
-    padding: 1px 3px;
-    line-height: 0;
-  }
-
-  .partner-logo {
-    height: auto;
-    max-height: 16px;
-    width: auto;
-    max-width: 60px;
-    object-fit: contain;
   }
 }
+</style>
 
-:global(body:not(.theme-dark)) .nvidia-logo--dark { display: none; }
-:global(body.theme-dark) .nvidia-logo--light { display: none; }
-:global(body:not(.theme-dark)) .suse-logo--dark { display: none; }
-:global(body.theme-dark) .suse-logo--light { display: none; }
-:global(body.theme-dark) .source-badge .bp-source-badge__partner-logo-wrapper {
-  background: rgba(255, 255, 255, 0.9);
-}
+<style lang="scss">
+/* Not scoped: the theme class lives on <body>, outside this component. A
+   scoped :global(body...) would compile to a bare `body` rule and hide the page. */
+body:not(.theme-dark) .nvidia-logo--dark { display: none; }
+body.theme-dark .nvidia-logo--light { display: none; }
+body:not(.theme-dark) .suse-logo--dark { display: none; }
+body.theme-dark .suse-logo--light { display: none; }
 </style>

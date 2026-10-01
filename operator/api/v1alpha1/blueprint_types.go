@@ -27,7 +27,7 @@ const (
 
 	// BlueprintSourceLabel is a provenance marker: the Helm chart stamps
 	// BlueprintSourceBundled on blueprints shipped with the product. This is
-	// distinct from spec.source (the BlueprintOrigin vendor enum SUSE/Nvidia/Custom).
+	// distinct from spec.source (the BlueprintOrigin enum SUSE/Nvidia/Partner/Custom).
 	BlueprintSourceLabel   = "ai-factory.suse.com/source"
 	BlueprintSourceBundled = "bundled"
 
@@ -54,13 +54,14 @@ const (
 // Named "Origin" (not "Source") to avoid collision with the existing
 // BlueprintSource struct in aiworkload_types.go, which is a reference type.
 // The user-visible field name remains "source" via the JSON tag.
-// +kubebuilder:validation:Enum=SUSE;Nvidia;Custom
+// +kubebuilder:validation:Enum=SUSE;Nvidia;Partner;Custom
 type BlueprintOrigin string
 
 const (
-	BlueprintOriginSUSE   BlueprintOrigin = "SUSE"
-	BlueprintOriginNvidia BlueprintOrigin = "Nvidia"
-	BlueprintOriginCustom BlueprintOrigin = "Custom"
+	BlueprintOriginSUSE    BlueprintOrigin = "SUSE"
+	BlueprintOriginNvidia  BlueprintOrigin = "Nvidia"
+	BlueprintOriginPartner BlueprintOrigin = "Partner"
+	BlueprintOriginCustom  BlueprintOrigin = "Custom"
 )
 
 // BlueprintComponent defines one Helm chart in a Blueprint.
@@ -116,12 +117,15 @@ type BlueprintSpec struct {
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
-	// Icon is a URL or data: URI for a partner logo (data: keeps it air-gap friendly).
+	// Icon is an optional partner logo: an https URL or a base64 raster data: URI
+	// (png, gif, jpeg, webp). Use a data: URI for air-gapped installs.
 	// +optional
-	// +kubebuilder:validation:MaxLength=32768
-	// +kubebuilder:validation:Pattern=`^(data:image\/(png|gif|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+|https?:\/\/.+)$`
+	// +kubebuilder:validation:MaxLength=16384
+	// +kubebuilder:validation:Pattern=`^(data:image\/(png|gif|jpeg|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s"'<>]+)$`
 	Icon string `json:"icon,omitempty"`
-	// Source identifies where this blueprint came from (SUSE, Nvidia, or Custom).
+	// Source identifies where this blueprint came from: SUSE, Nvidia, Partner
+	// (for the partner catalog), or Custom. It is declared by the blueprint
+	// author and not verified by the operator.
 	// To leave the source unset, omit the field entirely; the enum does not
 	// include the empty string, so setting `source: ""` will fail admission.
 	// +optional
