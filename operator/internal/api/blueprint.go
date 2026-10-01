@@ -245,6 +245,10 @@ func (h *BlueprintHandler) updateBlueprint(w http.ResponseWriter, r *http.Reques
 
 	bp.Spec = body.Spec
 	if err := h.client.Update(r.Context(), &bp); err != nil {
+		if errors.IsInvalid(err) {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

@@ -9,7 +9,7 @@ const BlueprintConfigStep       = defineAsyncComponent(() => import('./wizard/Bl
 const BlueprintReviewCreateStep = defineAsyncComponent(() => import('./wizard/BlueprintReviewCreateStep.vue'));
 import type { BlueprintSpec } from '../../types/blueprint-types';
 import { SEMVER_PATTERN, DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../types/blueprint-types';
-import { createBlueprint } from '../../utils/blueprint-api';
+import { createBlueprint, buildBlueprintSpec } from '../../utils/blueprint-api';
 import { PRODUCT } from '../../config/suseai';
 
 interface BasicInfo {
@@ -122,13 +122,7 @@ async function onCreate() {
     return;
   }
   try {
-    const spec: BlueprintSpec = {
-      displayName: basicInfo.value.displayName,
-      version:     basicInfo.value.version,
-      description: basicInfo.value.description || undefined,
-      source:      props.prefill?.source ?? 'Custom',
-      components:  components.value,
-    };
+    const spec = buildBlueprintSpec(basicInfo.value, components.value, props.prefill);
     // In edit mode props.editName is the existing family (blueprint-name label);
     // pass it through so the new version stays grouped under the same tile.
     await createBlueprint(spec, props.editName);
@@ -140,13 +134,7 @@ async function onCreate() {
   }
 }
 
-const reviewForm = computed<BlueprintSpec>(() => ({
-  displayName: basicInfo.value.displayName,
-  version:     basicInfo.value.version,
-  description: basicInfo.value.description || undefined,
-  source:      props.prefill?.source ?? 'Custom',
-  components:  components.value,
-}));
+const reviewForm = computed<BlueprintSpec>(() => buildBlueprintSpec(basicInfo.value, components.value, props.prefill));
 </script>
 
 <template>

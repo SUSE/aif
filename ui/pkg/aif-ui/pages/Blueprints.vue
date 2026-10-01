@@ -108,7 +108,7 @@
           role="grid"
         >
           <div
-            v-for="[family, versions, source] in sortedFamiliesWithSource"
+            v-for="{ family, versions, source, icon } in sortedFamiliesWithSource"
             :key="family"
             class="app-tile"
             role="button"
@@ -140,21 +140,8 @@
                 <div class="tile-meta">
                   <span class="tile-meta-item">{{ componentCount(versions, family) }} {{ componentCount(versions, family) === 1 ? 'app' : 'apps' }}</span>
                   <span class="tile-meta-sep">·</span>
-                  <span
-                    class="source-badge"
-                    :class="`source-badge--${ source.toLowerCase() }`"
-                    :aria-label="`Source: ${ source }`"
-                  >
-                    <template v-if="source === 'Nvidia'">
-                      <img :src="nvidiaLogo" alt="" class="source-logo nvidia-logo--light" />
-                      <img :src="nvidiaLogoDark" alt="" class="source-logo nvidia-logo--dark" />
-                    </template>
-                    <template v-else-if="source === 'SUSE'">
-                      <img :src="suseLogo" alt="" class="source-logo suse-logo--light" />
-                      <img :src="suseLogoDark" alt="" class="source-logo suse-logo--dark" />
-                    </template>
-                    <template v-else>{{ source }}</template>
-                  </span>
+                  <BlueprintSourceBadge :source="source" />
+                  <BlueprintPartnerLogo :icon="icon" />
                 </div>
               </div>
             </div>
@@ -315,21 +302,8 @@
         <div class="bp-detail-panel-header">
           <div class="bp-detail-panel-title-row">
             <span class="bp-detail-panel-title">{{ (families.get(detailPanel.family) ?? [])[0]?.spec.displayName ?? detailPanel.family }}</span>
-            <span
-              class="source-badge"
-              :class="`source-badge--${ detailPanelSource.toLowerCase() }`"
-              :aria-label="`Source: ${ detailPanelSource }`"
-            >
-              <template v-if="detailPanelSource === 'Nvidia'">
-                <img :src="nvidiaLogo" alt="" class="source-logo nvidia-logo--light" />
-                <img :src="nvidiaLogoDark" alt="" class="source-logo nvidia-logo--dark" />
-              </template>
-              <template v-else-if="detailPanelSource === 'SUSE'">
-                <img :src="suseLogo" alt="" class="source-logo suse-logo--light" />
-                <img :src="suseLogoDark" alt="" class="source-logo suse-logo--dark" />
-              </template>
-              <template v-else>{{ detailPanelSource }}</template>
-            </span>
+            <BlueprintSourceBadge :source="detailPanelSource" />
+            <BlueprintPartnerLogo :icon="detailPanelIcon" />
           </div>
           <button
             class="btn role-link bp-detail-panel-close"
@@ -357,7 +331,6 @@ import { Banner } from '@components/Banner';
 import { Checkbox } from '@components/Form/Checkbox';
 import ActionMenuShell from '@shell/components/ActionMenuShell';
 import AppModal from '@shell/components/AppModal';
-import Tag from '@shell/components/Tag.vue';
 import { isAdminUser } from '@shell/store/type-map';
 import {
   listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion, sourceFor,
@@ -367,14 +340,24 @@ import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/ca
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
+import BlueprintSourceBadge from '../components/BlueprintSourceBadge.vue';
+import BlueprintPartnerLogo from '../components/BlueprintPartnerLogo.vue';
+import { browserSafeBlueprintIcon } from '../utils/catalog-logo';
 import { type Blueprint, BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED, FLEET_BUNDLE_NAME_LABEL } from '../types/blueprint-types';
 import { type BlueprintCatalog, CATALOG_DEFAULT_NAME } from '../types/catalog-types';
 import { PRODUCT } from '../config/suseai';
 import { useT } from '../composables/useT';
 
+interface BlueprintFamilyCard {
+  family: string;
+  versions: Blueprint[];
+  source: string;
+  icon?: string;
+}
+
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner, BlueprintDetailPanel },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal, OperatorErrorBanner, BlueprintDetailPanel, BlueprintSourceBadge, BlueprintPartnerLogo },
   setup() {
     const vm        = getCurrentInstance()!.proxy as any;
     const $router   = vm.$router;
@@ -480,8 +463,13 @@ export default defineComponent({
       return entries;
     });
 
-    const sortedFamiliesWithSource = computed(() =>
-      sortedFamilies.value.map(([family, versions]) => [family, versions, sourceLabel(versions)] as [string, Blueprint[], string])
+    const sortedFamiliesWithSource = computed<BlueprintFamilyCard[]>(() =>
+      sortedFamilies.value.map(([family, versions]) => ({
+        family,
+        versions,
+        source: sourceLabel(versions),
+        icon:   browserSafeBlueprintIcon(latestFor(versions)?.spec.icon),
+      }))
     );
 
     // When the user hides deprecated, bump any selected-version that is deprecated
@@ -800,6 +788,10 @@ export default defineComponent({
       sourceLabel(families.value.get(detailPanel.family) ?? [])
     );
 
+    const detailPanelIcon = computed(() =>
+      browserSafeBlueprintIcon(latestFor(families.value.get(detailPanel.family) ?? [])?.spec.icon)
+    );
+
     function openDetail(family: string, versions: Blueprint[]) {
       detailPanel.family          = family;
       detailPanel.selectedVersion = selectedVersions.value[family] || versions[0]?.spec.version || '';
@@ -826,11 +818,6 @@ export default defineComponent({
       window.removeEventListener('keydown', handleKeydown);
     });
 
-    const nvidiaLogo      = require('../assets/nvidia-logo-horz.svg') as string;
-    const nvidiaLogoDark = require('../assets/nvidia-logo-horz-light.svg') as string;
-    const suseLogo      = require('../assets/SUSE_Logo-hor_L_Green-pos_sRGB.svg') as string;
-    const suseLogoDark  = require('../assets/SUSE_Logo-hor_L_Green-White-neg_sRGB.svg') as string;
-
     return {
       loading, error, operatorError, retryConnection,
       search, sortBy, sortedFamiliesWithSource, families, selectedVersions,
@@ -838,11 +825,10 @@ export default defineComponent({
       catalogs, selectedCatalog, catalogOptions,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
-      nvidiaLogo, nvidiaLogoDark, suseLogo, suseLogoDark,
       tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
-      detailPanel, detailPanelVersions, detailPanelSource, openDetail, closeDetail,
+      detailPanel, detailPanelVersions, detailPanelSource, detailPanelIcon, openDetail, closeDetail,
       t,
     };
   },
@@ -932,22 +918,6 @@ export default defineComponent({
     gap: 8px;
     padding-top: 12px;
     border-top: 1px solid var(--border);
-  }
-}
-.source-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 20px;
-  font-size: 12px;
-  padding: 0 6px;
-  border-radius: var(--border-radius);
-  color: var(--tag-primary);
-  background: var(--tag-bg);
-
-  .source-logo {
-    height: 13px;
-    width: auto;
   }
 }
 .app-tile-filler { visibility: hidden; }
@@ -1076,11 +1046,4 @@ export default defineComponent({
 .bp-panel-leave-to {
   transform: translateX(100%);
 }
-</style>
-
-<style lang="scss">
-body:not(.theme-dark) .nvidia-logo--dark { display: none; }
-body.theme-dark .nvidia-logo--light { display: none; }
-body:not(.theme-dark) .suse-logo--dark { display: none; }
-body.theme-dark .suse-logo--light { display: none; }
 </style>

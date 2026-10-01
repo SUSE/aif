@@ -35,6 +35,7 @@ func TestBlueprintTypesCompile(t *testing.T) {
 	_ = BlueprintVersionLabel
 	_ = BlueprintOriginSUSE
 	_ = BlueprintOriginNvidia
+	_ = BlueprintOriginPartner
 	_ = BlueprintOriginCustom
 }
 
