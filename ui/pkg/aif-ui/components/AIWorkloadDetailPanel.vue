@@ -1,19 +1,21 @@
 <script lang="ts" setup>
-import { computed, getCurrentInstance, ref } from 'vue';
+import { computed, ref, shallowRef, watchEffect } from 'vue';
+import { useStore } from 'vuex';
 import { BadgeState } from '@components/BadgeState';
 import { Banner } from '@components/Banner';
 import { LabeledInput } from '@components/Form/LabeledInput';
-import RcButton from '@components/RcButton/RcButton.vue';
-import Drawer from '@shell/components/Drawer/Chrome.vue';
-import DrawerCard from '@shell/components/Drawer/DrawerCard.vue';
-import LabeledSelect from '@shell/components/form/LabeledSelect';
+import { RcButton } from '@components/RcButton';
+import Drawer from '@shell/components/Drawer/Chrome';
+import DrawerCard from '@shell/components/Drawer/DrawerCard';
 import SortableTable from '@shell/components/SortableTable';
-import StateDot from '@shell/components/StateDot/index.vue';
-import Tabbed from '@shell/components/Tabbed/index.vue';
-import Tab from '@shell/components/Tabbed/Tab.vue';
+import StateDot from '@shell/components/StateDot';
+import Tabbed from '@shell/components/Tabbed';
+import Tab from '@shell/components/Tabbed/Tab';
 import YamlEditor, { EDITOR_MODES } from '@shell/components/YamlEditor';
 import { _VIEW } from '@shell/config/query-params';
 import { useT } from '../composables/useT';
+import ClusterChips from '../formatters/ClusterChips.vue';
+import { fleetBundleLink, fleetWorkspaces } from '../utils/rancher-links';
 import { phaseBadgeColor, phaseBadgeIcon, phaseColor, workloadStatusMessage } from '../utils/workload-status';
 import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
@@ -24,10 +26,12 @@ import type { ClusterInfo } from '../types/rancher-types';
 // AIWorkloads come from the operator API rather than a Steve model, so the
 // drawer's building blocks are reused here instead of the drawer itself.
 
+// Getters rather than values: the slide-in keeps the props it was opened with,
+// while the page keeps polling, so reading through these keeps the drawer live.
 const props = defineProps<{
-  workload:  AIWorkload;
-  blueprint: Blueprint | null;
-  clusters:  ClusterInfo[];
+  workload:  () => AIWorkload | undefined;
+  blueprint: () => Blueprint | null;
+  clusters:  () => ClusterInfo[];
 }>();
 
 // The page passes onManage through the slide-in props, so the footer action runs
@@ -38,31 +42,58 @@ const t = useT();
 
 // The panel is rendered by the shell's SlideInPanelManager, so closing it is a
 // store commit rather than an emit. This matches Rancher's Fleet detail drawer.
-const store = (getCurrentInstance()!.proxy as any)?.$store;
+const store = useStore();
 
 function close() {
-  store?.commit('slideInPanel/close');
+  store.commit('slideInPanel/close');
 }
 
-const w           = computed(() => props.workload);
+// The last known workload, so the body still renders while the panel slides
+// shut after the workload disappears (deleted elsewhere).
+const w = shallowRef(props.workload() as AIWorkload);
+
+watchEffect(() => {
+  const live = props.workload();
+
+  if (live) {
+    w.value = live;
+  } else {
+    close();
+  }
+});
+
+const blueprint = computed(() => props.blueprint());
+const clusters  = computed(() => props.clusters());
+
 const isBlueprint = computed(() => w.value.spec.source.sourceType === 'Blueprint');
 const displayName = computed(() => w.value.spec.displayName || w.value.metadata.name);
 const phase       = computed(() => w.value.status?.phase || 'Pending');
 
-const title = computed(() => store?.getters['i18n/t']?.('suseai.pages.workloads.detail.title', { name: displayName.value }) ||
-  `${ displayName.value } (AI Workload) - Details`);
+const title = computed(() => t('suseai.pages.workloads.detail.title', '{name} (AI Workload) - Details', { name: displayName.value }));
 
 const appSource   = computed(() => w.value.spec.source.app || null);
 const sourceName  = computed(() => (isBlueprint.value ? w.value.spec.source.blueprint?.name : appSource.value?.chartName) || '');
 const version     = computed(() => (isBlueprint.value ? w.value.spec.source.blueprint?.version : appSource.value?.chartVersion) || '');
-const description = computed(() => (isBlueprint.value ? props.blueprint?.spec.description?.trim() || '' : ''));
+const description = computed(() => (isBlueprint.value ? blueprint.value?.spec.description?.trim() || '' : ''));
 
-const targetClusters       = computed(() => w.value.spec.targetClusters || []);
-const targetClusterOptions = computed(() => targetClusters.value.map((id) => ({ label: clusterName(id), value: id })));
+const deployStrategy = computed(() => w.value.spec.deployStrategy || 'Helm');
+const targetClusters = computed(() => w.value.spec.targetClusters || []);
 
-const fleetBundles  = computed(() => w.value.spec.fleetBundleNames || []);
-const helmRelease   = computed(() => (isBlueprint.value ? '' : appSource.value?.release || ''));
-const hasUnderlying = computed(() => fleetBundles.value.length > 0 || !!helmRelease.value);
+// The operator records bundle names for every strategy, but Fleet bundles only
+// exist for the Fleet-based ones. A bundle lives in each workspace its targets
+// map to, so a mixed local + downstream target gets one link per workspace.
+const fleetBundles = computed(() => {
+  if (deployStrategy.value === 'Helm') {
+    return [];
+  }
+  const workspaces = fleetWorkspaces(targetClusters.value);
+
+  return (w.value.spec.fleetBundleNames || []).flatMap((name) => workspaces.map((workspace) => ({
+    key:   `${ workspace }/${ name }`,
+    label: workspaces.length > 1 ? `${ name } (${ workspace })` : name,
+    url:   fleetBundleLink(workspace, name),
+  })));
+});
 
 // Blueprint components switched off via componentValues[].enabled=false. The
 // operator doesn't deploy them, so they're listed but flagged as excluded.
@@ -70,18 +101,20 @@ const excludedNames = computed(() => new Set(
   (w.value.spec.componentValues || []).filter((override) => override.enabled === false).map((override) => override.componentName),
 ));
 
-const objectRows = computed(() => {
-  const components = props.blueprint?.spec.components || [];
-  const objects = isBlueprint.value ? components : (appSource.value ? [appSource.value] : []);
+// The release each component actually installed, as reported by the operator.
+const installedReleases = computed(() => new Map(
+  (w.value.status?.componentStatuses || []).filter((status) => status.releaseName).map((status) => [status.componentName, status.releaseName]),
+));
 
-  return objects.map((object, index) => ({
-    ...object,
-    excluded: isBlueprint.value && excludedNames.value.has(object.chartName),
-    _key:     `${ object.chartName }/${ object.chartVersion }/${ index }`,
-  }));
-});
+const componentRows = computed(() => (blueprint.value?.spec.components || []).map((component, index) => ({
+  ...component,
+  excluded:        excludedNames.value.has(component.chartName),
+  releaseName:     installedReleases.value.get(component.chartName) || component.releaseName || '',
+  targetNamespace: component.targetNamespace || w.value.spec.targetNamespace,
+  _key:            `${ component.chartName }/${ component.chartVersion }/${ index }`,
+})));
 
-const objectHeaders = computed(() => [
+const componentHeaders = computed(() => [
   {
     name:  'chartName',
     label: t('suseai.wizard.labels.chart', 'Chart'),
@@ -96,6 +129,20 @@ const objectHeaders = computed(() => [
     dashIfEmpty: true,
   },
   {
+    name:        'releaseName',
+    label:       t('suseai.pages.workloads.detail.releaseName', 'Release Name'),
+    value:       'releaseName',
+    sort:        'releaseName',
+    dashIfEmpty: true,
+  },
+  {
+    name:        'targetNamespace',
+    label:       t('suseai.common.labels.namespace', 'Namespace'),
+    value:       'targetNamespace',
+    sort:        'targetNamespace',
+    dashIfEmpty: true,
+  },
+  {
     name:        'chartRepo',
     label:       t('suseai.wizard.labels.repository', 'Repository'),
     value:       'chartRepo',
@@ -104,16 +151,97 @@ const objectHeaders = computed(() => [
   },
 ]);
 
-// Only overrides that actually set values are worth showing, and an excluded
-// component's values never deploy, so they're left out too.
-const overrides = computed(() => (w.value.spec.componentValues || []).filter((override) => override.enabled !== false &&
-  override.values && Object.keys(override.values).length > 0,
-));
+// One editor per deployed component. A component without overrides shows the
+// Blueprint's defaults, so the tab always reflects what the workload runs with.
+// Excluded components never deploy, so they're left out.
+const valueSections = computed(() => {
+  const overrides = new Map((w.value.spec.componentValues || [])
+    .filter((override) => override.enabled !== false && override.values && Object.keys(override.values).length > 0)
+    .map((override) => [override.componentName, override.values || {}]));
+
+  if (!isBlueprint.value || !blueprint.value) {
+    return [...overrides].map(([name, values]) => ({ name, values, customized: true }));
+  }
+
+  return blueprint.value.spec.components
+    .filter((component) => !excludedNames.value.has(component.chartName))
+    .map((component) => {
+      const custom = overrides.get(component.chartName);
+
+      return {
+        name: component.chartName, values: custom || component.values || {}, customized: !!custom
+      };
+    })
+    .filter((section) => Object.keys(section.values).length > 0);
+});
 
 const clusterStatuses   = computed(() => w.value.status?.clusterStatuses || []);
 const readyMessage      = computed(() => workloadStatusMessage(w.value));
-const hasStatus         = computed(() => clusterStatuses.value.length > 0 || !!readyMessage.value);
 const statusBannerColor = computed(() => (phase.value === 'Failed' ? 'error' : 'warning'));
+
+const componentStatuses = computed(() => (w.value.status?.componentStatuses || []).map((status) => ({
+  ...status,
+  _key: `${ status.componentName }/${ status.clusterId }`,
+})));
+
+// A finished operation is history; only in-flight or failed ones need attention.
+const activeOperation      = computed(() => {
+  const operation = w.value.status?.activeOperation;
+
+  return operation && operation.state !== 'Succeeded' ? operation : null;
+});
+const operationBannerColor = computed(() => {
+  switch (activeOperation.value?.state) {
+  case 'Failed': return 'error';
+  case 'Superseded': return 'warning';
+  default: return 'info';
+  }
+});
+
+const hasStatus = computed(() => !!readyMessage.value || !!activeOperation.value || componentStatuses.value.length > 0 || clusterStatuses.value.length > 0);
+
+const componentStatusHeaders = computed(() => [
+  {
+    name:  'componentName',
+    label: t('suseai.pages.workloads.detail.component', 'Component'),
+    value: 'componentName',
+    sort:  ['componentName', 'clusterId'],
+  },
+  {
+    name:        'releaseName',
+    label:       t('suseai.pages.workloads.detail.releaseName', 'Release Name'),
+    value:       'releaseName',
+    sort:        'releaseName',
+    dashIfEmpty: true,
+  },
+  {
+    name:  'clusterId',
+    label: t('suseai.common.labels.cluster', 'Cluster'),
+    value: 'clusterId',
+    sort:  'clusterId',
+  },
+  {
+    name:  'phase',
+    label: t('suseai.common.labels.status', 'Status'),
+    value: 'phase',
+    sort:  'phase',
+    width: 150,
+  },
+  {
+    name:        'installedVersion',
+    label:       t('suseai.common.labels.version', 'Version'),
+    value:       'installedVersion',
+    sort:        'installedVersion',
+    dashIfEmpty: true,
+  },
+  {
+    name:        'message',
+    label:       t('suseai.pages.workloads.detail.message', 'Message'),
+    value:       'message',
+    sort:        'message',
+    dashIfEmpty: true,
+  },
+]);
 
 const statusHeaders = computed(() => [
   {
@@ -137,18 +265,6 @@ const statusHeaders = computed(() => [
     dashIfEmpty: true,
   },
 ]);
-
-// Items from a typed list come back without apiVersion/kind; fill them in so
-// the YAML tab reads like `kubectl get -o yaml`.
-const workloadObject = computed(() => {
-  const { apiVersion, kind, ...rest } = w.value;
-
-  return {
-    apiVersion: apiVersion || 'ai-factory.suse.com/v1alpha1',
-    kind:       kind || 'AIWorkload',
-    ...rest,
-  };
-});
 
 // Manage is the equivalent of Rancher's "Edit Config". Mirrors the row's Manage
 // button: an App workload must be Running, and a Blueprint workload can't have an
@@ -176,7 +292,7 @@ function refreshValuesEditors() {
 }
 
 function clusterName(clusterId: string): string {
-  return props.clusters.find((cluster) => cluster.id === clusterId)?.name || clusterId;
+  return clusters.value.find((cluster) => cluster.id === clusterId)?.name || clusterId;
 }
 </script>
 
@@ -301,7 +417,7 @@ function clusterName(clusterId: string): string {
                 <div class="row mb-20">
                   <div class="col span-4">
                     <LabeledInput
-                      :value="w.spec.deployStrategy || 'Helm'"
+                      :value="deployStrategy"
                       :mode="_VIEW"
                       :label="t('suseai.pages.workloads.detail.deployStrategy', 'Deploy Strategy')"
                     />
@@ -315,55 +431,58 @@ function clusterName(clusterId: string): string {
                   </div>
                 </div>
                 <div class="row mb-20">
-                  <div class="col span-12">
-                    <LabeledSelect
-                      :value="targetClusters"
-                      :options="targetClusterOptions"
-                      :multiple="true"
-                      :mode="_VIEW"
-                      :label="t('suseai.pages.workloads.detail.targetClusters', 'Target Clusters')"
+                  <div
+                    class="col span-12"
+                    data-testid="target-clusters"
+                  >
+                    <label class="field-label">{{ t('suseai.pages.workloads.detail.targetClusters', 'Target Clusters') }}</label>
+                    <ClusterChips
+                      v-if="targetClusters.length"
+                      :clusters="targetClusters"
+                      :cluster-info="clusters"
+                      :show-label="false"
                     />
+                    <span
+                      v-else
+                      class="text-muted"
+                    >&mdash;</span>
                   </div>
                 </div>
 
-                <template v-if="hasUnderlying">
+                <template v-if="fleetBundles.length">
                   <h3>{{ t('suseai.pages.workloads.detail.underlyingResources', 'Underlying Resources') }}</h3>
                   <div class="row">
                     <div
-                      v-if="fleetBundles.length"
-                      class="col span-8"
+                      class="col span-12"
+                      data-testid="fleet-bundles"
                     >
-                      <LabeledSelect
-                        :value="fleetBundles"
-                        :options="fleetBundles"
-                        :multiple="true"
-                        :mode="_VIEW"
-                        :label="t('suseai.pages.workloads.detail.fleetBundles', 'Fleet Bundles')"
-                      />
-                    </div>
-                    <div
-                      v-if="helmRelease"
-                      class="col span-4"
-                    >
-                      <LabeledInput
-                        :value="helmRelease"
-                        :mode="_VIEW"
-                        :label="t('suseai.pages.workloads.detail.helmRelease', 'Helm Release')"
-                      />
+                      <label class="field-label">{{ t('suseai.pages.workloads.detail.fleetBundles', 'Fleet Bundles') }}</label>
+                      <ul class="resource-links">
+                        <li
+                          v-for="bundle in fleetBundles"
+                          :key="bundle.key"
+                        >
+                          <router-link :to="bundle.url">
+                            {{ bundle.label }}
+                          </router-link>
+                        </li>
+                      </ul>
                     </div>
                   </div>
                 </template>
               </Tab>
 
+              <!-- An App workload is a single chart, already shown under General. -->
               <Tab
+                v-if="isBlueprint"
                 name="applications"
                 :label="t('suseai.wizard.labels.applications', 'Applications')"
                 :weight="2"
               >
                 <SortableTable
-                  v-if="objectRows.length"
-                  :headers="objectHeaders"
-                  :rows="objectRows"
+                  v-if="componentRows.length"
+                  :headers="componentHeaders"
+                  :rows="componentRows"
                   key-field="_key"
                   default-sort-by="chartName"
                   :table-actions="false"
@@ -389,26 +508,46 @@ function clusterName(clusterId: string): string {
               </Tab>
 
               <Tab
-                v-if="overrides.length"
                 name="values"
                 :label="t('suseai.pages.workloads.detail.tabs.values', 'Values')"
                 :weight="1"
                 @active="refreshValuesEditors"
               >
+                <Banner
+                  class="mt-0"
+                  color="info"
+                >
+                  {{ t('suseai.pages.workloads.detail.plaintextNotice', 'Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.') }}
+                </Banner>
                 <div
-                  v-for="(override, index) in overrides"
-                  :key="override.componentName"
+                  v-for="(section, index) in valueSections"
+                  :key="section.name"
                   :class="{ 'mt-20': index > 0 }"
                 >
-                  <h3>{{ override.componentName }}</h3>
+                  <h3>
+                    {{ section.name }}
+                    <BadgeState
+                      v-if="isBlueprint"
+                      class="ml-5"
+                      :color="section.customized ? 'bg-info' : 'badge-disabled'"
+                      :label="section.customized ? t('suseai.wizard.labels.customized', 'Customized') : t('suseai.pages.workloads.detail.blueprintDefaults', 'Blueprint defaults')"
+                    />
+                  </h3>
                   <YamlEditor
                     ref="valuesEditors"
-                    :value="override.values"
+                    class="code-card"
+                    :value="section.values"
                     :as-object="true"
                     :editor-mode="EDITOR_MODES.VIEW_CODE"
                     :mode="_VIEW"
                   />
                 </div>
+                <p
+                  v-if="!valueSections.length"
+                  class="text-muted"
+                >
+                  {{ t('suseai.pages.workloads.detail.noValues', 'No custom values are set; the chart defaults are used.') }}
+                </p>
               </Tab>
             </Tabbed>
           </DrawerCard>
@@ -428,46 +567,88 @@ function clusterName(clusterId: string): string {
             >
               {{ readyMessage }}
             </Banner>
-            <SortableTable
-              v-if="clusterStatuses.length"
-              :headers="statusHeaders"
-              :rows="clusterStatuses"
-              key-field="clusterId"
-              default-sort-by="clusterId"
-              :table-actions="false"
-              :row-actions="false"
-              :search="false"
+            <Banner
+              v-if="activeOperation"
+              class="mt-0"
+              :color="operationBannerColor"
+              data-testid="active-operation"
             >
-              <template #cell:clusterId="{ row }">
-                <div>{{ clusterName(row.clusterId) }}</div>
-                <div
-                  v-if="clusterName(row.clusterId) !== row.clusterId"
-                  class="text-muted text-small"
-                >
-                  {{ row.clusterId }}
-                </div>
-              </template>
-              <template #cell:phase="{ row }">
-                <BadgeState
-                  :color="phaseBadgeColor(row.phase)"
-                  :icon="phaseBadgeIcon(row.phase)"
-                  :label="row.phase"
-                />
-              </template>
-            </SortableTable>
+              {{ t('suseai.pages.workloads.detail.operation', '{type}: {state}', { type: activeOperation.type, state: activeOperation.state }) }}<span v-if="activeOperation.reason"> ({{ activeOperation.reason }})</span>
+            </Banner>
+
+            <template v-if="componentStatuses.length">
+              <h3>{{ t('suseai.pages.workloads.detail.components', 'Components') }}</h3>
+              <SortableTable
+                class="mb-20"
+                :headers="componentStatusHeaders"
+                :rows="componentStatuses"
+                key-field="_key"
+                default-sort-by="componentName"
+                :table-actions="false"
+                :row-actions="false"
+                :search="false"
+              >
+                <template #cell:clusterId="{ row }">
+                  {{ clusterName(row.clusterId) }}
+                </template>
+                <template #cell:phase="{ row }">
+                  <BadgeState
+                    :color="phaseBadgeColor(row.phase)"
+                    :icon="phaseBadgeIcon(row.phase)"
+                    :label="row.phase"
+                  />
+                </template>
+              </SortableTable>
+            </template>
+
+            <template v-if="clusterStatuses.length">
+              <h3>{{ t('suseai.pages.workloads.detail.clusters', 'Clusters') }}</h3>
+              <SortableTable
+                :headers="statusHeaders"
+                :rows="clusterStatuses"
+                key-field="clusterId"
+                default-sort-by="clusterId"
+                :table-actions="false"
+                :row-actions="false"
+                :search="false"
+              >
+                <template #cell:clusterId="{ row }">
+                  <div>{{ clusterName(row.clusterId) }}</div>
+                  <div
+                    v-if="clusterName(row.clusterId) !== row.clusterId"
+                    class="text-muted text-small"
+                  >
+                    {{ row.clusterId }}
+                  </div>
+                </template>
+                <template #cell:phase="{ row }">
+                  <BadgeState
+                    :color="phaseBadgeColor(row.phase)"
+                    :icon="phaseBadgeIcon(row.phase)"
+                    :label="row.phase"
+                  />
+                </template>
+              </SortableTable>
+            </template>
           </DrawerCard>
         </Tab>
 
         <Tab
           name="yaml-tab"
-          class="yaml-tab"
           :label="t('suseai.pages.workloads.detail.tabs.yaml', 'YAML')"
           :weight="1"
           @active="refreshYamlEditor"
         >
+          <Banner
+            class="mt-0"
+            color="info"
+          >
+            {{ t('suseai.pages.workloads.detail.plaintextNotice', 'Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.') }}
+          </Banner>
           <YamlEditor
             ref="yamlEditor"
-            :value="workloadObject"
+            class="code-card"
+            :value="w"
             :as-object="true"
             :editor-mode="EDITOR_MODES.VIEW_CODE"
             :mode="_VIEW"
@@ -491,7 +672,7 @@ function clusterName(clusterId: string): string {
 
 <style lang="scss" scoped>
 // Same card treatment the shell's ResourceDetailDrawer YamlTab gives its editor.
-.yaml-tab {
+.code-card {
   :deep() .codemirror-container {
     background-color: var(--body-bg);
     border-radius: var(--border-radius-md);
@@ -501,5 +682,21 @@ function clusterName(clusterId: string): string {
       background-color: var(--body-bg);
     }
   }
+}
+
+// Label for read-only fields that hold links/chips rather than a LabeledInput.
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--input-label);
+}
+
+.resource-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 </style>

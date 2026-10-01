@@ -265,10 +265,17 @@ suseai:
         targetClusters: Target Clusters
         underlyingResources: Underlying Resources
         fleetBundles: Fleet Bundles
-        helmRelease: Helm Release
         noBlueprint: Blueprint details are not available for this workload.
+        noValues: No custom values are set; the chart defaults are used.
+        blueprintDefaults: Blueprint defaults
+        plaintextNotice: Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.
+        components: Components
+        component: Component
+        clusters: Clusters
+        operation: '{type}: {state}'
         message: Message
         manage: Manage
+        open: Show details
     blueprints:
       catalog:
         all: All catalogs

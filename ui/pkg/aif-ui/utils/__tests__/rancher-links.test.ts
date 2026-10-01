@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { namespaceLink, appLink, workloadTargetClusters, workloadRancherLinks } from '../rancher-links';
+import { namespaceLink, appLink, fleetBundleLink, fleetWorkspaces, workloadTargetClusters, workloadRancherLinks } from '../rancher-links';
 import type { AIWorkload } from '../../types/aiworkload-types';
 import type { ClusterInfo } from '../../types/rancher-types';
 
@@ -16,6 +16,20 @@ describe('rancher URL builders', () => {
   it('encodes path segments', () => {
     expect(namespaceLink('c/m', 'ns space')).toBe('/c/c%2Fm/explorer/namespace/ns%20space');
     expect(appLink('local', 'a/b', 'r@1')).toBe('/c/local/apps/catalog.cattle.io.app/a%2Fb/r%401');
+  });
+
+  it('builds a Fleet bundle detail path', () => {
+    expect(fleetBundleLink('fleet-default', 'w1-ollama'))
+      .toBe('/c/_/fleet/fleet.cattle.io.bundle/fleet-default/w1-ollama');
+  });
+});
+
+describe('fleetWorkspaces', () => {
+  it('maps local to fleet-local and downstream clusters to fleet-default', () => {
+    expect(fleetWorkspaces(['local'])).toEqual(['fleet-local']);
+    expect(fleetWorkspaces(['c-m-1', 'c-m-2'])).toEqual(['fleet-default']);
+    expect(fleetWorkspaces(['local', 'c-m-1'])).toEqual(['fleet-local', 'fleet-default']);
+    expect(fleetWorkspaces([])).toEqual([]);
   });
 });
 

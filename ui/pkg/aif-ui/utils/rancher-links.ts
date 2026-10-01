@@ -12,6 +12,20 @@ export function appLink(clusterId: string, namespace: string, release: string): 
   return `/c/${ encodeURIComponent(clusterId) }/apps/catalog.cattle.io.app/${ encodeURIComponent(namespace) }/${ encodeURIComponent(release) }`;
 }
 
+export function fleetBundleLink(workspace: string, bundle: string): string {
+  return `/c/_/fleet/fleet.cattle.io.bundle/${ encodeURIComponent(workspace) }/${ encodeURIComponent(bundle) }`;
+}
+
+// The Fleet workspaces a workload's bundles live in, mirroring the operator:
+// fleet-local serves the management cluster, fleet-default every downstream
+// cluster, and a mixed target gets a same-named bundle in each.
+export function fleetWorkspaces(clusterIds: string[]): string[] {
+  return [
+    ...(clusterIds.includes('local') ? ['fleet-local'] : []),
+    ...(clusterIds.some(id => id !== 'local') ? ['fleet-default'] : []),
+  ];
+}
+
 export interface RancherLinkTarget {
   clusterId:   string;
   clusterName: string;

@@ -8,7 +8,8 @@ import { checkOperatorConnection, getConnectionError } from '../utils/operator-c
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import { listAIWorkloads }           from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, latestVersion } from '../utils/blueprint-api';
-import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
+import { phaseBadgeColor, phaseBadgeIcon } from '../utils/workload-status';
+import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint }                   from '../types/blueprint-types';
 import { PRODUCT, PAGE_TYPES }              from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
@@ -66,24 +67,6 @@ const activeBlueprintList = computed(() => {
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function phaseBadgeColor(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'bg-success';
-    case 'Degraded': return 'bg-warning';
-    case 'Failed':   return 'bg-error';
-    default:         return 'bg-info';
-  }
-}
-
-function phaseBadgeIcon(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'icon-checkmark';
-    case 'Degraded': return 'icon-warning';
-    case 'Failed':   return 'icon-x';
-    default:         return 'icon-info';
-  }
-}
-
 function workloadSourceLabel(w: AIWorkload): string {
   if (w.spec.source.sourceType === 'App') return w.spec.source.app?.chartName || '—';
   return `${ w.spec.source.blueprint?.name || '—' } v${ w.spec.source.blueprint?.version || '' }`;

@@ -61,8 +61,7 @@ function workloadNamespaces(w: AIWorkload): string[] {
   const set = new Set<string>();
   if (base) set.add(base);
   if (w.spec.source.sourceType === 'Blueprint' && w.spec.source.blueprint) {
-    const family = groupBlueprintsByFamily(blueprints.value).get(w.spec.source.blueprint.name);
-    const bp = family?.find(b => b.spec.version === w.spec.source.blueprint!.version);
+    const bp = findBlueprint(blueprints.value, w.spec.source.blueprint.name, w.spec.source.blueprint.version);
     for (const c of bp?.spec.components || []) {
       set.add(c.targetNamespace || base);
     }
@@ -115,22 +114,32 @@ const upgradeError = ref<string | null>(null);
 const shell = useShell();
 
 function openDetailPanel(w: AIWorkload) {
-  const blueprint = w.spec.source.sourceType === 'Blueprint'
-    ? findBlueprint(
-      blueprints.value,
-      w.spec.source.blueprint?.name || '',
-      w.spec.source.blueprint?.version || '',
-    )
-    : null;
+  const key = wlKey(w);
+  // The slide-in keeps the props it was opened with, while this page swaps in
+  // fresh objects on every poll. Getters let the drawer read the live workload
+  // (undefined once it's gone) instead of a snapshot.
+  const live = () => workloads.value.find(x => wlKey(x) === key);
 
   shell.slideIn.open(AIWorkloadDetailPanel, {
     props: {
-      workload:  w,
-      blueprint,
-      clusters:  clusters.value,
+      workload:  live,
+      blueprint: () => {
+        const source = live()?.spec.source;
+
+        return source?.sourceType === 'Blueprint'
+          ? findBlueprint(blueprints.value, source.blueprint?.name || '', source.blueprint?.version || '')
+          : null;
+      },
+      clusters: () => clusters.value,
       // Listener for the drawer's footer Manage action, which closes the drawer
       // itself. Same target as the row's Manage button for each source type.
-      onManage:  () => (w.spec.source.sourceType === 'App' ? onManage(w) : onCustomize(w)),
+      onManage: () => {
+        const current = live();
+
+        if (!current) return;
+        if (current.spec.source.sourceType === 'App') onManage(current);
+        else onCustomize(current);
+      },
     },
     width:              'wide',
     height:             'full',
@@ -494,7 +503,12 @@ async function doRetry(w: AIWorkload) {
 
                 <!-- Name -->
                 <td class="col-name">
-                  <div class="name-primary">{{ w.metadata.name }}</div>
+                  <a
+                    href="#"
+                    class="name-primary"
+                    :title="t('suseai.pages.workloads.detail.open', 'Show details')"
+                    @click.prevent="openDetailPanel(w)"
+                  >{{ w.metadata.name }}</a>
                 </td>
 
                 <!-- Namespace -->
@@ -542,14 +556,6 @@ async function doRetry(w: AIWorkload) {
                 <!-- Actions -->
                 <td class="col-actions text-right">
                   <div class="btn-group">
-                    <button
-                      class="btn btn-sm role-secondary"
-                      @click="openDetailPanel(w)"
-                      type="button"
-                    >
-                      <i class="icon icon-info" />
-                      Details
-                    </button>
                     <!-- Open in Rancher (type-aware) -->
                     <RancherLinkCell
                       :link="linksFor(w).primary"
@@ -843,7 +849,8 @@ async function doRetry(w: AIWorkload) {
 
 // Name column
 .col-name {
-  .name-primary { font-weight: 600; color: var(--body-text); }
+  // Rendered as a link (theme link colour) that opens the detail drawer.
+  .name-primary { font-weight: 600; }
 }
 
 // Source column

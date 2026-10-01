@@ -34,6 +34,11 @@ describe('findBlueprint', () => {
     expect(findBlueprint(items, 'does-not-exist', '1.0.0')).toBeNull();
   });
 
+  it('matches unlabelled CRs by their slugified display name', () => {
+    const unlabelled = { ...bp('x', '3.0.0'), metadata: { name: 'custom' }, spec: { displayName: 'My Custom BP', version: '3.0.0', components: [] } } as Blueprint;
+    expect(findBlueprint([unlabelled], 'my-custom-bp', '3.0.0')).toBe(unlabelled);
+  });
+
   it('returns null for empty list or missing args', () => {
     expect(findBlueprint([], 'x', '1.0.0')).toBeNull();
     expect(findBlueprint(items, '', '1.0.0')).toBeNull();
