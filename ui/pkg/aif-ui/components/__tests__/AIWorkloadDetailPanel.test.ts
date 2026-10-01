@@ -111,10 +111,12 @@ function setup(initial: AIWorkload, bp: Blueprint | null = null) {
       // Rancher's global t(); a globalProperty, so the panel's own t still wins.
       plugins: [{
         install: (app) => {
-          app.config.globalProperties.t = translate;
+          // The shell also types an options-object overload, which the panel never uses.
+          app.config.globalProperties.t = translate as unknown as typeof app.config.globalProperties.t;
           // The shell's form fields inject a formSummary Symbol it doesn't export,
           // so there's no way to provide it; drop just that warning.
           app.config.warnHandler = (msg, _instance, trace) => {
+            // eslint-disable-next-line no-console
             if (!msg.includes('formSummary')) console.warn(`[Vue warn]: ${ msg }${ trace }`);
           };
         },
