@@ -663,39 +663,6 @@ func TestSettingsController_WiresWellKnownSecretsAndCreatesClusterRepos(t *testi
 	if pubSecret, found, _ := unstructured.NestedString(pubRepo.Object, "spec", "clientSecret", "name"); found && pubSecret != "" {
 		t.Errorf("public nvidia ClusterRepo must be anonymous, got clientSecret = %q", pubSecret)
 	}
-
-	// OpenShell is a public OCI repo created anonymously (no clientSecret). With no
-	// registryEndpoints.openshell mirror configured (connected mode), it points at
-	// the public ghcr.io default.
-	openshellRepo := &unstructured.Unstructured{}
-	openshellRepo.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
-	})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoOpenshell}, openshellRepo); err != nil {
-		t.Fatalf("expected openshell ClusterRepo: %v", err)
-	}
-	if osURL, _, _ := unstructured.NestedString(openshellRepo.Object, "spec", "url"); osURL != credentials.DefaultOpenshellURL {
-		t.Errorf("openshell ClusterRepo url = %q, want %q", osURL, credentials.DefaultOpenshellURL)
-	}
-	if osSecret, found, _ := unstructured.NestedString(openshellRepo.Object, "spec", "clientSecret", "name"); found && osSecret != "" {
-		t.Errorf("openshell ClusterRepo must be anonymous, got clientSecret = %q", osSecret)
-	}
-
-	// OpenShell Workspace is a sibling public OCI repo, also created anonymously
-	// and pointing at its public ghcr.io default in connected mode.
-	openshellWsRepo := &unstructured.Unstructured{}
-	openshellWsRepo.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo",
-	})
-	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.ClusterRepoOpenshellWorkspace}, openshellWsRepo); err != nil {
-		t.Fatalf("expected openshell-workspace ClusterRepo: %v", err)
-	}
-	if wsURL, _, _ := unstructured.NestedString(openshellWsRepo.Object, "spec", "url"); wsURL != credentials.DefaultOpenshellWorkspaceURL {
-		t.Errorf("openshell-workspace ClusterRepo url = %q, want %q", wsURL, credentials.DefaultOpenshellWorkspaceURL)
-	}
-	if wsSecret, found, _ := unstructured.NestedString(openshellWsRepo.Object, "spec", "clientSecret", "name"); found && wsSecret != "" {
-		t.Errorf("openshell-workspace ClusterRepo must be anonymous, got clientSecret = %q", wsSecret)
-	}
 }
 
 // registerClusterRepoTypes teaches the fake client about the unstructured
@@ -1296,44 +1263,6 @@ func TestSettingsController_AirGapUnauthenticatedMirrorCreated(t *testing.T) {
 	}
 }
 
-// The OpenShell repos are public and anonymous, but like the App Collection and
-// SUSE Registry repos their URL follows registryEndpoints. When
-// registryEndpoints.openshell is set (air-gap), both aliases point at the single
-// aggregate mirror instead of the public ghcr.io defaults, and stay anonymous.
-func TestSettingsController_AirGapRepointsOpenShellReposAtMirror(t *testing.T) {
-	s := newScheme(t)
-	registerClusterRepoTypes(s)
-	const ns = "aif-operator"
-	const mirrorURL = "oci://registry.internal/openshell"
-	cr := &aiplatformv1alpha1.Settings{
-		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
-		Spec: aiplatformv1alpha1.SettingsSpec{
-			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
-				OpenShell: mirrorURL,
-			},
-		},
-	}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr).
-		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
-
-	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
-	if _, err := r.Reconcile(context.Background(), reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
-	}); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
-	for _, name := range []string{credentials.ClusterRepoOpenshell, credentials.ClusterRepoOpenshellWorkspace} {
-		repo := getClusterRepo(t, c, name)
-		if url, _, _ := unstructured.NestedString(repo.Object, "spec", "url"); url != mirrorURL {
-			t.Errorf("air-gap %s URL = %q, want mirror %q", name, url, mirrorURL)
-		}
-		if sec, found, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name"); found && sec != "" {
-			t.Errorf("air-gap %s must stay anonymous, got clientSecret %q", name, sec)
-		}
-	}
-}
-
 func TestSettingsController_StampsManagedRepoLabel(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)
@@ -1464,5 +1393,356 @@ func TestSettingsController_AdoptionNeutralizesForeignSource(t *testing.T) {
 	}
 	if url, _, _ := unstructured.NestedString(nv.Object, "spec", "url"); url != credentials.DefaultNvidiaChartsURL {
 		t.Errorf("adopted repo url = %q, want %q", url, credentials.DefaultNvidiaChartsURL)
+	}
+}
+
+func TestReconcileCustomRepos_CreatesRepoAndAuth(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("secret123")},
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("robot")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{
+				{
+					Name: "acme",
+					Type: "helm",
+					URL:  "https://charts.acme.test/repo",
+					UserSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "acme-user",
+						Key:  "username",
+					},
+					TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "acme-token",
+						Key:  "token",
+					},
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, tokenSecret, userSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	repo := getClusterRepo(t, c, "acme")
+	labels := repo.GetLabels()
+	if labels[managedRepoLabel] != markerValueTrue {
+		t.Errorf("expected managed-repo=true, got labels=%v", labels)
+	}
+	if labels[credentials.CustomRepoLabel] != credentials.LabelValueTrue {
+		t.Errorf("expected custom-repo=true, got labels=%v", labels)
+	}
+	url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
+	if url != "https://charts.acme.test/repo" {
+		t.Errorf("url = %q, want https://charts.acme.test/repo", url)
+	}
+	secretName, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "name")
+	if secretName != credentials.CustomRepoAuthSecretName("acme") {
+		t.Errorf("clientSecret.name = %q, want %q", secretName, credentials.CustomRepoAuthSecretName("acme"))
+	}
+	secretNS, _, _ := unstructured.NestedString(repo.Object, "spec", "clientSecret", "namespace")
+	if secretNS != "cattle-system" {
+		t.Errorf("clientSecret.namespace = %q, want cattle-system", secretNS)
+	}
+
+	var authSec corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.CustomRepoAuthSecretName("acme"), Namespace: "cattle-system",
+	}, &authSec); err != nil {
+		t.Fatalf("expected auth secret in cattle-system: %v", err)
+	}
+	if string(authSec.Data["username"]) != "robot" {
+		t.Errorf("auth username = %q, want robot", string(authSec.Data["username"]))
+	}
+	if string(authSec.Data["password"]) != "secret123" {
+		t.Errorf("auth password = %q, want secret123", string(authSec.Data["password"]))
+	}
+}
+
+func TestReconcileCustomRepos_Git(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	sshSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "git-ssh", Namespace: ns},
+		Data:       map[string][]byte{"key": []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{
+				{
+					Name:      "git-charts",
+					Type:      "git",
+					GitRepo:   "git@github.com:example/charts.git",
+					GitBranch: "main",
+					SSHKeySecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "git-ssh",
+						Key:  "key",
+					},
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, sshSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	repo := getClusterRepo(t, c, "git-charts")
+	gitRepo, _, _ := unstructured.NestedString(repo.Object, "spec", "gitRepo")
+	if gitRepo != "git@github.com:example/charts.git" {
+		t.Errorf("gitRepo = %q, want git@github.com:example/charts.git", gitRepo)
+	}
+	gitBranch, _, _ := unstructured.NestedString(repo.Object, "spec", "gitBranch")
+	if gitBranch != "main" {
+		t.Errorf("gitBranch = %q, want main", gitBranch)
+	}
+	url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
+	if url != "" {
+		t.Errorf("url should be empty for git repo, got %q", url)
+	}
+}
+
+func TestReconcileCustomRepos_EditInPlace(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("secret123")},
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("robot")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{
+				{
+					Name: "acme",
+					Type: "helm",
+					URL:  "https://charts.acme.test/repo",
+					UserSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "acme-user",
+						Key:  "username",
+					},
+					TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "acme-token",
+						Key:  "token",
+					},
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, tokenSecret, userSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+
+	var updated aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	updated.Spec.CustomRepos[0].URL = "https://charts.acme.test/new-location"
+	if err := c.Update(context.Background(), &updated); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+
+	repo := getClusterRepo(t, c, "acme")
+	url, _, _ := unstructured.NestedString(repo.Object, "spec", "url")
+	if url != "https://charts.acme.test/new-location" {
+		t.Errorf("after edit, url = %q, want https://charts.acme.test/new-location", url)
+	}
+}
+
+func TestReconcileCustomRepos_Prune(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("secret123")},
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "acme-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("robot")},
+	}
+	appcoSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("user@suse.com"), "token": []byte("appco-token")},
+	}
+	suseRegistrySecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "suse-registry", Namespace: ns},
+		Data:       map[string][]byte{"user": []byte("user@suse.com"), "token": []byte("suse-token")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{
+				{
+					Name: "acme",
+					Type: "helm",
+					URL:  "https://charts.acme.test/repo",
+					UserSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "acme-user",
+						Key:  "username",
+					},
+					TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "acme-token",
+						Key:  "token",
+					},
+				},
+			},
+		},
+	}
+	predefinedRepo := &unstructured.Unstructured{}
+	predefinedRepo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	predefinedRepo.SetName(credentials.ClusterRepoApplicationCollection)
+	predefinedRepo.SetLabels(map[string]string{managedRepoLabel: markerValueTrue})
+
+	anotherPredefinedRepo := &unstructured.Unstructured{}
+	anotherPredefinedRepo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	anotherPredefinedRepo.SetName(credentials.ClusterRepoSUSERegistry)
+	anotherPredefinedRepo.SetLabels(map[string]string{managedRepoLabel: markerValueTrue})
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, tokenSecret, userSecret, appcoSecret, suseRegistrySecret, predefinedRepo, anotherPredefinedRepo).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+
+	_ = getClusterRepo(t, c, "acme")
+
+	var updated aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Name: credentials.SettingsName, Namespace: ns}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	updated.Spec.CustomRepos = nil
+	if err := c.Update(context.Background(), &updated); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+
+	customRepo := &unstructured.Unstructured{}
+	customRepo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "acme"}, customRepo); !apierrors.IsNotFound(err) {
+		t.Errorf("expected the acme ClusterRepo to be pruned, got err=%v", err)
+	}
+
+	var authSec corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: credentials.CustomRepoAuthSecretName("acme"), Namespace: "cattle-system",
+	}, &authSec); !apierrors.IsNotFound(err) {
+		t.Errorf("expected the acme auth secret to be pruned, got err=%v", err)
+	}
+
+	_ = getClusterRepo(t, c, credentials.ClusterRepoApplicationCollection)
+	_ = getClusterRepo(t, c, credentials.ClusterRepoSUSERegistry)
+}
+
+func TestReconcileCustomRepos_InvalidSkipped(t *testing.T) {
+	s := newScheme(t)
+	registerClusterRepoTypes(s)
+	const ns = "aif-operator"
+
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("secret123")},
+	}
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("robot")},
+	}
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{
+				{
+					Name: "",
+					Type: "helm",
+					URL:  "https://charts.invalid.test/repo",
+				},
+				{
+					Name: "valid",
+					Type: "helm",
+					URL:  "https://charts.valid.test/repo",
+					UserSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "valid-user",
+						Key:  "username",
+					},
+					TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{
+						Name: "valid-token",
+						Key:  "token",
+					},
+				},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, tokenSecret, userSecret).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+
+	r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+	}); err != nil {
+		t.Fatalf("reconcile should not fail on invalid entry: %v", err)
+	}
+
+	custom := &unstructured.UnstructuredList{}
+	custom.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepoList"})
+	if err := c.List(context.Background(), custom, client.MatchingLabels{credentials.CustomRepoLabel: credentials.LabelValueTrue}); err != nil {
+		t.Fatalf("list custom ClusterRepos: %v", err)
+	}
+	if len(custom.Items) != 1 || custom.Items[0].GetName() != "valid" {
+		names := make([]string, 0, len(custom.Items))
+		for _, item := range custom.Items {
+			names = append(names, item.GetName())
+		}
+		t.Errorf("custom ClusterRepos = %v, want only [valid]: the invalid entry must not be created", names)
 	}
 }

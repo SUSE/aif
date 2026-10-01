@@ -29,15 +29,21 @@ import (
 	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credcheck"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 var probeChartFn = credcheck.ProbeChart
+
+const targetCustomRepo = "customRepo"
 
 type chartAccessConfiguration struct {
 	URL               string                           `json:"url"`
 	UserSecretRef     *aiplatformv1alpha1.SecretKeyRef `json:"userSecretRef"`
 	TokenSecretRef    *aiplatformv1alpha1.SecretKeyRef `json:"tokenSecretRef"`
 	CABundleSecretRef *aiplatformv1alpha1.SecretKeyRef `json:"caBundleSecretRef"`
+	// Name identifies the saved custom repo the form edits, if any; it decides
+	// whether the probe may reach private addresses.
+	Name string `json:"name,omitempty"`
 }
 
 type chartAccessRequest struct {
@@ -70,6 +76,15 @@ func (h *SettingsHandler) validateChartAccess(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	if req.Target == targetCustomRepo {
+		// Only a saved custom repo may be reached on a private address; see
+		// validateCustomRepo. An unreadable Settings CR means nothing is saved.
+		var s aiplatformv1alpha1.Settings
+		_ = h.client.Get(ctx, types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &s)
+		if !isSavedCustomRepo(&s, req.Configuration.Name, req.Configuration.URL) {
+			ctx = credcheck.DenyPrivateNetworks(ctx)
+		}
+	}
 	user, password, caPEM, configReason := h.chartProbeCredentials(ctx, req.Configuration)
 	results := make([]credcheck.ChartResult, len(sources))
 	var wg sync.WaitGroup
@@ -93,10 +108,20 @@ func (h *SettingsHandler) validateChartAccess(w http.ResponseWriter, r *http.Req
 			if source.authenticated {
 				u, p = user, password
 			}
+			if source.chart == "" {
+				results[i] = credcheck.ChartResult{RepositoryURL: source.url, ChartName: "", Status: "skipped", Reason: "noSampleChart"}
+				return
+			}
 			results[i] = probeChartFn(ctx, source.url, source.chart, u, p, caPEM)
 		}()
 	}
 	wg.Wait()
+	// As in validateCredentials: a failed probe's latency is a port-scan oracle.
+	for i := range results {
+		if results[i].Status == statusError {
+			results[i].LatencyMs = 0
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
@@ -143,6 +168,19 @@ func chartProbeSources(req chartAccessRequest) ([]chartProbeSource, error) {
 		if chart == "" {
 			chart = representativeChart(endpoint, "aiq-aira")
 		}
+	case targetCustomRepo:
+		if endpoint == "" {
+			return nil, fmt.Errorf("%w: custom repository URL is required", ErrInvalidInput)
+		}
+		if reason := unsafeProbeTarget(endpoint); reason != "" {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidInput, reason)
+		}
+		if chart == "" {
+			// Chart access is optional for custom repos: with no sample chart there
+			// is nothing to probe. Surface a skipped result rather than an error.
+			return []chartProbeSource{{url: endpoint, chart: "", authenticated: true}}, nil
+		}
+		return []chartProbeSource{{url: endpoint, chart: chart, authenticated: true}}, nil
 	default:
 		return nil, fmt.Errorf("%w: unknown chart registry target", ErrInvalidInput)
 	}

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { browserSafeCatalogLogo, resolveCatalogLogo, onCatalogLogoError } from '../catalog-logo';
+import {
+  browserSafeCatalogLogo, browserSafeBlueprintIcon, resolveCatalogLogo, onCatalogLogoError,
+} from '../catalog-logo';
 
 const ollama = { library: 'suse-ai', slug_name: 'ollama' };
 const inline = 'data:image/png;base64,iVBORw0KGgo=';
@@ -132,5 +134,58 @@ describe('bundled logo manifest', () => {
       expect(png.readUInt32BE(20), `image ${index} height`).toBeGreaterThan(0);
       expect(png.readUInt32BE(20), `image ${index} height`).toBeLessThanOrEqual(128);
     }
+  });
+});
+
+describe('browserSafeBlueprintIcon', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+
+  it.each([
+    png,
+    'data:image/webp;base64,UklGRiQAAABXRUJQ',
+    'https://raw.githubusercontent.com/SUSE/partner-blueprints/main/partners/acme/logo.png',
+    'https://cdn.partner.example.com/logo.svg',
+    'https://partner.example.com:8443/logo.png?v=2',
+    'https://partner.example.com./logo.png',
+  ])('accepts %s', (value) => {
+    expect(browserSafeBlueprintIcon(value)).toBe(value);
+  });
+
+  it.each([
+    undefined,
+    '',
+    '   ',
+    'http://partner.example.com/logo.png',
+    'https://',
+    'https:///logo.png',
+    'https://10.0.0.1/logo.png',
+    'https://169.254.169.254/latest/meta-data/',
+    'https://2130706433/logo.png',
+    'https://[::1]/logo.png',
+    'https://localhost/logo.png',
+    'https://localhost./logo.png',
+    'https://app.localhost/logo.png',
+    'https://printer.local/logo.png',
+    'https://api.default.svc.cluster.local/logo.png',
+    'https://kubernetes.default.svc/logo.png',
+    'https://metadata.google.internal/computeMetadata/v1/',
+    'https://metadata.google.internal./computeMetadata/v1/',
+    'https://intranet/logo.png',
+    'https://partner.example.com/a b.png',
+    'https://partner.example.com/a"onerror="x.png',
+    ' https://partner.example.com/logo.png',
+    'DATA:IMAGE/PNG;base64,iVBORw0KGgo=',
+    'data:image/svg+xml;base64,PHN2Zy8+',
+    'data:text/html;base64,PHNjcmlwdD4=',
+    'javascript:alert(1)',
+    '//partner.example.com/logo.png',
+    '/assets/logo.png',
+    'https://localhost../logo.png',
+    'https://metadata.google.internal../computeMetadata/v1/',
+    'data:image/PNG;base64,iVBORw0KGgo=',
+    'data:image/png;BASE64,iVBORw0KGgo=',
+    `data:image/png;base64,${ 'A'.repeat(16384) }`,
+  ])('rejects %s', (value) => {
+    expect(browserSafeBlueprintIcon(value)).toBeUndefined();
   });
 });

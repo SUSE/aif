@@ -83,6 +83,7 @@ type clusterRepoInfo struct {
 	Commit         string   // git repos only: status.commit, the indexed revision
 	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
 	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
+	Custom         bool     // repo carries the custom-repo marker label (admin-defined ClusterRepo)
 }
 
 // reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
@@ -363,19 +364,18 @@ func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alph
 	return vals, nil
 }
 
-// ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
 // ociChartRef builds the OCI chart reference a Fleet HelmOp pulls from. Fleet
 // treats helm.repo as the full OCI chart path and appends the version tag, so
 // the operator hands it "<registry>/<namespace>/<chart>". A namespace-style OCI
-// repo needs the chart name appended — e.g. App Collection's
-// oci://dp.apps.rancher.io/charts + chart "milvus" -> .../charts/milvus.
+// repo needs the chart name appended, e.g. oci://registry.example.com/charts
+// with chart "app" -> oci://registry.example.com/charts/app.
 //
 // Some publishers instead give each chart its own OCI repository, so the
-// ClusterRepo URL already terminates at the chart (e.g. OpenShell's
-// oci://ghcr.io/nvidia/openshell/helm-chart, whose Chart.yaml name is
-// "helm-chart"). Blindly appending the chart name there doubles the trailing
-// segment (.../helm-chart/helm-chart) and the pull is denied. Skip the append
-// when the URL already ends in the chart segment so both layouts resolve.
+// ClusterRepo URL already terminates at the chart (e.g.
+// oci://registry.example.com/project/app with chart "app"). Blindly appending
+// the chart name there doubles the trailing segment (.../app/app) and the pull
+// is denied. Skip the append when the URL already ends in the chart segment so
+// both layouts resolve.
 func ociChartRef(repoURL, chartName string) string {
 	trimmed := strings.TrimSuffix(repoURL, "/")
 	if chartName == "" || strings.HasSuffix(trimmed, "/"+chartName) {
@@ -384,6 +384,19 @@ func ociChartRef(repoURL, chartName string) string {
 	return trimmed + "/" + chartName
 }
 
+// setHelmChartSource points a HelmOp helm spec at its chart. An HTTP repo takes
+// the repo URL plus a chart name; an OCI repo takes the full chart reference
+// in repo alone (see ociChartRef).
+func setHelmChartSource(helmSpec map[string]any, repoURL, chartName string, isOCI bool) {
+	if isOCI {
+		helmSpec["repo"] = ociChartRef(repoURL, chartName)
+		return
+	}
+	helmSpec["repo"] = repoURL
+	helmSpec["chart"] = chartName
+}
+
+// ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
 func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
@@ -434,12 +447,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// belong to whichever workload uses them.
 		"takeOwnership": true,
 	}
-	if !isOCI {
-		helmSpec["repo"] = repoInfo.URL
-		helmSpec["chart"] = c.ChartName
-	} else {
-		helmSpec["repo"] = ociChartRef(repoInfo.URL, c.ChartName)
-	}
+	setHelmChartSource(helmSpec, repoInfo.URL, c.ChartName, isOCI)
 	vals, err := resolveComponentValues(w, c)
 	if err != nil {
 		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
@@ -448,7 +456,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// blueprint component override the workload-level TargetNamespace. The
 	// injector and the HelmOp's defaultNamespace below both consume this.
 	ns := componentNamespace(w, c)
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -735,6 +743,29 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 	}
 }
 
+// injectorForRepo picks the pull-secret injector for a chart, gating on the
+// resolved repo first. Custom (admin-defined) repos get the noop injector so no
+// operator-managed pull secret is created, referenced in values, or merged onto
+// ServiceAccounts: the UI classifies every non-NVIDIA app as vendor "suse", so
+// without this a custom-repo app would fall through to the suseInjector and be
+// pulled with SUSE registry credentials. Non-custom repos keep the vendor-based
+// selection.
+func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo) secretInjector {
+	if repoInfo.Custom {
+		return &noopInjector{}
+	}
+	return r.injectorFor(vendor)
+}
+
+// noopInjector delivers no pull secrets and leaves chart values untouched. Used
+// for custom repos, whose image pulls rely on the repo's own credentials rather
+// than the operator's registry pull-secret machinery.
+type noopInjector struct{}
+
+func (n *noopInjector) Apply(_ context.Context, _ cluster.Client, _ string, _ clusterRepoInfo, _ map[string]any, _ bool) ([]string, error) {
+	return nil, nil
+}
+
 // ensureCombinedPullSecret creates (or updates) a single kubernetes.io/dockerconfigjson secret
 // in targetNamespace whose "auths" map covers ALL configured registries: the component's own
 // chartRepo, ApplicationCollection, and SUSERegistry from Settings. This ensures subchart
@@ -1012,12 +1043,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		// "adopt operator-delivered pull secrets" need on the GitOps path.
 		"takeOwnership": true,
 	}
-	if !isOCI {
-		helmSpec["repo"] = repoInfo.URL
-		helmSpec["chart"] = c.ChartName
-	} else {
-		helmSpec["repo"] = ociChartRef(repoInfo.URL, c.ChartName)
-	}
+	setHelmChartSource(helmSpec, repoInfo.URL, c.ChartName, isOCI)
 
 	// Load the blueprint component's own values BEFORE injecting pull secrets —
 	// mirrors ensureBlueprintHelmOp. Omitting this dropped every component value
@@ -1028,7 +1054,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
-	created, err := r.injectorFor(c.Vendor).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -1238,6 +1264,12 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		clientSecretNS = "cattle-system"
 	}
 	info := clusterRepoInfo{ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
+	// A custom (admin-defined) repo is out of the operator's pull-secret
+	// machinery: its chart pull auth comes from the ClusterRepo clientSecret/
+	// helmSecretName, and its images must not be pulled with SUSE registry
+	// credentials. The marker label is the single source of truth (mirrors the
+	// Fleet-bundle path, which scopes the combined pull secret to suse-ai only).
+	info.Custom = cr.GetLabels()[credentials.CustomRepoLabel] == credentials.LabelValueTrue
 
 	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
 	if url == "" {

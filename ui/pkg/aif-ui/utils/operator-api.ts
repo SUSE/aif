@@ -118,8 +118,13 @@ export interface ValidateOverride {
   /** @deprecated HTTPS Git credentials always use username plus password/PAT. */
   authType?:          string;
   username?:          string;
+  type?:              string;
   url?:               string;
+  gitRepo?:           string;
   insecureSkipVerify?: boolean;
+  /** Custom repo name. Only a saved repo (same name and URL) may be tested on a
+   * private network address. */
+  name?:              string;
 }
 
 export interface ValidateRequest {
@@ -152,13 +157,26 @@ export interface ChartAccessResult {
 
 export function validateChartAccess(body: {
   target: string;
-  configuration: Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef'>;
+  configuration: Pick<ValidateOverride, 'url' | 'userSecretRef' | 'tokenSecretRef' | 'caBundleSecretRef' | 'name'>;
   chartName?: string;
 }): Promise<{ results: ChartAccessResult[] }> {
+  // The endpoint rejects unknown fields, so post only the ones it accepts.
+  // Callers may hand us a richer form object (custom repos add type, gitRepo,
+  // branch, credSecretRef, insecureSkipVerify); those must not reach the wire.
+  const {
+    url, userSecretRef, tokenSecretRef, caBundleSecretRef, name,
+  } = body.configuration;
+  const payload = {
+    target:        body.target,
+    configuration: {
+      url, userSecretRef, tokenSecretRef, caBundleSecretRef, name,
+    },
+    chartName: body.chartName,
+  };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000);
   return operatorFetch('/api/v1/settings/validate-chart-access', {
-    method: 'POST', body: JSON.stringify(body), signal: controller.signal,
+    method: 'POST', body: JSON.stringify(payload), signal: controller.signal,
   }).finally(() => clearTimeout(timer));
 }
 

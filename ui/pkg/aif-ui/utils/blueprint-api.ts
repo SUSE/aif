@@ -1,4 +1,6 @@
-import type { Blueprint, BlueprintList, BlueprintOrigin, BlueprintSpec } from '../types/blueprint-types';
+import type {
+  Blueprint, BlueprintComponent, BlueprintList, BlueprintOrigin, BlueprintSpec,
+} from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
 import { operatorFetch } from './operator-config';
 
@@ -15,6 +17,25 @@ export function createBlueprint(spec: BlueprintSpec, blueprintName?: string): Pr
     method: 'POST',
     body:   JSON.stringify(blueprintName ? { spec, blueprintName } : { spec }),
   });
+}
+
+// buildBlueprintSpec assembles the spec the wizard submits and reviews. Fields
+// the wizard has no step for (source, icon) come from the prefill so an Edit
+// keeps them; a new blueprint or a Copy (which prefills neither) gets Custom
+// with no icon.
+export function buildBlueprintSpec(
+  basicInfo: { displayName: string; version: string; description: string },
+  components: BlueprintComponent[],
+  prefill?: BlueprintSpec,
+): BlueprintSpec {
+  return {
+    displayName: basicInfo.displayName,
+    version:     basicInfo.version,
+    description: basicInfo.description || undefined,
+    icon:        prefill?.icon,
+    source:      prefill?.source ?? 'Custom',
+    components,
+  };
 }
 
 export function getBlueprint(name: string): Promise<Blueprint> {

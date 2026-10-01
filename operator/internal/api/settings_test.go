@@ -37,13 +37,16 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credcheck"
+	"github.com/SUSE/aif-operator/internal/credentials"
 	"github.com/SUSE/aif-operator/internal/git"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -400,6 +403,122 @@ func TestSettingsPut_FirstSave_NoExistingCR(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200; first save should succeed; body=%s", rec.Code, rec.Body)
+	}
+}
+
+func TestSettingsPut_InvalidCustomRepo_400(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	// Invalid: git repo without branch
+	body := `{"spec":{"customRepos":[{"name":"test","type":"git","gitRepo":"https://git.example.com/repo"}]}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 for invalid custom repo; body=%s", rec.Code, rec.Body)
+	}
+	var apiErr APIError
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal APIError: %v", err)
+	}
+	if apiErr.Code != ErrCodeInvalidInput {
+		t.Errorf("error.code=%q want %q", apiErr.Code, ErrCodeInvalidInput)
+	}
+
+	// Verify CR was not updated
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after rejected PUT: %v", err)
+	}
+	if len(stored.Spec.CustomRepos) > 0 {
+		t.Errorf("invalid custom repo should not have been persisted, got %d repos", len(stored.Spec.CustomRepos))
+	}
+}
+
+var testClusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
+
+// newClusterRepo returns a ClusterRepo with the given labels.
+func newClusterRepo(name string, labels map[string]string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(testClusterRepoGVK)
+	u.SetName(name)
+	u.SetLabels(labels)
+	return u
+}
+
+// newSettingsFakeClientWithRepos is newSettingsFakeClient with the ClusterRepo
+// kind registered, so a test can seed existing ClusterRepos.
+func newSettingsFakeClientWithRepos(t *testing.T, objects ...client.Object) client.Client {
+	t.Helper()
+	s := newSettingsScheme(t)
+	s.AddKnownTypeWithName(testClusterRepoGVK, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(testClusterRepoGVK.GroupVersion().WithKind("ClusterRepoList"), &unstructured.UnstructuredList{})
+	return fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(objects...).
+		Build()
+}
+
+func putCustomRepo(t *testing.T, h http.Handler, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"spec":{"customRepos":[{"name":"` + name + `","type":"helm","url":"https://charts.example.com"}]}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// A custom repo's name is used verbatim as its ClusterRepo name, so saving one
+// whose name matches a ClusterRepo the custom-repo feature doesn't own must be
+// refused rather than taking that repo over.
+func TestSettingsPut_CustomRepoNameTakenByOtherClusterRepo_400(t *testing.T) {
+	foreign := newClusterRepo("partner-charts", map[string]string{"owner": "someone-else"})
+	c := newSettingsFakeClientWithRepos(t, sampleCR(), foreign)
+	h := newSettingsHandler(c, "aif-operator")
+
+	rec := putCustomRepo(t, h, "partner-charts")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 for a name taken by another ClusterRepo; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "already used by another chart repository") {
+		t.Errorf("body=%s, want the name-taken message", rec.Body)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after rejected PUT: %v", err)
+	}
+	if len(stored.Spec.CustomRepos) > 0 {
+		t.Errorf("custom repo with a taken name should not have been persisted, got %d repos", len(stored.Spec.CustomRepos))
+	}
+}
+
+// Re-saving an existing custom repo must succeed: its ClusterRepo carries the
+// custom-repo label, so it is not a collision.
+func TestSettingsPut_CustomRepoNameOwnedByCustomRepo_200(t *testing.T) {
+	own := newClusterRepo("partner-charts", map[string]string{
+		credentials.ManagedRepoLabel: credentials.LabelValueTrue,
+		credentials.CustomRepoLabel:  credentials.LabelValueTrue,
+	})
+	c := newSettingsFakeClientWithRepos(t, sampleCR(), own)
+	h := newSettingsHandler(c, "aif-operator")
+
+	if rec := putCustomRepo(t, h, "partner-charts"); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 when the ClusterRepo is already a custom repo; body=%s", rec.Code, rec.Body)
+	}
+}
+
+func TestSettingsPut_CustomRepoNewName_200(t *testing.T) {
+	c := newSettingsFakeClientWithRepos(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	if rec := putCustomRepo(t, h, "partner-charts"); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 for an unused name; body=%s", rec.Code, rec.Body)
 	}
 }
 
@@ -1218,5 +1337,162 @@ func TestValidateCredentials_UnresolvableSecretIsError(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || resp.Results[0].Status != statusError {
 		t.Fatalf("want status=error for unresolvable secret, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCustomRepo_HelmOK(t *testing.T) {
+	const ns = "aif-operator"
+	userSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-user", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("cu")},
+	}
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-token", Namespace: ns},
+		Data:       map[string][]byte{"token": []byte("ct")},
+	}
+	c := newSettingsFakeClient(t, sampleCR(), userSecret, tokenSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := probeHelmIndexFn
+	defer func() { probeHelmIndexFn = orig }()
+	var got struct{ user, pass, url string }
+	probeHelmIndexFn = func(_ context.Context, repoURL, user, pass string, _ []byte, _ bool) credcheck.Result {
+		got.user, got.pass, got.url = user, pass, repoURL
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "index reachable"}
+	}
+
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"helm","url":"https://charts.example.com","userSecretRef":{"name":"custom-user","key":"username"},"tokenSecretRef":{"name":"custom-token","key":"token"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want status=ok, got %+v", resp.Results)
+	}
+	if got.user != "cu" || got.pass != "ct" || got.url != "https://charts.example.com" {
+		t.Fatalf("probe got %+v want cu/ct/https://charts.example.com", got)
+	}
+}
+
+func TestValidateCustomRepo_GitOK(t *testing.T) {
+	const ns = "aif-operator"
+	credSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-git-cred", Namespace: ns},
+		Data:       map[string][]byte{"ssh-key": []byte("fake-key")},
+	}
+	c := newSettingsFakeClient(t, sampleCR(), credSecret)
+	h := newSettingsHandler(c, ns)
+
+	orig := gitCheckAuthFn
+	defer func() { gitCheckAuthFn = orig }()
+	gitCheckAuthFn = func(_ *git.Client, _ context.Context) error {
+		return nil
+	}
+
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"git","gitRepo":"https://git.example.com/repo.git","branch":"main","credSecretRef":{"name":"custom-git-cred","key":"ssh-key"}}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want status=ok, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCustomRepo_NotConfigured(t *testing.T) {
+	const ns = "aif-operator"
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, ns)
+
+	// No URL or gitRepo provided
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"oci"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusSkipped {
+		t.Fatalf("want status=skipped, got %+v", resp.Results)
+	}
+}
+
+func TestValidateCustomRepo_AnonymousProbe(t *testing.T) {
+	const ns = "aif-operator"
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, ns)
+
+	orig := probeRegistryWithInsecureFn
+	defer func() { probeRegistryWithInsecureFn = orig }()
+	got := struct{ user, pass, host string }{}
+	probeRegistryWithInsecureFn = func(_ context.Context, host, user, pass string, _ []byte, _ bool) credcheck.Result {
+		got.user, got.pass, got.host = user, pass, host
+		return credcheck.Result{Status: credcheck.StatusOK, Message: "anonymous access"}
+	}
+
+	// URL set, NO credential refs → should probe anonymously (not skipped)
+	body := `{"targets":["customRepo"],"overrides":{"customRepo":{"type":"oci","url":"oci://public.example.com/charts"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/validate-credentials", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp validateCredsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != statusOK {
+		t.Fatalf("want status=ok for anonymous probe, got %+v", resp.Results)
+	}
+	if got.user != "" || got.pass != "" {
+		t.Fatalf("probe should be called with empty creds for anonymous, got user=%q pass=%q", got.user, got.pass)
+	}
+	if got.host != "public.example.com" {
+		t.Fatalf("probe got host=%q, want public.example.com", got.host)
+	}
+}
+
+func TestUnsafeProbeTarget(t *testing.T) {
+	blocked := []string{
+		"https://user:pass@repo.example.com",
+		"https://localhost/charts",
+		"https://127.0.0.1/charts",
+		"https://[::1]/charts",
+		"https://[::ffff:127.0.0.1]/charts",
+		"http://169.254.169.254/latest/meta-data",
+		"https://[fe80::1]/charts",
+	}
+	for _, u := range blocked {
+		if unsafeProbeTarget(u) == "" {
+			t.Errorf("unsafeProbeTarget(%q) allowed, want rejected", u)
+		}
+	}
+	// Private address space is allowed: on-prem and air-gap mirrors live there.
+	// The credcheck dial guard keeps a public repository out of it.
+	allowed := []string{
+		"",
+		"https://charts.example.com/stable",
+		"oci://10.0.0.5/charts",
+		"https://192.168.1.10:8443/charts",
+		"https://172.16.0.1/charts",
+		"https://[fd00::1]/charts",
+	}
+	for _, u := range allowed {
+		if msg := unsafeProbeTarget(u); msg != "" {
+			t.Errorf("unsafeProbeTarget(%q)=%q, want allowed", u, msg)
+		}
 	}
 }
