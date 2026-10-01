@@ -79,7 +79,7 @@ const blueprint: Blueprint = {
     version:     '1.0.0',
     components:  [
       {
-        chartRepo: 'suse-ai', chartName: 'ollama', chartVersion: '1.0.0', values: { gpu: { enabled: true } }
+        chartRepo: 'suse-ai', chartName: 'ollama', chartVersion: '1.0.0', values: { gpu: { enabled: true }, models: ['llama3'] }
       },
       {
         chartRepo: 'suse-ai', chartName: 'milvus', chartVersion: '4.0.0', targetNamespace: 'vectors'
@@ -109,7 +109,16 @@ function setup(initial: AIWorkload, bp: Blueprint | null = null) {
       provide: { store },
       mocks:   { $store: store },
       // Rancher's global t(); a globalProperty, so the panel's own t still wins.
-      plugins: [{ install: (app) => { app.config.globalProperties.t = translate; } }],
+      plugins: [{
+        install: (app) => {
+          app.config.globalProperties.t = translate;
+          // The shell's form fields inject a formSummary Symbol it doesn't export,
+          // so there's no way to provide it; drop just that warning.
+          app.config.warnHandler = (msg, _instance, trace) => {
+            if (!msg.includes('formSummary')) console.warn(`[Vue warn]: ${ msg }${ trace }`);
+          };
+        },
+      }],
       directives: { 'clean-html': {}, 'clean-tooltip': {}, 'stripped-aria-label': {}, 'trim-whitespace': {} },
       stubs:   {
         t:          true,
@@ -194,42 +203,100 @@ describe('AIWorkloadDetailPanel', () => {
 
   it('shows Blueprint defaults on the Values tab when nothing was customized', () => {
     const { wrapper } = setup(blueprintWorkload(), blueprint);
-    const editors = wrapper.findAll('.yaml-stub').map((editor) => editor.text());
+    const editors = wrapper.findAll('[data-testid="value-section"] .yaml-stub').map((editor) => editor.text());
 
-    expect(editors).toContain(JSON.stringify({ gpu: { enabled: true } }));
+    expect(editors).toContain(JSON.stringify({ gpu: { enabled: true }, models: ['llama3'] }));
     expect(wrapper.text()).toContain('Blueprint defaults');
     expect(wrapper.text()).toContain('Values are shown in plain text');
   });
 
-  it('shows overrides instead of defaults and skips excluded components', () => {
+  it('shows overrides deep-merged onto the defaults, as the operator renders them', () => {
     const { wrapper } = setup(blueprintWorkload(undefined, {
       componentValues: [
-        { componentName: 'ollama', values: { replicas: 2 } },
+        { componentName: 'ollama', values: { gpu: { count: 2 }, models: ['mistral'] } },
         { componentName: 'milvus', enabled: false },
       ],
     }), blueprint);
-    const editors = wrapper.findAll('.yaml-stub').map((editor) => editor.text());
+    const editors = wrapper.findAll('[data-testid="value-section"] .yaml-stub').map((editor) => editor.text());
 
-    expect(editors).toContain(JSON.stringify({ replicas: 2 }));
-    expect(editors).not.toContain(JSON.stringify({ gpu: { enabled: true } }));
+    // Nested maps merge key by key; arrays are replaced wholesale.
+    expect(editors).toEqual([JSON.stringify({ gpu: { enabled: true, count: 2 }, models: ['mistral'] })]);
     expect(wrapper.text()).toContain('Customized');
     expect(wrapper.text()).toContain('Excluded');
+    expect(wrapper.get('[data-testid="values-caption"]').text()).toContain('overrides merged on top');
   });
 
-  it('links Fleet bundles in every workspace the targets map to', () => {
+  it('uses the first componentValues entry per component, like the operator', () => {
+    const { wrapper } = setup(blueprintWorkload(undefined, {
+      componentValues: [
+        { componentName: 'ollama', values: { replicas: 2 } },
+        { componentName: 'ollama', values: { replicas: 5 } },
+        { componentName: 'milvus' },
+        { componentName: 'milvus', enabled: false },
+      ],
+    }), blueprint);
+    const editors = wrapper.findAll('[data-testid="value-section"] .yaml-stub').map((editor) => editor.text());
+
+    expect(editors[0]).toBe(JSON.stringify({ gpu: { enabled: true }, models: ['llama3'], replicas: 2 }));
+    // Only the first milvus entry counts, and it doesn't disable the component.
+    expect(wrapper.text()).not.toContain('Excluded');
+  });
+
+  it('shows only the overrides, and says so, when the Blueprint is not loaded', () => {
+    const { wrapper } = setup(blueprintWorkload(undefined, {
+      componentValues: [{ componentName: 'ollama', values: { gpu: { count: 2 } } }],
+    }));
+    const editors = wrapper.findAll('[data-testid="value-section"] .yaml-stub').map((editor) => editor.text());
+
+    expect(editors).toEqual([JSON.stringify({ gpu: { count: 2 } })]);
+    expect(wrapper.get('[data-testid="values-caption"]').text()).toContain('only this workload\'s overrides');
+  });
+
+  it('flags a deployed Blueprint version that differs from the requested one', async() => {
+    const { wrapper, workload } = setup(blueprintWorkload({
+      deployedSource: { version: '1.0.0', renderDigest: 'd', certifiedAt: '' },
+    }), blueprint);
+
+    expect(wrapper.find('[data-testid="version-drift"]').exists()).toBe(false);
+
+    workload.value = blueprintWorkload({ deployedSource: { version: '0.9.0', renderDigest: 'd', certifiedAt: '' } });
+    await nextTick();
+
+    expect(wrapper.get('[data-testid="version-drift"]').text()).toContain('Version 0.9.0 is deployed');
+  });
+
+  it('adds the Status tab once status arrives while the drawer is open', async() => {
+    const { wrapper, workload } = setup(blueprintWorkload(), blueprint);
+
+    expect(wrapper.find('[data-testid="active-operation"]').exists()).toBe(false);
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text())).not.toContain('Status');
+
+    workload.value = blueprintWorkload({
+      activeOperation: {
+        type: 'Upgrade', nonce: 'n', requestedAt: '', state: 'InProgress'
+      },
+    });
+    await nextTick();
+    await nextTick();
+
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text())).toContain('Status');
+    expect(wrapper.get('[data-testid="active-operation"]').text()).toContain('Upgrade: InProgress');
+  });
+
+  it('links the operator\'s HelmOps in every workspace the targets map to', () => {
     const { wrapper } = setup(blueprintWorkload(), blueprint);
-    const links = wrapper.get('[data-testid="fleet-bundles"]').findAll('a').map((link) => link.attributes('href'));
+    const links = wrapper.get('[data-testid="fleet-helmops"]').findAll('a').map((link) => link.attributes('href'));
 
     expect(links).toEqual([
-      '/c/_/fleet/fleet.cattle.io.bundle/fleet-local/rag-ollama',
-      '/c/_/fleet/fleet.cattle.io.bundle/fleet-default/rag-ollama',
+      '/c/_/fleet/fleet.cattle.io.helmop/fleet-local/rag-ollama',
+      '/c/_/fleet/fleet.cattle.io.helmop/fleet-default/rag-ollama',
     ]);
   });
 
-  it('does not claim Fleet bundles for the Helm strategy', () => {
+  it('does not claim HelmOps for the Helm strategy', () => {
     const { wrapper } = setup(blueprintWorkload(undefined, { deployStrategy: 'Helm' }), blueprint);
 
-    expect(wrapper.find('[data-testid="fleet-bundles"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="fleet-helmops"]').exists()).toBe(false);
   });
 
   it('renders target clusters as chips rather than a disabled select', () => {

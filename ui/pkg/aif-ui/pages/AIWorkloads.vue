@@ -123,6 +123,8 @@ function openDetailPanel(w: AIWorkload) {
   shell.slideIn.open(AIWorkloadDetailPanel, {
     props: {
       workload:  live,
+      // The requested version (spec), not status.deployedSource: the drawer's
+      // Config tab describes desired state, and flags a differing deployed version.
       blueprint: () => {
         const source = live()?.spec.source;
 
@@ -252,7 +254,11 @@ async function silentRefresh() {
   if (loading.value) return;
   try {
     const wlResult = await listAIWorkloads();
-    workloads.value = wlResult.items || [];
+
+    // A response without items is a bad poll, not "everything was deleted";
+    // keep the last list so an open detail drawer doesn't close.
+    if (!wlResult.items) return;
+    workloads.value = wlResult.items;
     void refreshPodStatus();
   } catch {
     // silently ignore — user can use the Refresh button if needed

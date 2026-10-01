@@ -15,7 +15,8 @@ import YamlEditor, { EDITOR_MODES } from '@shell/components/YamlEditor';
 import { _VIEW } from '@shell/config/query-params';
 import { useT } from '../composables/useT';
 import ClusterChips from '../formatters/ClusterChips.vue';
-import { fleetBundleLink, fleetWorkspaces } from '../utils/rancher-links';
+import { componentOverride, deepMergeValues, isComponentEnabled } from '../utils/blueprint-customize';
+import { fleetHelmOpLink, fleetWorkspaces } from '../utils/rancher-links';
 import { phaseBadgeColor, phaseBadgeIcon, phaseColor, workloadStatusMessage } from '../utils/workload-status';
 import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
@@ -62,6 +63,10 @@ watchEffect(() => {
   }
 });
 
+// The Blueprint at spec.source.blueprint.version, i.e. the requested version.
+// Like the rest of the Config tab it describes the desired state, so while an
+// upgrade is in flight (or after one failed) the Applications and Values tabs
+// show the target version; versionDrift below flags that case.
 const blueprint = computed(() => props.blueprint());
 const clusters  = computed(() => props.clusters());
 
@@ -76,13 +81,18 @@ const sourceName  = computed(() => (isBlueprint.value ? w.value.spec.source.blue
 const version     = computed(() => (isBlueprint.value ? w.value.spec.source.blueprint?.version : appSource.value?.chartVersion) || '');
 const description = computed(() => (isBlueprint.value ? blueprint.value?.spec.description?.trim() || '' : ''));
 
+// The Blueprint version actually rendered, when it differs from the requested one.
+const deployedVersion = computed(() => (isBlueprint.value ? w.value.status?.deployedSource?.version || '' : ''));
+const versionDrift    = computed(() => !!deployedVersion.value && deployedVersion.value !== version.value);
+
 const deployStrategy = computed(() => w.value.spec.deployStrategy || 'Helm');
 const targetClusters = computed(() => w.value.spec.targetClusters || []);
 
-// The operator records bundle names for every strategy, but Fleet bundles only
-// exist for the Fleet-based ones. A bundle lives in each workspace its targets
-// map to, so a mixed local + downstream target gets one link per workspace.
-const fleetBundles = computed(() => {
+// spec.fleetBundleNames are the names of the HelmOps the operator owns. They're
+// recorded for every strategy, but HelmOps only exist for the Fleet-based ones.
+// A HelmOp lives in each workspace its targets map to, so a mixed local +
+// downstream target gets one link per workspace.
+const fleetHelmOps = computed(() => {
   if (deployStrategy.value === 'Helm') {
     return [];
   }
@@ -91,15 +101,15 @@ const fleetBundles = computed(() => {
   return (w.value.spec.fleetBundleNames || []).flatMap((name) => workspaces.map((workspace) => ({
     key:   `${ workspace }/${ name }`,
     label: workspaces.length > 1 ? `${ name } (${ workspace })` : name,
-    url:   fleetBundleLink(workspace, name),
+    url:   fleetHelmOpLink(workspace, name),
   })));
 });
 
 // Blueprint components switched off via componentValues[].enabled=false. The
 // operator doesn't deploy them, so they're listed but flagged as excluded.
-const excludedNames = computed(() => new Set(
-  (w.value.spec.componentValues || []).filter((override) => override.enabled === false).map((override) => override.componentName),
-));
+function isExcluded(chartName: string): boolean {
+  return !isComponentEnabled(w.value.spec.componentValues, chartName);
+}
 
 // The release each component actually installed, as reported by the operator.
 const installedReleases = computed(() => new Map(
@@ -108,7 +118,7 @@ const installedReleases = computed(() => new Map(
 
 const componentRows = computed(() => (blueprint.value?.spec.components || []).map((component, index) => ({
   ...component,
-  excluded:        excludedNames.value.has(component.chartName),
+  excluded:        isExcluded(component.chartName),
   releaseName:     installedReleases.value.get(component.chartName) || component.releaseName || '',
   targetNamespace: component.targetNamespace || w.value.spec.targetNamespace,
   _key:            `${ component.chartName }/${ component.chartVersion }/${ index }`,
@@ -151,28 +161,43 @@ const componentHeaders = computed(() => [
   },
 ]);
 
-// One editor per deployed component. A component without overrides shows the
-// Blueprint's defaults, so the tab always reflects what the workload runs with.
+function hasKeys(values: Record<string, any> | undefined): values is Record<string, any> {
+  return !!values && Object.keys(values).length > 0;
+}
+
+// Whether the Values tab can show what each component deploys with: that needs
+// the Blueprint's defaults to merge the overrides onto.
+const showsMergedValues = computed(() => isBlueprint.value && !!blueprint.value);
+
+// One editor per deployed component, holding the values the operator renders:
+// the Blueprint defaults with the workload's override deep-merged on top, the
+// same way resolveComponentValues does. Without the Blueprint (an App workload,
+// or a Blueprint that isn't loaded) only the stored overrides can be shown.
 // Excluded components never deploy, so they're left out.
 const valueSections = computed(() => {
-  const overrides = new Map((w.value.spec.componentValues || [])
-    .filter((override) => override.enabled !== false && override.values && Object.keys(override.values).length > 0)
-    .map((override) => [override.componentName, override.values || {}]));
+  const overrides = w.value.spec.componentValues;
 
-  if (!isBlueprint.value || !blueprint.value) {
-    return [...overrides].map(([name, values]) => ({ name, values, customized: true }));
+  if (!showsMergedValues.value) {
+    const names = [...new Set((overrides || []).map((override) => override.componentName))];
+
+    return names
+      .filter((name) => isComponentEnabled(overrides, name))
+      .map((name) => ({ name, values: componentOverride(overrides, name), customized: true }))
+      .filter((section): section is { name: string; values: Record<string, any>; customized: boolean } => hasKeys(section.values));
   }
 
-  return blueprint.value.spec.components
-    .filter((component) => !excludedNames.value.has(component.chartName))
+  return (blueprint.value?.spec.components || [])
+    .filter((component) => !isExcluded(component.chartName))
     .map((component) => {
-      const custom = overrides.get(component.chartName);
+      const override = componentOverride(overrides, component.chartName);
 
       return {
-        name: component.chartName, values: custom || component.values || {}, customized: !!custom
+        name:       component.chartName,
+        values:     deepMergeValues(component.values || {}, override || {}),
+        customized: hasKeys(override),
       };
     })
-    .filter((section) => Object.keys(section.values).length > 0);
+    .filter((section) => hasKeys(section.values));
 });
 
 const clusterStatuses   = computed(() => w.value.status?.clusterStatuses || []);
@@ -346,6 +371,15 @@ function clusterName(clusterId: string): string {
               </div>
             </div>
 
+            <Banner
+              v-if="versionDrift"
+              class="mt-0"
+              color="warning"
+              data-testid="version-drift"
+            >
+              {{ t('suseai.pages.workloads.detail.versionDrift', 'Version {deployed} is deployed. This configuration describes the requested version {requested}.', { deployed: deployedVersion, requested: version }) }}
+            </Banner>
+
             <Tabbed
               :side-tabs="true"
               :use-hash="false"
@@ -449,21 +483,21 @@ function clusterName(clusterId: string): string {
                   </div>
                 </div>
 
-                <template v-if="fleetBundles.length">
+                <template v-if="fleetHelmOps.length">
                   <h3>{{ t('suseai.pages.workloads.detail.underlyingResources', 'Underlying Resources') }}</h3>
                   <div class="row">
                     <div
                       class="col span-12"
-                      data-testid="fleet-bundles"
+                      data-testid="fleet-helmops"
                     >
-                      <label class="field-label">{{ t('suseai.pages.workloads.detail.fleetBundles', 'Fleet Bundles') }}</label>
+                      <label class="field-label">{{ t('suseai.pages.workloads.detail.fleetHelmOps', 'Fleet HelmOps') }}</label>
                       <ul class="resource-links">
                         <li
-                          v-for="bundle in fleetBundles"
-                          :key="bundle.key"
+                          v-for="helmOp in fleetHelmOps"
+                          :key="helmOp.key"
                         >
-                          <router-link :to="bundle.url">
-                            {{ bundle.label }}
+                          <router-link :to="helmOp.url">
+                            {{ helmOp.label }}
                           </router-link>
                         </li>
                       </ul>
@@ -519,10 +553,20 @@ function clusterName(clusterId: string): string {
                 >
                   {{ t('suseai.pages.workloads.detail.plaintextNotice', 'Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.') }}
                 </Banner>
+                <p
+                  v-if="isBlueprint"
+                  class="text-muted mb-20"
+                  data-testid="values-caption"
+                >
+                  {{ showsMergedValues
+                    ? t('suseai.pages.workloads.detail.valuesMerged', 'Each component shows the values it deploys with: the Blueprint defaults, with this workload\'s overrides merged on top.')
+                    : t('suseai.pages.workloads.detail.valuesOverridesOnly', 'The Blueprint is not available, so only this workload\'s overrides are shown. They are merged onto the Blueprint defaults at deploy time.') }}
+                </p>
                 <div
                   v-for="(section, index) in valueSections"
                   :key="section.name"
                   :class="{ 'mt-20': index > 0 }"
+                  data-testid="value-section"
                 >
                   <h3>
                     {{ section.name }}

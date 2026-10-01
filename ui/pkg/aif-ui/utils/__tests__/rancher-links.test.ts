@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { namespaceLink, appLink, fleetBundleLink, fleetWorkspaces, workloadTargetClusters, workloadRancherLinks } from '../rancher-links';
+import { namespaceLink, appLink, fleetHelmOpLink, fleetWorkspaces, workloadTargetClusters, workloadRancherLinks } from '../rancher-links';
 import type { AIWorkload } from '../../types/aiworkload-types';
 import type { ClusterInfo } from '../../types/rancher-types';
 
@@ -18,9 +18,9 @@ describe('rancher URL builders', () => {
     expect(appLink('local', 'a/b', 'r@1')).toBe('/c/local/apps/catalog.cattle.io.app/a%2Fb/r%401');
   });
 
-  it('builds a Fleet bundle detail path', () => {
-    expect(fleetBundleLink('fleet-default', 'w1-ollama'))
-      .toBe('/c/_/fleet/fleet.cattle.io.bundle/fleet-default/w1-ollama');
+  it('builds a Fleet HelmOp detail path', () => {
+    expect(fleetHelmOpLink('fleet-default', 'w1-ollama'))
+      .toBe('/c/_/fleet/fleet.cattle.io.helmop/fleet-default/w1-ollama');
   });
 });
 

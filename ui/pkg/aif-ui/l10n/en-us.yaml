@@ -264,10 +264,13 @@ suseai:
         targetNamespace: Target Namespace
         targetClusters: Target Clusters
         underlyingResources: Underlying Resources
-        fleetBundles: Fleet Bundles
+        fleetHelmOps: Fleet HelmOps
         noBlueprint: Blueprint details are not available for this workload.
         noValues: No custom values are set; the chart defaults are used.
         blueprintDefaults: Blueprint defaults
+        valuesMerged: "Each component shows the values it deploys with: the Blueprint defaults, with this workload's overrides merged on top."
+        valuesOverridesOnly: "The Blueprint is not available, so only this workload's overrides are shown. They are merged onto the Blueprint defaults at deploy time."
+        versionDrift: Version {deployed} is deployed. This configuration describes the requested version {requested}.
         plaintextNotice: Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.
         components: Components
         component: Component

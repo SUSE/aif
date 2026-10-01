@@ -12,13 +12,15 @@ export function appLink(clusterId: string, namespace: string, release: string): 
   return `/c/${ encodeURIComponent(clusterId) }/apps/catalog.cattle.io.app/${ encodeURIComponent(namespace) }/${ encodeURIComponent(release) }`;
 }
 
-export function fleetBundleLink(workspace: string, bundle: string): string {
-  return `/c/_/fleet/fleet.cattle.io.bundle/${ encodeURIComponent(workspace) }/${ encodeURIComponent(bundle) }`;
+// The HelmOp is the Fleet object the operator owns (spec.fleetBundleNames holds
+// HelmOp names); its detail page also lists the Bundle it produces.
+export function fleetHelmOpLink(workspace: string, name: string): string {
+  return `/c/_/fleet/fleet.cattle.io.helmop/${ encodeURIComponent(workspace) }/${ encodeURIComponent(name) }`;
 }
 
-// The Fleet workspaces a workload's bundles live in, mirroring the operator:
+// The Fleet workspaces a workload's HelmOps live in, mirroring the operator:
 // fleet-local serves the management cluster, fleet-default every downstream
-// cluster, and a mixed target gets a same-named bundle in each.
+// cluster, and a mixed target gets a same-named HelmOp in each.
 export function fleetWorkspaces(clusterIds: string[]): string[] {
   return [
     ...(clusterIds.includes('local') ? ['fleet-local'] : []),
