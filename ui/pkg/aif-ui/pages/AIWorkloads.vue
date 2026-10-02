@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, reactive, getCurrentInstance } from 'vue';
-import { useShell } from '@shell/apis';
 import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
@@ -18,6 +17,7 @@ import { PRODUCT } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
 import RancherLinkCell from '../components/RancherLinkCell.vue';
 import { workloadRancherLinks } from '../utils/rancher-links';
+import { openWideSlideIn } from '../utils/slide-in';
 import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
 import { useT } from '../composables/useT';
@@ -110,9 +110,8 @@ const upgradeError = ref<string | null>(null);
 
 // ── Detail slide-in panel ───────────────────────────────────────────────────────
 // Rendered by the shell's SlideInPanelManager, the same way the Fleet dashboard
-// opens its resource details.
-const shell = useShell();
-
+// opens its resource details. See utils/slide-in for why this doesn't go through
+// useShell().
 function openDetailPanel(w: AIWorkload) {
   const key = wlKey(w);
   // The slide-in keeps the props it was opened with, while this page swaps in
@@ -120,7 +119,7 @@ function openDetailPanel(w: AIWorkload) {
   // (undefined once it's gone) instead of a snapshot.
   const live = () => workloads.value.find(x => wlKey(x) === key);
 
-  shell.slideIn.open(AIWorkloadDetailPanel, {
+  openWideSlideIn(vm.$store, AIWorkloadDetailPanel, {
     props: {
       workload:  live,
       // The requested version (spec), not status.deployedSource: the drawer's
@@ -143,8 +142,6 @@ function openDetailPanel(w: AIWorkload) {
         else onCustomize(current);
       },
     },
-    width:              'wide',
-    height:             'full',
     closeOnRouteChange: ['name', 'params', 'query'],
   });
 }
