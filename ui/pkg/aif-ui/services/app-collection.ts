@@ -82,7 +82,8 @@ function normalizeLogoUrl(logo?: string): string | undefined {
  *  the install-path counterpart to fetchManagedRepos' discovery scoping. */
 export async function findManagedRepoNameByUrl($store: any, targetUrl: string): Promise<string | null> {
   const managed = await fetchManagedRepos($store);
-  const repo = managed.find(r => r.url === targetUrl);
+  // Custom repos resolve only by name; see appRepository.
+  const repo = managed.find(r => r.library !== 'custom' && r.url === targetUrl);
   return repo?.name ?? null;
 }
 
