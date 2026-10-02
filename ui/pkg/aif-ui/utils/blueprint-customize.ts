@@ -18,6 +18,19 @@ export function deepMergeValues(base: Record<string, any>, override: Record<stri
   return result;
 }
 
+// componentOverride returns the override values the operator applies to a
+// component: the first componentValues entry for it that carries values
+// (resolveComponentValues takes the first match, so later duplicates are ignored).
+export function componentOverride(overrides: ComponentValueOverride[] | undefined, chartName: string): Record<string, any> | undefined {
+  return (overrides || []).find((o) => o.componentName === chartName && o.values != null)?.values;
+}
+
+// isComponentEnabled mirrors the operator's check of the same name: the first
+// componentValues entry for the component decides, and no entry means enabled.
+export function isComponentEnabled(overrides: ComponentValueOverride[] | undefined, chartName: string): boolean {
+  return (overrides || []).find((o) => o.componentName === chartName)?.enabled !== false;
+}
+
 // seedComponentValues computes the starting per-component values shown in the
 // Customize step: each Blueprint component's baked-in defaults, deep-merged
 // with any existing override for that component. Passing no `existing` (a
@@ -26,11 +39,10 @@ export function seedComponentValues(
   components: BlueprintComponent[],
   existing: ComponentValueOverride[] = [],
 ): Record<string, Record<string, any>> {
-  const overrideByName = new Map(existing.map((o) => [o.componentName, o.values || {}]));
   const seed: Record<string, Record<string, any>> = {};
   for (const c of components) {
     const base = c.values || {};
-    const override = overrideByName.get(c.chartName);
+    const override = componentOverride(existing, c.chartName);
     seed[c.chartName] = override ? deepMergeValues(base, override) : { ...base };
   }
   return seed;
@@ -102,10 +114,9 @@ export function seedComponentEnabled(
   components: BlueprintComponent[],
   existing: ComponentValueOverride[] = [],
 ): Record<string, boolean> {
-  const overrideByName = new Map(existing.map((o) => [o.componentName, o]));
   const seed: Record<string, boolean> = {};
   for (const c of components) {
-    seed[c.chartName] = overrideByName.get(c.chartName)?.enabled ?? true;
+    seed[c.chartName] = isComponentEnabled(existing, c.chartName);
   }
   return seed;
 }

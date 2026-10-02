@@ -137,6 +137,10 @@ func (h *AIWorkloadHandler) listAIWorkloads(w http.ResponseWriter, r *http.Reque
 	}
 	for i := range list.Items {
 		list.Items[i].ManagedFields = nil
+		// The client strips TypeMeta from list items; restore it so consumers
+		// (the UI's YAML view) get a self-describing object.
+		list.Items[i].APIVersion = aiplatformv1alpha1.GroupVersion.String()
+		list.Items[i].Kind = "AIWorkload"
 	}
 	writeJSON(w, http.StatusOK, &list)
 }

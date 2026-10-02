@@ -83,11 +83,17 @@ export function slugifyBlueprintName(name: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+// blueprintFamily is the family key of a Blueprint CR: its BLUEPRINT_NAME_LABEL,
+// falling back to the slugified display name for unlabelled CRs.
+export function blueprintFamily(bp: Blueprint): string {
+  return bp.metadata.labels?.[BLUEPRINT_NAME_LABEL] || slugifyBlueprintName(bp.spec.displayName);
+}
+
 // groupBlueprintsByFamily groups Blueprint CRs by BLUEPRINT_NAME_LABEL, each group semver-sorted descending.
 export function groupBlueprintsByFamily(items: Blueprint[]): Map<string, Blueprint[]> {
   const map = new Map<string, Blueprint[]>();
   for (const bp of items) {
-    const family = bp.metadata.labels?.[BLUEPRINT_NAME_LABEL] || slugifyBlueprintName(bp.spec.displayName);
+    const family = blueprintFamily(bp);
     const group  = map.get(family) || [];
     group.push(bp);
     map.set(family, group);
@@ -96,6 +102,15 @@ export function groupBlueprintsByFamily(items: Blueprint[]): Map<string, Bluepri
     map.set(key, group.slice().sort((a, b) => semverCompare(b.spec.version, a.spec.version)));
   }
   return map;
+}
+
+// findBlueprint resolves the exact Blueprint CR backing an AIWorkload's blueprint
+// source: the CR whose family (see blueprintFamily) is `name` and whose
+// spec.version equals `version`. Returns null when there is no such CR — e.g. a
+// custom blueprint or one not present in the loaded list.
+export function findBlueprint(items: Blueprint[], name: string, version: string): Blueprint | null {
+  if (!name || !version) return null;
+  return items.find((bp) => bp.spec.version === version && blueprintFamily(bp) === name) || null;
 }
 
 // latestVersion returns the semver-greatest CR from a family group (assumes group is sorted descending).

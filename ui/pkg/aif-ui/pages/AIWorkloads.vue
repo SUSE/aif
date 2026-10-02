@@ -1,15 +1,18 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, reactive, getCurrentInstance } from 'vue';
+import { useShell } from '@shell/apis';
 import { Banner } from '@components/Banner';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
-import { listBlueprints, groupBlueprintsByFamily } from '../utils/blueprint-api';
+import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
 import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
+import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
-import type { AIWorkload, AIWorkloadPhase } from '../types/aiworkload-types';
+import AIWorkloadDetailPanel from '../components/AIWorkloadDetailPanel.vue';
+import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 import ClusterChips from '../formatters/ClusterChips.vue';
@@ -58,8 +61,7 @@ function workloadNamespaces(w: AIWorkload): string[] {
   const set = new Set<string>();
   if (base) set.add(base);
   if (w.spec.source.sourceType === 'Blueprint' && w.spec.source.blueprint) {
-    const family = groupBlueprintsByFamily(blueprints.value).get(w.spec.source.blueprint.name);
-    const bp = family?.find(b => b.spec.version === w.spec.source.blueprint!.version);
+    const bp = findBlueprint(blueprints.value, w.spec.source.blueprint.name, w.spec.source.blueprint.version);
     for (const c of bp?.spec.components || []) {
       set.add(c.targetNamespace || base);
     }
@@ -105,6 +107,47 @@ const rollbackModal = reactive({
 });
 
 const upgradeError = ref<string | null>(null);
+
+// ── Detail slide-in panel ───────────────────────────────────────────────────────
+// Rendered by the shell's SlideInPanelManager, the same way the Fleet dashboard
+// opens its resource details.
+const shell = useShell();
+
+function openDetailPanel(w: AIWorkload) {
+  const key = wlKey(w);
+  // The slide-in keeps the props it was opened with, while this page swaps in
+  // fresh objects on every poll. Getters let the drawer read the live workload
+  // (undefined once it's gone) instead of a snapshot.
+  const live = () => workloads.value.find(x => wlKey(x) === key);
+
+  shell.slideIn.open(AIWorkloadDetailPanel, {
+    props: {
+      workload:  live,
+      // The requested version (spec), not status.deployedSource: the drawer's
+      // Config tab describes desired state, and flags a differing deployed version.
+      blueprint: () => {
+        const source = live()?.spec.source;
+
+        return source?.sourceType === 'Blueprint'
+          ? findBlueprint(blueprints.value, source.blueprint?.name || '', source.blueprint?.version || '')
+          : null;
+      },
+      clusters: () => clusters.value,
+      // Listener for the drawer's footer Manage action, which closes the drawer
+      // itself. Same target as the row's Manage button for each source type.
+      onManage: () => {
+        const current = live();
+
+        if (!current) return;
+        if (current.spec.source.sourceType === 'App') onManage(current);
+        else onCustomize(current);
+      },
+    },
+    width:              'wide',
+    height:             'full',
+    closeOnRouteChange: ['name', 'params', 'query'],
+  });
+}
 
 const upgradeVersionOptions = computed(() => {
   if (!upgradeModal.workload) return [];
@@ -152,24 +195,6 @@ const filteredWorkloads = computed(() => {
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function phaseBadgeColor(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'bg-success';
-    case 'Degraded': return 'bg-warning';
-    case 'Failed':   return 'bg-error';
-    default:         return 'bg-info';
-  }
-}
-
-function phaseBadgeIcon(phase: AIWorkloadPhase | undefined): string {
-  switch (phase) {
-    case 'Running':  return 'icon-checkmark';
-    case 'Degraded': return 'icon-warning';
-    case 'Failed':   return 'icon-x';
-    default:         return 'icon-info';
-  }
-}
-
 function workloadVersion(w: AIWorkload): string {
   if (w.spec.source.sourceType === 'App') return w.spec.source.app?.chartVersion || '—';
   return w.spec.source.blueprint?.version || '—';
@@ -184,22 +209,6 @@ function workloadSource(w: AIWorkload): string {
 
 function linksFor(w: AIWorkload) {
   return workloadRancherLinks(w, clusters.value);
-}
-
-// workloadStatusMessage returns a human-readable reason when a workload is not
-// healthy: the Ready=False condition message (set by the operator when a
-// ClusterRepo can't be resolved), falling back to the first non-empty
-// per-cluster message. Empty string when there's nothing to surface. Running
-// workloads suppress the message — the success text ("Helm install complete…")
-// is noise once the badge already says Running.
-function workloadStatusMessage(w: AIWorkload): string {
-  if (w.status?.phase === 'Running') return '';
-  const ready = (w.status?.conditions || []).find(
-    (c: any) => c?.type === 'Ready' && c?.status === 'False',
-  );
-  if (ready?.message) return ready.message;
-  const clusterMsg = (w.status?.clusterStatuses || []).find((s) => s.message);
-  return clusterMsg?.message || '';
 }
 
 function unhealthyComponents(w: AIWorkload) {
@@ -245,7 +254,11 @@ async function silentRefresh() {
   if (loading.value) return;
   try {
     const wlResult = await listAIWorkloads();
-    workloads.value = wlResult.items || [];
+
+    // A response without items is a bad poll, not "everything was deleted";
+    // keep the last list so an open detail drawer doesn't close.
+    if (!wlResult.items) return;
+    workloads.value = wlResult.items;
     void refreshPodStatus();
   } catch {
     // silently ignore — user can use the Refresh button if needed
@@ -496,7 +509,12 @@ async function doRetry(w: AIWorkload) {
 
                 <!-- Name -->
                 <td class="col-name">
-                  <div class="name-primary">{{ w.metadata.name }}</div>
+                  <a
+                    href="#"
+                    class="name-primary"
+                    :title="t('suseai.pages.workloads.detail.open', 'Show details')"
+                    @click.prevent="openDetailPanel(w)"
+                  >{{ w.metadata.name }}</a>
                 </td>
 
                 <!-- Namespace -->
@@ -837,7 +855,8 @@ async function doRetry(w: AIWorkload) {
 
 // Name column
 .col-name {
-  .name-primary { font-weight: 600; color: var(--body-text); }
+  // Rendered as a link (theme link colour) that opens the detail drawer.
+  .name-primary { font-weight: 600; }
 }
 
 // Source column

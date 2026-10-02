@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   deepMergeValues, deepDiffValues, seedComponentValues, diffComponentValues,
-  seedComponentEnabled, diffComponentOverrides,
+  componentOverride, isComponentEnabled, seedComponentEnabled, diffComponentOverrides,
   customizedComponentNames, resolveInitialFormState,
 } from '../blueprint-customize';
 import type { BlueprintComponent } from '../../types/blueprint-types';
@@ -30,6 +30,45 @@ describe('deepMergeValues', () => {
 function comp(chartName: string, values?: Record<string, any>): BlueprintComponent {
   return { chartRepo: 'suse-ai', chartName, chartVersion: '1.0.0', values };
 }
+
+// Hand-edited CRs can repeat a component; the operator takes the first match.
+describe('componentOverride / isComponentEnabled', () => {
+  it('takes the first entry that carries values, like resolveComponentValues', () => {
+    const overrides = [
+      { componentName: 'milvus', enabled: true },
+      { componentName: 'milvus', values: { replicas: 2 } },
+      { componentName: 'milvus', values: { replicas: 9 } },
+    ];
+    expect(componentOverride(overrides, 'milvus')).toEqual({ replicas: 2 });
+    expect(componentOverride(overrides, 'ollama')).toBeUndefined();
+    expect(componentOverride(undefined, 'milvus')).toBeUndefined();
+  });
+
+  it('lets the first entry decide enablement, defaulting to enabled', () => {
+    expect(isComponentEnabled([{ componentName: 'milvus', enabled: false }, { componentName: 'milvus', enabled: true }], 'milvus')).toBe(false);
+    expect(isComponentEnabled([{ componentName: 'milvus', values: {} }, { componentName: 'milvus', enabled: false }], 'milvus')).toBe(true);
+    expect(isComponentEnabled([], 'milvus')).toBe(true);
+    expect(isComponentEnabled(undefined, 'milvus')).toBe(true);
+  });
+});
+
+describe('deepMergeValues: operator (mergo WithOverride) parity', () => {
+  // Expected results recorded from dario.cat/mergo v1.0.2 Merge(..., WithOverride).
+  it.each([
+    [{ a: { x: 1, y: 2 }, b: 3 }, { a: { y: 5 } }, { a: { x: 1, y: 5 }, b: 3 }],
+    [{ a: true }, { a: false }, { a: false }],
+    [{ a: 1 }, { a: 0 }, { a: 0 }],
+    [{ a: 's' }, { a: '' }, { a: '' }],
+    [{ a: 1 }, { a: null }, { a: null }],
+    [{ a: [1, 2, 3] }, { a: [] }, { a: [] }],
+    [{ a: { x: 1 } }, { a: {} }, { a: { x: 1 } }],
+    [{ a: { x: 1 } }, { a: 'scalar' }, { a: 'scalar' }],
+    [{ a: 'scalar' }, { a: { x: 1 } }, { a: { x: 1 } }],
+    [{ a: { b: { c: true, d: 1 } } }, { a: { b: { c: false } } }, { a: { b: { c: false, d: 1 } } }],
+  ])('%j + %j', (base, override, expected) => {
+    expect(deepMergeValues(base, override)).toEqual(expected);
+  });
+});
 
 describe('seedComponentValues', () => {
   it('seeds from blueprint defaults when there is no existing override', () => {

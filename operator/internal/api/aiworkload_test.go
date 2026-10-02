@@ -58,6 +58,59 @@ func TestListAIWorkloads_Empty(t *testing.T) {
 	}
 }
 
+func TestListAIWorkloads_ItemsCarryTypeMeta(t *testing.T) {
+	h := newAIWorkloadHandler(t)
+	body := map[string]any{
+		"metadata": map[string]any{"name": "my-workload"},
+		"spec": map[string]any{
+			"displayName":     "My Workload",
+			"targetNamespace": "my-ns",
+			"deployStrategy":  "Helm",
+			"source": map[string]any{
+				"sourceType": "App",
+				"app": map[string]any{
+					"chartRepo":    "suse-ai",
+					"chartName":    "ollama",
+					"chartVersion": "1.0.0",
+					"release":      "ollama",
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(body)
+	create := httptest.NewRequest("POST", "/api/v1/namespaces/default/aiworkloads", bytes.NewReader(b))
+	create.Header.Set("Content-Type", "application/json")
+	cw := httptest.NewRecorder()
+	h.ServeHTTP(cw, create)
+	if cw.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", cw.Code, cw.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/aiworkloads", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var list struct {
+		Items []struct {
+			APIVersion string `json:"apiVersion"`
+			Kind       string `json:"kind"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(list.Items))
+	}
+	if got, want := list.Items[0].APIVersion, aiplatformv1alpha1.GroupVersion.String(); got != want {
+		t.Errorf("apiVersion = %q, want %q", got, want)
+	}
+	if got := list.Items[0].Kind; got != "AIWorkload" {
+		t.Errorf("kind = %q, want AIWorkload", got)
+	}
+}
+
 func TestCreateAIWorkload(t *testing.T) {
 	h := newAIWorkloadHandler(t)
 	body := map[string]any{

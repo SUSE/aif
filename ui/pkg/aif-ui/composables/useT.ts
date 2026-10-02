@@ -9,11 +9,15 @@ import { getCurrentInstance } from 'vue';
  * renders `%a.key%` on a miss — or `%a.key%(0: L, 1: a, ...)`, since the string
  * gets spread as args.
  *
+ * Optional `args` are interpolated into `{name}` placeholders, both by the store
+ * and in the fallback.
+ *
  * Must be called synchronously during component setup so that
  * `getCurrentInstance()` resolves to the calling component.
  */
 export function useT() {
   const store = (getCurrentInstance()!.proxy as any)?.$store;
 
-  return (key: string, fallback: string): string => store?.getters['i18n/t']?.(key) || fallback;
+  return (key: string, fallback: string, args?: Record<string, string>): string => store?.getters['i18n/t']?.(key, args) ||
+    (args ? fallback.replace(/\{(\w+)\}/g, (match, name) => args[name] ?? match) : fallback);
 }

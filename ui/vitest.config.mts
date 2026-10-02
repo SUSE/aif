@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   plugins: [vue()],
   resolve: {
+    // Vite's defaults plus '.vue', so extensionless shell imports such as
+    // '@shell/components/Tabbed' resolve as they do in Rancher's webpack build.
+    extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json', '.vue'],
     alias: {
       '@shell': fileURLToPath(new URL('./node_modules/@rancher/shell', import.meta.url)),
       '@components': fileURLToPath(new URL('./node_modules/@rancher/shell/rancher-components', import.meta.url)),
