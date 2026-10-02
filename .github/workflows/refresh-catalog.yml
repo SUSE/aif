@@ -29,7 +29,10 @@ jobs:
 
       - name: Regenerate catalog
         working-directory: operator
-        run: go run ./hack/generate-catalog
+        run: go run ./hack/generate-catalog -report-dir "$RUNNER_TEMP/catalog-report"
+
+      - name: Publish job summary
+        run: cat "$RUNNER_TEMP/catalog-report/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or refresh PR
         env:
@@ -38,7 +41,16 @@ jobs:
           set -euo pipefail
 
           catalog="operator/internal/catalog/default-catalog.json"
+          report_dir="$RUNNER_TEMP/catalog-report"
+          summary="$report_dir/summary.md"
+
+          has_diff=true
           if git diff --quiet -- "$catalog"; then
+            has_diff=false
+          fi
+          has_unclassified="$(jq '.unclassified | length > 0' "$report_dir/report.json")"
+
+          if [[ "$has_diff" == false && "$has_unclassified" == false ]]; then
             echo "No catalog changes; nothing to do." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -48,20 +60,20 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           # Bot-owned, deterministic branch: reset and force-update so re-runs
-          # refresh the same PR in place.
+          # refresh the same PR in place. An unclassified path alone leaves the
+          # catalog unchanged, so allow an empty commit to still open the PR.
           git checkout -B "$branch"
           git add "$catalog"
-          git commit -m "chore(catalog): refresh NVAIE static catalog"
+          git commit --allow-empty -m "chore(catalog): refresh NVAIE static catalog"
           git push --force origin "$branch"
-
-          body="$(printf 'Automated NVAIE static catalog refresh by the refresh-catalog workflow.\n\nReview the diff, and if the run log warned about any **unclassified NGC path**, add it to `operator/internal/catalog/ngc_repos.go` before merging.\n')"
 
           url="$(gh pr view "$branch" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)"
           if [[ -n "$url" ]]; then
+            gh pr edit "$branch" --body-file "$summary"
             echo "PR already open, updated in place: $url" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          if url="$(gh pr create --base main --head "$branch" --title "chore(catalog): refresh NVAIE static catalog" --body "$body" 2>/dev/null)"; then
+          if url="$(gh pr create --base main --head "$branch" --title "chore(catalog): refresh NVAIE static catalog" --body-file "$summary" 2>/dev/null)"; then
             echo "Opened PR: $url" >> "$GITHUB_STEP_SUMMARY"
           else
             compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
