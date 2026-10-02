@@ -592,15 +592,9 @@
       "slug_name": "gpu-operator",
       "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
       "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
-      "last_updated_at": "2026-08-21T13:49:44.086Z",
+      "last_updated_at": "2026-09-23T01:02:27.810Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
-      "labels": [
-        {
-          "code": "supported",
-          "name": "Supported"
-        }
-      ]
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
       "name": "Harbor Reef Operator",
