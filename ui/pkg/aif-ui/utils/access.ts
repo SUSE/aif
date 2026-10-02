@@ -6,6 +6,9 @@ export const CRTB_TYPE    = 'management.cattle.io.clusterroletemplatebinding';
 
 const CLUSTER_OWNER_ROLE = 'cluster-owner';
 
+// Same 30s limit the Rancher shell uses when it waits for managementReady.
+export const MANAGEMENT_READY_TIMEOUT_MS = 30000;
+
 interface CrtbBinding {
   metadata?:          { namespace?: string };
   roleTemplateName?:  string;
@@ -18,6 +21,32 @@ let cachedDecision: boolean | null = null;
 
 export function invalidateAccessCache(): void {
   cachedDecision = null;
+}
+
+/**
+ * Resolves true once Rancher has loaded the management store (root state.managementReady),
+ * or false if it does not within the timeout. The access checks below read management
+ * schemas, and isAdminUser throws "Schemas aren't loaded yet" when they are missing.
+ * The nav guard can run before that, e.g. on the navigation right after creating a cluster.
+ */
+function waitForManagementReady(store: RancherStore, timeoutMs = MANAGEMENT_READY_TIMEOUT_MS): Promise<boolean> {
+  if (store.state.managementReady) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      unwatch();
+      resolve(false);
+    }, timeoutMs);
+    const unwatch = store.watch(
+      (state) => state.managementReady,
+      (ready) => {
+        if (!ready) return;
+        clearTimeout(timer);
+        unwatch();
+        resolve(true);
+      }
+    );
+  });
 }
 
 async function resolveAccess(store: RancherStore): Promise<boolean> {
@@ -74,6 +103,7 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
 /**
  * Returns true if the current user is allowed to access the extension.
  * Result is cached for the session; invalidated when CRTBs change in the store.
+ * Waits for the management store first; if it never loads, returns false.
  *
  *  1. isAdminUser  — schema-based fast path for global admins.
  *  2. CRTB POST    — eliminates cluster members and standard users.
@@ -82,6 +112,8 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
  */
 export async function canAccessExtension(store: RancherStore): Promise<boolean> {
   if (cachedDecision !== null) return cachedDecision;
+  // Fail closed without caching, so the next navigation checks again.
+  if (!(await waitForManagementReady(store))) return false;
   cachedDecision = await resolveAccess(store);
   return cachedDecision;
 }
