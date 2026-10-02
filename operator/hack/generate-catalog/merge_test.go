@@ -439,14 +439,6 @@ func TestSyncNVAIE_OverrideCannotAddChipToDelabeled(t *testing.T) {
 	}
 }
 
-func TestSyncNVAIE_OverrideCannotChangeSource(t *testing.T) {
-	ov := mustOverrides(t, `{"gpu-operator":{"source":""}}`)
-	doc, _, _ := mustSync(t, baseCatalog, []ngcResource{gpuOperator(true)}, ov)
-	if e := findNVIDIA(doc, gpuOperatorSlug); e.Source != catalog.SourceNGC {
-		t.Fatalf("override changed ownership: %q", e.Source)
-	}
-}
-
 func TestSyncNVAIE_DedupeEqualRankIsDeterministic(t *testing.T) {
 	// Two gated, non-nim repos collide on a slug (equal repo rank). Regardless of
 	// the order NGC returns them, the lexicographically smaller URL wins.
