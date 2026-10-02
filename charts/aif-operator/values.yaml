@@ -266,12 +266,11 @@ defaultBlueprints:
 # always present and is NOT listed here. credSecretRef/caBundleSecretRef must
 # reference Secrets you pre-create in the operator namespace.
 blueprintCatalogs: []
-#  - name: partner-acme
-#    repoURL: https://github.com/acme/blueprints.git
-#    branch: main
-#    paths: [catalog/blueprints]
-#    credSecretRef:    {name: acme-git, key: token}
-#    caBundleSecretRef: {name: acme-ca, key: ca.crt}
+ - name: Partner Blueprints
+   repoURL: https://github.com/SUSE/partner-blueprints.git
+   branch: main
+   paths: [partners/]
+
 
 # CRD lifecycle. The chart ships its CRDs under Helm's standard crds/ directory,
 # so Helm natively installs them before it builds the release manifest (the
