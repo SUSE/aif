@@ -212,3 +212,16 @@ func TestRepresentativeChart(t *testing.T) {
 		}
 	}
 }
+
+// The generator-only ownership marker must never reach API consumers.
+func TestNormalize_ClearsSource(t *testing.T) {
+	raw := []byte(`{"nvidia":[{"name":"A","slug_name":"a",` +
+		`"repository_url":"https://helm.ngc.nvidia.com/nvidia","source":"ngc"}]}`)
+	items := Normalize(raw)
+	if len(items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(items))
+	}
+	if items[0].Source != "" {
+		t.Fatalf("Source not cleared: %q", items[0].Source)
+	}
+}
