@@ -265,8 +265,9 @@ defaultBlueprints:
 # syncs Blueprint CRs from the given repo/paths. The bundled default catalog is
 # always present and is NOT listed here. credSecretRef/caBundleSecretRef must
 # reference Secrets you pre-create in the operator namespace.
-blueprintCatalogs: []
- - name: Partner Blueprints
+blueprintCatalogs:
+ - name: partner-blueprints
+   displayName: Partner Blueprints
    repoURL: https://github.com/SUSE/partner-blueprints.git
    branch: main
    paths: [partners/]
