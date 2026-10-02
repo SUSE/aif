@@ -20,7 +20,7 @@ describe('injectNvidiaPullSecretRefs', () => {
 
   it('writes every pull-secret shape into empty values', () => {
     const v: Record<string, any> = {};
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
 
     // Standard k8s pod-spec shape at the chart root: list of {name} objects.
     expect(v.imagePullSecrets).toEqual([{ name: NGC }]);
@@ -50,8 +50,8 @@ describe('injectNvidiaPullSecretRefs', () => {
 
   it('is idempotent — re-applying does not duplicate ngc-secret', () => {
     const v: Record<string, any> = {};
-    injectNvidiaPullSecretRefs(v, 'nvidia');
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
 
     expect(v.imagePullSecrets).toEqual([{ name: NGC }]);
     expect(v.image.pullSecrets).toEqual([NGC]);
@@ -68,10 +68,32 @@ describe('injectNvidiaPullSecretRefs', () => {
 
   it('creates the nested operator.image.pullSecrets when operator exists without image', () => {
     const v: Record<string, any> = { operator: { replicas: 2 } };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
 
     expect(v.operator.replicas).toBe(2);
     expect(v.operator.image.pullSecrets).toEqual([NGC]);
+  });
+
+  it('never creates operator.image for charts that read it as a scalar (GPU Operator)', () => {
+    // The GPU Operator chart builds "<repository>/<image>:<version>" from a scalar
+    // operator.image; a created map rendered as
+    // "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>".
+    for (const chartName of ['gpu-operator', 'network-operator', undefined]) {
+      const empty: Record<string, any> = {};
+      injectNvidiaPullSecretRefs(empty, 'nvidia', chartName);
+      expect(empty.operator).toBeUndefined();
+
+      const withOperator: Record<string, any> = { operator: { upgradeCRD: true } };
+      injectNvidiaPullSecretRefs(withOperator, 'nvidia', chartName);
+      expect(withOperator.operator).toEqual({ upgradeCRD: true });
+    }
+  });
+
+  it('still fills an operator.image map the author supplied, for any chart', () => {
+    const v: Record<string, any> = { operator: { image: { tag: 'main' } } };
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'some-chart');
+
+    expect(v.operator.image).toEqual({ tag: 'main', pullSecrets: [NGC] });
   });
 
   it('treats an explicit null the same as absent', () => {

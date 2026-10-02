@@ -663,25 +663,27 @@ func buildNvidiaInjectorFixture(t *testing.T) (client.Client, *AIWorkloadReconci
 
 func TestInjectorFor_VendorNvidia(t *testing.T) {
 	r := &AIWorkloadReconciler{}
-	if _, ok := r.injectorFor(aiplatformv1alpha1.ComponentVendorNvidia).(*nvidiaInjector); !ok {
+	if _, ok := r.injectorFor(aiplatformv1alpha1.ComponentVendorNvidia, "").(*nvidiaInjector); !ok {
 		t.Errorf("vendor nvidia did not yield *nvidiaInjector")
 	}
 }
 
 func TestInjectorFor_VendorSUSE(t *testing.T) {
 	r := &AIWorkloadReconciler{}
-	if _, ok := r.injectorFor(aiplatformv1alpha1.ComponentVendorSUSE).(*suseInjector); !ok {
+	if _, ok := r.injectorFor(aiplatformv1alpha1.ComponentVendorSUSE, "").(*suseInjector); !ok {
 		t.Errorf("vendor suse did not yield *suseInjector")
 	}
 }
 
 func TestInjectorFor_VendorEmptyDefaultsToSUSE(t *testing.T) {
 	r := &AIWorkloadReconciler{}
-	if _, ok := r.injectorFor("").(*suseInjector); !ok {
+	if _, ok := r.injectorFor("", "").(*suseInjector); !ok {
 		t.Errorf("empty vendor did not default to *suseInjector")
 	}
 }
 
+// The cases below exercise the k8s-nim-operator chart, the only chart for which
+// the operator.image map is created when absent.
 func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecrets(t *testing.T) {
 	cases := []struct {
 		name string
@@ -728,7 +730,7 @@ func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecrets(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			injectNvidiaPullSecretRefs(tc.in)
+			injectNvidiaPullSecretRefs(tc.in, nimOperatorChartName)
 			op, _ := tc.in["operator"].(map[string]any)
 			img, _ := op["image"].(map[string]any)
 			got, _ := img["pullSecrets"].([]any)
@@ -742,16 +744,73 @@ func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecrets(t *testing.T) {
 func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecretsLeavesUnexpected(t *testing.T) {
 	// If operator is present but not a map, leave it alone.
 	vals := map[string]any{"operator": "not-a-map"}
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, "")
 	if got := vals["operator"]; got != "not-a-map" {
 		t.Errorf("expected operator string to be untouched, got %+v", got)
 	}
 	// If operator.image is present but not a map, leave it alone.
 	vals = map[string]any{"operator": map[string]any{"image": "not-a-map"}}
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, "")
 	op, _ := vals["operator"].(map[string]any)
 	if got := op["image"]; got != "not-a-map" {
 		t.Errorf("expected operator.image string to be untouched, got %+v", got)
+	}
+}
+
+// TestInjectNvidiaPullSecretRefs_ScalarOperatorImageCharts pins that charts
+// other than k8s-nim-operator never get operator.image created. The GPU
+// Operator chart reads operator.image as a scalar image name and builds
+// "<repository>/<image>:<version>"; a created map rendered as
+// "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>".
+func TestInjectNvidiaPullSecretRefs_ScalarOperatorImageCharts(t *testing.T) {
+	cases := []struct {
+		name string
+		in   map[string]any
+	}{
+		{name: "no operator key", in: map[string]any{}},
+		{name: "operator without image", in: map[string]any{"operator": map[string]any{"upgradeCRD": true}}},
+	}
+	for _, chart := range []string{"gpu-operator", "network-operator", ""} {
+		for _, tc := range cases {
+			t.Run(chart+"/"+tc.name, func(t *testing.T) {
+				vals := map[string]any{}
+				for k, v := range tc.in {
+					if m, ok := v.(map[string]any); ok {
+						cp := map[string]any{}
+						for mk, mv := range m {
+							cp[mk] = mv
+						}
+						v = cp
+					}
+					vals[k] = v
+				}
+				injectNvidiaPullSecretRefs(vals, chart)
+				op, ok := vals["operator"].(map[string]any)
+				if !ok {
+					if _, present := vals["operator"]; present {
+						t.Fatalf("operator has unexpected shape: %#v", vals["operator"])
+					}
+					return
+				}
+				if img, present := op["image"]; present {
+					t.Errorf("operator.image created for chart %q: %#v", chart, img)
+				}
+			})
+		}
+	}
+}
+
+// TestInjectNvidiaPullSecretRefs_ExistingOperatorImageMapAnyChart pins that an
+// operator.image map the blueprint author already supplied still gets the
+// pull secret, whatever the chart.
+func TestInjectNvidiaPullSecretRefs_ExistingOperatorImageMapAnyChart(t *testing.T) {
+	vals := map[string]any{"operator": map[string]any{"image": map[string]any{"tag": "main"}}}
+	injectNvidiaPullSecretRefs(vals, "some-chart")
+	op, _ := vals["operator"].(map[string]any)
+	img, _ := op["image"].(map[string]any)
+	got, _ := img["pullSecrets"].([]any)
+	if !equalAnyStringSlice(got, []any{nvidiaImagePullSecretName}) {
+		t.Errorf("operator.image.pullSecrets: got %+v want [%q]", got, nvidiaImagePullSecretName)
 	}
 }
 
@@ -760,7 +819,7 @@ func TestInjectNvidiaPullSecretRefs_OperatorImagePullSecretsLeavesUnexpected(t *
 // Mirrors the UI copy so the operator and browser install paths never diverge.
 func TestInjectNvidiaPullSecretRefs_FlatListExplicitNull(t *testing.T) {
 	vals := map[string]any{"image": map[string]any{"pullSecrets": nil}}
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, "")
 	img, _ := vals["image"].(map[string]any)
 	got, _ := img["pullSecrets"].([]any)
 	if len(got) != 1 || got[0] != nvidiaImagePullSecretName {
@@ -971,7 +1030,7 @@ func TestInjectNgcImagePullSecretName(t *testing.T) {
 // install path.
 func TestInjectNvidiaPullSecretRefs_SetsNgcImagePullSecretName(t *testing.T) {
 	vals := map[string]any{}
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, "")
 	if got := vals["ngcImagePullSecretName"]; got != nvidiaImagePullSecretName {
 		t.Errorf("ngcImagePullSecretName = %#v, want %q", got, nvidiaImagePullSecretName)
 	}
