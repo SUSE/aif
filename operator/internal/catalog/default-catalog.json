@@ -350,6 +350,15 @@
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
+      "name": "DGX Cloud Admission Controller",
+      "slug_name": "dgxc-admission-controller",
+      "description": "Multi-node training admission controller for DGX Cloud",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-04-18T22:24:16.379Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
       "name": "Discovery Service Chart",
       "slug_name": "discovery-service",
       "description": "Omniverse Storage APIs - Discovery Service Chart.",
@@ -583,15 +592,9 @@
       "slug_name": "gpu-operator",
       "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
       "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
-      "last_updated_at": "2026-08-21T13:49:44.086Z",
+      "last_updated_at": "2026-09-23T01:02:27.810Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
-      "labels": [
-        {
-          "code": "supported",
-          "name": "Supported"
-        }
-      ]
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
       "name": "Harbor Reef Operator",
@@ -740,6 +743,87 @@
           "name": "Supported"
         }
       ]
+    },
+    {
+      "name": "NeMo Customizer",
+      "slug_name": "nemo-customizer",
+      "description": "Model customization service for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:04:41.419Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Data Store",
+      "slug_name": "nemo-datastore",
+      "description": "Data storage component for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:03:49.554Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Deployment Management",
+      "slug_name": "nemo-deployment-management",
+      "description": "Deployment management service for NeMo models",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:04:42.178Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Entity Store",
+      "slug_name": "nemo-entity-store",
+      "description": "Entity management component for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:03:50.739Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Evaluator",
+      "slug_name": "nemo-evaluator",
+      "description": "Model evaluation service for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:04:33.938Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Guardrails",
+      "slug_name": "nemo-guardrails",
+      "description": "Safety checks and moderation for LLM applications",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:04:41.404Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Microservices Helm Chart",
+      "slug_name": "nemo-microservices-helm-chart",
+      "description": "Deploy NeMo microservices as a platform",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2026-03-18T01:12:52.784Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo NIM Proxy",
+      "slug_name": "nemo-nim-proxy",
+      "description": "Proxy service for NIM microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:04:41.439Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+    },
+    {
+      "name": "NeMo Operator",
+      "slug_name": "nemo-operator",
+      "description": "Kubernetes operator for NeMo microservices",
+      "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
+      "last_updated_at": "2025-06-11T16:04:32.391Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
     },
     {
       "name": "NVIDIA Network Operator",
@@ -969,6 +1053,15 @@
       ]
     },
     {
+      "name": "NVIDIA NIM for Llama Nemotron Embed VL 1B v2",
+      "slug_name": "nvidia-nim-llama-nemotron-embed-vl-1b-v2",
+      "description": "NVIDIA NIM for Llama Nemotron Embed VL 1B v2",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "last_updated_at": "2026-08-03T19:36:31.880Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia"
+    },
+    {
       "name": "NVIDIA NIM for Text Reranking",
       "slug_name": "nvidia-nim-llama-nemotron-rerank-1b-v2",
       "description": "Helm Chart for NVIDIA NIM for Text Reranking - llama-nemotron-rerank-1b-v2",
@@ -1087,6 +1180,15 @@
           "name": "Supported"
         }
       ]
+    },
+    {
+      "name": "NVIDIA NIM for Nemotron 3 Embed 1B",
+      "slug_name": "nvidia-nim-nemotron-3-embed-1b",
+      "description": "NVIDIA NIM for Nemotron 3 Embed 1B",
+      "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
+      "last_updated_at": "2026-08-05T00:17:37.633Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia"
     },
     {
       "name": "NeMo Retriever Graphic Elements v1",
