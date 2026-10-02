@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -223,5 +224,30 @@ func TestNormalize_ClearsSource(t *testing.T) {
 	}
 	if items[0].Source != "" {
 		t.Fatalf("Source not cleared: %q", items[0].Source)
+	}
+}
+
+// Every generator-owned bundled entry must be an NGC chart: the generator maps it
+// back to NGC by repository URL and slug, and fails on anything else.
+func TestBundled_SourceMarkedEntriesAreNGC(t *testing.T) {
+	var doc map[string][]Item
+	if err := json.Unmarshal(bundledJSON, &doc); err != nil {
+		t.Fatal(err)
+	}
+	marked := 0
+	for library, items := range doc {
+		for _, it := range items {
+			if it.Source != SourceNGC {
+				continue
+			}
+			marked++
+			if library != "nvidia" || !IsNGCURL(it.RepositoryURL) {
+				t.Errorf("%s/%s: source ngc requires an nvidia NGC entry, got repo %q",
+					library, it.SlugName, it.RepositoryURL)
+			}
+		}
+	}
+	if marked == 0 {
+		t.Fatal("no bundled entry is marked source ngc")
 	}
 }
