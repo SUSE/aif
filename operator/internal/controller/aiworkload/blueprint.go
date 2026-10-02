@@ -456,7 +456,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// blueprint component override the workload-level TargetNamespace. The
 	// injector and the HelmOp's defaultNamespace below both consume this.
 	ns := componentNamespace(w, c)
-	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(c.Vendor, repoInfo, c.ChartName).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -624,7 +624,13 @@ func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNames
 // either the standard k8s pod-spec list-of-objects shape (imagePullSecrets) or
 // the k8s-nim-operator flat-string shape (image.pullSecrets); writing both
 // covers the surveyed NIM chart families.
-type nvidiaInjector struct{ r *AIWorkloadReconciler }
+//
+// chartName is the component's chart. It gates the one value shape that is
+// specific to a single chart (see injectNvidiaPullSecretRefs).
+type nvidiaInjector struct {
+	r         *AIWorkloadReconciler
+	chartName string
+}
 
 func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any, writeLocal bool) ([]string, error) {
 	l := log.FromContext(ctx)
@@ -680,7 +686,7 @@ func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNam
 		}
 	}
 
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, n.chartName)
 	// NVIDIA blueprint charts (aiq-aira, nvidia-blueprint-rag, ...) commonly
 	// template their own ngc-secret / ngc-api from `imagePullSecret.password` /
 	// `ngcApiSecret.password`. Those values default to "" — and with the
@@ -733,11 +739,12 @@ func (r *AIWorkloadReconciler) localCC() cluster.Client {
 
 // injectorFor returns the secretInjector for a component vendor. Unknown or
 // empty vendors fall back to the SUSE profile defensively; the CRD default
-// fills the field in practice.
-func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVendor) secretInjector {
+// fills the field in practice. chartName is the component's chart; the NVIDIA
+// injector uses it to gate chart-specific value shapes.
+func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVendor, chartName string) secretInjector {
 	switch vendor {
 	case aiplatformv1alpha1.ComponentVendorNvidia:
-		return &nvidiaInjector{r: r}
+		return &nvidiaInjector{r: r, chartName: chartName}
 	default:
 		return &suseInjector{r: r}
 	}
@@ -750,11 +757,11 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 // without this a custom-repo app would fall through to the suseInjector and be
 // pulled with SUSE registry credentials. Non-custom repos keep the vendor-based
 // selection.
-func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo) secretInjector {
+func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo, chartName string) secretInjector {
 	if repoInfo.Custom {
 		return &noopInjector{}
 	}
-	return r.injectorFor(vendor)
+	return r.injectorFor(vendor, chartName)
 }
 
 // noopInjector delivers no pull secrets and leaves chart values untouched. Used
@@ -1054,7 +1061,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
-	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(c.Vendor, repoInfo, c.ChartName).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
@@ -1316,7 +1323,9 @@ func bpCRName(familyName, version string) string {
 //   - path present and ngc-secret already listed → leave unchanged
 //   - path present with other entries → prepend ngc-secret
 //   - path present with an unexpected shape → leave untouched (author intent)
-func injectNvidiaPullSecretRefs(vals map[string]any) {
+//
+// chartName gates the k8s-nim-operator shape; see the operator.image block.
+func injectNvidiaPullSecretRefs(vals map[string]any, chartName string) {
 	// Top-level k8s pod-spec shape: list of objects with {"name": ...}.
 	// Covers Helm charts that respect the standard pod-spec convention at
 	// the chart root.
@@ -1338,8 +1347,14 @@ func injectNvidiaPullSecretRefs(vals map[string]any) {
 
 	// k8s-nim-operator chart shape: operator.image.pullSecrets is a flat
 	// string list nested two levels deep (operator -> image -> pullSecrets).
-	// Same conservative shape policy as image.pullSecrets above.
-	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets")
+	// Other NVIDIA charts use operator.image as a scalar image name (the GPU
+	// Operator and Network Operator default it to "gpu-operator" /
+	// "network-operator" and build "<repository>/<image>:<version>"). Creating
+	// operator.image as a map there shadows that default, and the chart renders
+	// "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>". So the missing
+	// maps are created only for the k8s-nim-operator chart; any chart whose
+	// values already carry operator.image as a map still gets the entry.
+	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets", chartName == nimOperatorChartName)
 
 	// Scalar name shape: some NVIDIA charts read a single string that names the
 	// pull secret to wire into pod specs, rather than a list.
@@ -1355,6 +1370,10 @@ func injectNvidiaPullSecretRefs(vals map[string]any) {
 // Unlike the object-shaped keys, this key is only ever a scalar string across the
 // surveyed charts, so setting it blindly is safe.
 const nvidiaNgcImagePullSecretNameKey = "ngcImagePullSecretName"
+
+// nimOperatorChartName is the k8s-nim-operator chart, the one NVIDIA chart that
+// reads its operator pull secrets from operator.image.pullSecrets.
+const nimOperatorChartName = "k8s-nim-operator"
 
 // injectNgcImagePullSecretName sets the scalar pull-secret name at both the top
 // level and under global, since charts read one or the other (see
@@ -1409,13 +1428,17 @@ func injectFlatPullSecretList(vals map[string]any, topKey, listKey string) {
 	}
 }
 
-// injectNestedFlatPullSecretList walks vals[topKey][midKey][listKey],
-// creating intermediate maps as needed. If any intermediate value exists but
-// isn't a map, the function returns without changes (preserves author intent).
-func injectNestedFlatPullSecretList(vals map[string]any, topKey, midKey, listKey string) {
+// injectNestedFlatPullSecretList walks vals[topKey][midKey][listKey]. When
+// createMissing is true, absent intermediate maps are created; otherwise an
+// absent intermediate leaves vals unchanged. If any intermediate value exists
+// but isn't a map, the function returns without changes (preserves author
+// intent).
+func injectNestedFlatPullSecretList(vals map[string]any, topKey, midKey, listKey string, createMissing bool) {
 	topRaw, present := vals[topKey]
 	if !present {
-		vals[topKey] = map[string]any{midKey: map[string]any{listKey: []any{nvidiaImagePullSecretName}}}
+		if createMissing {
+			vals[topKey] = map[string]any{midKey: map[string]any{listKey: []any{nvidiaImagePullSecretName}}}
+		}
 		return
 	}
 	top, ok := topRaw.(map[string]any)
@@ -1424,7 +1447,9 @@ func injectNestedFlatPullSecretList(vals map[string]any, topKey, midKey, listKey
 	}
 	midRaw, midPresent := top[midKey]
 	if !midPresent {
-		top[midKey] = map[string]any{listKey: []any{nvidiaImagePullSecretName}}
+		if createMissing {
+			top[midKey] = map[string]any{listKey: []any{nvidiaImagePullSecretName}}
+		}
 		return
 	}
 	mid, ok := midRaw.(map[string]any)
