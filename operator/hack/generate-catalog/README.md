@@ -70,7 +70,8 @@ present are pinned:
   fresh from the search API. A slice-valued key (e.g. `labels`) is replaced
   wholesale, not merged — but the Supported chip always follows the NGC designation
   afterward, so an override can add other labels yet never add or strip the chip.
-  `source` cannot be overridden.
+- `repository_url`, `slug_name` and `source` cannot be overridden: they tie an owned
+  entry back to its NGC chart, so the tool rejects an overrides file that pins them.
 - Pinning a field never affects removal: an override for a chart NGC no longer
   publishes does not resurrect it. Remove the stale override entry when convenient.
 - The file is read only by this tool; the operator does not embed it. An absent or
