@@ -510,6 +510,15 @@ describe('install-path repo resolution', () => {
     const name = await resolveInstallRepoName(store, { repository_url: 'oci://ac' });
     expect(name).toBe('application-collection');
   });
+
+  it('resolveInstallRepoName never resolves a built-in URL to a custom repo at the same endpoint', async () => {
+    const store = makeStore([
+      { metadata: { name: 'custom-my-registry', labels: { [MANAGED]: 'true', [CUSTOM_REPO_LABEL]: 'true' } }, spec: { url: 'oci://registry.suse.com/ai/charts' }, status: ready() }, // sorts first
+      { metadata: { name: 'suse-ai-registry', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://registry.suse.com/ai/charts' }, status: ready() },
+    ]);
+    const name = await resolveInstallRepoName(store, { repository_url: 'oci://registry.suse.com/ai/charts' });
+    expect(name).toBe('suse-ai-registry');
+  });
 });
 
 describe('managed-repo threading (list once)', () => {

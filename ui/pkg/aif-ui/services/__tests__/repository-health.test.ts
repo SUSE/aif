@@ -12,6 +12,13 @@ describe('application repository availability', () => {
     expect(appRepository(qdrant, [mirror])).toBe(mirror);
   });
 
+  it('never resolves a built-in entry to a custom repo at the same endpoint', () => {
+    const custom: ManagedRepo = { name: 'custom-my-registry', url: 'oci://registry.suse.com/ai/charts', library: 'custom', ready: true };
+    const builtIn: ManagedRepo = { name: 'suse-ai-registry', url: 'oci://registry.suse.com/ai/charts', library: 'suse-ai', ready: true };
+    expect(appRepository(qdrant, [custom, builtIn])).toBe(builtIn);
+    expect(appRepository(qdrant, [custom])).toBeUndefined();
+  });
+
   it('does not replace a missing NVIDIA team repo with a healthy public org repo', () => {
     expect(appRepository(runai, [{ name: 'nvidia', url: 'https://helm.ngc.nvidia.com/nvidia', library: 'nvidia', ready: true }])).toBeUndefined();
   });

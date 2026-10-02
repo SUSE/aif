@@ -9,7 +9,9 @@ export function appRepository(app: AppCollectionItem, repos: ManagedRepo[]): Man
   if (app.repository_name) return repos.find(repo => repo.name === app.repository_name);
   const source = normalize(app.repository_url);
   if (!source) return undefined;
-  const exact = repos.find(repo => normalize(repo.url) === source);
+  // Custom repos are only reachable by name: one pointed at a built-in endpoint
+  // must not take over that endpoint's catalog entries (and their pull secrets).
+  const exact = repos.find(repo => repo.library !== 'custom' && normalize(repo.url) === source);
   if (exact) return exact;
   if (source === APP_COLLECTION_REPO_URL) return repos.find(repo => repo.name === 'application-collection');
   if (source === SUSE_REGISTRY_REPO_URL) return repos.find(repo => repo.name === 'suse-ai-registry');
