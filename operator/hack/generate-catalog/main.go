@@ -1,8 +1,9 @@
 // Command generate-catalog regenerates the operator's bundled default-catalog.json
-// from the NGC catalog search API. It rebuilds every generator-owned entry (those
-// carrying the "Supported" chip) from the current NGC data — refreshing changed
-// fields and dropping charts NGC no longer lists — while preserving hand-added
-// entries and the suse-ai library. Pinned fields in catalog-overrides.json are
+// from the NGC catalog search API. Generator-owned entries (marked "source": "ngc")
+// are rebuilt from the current NGC data each run: NVAIE-supported charts carry the
+// Supported chip, owned charts that lose the designation stay without it, and
+// owned charts NGC no longer publishes are removed. Hand-added entries and the
+// suse-ai library are preserved. Pinned fields in catalog-overrides.json are
 // applied on top of the fresh NGC values. Manual runs and the weekly
 // refresh-catalog CI workflow both invoke it; commit the result. See README.md.
 package main
@@ -17,8 +18,6 @@ import (
 	"net/url"
 	"os"
 	"time"
-
-	"github.com/SUSE/aif-operator/internal/catalog"
 )
 
 const ngcSearchBase = "https://api.ngc.nvidia.com/v2/search/catalog/resources/HELM_CHART"
@@ -38,24 +37,6 @@ func main() {
 		log.Fatalf("fetch NGC catalog: %v", err)
 	}
 
-	var derived []catalog.Item
-	var skippedExcluded, skippedUnknown int
-	for _, res := range resources {
-		if !isNVAIE(res) {
-			continue
-		}
-		switch kind := catalog.ClassifyNGCPath(ngcRepoPath(res)); kind {
-		case catalog.NGCPathExcluded:
-			skippedExcluded++
-		case catalog.NGCPathUnknown:
-			skippedUnknown++
-			log.Printf("warning: NVAIE chart %q is under unclassified NGC path %q; "+
-				"add it to ngc_repos.go before it can be listed", res.ResourceID, ngcRepoPath(res))
-		default: // org, public, gated → deployable
-			derived = append(derived, deriveItem(res))
-		}
-	}
-
 	catIn, err := os.ReadFile(*catalogPath)
 	if err != nil {
 		log.Fatalf("read catalog: %v", err)
@@ -72,7 +53,7 @@ func main() {
 		log.Fatalf("load overrides: %v", err)
 	}
 
-	out, added, removed, err := syncNVAIE(catIn, derived, ov)
+	out, rep, err := syncNVAIE(catIn, resources, ov)
 	if err != nil {
 		log.Fatalf("sync catalog: %v", err)
 	}
@@ -80,14 +61,32 @@ func main() {
 		log.Fatalf("write catalog: %v", err)
 	}
 
-	fmt.Printf("updated %s (%d NGC resources, %d NVAIE deployable, %d added, %d removed, "+
-		"%d skipped excluded, %d skipped unclassified)\n",
-		*catalogPath, len(resources), len(derived), len(added), len(removed), skippedExcluded, skippedUnknown)
-	for _, slug := range added {
-		log.Printf("added: %s", slug)
+	fmt.Printf("updated %s (%d NGC resources, %d added, %d removed, %d delabeled, %d relabeled, "+
+		"%d unclassified paths)\n",
+		*catalogPath, len(resources), len(rep.Added), len(rep.Removed), len(rep.Delabeled),
+		len(rep.Relabeled), len(rep.Unclassified))
+	logReport(rep)
+}
+
+// logReport prints the run's findings to the log, one line each.
+func logReport(rep report) {
+	for _, p := range rep.Unclassified {
+		for _, c := range p.Charts {
+			log.Printf("warning: NVAIE chart %q is under unclassified NGC path %q; "+
+				"add it to ngc_repos.go before it can be listed", c.ResourceID, p.Path)
+		}
 	}
-	for _, slug := range removed {
-		log.Printf("removed: %s", slug)
+	for _, a := range rep.Added {
+		log.Printf("added: %s", a.Slug)
+	}
+	for _, a := range rep.Removed {
+		log.Printf("removed: %s (%s)", a.Slug, a.Reason)
+	}
+	for _, a := range rep.Delabeled {
+		log.Printf("delabeled: %s", a.Slug)
+	}
+	for _, a := range rep.Relabeled {
+		log.Printf("relabeled: %s", a.Slug)
 	}
 }
 
