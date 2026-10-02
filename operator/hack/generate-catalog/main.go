@@ -27,6 +27,8 @@ func main() {
 	overridesPath := flag.String("overrides", "internal/catalog/catalog-overrides.json",
 		"path to catalog-overrides.json (pinned fields, generator-only input)")
 	pageSize := flag.Int("page-size", 100, "NGC search page size")
+	reportDir := flag.String("report-dir", "",
+		"if set, write report.json and summary.md describing the run into this directory")
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -66,6 +68,11 @@ func main() {
 		*catalogPath, len(resources), len(rep.Added), len(rep.Removed), len(rep.Delabeled),
 		len(rep.Relabeled), len(rep.Unclassified))
 	logReport(rep)
+	if *reportDir != "" {
+		if err := writeReport(*reportDir, rep); err != nil {
+			log.Fatalf("write report: %v", err)
+		}
+	}
 }
 
 // logReport prints the run's findings to the log, one line each.
