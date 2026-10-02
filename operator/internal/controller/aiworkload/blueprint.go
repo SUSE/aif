@@ -125,7 +125,16 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// by desiredHelmOpKeys/cleanup/certification alike — so a version change that adds, removes,
 	// renames, or reorders components never desynchronizes the render names from the desired set
 	// (the stale FleetBundleNames[i] index is intentionally NOT used for rendering).
-	enabledComponents := filterEnabledComponents(w, bp.Spec.Components)
+	if err := validateComponentDependencies(bp.Spec.Components); err != nil {
+		// Terminal for this Blueprint version: a published version does not
+		// change, so retrying cannot help. Nothing is deployed until the
+		// workload moves to a valid version.
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonInvalidComponentDependencies,
+			fmt.Sprintf("Blueprint %q has invalid component dependencies: %v", crName, err), w.Generation)
+		w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+		return ctrl.Result{}, nil
+	}
+	enabledComponents := pruneDisabledDependencies(filterEnabledComponents(w, bp.Spec.Components))
 
 	expectedDigests := map[string]string{}
 	for _, c := range enabledComponents {
@@ -476,6 +485,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		RepoURL:      repoInfo.URL,
 		Targets:      w.Spec.TargetClusters,
 		Values:       vals,
+		DependsOn:    c.DependsOn,
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
@@ -518,6 +528,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// schema declares spec.forceSyncGeneration and rejects spec.helm.forceSyncGeneration.
 		_ = unstructured.SetNestedField(ho.Object, epoch, "spec", "forceSyncGeneration")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
+		if refs := dependsOnRefs(w.Name, c.DependsOn); refs != nil {
+			_ = unstructured.SetNestedSlice(ho.Object, refs, "spec", "dependsOn")
+		}
 		if repoInfo.ClientSecret != "" {
 			_ = unstructured.SetNestedField(ho.Object, repoInfo.ClientSecret, "spec", "helmSecretName")
 		}
@@ -1074,6 +1087,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		RepoURL:      repoInfo.URL,
 		Targets:      w.Spec.TargetClusters,
 		Values:       vals,
+		DependsOn:    c.DependsOn,
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
@@ -1113,6 +1127,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		}
 		if repoInfo.ClientSecret != "" {
 			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+		}
+		if refs := dependsOnRefs(w.Name, c.DependsOn); refs != nil {
+			helmOpSpec["dependsOn"] = refs
 		}
 		objects = append(objects, map[string]any{
 			"apiVersion": "fleet.cattle.io/v1alpha1",

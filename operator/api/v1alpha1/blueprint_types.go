@@ -65,6 +65,7 @@ const (
 )
 
 // BlueprintComponent defines one Helm chart in a Blueprint.
+// +kubebuilder:validation:XValidation:rule="!has(self.dependsOn) || !(self.chartName in self.dependsOn)",message="a component cannot depend on itself"
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
 	// ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
@@ -104,6 +105,18 @@ type BlueprintComponent struct {
 	// +kubebuilder:validation:MaxLength=53
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	ReleaseName string `json:"releaseName,omitempty"`
+	// DependsOn lists the chartName of other components in this blueprint that
+	// must be ready before this component is deployed. The operator maps each
+	// entry to the dependency's Fleet bundle in spec.dependsOn, so Fleet holds
+	// this component until the dependency's bundle is Ready. Entries must name
+	// another component of the same blueprint and must not form a cycle; an
+	// entry naming a component the workload disabled is ignored.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.

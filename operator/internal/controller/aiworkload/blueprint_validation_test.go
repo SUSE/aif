@@ -49,3 +49,21 @@ var _ = Describe("Blueprint component identity", func() {
 		Expect(k8sClient.Update(ctx, b)).To(Succeed())
 	})
 })
+
+var _ = Describe("Blueprint component dependsOn", func() {
+	It("rejects a component that depends on itself", func() {
+		self := comp("a")
+		self.DependsOn = []string{"a"}
+		Expect(k8sClient.Create(ctx, bp("dep-self", self))).ToNot(Succeed())
+	})
+	It("rejects duplicate dependsOn entries", func() {
+		dup := comp("b")
+		dup.DependsOn = []string{"a", "a"}
+		Expect(k8sClient.Create(ctx, bp("dep-dup", comp("a"), dup))).ToNot(Succeed())
+	})
+	It("accepts a dependency on another component", func() {
+		dependent := comp("b")
+		dependent.DependsOn = []string{"a"}
+		Expect(k8sClient.Create(ctx, bp("dep-ok", comp("a"), dependent))).To(Succeed())
+	})
+})
