@@ -176,7 +176,7 @@ func TestClassifyNGCPath(t *testing.T) {
 		"/nvidia/omniverse":               NGCPathGated, // public index, gated charts
 		"/nim/nvidia":                     NGCPathGated,
 		"/nvidia/runai":                   NGCPathGated,
-		"/nim":                            NGCPathExcluded,
+		"/nim":                            NGCPathPublic,
 		"/eevaigoeixww/animation":         NGCPathExcluded,
 		"/eevaigoeixww/conversational-ai": NGCPathExcluded,
 		"/some/brand-new-team":            NGCPathUnknown,

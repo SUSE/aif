@@ -845,9 +845,39 @@
       "slug_name": "nim-llm",
       "description": "Helm Chart for NVIDIA NIM for LLMs",
       "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
-      "last_updated_at": "2026-10-04T01:41:03.905Z",
+      "last_updated_at": "2026-09-16T23:52:28.476Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
+      "repository_url": "https://helm.ngc.nvidia.com/nim",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
+      "name": "Helm Chart for NVIDIA NIM for VLMs",
+      "slug_name": "nim-vlm",
+      "description": "Helm Chart for NVIDIA NIM for VLMs",
+      "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama-3_2-11b-vision-instruct.jpg",
+      "last_updated_at": "2026-03-11T23:00:30.652Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
+      "name": "Helm Chart for NVIDIA NIM for WFMs",
+      "slug_name": "nim-wfm",
+      "description": "Helm Chart for NVIDIA NIM for WFMs",
+      "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/cosmos-transfer1-7b.jpg",
+      "last_updated_at": "2026-10-01T12:31:10.581Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nim",
       "labels": [
         {
           "code": "supported",
