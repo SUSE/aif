@@ -267,7 +267,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Boltz2 NIM",
@@ -559,6 +560,22 @@
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
+      "name": "Dynamo Platform (Enterprise)",
+      "slug_name": "dynamo-platform-enterprise",
+      "description": "The Dynamo Platform Helm chart installs the Dynamo operator and its optional dependencies. Eligible for NVIDIA Enterprise Support. No functional or binary differences from its corresponding OSS artifact.",
+      "logo_url": "https://s3.amazonaws.com/cms.ipressroom.com/219/files/20237/64e3dc1a3d6332319b2dfd35_NVIDIA-logo-white-16x9/NVIDIA-logo-white-16x9_927581a6-fc31-4fa5-85c6-379680c6aa6c-prv.png",
+      "last_updated_at": "2026-09-29T02:18:51.701Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/ai-dynamo",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
       "name": "Envoy Auth Extension",
       "slug_name": "envoy-auth-extension",
       "description": "Auth extension used with Envoy and the Omniverse Storage APIs.",
@@ -767,7 +784,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Microsoft Graph User Info Chart",
@@ -936,7 +954,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Helm Chart for NVIDIA NIM for WFMs",
@@ -951,7 +970,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Active Speaker Detection ST 2110 Operator",
@@ -1758,7 +1778,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Triton Inference Server (AWS)",
