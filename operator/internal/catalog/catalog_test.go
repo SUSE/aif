@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -210,5 +211,43 @@ func TestRepresentativeChart(t *testing.T) {
 		if anySupported && !supported(*pick) {
 			t.Errorf("%s: picked unsupported %q while a supported chart exists", repo, got)
 		}
+	}
+}
+
+// The generator-only ownership marker must never reach API consumers.
+func TestNormalize_ClearsSource(t *testing.T) {
+	raw := []byte(`{"nvidia":[{"name":"A","slug_name":"a",` +
+		`"repository_url":"https://helm.ngc.nvidia.com/nvidia","source":"ngc"}]}`)
+	items := Normalize(raw)
+	if len(items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(items))
+	}
+	if items[0].Source != "" {
+		t.Fatalf("Source not cleared: %q", items[0].Source)
+	}
+}
+
+// Every generator-owned bundled entry must be an NGC chart: the generator maps it
+// back to NGC by repository URL and slug, and fails on anything else.
+func TestBundled_SourceMarkedEntriesAreNGC(t *testing.T) {
+	var doc map[string][]Item
+	if err := json.Unmarshal(bundledJSON, &doc); err != nil {
+		t.Fatal(err)
+	}
+	marked := 0
+	for library, items := range doc {
+		for _, it := range items {
+			if it.Source != SourceNGC {
+				continue
+			}
+			marked++
+			if library != "nvidia" || !IsNGCURL(it.RepositoryURL) {
+				t.Errorf("%s/%s: source ngc requires an nvidia NGC entry, got repo %q",
+					library, it.SlugName, it.RepositoryURL)
+			}
+		}
+	}
+	if marked == 0 {
+		t.Fatal("no bundled entry is marked source ngc")
 	}
 }

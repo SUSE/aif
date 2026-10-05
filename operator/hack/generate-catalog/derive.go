@@ -69,3 +69,23 @@ func deriveItem(res ngcResource) catalog.Item {
 		RepositoryURL:   ngcRepoURL(res),
 	}
 }
+
+// ngcResourceKey identifies a chart by its NGC repo path and name, e.g.
+// "nim/nvidia/foo" or "nvidia/foo". An owned catalog entry maps to the same key
+// via its repository_url and slug_name.
+func ngcResourceKey(res ngcResource) string {
+	return strings.TrimPrefix(ngcRepoPath(res), "/") + "/" + res.Name
+}
+
+// ngcLatestVersionAttr is the NGC resource attribute holding the latest chart version.
+const ngcLatestVersionAttr = "latestVersionIdStr"
+
+// ngcLatestVersion returns the resource's latest chart version, or "" if absent.
+func ngcLatestVersion(res ngcResource) string {
+	for _, a := range res.Attributes {
+		if a.Key == ngcLatestVersionAttr {
+			return strings.TrimSpace(a.Value)
+		}
+	}
+	return ""
+}

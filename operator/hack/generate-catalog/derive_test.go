@@ -77,3 +77,22 @@ func TestNGCRepoURL_NoTeam(t *testing.T) {
 		t.Errorf("ngcRepoPath no-team = %q", got)
 	}
 }
+
+func TestNGCResourceKey(t *testing.T) {
+	if got := ngcResourceKey(nvaieRes()); got != "nim/nvidia/multimodal-safety-nim" {
+		t.Errorf("team key = %q", got)
+	}
+	if got := ngcResourceKey(ngcResource{OrgName: "nvidia", Name: "gpu-operator"}); got != "nvidia/gpu-operator" {
+		t.Errorf("no-team key = %q", got)
+	}
+}
+
+func TestNGCLatestVersion(t *testing.T) {
+	r := ngcResource{Attributes: []ngcAttribute{{Key: ngcLatestVersionAttr, Value: " 1.5.0 "}}}
+	if got := ngcLatestVersion(r); got != "1.5.0" {
+		t.Errorf("version = %q", got)
+	}
+	if got := ngcLatestVersion(ngcResource{}); got != "" {
+		t.Errorf("missing version = %q", got)
+	}
+}

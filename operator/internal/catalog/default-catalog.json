@@ -267,7 +267,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "cluster-installer-helm",
@@ -281,14 +282,15 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Run:ai (self-hosted) Control Plane",
       "slug_name": "control-plane",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-08-10T16:30:12.726Z",
+      "last_updated_at": "2026-09-23T19:48:26.632Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
@@ -296,7 +298,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "cuOpt",
@@ -311,7 +314,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Morpheus Digital Fingerprinting",
@@ -340,7 +344,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DeepStream Intelligent Traffic System",
@@ -356,7 +361,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-04-18T22:24:16.379Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "Discovery Service Chart",
@@ -371,7 +377,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DOCA Argus",
@@ -386,7 +393,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DOCA Firefly",
@@ -401,7 +409,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DOCA HBN",
@@ -416,7 +425,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DOCA Telemetry Service",
@@ -431,7 +441,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DPU (DPF) Operator",
@@ -446,7 +457,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DPF Storage",
@@ -461,7 +473,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "OVN VPC System for DPF - Helm Chart",
@@ -476,7 +489,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Datacenter Power Service",
@@ -505,7 +519,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "DRA Driver for NVIDIA GPUs",
@@ -529,6 +544,22 @@
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
     {
+      "name": "Dynamo Platform (Enterprise)",
+      "slug_name": "dynamo-platform-enterprise",
+      "description": "The Dynamo Platform Helm chart installs the Dynamo operator and its optional dependencies. Eligible for NVIDIA Enterprise Support. No functional or binary differences from its corresponding OSS artifact.",
+      "logo_url": "https://s3.amazonaws.com/cms.ipressroom.com/219/files/20237/64e3dc1a3d6332319b2dfd35_NVIDIA-logo-white-16x9/NVIDIA-logo-white-16x9_927581a6-fc31-4fa5-85c6-379680c6aa6c-prv.png",
+      "last_updated_at": "2026-09-29T02:18:51.701Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/ai-dynamo",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
       "name": "Envoy Auth Extension",
       "slug_name": "envoy-auth-extension",
       "description": "Auth extension used with Envoy and the Omniverse Storage APIs.",
@@ -541,7 +572,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Notification Aggregation Service Chart",
@@ -556,7 +588,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Notification Consumer Service Chart",
@@ -571,7 +604,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Federated Learning Server",
@@ -594,7 +628,8 @@
       "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
       "last_updated_at": "2026-09-23T01:02:27.810Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia",
+      "source": "ngc"
     },
     {
       "name": "Harbor Reef Operator",
@@ -630,7 +665,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Kata Containers",
@@ -652,7 +688,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Omniverse Kit App Streaming - AWS NLB Manager",
@@ -667,7 +704,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Omniverse Kit App Streaming - Session Manager",
@@ -682,7 +720,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Omniverse Kit App Streaming - Resource Management Control Plane",
@@ -697,7 +736,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Omniverse Kit App Streaming - Kit App Streaming Session",
@@ -712,7 +752,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Microsoft Graph User Info Chart",
@@ -727,7 +768,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Helm Chart for NVIDIA NIM for Multimodal Safety",
@@ -742,7 +784,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NeMo Customizer",
@@ -751,7 +794,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:04:41.419Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Data Store",
@@ -760,7 +804,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:03:49.554Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Deployment Management",
@@ -769,7 +814,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:04:42.178Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Entity Store",
@@ -778,7 +824,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:03:50.739Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Evaluator",
@@ -787,7 +834,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:04:33.938Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Guardrails",
@@ -796,7 +844,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:04:41.404Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Microservices Helm Chart",
@@ -805,7 +854,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2026-03-18T01:12:52.784Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo NIM Proxy",
@@ -814,7 +864,8 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:04:41.439Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NeMo Operator",
@@ -823,14 +874,15 @@
       "logo_url": "https://images.ngc.nvidia.com/public-images/llm-social-data-flywheel-gtc25-1200x675.png",
       "last_updated_at": "2025-06-11T16:04:32.391Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices"
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/nemo-microservices",
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Network Operator",
       "slug_name": "network-operator",
       "description": "NVIDIA Network Operator Helm Chart provides an easy way to install, configure and manage the lifecycle of NVIDIA Mellanox network operator.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-Network-Operator.png",
-      "last_updated_at": "2026-09-01T07:35:35.479Z",
+      "last_updated_at": "2026-09-23T18:14:45.369Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -838,14 +890,15 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for LLMs",
       "slug_name": "nim-llm",
       "description": "Helm Chart for NVIDIA NIM for LLMs",
       "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
-      "last_updated_at": "2026-09-15T01:15:32.789Z",
+      "last_updated_at": "2026-10-04T01:41:03.905Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -853,7 +906,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Active Speaker Detection ST 2110 Operator",
@@ -867,7 +921,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Active Speaker Detection ST 2110 Sample",
@@ -881,7 +936,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Active Speaker Detection ST 2110 NIM",
@@ -895,7 +951,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Blueprint Data Flywheel",
@@ -960,7 +1017,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Embedding",
@@ -975,7 +1033,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Reranking",
@@ -990,7 +1049,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Embedding",
@@ -1005,7 +1065,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Reranking",
@@ -1020,7 +1081,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Embedding",
@@ -1035,7 +1097,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Embedding",
@@ -1050,7 +1113,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Llama Nemotron Embed VL 1B v2",
@@ -1059,7 +1123,8 @@
       "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
       "last_updated_at": "2026-08-03T19:36:31.880Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia"
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Reranking",
@@ -1074,7 +1139,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Reranking",
@@ -1089,7 +1155,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Multimodal Reranking",
@@ -1104,7 +1171,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Object Detection",
@@ -1119,7 +1187,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Image OCR",
@@ -1134,7 +1203,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Object Detection",
@@ -1149,7 +1219,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Object Detection",
@@ -1164,7 +1235,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Object Detection",
@@ -1179,7 +1251,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Nemotron 3 Embed 1B",
@@ -1188,7 +1261,8 @@
       "logo_url": "https://developer-blogs.nvidia.com/wp-content/uploads/2024/03/nemo-retriever-graphic.png",
       "last_updated_at": "2026-08-05T00:17:37.633Z",
       "packaging_format": "HELM_CHART",
-      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia"
+      "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "source": "ngc"
     },
     {
       "name": "NeMo Retriever Graphic Elements v1",
@@ -1203,7 +1277,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Nemotron Object Detection",
@@ -1218,7 +1293,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM nemotron-ocr-v1",
@@ -1233,7 +1309,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Image OCR",
@@ -1248,7 +1325,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NeMo Retriever Page Elements v3",
@@ -1263,7 +1341,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NeMo Retriever Table Structure v1",
@@ -1278,7 +1357,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Embedding",
@@ -1293,7 +1373,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Image OCR",
@@ -1308,7 +1389,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Studio Voice ST 2110 Operator",
@@ -1322,7 +1404,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Studio Voice ST 2110 Sample",
@@ -1336,7 +1419,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Studio Voice ST 2110 NIM",
@@ -1350,7 +1434,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Video Super Resolution ST 2110 Operator",
@@ -1364,7 +1449,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Video Super Resolution ST 2110 Sample",
@@ -1378,7 +1464,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA Video Super Resolution ST 2110 NIM",
@@ -1392,7 +1479,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA System Management",
@@ -1414,7 +1502,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Permissions Service Chart",
@@ -1429,7 +1518,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Permissions UI",
@@ -1444,7 +1534,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Power Reservation Steering",
@@ -1465,7 +1556,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Riva Speech Skills",
@@ -1480,7 +1572,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Riva NIM",
@@ -1495,14 +1588,15 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Run:ai (self-hosted) Cluster",
       "slug_name": "runai-cluster",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-08-10T14:56:37.578Z",
+      "last_updated_at": "2026-09-23T19:44:41.443Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
@@ -1510,7 +1604,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Storage APIs Integration Tests",
@@ -1525,7 +1620,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Storage Navigator Chart",
@@ -1540,7 +1636,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Storage Service Chart",
@@ -1555,7 +1652,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "TensorRT Inference Server",
@@ -1584,7 +1682,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "NVIDIA NIM for Text Ranking",
@@ -1599,7 +1698,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Triton Inference Server (AWS)",
@@ -1621,7 +1721,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "USD Code",
@@ -1636,7 +1737,8 @@
           "code": "supported",
           "name": "Supported"
         }
-      ]
+      ],
+      "source": "ngc"
     },
     {
       "name": "Video Analytics Demo",

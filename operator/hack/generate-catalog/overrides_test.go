@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/SUSE/aif-operator/internal/catalog"
@@ -62,5 +63,16 @@ func TestApply_NoOverrideForSlugIsNoOp(t *testing.T) {
 	}
 	if item.Description != "derived" {
 		t.Fatalf("unrelated override applied: %q", item.Description)
+	}
+}
+
+// Owned entries are matched back to NGC by repository_url + slug_name and owned
+// via source, so an override must not be able to pin any of them.
+func TestLoadOverrides_RejectsIdentityFields(t *testing.T) {
+	for _, field := range []string{"repository_url", "slug_name", "source"} {
+		_, err := loadOverrides([]byte(`{"some-slug":{"` + field + `":"x"}}`))
+		if err == nil || !strings.Contains(err.Error(), field) {
+			t.Errorf("override pinning %q: want error naming the field, got %v", field, err)
+		}
 	}
 }
