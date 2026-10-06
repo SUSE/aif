@@ -157,11 +157,11 @@ func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 		}
 	}
 
-	bounced, err := r.restartImagePullBackOffPods(ctx, namespace, secretNames)
+	bounced, pending, err := r.restartImagePullBackOffPods(ctx, namespace, secretNames)
 	if err != nil {
 		return false, err
 	}
-	if bounced > 0 {
+	if bounced > 0 || pending > 0 {
 		settled = false
 	}
 	return settled, nil
@@ -229,27 +229,33 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 // counter because the new RS object has no annotation yet. Pods without a
 // controllerRef are skipped (no place to persist the counter).
 //
-// Returns the count of pods deleted this pass.
-func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string, deliveredSecrets []string) (int, error) {
+// Returns the count of pods deleted this pass, and the count of still-Pending
+// pods that miss a delivered secret and would be recreated once their image
+// pull fails (so the caller keeps checking instead of settling).
+func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string, deliveredSecrets []string) (bounced, pending int, err error) {
 	l := log.FromContext(ctx)
 
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(namespace)); err != nil {
-		return 0, fmt.Errorf("list pods in %s: %w", namespace, err)
+		return 0, 0, fmt.Errorf("list pods in %s: %w", namespace, err)
 	}
 
 	saSecrets := map[string]map[string]bool{}
-	bounced := 0
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		if !isPodImagePullBackOff(p) {
+		pullFailing := isPodImagePullBackOff(p)
+		viaServiceAccount := p.Labels[chartManagedByLabel] != chartManagedByHelm
+		// A pod admitted without the delivered secret may not have failed its
+		// first pull yet. It is reported as pending below so the caller checks
+		// again, rather than settling before the failure shows up.
+		awaitingPull := !pullFailing && viaServiceAccount && p.Status.Phase == corev1.PodPending
+		if !pullFailing && !awaitingPull {
 			continue
 		}
-		viaServiceAccount := p.Labels[chartManagedByLabel] != chartManagedByHelm
 		if viaServiceAccount {
 			missing, err := r.podMissesDeliveredSecret(ctx, p, deliveredSecrets, saSecrets)
 			if err != nil {
-				return bounced, err
+				return bounced, pending, err
 			}
 			if !missing {
 				continue
@@ -277,6 +283,12 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		if viaServiceAccount && templateSetsPullSecrets(owner) {
 			continue
 		}
+		if awaitingPull {
+			if count < chartPodMaxBounces {
+				pending++
+			}
+			continue
+		}
 		if count >= chartPodMaxBounces {
 			l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
 				"namespace", p.Namespace, "pod", p.Name,
@@ -288,13 +300,13 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		// a transient delete failure doesn't double-count, and the cap is
 		// enforced even if this pass partially fails.
 		if err := r.incrementBounceCount(ctx, owner, count+1); err != nil {
-			return bounced, fmt.Errorf("increment bounce counter on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
+			return bounced, pending, fmt.Errorf("increment bounce counter on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
 		}
 		if err := r.Delete(ctx, p); err != nil {
 			if client.IgnoreNotFound(err) == nil {
 				continue
 			}
-			return bounced, fmt.Errorf("delete pod %s/%s: %w", p.Namespace, p.Name, err)
+			return bounced, pending, fmt.Errorf("delete pod %s/%s: %w", p.Namespace, p.Name, err)
 		}
 		l.Info("bounced ImagePullBackOff pod",
 			"namespace", p.Namespace, "name", p.Name,
@@ -302,7 +314,7 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 			"bounce", count+1, "cap", chartPodMaxBounces)
 		bounced++
 	}
-	return bounced, nil
+	return bounced, pending, nil
 }
 
 // templateControllerKinds are the pod controllers whose pod template the

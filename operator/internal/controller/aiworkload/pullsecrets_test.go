@@ -395,7 +395,7 @@ func TestRestartImagePullBackOffPods(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-	bounced, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestRestartImagePullBackOffPods_BounceCap(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, rs).Build()
 			r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-			bounced, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+			bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
 			if err != nil {
 				t.Fatalf("restartImagePullBackOffPods: %v", err)
 			}
@@ -570,7 +570,7 @@ func TestRestartImagePullBackOffPods_SkipsUnlabeled(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
-	bounced, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -600,7 +600,7 @@ func TestRestartImagePullBackOffPods_SkipsNoControllerRef(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
-	bounced, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}

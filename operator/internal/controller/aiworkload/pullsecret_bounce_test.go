@@ -20,6 +20,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -77,7 +78,7 @@ func runBounce(t *testing.T, pod *corev1.Pod, objs ...client.Object) (int, bool)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-	bounced, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestRestartImagePullBackOffPods_BouncesStatefulSetPod(t *testing.T) {
 		WithObjects(pod, sts, serviceAccountWithSecrets("qdrant", bounceTestSecret)).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-	bounced, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -169,11 +170,114 @@ func TestRestartImagePullBackOffPods_SkipsPodWhoseControllerTemplateSetsPullSecr
 		WithObjects(pod, rs, serviceAccountWithSecrets("default", "ngc-secret", "ngc-api")).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-	bounced, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{"ngc-secret", "ngc-api"})
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{"ngc-secret", "ngc-api"})
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
 	if bounced != 0 {
 		t.Errorf("bounced = %d, want 0 (recreated pods would still lack ngc-api)", bounced)
+	}
+}
+
+// pendingPod turns a pod into one that has not reached an image-pull failure
+// yet (just scheduled, containers still being created).
+func pendingPod(p *corev1.Pod) *corev1.Pod {
+	p.Status = corev1.PodStatus{
+		Phase: corev1.PodPending,
+		InitContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "init",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}},
+		}},
+	}
+	return p
+}
+
+// A pod admitted without the delivered secret often has not failed its first
+// pull yet when the operator finishes merging. It must be reported so the
+// operator checks again once the pull fails, instead of settling and never
+// looking at the namespace again.
+func TestRestartImagePullBackOffPods_ReportsPendingPodThatWillNeedRecreation(t *testing.T) {
+	pod := pendingPod(unlabelledBackOffPod("demo-0", "demo"))
+	scheme := newTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pod, helmReplicaSet(pod.Name, nil), serviceAccountWithSecrets("demo", bounceTestSecret)).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	bounced, pending, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
+	if err != nil {
+		t.Fatalf("restartImagePullBackOffPods: %v", err)
+	}
+	if bounced != 0 || pending != 1 {
+		t.Errorf("bounced=%d pending=%d, want 0 bounced and 1 pending", bounced, pending)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "test-ns", Name: pod.Name}, &corev1.Pod{}); err != nil {
+		t.Errorf("pending pod must not be deleted: %v", err)
+	}
+}
+
+// Pending pods that a recreation would not help are not reported, so the
+// operator does not keep re-checking for nothing.
+func TestRestartImagePullBackOffPods_DoesNotReportPendingPodsRecreationCannotHelp(t *testing.T) {
+	cases := []struct {
+		name string
+		pod  *corev1.Pod
+		objs []client.Object
+	}{
+		{
+			name: "pod already references the secret",
+			pod:  pendingPod(unlabelledBackOffPod("a-0", "demo", bounceTestSecret)),
+			objs: []client.Object{serviceAccountWithSecrets("demo", bounceTestSecret)},
+		},
+		{
+			name: "ServiceAccount lacks the secret",
+			pod:  pendingPod(unlabelledBackOffPod("b-0", "demo")),
+			objs: []client.Object{serviceAccountWithSecrets("demo")},
+		},
+		{
+			name: "bounce cap reached",
+			pod:  pendingPod(unlabelledBackOffPod("c-0", "demo")),
+			objs: []client.Object{serviceAccountWithSecrets("demo", bounceTestSecret)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			annotations := map[string]string(nil)
+			if tc.name == "bounce cap reached" {
+				annotations = map[string]string{chartPodBounceAnnotation: "3"}
+			}
+			scheme := newTestScheme(t)
+			objs := append(tc.objs, tc.pod, helmReplicaSet(tc.pod.Name, annotations))
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+			r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+			bounced, pending, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
+			if err != nil {
+				t.Fatalf("restartImagePullBackOffPods: %v", err)
+			}
+			if bounced != 0 || pending != 0 {
+				t.Errorf("bounced=%d pending=%d, want 0/0", bounced, pending)
+			}
+		})
+	}
+}
+
+// With nothing left to merge, a namespace holding a pod that will need
+// recreation is not settled, so the reconciler requeues and recreates the
+// pod once its pull fails.
+func TestReconcilePullSecretsForNamespace_UnsettledWhilePodAwaitsRecreation(t *testing.T) {
+	pod := pendingPod(unlabelledBackOffPod("demo-0", "demo"))
+	demoSA := serviceAccountWithSecrets("demo", bounceTestSecret)
+	demoSA.Labels = map[string]string{chartManagedByLabel: chartManagedByHelm}
+	scheme := newTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pod, helmReplicaSet(pod.Name, nil), demoSA, serviceAccountWithSecrets("default", bounceTestSecret)).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	settled, err := r.reconcilePullSecretsForNamespace(context.Background(), "test-ns", []string{bounceTestSecret}, logr.Discard())
+	if err != nil {
+		t.Fatalf("reconcilePullSecretsForNamespace: %v", err)
+	}
+	if settled {
+		t.Error("settled = true, want false while a pod awaits recreation")
 	}
 }
