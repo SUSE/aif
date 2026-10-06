@@ -134,6 +134,7 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups="",resources=services;configmaps;persistentvolumeclaims,verbs=get;list;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;replicasets;daemonsets,verbs=get;list;delete
+// +kubebuilder:rbac:groups=apps,resources=statefulsets;replicasets;daemonsets,verbs=patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch

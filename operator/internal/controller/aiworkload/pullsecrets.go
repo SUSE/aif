@@ -157,7 +157,7 @@ func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 		}
 	}
 
-	bounced, err := r.restartImagePullBackOffPods(ctx, namespace)
+	bounced, err := r.restartImagePullBackOffPods(ctx, namespace, secretNames)
 	if err != nil {
 		return false, err
 	}
@@ -208,14 +208,15 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 	return mutated
 }
 
-// restartImagePullBackOffPods deletes chart-managed pods in `namespace`
-// whose container statuses report ImagePullBackOff or ErrImagePull. The
-// pod's controller (Deployment-owned ReplicaSet, StatefulSet, DaemonSet,
-// Job) recreates it; the recreated pod picks up its ServiceAccount's
-// current .imagePullSecrets at admission time.
+// restartImagePullBackOffPods deletes pods in `namespace` whose container
+// statuses report ImagePullBackOff or ErrImagePull. The pod's controller
+// (Deployment-owned ReplicaSet, StatefulSet, DaemonSet, Job) recreates it;
+// the recreated pod picks up its ServiceAccount's current .imagePullSecrets
+// at admission time.
 //
-// Owner scope: only pods labeled app.kubernetes.io/managed-by=Helm are
-// considered — pods unrelated to a chart install aren't churned.
+// Scope: pods labeled app.kubernetes.io/managed-by=Helm, plus pods whose
+// ServiceAccount carries one of deliveredSecrets that the pod spec lacks
+// (podMissesDeliveredSecret). Other pods aren't churned.
 //
 // Retry bound: each bounce increments an annotation
 // (chartPodBounceAnnotation) on the pod's controllerRef. Once the count
@@ -227,22 +228,29 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 // controllerRef are skipped (no place to persist the counter).
 //
 // Returns the count of pods deleted this pass.
-func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string) (int, error) {
+func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string, deliveredSecrets []string) (int, error) {
 	l := log.FromContext(ctx)
 
 	var pods corev1.PodList
-	if err := r.List(ctx, &pods,
-		client.InNamespace(namespace),
-		client.MatchingLabels{chartManagedByLabel: chartManagedByHelm},
-	); err != nil {
+	if err := r.List(ctx, &pods, client.InNamespace(namespace)); err != nil {
 		return 0, fmt.Errorf("list pods in %s: %w", namespace, err)
 	}
 
+	saSecrets := map[string]map[string]bool{}
 	bounced := 0
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		if !isPodImagePullBackOff(p) {
 			continue
+		}
+		if p.Labels[chartManagedByLabel] != chartManagedByHelm {
+			missing, err := r.podMissesDeliveredSecret(ctx, p, deliveredSecrets, saSecrets)
+			if err != nil {
+				return bounced, err
+			}
+			if !missing {
+				continue
+			}
 		}
 		cr := metav1.GetControllerOf(p)
 		if cr == nil {
@@ -283,6 +291,46 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		bounced++
 	}
 	return bounced, nil
+}
+
+// podMissesDeliveredSecret reports whether the pod's ServiceAccount carries a
+// delivered pull secret that the pod spec lacks. Pull secrets are copied from
+// the ServiceAccount only at pod admission, so such a pod was created before
+// the merge and only a recreation picks the secret up. This covers charts that
+// put the Helm managed-by label on their controllers but not on their pods.
+// saSecrets caches ServiceAccount lookups across pods in one pass.
+func (r *AIWorkloadReconciler) podMissesDeliveredSecret(ctx context.Context, p *corev1.Pod, delivered []string, saSecrets map[string]map[string]bool) (bool, error) {
+	if len(delivered) == 0 {
+		return false, nil
+	}
+	saName := p.Spec.ServiceAccountName
+	if saName == "" {
+		saName = "default"
+	}
+	onSA, ok := saSecrets[saName]
+	if !ok {
+		onSA = map[string]bool{}
+		var sa corev1.ServiceAccount
+		if err := r.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: saName}, &sa); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				return false, fmt.Errorf("get ServiceAccount %s/%s: %w", p.Namespace, saName, err)
+			}
+		}
+		for _, ref := range sa.ImagePullSecrets {
+			onSA[ref.Name] = true
+		}
+		saSecrets[saName] = onSA
+	}
+	onPod := map[string]bool{}
+	for _, ref := range p.Spec.ImagePullSecrets {
+		onPod[ref.Name] = true
+	}
+	for _, name := range delivered {
+		if onSA[name] && !onPod[name] {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // readBounceCount fetches the pod's owning controller (any Kind) via an
