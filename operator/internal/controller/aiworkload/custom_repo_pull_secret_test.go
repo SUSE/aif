@@ -260,7 +260,7 @@ func TestPullSecretFactory_RebuildsCustomRepoSecret(t *testing.T) {
 		newCustomTestAuthSecret("repo-user", "rotated-token")).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: customTestOpNS}
 
-	sec, err := r.pullSecretFactory(context.Background())("other-ns", customRepoPullSecretName(customTestRepo))
+	sec, err := r.pullSecretFactory(context.Background(), workloadScope{repos: map[string]bool{customTestRepo: true}})("other-ns", customRepoPullSecretName(customTestRepo))
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestPullSecretFactory_CustomRepoGoneOrNotCustom_Skips(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objs...).Build()
 			r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: customTestOpNS}
 
-			sec, err := r.pullSecretFactory(context.Background())(customTestTargetNS, customRepoPullSecretName(customTestRepo))
+			sec, err := r.pullSecretFactory(context.Background(), workloadScope{repos: map[string]bool{customTestRepo: true}})(customTestTargetNS, customRepoPullSecretName(customTestRepo))
 			if err != nil {
 				t.Fatalf("factory: %v", err)
 			}

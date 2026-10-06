@@ -72,7 +72,7 @@ func TestReconcilePullSecrets_PatchesDefaultSA(t *testing.T) {
 		},
 	}
 
-	settled, err := r.reconcilePullSecrets(context.Background(), w)
+	settled, err := r.reconcilePullSecrets(context.Background(), w, testScopeFor(w.Spec.TargetNamespace))
 	if err != nil {
 		t.Fatalf("reconcilePullSecrets: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestReconcilePullSecrets_SkipsLocalWhenDownstreamOnly(t *testing.T) {
 		},
 	}
 
-	settled, err := r.reconcilePullSecrets(context.Background(), w)
+	settled, err := r.reconcilePullSecrets(context.Background(), w, testScopeFor(w.Spec.TargetNamespace))
 	if err != nil {
 		t.Fatalf("reconcilePullSecrets: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestReconcilePullSecrets_SkipsUnlabeledSA(t *testing.T) {
 			},
 		},
 	}
-	settled, err := r.reconcilePullSecrets(context.Background(), w)
+	settled, err := r.reconcilePullSecrets(context.Background(), w, testScopeFor(w.Spec.TargetNamespace))
 	if err != nil {
 		t.Fatalf("reconcilePullSecrets: %v", err)
 	}
@@ -322,14 +322,29 @@ func podWithContainerWaiting(name string, init bool, reason string) *corev1.Pod 
 // reference, labeled Helm-managed. Tests must include the corresponding RS
 // in the fake-client objects when they expect the pod-bounce path to run.
 func helmReplicaSet(podName string, annotations map[string]string) *appsv1.ReplicaSet {
+	merged := map[string]string{helmReleaseNameAnnotation: testRelease}
+	for k, v := range annotations {
+		merged[k] = v
+	}
 	return &appsv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName + "-rs", Namespace: "test-ns",
 			UID:         types.UID("rs-uid-" + podName),
 			Labels:      map[string]string{chartManagedByLabel: chartManagedByHelm},
-			Annotations: annotations,
+			Annotations: merged,
 		},
 	}
+}
+
+// testRelease is the Helm release the test controllers belong to; testReleases
+// is the matching workload scope for restartImagePullBackOffPods.
+const testRelease = "demo-release"
+
+var testReleases = map[string]bool{testRelease: true}
+
+// testScopeFor is a workload scope owning testRelease in namespace.
+func testScopeFor(namespace string) workloadScope {
+	return workloadScope{releases: map[string]map[string]bool{namespace: testReleases}}
 }
 
 func TestRestartImagePullBackOffPods(t *testing.T) {
@@ -395,7 +410,7 @@ func TestRestartImagePullBackOffPods(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil, testReleases)
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -524,7 +539,7 @@ func TestRestartImagePullBackOffPods_BounceCap(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, rs).Build()
 			r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
-			bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+			bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil, testReleases)
 			if err != nil {
 				t.Fatalf("restartImagePullBackOffPods: %v", err)
 			}
@@ -570,7 +585,7 @@ func TestRestartImagePullBackOffPods_SkipsUnlabeled(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
-	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil, testReleases)
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -600,7 +615,7 @@ func TestRestartImagePullBackOffPods_SkipsNoControllerRef(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
-	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil)
+	bounced, _, err := r.restartImagePullBackOffPods(context.Background(), ns, nil, testReleases)
 	if err != nil {
 		t.Fatalf("restartImagePullBackOffPods: %v", err)
 	}
@@ -653,7 +668,8 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 		// ReplicaSet target for the bounce-cap annotation.
 		&appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
 			Name: "stuck-rs", Namespace: ns, UID: "stuck-rs-uid",
-			Labels: map[string]string{chartManagedByLabel: chartManagedByHelm},
+			Labels:      map[string]string{chartManagedByLabel: chartManagedByHelm},
+			Annotations: map[string]string{helmReleaseNameAnnotation: testRelease},
 		}},
 	).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
@@ -669,7 +685,7 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 	}
 
 	// Round 1: SA gets patched AND stuck pod bounced — settled=false on both counts.
-	settled, err := r.reconcilePullSecrets(context.Background(), w)
+	settled, err := r.reconcilePullSecrets(context.Background(), w, testScopeFor(w.Spec.TargetNamespace))
 	if err != nil {
 		t.Fatalf("round 1: %v", err)
 	}
@@ -686,7 +702,7 @@ func TestReconcilePullSecrets_BouncesBackOffPodAndUnsettles(t *testing.T) {
 	}
 
 	// Round 2: SA already patched, pod is gone — settled=true.
-	settled, err = r.reconcilePullSecrets(context.Background(), w)
+	settled, err = r.reconcilePullSecrets(context.Background(), w, testScopeFor(w.Spec.TargetNamespace))
 	if err != nil {
 		t.Fatalf("round 2: %v", err)
 	}
@@ -720,7 +736,7 @@ func TestDeliverPullSecrets_EmitsBundlePerDownstreamCluster(t *testing.T) {
 		},
 	}
 
-	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory, workloadScope{}); err != nil {
 		t.Fatalf("deliverPullSecrets: %v", err)
 	}
 
@@ -784,7 +800,7 @@ func TestDeliverPullSecrets_LocalOnlyWhenNoTargetClusters(t *testing.T) {
 		},
 	}
 
-	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory, workloadScope{}); err != nil {
 		t.Fatalf("deliverPullSecrets: %v", err)
 	}
 
@@ -833,7 +849,7 @@ func TestDeliverPullSecrets_SkipsLocalEntryInTargetClusters(t *testing.T) {
 		},
 	}
 
-	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory, workloadScope{}); err != nil {
 		t.Fatalf("deliverPullSecrets: %v", err)
 	}
 
@@ -885,7 +901,7 @@ func TestDeliverPullSecrets_FactoryReturningNilSkipsThatSecret(t *testing.T) {
 	}
 
 	nilFactory := func(ns, name string) (*corev1.Secret, error) { return nil, nil }
-	if err := r.deliverPullSecrets(context.Background(), w, nilFactory); err != nil {
+	if err := r.deliverPullSecrets(context.Background(), w, nilFactory, workloadScope{}); err != nil {
 		t.Fatalf("deliverPullSecrets: %v", err)
 	}
 
@@ -933,7 +949,7 @@ func TestDeliverPullSecrets_FactoryErrorPropagates(t *testing.T) {
 	boom := errors.New("creds-read failed")
 	errFactory := func(ns, name string) (*corev1.Secret, error) { return nil, boom }
 
-	err := r.deliverPullSecrets(context.Background(), w, errFactory)
+	err := r.deliverPullSecrets(context.Background(), w, errFactory, workloadScope{})
 	if err == nil {
 		t.Fatal("expected error from factory to propagate; got nil")
 	}
@@ -991,7 +1007,7 @@ func TestPullSecretFactory_NvidiaImagePullSecret(t *testing.T) {
 	).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 
-	factory := r.pullSecretFactory(context.Background())
+	factory := r.pullSecretFactory(context.Background(), workloadScope{})
 
 	// ngc-secret: dockerconfigjson with non-empty data
 	sec, err := factory("target-ns", nvidiaImagePullSecretName)
@@ -1044,7 +1060,7 @@ func TestPullSecretFactory_NoCredsReturnsNil(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 
-	factory := r.pullSecretFactory(context.Background())
+	factory := r.pullSecretFactory(context.Background(), workloadScope{})
 	sec, err := factory("target-ns", nvidiaImagePullSecretName)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
@@ -1293,7 +1309,7 @@ func TestPullSecretFactory_SUSECombined(t *testing.T) {
 	).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 
-	factory := r.pullSecretFactory(context.Background())
+	factory := r.pullSecretFactory(context.Background(), workloadScope{})
 	sec, err := factory("target-ns", combinedPullSecretName)
 	if err != nil {
 		t.Fatalf("factory(suse-ai-pull-combined): %v", err)
@@ -1345,7 +1361,7 @@ func TestPullSecretFactory_SUSECombined_NoCreds(t *testing.T) {
 	).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: opNS}
 
-	factory := r.pullSecretFactory(context.Background())
+	factory := r.pullSecretFactory(context.Background(), workloadScope{})
 	sec, err := factory("target-ns", combinedPullSecretName)
 	if err != nil {
 		t.Fatalf("factory(suse-ai-pull-combined): %v", err)
@@ -1448,7 +1464,7 @@ func TestDeliverPullSecrets_MultiNamespaceBlueprint(t *testing.T) {
 		},
 	}
 
-	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory); err != nil {
+	if err := r.deliverPullSecrets(context.Background(), w, dummyPullSecretFactory, workloadScope{}); err != nil {
 		t.Fatalf("deliverPullSecrets: %v", err)
 	}
 

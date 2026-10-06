@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // buildSAMergeResources returns a multi-document YAML containing the
@@ -59,25 +61,27 @@ import (
 //
 // Two runners ship together:
 //
-//   - Job (one-shot): runs immediately when the Bundle is applied, so the
-//     common case (SAs that ship with the chart) is patched within seconds of
-//     install. Its name carries a deterministic hash of (namespace + sorted
-//     secret names + image + rendered script) so any change to the desired
+//   - Job (install-time): runs when the Bundle is applied and repeats the
+//     merge every saMergeJobIntervalSeconds for saMergeJobRuns passes, so SAs
+//     and Pods the chart creates during the install are handled within seconds.
+//     Its name carries a deterministic hash of (namespace + sorted secret names
+//
+//   - image + rendered script + repeat settings) so any change to the desired
 //     state — including a new script from an operator upgrade — produces a new
 //     Job (Job .spec is immutable after create, so reusing the name with a
 //     changed pod template would fail with "field is immutable"). With
 //     unchanged inputs the name is stable, so Fleet's re-apply is a no-op and a
 //     completed Job stays completed (a TTL would create permanent Fleet drift).
 //
-//   - CronJob (recurring): closes the one-shot's gap — ServiceAccounts created
-//     AFTER the Job runs (e.g. by the workload chart itself) would otherwise
+//   - CronJob (recurring): closes the Job's gap — ServiceAccounts created
+//     AFTER the Job finished (e.g. by a later chart upgrade) would otherwise
 //     never be patched, because re-applying the immutable Job is a no-op. The
 //     CronJob re-runs the same merge on a schedule, so late-created SAs (and
 //     Pods that came up before their SA was patched) eventually converge. Its
 //     name is stable; Fleet updates it in place when the secret set changes.
 //     The Jobs the CronJob spawns are owned by the CronJob, not the Bundle, so
 //     they don't register as Fleet drift.
-func buildSAMergeResources(namespace string, secretNames []string, image string) (string, error) {
+func buildSAMergeResources(owner, namespace string, secretNames, releases []string, image string) (string, error) {
 	if namespace == "" {
 		return "", fmt.Errorf("namespace required")
 	}
@@ -102,6 +106,17 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	// format to one-per-line via `tr ' ' '\n'` before sort -u, so a
 	// space-separated source is fine.
 	desiredLine := strings.Join(sortedNames, " ")
+	// The workload's Helm releases in this namespace, also single-line: only
+	// pods whose controller belongs to one of them are recreated. They are
+	// rendered into a single-quoted shell string, so only valid Helm release
+	// names (DNS-1123 labels of at most 53 characters) are kept.
+	sortedReleases := make([]string, 0, len(releases))
+	for _, release := range releases {
+		if len(release) <= saMergeReleaseNameMax && len(validation.IsDNS1123Label(release)) == 0 {
+			sortedReleases = append(sortedReleases, release)
+		}
+	}
+	sort.Strings(sortedReleases)
 
 	// Build the shell script once (the long, indentation-sensitive part) and
 	// inject it into both the Job and the CronJob pod specs via the `indent`
@@ -110,7 +125,8 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	if err := saMergeScriptTemplate.Execute(&scriptBuf, struct {
 		Namespace    string
 		DesiredNames string
-	}{Namespace: namespace, DesiredNames: desiredLine}); err != nil {
+		Releases     string
+	}{Namespace: namespace, DesiredNames: desiredLine, Releases: strings.Join(sortedReleases, " ")}); err != nil {
 		return "", fmt.Errorf("render SA-merge script: %w", err)
 	}
 	script := scriptBuf.String()
@@ -123,21 +139,15 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	// script change yields a NEW Job name: Fleet prunes the old completed Job
 	// and creates the new one cleanly. With unchanged inputs the name is stable,
 	// so steady-state re-applies stay no-ops.
-	h := sha1.New()
-	h.Write([]byte(namespace))
-	h.Write([]byte{0})
-	h.Write([]byte(strings.Join(sortedNames, ",")))
-	h.Write([]byte{0})
-	h.Write([]byte(image))
-	h.Write([]byte{0})
-	h.Write([]byte(script))
-	hashHex := hex.EncodeToString(h.Sum(nil))[:10]
-	jobName := fmt.Sprintf("%s-%s", saMergeJobNamePrefix, hashHex)
-	// The CronJob name is stable (no hash): CronJob .spec is mutable, so Fleet
-	// updates it in place when the script or secret set changes instead of
-	// orphaning a hash-named predecessor that would keep running alongside the
-	// new one.
-	cronJobName := fmt.Sprintf("%s-cron", saMergeJobNamePrefix)
+	jobName := saMergeJobName(owner, namespace, sortedNames, image, script, saMergeJobRuns, saMergeJobIntervalSeconds)
+	// The runners belong to one workload: two workloads sharing a namespace
+	// each get their own, so neither overwrites the other's releases.
+	suffix := ownerSuffix(owner)
+	// The CronJob name depends only on the owning workload, not on the script
+	// or secrets: CronJob .spec is mutable, so Fleet updates it in place when
+	// the script or secret set changes instead of orphaning a hash-named
+	// predecessor that would keep running alongside the new one.
+	cronJobName := fmt.Sprintf("%s-cron-%s", saMergeJobNamePrefix, suffix)
 
 	data := struct {
 		Namespace      string
@@ -147,14 +157,18 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 		ServiceAccount string
 		Image          string
 		Script         string
+		JobRuns        int
+		JobInterval    int
 	}{
 		Namespace:      namespace,
 		JobName:        jobName,
 		CronJobName:    cronJobName,
 		Schedule:       saMergeCronSchedule,
-		ServiceAccount: saMergeServiceAccount,
+		ServiceAccount: saMergeServiceAccount + "-" + suffix,
 		Image:          image,
 		Script:         script,
+		JobRuns:        saMergeJobRuns,
+		JobInterval:    saMergeJobIntervalSeconds,
 	}
 
 	var buf bytes.Buffer
@@ -164,11 +178,51 @@ func buildSAMergeResources(namespace string, secretNames []string, image string)
 	return buf.String(), nil
 }
 
+// saMergeJobName derives the install-time Job's name from every input that shapes
+// its pod template, so any change to it yields a new Job (see
+// buildSAMergeResources). sortedNames must already be sorted.
+func saMergeJobName(owner, namespace string, sortedNames []string, image, script string, runs, interval int) string {
+	h := sha1.New()
+	h.Write([]byte(owner))
+	h.Write([]byte{0})
+	h.Write([]byte(namespace))
+	h.Write([]byte{0})
+	h.Write([]byte(strings.Join(sortedNames, ",")))
+	h.Write([]byte{0})
+	h.Write([]byte(image))
+	h.Write([]byte{0})
+	h.Write([]byte(script))
+	h.Write([]byte{0})
+	_, _ = fmt.Fprintf(h, "%d/%d", runs, interval) // a hash write never fails
+	hashHex := hex.EncodeToString(h.Sum(nil))[:10]
+	return fmt.Sprintf("%s-%s", saMergeJobNamePrefix, hashHex)
+}
+
+// ownerSuffix is a short, stable hash of the owning workload ("namespace/name")
+// that keeps each workload's SA-merge runners apart within a namespace.
+func ownerSuffix(owner string) string {
+	sum := sha1.Sum([]byte(owner))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// saMergeReleaseNameMax is Helm's limit on release names.
+const saMergeReleaseNameMax = 53
+
 // saMergeCronSchedule is how often the recurring reconciliation runs. Five
 // minutes balances "late-created SAs converge promptly" against the cost of a
-// short-lived kubectl Pod per tick. The one-shot Job covers the install-time
+// short-lived kubectl Pod per tick. The install-time Job covers the install-time
 // common case, so this is a safety net, not the primary path.
 const saMergeCronSchedule = "*/5 * * * *"
+
+// saMergeJobRuns and saMergeJobIntervalSeconds make the install-time Job repeat
+// the merge every 15 seconds for 5 minutes. Charts create their ServiceAccounts
+// and Pods after the Bundle (and so the Job) is applied; repeating covers the
+// install window so their Pods recover in seconds, well within an install
+// wait, instead of on the next CronJob tick.
+const (
+	saMergeJobRuns            = 20
+	saMergeJobIntervalSeconds = 15
+)
 
 // saMergeIndentFuncs lets the shared script be spliced into block scalars at
 // different YAML depths (the Job and the CronJob's jobTemplate nest the pod
@@ -202,19 +256,21 @@ var saMergeIndentFuncs = template.FuncMap{
 //  5. skips the patch when the union equals the existing set, so unchanged SAs
 //     don't generate spurious update events on re-apply, then
 //
-//  6. recreates Pods stuck in ImagePullBackOff/ErrImagePull: a Pod's
+//  6. recreates Pods stuck in ImagePullBackOff/ErrImagePull, and Pending Pods
+//     that have not started any container yet: a Pod's
 //     imagePullSecrets are merged from its SA only at admission, so a Pod that
 //     started before its SA was patched stays broken until recreated, and
 //     deleting it lets its controller recreate it with the patched SA. A Pod
 //     qualifies when its SA carries a desired secret that its spec lacks
 //     (whatever its labels — many charts leave Pods without the Helm
 //     managed-by label) and its ReplicaSet/StatefulSet/DaemonSet pod template
-//     sets no imagePullSecrets, or when it is Helm-labelled and an SA was
-//     patched this run.
+//     sets no imagePullSecrets, or when it is Helm-labelled, failing to pull,
+//     and an SA was patched this pass. Pending Pods qualify only through the
+//     first condition.
 //
 //     Both conditions bound the bounce. The first stops on its own once the
 //     recreated Pod carries the secret. The second is guarded by "only if an SA
-//     changed": once SAs are stable the bounce never fires, so a genuinely
+//     changed this pass": once SAs are stable the bounce never fires, so a genuinely
 //     unpullable or slow-pulling Pod sits stably in ImagePullBackOff instead of
 //     being deleted-and-recreated on every CronJob tick — the unconditional
 //     bounce caused exactly that perpetual Pending<->Running redeploy churn.
@@ -223,7 +279,38 @@ var saMergeScriptTemplate = template.Must(template.New("sa-merge-script").Parse(
 # so the YAML block-scalar embedding this script doesn't break.
 DESIRED='{{ .DesiredNames }}'
 NS='{{ .Namespace }}'
-# Tracks whether we patched any SA this run. The Pod-bounce below only fires
+# The workload's Helm releases, space-separated: only Pods whose controller
+# belongs to one of them are recreated, so other apps sharing the namespace
+# (and its "default" SA) are left alone.
+RELEASES='{{ .Releases }}'
+# pod_in_scope KIND NAME: the Pod's controller belongs to one of RELEASES. A
+# ReplicaSet carries no Helm release annotation; its Deployment is read instead.
+pod_in_scope() {
+  case "$1" in
+    "") return 1 ;;
+    ReplicaSet)
+      dep=$(kubectl -n "$NS" get "$1" "$2" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Deployment")].name}' 2>/dev/null || true)
+      [ -n "$dep" ] || return 1
+      rel=$(kubectl -n "$NS" get deployment "$dep" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)
+      ;;
+    *)
+      rel=$(kubectl -n "$NS" get "$1" "$2" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)
+      ;;
+  esac
+  [ -n "$rel" ] || return 1
+  case " $RELEASES " in
+    *" $rel "*) return 0 ;;
+  esac
+  return 1
+}
+# MERGE_RUNS passes MERGE_INTERVAL seconds apart (default: a single pass). The
+# install-time Job repeats the merge over the install window, so ServiceAccounts
+# and Pods the chart creates after the Job started are still handled promptly
+# instead of waiting for the next CronJob tick.
+RUNS="${MERGE_RUNS:-1}"
+INTERVAL="${MERGE_INTERVAL:-15}"
+merge_once() {
+# Tracks whether we patched any SA this pass. The Pod-bounce below only fires
 # when this is 1, so a stable namespace (nothing to patch) never churns Pods.
 PATCHED=0
 # Patch chart-managed SAs (app.kubernetes.io/managed-by=Helm) PLUS the namespace
@@ -269,11 +356,19 @@ done
 # Without that guard a genuinely unpullable or slow-pulling Pod would be deleted
 # and recreated on every tick, which reads as the workload perpetually toggling
 # Pending<->Running.
-kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.serviceAccountName}|{.metadata.labels.app\.kubernetes\.io/managed-by}|{.metadata.ownerReferences[?(@.controller==true)].kind}|{.metadata.ownerReferences[?(@.controller==true)].name}|{range .spec.imagePullSecrets[*]}{.name},{end}|{range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='|' read -r pod psa managed okind oname podsecrets reasons; do
+kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.serviceAccountName}|{.metadata.labels.app\.kubernetes\.io/managed-by}|{.metadata.ownerReferences[?(@.controller==true)].kind}|{.metadata.ownerReferences[?(@.controller==true)].name}|{range .spec.imagePullSecrets[*]}{.name},{end}|{range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}|{.status.phase}|{range .status.initContainerStatuses[*]}{.state.running.startedAt}{.state.terminated.exitCode}{.lastState.terminated.exitCode}{end}{range .status.containerStatuses[*]}{.state.running.startedAt}{.state.terminated.exitCode}{.lastState.terminated.exitCode}{end}{"\n"}{end}' | while IFS='|' read -r pod psa managed okind oname podsecrets reasons phase started; do
   [ -n "$pod" ] || continue
+  # A Pod that has not started any container yet is recreated right away
+  # when it lacks a delivered secret (nothing is lost, and waiting for its
+  # first failed pull could push recovery past the next tick).
+  PULL_FAILING=0
   case ",$reasons" in
-    *,ImagePullBackOff,*|*,ErrImagePull,*) ;;
-    *) continue ;;
+    *,ImagePullBackOff,*|*,ErrImagePull,*) PULL_FAILING=1 ;;
+    *)
+      if [ "$phase" != Pending ] || [ -n "$started" ]; then
+        continue
+      fi
+      ;;
   esac
   [ -n "$psa" ] || psa=default
   SA_SECRETS=$(kubectl -n "$NS" get sa "$psa" -o jsonpath='{range .imagePullSecrets[*]}{.name}{"\n"}{end}' 2>/dev/null | tr '\n' ' ' || true)
@@ -302,13 +397,24 @@ kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.
       *) MISSING=0 ;;
     esac
   fi
+  REASON=''
   if [ "$MISSING" = 1 ]; then
-    echo "$pod: SA $psa has a pull secret the pod lacks, deleting so it is recreated with it"
-    kubectl -n "$NS" delete pod "$pod" --ignore-not-found
-  elif [ "$PATCHED" = 1 ] && [ "$managed" = Helm ]; then
-    echo "$pod: image pull failing after SA patch, deleting so it re-reads SA imagePullSecrets"
+    REASON="SA $psa has a pull secret the pod lacks, deleting so it is recreated with it"
+  elif [ "$PULL_FAILING" = 1 ] && [ "$PATCHED" = 1 ] && [ "$managed" = Helm ]; then
+    REASON="image pull failing after SA patch, deleting so it re-reads SA imagePullSecrets"
+  fi
+  if [ -n "$REASON" ] && pod_in_scope "$okind" "$oname"; then
+    echo "$pod: $REASON"
     kubectl -n "$NS" delete pod "$pod" --ignore-not-found
   fi
+done
+}
+pass=1
+while :; do
+  merge_once
+  [ "$pass" -lt "$RUNS" ] || break
+  pass=$((pass + 1))
+  sleep "$INTERVAL"
 done
 `))
 
@@ -318,10 +424,12 @@ done
 //   - ServiceAccount: the runners execute under a dedicated SA, NOT default,
 //     so RBAC stays minimal.
 //   - Role:           get/list/patch on serviceaccounts, get/list/delete on
-//     pods (for the bounce step) and get on ReplicaSets/StatefulSets/DaemonSets
-//     (to read their pod templates), scoped to the workload's target namespace.
+//     pods (for the bounce step) and get on ReplicaSets/StatefulSets/DaemonSets/
+//     Deployments (to read pod templates and Helm releases), scoped to the
+//     workload's target namespace.
 //   - RoleBinding:    binds the SA to the Role.
-//   - Job:            the one-shot install-time merge. Retained (no TTL) so
+//   - Job:            the install-time merge (repeated over the install
+//     window). Retained (no TTL) so
 //     Fleet doesn't see drift ten minutes after a successful install.
 //   - CronJob:        the recurring merge, so SAs/Pods created after the Job ran
 //     still converge. Its spawned Jobs are CronJob-owned, not Bundle-owned, so
@@ -348,7 +456,7 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list", "delete"]
   - apiGroups: ["apps"]
-    resources: ["replicasets", "statefulsets", "daemonsets"]
+    resources: ["replicasets", "statefulsets", "daemonsets", "deployments"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -398,6 +506,11 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+          env:
+            - name: MERGE_RUNS
+              value: "{{ .JobRuns }}"
+            - name: MERGE_INTERVAL
+              value: "{{ .JobInterval }}"
           command: ["/bin/sh", "-c"]
           args:
             - |

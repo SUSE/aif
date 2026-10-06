@@ -222,7 +222,7 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	if body.Status != nil {
-		wl.Status = *body.Status
+		applyClientStatus(&wl.Status, body.Status)
 		if err := h.client.Status().Update(r.Context(), wl); err != nil {
 			log.Printf("api: failed to set initial AIWorkload status %s/%s: %v", namespace, body.Metadata.Name, err)
 		}
@@ -295,14 +295,30 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	if body.Status != nil {
-		wl.Status = *body.Status
-		if err := h.client.Status().Update(r.Context(), wl); err != nil {
-			log.Printf("api: failed to update AIWorkload status %s/%s: %v", namespace, name, err)
+		// Start from the stored status so operator-owned fields survive; only
+		// the client-owned ones are taken from the request.
+		current := &aiplatformv1alpha1.AIWorkload{}
+		if err := h.client.Get(r.Context(), client.ObjectKeyFromObject(wl), current); err != nil {
+			log.Printf("api: failed to read AIWorkload %s/%s before updating its status: %v", namespace, name, err)
+		} else {
+			applyClientStatus(&current.Status, body.Status)
+			if err := h.client.Status().Update(r.Context(), current); err != nil {
+				log.Printf("api: failed to update AIWorkload status %s/%s: %v", namespace, name, err)
+			}
 		}
 	}
 
 	wl.ManagedFields = nil
 	writeJSON(w, http.StatusOK, wl)
+}
+
+// applyClientStatus copies the status fields a client may set — the phase and
+// per-cluster statuses the UI records after an install — into dst. Everything
+// else (pull-secret deliveries, conditions, operations, baselines…) is owned by
+// the operator and is never taken from a request.
+func applyClientStatus(dst *aiplatformv1alpha1.AIWorkloadStatus, src *aiplatformv1alpha1.AIWorkloadStatus) {
+	dst.Phase = src.Phase
+	dst.ClusterStatuses = src.ClusterStatuses
 }
 
 func (h *AIWorkloadHandler) deleteAIWorkload(w http.ResponseWriter, r *http.Request) {

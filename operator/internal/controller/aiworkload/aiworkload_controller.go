@@ -196,10 +196,7 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if len(w.Status.PullSecretDeliveries) > 0 {
-		if err := r.deliverPullSecrets(ctx, &w, r.pullSecretFactory(ctx)); err != nil {
-			return ctrl.Result{}, err
-		}
-		settled, err := r.reconcilePullSecrets(ctx, &w)
+		settled, err := r.reconcileDeliveredPullSecrets(ctx, &w)
 		if err != nil {
 			return ctrl.Result{}, err
 		}

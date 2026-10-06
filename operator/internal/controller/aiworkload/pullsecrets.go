@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/go-logr/logr"
@@ -35,6 +36,29 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 )
+
+// reconcileDeliveredPullSecrets ships the workload's recorded pull secrets
+// (locally and to downstream clusters) and recreates pods that need them,
+// within the workload's scope. It reports settled=false while pods still need
+// attention, so the caller requeues.
+func (r *AIWorkloadReconciler) reconcileDeliveredPullSecrets(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (bool, error) {
+	scope, err := r.resolveWorkloadScope(ctx, w)
+	if err != nil {
+		return false, err
+	}
+	// Without a resolved scope, leave existing deliveries exactly as they are:
+	// re-applying them with an empty scope would withdraw custom repository
+	// secrets that running pods still pull with.
+	if !scope.resolved {
+		log.FromContext(ctx).Info("workload scope unresolved; leaving pull-secret deliveries unchanged",
+			"namespace", w.Namespace, "name", w.Name)
+		return true, nil
+	}
+	if err := r.deliverPullSecrets(ctx, w, r.pullSecretFactory(ctx, scope), scope); err != nil {
+		return false, err
+	}
+	return r.reconcilePullSecrets(ctx, w, scope)
+}
 
 // reconcilePullSecrets ensures every operator-delivered pull-secret is
 // merged into every ServiceAccount in the namespace(s) the workload installs
@@ -62,6 +86,7 @@ func targetsLocalCluster(w *aiplatformv1alpha1.AIWorkload) bool {
 func (r *AIWorkloadReconciler) reconcilePullSecrets(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
+	scope workloadScope,
 ) (settled bool, err error) {
 	l := log.FromContext(ctx)
 
@@ -83,7 +108,7 @@ func (r *AIWorkloadReconciler) reconcilePullSecrets(
 		if d.Namespace == "" || len(d.Names) == 0 {
 			continue
 		}
-		nsSettled, err := r.reconcilePullSecretsForNamespace(ctx, d.Namespace, d.Names, l)
+		nsSettled, err := r.reconcilePullSecretsForNamespace(ctx, d.Namespace, d.Names, scope.releases[d.Namespace], l)
 		if err != nil {
 			return false, err
 		}
@@ -96,22 +121,21 @@ func (r *AIWorkloadReconciler) reconcilePullSecrets(
 }
 
 // reconcilePullSecretsForNamespace handles a single (namespace, names) pair:
-// list chart-managed SAs in the namespace, merge the missing pull-secret
-// references, then bounce any chart-managed pod still stuck in
-// ImagePullBackOff so the kubelet re-reads the SA's imagePullSecrets at
-// admission time.
+// merge the missing pull-secret references into the chart-managed SAs (label
+// app.kubernetes.io/managed-by=Helm) and the namespace "default" SA, then
+// recreate pods that need it so the kubelet re-reads the SA's
+// imagePullSecrets at admission time.
 //
-// Owner scope: SAs and pods are filtered by label
-// app.kubernetes.io/managed-by=Helm so the operator does NOT touch
-// cluster-admin-created resources that happen to share the namespace.
-//
-// Retry bound: the pod-bounce step caps restarts per pod-owner at
-// chartPodMaxBounces — see restartImagePullBackOffPods. Genuinely unpullable
-// images surface as a permanent ImagePullBackOff rather than churning.
+// Pod scope: only pods whose controller belongs to one of releases (the
+// workload's Helm releases in this namespace) are recreated, so other apps
+// sharing the namespace — and often its "default" SA — are left alone. See
+// restartImagePullBackOffPods for which pods qualify and how restarts are
+// bounded.
 func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 	ctx context.Context,
 	namespace string,
 	secretNames []string,
+	releases map[string]bool,
 	l logr.Logger,
 ) (settled bool, err error) {
 	var sas corev1.ServiceAccountList
@@ -157,7 +181,7 @@ func (r *AIWorkloadReconciler) reconcilePullSecretsForNamespace(
 		}
 	}
 
-	bounced, pending, err := r.restartImagePullBackOffPods(ctx, namespace, secretNames)
+	bounced, pending, err := r.restartImagePullBackOffPods(ctx, namespace, secretNames, releases)
 	if err != nil {
 		return false, err
 	}
@@ -222,10 +246,15 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 // Scope: pods labeled app.kubernetes.io/managed-by=Helm, plus pods whose
 // ServiceAccount carries one of deliveredSecrets that the pod spec lacks
 // (podMissesDeliveredSecret), when their ReplicaSet/StatefulSet/DaemonSet pod
-// template sets no imagePullSecrets of its own — only then does a recreated
-// pod pick the delivered secret up. Other pods aren't churned.
+// template sets no imagePullSecrets of its own and every pull secret the pod
+// lists came from its ServiceAccount — only then does a recreated pod pick the
+// delivered secret up. Other pods aren't churned.
 //
-// Retry bound: each bounce increments an annotation
+// Recreations for a missing delivered secret are not counted: the recreated
+// pod is admitted with the secret and no longer qualifies, so they stop on
+// their own and every replica of a controller recovers.
+//
+// Retry bound (Helm-labelled pods): each bounce increments an annotation
 // (chartPodBounceAnnotation) on the pod's controllerRef. Once the count
 // reaches chartPodMaxBounces, this function stops bouncing pods of that
 // controller — leaving the failure visible as a persistent
@@ -241,9 +270,7 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 //
 // Returns the count of pods deleted this pass, and the count of pending pods
 // (so the caller keeps checking instead of settling).
-func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string, deliveredSecrets []string) (bounced, pending int, err error) {
-	l := log.FromContext(ctx)
-
+func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string, deliveredSecrets []string, releases map[string]bool) (bounced, pending int, err error) {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(namespace)); err != nil {
 		return 0, 0, fmt.Errorf("list pods in %s: %w", namespace, err)
@@ -267,82 +294,149 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		// Helm-labelled pods already failing to pull keep the original
 		// behaviour. Every other candidate qualifies only when recreating it
 		// adds a delivered secret its ServiceAccount carries.
-		viaServiceAccount := admitting || p.Labels[chartManagedByLabel] != chartManagedByHelm
-		if viaServiceAccount {
-			missing, err := r.podMissesDeliveredSecret(ctx, p, deliveredSecrets, saSecrets)
-			if err != nil {
-				return bounced, pending, err
-			}
-			if !missing {
-				continue
-			}
+		var outcome restartOutcome
+		if admitting || p.Labels[chartManagedByLabel] != chartManagedByHelm {
+			outcome, err = r.recreateForDeliveredSecret(ctx, p, pullFailing, deliveredSecrets, releases, saSecrets)
+		} else {
+			outcome, err = r.bounceHelmLabelledPod(ctx, p, releases)
 		}
-		cr := metav1.GetControllerOf(p)
-		if cr == nil {
-			if pullFailing {
-				l.Info("skipping ImagePullBackOff pod with no controllerRef (cannot track retries)",
-					"namespace", p.Namespace, "name", p.Name)
-			}
-			continue
-		}
-		if viaServiceAccount && !templateControllerKinds[cr.Kind] {
-			continue
-		}
-		count, owner, err := r.readBounceCount(ctx, p.Namespace, cr)
 		if err != nil {
-			l.Info("could not read bounce counter for controller; will not bounce this round",
-				"namespace", p.Namespace, "pod", p.Name,
-				"controllerKind", cr.Kind, "controllerName", cr.Name, "err", err.Error())
-			continue
+			return bounced, pending, err
 		}
-		// A pod template that lists its own imagePullSecrets never gets the
-		// ServiceAccount's merged in, so a recreated pod would miss the
-		// delivered secret again.
-		if viaServiceAccount && templateSetsPullSecrets(owner) {
-			continue
-		}
-		// Passes that run before the cache drops a pod this operator already
-		// deleted see it again; count each pod once.
-		if p.UID != "" && owner.GetAnnotations()[chartPodBouncedPodAnnotation] == string(p.UID) {
-			continue
-		}
-		if count >= chartPodMaxBounces {
-			if pullFailing {
-				l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
-					"namespace", p.Namespace, "pod", p.Name,
-					"controllerKind", cr.Kind, "controllerName", cr.Name,
-					"cap", chartPodMaxBounces)
-			}
-			continue
-		}
-		// A Pending pod with a container already started (e.g. a running init
-		// container) would lose that work if recreated now; report it so the
-		// caller checks again once its image pull fails. A pod that has not
-		// started anything is recreated right away at no cost.
-		if admitting && containersStarted(p) {
+		switch outcome {
+		case restartPending:
 			pending++
-			continue
+		case restartDone:
+			bounced++
 		}
-		// Increment the controller's counter BEFORE deleting the pod, so
-		// a transient delete failure doesn't double-count, and the cap is
-		// enforced even if this pass partially fails.
-		if err := r.incrementBounceCount(ctx, owner, count+1, p.UID); err != nil {
-			return bounced, pending, fmt.Errorf("increment bounce counter on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
-		}
-		if err := r.Delete(ctx, p); err != nil {
-			if client.IgnoreNotFound(err) == nil {
-				continue
-			}
-			return bounced, pending, fmt.Errorf("delete pod %s/%s: %w", p.Namespace, p.Name, err)
-		}
-		l.Info("bounced ImagePullBackOff pod",
-			"namespace", p.Namespace, "name", p.Name,
-			"controllerKind", cr.Kind, "controllerName", cr.Name,
-			"imagePullFailing", pullFailing,
-			"bounce", count+1, "cap", chartPodMaxBounces)
-		bounced++
 	}
 	return bounced, pending, nil
+}
+
+// restartOutcome is what one restart check did with a pod.
+type restartOutcome int
+
+const (
+	restartSkipped restartOutcome = iota
+	restartPending                // will need recreating once its image pull fails
+	restartDone                   // deleted for its controller to recreate
+)
+
+// recreateForDeliveredSecret recreates a pod that was admitted before its
+// ServiceAccount received a delivered pull secret, when a recreated pod would
+// actually pick the secret up. These recreations are not counted against the
+// restart limit: the recreated pod is admitted with the secret and no longer
+// qualifies, so they stop on their own.
+func (r *AIWorkloadReconciler) recreateForDeliveredSecret(ctx context.Context, p *corev1.Pod, pullFailing bool, delivered []string, releases map[string]bool, saSecrets map[string]map[string]bool) (restartOutcome, error) {
+	missing, err := r.podMissesDeliveredSecret(ctx, p, delivered, saSecrets)
+	if err != nil || !missing {
+		return restartSkipped, err
+	}
+	cr := metav1.GetControllerOf(p)
+	if cr == nil || !templateControllerKinds[cr.Kind] {
+		return restartSkipped, nil
+	}
+	_, owner, err := r.readBounceCount(ctx, p.Namespace, cr)
+	if err != nil {
+		log.FromContext(ctx).Info("could not read the pod's controller; will not recreate this round",
+			"namespace", p.Namespace, "pod", p.Name,
+			"controllerKind", cr.Kind, "controllerName", cr.Name, "err", err.Error())
+		return restartSkipped, nil
+	}
+	if !r.ownedByRelease(ctx, owner, releases) {
+		return restartSkipped, nil
+	}
+	// A pod template that lists its own imagePullSecrets never gets the
+	// ServiceAccount's merged in, so a recreated pod would miss the delivered
+	// secret again.
+	if templateSetsPullSecrets(owner) {
+		return restartSkipped, nil
+	}
+	// A pod listing a pull secret its ServiceAccount lacks did not get its
+	// pull secrets from the ServiceAccount alone (a mutating webhook, or a
+	// secret since removed from the ServiceAccount). Whether a recreated pod
+	// would carry the delivered secret then depends on that other source, so
+	// it is left alone: recreations are not counted, and this keeps them from
+	// repeating without a bound.
+	fromSA, err := r.podPullSecretsFromServiceAccount(ctx, p, saSecrets)
+	if err != nil || !fromSA {
+		return restartSkipped, err
+	}
+	// A Pending pod with a container already started (e.g. a running init
+	// container) would lose that work if recreated now; report it so the
+	// caller checks again once its image pull fails. A pod that has not
+	// started anything is recreated right away at no cost.
+	if !pullFailing && containersStarted(p) {
+		return restartPending, nil
+	}
+	if err := r.Delete(ctx, p); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return restartSkipped, nil
+		}
+		return restartSkipped, fmt.Errorf("delete pod %s/%s: %w", p.Namespace, p.Name, err)
+	}
+	log.FromContext(ctx).Info("recreated pod to pick up a delivered pull secret",
+		"namespace", p.Namespace, "name", p.Name,
+		"controllerKind", cr.Kind, "controllerName", cr.Name,
+		"imagePullFailing", pullFailing)
+	return restartDone, nil
+}
+
+// bounceHelmLabelledPod recreates a Helm-labelled pod failing to pull, bounded
+// by the per-controller restart limit (see restartImagePullBackOffPods).
+func (r *AIWorkloadReconciler) bounceHelmLabelledPod(ctx context.Context, p *corev1.Pod, releases map[string]bool) (restartOutcome, error) {
+	l := log.FromContext(ctx)
+	cr := metav1.GetControllerOf(p)
+	if cr == nil {
+		l.Info("skipping ImagePullBackOff pod with no controllerRef (cannot track retries)",
+			"namespace", p.Namespace, "name", p.Name)
+		return restartSkipped, nil
+	}
+	count, owner, err := r.readBounceCount(ctx, p.Namespace, cr)
+	if err != nil {
+		l.Info("could not read bounce counter for controller; will not bounce this round",
+			"namespace", p.Namespace, "pod", p.Name,
+			"controllerKind", cr.Kind, "controllerName", cr.Name, "err", err.Error())
+		return restartSkipped, nil
+	}
+	if !r.ownedByRelease(ctx, owner, releases) {
+		return restartSkipped, nil
+	}
+	// Passes that run before the cache drops a pod this operator already
+	// deleted see it again; count each pod once.
+	if p.UID != "" && owner.GetAnnotations()[chartPodBouncedPodAnnotation] == string(p.UID) {
+		return restartSkipped, nil
+	}
+	if count >= chartPodMaxBounces {
+		l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
+			"namespace", p.Namespace, "pod", p.Name,
+			"controllerKind", cr.Kind, "controllerName", cr.Name,
+			"cap", chartPodMaxBounces)
+		return restartSkipped, nil
+	}
+	// Increment the controller's counter BEFORE deleting the pod, so the cap is
+	// enforced even if this pass partially fails. Each attempt counts,
+	// including one whose delete fails and is retried later.
+	if err := r.incrementBounceCount(ctx, owner, count+1); err != nil {
+		return restartSkipped, fmt.Errorf("increment bounce counter on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
+	}
+	deleteErr := r.Delete(ctx, p)
+	if deleteErr != nil && client.IgnoreNotFound(deleteErr) != nil {
+		return restartSkipped, fmt.Errorf("delete pod %s/%s: %w", p.Namespace, p.Name, deleteErr)
+	}
+	// Record the pod only once it is gone (deleted now, or already): a failed
+	// delete leaves it running, and later passes must retry it.
+	if err := r.recordBouncedPod(ctx, owner, p.UID); err != nil {
+		return restartSkipped, fmt.Errorf("record bounced pod on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
+	}
+	if deleteErr != nil {
+		return restartSkipped, nil
+	}
+	l.Info("bounced ImagePullBackOff pod",
+		"namespace", p.Namespace, "name", p.Name,
+		"controllerKind", cr.Kind, "controllerName", cr.Name,
+		"bounce", count+1, "cap", chartPodMaxBounces)
+	return restartDone, nil
 }
 
 // templateControllerKinds are the pod controllers whose pod template the
@@ -350,6 +444,36 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 // may patch). Other owners — Jobs, whose deleted pods count against their
 // backoff limit, and operator-managed custom resources — are left alone.
 var templateControllerKinds = map[string]bool{"ReplicaSet": true, "StatefulSet": true, "DaemonSet": true}
+
+// ownedByRelease reports whether the pod controller owner belongs to one of
+// releases, read from its Helm release annotation. A ReplicaSet carries no
+// such annotation; its controlling Deployment is consulted instead. Anything
+// that cannot be attributed to one of releases is out of scope.
+func (r *AIWorkloadReconciler) ownedByRelease(ctx context.Context, owner *unstructured.Unstructured, releases map[string]bool) bool {
+	if len(releases) == 0 {
+		return false
+	}
+	if release := owner.GetAnnotations()[helmReleaseNameAnnotation]; release != "" {
+		return releases[release]
+	}
+	if owner.GetKind() != "ReplicaSet" {
+		return false
+	}
+	for _, ref := range owner.GetOwnerReferences() {
+		if ref.Controller == nil || !*ref.Controller || ref.Kind != "Deployment" {
+			continue
+		}
+		dep := &unstructured.Unstructured{}
+		dep.SetGroupVersionKind(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"})
+		if err := r.Get(ctx, types.NamespacedName{Namespace: owner.GetNamespace(), Name: ref.Name}, dep); err != nil {
+			log.FromContext(ctx).Info("could not read the ReplicaSet's Deployment; leaving its pods alone",
+				"namespace", owner.GetNamespace(), "replicaSet", owner.GetName(), "deployment", ref.Name, "err", err.Error())
+			return false
+		}
+		return releases[dep.GetAnnotations()[helmReleaseNameAnnotation]]
+	}
+	return false
+}
 
 // containersStarted reports whether any init or app container of the pod has
 // run (or is running).
@@ -371,33 +495,43 @@ func templateSetsPullSecrets(owner *unstructured.Unstructured) bool {
 	return len(secrets) > 0
 }
 
+// serviceAccountPullSecrets returns the imagePullSecrets names on the pod's
+// ServiceAccount (empty when it does not exist). cache holds lookups across
+// pods in one pass.
+func (r *AIWorkloadReconciler) serviceAccountPullSecrets(ctx context.Context, p *corev1.Pod, cache map[string]map[string]bool) (map[string]bool, error) {
+	saName := p.Spec.ServiceAccountName
+	if saName == "" {
+		saName = "default"
+	}
+	if onSA, ok := cache[saName]; ok {
+		return onSA, nil
+	}
+	onSA := map[string]bool{}
+	var sa corev1.ServiceAccount
+	if err := r.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: saName}, &sa); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return nil, fmt.Errorf("get ServiceAccount %s/%s: %w", p.Namespace, saName, err)
+		}
+	}
+	for _, ref := range sa.ImagePullSecrets {
+		onSA[ref.Name] = true
+	}
+	cache[saName] = onSA
+	return onSA, nil
+}
+
 // podMissesDeliveredSecret reports whether the pod's ServiceAccount carries a
 // delivered pull secret that the pod spec lacks. Pull secrets are copied from
 // the ServiceAccount only at pod admission, so such a pod was created before
 // the merge and only a recreation picks the secret up. This covers charts that
 // put the Helm managed-by label on their controllers but not on their pods.
-// saSecrets caches ServiceAccount lookups across pods in one pass.
 func (r *AIWorkloadReconciler) podMissesDeliveredSecret(ctx context.Context, p *corev1.Pod, delivered []string, saSecrets map[string]map[string]bool) (bool, error) {
 	if len(delivered) == 0 {
 		return false, nil
 	}
-	saName := p.Spec.ServiceAccountName
-	if saName == "" {
-		saName = "default"
-	}
-	onSA, ok := saSecrets[saName]
-	if !ok {
-		onSA = map[string]bool{}
-		var sa corev1.ServiceAccount
-		if err := r.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: saName}, &sa); err != nil {
-			if client.IgnoreNotFound(err) != nil {
-				return false, fmt.Errorf("get ServiceAccount %s/%s: %w", p.Namespace, saName, err)
-			}
-		}
-		for _, ref := range sa.ImagePullSecrets {
-			onSA[ref.Name] = true
-		}
-		saSecrets[saName] = onSA
+	onSA, err := r.serviceAccountPullSecrets(ctx, p, saSecrets)
+	if err != nil {
+		return false, err
 	}
 	onPod := map[string]bool{}
 	for _, ref := range p.Spec.ImagePullSecrets {
@@ -409,6 +543,22 @@ func (r *AIWorkloadReconciler) podMissesDeliveredSecret(ctx context.Context, p *
 		}
 	}
 	return false, nil
+}
+
+// podPullSecretsFromServiceAccount reports whether every pull secret on the
+// pod spec is also on its ServiceAccount, i.e. the ServiceAccount alone can
+// account for them (its controller template sets none).
+func (r *AIWorkloadReconciler) podPullSecretsFromServiceAccount(ctx context.Context, p *corev1.Pod, saSecrets map[string]map[string]bool) (bool, error) {
+	onSA, err := r.serviceAccountPullSecrets(ctx, p, saSecrets)
+	if err != nil {
+		return false, err
+	}
+	for _, ref := range p.Spec.ImagePullSecrets {
+		if !onSA[ref.Name] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // readBounceCount fetches the pod's owning controller (any Kind) via an
@@ -439,14 +589,23 @@ func (r *AIWorkloadReconciler) readBounceCount(ctx context.Context, namespace st
 }
 
 // incrementBounceCount writes newCount onto the owner's
-// chartPodBounceAnnotation and records the bounced pod's UID in
-// chartPodBouncedPodAnnotation. Uses a merge patch on the annotations
-// only — avoids the spec-level conflict potential of a full Update on an
-// unstructured object the operator doesn't own.
-func (r *AIWorkloadReconciler) incrementBounceCount(ctx context.Context, owner *unstructured.Unstructured, newCount int, podUID types.UID) error {
+// chartPodBounceAnnotation. Uses a merge patch on the annotation only — avoids
+// the spec-level conflict potential of a full Update on an unstructured object
+// the operator doesn't own.
+func (r *AIWorkloadReconciler) incrementBounceCount(ctx context.Context, owner *unstructured.Unstructured, newCount int) error {
 	patch := []byte(fmt.Sprintf(
-		`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
+		`{"metadata":{"annotations":{%q:%q}}}`,
 		chartPodBounceAnnotation, strconv.Itoa(newCount),
+	))
+	return r.Patch(ctx, owner, client.RawPatch(types.MergePatchType, patch))
+}
+
+// recordBouncedPod writes the deleted pod's UID onto the owner's
+// chartPodBouncedPodAnnotation, so passes that still see the pod in a stale
+// cache do not count it again.
+func (r *AIWorkloadReconciler) recordBouncedPod(ctx context.Context, owner *unstructured.Unstructured, podUID types.UID) error {
+	patch := []byte(fmt.Sprintf(
+		`{"metadata":{"annotations":{%q:%q}}}`,
 		chartPodBouncedPodAnnotation, string(podUID),
 	))
 	return r.Patch(ctx, owner, client.RawPatch(types.MergePatchType, patch))
@@ -542,6 +701,7 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
 	factory PullSecretFactory,
+	scope workloadScope,
 ) error {
 	if len(w.Status.PullSecretDeliveries) == 0 || factory == nil {
 		return nil
@@ -611,6 +771,7 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 				OwnerName:      w.Name,
 				OwnerNamespace: w.Namespace,
 				Namespace:      b.namespace,
+				Releases:       sortedKeys(scope.releases[b.namespace]),
 			})
 			if err := bc.ApplyPullSecretBundle(ctx, b.secrets); err != nil {
 				return fmt.Errorf("apply pull-secret bundle to cluster %s ns %s: %w", clusterID, b.namespace, err)
@@ -619,6 +780,15 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 	}
 
 	return nil
+}
+
+func sortedKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // pullSecretFactory returns a PullSecretFactory that produces the
@@ -631,12 +801,13 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 //   - ngc-secret              (nvidiaInjector dockerconfigjson)
 //   - ngc-api                 (nvidiaInjector Opaque, NGC API keys)
 //   - suse-ai-pull-combined   (suseInjector combined dockerconfigjson)
-//   - aif-custom-pull-<repo>  (customRepoInjector, custom repo credentials)
+//   - aif-custom-pull-<repo>  (customRepoInjector, custom repo credentials;
+//     only for a repository in the workload's scope)
 //
 // Unknown secret names skip silently — keeps the factory forward-compatible
 // with future injector outputs without coupling deliverPullSecrets to a
 // hard-coded enum.
-func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecretFactory {
+func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context, scope workloadScope) PullSecretFactory {
 	return func(targetNamespace, secretName string) (*corev1.Secret, error) {
 		switch secretName {
 		case nvidiaImagePullSecretName:
@@ -689,6 +860,12 @@ func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecret
 			}, nil
 		default:
 			if repoName, ok := customRepoNameFromPullSecret(secretName); ok {
+				// Only a repository the workload itself uses: the name comes
+				// from status, which must not decide whose credentials are
+				// copied into the workload's namespaces.
+				if !scope.repos[repoName] {
+					return nil, nil
+				}
 				repoInfo, err := r.resolveClusterRepo(ctx, repoName)
 				if err != nil {
 					if stderrors.Is(err, errClusterRepoNotReady) {
