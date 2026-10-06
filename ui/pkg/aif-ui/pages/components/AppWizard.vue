@@ -30,6 +30,7 @@ import {
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
 import { fetchSuseAiApps, resolveInstallRepoName, getLibraryForClusterRepo, isManagedRepoName } from '../../services/app-collection';
+import { installRecordingWorkloadsFirst } from '../../services/helm-install-order';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
@@ -839,8 +840,13 @@ async function performMultiClusterInstall() {
 
   showProgressModal.value = true;
 
-  // Install to clusters in parallel with concurrency limit
-  await installWithConcurrencyLimit(targetClusters, INSTALL_CONCURRENCY);
+  // Install to clusters in parallel with concurrency limit. One CR per
+  // cluster — Helm strategy has no fleet bundle name to record.
+  await installRecordingWorkloadsFirst(targetClusters, {
+    recordPending: c => recordAIWorkload({}, 'Helm', c, { phase: 'Pending', clusterStatuses: [] }),
+    install:       () => installWithConcurrencyLimit(targetClusters, INSTALL_CONCURRENCY),
+    recordResult:  c => recordAIWorkload({}, 'Helm', c, undefined, true),
+  });
 
   // Check final status
   const allSucceeded = installProgress.value.every(p => p.status === 'success');
@@ -851,8 +857,6 @@ async function performMultiClusterInstall() {
     console.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
   }
 
-  // One CR per cluster — Helm strategy has no fleet bundle name to record.
-  await Promise.all(targetClusters.map(c => recordAIWorkload({}, 'Helm', c)));
   submitting.value = false;
 }
 
@@ -1086,6 +1090,9 @@ async function recordAIWorkload(
   strategy: 'Helm' | 'FleetBundle' | 'GitOps',
   clusterId: string,
   initialStatus?: { phase: AIWorkloadPhase; clusterStatuses: AIWorkloadClusterStatus[] },
+  // recordedEarlier: this install already created the CR (as Pending), so
+  // update it; fall back to create if that earlier call did not succeed.
+  recordedEarlier = false,
 ) {
   try {
     let phase: AIWorkloadPhase;
@@ -1141,6 +1148,12 @@ async function recordAIWorkload(
 
     if (isManageMode.value) {
       await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+    } else if (recordedEarlier) {
+      try {
+        await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+      } catch {
+        await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+      }
     } else {
       await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
     }
