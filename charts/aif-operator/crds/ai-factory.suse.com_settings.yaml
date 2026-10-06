@@ -251,6 +251,12 @@ spec:
                       - key
                       - name
                       type: object
+                    testChart:
+                      description: |-
+                        TestChart is the chart the Settings Test uses to verify chart access in
+                        this repository. It is saved so the Test form keeps it; installs ignore it.
+                      maxLength: 253
+                      type: string
                     tokenSecretRef:
                       description: TokenSecretRef references the basic-auth password/token
                         secret.

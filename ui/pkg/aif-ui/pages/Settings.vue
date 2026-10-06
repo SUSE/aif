@@ -1198,6 +1198,7 @@ export default {
             </div>
 
             <RegistryConnectionStatus
+              v-model:test-chart="repo.testChart"
               :target="'customRepo'"
               :configuration="customRepoConfiguration(repo)"
               :repo-name="repo.name"

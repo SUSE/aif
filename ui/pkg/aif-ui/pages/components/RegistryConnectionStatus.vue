@@ -16,7 +16,12 @@ export default {
     target: { type: String, required: true },
     configuration: { type: Object, required: true },
     repoName: { type: String, default: '' },
+    // Chart saved with a custom repo for Test; edits are emitted back so the
+    // repo saves them. Null for targets that keep the chart locally.
+    testChart: { type: String, default: null },
   },
+
+  emits: ['update:testChart'],
 
   data() {
     return {
@@ -25,7 +30,7 @@ export default {
       refreshError: '',
       result: null,
       testedFingerprint: '',
-      chartName: { applicationCollection: 'ollama', suseRegistry: 'qdrant', nvidia: 'aiq-aira' }[this.target] || '',
+      chartName: this.testChart ?? ({ applicationCollection: 'ollama', suseRegistry: 'qdrant', nvidia: 'aiq-aira' }[this.target] || ''),
       testedChartName: '',
       active: true,
     };
@@ -53,6 +58,10 @@ export default {
     busy() {
       return this.checking || !!this.refreshing;
     },
+    sampleHelp() {
+      const key = this.target === 'customRepo' ? 'sampleHelpCustomRepo' : 'sampleHelp';
+      return this.t(`suseai.pages.settings.registryConnection.chartAccess.${key}`);
+    },
     sampleSelectable() {
       if (this.target === 'customRepo') return this.configuration.type !== 'git';
       return this.target !== 'nvidia' || !!this.configuration.url?.trim();
@@ -74,6 +83,15 @@ export default {
       if (this.verificationSummary === 'failed') return 'error';
       if (['incomplete', 'changed', 'unsaved'].includes(this.verificationSummary)) return 'warning';
       return 'info';
+    },
+  },
+
+  watch: {
+    testChart(value) {
+      if (value !== null && value !== this.chartName) this.chartName = value;
+    },
+    chartName(value) {
+      if (this.testChart !== null && value !== this.testChart) this.$emit('update:testChart', value);
     },
   },
 
@@ -154,7 +172,7 @@ export default {
           :id="`${target}-test-chart-help`"
           class="text-deemphasized mt-5"
         >
-          {{ t('suseai.pages.settings.registryConnection.chartAccess.sampleHelp') }}
+          {{ sampleHelp }}
         </p>
       </div>
     </div>

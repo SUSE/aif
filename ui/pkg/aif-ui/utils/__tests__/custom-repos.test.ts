@@ -21,6 +21,19 @@ describe('custom-repos form helpers', () => {
     expect(buildCustomReposCrd([f])[0]).toMatchObject({ userSecretRef: { name: 's', key: 'u' }, insecureSkipTLSVerify: true });
   });
 
+  it('saves the chart used to test the repository, trimmed, and reads it back', () => {
+    const f = { ...emptyCustomRepo(), name: 'a', type: 'oci' as const, url: 'oci://r/c', testChart: ' demo ' };
+    const crd = buildCustomReposCrd([f]);
+    expect(crd[0].testChart).toBe('demo');
+    expect(buildCustomReposForm(crd)[0].testChart).toBe('demo');
+  });
+
+  it('omits an empty test chart, and the test chart of git repos (they have no chart test)', () => {
+    expect(buildCustomReposCrd([{ ...emptyCustomRepo(), name: 'a', type: 'helm' as const, url: 'https://x' }])[0]).not.toHaveProperty('testChart');
+    expect(buildCustomReposCrd([{ ...emptyCustomRepo(), name: 'g', type: 'git' as const, gitRepo: 'https://git/r.git', testChart: 'demo' }])[0]).not.toHaveProperty('testChart');
+    expect(buildCustomReposForm([{ name: 'a', type: 'helm', url: 'https://x' }])[0].testChart).toBe('');
+  });
+
   it('rejects invalid names and duplicates and scheme mismatches', () => {
     expect(validateCustomRepoForm({ ...emptyCustomRepo(), name: '', type: 'helm', url: 'https://x' }, [])).toBeTruthy();
     expect(validateCustomRepoForm({ ...emptyCustomRepo(), name: 'Acme', type: 'helm', url: 'https://x' }, [])).toBeTruthy();

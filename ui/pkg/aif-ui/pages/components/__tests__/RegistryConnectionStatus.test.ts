@@ -63,7 +63,7 @@ async function runTest(wrapper: ReturnType<typeof mount>) {
   await flushPromises();
 }
 
-function mountRCS(props: { target: string; configuration: Record<string, unknown>; repoName?: string }) {
+function mountRCS(props: { target: string; configuration: Record<string, unknown>; repoName?: string; testChart?: string }) {
   const store = { dispatch: vi.fn(async (_action, request) => request.url === CLUSTERREPOS_URL ? { items: [] } : {}) };
   const wrapper = mount(RegistryConnectionStatus, {
     props,
@@ -294,6 +294,24 @@ describe('Settings registry diagnostics - customRepo target', () => {
     const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'helm', url: 'https://charts.example.com' } });
     expect((wrapper.vm as any).chartName).toBe('');
     expect((wrapper.vm as any).sampleSelectable).toBe(true);
+  });
+
+  it('customRepo prefills the chart saved with the repository', async () => {
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'oci', url: 'oci://registry.example.com/charts' }, testChart: 'demo' });
+    expect((wrapper.get('#customRepo-test-chart').element as HTMLInputElement).value).toBe('demo');
+  });
+
+  it('customRepo reports chart edits so the repository saves them', async () => {
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'oci', url: 'oci://registry.example.com/charts' }, testChart: '' });
+    await wrapper.get('#customRepo-test-chart').setValue('other');
+    expect(wrapper.emitted('update:testChart')?.at(-1)).toEqual(['other']);
+  });
+
+  it('customRepo help text does not promise a default sample chart', async () => {
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'helm', url: 'https://charts.example.com' } });
+    const help = wrapper.get('#customRepo-test-chart-help').text();
+    expect(help).not.toMatch(/default sample/i);
+    expect(help).toMatch(/saved with the repository/i);
   });
 
   it('git custom repo hides chart access (N/A)', async () => {

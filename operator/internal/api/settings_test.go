@@ -522,6 +522,30 @@ func TestSettingsPut_CustomRepoNewName_200(t *testing.T) {
 	}
 }
 
+// The chart a user enters to Test a custom repo is saved with the repo, so the
+// Test form shows it again after a reload instead of starting empty.
+func TestSettingsPut_CustomRepoTestChartPersists(t *testing.T) {
+	c := newSettingsFakeClientWithRepos(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
+
+	body := `{"spec":{"customRepos":[{"name":"partner-charts","type":"oci","url":"oci://registry.example.com/charts","testChart":"demo"}]}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	if len(stored.Spec.CustomRepos) != 1 || stored.Spec.CustomRepos[0].TestChart != "demo" {
+		t.Errorf("stored custom repos = %+v, want testChart \"demo\" persisted", stored.Spec.CustomRepos)
+	}
+}
+
 func TestGetRegistryCredentials_NoSettings(t *testing.T) {
 	c := newSettingsFakeClient(t)
 	h := newSettingsHandler(c, "suse-ai-system")

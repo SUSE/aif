@@ -267,6 +267,11 @@ type CustomRepoSpec struct {
 	// InsecureSkipTLSVerify disables TLS verification for this repository.
 	// +optional
 	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
+	// TestChart is the chart the Settings Test uses to verify chart access in
+	// this repository. It is saved so the Test form keeps it; installs ignore it.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	TestChart string `json:"testChart,omitempty"`
 }
 
 // SettingsStatus defines the observed state of Settings.

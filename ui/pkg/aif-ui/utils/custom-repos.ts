@@ -14,6 +14,8 @@ export interface CustomRepoForm {
   sshKeySecretRef: SecretRef | null;
   caBundleSecretRef: SecretRef | null;
   insecureSkipTLSVerify: boolean;
+  // Chart the Settings Test uses to verify chart access; saved with the repo.
+  testChart: string;
 }
 
 // Mirror of operator/internal/credentials reserved repo names: the canonical
@@ -33,7 +35,7 @@ export function emptyCustomRepo(): CustomRepoForm {
   return {
     name: '', displayName: '', type: 'helm', url: '', gitRepo: '', gitBranch: '',
     userSecretRef: null, tokenSecretRef: null, sshKeySecretRef: null, caBundleSecretRef: null,
-    insecureSkipTLSVerify: false,
+    insecureSkipTLSVerify: false, testChart: '',
   };
 }
 
@@ -48,6 +50,8 @@ export function buildCustomReposCrd(forms: CustomRepoForm[]): any[] {
       out.gitBranch = f.gitBranch;
     } else {
       out.url = f.url;
+      const testChart = f.testChart?.trim();
+      if (testChart) out.testChart = testChart;
     }
     const user = refOrNull(f.userSecretRef);
     const token = refOrNull(f.tokenSecretRef);
@@ -76,6 +80,7 @@ export function buildCustomReposForm(crd: any[] = []): CustomRepoForm[] {
     sshKeySecretRef: c.sshKeySecretRef || null,
     caBundleSecretRef: c.caBundleSecretRef || null,
     insecureSkipTLSVerify: !!c.insecureSkipTLSVerify,
+    testChart: c.testChart || '',
   }));
 }
 
