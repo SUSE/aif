@@ -222,8 +222,7 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	if body.Status != nil {
-		applyClientStatus(&wl.Status, body.Status)
-		if err := h.client.Status().Update(r.Context(), wl); err != nil {
+		if err := h.patchClientStatus(r.Context(), wl, body.Status); err != nil {
 			log.Printf("api: failed to set initial AIWorkload status %s/%s: %v", namespace, body.Metadata.Name, err)
 		}
 	}
@@ -295,16 +294,8 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	if body.Status != nil {
-		// Start from the stored status so operator-owned fields survive; only
-		// the client-owned ones are taken from the request.
-		current := &aiplatformv1alpha1.AIWorkload{}
-		if err := h.client.Get(r.Context(), client.ObjectKeyFromObject(wl), current); err != nil {
-			log.Printf("api: failed to read AIWorkload %s/%s before updating its status: %v", namespace, name, err)
-		} else {
-			applyClientStatus(&current.Status, body.Status)
-			if err := h.client.Status().Update(r.Context(), current); err != nil {
-				log.Printf("api: failed to update AIWorkload status %s/%s: %v", namespace, name, err)
-			}
+		if err := h.patchClientStatus(r.Context(), wl, body.Status); err != nil {
+			log.Printf("api: failed to update AIWorkload status %s/%s: %v", namespace, name, err)
 		}
 	}
 
@@ -312,13 +303,28 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, wl)
 }
 
-// applyClientStatus copies the status fields a client may set — the phase and
-// per-cluster statuses the UI records after an install — into dst. Everything
-// else (pull-secret deliveries, conditions, operations, baselines…) is owned by
-// the operator and is never taken from a request.
-func applyClientStatus(dst *aiplatformv1alpha1.AIWorkloadStatus, src *aiplatformv1alpha1.AIWorkloadStatus) {
-	dst.Phase = src.Phase
-	dst.ClusterStatuses = src.ClusterStatuses
+// patchClientStatus writes the status fields a client may set — the phase and
+// per-cluster statuses the UI records after an install — onto wl's stored
+// status. Everything else (pull-secret deliveries, conditions, operations,
+// baselines…) is owned by the operator and is never taken from a request. A
+// merge patch carries only these two fields and does not depend on the
+// version last read, so a concurrent operator write neither fails it nor is
+// overwritten by it.
+func (h *AIWorkloadHandler) patchClientStatus(ctx context.Context, wl *aiplatformv1alpha1.AIWorkload, src *aiplatformv1alpha1.AIWorkloadStatus) error {
+	// The phase is an enum, so an omitted one is sent as null (clearing it)
+	// rather than "", which the API server would reject with the whole patch.
+	var phase any
+	if src.Phase != "" {
+		phase = src.Phase
+	}
+	data, err := json.Marshal(map[string]any{"status": map[string]any{
+		"phase":           phase,
+		"clusterStatuses": src.ClusterStatuses,
+	}})
+	if err != nil {
+		return err
+	}
+	return h.client.Status().Patch(ctx, wl, client.RawPatch(types.MergePatchType, data))
 }
 
 func (h *AIWorkloadHandler) deleteAIWorkload(w http.ResponseWriter, r *http.Request) {
