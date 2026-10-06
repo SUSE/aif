@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 const bounceTestSecret = "aif-custom-pull-private-charts"
@@ -352,5 +353,56 @@ func TestRestartImagePullBackOffPods_HandlesHelmLabelledPendingPods(t *testing.T
 	}
 	if bounced != 0 || pending != 1 {
 		t.Errorf("init running: bounced=%d pending=%d, want 0 bounced and 1 pending", bounced, pending)
+	}
+}
+
+// Several reconciles can run before the cache drops a pod the operator just
+// deleted. Seeing the same pod again must not count another bounce, or one
+// recreation uses up the controller's whole restart budget.
+func TestRestartImagePullBackOffPods_CountsOneBouncePerPodAcrossStalePasses(t *testing.T) {
+	pod := unlabelledBackOffPod("demo-0", "demo")
+	pod.UID = "pod-uid-demo-0"
+	scheme := newTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pod, helmReplicaSet(pod.Name, nil), serviceAccountWithSecrets("demo", bounceTestSecret)).
+		WithInterceptorFuncs(interceptor.Funcs{
+			// The delete is accepted but the pod stays visible, as with a
+			// cache that has not caught up yet.
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error { return nil },
+		}).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	for pass := 1; pass <= 3; pass++ {
+		bounced, _, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
+		if err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		want := 0
+		if pass == 1 {
+			want = 1
+		}
+		if bounced != want {
+			t.Errorf("pass %d: bounced = %d, want %d", pass, bounced, want)
+		}
+	}
+	rs := &appsv1.ReplicaSet{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "test-ns", Name: pod.Name + "-rs"}, rs); err != nil {
+		t.Fatalf("get ReplicaSet: %v", err)
+	}
+	if got := rs.Annotations[chartPodBounceAnnotation]; got != "1" {
+		t.Errorf("bounce count = %q, want \"1\"", got)
+	}
+}
+
+// A pod that is already being deleted is on its way out; bouncing it again
+// would only consume the restart budget.
+func TestRestartImagePullBackOffPods_SkipsPodBeingDeleted(t *testing.T) {
+	pod := unlabelledBackOffPod("demo-0", "demo")
+	now := metav1.Now()
+	pod.DeletionTimestamp = &now
+	pod.Finalizers = []string{"test/hold"}
+	bounced, _ := runBounce(t, pod, serviceAccountWithSecrets("demo", bounceTestSecret))
+	if bounced != 0 {
+		t.Errorf("bounced = %d, want 0 for a pod already being deleted", bounced)
 	}
 }

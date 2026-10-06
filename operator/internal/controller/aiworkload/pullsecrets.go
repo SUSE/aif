@@ -185,6 +185,11 @@ const (
 	// New ReplicaSets (created by a Deployment spec.template change) start
 	// at 0 again, so a chart upgrade naturally resets the counter.
 	chartPodMaxBounces = 3
+
+	// chartPodBouncedPodAnnotation records, on the same controller, the UID of
+	// the pod bounced last, so a pass that still sees that pod (the cache has
+	// not caught up with the delete) does not count it again.
+	chartPodBouncedPodAnnotation = "ai-factory.suse.com/pull-secret-bounced-pod"
 )
 
 // mergeImagePullSecrets adds each name to sa.ImagePullSecrets if not already
@@ -247,6 +252,11 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 	saSecrets := map[string]map[string]bool{}
 	for i := range pods.Items {
 		p := &pods.Items[i]
+		// Already on its way out; bouncing it again would only consume the
+		// controller's restart budget.
+		if p.DeletionTimestamp != nil {
+			continue
+		}
 		pullFailing := isPodImagePullBackOff(p)
 		// A pod admitted without the delivered secret may not have failed its
 		// first pull yet when this pass runs.
@@ -291,6 +301,11 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		if viaServiceAccount && templateSetsPullSecrets(owner) {
 			continue
 		}
+		// Passes that run before the cache drops a pod this operator already
+		// deleted see it again; count each pod once.
+		if p.UID != "" && owner.GetAnnotations()[chartPodBouncedPodAnnotation] == string(p.UID) {
+			continue
+		}
 		if count >= chartPodMaxBounces {
 			if pullFailing {
 				l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
@@ -311,7 +326,7 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		// Increment the controller's counter BEFORE deleting the pod, so
 		// a transient delete failure doesn't double-count, and the cap is
 		// enforced even if this pass partially fails.
-		if err := r.incrementBounceCount(ctx, owner, count+1); err != nil {
+		if err := r.incrementBounceCount(ctx, owner, count+1, p.UID); err != nil {
 			return bounced, pending, fmt.Errorf("increment bounce counter on %s/%s: %w", owner.GetKind(), owner.GetName(), err)
 		}
 		if err := r.Delete(ctx, p); err != nil {
@@ -424,13 +439,15 @@ func (r *AIWorkloadReconciler) readBounceCount(ctx context.Context, namespace st
 }
 
 // incrementBounceCount writes newCount onto the owner's
-// chartPodBounceAnnotation. Uses a strategic-merge patch on the annotation
+// chartPodBounceAnnotation and records the bounced pod's UID in
+// chartPodBouncedPodAnnotation. Uses a merge patch on the annotations
 // only — avoids the spec-level conflict potential of a full Update on an
 // unstructured object the operator doesn't own.
-func (r *AIWorkloadReconciler) incrementBounceCount(ctx context.Context, owner *unstructured.Unstructured, newCount int) error {
+func (r *AIWorkloadReconciler) incrementBounceCount(ctx context.Context, owner *unstructured.Unstructured, newCount int, podUID types.UID) error {
 	patch := []byte(fmt.Sprintf(
-		`{"metadata":{"annotations":{%q:%q}}}`,
+		`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
 		chartPodBounceAnnotation, strconv.Itoa(newCount),
+		chartPodBouncedPodAnnotation, string(podUID),
 	))
 	return r.Patch(ctx, owner, client.RawPatch(types.MergePatchType, patch))
 }
