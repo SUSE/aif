@@ -257,16 +257,16 @@ var saMergeIndentFuncs = template.FuncMap{
 //     don't generate spurious update events on re-apply, then
 //
 //  6. recreates Pods stuck in ImagePullBackOff/ErrImagePull, and Pending Pods
-//     that have not started any container yet: a Pod's
-//     imagePullSecrets are merged from its SA only at admission, so a Pod that
-//     started before its SA was patched stays broken until recreated, and
-//     deleting it lets its controller recreate it with the patched SA. A Pod
-//     qualifies when its SA carries a desired secret that its spec lacks
-//     (whatever its labels — many charts leave Pods without the Helm
-//     managed-by label) and its ReplicaSet/StatefulSet/DaemonSet pod template
-//     sets no imagePullSecrets, or when it is Helm-labelled, failing to pull,
-//     and an SA was patched this pass. Pending Pods qualify only through the
-//     first condition.
+//     that have not started any container yet: a Pod's imagePullSecrets are
+//     merged from its SA only at admission, so a Pod that started before its
+//     SA was patched stays broken until recreated, and deleting it lets its
+//     controller recreate it with the patched SA. A Pod qualifies when its SA
+//     carries a desired secret that its spec lacks (whatever its labels —
+//     many charts leave Pods without the Helm managed-by label), every pull
+//     secret it lists is on its SA, and its ReplicaSet/StatefulSet/DaemonSet
+//     pod template sets no imagePullSecrets; or when it is Helm-labelled,
+//     failing to pull, and an SA was patched this pass. Pending Pods qualify
+//     only through the first condition.
 //
 //     Both conditions bound the bounce. The first stops on its own once the
 //     recreated Pod carries the secret. The second is guarded by "only if an SA
@@ -383,6 +383,18 @@ kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.
       *) MISSING=1 ;;
     esac
   done
+  # A Pod listing a pull secret its SA lacks did not get its pull secrets from
+  # the SA alone (e.g. a mutating webhook), so a recreated Pod may miss the
+  # delivered secret again. Leave it alone: these recreations are not counted,
+  # and this keeps them from repeating on every pass.
+  if [ "$MISSING" = 1 ]; then
+    for s in $(printf '%s' "$podsecrets" | tr ',' ' '); do
+      case " $SA_SECRETS " in
+        *" $s "*) ;;
+        *) MISSING=0 ;;
+      esac
+    done
+  fi
   # Only a ReplicaSet/StatefulSet/DaemonSet whose pod template sets no
   # imagePullSecrets recreates the Pod with its SA's secrets merged in. Bare
   # Pods are never recreated, deleted Job Pods count against the Job's backoff
@@ -400,6 +412,8 @@ kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.
   REASON=''
   if [ "$MISSING" = 1 ]; then
     REASON="SA $psa has a pull secret the pod lacks, deleting so it is recreated with it"
+  # The older Helm-label recreation is bounded by "an SA was patched this
+  # pass" instead, so the SA-only pull secret check above does not apply to it.
   elif [ "$PULL_FAILING" = 1 ] && [ "$PATCHED" = 1 ] && [ "$managed" = Helm ]; then
     REASON="image pull failing after SA patch, deleting so it re-reads SA imagePullSecrets"
   fi

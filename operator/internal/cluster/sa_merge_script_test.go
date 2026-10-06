@@ -654,3 +654,25 @@ func TestMergeResources_DropsInvalidReleaseNames(t *testing.T) {
 		t.Errorf("want only the valid release rendered, got:\n%s", m)
 	}
 }
+
+// A pod listing a pull secret its ServiceAccount does not carry did not get
+// its pull secrets from the ServiceAccount alone (e.g. a mutating webhook), so
+// a recreated pod may miss the delivered secret again. Such pods are left
+// alone, which keeps the uncounted recreations from repeating on every pass.
+// Pull secrets that all come from the ServiceAccount do not block recreation.
+func TestMergeScript_LeavesPodWithPullSecretNotFromItsServiceAccount(t *testing.T) {
+	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
+		sas: map[string][]string{"default": {"older-sa-secret", scriptTestSecret}},
+		pods: []string{
+			"injected-0|default||StatefulSet|injected|injected-by-webhook,|ImagePullBackOff,",
+			"fromsa-0|default||StatefulSet|fromsa|older-sa-secret,|ImagePullBackOff,",
+		},
+		owners: map[string]string{"StatefulSet-injected": "", "StatefulSet-fromsa": ""},
+	})
+	if containsAction(actions, "delete", "injected-0") {
+		t.Errorf("pod with a pull secret not from its ServiceAccount must be left alone, actions: %v", actions)
+	}
+	if !containsAction(actions, "delete", "fromsa-0") {
+		t.Errorf("pod whose pull secrets all come from its ServiceAccount must be recreated, actions: %v", actions)
+	}
+}
