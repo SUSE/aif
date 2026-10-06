@@ -229,9 +229,13 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 // counter because the new RS object has no annotation yet. Pods without a
 // controllerRef are skipped (no place to persist the counter).
 //
-// Returns the count of pods deleted this pass, and the count of still-Pending
-// pods that miss a delivered secret and would be recreated once their image
-// pull fails (so the caller keeps checking instead of settling).
+// Pending pods admitted before their ServiceAccount received a delivered
+// secret (whatever their labels) are handled too: recreated right away when no
+// container has started, otherwise reported as pending so the caller checks
+// again once their image pull fails.
+//
+// Returns the count of pods deleted this pass, and the count of pending pods
+// (so the caller keeps checking instead of settling).
 func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, namespace string, deliveredSecrets []string) (bounced, pending int, err error) {
 	l := log.FromContext(ctx)
 
@@ -244,14 +248,16 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		pullFailing := isPodImagePullBackOff(p)
-		viaServiceAccount := p.Labels[chartManagedByLabel] != chartManagedByHelm
 		// A pod admitted without the delivered secret may not have failed its
-		// first pull yet. It is reported as pending below so the caller checks
-		// again, rather than settling before the failure shows up.
-		awaitingPull := !pullFailing && viaServiceAccount && p.Status.Phase == corev1.PodPending
-		if !pullFailing && !awaitingPull {
+		// first pull yet when this pass runs.
+		admitting := !pullFailing && p.Status.Phase == corev1.PodPending
+		if !pullFailing && !admitting {
 			continue
 		}
+		// Helm-labelled pods already failing to pull keep the original
+		// behaviour. Every other candidate qualifies only when recreating it
+		// adds a delivered secret its ServiceAccount carries.
+		viaServiceAccount := admitting || p.Labels[chartManagedByLabel] != chartManagedByHelm
 		if viaServiceAccount {
 			missing, err := r.podMissesDeliveredSecret(ctx, p, deliveredSecrets, saSecrets)
 			if err != nil {
@@ -263,8 +269,10 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		}
 		cr := metav1.GetControllerOf(p)
 		if cr == nil {
-			l.Info("skipping ImagePullBackOff pod with no controllerRef (cannot track retries)",
-				"namespace", p.Namespace, "name", p.Name)
+			if pullFailing {
+				l.Info("skipping ImagePullBackOff pod with no controllerRef (cannot track retries)",
+					"namespace", p.Namespace, "name", p.Name)
+			}
 			continue
 		}
 		if viaServiceAccount && !templateControllerKinds[cr.Kind] {
@@ -283,17 +291,21 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		if viaServiceAccount && templateSetsPullSecrets(owner) {
 			continue
 		}
-		if awaitingPull {
-			if count < chartPodMaxBounces {
-				pending++
+		if count >= chartPodMaxBounces {
+			if pullFailing {
+				l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
+					"namespace", p.Namespace, "pod", p.Name,
+					"controllerKind", cr.Kind, "controllerName", cr.Name,
+					"cap", chartPodMaxBounces)
 			}
 			continue
 		}
-		if count >= chartPodMaxBounces {
-			l.Info("bounce cap reached for controller; leaving pod in ImagePullBackOff so the failure is visible",
-				"namespace", p.Namespace, "pod", p.Name,
-				"controllerKind", cr.Kind, "controllerName", cr.Name,
-				"cap", chartPodMaxBounces)
+		// A Pending pod with a container already started (e.g. a running init
+		// container) would lose that work if recreated now; report it so the
+		// caller checks again once its image pull fails. A pod that has not
+		// started anything is recreated right away at no cost.
+		if admitting && containersStarted(p) {
+			pending++
 			continue
 		}
 		// Increment the controller's counter BEFORE deleting the pod, so
@@ -311,6 +323,7 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		l.Info("bounced ImagePullBackOff pod",
 			"namespace", p.Namespace, "name", p.Name,
 			"controllerKind", cr.Kind, "controllerName", cr.Name,
+			"imagePullFailing", pullFailing,
 			"bounce", count+1, "cap", chartPodMaxBounces)
 		bounced++
 	}
@@ -322,6 +335,19 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 // may patch). Other owners — Jobs, whose deleted pods count against their
 // backoff limit, and operator-managed custom resources — are left alone.
 var templateControllerKinds = map[string]bool{"ReplicaSet": true, "StatefulSet": true, "DaemonSet": true}
+
+// containersStarted reports whether any init or app container of the pod has
+// run (or is running).
+func containersStarted(p *corev1.Pod) bool {
+	for _, statuses := range [][]corev1.ContainerStatus{p.Status.InitContainerStatuses, p.Status.ContainerStatuses} {
+		for _, st := range statuses {
+			if st.State.Running != nil || st.State.Terminated != nil || st.RestartCount > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // templateSetsPullSecrets reports whether the controller's pod template lists
 // imagePullSecrets of its own.

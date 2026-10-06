@@ -179,9 +179,9 @@ func TestRestartImagePullBackOffPods_SkipsPodWhoseControllerTemplateSetsPullSecr
 	}
 }
 
-// pendingPod turns a pod into one that has not reached an image-pull failure
-// yet (just scheduled, containers still being created).
-func pendingPod(p *corev1.Pod) *corev1.Pod {
+// notStartedPod turns a pod into one that is scheduled but has not started
+// any container yet (images still being pulled for the first time).
+func notStartedPod(p *corev1.Pod) *corev1.Pod {
 	p.Status = corev1.PodStatus{
 		Phase: corev1.PodPending,
 		InitContainerStatuses: []corev1.ContainerStatus{{
@@ -192,12 +192,25 @@ func pendingPod(p *corev1.Pod) *corev1.Pod {
 	return p
 }
 
-// A pod admitted without the delivered secret often has not failed its first
-// pull yet when the operator finishes merging. It must be reported so the
+// initRunningPod turns a pod into one that is still Pending while an init
+// container runs (its main image is pulled only after init finishes).
+func initRunningPod(p *corev1.Pod) *corev1.Pod {
+	p.Status = corev1.PodStatus{
+		Phase: corev1.PodPending,
+		InitContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "init",
+			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		}},
+	}
+	return p
+}
+
+// A pod admitted without the delivered secret whose init container is already
+// running has not reached its main image pull yet. It must be reported so the
 // operator checks again once the pull fails, instead of settling and never
-// looking at the namespace again.
+// looking at the namespace again (recreating it now would restart its init).
 func TestRestartImagePullBackOffPods_ReportsPendingPodThatWillNeedRecreation(t *testing.T) {
-	pod := pendingPod(unlabelledBackOffPod("demo-0", "demo"))
+	pod := initRunningPod(unlabelledBackOffPod("demo-0", "demo"))
 	scheme := newTestScheme(t)
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(pod, helmReplicaSet(pod.Name, nil), serviceAccountWithSecrets("demo", bounceTestSecret)).Build()
@@ -219,34 +232,41 @@ func TestRestartImagePullBackOffPods_ReportsPendingPodThatWillNeedRecreation(t *
 // operator does not keep re-checking for nothing.
 func TestRestartImagePullBackOffPods_DoesNotReportPendingPodsRecreationCannotHelp(t *testing.T) {
 	cases := []struct {
-		name string
-		pod  *corev1.Pod
-		objs []client.Object
+		name        string
+		pod         *corev1.Pod
+		objs        []client.Object
+		annotations map[string]string
 	}{
 		{
 			name: "pod already references the secret",
-			pod:  pendingPod(unlabelledBackOffPod("a-0", "demo", bounceTestSecret)),
+			pod:  initRunningPod(unlabelledBackOffPod("a-0", "demo", bounceTestSecret)),
 			objs: []client.Object{serviceAccountWithSecrets("demo", bounceTestSecret)},
 		},
 		{
 			name: "ServiceAccount lacks the secret",
-			pod:  pendingPod(unlabelledBackOffPod("b-0", "demo")),
+			pod:  initRunningPod(unlabelledBackOffPod("b-0", "demo")),
 			objs: []client.Object{serviceAccountWithSecrets("demo")},
 		},
 		{
-			name: "bounce cap reached",
-			pod:  pendingPod(unlabelledBackOffPod("c-0", "demo")),
+			name:        "bounce cap reached",
+			pod:         initRunningPod(unlabelledBackOffPod("c-0", "demo")),
+			objs:        []client.Object{serviceAccountWithSecrets("demo", bounceTestSecret)},
+			annotations: map[string]string{chartPodBounceAnnotation: "3"},
+		},
+		{
+			name: "pod is running",
+			pod: func() *corev1.Pod {
+				p := unlabelledBackOffPod("d-0", "demo")
+				p.Status = corev1.PodStatus{Phase: corev1.PodRunning}
+				return p
+			}(),
 			objs: []client.Object{serviceAccountWithSecrets("demo", bounceTestSecret)},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			annotations := map[string]string(nil)
-			if tc.name == "bounce cap reached" {
-				annotations = map[string]string{chartPodBounceAnnotation: "3"}
-			}
 			scheme := newTestScheme(t)
-			objs := append(tc.objs, tc.pod, helmReplicaSet(tc.pod.Name, annotations))
+			objs := append(tc.objs, tc.pod, helmReplicaSet(tc.pod.Name, tc.annotations))
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 			r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
 
@@ -265,7 +285,7 @@ func TestRestartImagePullBackOffPods_DoesNotReportPendingPodsRecreationCannotHel
 // recreation is not settled, so the reconciler requeues and recreates the
 // pod once its pull fails.
 func TestReconcilePullSecretsForNamespace_UnsettledWhilePodAwaitsRecreation(t *testing.T) {
-	pod := pendingPod(unlabelledBackOffPod("demo-0", "demo"))
+	pod := initRunningPod(unlabelledBackOffPod("demo-0", "demo"))
 	demoSA := serviceAccountWithSecrets("demo", bounceTestSecret)
 	demoSA.Labels = map[string]string{chartManagedByLabel: chartManagedByHelm}
 	scheme := newTestScheme(t)
@@ -279,5 +299,58 @@ func TestReconcilePullSecretsForNamespace_UnsettledWhilePodAwaitsRecreation(t *t
 	}
 	if settled {
 		t.Error("settled = true, want false while a pod awaits recreation")
+	}
+}
+
+// A pod admitted without the delivered secret that has not started any
+// container is recreated right away: nothing is lost, and the recreated pod is
+// admitted with the secret. This also avoids re-checking indefinitely for pods
+// that stay Pending for unrelated reasons (e.g. unschedulable).
+func TestRestartImagePullBackOffPods_RecreatesNotStartedPodMissingSecret(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pod  *corev1.Pod
+	}{
+		{name: "containers being created", pod: notStartedPod(unlabelledBackOffPod("e-0", "demo"))},
+		{name: "not scheduled yet", pod: func() *corev1.Pod {
+			p := unlabelledBackOffPod("f-0", "demo")
+			p.Status = corev1.PodStatus{Phase: corev1.PodPending}
+			return p
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bounced, exists := runBounce(t, tc.pod, serviceAccountWithSecrets("demo", bounceTestSecret))
+			if bounced != 1 || exists {
+				t.Errorf("bounced=%d podExists=%v, want the pod recreated", bounced, exists)
+			}
+		})
+	}
+}
+
+// Charts that label their pods with the Helm managed-by label (the common
+// scaffold) hit the same admission race and must be handled the same way.
+func TestRestartImagePullBackOffPods_HandlesHelmLabelledPendingPods(t *testing.T) {
+	labelled := func(p *corev1.Pod) *corev1.Pod {
+		p.Labels[chartManagedByLabel] = chartManagedByHelm
+		return p
+	}
+
+	bounced, exists := runBounce(t, labelled(notStartedPod(unlabelledBackOffPod("g-0", "demo"))),
+		serviceAccountWithSecrets("demo", bounceTestSecret))
+	if bounced != 1 || exists {
+		t.Errorf("not started: bounced=%d podExists=%v, want the pod recreated", bounced, exists)
+	}
+
+	pod := labelled(initRunningPod(unlabelledBackOffPod("h-0", "demo")))
+	scheme := newTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pod, helmReplicaSet(pod.Name, nil), serviceAccountWithSecrets("demo", bounceTestSecret)).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	bounced, pending, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{bounceTestSecret})
+	if err != nil {
+		t.Fatalf("restartImagePullBackOffPods: %v", err)
+	}
+	if bounced != 0 || pending != 1 {
+		t.Errorf("init running: bounced=%d pending=%d, want 0 bounced and 1 pending", bounced, pending)
 	}
 }
