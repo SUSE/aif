@@ -30,6 +30,7 @@ import {
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
 import { fetchSuseAiApps, resolveInstallRepoName, getLibraryForClusterRepo, isManagedRepoName } from '../../services/app-collection';
+import { installRecordingWorkloadsFirst } from '../../services/helm-install-order';
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
@@ -592,7 +593,7 @@ async function resolvePullSecretNames() {
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
 
     // Only inject pull secrets for suse-ai library charts. Custom repos (library=undefined)
     // and nvidia repos must not get auto-injected pull secrets.
@@ -839,8 +840,13 @@ async function performMultiClusterInstall() {
 
   showProgressModal.value = true;
 
-  // Install to clusters in parallel with concurrency limit
-  await installWithConcurrencyLimit(targetClusters, INSTALL_CONCURRENCY);
+  // Install to clusters in parallel with concurrency limit. One CR per
+  // cluster — Helm strategy has no fleet bundle name to record.
+  await installRecordingWorkloadsFirst(targetClusters, {
+    recordPending: c => recordAIWorkload({}, 'Helm', c, { phase: 'Pending', clusterStatuses: [] }),
+    install:       () => installWithConcurrencyLimit(targetClusters, INSTALL_CONCURRENCY),
+    recordResult:  c => recordAIWorkload({}, 'Helm', c, undefined, true),
+  });
 
   // Check final status
   const allSucceeded = installProgress.value.every(p => p.status === 'success');
@@ -851,8 +857,6 @@ async function performMultiClusterInstall() {
     console.warn(`[SUSE-AI] Multi-cluster install completed with ${failed.length} failure(s)`);
   }
 
-  // One CR per cluster — Helm strategy has no fleet bundle name to record.
-  await Promise.all(targetClusters.map(c => recordAIWorkload({}, 'Helm', c)));
   submitting.value = false;
 }
 
@@ -957,7 +961,7 @@ async function performFleetBundleInstall() {
         targetNamespace:           form.value.namespace,
         targetClusterIds:          [clusterId],
         additionalPullSecretNames: extraPullSecretNames,
-        library:                   getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+        library:                   getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
       });
     }));
 
@@ -1021,7 +1025,7 @@ async function performGitOpsInstall() {
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds into the bundle values too (the SA's
     // imagePullSecrets are ignored once the chart sets pod-spec imagePullSecrets).
-    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'suse-ai') {
+    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1044,7 +1048,7 @@ async function performGitOpsInstall() {
           pullSecretNames,
           targetClusterIds: [clusterId],
           targetNamespace:  form.value.namespace,
-          library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+          library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
         });
         await recordAIWorkload(bundleNamesByCluster, 'GitOps', clusterId, { phase: 'Pending', clusterStatuses: [] });
         results.push({ status: 'fulfilled', value: undefined });
@@ -1086,6 +1090,9 @@ async function recordAIWorkload(
   strategy: 'Helm' | 'FleetBundle' | 'GitOps',
   clusterId: string,
   initialStatus?: { phase: AIWorkloadPhase; clusterStatuses: AIWorkloadClusterStatus[] },
+  // recordedEarlier: this install already created the CR (as Pending), so
+  // update it; fall back to create if that earlier call did not succeed.
+  recordedEarlier = false,
 ) {
   try {
     let phase: AIWorkloadPhase;
@@ -1114,7 +1121,7 @@ async function recordAIWorkload(
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-    const vendor = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'nvidia' ? 'nvidia' : 'suse';
+    const vendor = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'nvidia' ? 'nvidia' : 'suse';
 
     const fleetBundleName = fleetBundleNamesByCluster[clusterId];
     const spec = {
@@ -1141,6 +1148,14 @@ async function recordAIWorkload(
 
     if (isManageMode.value) {
       await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+    } else if (recordedEarlier) {
+      // No status here: the operator has owned it since the pending record,
+      // and replacing it would drop the deliveries and conditions it set.
+      try {
+        await updateAIWorkload(form.value.namespace, crName, spec);
+      } catch {
+        await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+      }
     } else {
       await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
     }
@@ -1338,7 +1353,7 @@ async function installToCluster(
   const repos = await listClusterRepos(store);
   const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-  const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
+  const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
 
   // Only add pull secrets to values for suse-ai library charts
   if (pullSecrets.length > 0 && library === 'suse-ai') {
@@ -1493,7 +1508,7 @@ async function performFleetBundleUpgrade() {
       targetNamespace:          form.value.namespace,
       targetClusterIds:         form.value.clusters,
       additionalPullSecretNames: extraPullSecretNames,
-      library:                  getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+      library:                  getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
     });
 
     updateAllProgress(100, 'Update scheduled — Fleet will reconcile to new version');
@@ -1553,7 +1568,7 @@ async function performGitOpsUpgrade() {
 
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds in too (see performGitOpsInstall).
-    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'suse-ai') {
+    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1568,7 +1583,7 @@ async function performGitOpsUpgrade() {
       pullSecretNames,
       targetClusterIds: form.value.clusters,
       targetNamespace:  form.value.namespace,
-      library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+      library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
     });
 
     updateAllProgress(100, 'Changes committed to git — Fleet will sync and reconcile');

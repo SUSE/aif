@@ -76,6 +76,7 @@ suseai:
           label: Chart access (current form)
           sampleLabel: Chart to test
           sampleHelp: Enter a chart available in this repository or private mirror. Leave empty to use the default sample. This field is only used by Test.
+          sampleHelpCustomRepo: 'Enter a chart available in this repository to verify chart access. It is saved with the repository and used only by Test.'
           scope: Only the listed chart and version in each repository are checked. This does not verify all charts, full downloads, or application container images.
           notApplicable: Chart access checks do not apply to git repositories.
           states:

@@ -248,7 +248,7 @@ func TestBundleClient_EmitsConsolidatedBundle(t *testing.T) {
 			// the bounce must be gated on an SA actually being patched this
 			// run, so a stable namespace never churns Pods (Pending<->Running).
 			"PATCHED=0",
-			`if [ "$PATCHED" = 1 ]; then`,
+			`[ "$PATCHED" = 1 ] && [ "$managed" = Helm ]`,
 			// The namespace "default" SA must be in scope so subchart pods that
 			// run under it (e.g. litellm's postgresql) get the combined creds.
 			`printf 'default %s'`,

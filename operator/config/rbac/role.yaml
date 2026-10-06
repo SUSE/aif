@@ -117,6 +117,7 @@ rules:
   - delete
   - get
   - list
+  - patch
 - apiGroups:
   - apps
   resources:

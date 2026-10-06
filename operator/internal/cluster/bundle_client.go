@@ -70,6 +70,9 @@ type BundleClientOptions struct {
 	OwnerName string
 	// OwnerNamespace is the AIWorkload namespace owning this Bundle.
 	OwnerNamespace string
+	// Releases are the owning workload's Helm releases in Namespace. The
+	// SA-merge job only recreates pods whose controller belongs to one of them.
+	Releases []string
 	// Namespace is the target namespace this Bundle's secrets are written
 	// into on the downstream cluster. Threaded through to the Bundle's
 	// metadata.name so two ApplyPullSecretBundle calls for the same
@@ -182,7 +185,7 @@ func (b *bundleClient) ApplyPullSecretBundle(ctx context.Context, secrets []*cor
 	//    enumerates every SA in the namespace and patches imagePullSecrets
 	//    to include each of secretNames, preserving any pre-existing
 	//    entries. Mirrors mergeImagePullSecrets() on the local cluster.
-	saMergeYAML, err := buildSAMergeResources(ns, secretNames, b.opts.SAMergeImage)
+	saMergeYAML, err := buildSAMergeResources(b.opts.OwnerNamespace+"/"+b.opts.OwnerName, ns, secretNames, b.opts.Releases, b.opts.SAMergeImage)
 	if err != nil {
 		return fmt.Errorf("build SA-merge resources for ns %s: %w", ns, err)
 	}

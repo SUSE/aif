@@ -120,12 +120,18 @@ export function getLibraryFromRepoUrl(repoUrl: string): 'suse-ai' | 'nvidia' | u
  * Classify a chart source by its stable ClusterRepo identity first, then fall
  * back to URL discovery for administrator-created connected repositories.
  * Private mirrors deliberately change the URL, but not the well-known source
- * name referenced by applications and Blueprints.
+ * name referenced by applications and Blueprints. Custom repositories are never
+ * classified, even when their URL matches a built-in source: they are outside
+ * the SUSE/NVIDIA pull-secret handling this result drives.
  */
 export function getLibraryForClusterRepo(
   repoName: string,
   repoUrl: string,
+  labels?: Record<string, string>,
 ): 'suse-ai' | 'nvidia' | undefined {
+  if (labels?.[CUSTOM_REPO_LABEL] === 'true') {
+    return undefined;
+  }
   if (repoName === 'application-collection' || repoName === 'suse-ai-registry') {
     return 'suse-ai';
   }

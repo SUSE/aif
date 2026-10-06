@@ -76,6 +76,7 @@ var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 var errCatalogClientNotConfigured = stderrors.New("rancher catalog client not configured")
 
 type clusterRepoInfo struct {
+	Name           string   // ClusterRepo metadata.name
 	Kind           repoKind // how the repo serves charts (http/oci/git)
 	URL            string   // http/oci repos only
 	GitRepo        string   // git repos only
@@ -744,26 +745,16 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 }
 
 // injectorForRepo picks the pull-secret injector for a chart, gating on the
-// resolved repo first. Custom (admin-defined) repos get the noop injector so no
-// operator-managed pull secret is created, referenced in values, or merged onto
-// ServiceAccounts: the UI classifies every non-NVIDIA app as vendor "suse", so
-// without this a custom-repo app would fall through to the suseInjector and be
-// pulled with SUSE registry credentials. Non-custom repos keep the vendor-based
-// selection.
+// resolved repo first. Custom (admin-defined) repos get the customRepoInjector,
+// which delivers only the repo's own credentials: the UI classifies every
+// non-NVIDIA app as vendor "suse", so without this gate a custom-repo app would
+// fall through to the suseInjector and be pulled with SUSE registry
+// credentials. Non-custom repos keep the vendor-based selection.
 func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo) secretInjector {
 	if repoInfo.Custom {
-		return &noopInjector{}
+		return &customRepoInjector{r: r}
 	}
 	return r.injectorFor(vendor)
-}
-
-// noopInjector delivers no pull secrets and leaves chart values untouched. Used
-// for custom repos, whose image pulls rely on the repo's own credentials rather
-// than the operator's registry pull-secret machinery.
-type noopInjector struct{}
-
-func (n *noopInjector) Apply(_ context.Context, _ cluster.Client, _ string, _ clusterRepoInfo, _ map[string]any, _ bool) ([]string, error) {
-	return nil, nil
 }
 
 // ensureCombinedPullSecret creates (or updates) a single kubernetes.io/dockerconfigjson secret
@@ -1263,12 +1254,11 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	if clientSecretNS == "" {
 		clientSecretNS = "cattle-system"
 	}
-	info := clusterRepoInfo{ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
-	// A custom (admin-defined) repo is out of the operator's pull-secret
-	// machinery: its chart pull auth comes from the ClusterRepo clientSecret/
-	// helmSecretName, and its images must not be pulled with SUSE registry
-	// credentials. The marker label is the single source of truth (mirrors the
-	// Fleet-bundle path, which scopes the combined pull secret to suse-ai only).
+	info := clusterRepoInfo{Name: repoName, ClientSecret: clientSecretName, ClientSecretNS: clientSecretNS}
+	// A custom (admin-defined) repo is out of the SUSE/NVIDIA pull-secret
+	// machinery: its images must not be pulled with SUSE registry credentials.
+	// It gets its own pull secret built from the repo's credentials instead
+	// (customRepoInjector). The marker label is the single source of truth.
 	info.Custom = cr.GetLabels()[credentials.CustomRepoLabel] == credentials.LabelValueTrue
 
 	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")

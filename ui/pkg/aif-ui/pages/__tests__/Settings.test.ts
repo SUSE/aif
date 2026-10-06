@@ -43,7 +43,8 @@ vi.mock('../../utils/custom-repos', () => ({
 vi.mock('../components/RegistryConnectionStatus.vue', () => ({
   default: {
     name: 'RegistryConnectionStatus',
-    props: ['target', 'configuration', 'repoName'],
+    props: ['target', 'configuration', 'repoName', 'testChart'],
+    emits: ['update:testChart'],
     template: '<div class="registry-connection-status" />',
   },
 }));
@@ -152,6 +153,21 @@ describe('Settings page - Custom Repositories', () => {
 
     expect(wrapper.find('[data-testid="section-customRepo-0"] .registry-connection-status').exists()).toBe(true);
     expect(wrapper.find('[data-testid="delete-custom-repo-0"]').exists()).toBe(true);
+  });
+
+  it('binds the custom repo test chart to its Test so Apply saves the chart', async () => {
+    const wrapper = await mountSettings();
+    await flushPromises();
+    await wrapper.find('[data-testid="add-custom-repo"]').trigger('click');
+    await flushPromises();
+
+    const status = wrapper.findAllComponents({ name: 'RegistryConnectionStatus' })
+      .find(c => c.props('target') === 'customRepo')!;
+    status.vm.$emit('update:testChart', 'demo');
+    await flushPromises();
+
+    expect((wrapper.vm as any).spec.customRepos[0].testChart).toBe('demo');
+    expect(status.props('testChart')).toBe('demo');
   });
 
   it('Delete opens a confirmation modal and only removes the repo on confirm', async () => {
