@@ -302,3 +302,29 @@ func TestPullSecretFactory_CustomRepoGoneOrNotCustom_Skips(t *testing.T) {
 		})
 	}
 }
+
+// Docker Hub serves OCI charts from registry-1.docker.io, but kubelet resolves
+// docker.io image references against index.docker.io, so the repo host alone
+// would never match. The secret must also carry the Docker Hub index key.
+func TestReconcileAppPullSecrets_CustomDockerHubRepoMatchesImageIndex(t *testing.T) {
+	scheme := newAppTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		newCustomTestRepo("oci://registry-1.docker.io/example"),
+		newCustomTestAuthSecret("hub-user", "hub-token")).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: customTestOpNS}
+
+	w := newCustomTestWorkload(nil)
+	if err := r.reconcileAppPullSecrets(context.Background(), w); err != nil {
+		t.Fatalf("reconcileAppPullSecrets: %v", err)
+	}
+	sec := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: customTestTargetNS, Name: customRepoPullSecretName(customTestRepo)}, sec); err != nil {
+		t.Fatalf("custom pull secret missing: %v", err)
+	}
+	auths := dockerAuths(t, sec)
+	for _, key := range []string{"registry-1.docker.io", "https://index.docker.io/v1/"} {
+		if entry, ok := auths[key]; !ok || entry["password"] != "hub-token" {
+			t.Errorf("auths[%q] = %v, want Docker Hub credentials (auths: %v)", key, entry, auths)
+		}
+	}
+}

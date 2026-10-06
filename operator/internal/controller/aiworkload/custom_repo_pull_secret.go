@@ -36,6 +36,13 @@ import (
 // prefix, so pullSecretFactory can rebuild the secret from the name alone.
 const customRepoPullSecretPrefix = "aif-custom-pull-"
 
+// Docker Hub's registry API host and the dockerconfigjson key kubelet uses
+// for docker.io image references.
+const (
+	dockerHubRegistryHost = "registry-1.docker.io"
+	dockerHubIndexKey     = "https://index.docker.io/v1/"
+)
+
 func customRepoPullSecretName(repoName string) string {
 	return customRepoPullSecretPrefix + repoName
 }
@@ -76,7 +83,14 @@ func (r *AIWorkloadReconciler) buildCustomRepoPullSecret(ctx context.Context, re
 	if username == "" || password == "" {
 		return nil, nil
 	}
-	cfg, err := json.Marshal(map[string]any{"auths": map[string]any{host: dockerAuthEntry(username, password)}})
+	entry := dockerAuthEntry(username, password)
+	auths := map[string]any{host: entry}
+	// Docker Hub serves OCI charts from registry-1.docker.io, while kubelet
+	// resolves docker.io image references against the Docker Hub index key.
+	if host == dockerHubRegistryHost {
+		auths[dockerHubIndexKey] = entry
+	}
+	cfg, err := json.Marshal(map[string]any{"auths": auths})
 	if err != nil {
 		return nil, err
 	}
