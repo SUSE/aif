@@ -1149,8 +1149,10 @@ async function recordAIWorkload(
     if (isManageMode.value) {
       await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
     } else if (recordedEarlier) {
+      // No status here: the operator has owned it since the pending record,
+      // and replacing it would drop the deliveries and conditions it set.
       try {
-        await updateAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
+        await updateAIWorkload(form.value.namespace, crName, spec);
       } catch {
         await createAIWorkload(form.value.namespace, crName, spec, { phase, clusterStatuses });
       }

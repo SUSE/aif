@@ -10,9 +10,7 @@ export interface HelmInstallSteps {
 // instead of after the install wait. The final result is recorded even when
 // the install throws.
 export async function installRecordingWorkloadsFirst(clusterIds: string[], steps: HelmInstallSteps): Promise<void> {
-  for (const id of clusterIds) {
-    await steps.recordPending(id);
-  }
+  await Promise.all(clusterIds.map(id => steps.recordPending(id)));
   try {
     await steps.install();
   } finally {

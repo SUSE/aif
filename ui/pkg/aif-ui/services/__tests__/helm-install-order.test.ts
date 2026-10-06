@@ -37,4 +37,26 @@ describe('installRecordingWorkloadsFirst', () => {
 
     expect(calls).toEqual(['pending:local', 'result:local']);
   });
+
+  it('records the clusters concurrently rather than one after another', async() => {
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const run = installRecordingWorkloadsFirst(['local', 'c-1'], {
+      recordPending: async(id) => {
+        started.push(id);
+        await gate;
+      },
+      install:      async() => {},
+      recordResult: async() => {},
+    });
+
+    await Promise.resolve();
+    expect(started).toEqual(['local', 'c-1']);
+    release();
+    await run;
+  });
 });
