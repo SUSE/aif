@@ -48,6 +48,7 @@ var orgNGCPaths = map[string]bool{
 // it and fails with "gzip: invalid header" at install time.
 var publicNGCPaths = map[string]bool{
 	"/nvidia/doca": true,
+	"/nim":         true,
 }
 
 // Gated team repos require NGC auth for their chart tarballs (chart .tgz 403
@@ -77,7 +78,6 @@ var gatedNGCPaths = map[string]bool{
 // excludedNGCPaths return an invalid Helm index and must never be provisioned.
 // Defense-in-depth: these are not in the curated catalog today.
 var excludedNGCPaths = map[string]bool{
-	"/nim":                            true,
 	"/nim/snowflake":                  true,
 	"/eevaigoeixww/animation":         true,
 	"/eevaigoeixww/conversational-ai": true,
