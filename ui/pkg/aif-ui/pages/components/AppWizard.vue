@@ -592,7 +592,7 @@ async function resolvePullSecretNames() {
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
 
     // Only inject pull secrets for suse-ai library charts. Custom repos (library=undefined)
     // and nvidia repos must not get auto-injected pull secrets.
@@ -957,7 +957,7 @@ async function performFleetBundleInstall() {
         targetNamespace:           form.value.namespace,
         targetClusterIds:          [clusterId],
         additionalPullSecretNames: extraPullSecretNames,
-        library:                   getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+        library:                   getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
       });
     }));
 
@@ -1021,7 +1021,7 @@ async function performGitOpsInstall() {
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds into the bundle values too (the SA's
     // imagePullSecrets are ignored once the chart sets pod-spec imagePullSecrets).
-    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'suse-ai') {
+    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1044,7 +1044,7 @@ async function performGitOpsInstall() {
           pullSecretNames,
           targetClusterIds: [clusterId],
           targetNamespace:  form.value.namespace,
-          library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+          library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
         });
         await recordAIWorkload(bundleNamesByCluster, 'GitOps', clusterId, { phase: 'Pending', clusterStatuses: [] });
         results.push({ status: 'fulfilled', value: undefined });
@@ -1114,7 +1114,7 @@ async function recordAIWorkload(
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-    const vendor = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'nvidia' ? 'nvidia' : 'suse';
+    const vendor = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'nvidia' ? 'nvidia' : 'suse';
 
     const fleetBundleName = fleetBundleNamesByCluster[clusterId];
     const spec = {
@@ -1338,7 +1338,7 @@ async function installToCluster(
   const repos = await listClusterRepos(store);
   const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
-  const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl);
+  const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
 
   // Only add pull secrets to values for suse-ai library charts
   if (pullSecrets.length > 0 && library === 'suse-ai') {
@@ -1493,7 +1493,7 @@ async function performFleetBundleUpgrade() {
       targetNamespace:          form.value.namespace,
       targetClusterIds:         form.value.clusters,
       additionalPullSecretNames: extraPullSecretNames,
-      library:                  getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+      library:                  getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
     });
 
     updateAllProgress(100, 'Update scheduled — Fleet will reconcile to new version');
@@ -1553,7 +1553,7 @@ async function performGitOpsUpgrade() {
 
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds in too (see performGitOpsInstall).
-    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl) === 'suse-ai') {
+    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1568,7 +1568,7 @@ async function performGitOpsUpgrade() {
       pullSecretNames,
       targetClusterIds: form.value.clusters,
       targetNamespace:  form.value.namespace,
-      library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl),
+      library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
     });
 
     updateAllProgress(100, 'Changes committed to git — Fleet will sync and reconcile');

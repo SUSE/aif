@@ -21,6 +21,15 @@ describe('private source identity', () => {
     )).toBe('nvidia');
   });
 
+  it('treats custom-labelled repos as custom even when they reuse a built-in URL', () => {
+    const custom = { 'ai-factory.suse.com/custom-repo': 'true' };
+
+    expect(getLibraryForClusterRepo('my-appco', 'oci://dp.apps.rancher.io/charts', custom)).toBeUndefined();
+    expect(getLibraryForClusterRepo('my-suse-registry', 'oci://registry.suse.com/ai/charts', custom)).toBeUndefined();
+    // Without the label, URL discovery still applies.
+    expect(getLibraryForClusterRepo('connected', 'oci://dp.apps.rancher.io/charts')).toBe('suse-ai');
+  });
+
   it('extracts a registry host, including a private port, from OCI URLs', () => {
     expect(registryHostFromRepoURL('oci://harbor.airgap.test:5443/charts')).toBe('harbor.airgap.test:5443');
     expect(registryHostFromRepoURL('not a URL')).toBe('');
