@@ -208,8 +208,9 @@ var saMergeIndentFuncs = template.FuncMap{
 //     deleting it lets its controller recreate it with the patched SA. A Pod
 //     qualifies when its SA carries a desired secret that its spec lacks
 //     (whatever its labels — many charts leave Pods without the Helm
-//     managed-by label), or when it is Helm-labelled and an SA was patched
-//     this run.
+//     managed-by label) and its ReplicaSet/StatefulSet/DaemonSet pod template
+//     sets no imagePullSecrets, or when it is Helm-labelled and an SA was
+//     patched this run.
 //
 //     Both conditions bound the bounce. The first stops on its own once the
 //     recreated Pod carries the secret. The second is guarded by "only if an SA
@@ -268,7 +269,7 @@ done
 # Without that guard a genuinely unpullable or slow-pulling Pod would be deleted
 # and recreated on every tick, which reads as the workload perpetually toggling
 # Pending<->Running.
-kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.serviceAccountName}|{.metadata.labels.app\.kubernetes\.io/managed-by}|{range .spec.imagePullSecrets[*]}{.name},{end}|{range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='|' read -r pod psa managed podsecrets reasons; do
+kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.serviceAccountName}|{.metadata.labels.app\.kubernetes\.io/managed-by}|{.metadata.ownerReferences[?(@.controller==true)].kind}|{.metadata.ownerReferences[?(@.controller==true)].name}|{range .spec.imagePullSecrets[*]}{.name},{end}|{range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='|' read -r pod psa managed okind oname podsecrets reasons; do
   [ -n "$pod" ] || continue
   case ",$reasons" in
     *,ImagePullBackOff,*|*,ErrImagePull,*) ;;
@@ -287,6 +288,20 @@ kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.
       *) MISSING=1 ;;
     esac
   done
+  # Only a ReplicaSet/StatefulSet/DaemonSet whose pod template sets no
+  # imagePullSecrets recreates the Pod with its SA's secrets merged in. Bare
+  # Pods are never recreated, deleted Job Pods count against the Job's backoff
+  # limit, and a template listing its own secrets never gets the SA's — so
+  # deleting any of those would not help (and could repeat on every run).
+  if [ "$MISSING" = 1 ]; then
+    case "$okind" in
+      ReplicaSet|StatefulSet|DaemonSet)
+        TEMPLATE_SECRETS=$(kubectl -n "$NS" get "$okind" "$oname" -o jsonpath='{.spec.template.spec.imagePullSecrets[*].name}' 2>/dev/null || echo unknown)
+        [ -z "$TEMPLATE_SECRETS" ] || MISSING=0
+        ;;
+      *) MISSING=0 ;;
+    esac
+  fi
   if [ "$MISSING" = 1 ]; then
     echo "$pod: SA $psa has a pull secret the pod lacks, deleting so it is recreated with it"
     kubectl -n "$NS" delete pod "$pod" --ignore-not-found
@@ -302,8 +317,9 @@ done
 //
 //   - ServiceAccount: the runners execute under a dedicated SA, NOT default,
 //     so RBAC stays minimal.
-//   - Role:           get/list/patch on serviceaccounts and get/list/delete on
-//     pods (for the bounce step), scoped to the workload's target namespace.
+//   - Role:           get/list/patch on serviceaccounts, get/list/delete on
+//     pods (for the bounce step) and get on ReplicaSets/StatefulSets/DaemonSets
+//     (to read their pod templates), scoped to the workload's target namespace.
 //   - RoleBinding:    binds the SA to the Role.
 //   - Job:            the one-shot install-time merge. Retained (no TTL) so
 //     Fleet doesn't see drift ten minutes after a successful install.
@@ -331,6 +347,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

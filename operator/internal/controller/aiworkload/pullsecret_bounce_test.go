@@ -155,3 +155,25 @@ func TestRestartImagePullBackOffPods_BouncesStatefulSetPod(t *testing.T) {
 		t.Errorf("bounce annotation = %q, want \"1\"", got.Annotations[chartPodBounceAnnotation])
 	}
 }
+
+// A controller whose pod template lists its own imagePullSecrets never gets
+// the ServiceAccount's secrets merged in, so recreating its pods cannot help
+// and would only use up the bounce budget.
+func TestRestartImagePullBackOffPods_SkipsPodWhoseControllerTemplateSetsPullSecrets(t *testing.T) {
+	pod := unlabelledBackOffPod("nim-0", "default", "ngc-secret")
+	rs := helmReplicaSet(pod.Name, nil)
+	rs.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "ngc-secret"}}
+
+	scheme := newTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(pod, rs, serviceAccountWithSecrets("default", "ngc-secret", "ngc-api")).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+
+	bounced, err := r.restartImagePullBackOffPods(context.Background(), "test-ns", []string{"ngc-secret", "ngc-api"})
+	if err != nil {
+		t.Fatalf("restartImagePullBackOffPods: %v", err)
+	}
+	if bounced != 0 {
+		t.Errorf("bounced = %d, want 0 (recreated pods would still lack ngc-api)", bounced)
+	}
+}

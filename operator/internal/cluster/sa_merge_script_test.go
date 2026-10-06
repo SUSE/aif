@@ -17,12 +17,17 @@ limitations under the License.
 package cluster
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/jsonpath"
 	"sigs.k8s.io/yaml"
 )
 
@@ -32,6 +37,8 @@ import (
 //	helm-sas   space-separated names of Helm-labelled ServiceAccounts
 //	sa/<name>  one imagePullSecrets name per line (absent file = none)
 //	pods       pre-rendered output of the script's pod listing
+//	owner/<Kind>-<name>  pull secret names in that controller's pod template
+//	           (absent file = the controller lookup fails)
 //	log        appended "patch <sa>" / "delete <pod>" lines
 const stubKubectl = `#!/bin/sh
 shift 2
@@ -45,6 +52,8 @@ get)
     exit 0
   fi
   if [ "$kind" = pods ]; then cat "$STATE/pods"; exit 0; fi
+  if [ -f "$STATE/owner/$kind-$1" ]; then cat "$STATE/owner/$kind-$1"; exit 0; fi
+  echo "not found" >&2; exit 1
   ;;
 patch)
   echo "patch $2" >> "$STATE/log"
@@ -86,7 +95,8 @@ func renderedMergeScript(t *testing.T, secretNames []string) string {
 type mergeScriptState struct {
 	helmSAs string
 	sas     map[string][]string
-	pods    []string // name|serviceAccount|managedBy|podSecrets,|waitingReasons,
+	pods    []string          // name|serviceAccount|managedBy|ownerKind|ownerName|podSecrets,|waitingReasons,
+	owners  map[string]string // "<Kind>-<name>" -> template pull secret names
 }
 
 // runMergeScript runs the rendered script against the stub and returns the
@@ -100,7 +110,7 @@ func runMergeScript(t *testing.T, secretNames []string, st mergeScriptState) []s
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	stateDir := filepath.Join(dir, "state")
-	for _, d := range []string{binDir, filepath.Join(stateDir, "sa")} {
+	for _, d := range []string{binDir, filepath.Join(stateDir, "sa"), filepath.Join(stateDir, "owner")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -116,6 +126,9 @@ func runMergeScript(t *testing.T, secretNames []string, st mergeScriptState) []s
 	write(filepath.Join(stateDir, "log"), "", 0o644)
 	for name, secrets := range st.sas {
 		write(filepath.Join(stateDir, "sa", name), strings.Join(secrets, "\n")+"\n", 0o644)
+	}
+	for owner, secrets := range st.owners {
+		write(filepath.Join(stateDir, "owner", owner), secrets, 0o644)
 	}
 
 	cmd := exec.Command(sh, "-c", renderedMergeScript(t, secretNames))
@@ -154,7 +167,8 @@ func TestMergeScript_RecreatesUnlabelledPodAfterPatchingItsSA(t *testing.T) {
 	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
 		helmSAs: "qdrant",
 		sas:     map[string][]string{"default": {scriptTestSecret}},
-		pods:    []string{"qdrant-0|qdrant|||ImagePullBackOff,"},
+		pods:    []string{"qdrant-0|qdrant||StatefulSet|qdrant||ImagePullBackOff,"},
+		owners:  map[string]string{"StatefulSet-qdrant": ""},
 	})
 	if !containsAction(actions, "patch", "qdrant") {
 		t.Errorf("expected SA qdrant to be patched, actions: %v", actions)
@@ -170,7 +184,8 @@ func TestMergeScript_RecreatesPodMissingSecretWhenNothingToPatch(t *testing.T) {
 	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
 		helmSAs: "qdrant",
 		sas:     map[string][]string{"default": {scriptTestSecret}, "qdrant": {scriptTestSecret}},
-		pods:    []string{"qdrant-0|qdrant|||ErrImagePull,"},
+		pods:    []string{"qdrant-0|qdrant||StatefulSet|qdrant||ErrImagePull,"},
+		owners:  map[string]string{"StatefulSet-qdrant": ""},
 	})
 	if len(actions) != 1 || !containsAction(actions, "delete", "qdrant-0") {
 		t.Errorf("actions = %v, want only the qdrant-0 recreation", actions)
@@ -184,9 +199,10 @@ func TestMergeScript_LeavesPodThatAlreadyHasSecret(t *testing.T) {
 		helmSAs: "qdrant",
 		sas:     map[string][]string{"default": {scriptTestSecret}, "qdrant": {scriptTestSecret}},
 		pods: []string{
-			"qdrant-0|qdrant||" + scriptTestSecret + ",|ImagePullBackOff,",
-			"web-1|qdrant|Helm|" + scriptTestSecret + ",|ImagePullBackOff,",
+			"qdrant-0|qdrant||StatefulSet|qdrant|" + scriptTestSecret + ",|ImagePullBackOff,",
+			"web-1|qdrant|Helm|ReplicaSet|web-rs|" + scriptTestSecret + ",|ImagePullBackOff,",
 		},
+		owners: map[string]string{"StatefulSet-qdrant": "", "ReplicaSet-web-rs": ""},
 	})
 	if len(actions) != 0 {
 		t.Errorf("actions = %v, want none in a stable namespace", actions)
@@ -196,8 +212,9 @@ func TestMergeScript_LeavesPodThatAlreadyHasSecret(t *testing.T) {
 // An empty serviceAccountName means the namespace "default" ServiceAccount.
 func TestMergeScript_EmptyServiceAccountMeansDefault(t *testing.T) {
 	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
-		sas:  map[string][]string{"default": {scriptTestSecret}},
-		pods: []string{"worker-0||||ImagePullBackOff,"},
+		sas:    map[string][]string{"default": {scriptTestSecret}},
+		pods:   []string{"worker-0|||ReplicaSet|worker-rs||ImagePullBackOff,"},
+		owners: map[string]string{"ReplicaSet-worker-rs": ""},
 	})
 	if !containsAction(actions, "delete", "worker-0") {
 		t.Errorf("expected pod worker-0 to be recreated, actions: %v", actions)
@@ -209,9 +226,10 @@ func TestMergeScript_LeavesHealthyAndUnrelatedPods(t *testing.T) {
 	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
 		sas: map[string][]string{"default": {scriptTestSecret}},
 		pods: []string{
-			"running-0|default|||,",
-			"other-0|other|||ImagePullBackOff,",
+			"running-0|default||ReplicaSet|running-rs||,",
+			"other-0|other||ReplicaSet|other-rs||ImagePullBackOff,",
 		},
+		owners: map[string]string{"ReplicaSet-running-rs": "", "ReplicaSet-other-rs": ""},
 	})
 	if len(actions) != 0 {
 		t.Errorf("actions = %v, want none", actions)
@@ -224,9 +242,101 @@ func TestMergeScript_RecreatesHelmPodWhenAnSAWasPatched(t *testing.T) {
 	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
 		helmSAs: "web",
 		sas:     map[string][]string{"default": {scriptTestSecret}},
-		pods:    []string{"web-1|web|Helm|" + scriptTestSecret + ",|ImagePullBackOff,"},
+		pods:    []string{"web-1|web|Helm|ReplicaSet|web-rs|" + scriptTestSecret + ",|ImagePullBackOff,"},
+		owners:  map[string]string{"ReplicaSet-web-rs": ""},
 	})
 	if !containsAction(actions, "patch", "web") || !containsAction(actions, "delete", "web-1") {
 		t.Errorf("actions = %v, want SA web patched and pod web-1 recreated", actions)
+	}
+}
+
+// A pod template that lists its own imagePullSecrets never gets the SA's
+// merged in: recreating its pods cannot add the missing secret, so they must
+// not be deleted on every run.
+func TestMergeScript_LeavesPodWhoseTemplateSetsPullSecrets(t *testing.T) {
+	actions := runMergeScript(t, []string{"ngc-api", "ngc-secret"}, mergeScriptState{
+		sas:    map[string][]string{"default": {"ngc-api", "ngc-secret"}},
+		pods:   []string{"nim-0|default||StatefulSet|nim|ngc-secret,|ImagePullBackOff,"},
+		owners: map[string]string{"StatefulSet-nim": "ngc-secret"},
+	})
+	if len(actions) != 0 {
+		t.Errorf("actions = %v, want none", actions)
+	}
+}
+
+// Pods nothing would recreate (no controller), Job pods (deletions count
+// against the Job's backoff limit), and pods whose controller cannot be read
+// are left alone.
+func TestMergeScript_LeavesPodsWithoutRecreatingController(t *testing.T) {
+	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
+		sas: map[string][]string{"default": {scriptTestSecret}},
+		pods: []string{
+			"debug|default|||||ImagePullBackOff,",
+			"migrate-x|default||Job|migrate||ImagePullBackOff,",
+			"gone-0|default||ReplicaSet|gone-rs||ImagePullBackOff,",
+		},
+	})
+	if len(actions) != 0 {
+		t.Errorf("actions = %v, want none", actions)
+	}
+}
+
+// The stub above serves a pre-rendered pod listing; this pins the script's
+// real jsonpath (escaped label key, controller filter, empty fields) against
+// kubectl's evaluator so the listing the script parses matches the stub's
+// format.
+func TestMergeScript_PodListingJSONPathMatchesStubFormat(t *testing.T) {
+	script := renderedMergeScript(t, []string{scriptTestSecret})
+	start := strings.Index(script, `get pods -o jsonpath='`)
+	if start < 0 {
+		t.Fatal("pod listing not found in script")
+	}
+	expr := script[start+len(`get pods -o jsonpath='`):]
+	expr = expr[:strings.Index(expr, "'")]
+
+	tru := true
+	pods := corev1.PodList{Items: []corev1.Pod{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "qdrant-0",
+				Labels: map[string]string{"app.kubernetes.io/name": "qdrant"},
+				OwnerReferences: []metav1.OwnerReference{
+					{Kind: "ConfigMap", Name: "not-a-controller"},
+					{Kind: "StatefulSet", Name: "qdrant", Controller: &tru},
+				},
+			},
+			Spec: corev1.PodSpec{ServiceAccountName: "qdrant"},
+			Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}},
+			}}},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "web-1",
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "Helm"},
+			},
+			Spec: corev1.PodSpec{ImagePullSecrets: []corev1.LocalObjectReference{{Name: "a"}, {Name: "b"}}},
+		},
+	}}
+	raw, err := json.Marshal(pods)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	jp := jsonpath.New("pods").AllowMissingKeys(true)
+	if err := jp.Parse(expr); err != nil {
+		t.Fatalf("parse %q: %v", expr, err)
+	}
+	var out bytes.Buffer
+	if err := jp.Execute(&out, data); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	want := "qdrant-0|qdrant||StatefulSet|qdrant||ImagePullBackOff,\n" +
+		"web-1||Helm|||a,b,|\n"
+	if out.String() != want {
+		t.Errorf("pod listing:\n got %q\nwant %q", out.String(), want)
 	}
 }

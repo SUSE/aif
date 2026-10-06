@@ -216,7 +216,9 @@ func mergeImagePullSecrets(sa *corev1.ServiceAccount, names []string) bool {
 //
 // Scope: pods labeled app.kubernetes.io/managed-by=Helm, plus pods whose
 // ServiceAccount carries one of deliveredSecrets that the pod spec lacks
-// (podMissesDeliveredSecret). Other pods aren't churned.
+// (podMissesDeliveredSecret), when their ReplicaSet/StatefulSet/DaemonSet pod
+// template sets no imagePullSecrets of its own — only then does a recreated
+// pod pick the delivered secret up. Other pods aren't churned.
 //
 // Retry bound: each bounce increments an annotation
 // (chartPodBounceAnnotation) on the pod's controllerRef. Once the count
@@ -243,7 +245,8 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		if !isPodImagePullBackOff(p) {
 			continue
 		}
-		if p.Labels[chartManagedByLabel] != chartManagedByHelm {
+		viaServiceAccount := p.Labels[chartManagedByLabel] != chartManagedByHelm
+		if viaServiceAccount {
 			missing, err := r.podMissesDeliveredSecret(ctx, p, deliveredSecrets, saSecrets)
 			if err != nil {
 				return bounced, err
@@ -258,11 +261,20 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 				"namespace", p.Namespace, "name", p.Name)
 			continue
 		}
+		if viaServiceAccount && !templateControllerKinds[cr.Kind] {
+			continue
+		}
 		count, owner, err := r.readBounceCount(ctx, p.Namespace, cr)
 		if err != nil {
 			l.Info("could not read bounce counter for controller; will not bounce this round",
 				"namespace", p.Namespace, "pod", p.Name,
 				"controllerKind", cr.Kind, "controllerName", cr.Name, "err", err.Error())
+			continue
+		}
+		// A pod template that lists its own imagePullSecrets never gets the
+		// ServiceAccount's merged in, so a recreated pod would miss the
+		// delivered secret again.
+		if viaServiceAccount && templateSetsPullSecrets(owner) {
 			continue
 		}
 		if count >= chartPodMaxBounces {
@@ -291,6 +303,19 @@ func (r *AIWorkloadReconciler) restartImagePullBackOffPods(ctx context.Context, 
 		bounced++
 	}
 	return bounced, nil
+}
+
+// templateControllerKinds are the pod controllers whose pod template the
+// ServiceAccount-based bounce inspects (and whose bounce counter the operator
+// may patch). Other owners — Jobs, whose deleted pods count against their
+// backoff limit, and operator-managed custom resources — are left alone.
+var templateControllerKinds = map[string]bool{"ReplicaSet": true, "StatefulSet": true, "DaemonSet": true}
+
+// templateSetsPullSecrets reports whether the controller's pod template lists
+// imagePullSecrets of its own.
+func templateSetsPullSecrets(owner *unstructured.Unstructured) bool {
+	secrets, _, _ := unstructured.NestedSlice(owner.Object, "spec", "template", "spec", "imagePullSecrets")
+	return len(secrets) > 0
 }
 
 // podMissesDeliveredSecret reports whether the pod's ServiceAccount carries a
