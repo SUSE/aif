@@ -18,6 +18,7 @@ package aiworkload
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strconv"
 
@@ -497,11 +498,12 @@ func (r *AIWorkloadReconciler) deliverPullSecrets(
 // (nil, nil) means "credentials not configured — skip"; deliverPullSecrets
 // treats this as a no-op.
 //
-// The factory recognizes the three secret names the operator's injectors
+// The factory recognizes the secret names the operator's injectors
 // persist onto Status.PullSecretDeliveries[].Names:
 //   - ngc-secret              (nvidiaInjector dockerconfigjson)
 //   - ngc-api                 (nvidiaInjector Opaque, NGC API keys)
 //   - suse-ai-pull-combined   (suseInjector combined dockerconfigjson)
+//   - aif-custom-pull-<repo>  (customRepoInjector, custom repo credentials)
 //
 // Unknown secret names skip silently — keeps the factory forward-compatible
 // with future injector outputs without coupling deliverPullSecrets to a
@@ -558,6 +560,16 @@ func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context) PullSecret
 				Data:       map[string][]byte{corev1.DockerConfigJsonKey: cfg},
 			}, nil
 		default:
+			if repoName, ok := customRepoNameFromPullSecret(secretName); ok {
+				repoInfo, err := r.resolveClusterRepo(ctx, repoName)
+				if err != nil {
+					if stderrors.Is(err, errClusterRepoNotReady) {
+						return nil, nil
+					}
+					return nil, err
+				}
+				return r.buildCustomRepoPullSecret(ctx, repoInfo, targetNamespace)
+			}
 			// Unknown secret name — silently skip for forward compatibility.
 			return nil, nil
 		}

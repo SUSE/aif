@@ -252,3 +252,53 @@ func TestReconcileAppPullSecrets_CustomRepoWithoutUsableCredentials_NoDelivery(t
 		})
 	}
 }
+
+func TestPullSecretFactory_RebuildsCustomRepoSecret(t *testing.T) {
+	scheme := newAppTestScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		newCustomTestRepo("oci://ghcr.io/example/charts"),
+		newCustomTestAuthSecret("repo-user", "rotated-token")).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: customTestOpNS}
+
+	sec, err := r.pullSecretFactory(context.Background())("other-ns", customRepoPullSecretName(customTestRepo))
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	if sec == nil {
+		t.Fatal("factory returned nil for a configured custom repo")
+		return
+	}
+	if sec.Namespace != "other-ns" || sec.Name != customRepoPullSecretName(customTestRepo) {
+		t.Errorf("secret = %s/%s", sec.Namespace, sec.Name)
+	}
+	if entry := dockerAuths(t, sec)["ghcr.io"]; entry["password"] != "rotated-token" {
+		t.Errorf("auths[ghcr.io] = %v, want current repo credentials", entry)
+	}
+}
+
+func TestPullSecretFactory_CustomRepoGoneOrNotCustom_Skips(t *testing.T) {
+	notCustom := newAppTestClusterRepo(customTestRepo, "oci://ghcr.io/example/charts")
+	_ = unstructured.SetNestedField(notCustom.Object, customTestAuth, "spec", "clientSecret", "name")
+	cases := []struct {
+		name string
+		objs []client.Object
+	}{
+		{name: "repo deleted", objs: []client.Object{newCustomTestAuthSecret("u", "p")}},
+		{name: "repo no longer custom", objs: []client.Object{notCustom, newCustomTestAuthSecret("u", "p")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := newAppTestScheme(t)
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objs...).Build()
+			r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: customTestOpNS}
+
+			sec, err := r.pullSecretFactory(context.Background())(customTestTargetNS, customRepoPullSecretName(customTestRepo))
+			if err != nil {
+				t.Fatalf("factory: %v", err)
+			}
+			if sec != nil {
+				t.Errorf("factory returned %s, want nil", sec.Name)
+			}
+		})
+	}
+}
