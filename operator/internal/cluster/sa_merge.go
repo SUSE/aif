@@ -202,18 +202,21 @@ var saMergeIndentFuncs = template.FuncMap{
 //  5. skips the patch when the union equals the existing set, so unchanged SAs
 //     don't generate spurious update events on re-apply, then
 //
-//  6. ONLY IF at least one SA was actually patched this run, bounces
-//     chart-managed Pods stuck in ImagePullBackOff/ErrImagePull: a Pod's
+//  6. recreates Pods stuck in ImagePullBackOff/ErrImagePull: a Pod's
 //     imagePullSecrets are merged from its SA only at admission, so a Pod that
 //     started before its SA was patched stays broken until recreated, and
-//     deleting it lets its controller recreate it with the patched SA.
+//     deleting it lets its controller recreate it with the patched SA. A Pod
+//     qualifies when its SA carries a desired secret that its spec lacks
+//     (whatever its labels — many charts leave Pods without the Helm
+//     managed-by label), or when it is Helm-labelled and an SA was patched
+//     this run.
 //
-//     The "only if an SA changed" guard is critical: it bounds the bounce to
-//     the tick that actually fixed something. Once SAs are stable (the patch is
-//     idempotent and skips), the bounce never fires, so a genuinely unpullable
-//     or slow-pulling Pod sits stably in ImagePullBackOff instead of being
-//     deleted-and-recreated on every CronJob tick — the unconditional bounce
-//     caused exactly that perpetual Pending<->Running redeploy churn.
+//     Both conditions bound the bounce. The first stops on its own once the
+//     recreated Pod carries the secret. The second is guarded by "only if an SA
+//     changed": once SAs are stable the bounce never fires, so a genuinely
+//     unpullable or slow-pulling Pod sits stably in ImagePullBackOff instead of
+//     being deleted-and-recreated on every CronJob tick — the unconditional
+//     bounce caused exactly that perpetual Pending<->Running redeploy churn.
 var saMergeScriptTemplate = template.Must(template.New("sa-merge-script").Parse(`set -eu
 # Desired names, space-separated (rendered by the operator). Kept single-line
 # so the YAML block-scalar embedding this script doesn't break.
@@ -255,23 +258,43 @@ for sa in $(printf 'default %s' "$SAS" | tr ' ' '\n' | sort -u); do
   kubectl -n "$NS" patch sa "$sa" --type=strategic -p "$PATCH"
   PATCHED=1
 done
-# Bounce chart-managed Pods stuck pulling images so they re-read their SA's
+# Recreate Pods stuck pulling images so they re-read their SA's
 # imagePullSecrets at admission (a Pod created before its SA was patched keeps
-# its possibly-empty imagePullSecrets baked in until recreated) — but ONLY when
-# we actually changed an SA this run. Without this guard a genuinely unpullable
-# or slow-pulling Pod would be deleted and recreated on every tick, which reads
-# as the workload perpetually toggling Pending<->Running.
-if [ "$PATCHED" = 1 ]; then
-  kubectl -n "$NS" get pods -l 'app.kubernetes.io/managed-by=Helm' -o jsonpath='{range .items[*]}{.metadata.name}={range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='=' read -r pod reasons; do
-    [ -n "$pod" ] || continue
-    case ",$reasons" in
-      *,ImagePullBackOff,*|*,ErrImagePull,*)
-        echo "$pod: image pull failing after SA patch, deleting so it re-reads SA imagePullSecrets"
-        kubectl -n "$NS" delete pod "$pod" --ignore-not-found
-        ;;
+# its possibly-empty imagePullSecrets baked in until recreated). A Pod is
+# recreated when its SA now carries a desired secret its spec lacks — this
+# holds for charts that leave their Pods without the Helm managed-by label, and
+# it stops on its own once the recreated Pod carries the secret. Helm-labelled
+# Pods are also recreated, but ONLY when we actually changed an SA this run.
+# Without that guard a genuinely unpullable or slow-pulling Pod would be deleted
+# and recreated on every tick, which reads as the workload perpetually toggling
+# Pending<->Running.
+kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.serviceAccountName}|{.metadata.labels.app\.kubernetes\.io/managed-by}|{range .spec.imagePullSecrets[*]}{.name},{end}|{range .status.initContainerStatuses[*]}{.state.waiting.reason},{end}{range .status.containerStatuses[*]}{.state.waiting.reason},{end}{"\n"}{end}' | while IFS='|' read -r pod psa managed podsecrets reasons; do
+  [ -n "$pod" ] || continue
+  case ",$reasons" in
+    *,ImagePullBackOff,*|*,ErrImagePull,*) ;;
+    *) continue ;;
+  esac
+  [ -n "$psa" ] || psa=default
+  SA_SECRETS=$(kubectl -n "$NS" get sa "$psa" -o jsonpath='{range .imagePullSecrets[*]}{.name}{"\n"}{end}' 2>/dev/null | tr '\n' ' ' || true)
+  MISSING=0
+  for n in $DESIRED; do
+    case " $SA_SECRETS " in
+      *" $n "*) ;;
+      *) continue ;;
+    esac
+    case ",$podsecrets" in
+      *",$n,"*) ;;
+      *) MISSING=1 ;;
     esac
   done
-fi
+  if [ "$MISSING" = 1 ]; then
+    echo "$pod: SA $psa has a pull secret the pod lacks, deleting so it is recreated with it"
+    kubectl -n "$NS" delete pod "$pod" --ignore-not-found
+  elif [ "$PATCHED" = 1 ] && [ "$managed" = Helm ]; then
+    echo "$pod: image pull failing after SA patch, deleting so it re-reads SA imagePullSecrets"
+    kubectl -n "$NS" delete pod "$pod" --ignore-not-found
+  fi
+done
 `))
 
 // saMergeTemplate renders the manifests Fleet/Helm applies on the downstream
