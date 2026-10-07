@@ -234,6 +234,16 @@ const (
 // failure restarts its passes from the first one (restartPolicy OnFailure),
 // and a healthy but slow Job must not end Failed. The CronJob's jobs end
 // before the next five-minute tick.
+//
+// The deadline counts from the Job's start, so time spent scheduling the pod
+// or pulling the kubectl image (e.g. while a private mirror is unreachable)
+// uses it up too. A Job that passes its deadline is marked Failed
+// (DeadlineExceeded) and, having no TTL, stays Failed even after later
+// CronJob runs merge successfully. Nothing depends on it: workload status
+// comes from the workload's own bundle, and the CronJob keeps merging every
+// five minutes. To clear the failed state, delete the Job:
+//
+//	kubectl -n <namespace> delete job <ai-pullsecret-merge-...>
 const (
 	saMergeJobDeadlineSeconds     = 1800
 	saMergeCronJobDeadlineSeconds = 240
