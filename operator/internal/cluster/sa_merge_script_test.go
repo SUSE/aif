@@ -70,6 +70,12 @@ patch)
   ;;
 delete)
   echo "delete $2" >> "$STATE/log"
+  # Real kubectl waits for the deletion by default, which needs a watch the
+  # merge runners' Role does not grant; record any delete that would wait.
+  case " $* " in
+    *" --wait=false "*) ;;
+    *) echo "$2" >> "$STATE/waiting-deletes" ;;
+  esac
   ;;
 esac
 `
@@ -116,13 +122,21 @@ type mergeScriptState struct {
 // runMergeScript runs the rendered script against the stub and returns the
 // logged patch/delete actions.
 func runMergeScript(t *testing.T, secretNames []string, st mergeScriptState) []string {
-	actions, _ := runMergeScriptCounting(t, secretNames, st)
-	return actions
+	return runMergeScriptDetailed(t, secretNames, st).actions
 }
 
-// runMergeScriptCounting also returns how many merge passes the script made
-// (one pod listing per pass).
-func runMergeScriptCounting(t *testing.T, secretNames []string, st mergeScriptState, env ...string) ([]string, int) {
+// mergeScriptRun is what one run of the merge script did against the stub.
+type mergeScriptRun struct {
+	actions []string // logged "patch <sa>" / "delete <pod>" lines
+	passes  int      // merge passes made (one pod listing per pass)
+	// waitingDeletes lists the pods deleted with a kubectl delete that would
+	// wait for them to be gone (see the stub).
+	waitingDeletes []string
+}
+
+// runMergeScriptDetailed runs the rendered script against the stub and
+// returns everything it observed.
+func runMergeScriptDetailed(t *testing.T, secretNames []string, st mergeScriptState, env ...string) mergeScriptRun {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -182,6 +196,10 @@ func runMergeScriptCounting(t *testing.T, secretNames []string, st mergeScriptSt
 	if lists, err := os.ReadFile(filepath.Join(stateDir, "pod-lists")); err == nil {
 		passes = strings.Count(string(lists), "list")
 	}
+	var waitingDeletes []string
+	if waiting, err := os.ReadFile(filepath.Join(stateDir, "waiting-deletes")); err == nil {
+		waitingDeletes = strings.Fields(string(waiting))
+	}
 	logged, err := os.ReadFile(filepath.Join(stateDir, "log"))
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +210,7 @@ func runMergeScriptCounting(t *testing.T, secretNames []string, st mergeScriptSt
 			actions = append(actions, line)
 		}
 	}
-	return actions, passes
+	return mergeScriptRun{actions: actions, passes: passes, waitingDeletes: waitingDeletes}
 }
 
 func containsAction(actions []string, verb, name string) bool {
@@ -427,15 +445,15 @@ func TestMergeScript_LeavesStartedPendingPod(t *testing.T) {
 // The install-time Job repeats the merge so pods and ServiceAccounts that the
 // chart creates after the Job started are still handled within the install.
 func TestMergeScript_RepeatsMergeWhenAskedTo(t *testing.T) {
-	_, passes := runMergeScriptCounting(t, []string{scriptTestSecret}, mergeScriptState{
+	passes := runMergeScriptDetailed(t, []string{scriptTestSecret}, mergeScriptState{
 		sas: map[string][]string{"default": {scriptTestSecret}},
-	}, "MERGE_RUNS=3", "MERGE_INTERVAL=0")
+	}, "MERGE_RUNS=3", "MERGE_INTERVAL=0").passes
 	if passes != 3 {
 		t.Errorf("merge passes = %d, want 3", passes)
 	}
-	_, passes = runMergeScriptCounting(t, []string{scriptTestSecret}, mergeScriptState{
+	passes = runMergeScriptDetailed(t, []string{scriptTestSecret}, mergeScriptState{
 		sas: map[string][]string{"default": {scriptTestSecret}},
-	})
+	}).passes
 	if passes != 1 {
 		t.Errorf("merge passes without MERGE_RUNS = %d, want 1", passes)
 	}
@@ -674,5 +692,70 @@ func TestMergeScript_LeavesPodWithPullSecretNotFromItsServiceAccount(t *testing.
 	}
 	if !containsAction(actions, "delete", "fromsa-0") {
 		t.Errorf("pod whose pull secrets all come from its ServiceAccount must be recreated, actions: %v", actions)
+	}
+}
+
+// kubectl delete waits for the object to be gone by default, which watches
+// it. The merge runners' Role has no watch on pods, so a waiting delete is
+// refused and retried forever: the merge pod never finishes and, for the
+// CronJob (concurrencyPolicy Forbid), later runs are skipped. Deletes must not
+// wait; the pod's controller recreates it anyway.
+func TestMergeScript_DeletesDoNotWait(t *testing.T) {
+	run := runMergeScriptDetailed(t, []string{scriptTestSecret}, mergeScriptState{
+		helmSAs: "web",
+		sas:     map[string][]string{"default": {scriptTestSecret}},
+		pods: []string{
+			"qdrant-0|default||StatefulSet|qdrant||ImagePullBackOff,",
+			"web-1|web|Helm|StatefulSet|web|" + scriptTestSecret + ",|ImagePullBackOff,",
+		},
+		owners: map[string]string{"StatefulSet-qdrant": "", "StatefulSet-web": ""},
+	})
+	if !containsAction(run.actions, "delete", "qdrant-0") || !containsAction(run.actions, "delete", "web-1") {
+		t.Fatalf("expected both pods to be deleted, actions: %v", run.actions)
+	}
+	if len(run.waitingDeletes) != 0 {
+		t.Errorf("deletes that would wait for the pod to be gone: %v", run.waitingDeletes)
+	}
+}
+
+// A merge run that hangs for any reason must end: the CronJob uses
+// concurrencyPolicy Forbid, so one stuck run would skip every later one. The
+// install-time Job's deadline leaves room for all its passes; the CronJob's
+// jobs end before the next tick.
+func TestMergeResources_RunsHaveDeadlines(t *testing.T) {
+	manifests, err := buildSAMergeResources("default/wl", "demo-ns", []string{scriptTestSecret}, []string{scriptTestRelease}, "kubectl:test")
+	if err != nil {
+		t.Fatalf("buildSAMergeResources: %v", err)
+	}
+	sawJob, sawCron := false, false
+	for _, doc := range strings.Split(manifests, "\n---\n") {
+		var out map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &out); err != nil {
+			continue
+		}
+		spec, _ := out["spec"].(map[string]any)
+		switch out["kind"] {
+		case "Job":
+			sawJob = true
+			// A healthy Job restarts its passes from the first one after a
+			// transient kubectl failure (restartPolicy OnFailure), so the
+			// deadline leaves room for several full runs; it only has to
+			// catch real hangs.
+			deadline, _ := spec["activeDeadlineSeconds"].(float64)
+			if deadline < float64(3*saMergeJobRuns*saMergeJobIntervalSeconds) {
+				t.Errorf("Job activeDeadlineSeconds = %v, want room for several full runs of its %d passes", spec["activeDeadlineSeconds"], saMergeJobRuns)
+			}
+		case "CronJob":
+			sawCron = true
+			jobTemplate, _ := spec["jobTemplate"].(map[string]any)
+			jobSpec, _ := jobTemplate["spec"].(map[string]any)
+			deadline, _ := jobSpec["activeDeadlineSeconds"].(float64)
+			if deadline <= 0 || deadline >= 300 {
+				t.Errorf("CronJob job activeDeadlineSeconds = %v, want set and shorter than the 5-minute schedule", jobSpec["activeDeadlineSeconds"])
+			}
+		}
+	}
+	if !sawJob || !sawCron {
+		t.Errorf("rendered Job=%v CronJob=%v, want both", sawJob, sawCron)
 	}
 }
