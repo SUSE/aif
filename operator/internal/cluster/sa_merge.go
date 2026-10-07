@@ -150,25 +150,29 @@ func buildSAMergeResources(owner, namespace string, secretNames, releases []stri
 	cronJobName := fmt.Sprintf("%s-cron-%s", saMergeJobNamePrefix, suffix)
 
 	data := struct {
-		Namespace      string
-		JobName        string
-		CronJobName    string
-		Schedule       string
-		ServiceAccount string
-		Image          string
-		Script         string
-		JobRuns        int
-		JobInterval    int
+		Namespace       string
+		JobName         string
+		CronJobName     string
+		Schedule        string
+		ServiceAccount  string
+		Image           string
+		Script          string
+		JobRuns         int
+		JobInterval     int
+		JobDeadline     int
+		CronJobDeadline int
 	}{
-		Namespace:      namespace,
-		JobName:        jobName,
-		CronJobName:    cronJobName,
-		Schedule:       saMergeCronSchedule,
-		ServiceAccount: saMergeServiceAccount + "-" + suffix,
-		Image:          image,
-		Script:         script,
-		JobRuns:        saMergeJobRuns,
-		JobInterval:    saMergeJobIntervalSeconds,
+		Namespace:       namespace,
+		JobName:         jobName,
+		CronJobName:     cronJobName,
+		Schedule:        saMergeCronSchedule,
+		ServiceAccount:  saMergeServiceAccount + "-" + suffix,
+		Image:           image,
+		Script:          script,
+		JobRuns:         saMergeJobRuns,
+		JobInterval:     saMergeJobIntervalSeconds,
+		JobDeadline:     saMergeJobDeadlineSeconds,
+		CronJobDeadline: saMergeCronJobDeadlineSeconds,
 	}
 
 	var buf bytes.Buffer
@@ -222,6 +226,17 @@ const saMergeCronSchedule = "*/5 * * * *"
 const (
 	saMergeJobRuns            = 20
 	saMergeJobIntervalSeconds = 15
+)
+
+// Deadlines end a merge run that hangs for any reason. The CronJob uses
+// concurrencyPolicy Forbid, so one stuck run would otherwise skip every later
+// one. The install-time Job's deadline is generous: a transient kubectl
+// failure restarts its passes from the first one (restartPolicy OnFailure),
+// and a healthy but slow Job must not end Failed. The CronJob's jobs end
+// before the next five-minute tick.
+const (
+	saMergeJobDeadlineSeconds     = 1800
+	saMergeCronJobDeadlineSeconds = 240
 )
 
 // saMergeIndentFuncs lets the shared script be spliced into block scalars at
@@ -419,7 +434,10 @@ kubectl -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.
   fi
   if [ -n "$REASON" ] && pod_in_scope "$okind" "$oname"; then
     echo "$pod: $REASON"
-    kubectl -n "$NS" delete pod "$pod" --ignore-not-found
+    # --wait=false: kubectl would otherwise watch the Pod until it is gone,
+    # which the Role does not allow (no watch on pods), and retry forever.
+    # The Pod's controller recreates it; there is nothing to wait for.
+    kubectl -n "$NS" delete pod "$pod" --ignore-not-found --wait=false
   fi
 done
 }
@@ -496,6 +514,7 @@ metadata:
     ai-factory.suse.com/role: pullsecret-sa-merge
 spec:
   backoffLimit: 4
+  activeDeadlineSeconds: {{ .JobDeadline }}
   template:
     metadata:
       labels:
@@ -549,6 +568,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 4
+      activeDeadlineSeconds: {{ .CronJobDeadline }}
       template:
         metadata:
           labels:

@@ -70,6 +70,12 @@ patch)
   ;;
 delete)
   echo "delete $2" >> "$STATE/log"
+  # Real kubectl waits for the deletion by default, which needs a watch the
+  # merge runners' Role does not grant; record any delete that would wait.
+  case " $* " in
+    *" --wait=false "*) ;;
+    *) echo "$2" >> "$STATE/waiting-deletes" ;;
+  esac
   ;;
 esac
 `
@@ -182,6 +188,10 @@ func runMergeScriptCounting(t *testing.T, secretNames []string, st mergeScriptSt
 	if lists, err := os.ReadFile(filepath.Join(stateDir, "pod-lists")); err == nil {
 		passes = strings.Count(string(lists), "list")
 	}
+	lastWaitingDeletes = ""
+	if waiting, err := os.ReadFile(filepath.Join(stateDir, "waiting-deletes")); err == nil {
+		lastWaitingDeletes = strings.TrimSpace(string(waiting))
+	}
 	logged, err := os.ReadFile(filepath.Join(stateDir, "log"))
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +213,10 @@ func containsAction(actions []string, verb, name string) bool {
 	}
 	return false
 }
+
+// lastWaitingDeletes lists the pods the last script run deleted with a
+// waiting kubectl delete (see the stub).
+var lastWaitingDeletes string
 
 const (
 	scriptTestSecret  = "aif-custom-pull-private-charts"
@@ -674,5 +688,70 @@ func TestMergeScript_LeavesPodWithPullSecretNotFromItsServiceAccount(t *testing.
 	}
 	if !containsAction(actions, "delete", "fromsa-0") {
 		t.Errorf("pod whose pull secrets all come from its ServiceAccount must be recreated, actions: %v", actions)
+	}
+}
+
+// kubectl delete waits for the object to be gone by default, which watches
+// it. The merge runners' Role has no watch on pods, so a waiting delete is
+// refused and retried forever: the merge pod never finishes and, for the
+// CronJob (concurrencyPolicy Forbid), later runs are skipped. Deletes must not
+// wait; the pod's controller recreates it anyway.
+func TestMergeScript_DeletesDoNotWait(t *testing.T) {
+	actions := runMergeScript(t, []string{scriptTestSecret}, mergeScriptState{
+		helmSAs: "web",
+		sas:     map[string][]string{"default": {scriptTestSecret}},
+		pods: []string{
+			"qdrant-0|default||StatefulSet|qdrant||ImagePullBackOff,",
+			"web-1|web|Helm|StatefulSet|web|" + scriptTestSecret + ",|ImagePullBackOff,",
+		},
+		owners: map[string]string{"StatefulSet-qdrant": "", "StatefulSet-web": ""},
+	})
+	if !containsAction(actions, "delete", "qdrant-0") || !containsAction(actions, "delete", "web-1") {
+		t.Fatalf("expected both pods to be deleted, actions: %v", actions)
+	}
+	if waiting := lastWaitingDeletes; waiting != "" {
+		t.Errorf("deletes that would wait for the pod to be gone: %q", waiting)
+	}
+}
+
+// A merge run that hangs for any reason must end: the CronJob uses
+// concurrencyPolicy Forbid, so one stuck run would skip every later one. The
+// install-time Job's deadline leaves room for all its passes; the CronJob's
+// jobs end before the next tick.
+func TestMergeResources_RunsHaveDeadlines(t *testing.T) {
+	manifests, err := buildSAMergeResources("default/wl", "demo-ns", []string{scriptTestSecret}, []string{scriptTestRelease}, "kubectl:test")
+	if err != nil {
+		t.Fatalf("buildSAMergeResources: %v", err)
+	}
+	sawJob, sawCron := false, false
+	for _, doc := range strings.Split(manifests, "\n---\n") {
+		var out map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &out); err != nil {
+			continue
+		}
+		spec, _ := out["spec"].(map[string]any)
+		switch out["kind"] {
+		case "Job":
+			sawJob = true
+			// A healthy Job restarts its passes from the first one after a
+			// transient kubectl failure (restartPolicy OnFailure), so the
+			// deadline leaves room for several full runs; it only has to
+			// catch real hangs.
+			deadline, _ := spec["activeDeadlineSeconds"].(float64)
+			if deadline < float64(3*saMergeJobRuns*saMergeJobIntervalSeconds) {
+				t.Errorf("Job activeDeadlineSeconds = %v, want room for several full runs of its %d passes", spec["activeDeadlineSeconds"], saMergeJobRuns)
+			}
+		case "CronJob":
+			sawCron = true
+			jobTemplate, _ := spec["jobTemplate"].(map[string]any)
+			jobSpec, _ := jobTemplate["spec"].(map[string]any)
+			deadline, _ := jobSpec["activeDeadlineSeconds"].(float64)
+			if deadline <= 0 || deadline >= 300 {
+				t.Errorf("CronJob job activeDeadlineSeconds = %v, want set and shorter than the 5-minute schedule", jobSpec["activeDeadlineSeconds"])
+			}
+		}
+	}
+	if !sawJob || !sawCron {
+		t.Errorf("rendered Job=%v CronJob=%v, want both", sawJob, sawCron)
 	}
 }
