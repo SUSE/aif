@@ -8,13 +8,26 @@ release:
   name: my-release
   namespace: aif-operator
 tests:
-  - it: default values produce a bare Settings resource with no spec
+  - it: default values enable only the SUSE partner blueprint catalog
     asserts:
       - containsDocument:
           kind: Settings
           apiVersion: ai-factory.suse.com/v1alpha1
           name: settings
           namespace: aif-operator
+      - equal:
+          path: spec
+          value:
+            blueprintCatalogs:
+              - name: partner-blueprints
+                repoURL: https://github.com/suse/partner-blueprints.git
+                branch: main
+                paths: [partners]
+
+  - it: disabling the partner catalog produces a bare Settings resource with no spec
+    set:
+      blueprintCatalogs: []
+    asserts:
       - notExists:
           path: spec
 
@@ -78,6 +91,7 @@ tests:
   # so rancherCatalog is intentionally left out of the spec.
   - it: a ca bundle on its own does not open the spec block
     set:
+      blueprintCatalogs: []
       rancherCatalog.caBundle: |
         -----BEGIN CERTIFICATE-----
     asserts:
@@ -110,6 +124,7 @@ tests:
 
   - it: a half-filled credential pair is ignored
     set:
+      blueprintCatalogs: []
       credentials.nvidia.username: user
     asserts:
       - notExists:
@@ -161,6 +176,8 @@ tests:
           value: {name: acme-ca, key: ca.crt}
 
   - it: an empty blueprint catalog list does not open the spec block
+    set:
+      blueprintCatalogs: []
     asserts:
       - notExists:
           path: spec.blueprintCatalogs
