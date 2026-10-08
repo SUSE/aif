@@ -264,8 +264,15 @@ defaultBlueprints:
 # Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo that
 # syncs Blueprint CRs from the given repo/paths. The bundled default catalog is
 # always present and is NOT listed here. credSecretRef/caBundleSecretRef must
-# reference Secrets you pre-create in the operator namespace.
-blueprintCatalogs: []
+# reference Secrets you pre-create in the operator namespace. The SUSE partner
+# catalog is enabled by default; set blueprintCatalogs to [] to disable it, or
+# note that overriding this list replaces it (re-list partner-blueprints to keep
+# it alongside your own catalogs).
+blueprintCatalogs:
+  - name: partner-blueprints
+    repoURL: https://github.com/suse/partner-blueprints.git
+    branch: main
+    paths: [partners]
 #  - name: partner-acme
 #    repoURL: https://github.com/acme/blueprints.git
 #    branch: main
