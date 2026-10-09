@@ -56,3 +56,23 @@ tests:
     asserts:
       - matchRegexRaw:
           pattern: "http://my-rel-aif-ui-svc\\.cattle-ui-plugin-system:9090"
+
+  # Standalone mode leaves installing and updating the extension to the user,
+  # and a missed update only fails later, when Rancher's cache is lost.
+  - it: tells a standalone user to install or update the extension in Rancher
+    template: templates/NOTES.txt
+    set:
+      standalone: true
+    asserts:
+      - matchRegexRaw:
+          pattern: "Available > SUSE AI Factory > Install"
+      - matchRegexRaw:
+          pattern: "Installed > SUSE AI Factory > Update to 2.2"
+      - matchRegexRaw:
+          pattern: "refresh my-rel-aif-ui under Apps > Repositories"
+
+  - it: asks for no extra step when embedded in aif-operator
+    template: templates/NOTES.txt
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "Next step"

@@ -9,7 +9,56 @@ The chart creates a Deployment and Service that serve the built extension assets
 - Rancher 2.10+ with UI Extensions support (`catalog.cattle.io/v1` API)
 - Target namespace: `cattle-ui-plugin-system`
 
-## Standalone install/upgrade
+## Standalone mode
+
+With `standalone=true` (and `aiExtension.enabled=false` on the aif-operator chart), this chart deploys an extension catalog: the server, a Service named `aif-ui-svc`, and a ClusterRepo pointing at it. This is the same thing Rancher's **Extensions > Manage Extension Catalogs > Import Extension Catalog** creates, and the extension is installed from it the same way, from Rancher's Extensions page. Rancher then manages the extension release itself, so the extension shows its logo and description, works air-gapped, and can be updated and uninstalled from the Extensions page.
+
+Constraints, checked when the chart renders:
+
+- Namespace `cattle-ui-plugin-system`, and `service.port` 8080: the extension Rancher installs expects the server there.
+- The release must not be named `aif-ui`: Rancher installs the extension as a release of that name.
+
+### Install
+
+```bash
+helm upgrade --install aif-ui-server oci://ghcr.io/suse/chart/aif-ui \
+  --namespace cattle-ui-plugin-system --create-namespace \
+  --version <version> \
+  --set standalone=true
+```
+
+Then, in Rancher: **Extensions > Available > SUSE AI Factory > Install**. If it is not listed yet, Rancher read the repository before the server was ready and retries only every few minutes; refresh the `aif-ui-server` repository under **Apps > Repositories**.
+
+### Upgrade
+
+```bash
+helm upgrade aif-ui-server oci://ghcr.io/suse/chart/aif-ui \
+  --namespace cattle-ui-plugin-system \
+  --version <new-version> \
+  --set standalone=true
+```
+
+Then, in Rancher: **Extensions > Installed > SUSE AI Factory > Update**. Do this straight after the `helm upgrade`. The server only serves the extension version it was built for, so until the extension is updated Rancher runs its cached copy of the previous version, and that copy stops loading if the cache is lost, for example when Rancher restarts.
+
+### Uninstall
+
+Uninstall the extension from **Extensions > Installed**, then `helm uninstall aif-ui-server -n cattle-ui-plugin-system`.
+
+### Migrating from an earlier standalone install
+
+Earlier versions of this chart created the extension's UIPlugin themselves. After upgrading:
+
+- **Release named anything but `aif-ui`:** `helm upgrade` as above. It removes the old UIPlugin, so install the extension once from **Extensions > Available**.
+- **Release named `aif-ui`:** the chart now refuses that name. Uninstall it and install under a new name, then install the extension from **Extensions > Available**. `aif-ui-config` is kept by the uninstall (see [Uninstall](#uninstall)), so pass `--take-ownership` to the install, and with Helm 4 also `--force-conflicts` (see [Installing or upgrading outside the operator](#installing-or-upgrading-outside-the-operator)):
+
+  ```bash
+  helm uninstall aif-ui -n cattle-ui-plugin-system
+  helm install aif-ui-server oci://ghcr.io/suse/chart/aif-ui \
+    --namespace cattle-ui-plugin-system --version <version> \
+    --set standalone=true --take-ownership
+  ```
+
+## Installing or upgrading outside the operator
 
 This chart templates `aif-ui-config`, a ConfigMap the aif-operator can also create or recreate outside of Helm (see `templates/configmap.yaml`). The aif-operator's own installs/upgrades handle this automatically, but if you run `helm install`/`helm upgrade` for this chart directly — outside the operator, e.g. for local development or troubleshooting — and `aif-ui-config` already exists unowned by Helm, the command fails with `invalid ownership metadata`. Pass `--take-ownership` to adopt it:
 
@@ -17,6 +66,8 @@ This chart templates `aif-ui-config`, a ConfigMap the aif-operator can also crea
 helm install aif-ui-server . --take-ownership
 helm upgrade aif-ui-server . --take-ownership
 ```
+
+Helm 4 applies changes server-side by default, and if the operator was the last to write `aif-ui-config` (for example when moving from operator-managed to standalone), the command then fails with `conflict occurred while applying object ... aif-ui-config ... conflicts with "manager"`. Add `--force-conflicts` to take over those fields too. Helm 3 has no such flag and does not need it.
 
 ## Uninstall
 
@@ -30,7 +81,7 @@ set the private registry prefix and pull Secret name, then install the mirrored
 UI chart:
 
 ```bash
-helm upgrade --install aif-ui \
+helm upgrade --install aif-ui-server \
   oci://registry.example.com/ai-factory/charts/aif-ui \
   --namespace cattle-ui-plugin-system \
   --create-namespace \
@@ -38,6 +89,10 @@ helm upgrade --install aif-ui \
   -f charts/values-airgap-images.example.yaml \
   --set standalone=true
 ```
+
+Then install the extension from Rancher's Extensions page, as described in
+[Standalone mode](#standalone-mode). Everything it needs, including its logo,
+is served from inside the cluster.
 
 The named pull Secret must already exist in `cattle-ui-plugin-system`.
 `global.imageRegistry` changes only the container image prefix; it does not

@@ -218,7 +218,7 @@ helm upgrade --install aif-operator \
   -f charts/values-airgap-images.example.yaml \
   --set aiExtension.enabled=false
 
-helm upgrade --install aif-ui \
+helm upgrade --install aif-ui-server \
   oci://registry.example.com/ai-factory/charts/aif-ui \
   --namespace cattle-ui-plugin-system \
   --create-namespace \
@@ -226,6 +226,10 @@ helm upgrade --install aif-ui \
   -f charts/values-airgap-images.example.yaml \
   --set standalone=true
 ```
+
+The standalone UI chart deploys the extension catalog only. Install the
+extension itself from Rancher's **Extensions** page, and update it there after
+each upgrade of the UI chart; see the aif-ui chart's README, "Standalone mode".
 
 The shared override covers images rendered by these charts only. Application
 images referenced by catalogs and Blueprints must be mirrored and configured as

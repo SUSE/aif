@@ -9,6 +9,20 @@ Chart repository URL (for ClusterRepo / Rancher Extensions page):
 Verify the deployment:
   kubectl get deploy {{ include "aif-ui.fullname" . }} -n {{ .Release.Namespace }}
   kubectl get svc {{ include "aif-ui.serviceName" . }} -n {{ .Release.Namespace }}
+{{- if .Values.standalone }}
+{{- $displayName := index .Chart.Annotations "catalog.cattle.io/display-name" | default .Chart.Name }}
+
+Next step, on every install and upgrade of this chart:
+  This chart serves the extension catalog for {{ .Chart.AppVersion }}; it does not
+  install the extension itself. In Rancher, open Extensions and:
+    - first install: Available > {{ $displayName }} > Install
+    - upgrade:       Installed > {{ $displayName }} > Update to {{ .Chart.AppVersion }}
+  Not listed yet? Rancher may have read the repository before this server was
+  ready; refresh {{ include "aif-ui.fullname" . }} under Apps > Repositories.
+  This server only serves {{ .Chart.AppVersion }}. Until the extension is updated,
+  Rancher keeps running its cached copy of the previous version, which stops
+  loading if that cache is lost (for example when Rancher restarts).
+{{- end }}
 
 Kept on uninstall:
   The aif-ui-config ConfigMap carries helm.sh/resource-policy: keep, so

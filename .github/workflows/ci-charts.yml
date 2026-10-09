@@ -55,7 +55,7 @@ jobs:
       - name: Render charts under Helm 4
         run: |
           helm template charts/aif-ui > /dev/null
-          helm template charts/aif-ui --set standalone=true > /dev/null
+          helm template aif-ui-server charts/aif-ui -n cattle-ui-plugin-system --set standalone=true > /dev/null
           helm template charts/aif-operator > /dev/null
 
       - name: Guard the image annotation against appVersion drift

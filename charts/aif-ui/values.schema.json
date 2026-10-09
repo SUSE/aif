@@ -11,7 +11,7 @@
     "standalone": {
       "type": "boolean",
       "default": false,
-      "description": "Deploy aif-ui standalone (renders ClusterRepo + UIPlugin) instead of embedded in aif-operator"
+      "description": "Deploy aif-ui standalone as an extension catalog (renders a ClusterRepo; the extension is then installed from Rancher's Extensions page) instead of embedded in aif-operator"
     },
     "global": {
       "type": "object",
