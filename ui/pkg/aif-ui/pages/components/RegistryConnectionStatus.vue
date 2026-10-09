@@ -62,17 +62,25 @@ export default {
       const key = this.target === 'customRepo' ? 'sampleHelpCustomRepo' : 'sampleHelp';
       return this.t(`suseai.pages.settings.registryConnection.chartAccess.${key}`);
     },
+    // Git repositories serve no chart index or OCI manifests to probe.
+    chartAccessApplicable() {
+      return this.target !== 'customRepo' || this.configuration.type !== 'git';
+    },
+    // Without a mirror the operator picks a sample chart per NGC repository, so
+    // there is no single chart to choose; the per-repository results still apply.
     sampleSelectable() {
-      if (this.target === 'customRepo') return this.configuration.type !== 'git';
+      if (!this.chartAccessApplicable) return false;
       return this.target !== 'nvidia' || !!this.configuration.url?.trim();
     },
     verificationSummary() {
       if (this.formChanged) return 'changed';
       const { authentication, chartAccess, chartRepositories } = this.result;
-      if (authentication.status === 'failed' || chartAccess.results.some(check => check.status === 'failed') ||
+      const chartFailed = this.chartAccessApplicable && chartAccess.results.some(check => check.status === 'failed');
+      const chartIncomplete = this.chartAccessApplicable && (chartAccess.error || !chartAccess.results.length ||
+          chartAccess.results.some(check => check.status !== 'ok'));
+      if (authentication.status === 'failed' || chartFailed ||
           chartRepositories.repositories.some(repo => ['failed', 'missing'].includes(repo.state))) return 'failed';
-      if (authentication.status === 'error' || chartAccess.error || !chartAccess.results.length ||
-          chartAccess.results.some(check => check.status !== 'ok') || chartRepositories.error ||
+      if (authentication.status === 'error' || chartIncomplete || chartRepositories.error ||
           chartRepositories.settingsError || !chartRepositories.repositories.length) return 'incomplete';
       if (this.unsaved) return 'unsaved';
       if (chartRepositories.settingsPending || chartRepositories.repositories.some(repo => repo.state !== 'ready')) return 'pending';
@@ -238,7 +246,7 @@ export default {
           <div class="verification-check">
             <dt>{{ t('suseai.pages.settings.registryConnection.chartAccess.label') }}</dt>
             <dd>
-              <p v-if="!sampleSelectable">
+              <p v-if="!chartAccessApplicable">
                 {{ t('suseai.pages.settings.registryConnection.chartAccess.notApplicable') }}
               </p>
               <template v-else>
