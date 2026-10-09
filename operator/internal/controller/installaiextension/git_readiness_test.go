@@ -29,11 +29,12 @@ import (
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
 
-// gitReleaseName is what reconcileGitSource installs under — the extension name,
-// not deriveReleaseName's output. Spelled out because the whole readiness lookup
-// selects on it, and pointing it at releaseName would make these tests watch a
-// workload the git path never creates.
-const gitReleaseName = "aif-ui"
+// extensionReleaseName is what ensureExtensionChart installs the UI-plugin chart
+// under, on either source path: the extension name, not deriveReleaseName's
+// output. Spelled out because the git path's readiness lookup selects on it,
+// and pointing it at releaseName would make these tests watch a workload the
+// git path never creates.
+const extensionReleaseName = "aif-ui"
 
 // rollingDeployment is a Deployment the deployment controller has not finished
 // rolling out: the spec update is observed, but the new revision's replica is
@@ -69,7 +70,7 @@ func rollingDeployment(instance string) *appsv1.Deployment {
 // the new one is in CrashLoopBackOff.
 func TestGitSourceWaitsForItsRolloutToFinish(t *testing.T) {
 	ext := gitExtension()
-	r := readinessReconciler(t, ext, interceptor.Funcs{}, rollingDeployment(gitReleaseName))
+	r := readinessReconciler(t, ext, interceptor.Funcs{}, rollingDeployment(extensionReleaseName))
 
 	result, err := r.reconcileGitSource(context.Background(), ext, wiringNamespace)
 	if err != nil {
@@ -96,7 +97,7 @@ func TestGitSourceWaitsForItsRolloutToFinish(t *testing.T) {
 func TestGitReadinessWaitIsBounded(t *testing.T) {
 	ext := gitExtension()
 	backdate(ext, annotationWaitingSince, readinessTimeout+time.Minute)
-	r := readinessReconciler(t, ext, interceptor.Funcs{}, rollingDeployment(gitReleaseName))
+	r := readinessReconciler(t, ext, interceptor.Funcs{}, rollingDeployment(extensionReleaseName))
 
 	result, err := r.reconcileGitSource(context.Background(), ext, wiringNamespace)
 	if err != nil {
@@ -162,7 +163,7 @@ func TestGitReadinessClockRestartsOnANewRevision(t *testing.T) {
 	ext.Status.HelmReleaseRevision = 1
 	backdate(ext, annotationWaitingSince, readinessTimeout+20*time.Minute)
 
-	r := readinessReconciler(t, ext, interceptor.Funcs{}, rollingDeployment(gitReleaseName))
+	r := readinessReconciler(t, ext, interceptor.Funcs{}, rollingDeployment(extensionReleaseName))
 	r.helmClientFor = atRevision(2)
 
 	result, err := r.reconcileGitSource(context.Background(), ext, wiringNamespace)

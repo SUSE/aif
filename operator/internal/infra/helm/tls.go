@@ -93,11 +93,13 @@ type chartFetcher func(setRegistry func(*registry.Client), opts *action.ChartPat
 // the extension chart's registry traffic exactly, and caching here covers all
 // three callers without any of them knowing about it.
 //
-// Helm-SDK, not every byte the operator pulls: repository index fetches go out
-// through helm.FetchIndex, and a git-backed blueprint chart is downloaded from
-// the Rancher catalog API by rancher.ChartFetcher. Neither is counted here.
-// Both are in-cluster, so neither shows up as registry egress, which is what
-// this counter exists to track.
+// Helm-SDK, not every byte the operator pulls: a git-backed blueprint chart is
+// downloaded from the Rancher catalog API by rancher.ChartFetcher and is not
+// counted here. That one is in-cluster, so it does not show up as registry
+// egress, which is what this counter exists to track. The extension's
+// UI-plugin chart is counted even though it is in-cluster too, because it is
+// pulled through here from the extension server's Service; its registry label
+// is that Service's host, so it is easy to tell apart.
 func (c *helmClient) loadChart(setRegistry func(*registry.Client), opts *action.ChartPathOptions, spec ReleaseSpec) (*chart.Chart, error) {
 	host, chartLabel := pullRegistry(spec), pullChart(spec)
 

@@ -102,9 +102,9 @@ func (m *Manager) EnsureClusterRepo(
 // (or git branch) leaves Rancher serving a stale cached index.
 //
 // It gates on the caller-supplied Extension.Version, not Source.Helm.Version:
-// index/UIPlugin resolution keys on Extension.Version (see uiplugin.go and
-// helm.FindAnnotations), so a chart-only version bump that leaves Extension.Version
-// unchanged intentionally does not force a refresh.
+// the extension chart is installed from this repo at Extension.Version, so a
+// server-chart-only version bump that leaves Extension.Version unchanged
+// intentionally does not force a refresh.
 //
 // SettingsReconciler stamps spec.forceUpdate on its (registry-credential)
 // ClusterRepos via a separate merge patch, kept out of its SSA-managed field set

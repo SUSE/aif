@@ -1,6 +1,6 @@
 {
   "name": "aif-ui",
-  "description": "SUSE AI Factory",
+  "description": "Rancher UI Extension for SUSE AI Factory to manage AI Workloads",
   "version": "2.3.0-rc.5",
   "private": false,
   "license": "Apache-2.0",
@@ -11,7 +11,7 @@
       "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
     }
   },
-  "icon": "https://raw.githubusercontent.com/SUSE/aif/refs/heads/main/pkg/aif-ui/assets/logo.svg",
+  "icon": "plugin/aif-ui/logo.svg",
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
     "commitlint": "commitlint --edit"

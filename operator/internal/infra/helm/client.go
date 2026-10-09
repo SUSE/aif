@@ -57,6 +57,9 @@ type ReleaseInfo struct {
 	Values    map[string]interface{}
 	Status    ReleaseStatus
 	Revision  int
+	// Labels are the labels on the stored release record, Helm's own system
+	// labels (name, owner, status, version) included.
+	Labels map[string]string
 }
 
 type ReleaseSpec struct {
@@ -66,6 +69,10 @@ type ReleaseSpec struct {
 	RepoURL   string
 	Version   string
 	Values    map[string]interface{}
+	// Labels are stamped on the stored release record, the SDK equivalent of
+	// `helm install --labels`. Helm keeps labels it was not asked about, so this
+	// adds to a release's labels and never strips any.
+	Labels map[string]string
 	// RegistryAuth optionally authenticates the chart pull. In-memory only.
 	RegistryAuth *RegistryAuth
 	// TLSConfig optionally supplies registry TLS trust (private CA / mTLS / skip-verify). In-memory only.

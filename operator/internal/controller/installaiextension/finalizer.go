@@ -76,23 +76,18 @@ func (r *InstallAIExtensionReconciler) cleanup(
 ) error {
 	logger := log.FromContext(ctx)
 	namespace := r.ExtensionNamespace
-	var errs []error
 
 	names := []string{ext.Spec.Extension.Name}
 	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
 		names = append(names, ext.Status.ActiveExtensionName)
 	}
+	errs := make([]error, 0, len(names)+1)
 
 	for _, name := range names {
 		if name == "" {
 			continue
 		}
-		if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(name)); err != nil {
-			errs = append(errs, err)
-		}
-		if err := r.rancherMgr.DeleteUIPlugin(ctx, name, namespace); err != nil {
-			errs = append(errs, err)
-		}
+		errs = append(errs, r.removeExtension(ctx, name, namespace))
 	}
 
 	if ext.Status.HelmReleaseName != "" {
@@ -110,20 +105,37 @@ func (r *InstallAIExtensionReconciler) cleanup(
 		}
 	}
 
-	if ext.Status.ActiveSourceKind == v1alpha1.ExtensionSourceKindGit ||
-		ext.Spec.Source.Kind == v1alpha1.ExtensionSourceKindGit {
-		for _, name := range names {
-			if name == ext.Status.HelmReleaseName {
-				continue
-			}
-			logger.Info("uninstalling UIPlugin Helm release", "release", name)
-			helm, err := r.helmFor(namespace)
-			if err == nil {
-				if err := helm.DeleteRelease(ctx, name); err != nil {
-					errs = append(errs, err)
-				}
-			}
-		}
+	return stderrors.Join(errs...)
+}
+
+// removeExtension removes everything installed under an extension name, for
+// either source kind: its ClusterRepo, the release of its UI-plugin chart, and
+// the UIPlugin.
+//
+// The UIPlugin is deleted directly as well as through its release. An operator
+// release from before the extension chart was installed wrote it without a
+// Helm owner, and if the CR is deleted before a reconcile adopts it, nothing
+// else removes it. Deleting it after the uninstall makes the call a no-op in
+// every other case.
+//
+// The Helm source's server release is not touched here. It is named after the
+// chart URL rather than the extension, and its callers handle it.
+func (r *InstallAIExtensionReconciler) removeExtension(ctx context.Context, name, namespace string) error {
+	var errs []error
+
+	if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(name)); err != nil {
+		errs = append(errs, err)
+	}
+
+	log.FromContext(ctx).Info("uninstalling UIPlugin Helm release", "release", name)
+	if helm, err := r.helmFor(namespace); err != nil {
+		errs = append(errs, err)
+	} else if err := helm.DeleteRelease(ctx, name); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := r.rancherMgr.DeleteUIPlugin(ctx, name, namespace); err != nil {
+		errs = append(errs, err)
 	}
 
 	return stderrors.Join(errs...)

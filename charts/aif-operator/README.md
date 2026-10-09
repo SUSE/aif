@@ -349,7 +349,7 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 
 #### Source types
 
-**Helm** (`aiExtension.source.kind=Helm`): The operator installs a Helm chart that deploys a container serving extension assets. It then creates a ClusterRepo pointing to the in-cluster Service and a UIPlugin CR for Rancher to load the extension.
+**Helm** (`aiExtension.source.kind=Helm`): The operator installs a Helm chart that deploys a container serving extension assets. It then creates a ClusterRepo pointing to the in-cluster Service and installs the extension chart from that repository, the same way Rancher's Extensions page installs extensions: a Helm release named after the extension, tagged with the ClusterRepo it came from. That release creates the UIPlugin CR that Rancher loads the extension from. Because Rancher can match the release to its catalog entry, the Extensions page shows the extension's logo and description, and does not mark it Third-Party. Everything is served from inside the cluster, so this also works air-gapped.
 
 ### RBAC helper roles
 

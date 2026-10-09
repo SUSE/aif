@@ -20,70 +20,51 @@ import (
 	"context"
 	"fmt"
 
-	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	logging "github.com/SUSE/aif-operator/internal/logging"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (m *Manager) EnsureUIPlugin(
-	ctx context.Context,
-	ext *v1alpha1.InstallAIExtension,
-	svcURL string,
-	namespace string,
-) error {
-	log := logging.FromContext(ctx, "rancher.uiplugin").
-		WithValues(
-			logging.KeyExtension, ext.Spec.Extension.Name,
-			logging.KeyVersion, ext.Spec.Extension.Version,
-		)
+// labelClusterRepoName records which ClusterRepo an extension was installed
+// from. When Rancher installs an extension chart from its Extensions page,
+// helmop puts this label on the Helm release (`--labels`), and Rancher's App
+// controller copies it onto the release's App. Since Rancher 2.15, the
+// Extensions page reads it back off the App to pair the installed UIPlugin with
+// its catalog chart, which is where the card's logo, description and
+// certification come from. An extension installed without it is shown as a
+// "Third-Party" card with no logo, next to a second, uninstalled copy of itself
+// under Available.
+const labelClusterRepoName = "catalog.cattle.io/cluster-repo-name"
 
-	ui := &unstructured.Unstructured{}
-	ui.SetAPIVersion("catalog.cattle.io/v1")
-	ui.SetKind("UIPlugin")
-	ui.SetName(ext.Spec.Extension.Name)
-	ui.SetNamespace(namespace)
-
-	log.Info("Ensuring UIPlugin", "namespace", namespace)
-
-	_, err := ctrl.CreateOrUpdate(ctx, m.client, ui, func() error {
-		if err := unstructured.SetNestedField(ui.Object, ext.Spec.Extension.Name, "spec", "plugin", "name"); err != nil {
-			return err
-		}
-		if err := unstructured.SetNestedField(ui.Object, ext.Spec.Extension.Version, "spec", "plugin", "version"); err != nil {
-			return err
-		}
-
-		pluginEndpoint := fmt.Sprintf("%s/plugin/%s-%s", svcURL, ext.Spec.Extension.Name, ext.Spec.Extension.Version)
-		if err := unstructured.SetNestedField(ui.Object, pluginEndpoint, "spec", "plugin", "endpoint"); err != nil {
-			return err
-		}
-
-		logging.Trace(log).Info("Configuring UIPlugin spec", "endpoint", pluginEndpoint)
-
-		metadata, err := buildExtensionMetadata(
-			ctx,
-			m.indexCache,
-			svcURL,
-			ext.Spec.Extension.Name,
-			ext.Spec.Extension.Version,
-			nil,
-		)
-		if err != nil {
-			return err
-		}
-
-		return unstructured.SetNestedStringMap(ui.Object, metadata, "spec", "plugin", "metadata")
-	})
-	if err != nil {
-		return err
-	}
-
-	logging.Debug(log).Info("UIPlugin ensured")
-	return nil
+// ExtensionChartLabels returns the release labels that tie an extension chart
+// to the ClusterRepo it is installed from, the same ones an install from
+// Rancher's Extensions page writes.
+func ExtensionChartLabels(clusterRepo string) map[string]string {
+	return map[string]string{labelClusterRepoName: clusterRepo}
 }
 
+// ExtensionChartValues points the UIPlugin that an extension chart renders at
+// the extension server that serves it.
+//
+// Required because the chart cannot work this out for itself. The
+// `plugin.endpoint` and `plugin.compressedEndpoint` keys come from the UI-plugin
+// chart that @rancher/shell's publish script generates. Their defaults assume
+// the server's Service is called `<image>-svc`, the name Rancher's "Import
+// Extension Catalog" dialog gives it, and ours is not. The paths follow the
+// layout of the catalog image that same script builds.
+func ExtensionChartValues(svcURL, name, version string) map[string]interface{} {
+	endpoint := fmt.Sprintf("%s/plugin/%s-%s", svcURL, name, version)
+	return map[string]interface{}{
+		"plugin": map[string]interface{}{
+			"endpoint":           endpoint,
+			"compressedEndpoint": endpoint + ".tgz",
+		},
+	}
+}
+
+// DeleteUIPlugin removes a UIPlugin the extension's Helm release does not own:
+// one written directly by an operator release that predates installing the
+// extension chart, and never adopted because the CR went away first.
 func (m *Manager) DeleteUIPlugin(ctx context.Context, name string, namespace string) error {
 	log := logging.FromContext(ctx, "rancher.uiplugin").
 		WithValues(logging.KeyExtension, name)

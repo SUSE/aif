@@ -38,11 +38,10 @@ import (
 // condition a user reads.
 var errRancher = errors.New("admission webhook denied the request")
 
-// stubRancherManager fails whichever Ensure call a test names and succeeds at
-// everything else, so a case reaches exactly the branch it is about.
+// stubRancherManager fails EnsureClusterRepo when a test asks it to and
+// succeeds at everything else, so a case reaches exactly the branch it is about.
 type stubRancherManager struct {
 	clusterRepoErr error
-	uiPluginErr    error
 }
 
 func (s *stubRancherManager) CheckCRDs(context.Context, []string) error { return nil }
@@ -51,18 +50,12 @@ func (s *stubRancherManager) EnsureClusterRepo(context.Context, *v1alpha1.Instal
 	return s.clusterRepoErr
 }
 
-func (s *stubRancherManager) EnsureUIPlugin(
-	context.Context, *v1alpha1.InstallAIExtension, string, string,
-) error {
-	return s.uiPluginErr
-}
-
 func (s *stubRancherManager) DeleteClusterRepo(context.Context, string) error { return nil }
 
 func (s *stubRancherManager) DeleteUIPlugin(context.Context, string, string) error { return nil }
 
 // TestRancherFailuresAreRetried covers the four places a reconcile gives up on
-// a Rancher object — a ClusterRepo and a UIPlugin on each source path.
+// a Rancher object — a ClusterRepo and the UI-plugin chart on each source path.
 //
 // All four are transients the cluster resolves without anything happening to
 // the CR: an admission webhook mid-restart, a CRD not yet served, the extension
@@ -71,21 +64,20 @@ func (s *stubRancherManager) DeleteUIPlugin(context.Context, string, string) err
 // here parks the extension in Failed until someone edits it or the informer
 // resyncs — ten hours later.
 //
-// Untested until now because both Ensure calls sat behind the real Rancher
-// manager: no case drove one to failure, and deleting the RequeueAfter from any
-// of the four left the whole suite green.
+// Untested until these were written, because the calls sat behind the real
+// Rancher manager: no case drove one to failure, and deleting the RequeueAfter
+// from any of the four left the whole suite green.
 func TestRancherFailuresAreRetried(t *testing.T) {
 	tests := []struct {
 		name     string
 		condType string
-		// stub decides which of the two calls fails.
+		// stub decides whether the ClusterRepo write fails.
 		stub *stubRancherManager
 		// helm marks the cases that run the Helm path; the rest run the git path.
 		helm bool
-		// ensureErr fails the git path's chart install, which is how that path
-		// reaches its UIPlugin branch — it installs a release rather than writing
-		// a UIPlugin directly.
-		ensureErr error
+		// chartErr fails the install of the UI-plugin chart, which is how either
+		// path reaches its UIPlugin branch. Neither writes a UIPlugin directly.
+		chartErr error
 	}{
 		{
 			name:     "helm source cannot write its ClusterRepo",
@@ -94,10 +86,11 @@ func TestRancherFailuresAreRetried(t *testing.T) {
 			helm:     true,
 		},
 		{
-			name:     "helm source cannot write its UIPlugin",
+			name:     "helm source cannot install its UI-plugin chart",
 			condType: conditionTypeUIPlugin,
-			stub:     &stubRancherManager{uiPluginErr: errRancher},
+			stub:     &stubRancherManager{},
 			helm:     true,
+			chartErr: errRancher,
 		},
 		{
 			name:     "git source cannot write its ClusterRepo",
@@ -105,10 +98,10 @@ func TestRancherFailuresAreRetried(t *testing.T) {
 			stub:     &stubRancherManager{clusterRepoErr: errRancher},
 		},
 		{
-			name:      "git source cannot install its UI-plugin chart",
-			condType:  conditionTypeUIPlugin,
-			stub:      &stubRancherManager{},
-			ensureErr: errRancher,
+			name:     "git source cannot install its UI-plugin chart",
+			condType: conditionTypeUIPlugin,
+			stub:     &stubRancherManager{},
+			chartErr: errRancher,
 		},
 	}
 
@@ -137,9 +130,13 @@ func TestRancherFailuresAreRetried(t *testing.T) {
 
 			r := readinessReconciler(t, ext, interceptor.Funcs{}, objs...)
 			r.rancherMgr = tt.stub
-			if tt.ensureErr != nil {
+			if tt.chartErr != nil {
+				// Only the release named after the extension: on the Helm path the
+				// server release has to succeed for the pass to get that far.
 				r.helmClientFor = func(string) (helmClient.HelmClient, error) {
-					return &stubHelmClient{ensureErr: tt.ensureErr}, nil
+					return &stubHelmClient{
+						ensureErrFor: map[string]error{ext.Spec.Extension.Name: tt.chartErr},
+					}, nil
 				}
 			}
 

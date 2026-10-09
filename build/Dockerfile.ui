@@ -12,6 +12,12 @@ RUN zypper --non-interactive --gpg-auto-import-keys refresh && \
     zypper --non-interactive clean --all
 COPY --from=app /etc/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --from=app /home/plugin-server/plugin-contents /home/plugin-server/plugin-contents
+# The extension's catalog icon. ui/pkg/aif-ui/package.json sets "icon" to this
+# path relative to the repo root. Rancher resolves a relative chart icon against
+# the ClusterRepo URL and fetches it from inside the cluster, so the Extensions
+# page shows the logo without internet access. The build output only has
+# content-hashed copies of the image, so it is copied here under a fixed name.
+COPY ui/pkg/aif-ui/assets/logo.svg /home/plugin-server/plugin-contents/plugin/aif-ui/logo.svg
 RUN echo 'pluginserver:x:1000:1000::/home/pluginserver:/bin/bash' >> /etc/passwd && \
     echo 'pluginserver:x:1000:' >> /etc/group && \
     mkdir -p /home/pluginserver && \

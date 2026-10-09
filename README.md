@@ -90,7 +90,8 @@ https://github.com/SUSE/aif/pkgs/container/aif-ui
         ├── index.yaml
         ├── package.json
         ├── aif-ui
-            └── aif-ui-<version>.tgz
+            ├── aif-ui-<version>.tgz
+            └── logo.svg            # catalog icon (added by build/Dockerfile.ui)
         └── aif-ui-<version>
             ├── files.txt
             └── plugin/

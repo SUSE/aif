@@ -2,7 +2,7 @@
 
 Deploys the SUSE AI Factory UI extension as a container-based Rancher Dashboard extension.
 
-The chart creates a Deployment and Service that serve the built extension assets (including `index.yaml`). The InstallAIExtension controller then creates a ClusterRepo pointing to the Service and a UIPlugin referencing the chart metadata.
+The chart creates a Deployment and Service that serve the built extension assets (including `index.yaml`). The InstallAIExtension controller then creates a ClusterRepo pointing to the Service and installs the extension chart from it, as a Helm release named after the extension that creates the UIPlugin.
 
 ## Prerequisites
 

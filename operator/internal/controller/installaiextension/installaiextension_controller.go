@@ -129,9 +129,8 @@ type InstallAIExtensionReconciler struct {
 	AllowedRegistryHosts []string
 	// rancherMgr owns the Rancher-side objects. An interface for the same reason
 	// helmClientFor is a field: the failure branches behind these calls are
-	// recoverable ones the reconcile has to retry, and reaching them through the
-	// real manager means reaching them through a live index fetch over the
-	// network. See rancherManager.
+	// recoverable ones the reconcile has to retry, and tests have to be able to
+	// reach them. See rancherManager.
 	rancherMgr rancherManager
 	// helmClientFor builds the Helm client for a namespace. A field rather than a
 	// direct call so tests can drive the reconcile paths end to end against a stub
@@ -145,16 +144,13 @@ type InstallAIExtensionReconciler struct {
 // *rancher.Manager.
 //
 // Declared here rather than in the rancher package because it exists for the
-// consumer's sake. Four reconcile branches turn a failed Ensure into a retry,
-// and every one of them is a transient the cluster resolves on its own — a
-// webhook mid-restart, a CRD not yet served. Driving them through the real
-// manager means driving them through its Helm index fetch, so a test for
-// "does this retry" would come to depend on how the machine running it answers
-// a DNS query for a Service that does not exist.
+// consumer's sake. Both source paths turn a failed EnsureClusterRepo into a
+// retry, and that is a transient the cluster resolves on its own — a webhook
+// mid-restart, a CRD not yet served — so a test for "does this retry" has to be
+// able to produce the failure without a cluster that misbehaves on cue.
 type rancherManager interface {
 	CheckCRDs(ctx context.Context, crds []string) error
 	EnsureClusterRepo(ctx context.Context, ext *v1alpha1.InstallAIExtension, svcURL string) error
-	EnsureUIPlugin(ctx context.Context, ext *v1alpha1.InstallAIExtension, svcURL string, namespace string) error
 	DeleteClusterRepo(ctx context.Context, name string) error
 	DeleteUIPlugin(ctx context.Context, name string, namespace string) error
 }
@@ -648,15 +644,26 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
 		"Created", "ClusterRepo created", ext.Generation)
 
-	if err := r.rancherMgr.EnsureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		return setFailureAndRetry(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin failed: %v", err)), nil
-	}
-
-	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
-		"Created", "UIPlugin created", ext.Generation)
-
-	return ctrl.Result{}, nil
+	// The UIPlugin comes from the extension chart the server publishes, installed
+	// from the ClusterRepo just ensured, rather than being written here directly.
+	// Rancher's Extensions page only links an installed UIPlugin to its catalog
+	// chart through a release named after the plugin that records the repo it
+	// came from. See ensureExtensionChart.
+	//
+	// Its own pending marker, because the server release above has one too: if
+	// they shared it, every pass that found the server settled would clear the
+	// wait on this release and restart its timeout.
+	//
+	// No readiness wait: the chart is nothing but the UIPlugin CR, so there is no
+	// workload to wait for, and awaitReleaseRunning records
+	// Status.HelmReleaseRevision, which belongs to the server release.
+	//
+	// The last step, so whether it took ownership of the pass does not matter:
+	// a zero Result is what a completed pass returns anyway.
+	result, _, err = r.installExtensionChart(ctx, ext, namespace, svcURL,
+		rancher.ExtensionChartValues(svcURL, ext.Spec.Extension.Name, ext.Spec.Extension.Version),
+		annotationExtensionReleasePendingSince, "UIPlugin installed from the extension server")
+	return result, err
 }
 
 func (r *InstallAIExtensionReconciler) reconcileGitSource(
@@ -688,28 +695,20 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	setCondition(&ext.Status.Conditions, conditionTypeClusterRepo, metav1.ConditionTrue,
 		"Created", "ClusterRepo created for git source", ext.Generation)
 
-	pluginErr := r.ensureUIPluginGit(ctx, ext, rawBaseURL, namespace)
-	result, handled, err := r.handlePendingRelease(ctx, ext, conditionTypeUIPlugin, pluginErr)
-	if err != nil {
-		return ctrl.Result{}, err
+	// No values: a chart published to git already points its UIPlugin at the
+	// files published next to it.
+	if result, handled, err := r.installExtensionChart(ctx, ext, namespace, rawBaseURL, nil,
+		annotationReleasePendingSince, "UIPlugin installed from git source",
+	); handled || err != nil {
+		return result, err
 	}
-	if handled {
-		return result, nil
-	}
-	if pluginErr != nil {
-		return setFailureAndRetry(ext, conditionTypeUIPlugin,
-			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr)), nil
-	}
-
-	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
-		"Created", "UIPlugin installed from git source", ext.Generation)
 
 	// deploymentOptional, because a Rancher UI-plugin chart is allowed to be
 	// nothing but a UIPlugin CR and this path cannot tell that chart from one whose
 	// Deployment has not appeared yet. Required here would fail every install of
 	// the former after ReadinessTimeout — strictly worse than the wait it replaces.
 	//
-	// ext.Spec.Extension.Name, not releaseName: that is what ensureUIPluginGit
+	// ext.Spec.Extension.Name, not releaseName: that is what ensureExtensionChart
 	// installs under, and Status.HelmReleaseName is deliberately left unset on this
 	// path for the finalizer's sake.
 	if result, handled, err := r.awaitReleaseRunning(
@@ -721,11 +720,58 @@ func (r *InstallAIExtensionReconciler) reconcileGitSource(
 	return ctrl.Result{}, nil
 }
 
-func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
+// installExtensionChart ensures the extension chart and records the outcome on
+// UIPluginReady. It reports whether it took ownership of the pass, the way
+// handlePendingRelease does. Both source kinds go through it, so the same
+// release state produces the same conditions however the extension is sourced.
+//
+// pendingMarker is the annotation that times a wait on this release. See
+// handlePendingReleaseMarker.
+func (r *InstallAIExtensionReconciler) installExtensionChart(
 	ctx context.Context,
 	ext *v1alpha1.InstallAIExtension,
-	repoURL string,
 	namespace string,
+	repoURL string,
+	values map[string]interface{},
+	pendingMarker string,
+	installedMessage string,
+) (ctrl.Result, bool, error) {
+	pluginErr := r.ensureExtensionChart(ctx, ext, namespace, repoURL, values)
+	result, handled, err := r.handlePendingReleaseMarker(ctx, ext, conditionTypeUIPlugin, pendingMarker, pluginErr)
+	if err != nil || handled {
+		return result, true, err
+	}
+	if pluginErr != nil {
+		return setFailureAndRetry(ext, conditionTypeUIPlugin,
+			"Failed", fmt.Sprintf("UIPlugin install failed: %v", pluginErr)), true, nil
+	}
+
+	setCondition(&ext.Status.Conditions, conditionTypeUIPlugin, metav1.ConditionTrue,
+		"Created", installedMessage, ext.Generation)
+	return ctrl.Result{}, false, nil
+}
+
+// ensureExtensionChart installs the extension's Rancher UI-plugin chart from
+// repoURL, which serves the same charts as the extension's ClusterRepo. Both
+// source kinds use it, so they install the UIPlugin the same way.
+//
+// It installs the chart the way Rancher's Extensions page does, because that
+// page only recognises an installed extension that looks like one Rancher
+// installed itself. The release is named after the extension, which is what the
+// page matches a UIPlugin's App on, and it carries the ClusterRepo label that
+// pairs the App with the catalog chart. That pairing is what gives the
+// card its logo and description and drops the "Third-Party" tag. Without it the
+// page also lists the chart under Available as if it were not installed.
+//
+// The extension name is used both as the chart name and as the release name.
+// The chart renders its UIPlugin under the release name, and Rancher keys
+// plugins by name, so the two have to agree.
+func (r *InstallAIExtensionReconciler) ensureExtensionChart(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	namespace string,
+	repoURL string,
+	values map[string]interface{},
 ) error {
 	helm, err := r.helmFor(namespace)
 	if err != nil {
@@ -745,6 +791,8 @@ func (r *InstallAIExtensionReconciler) ensureUIPluginGit(
 		ChartRef:  ext.Spec.Extension.Name,
 		RepoURL:   repoURL,
 		Version:   ext.Spec.Extension.Version,
+		Values:    values,
+		Labels:    rancher.ExtensionChartLabels(rancher.ClusterRepoName(ext.Spec.Extension.Name)),
 	})
 }
 
@@ -764,12 +812,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 	if oldName != "" && oldName != newName {
 		logger.Info("extension name changed, cleaning up old resources", "old", oldName, "new", newName)
 
-		if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(oldName)); err != nil {
-			errs = append(errs, err)
-		}
-		if err := r.rancherMgr.DeleteUIPlugin(ctx, oldName, namespace); err != nil {
-			errs = append(errs, err)
-		}
+		errs = append(errs, r.removeExtension(ctx, oldName, namespace))
 
 		if oldSource == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
 			helm, err := r.helmFor(namespace)
@@ -781,12 +824,6 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 			ext.Status.HelmReleaseName = ""
 			ext.Status.HelmReleaseRevision = 0
 		}
-		if oldSource == v1alpha1.ExtensionSourceKindGit {
-			helm, err := r.helmFor(namespace)
-			if err == nil {
-				_ = helm.DeleteRelease(ctx, oldName)
-			}
-		}
 	}
 
 	if oldSource != "" && oldSource != newSource {
@@ -797,12 +834,7 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 			name = newName
 		}
 
-		if err := r.rancherMgr.DeleteClusterRepo(ctx, rancher.ClusterRepoName(name)); err != nil {
-			errs = append(errs, err)
-		}
-		if err := r.rancherMgr.DeleteUIPlugin(ctx, name, namespace); err != nil {
-			errs = append(errs, err)
-		}
+		errs = append(errs, r.removeExtension(ctx, name, namespace))
 
 		if oldSource == v1alpha1.ExtensionSourceKindHelm && ext.Status.HelmReleaseName != "" {
 			helm, err := r.helmFor(namespace)
@@ -817,13 +849,6 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 			meta.RemoveStatusCondition(&ext.Status.Conditions, conditionTypeHelmInstalled)
 			meta.RemoveStatusCondition(&ext.Status.Conditions, conditionTypeDeploymentReady)
 			meta.RemoveStatusCondition(&ext.Status.Conditions, conditionTypeServiceReady)
-		}
-
-		if oldSource == v1alpha1.ExtensionSourceKindGit {
-			helm, err := r.helmFor(namespace)
-			if err == nil {
-				_ = helm.DeleteRelease(ctx, name)
-			}
 		}
 	}
 
@@ -1089,20 +1114,10 @@ func (r *InstallAIExtensionReconciler) restartReadinessClocks(
 		return nil
 	}
 
-	cleared := false
-	for _, annotation := range []string{annotationWaitingSince, annotationServiceWaitingSince} {
-		if !r.getWaitingSince(ext, annotation).IsZero() {
-			r.clearWaitingSince(ext, annotation)
-			cleared = true
-		}
-	}
-	if !cleared {
-		return nil
-	}
-
-	// updateAnnotations, not Update: HelmReleaseName was set earlier in this pass
-	// and a bare Update would drop it before persistStatus ever sees it.
-	return r.updateAnnotations(ctx, ext)
+	// clearMarkers writes through updateAnnotations, not Update: HelmReleaseName
+	// was set earlier in this pass and a bare Update would drop it before
+	// persistStatus ever sees it.
+	return r.clearMarkers(ctx, ext, annotationWaitingSince, annotationServiceWaitingSince)
 }
 
 // awaitReadiness advances a bounded wait on an install step that has not
@@ -1176,11 +1191,26 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 	condType string,
 	err error,
 ) (ctrl.Result, bool, error) {
+	return r.handlePendingReleaseMarker(ctx, ext, condType, annotationReleasePendingSince, err)
+}
+
+// handlePendingReleaseMarker is handlePendingRelease with the wait timed under
+// marker, for a pass that ensures more than one release. Each release needs its
+// own clock. The settled branch below clears the marker it was given, so a
+// shared one would be cleared by whichever release settled and the other's
+// wait would never time out.
+func (r *InstallAIExtensionReconciler) handlePendingReleaseMarker(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	condType string,
+	marker string,
+	err error,
+) (ctrl.Result, bool, error) {
 	if !stderrors.Is(err, helmClient.ErrReleasePending) {
 		// The release either settled or failed for some other reason. Either way the
 		// wait is over, so drop the marker — left behind, it would make the next
 		// pending release inherit this window and time out on its first observation.
-		cerr := r.clearReleasePending(ctx, ext)
+		cerr := r.clearMarkers(ctx, ext, marker)
 		if cerr == nil {
 			return ctrl.Result{}, false, nil
 		}
@@ -1197,10 +1227,10 @@ func (r *InstallAIExtensionReconciler) handlePendingRelease(
 		return ctrl.Result{}, false, nil
 	}
 
-	pendingSince := r.getWaitingSince(ext, annotationReleasePendingSince)
+	pendingSince := r.getWaitingSince(ext, marker)
 	switch {
 	case pendingSince.IsZero():
-		r.setWaitingSince(ext, annotationReleasePendingSince)
+		r.setWaitingSince(ext, marker)
 		if uerr := r.updateAnnotations(ctx, ext); uerr != nil {
 			return ctrl.Result{}, true, uerr
 		}
@@ -1242,16 +1272,32 @@ func inReleasePendingWait(ext *v1alpha1.InstallAIExtension) bool {
 	return cond.Reason == reasonReleasePending || cond.Reason == reasonReleasePendingTimedOut
 }
 
-// clearReleasePending drops the pending-wait marker, writing only when one is
+// clearReleasePending drops every pending-wait marker, writing only when one is
 // actually set so the common path costs no API call.
 func (r *InstallAIExtensionReconciler) clearReleasePending(
 	ctx context.Context,
 	ext *v1alpha1.InstallAIExtension,
 ) error {
-	if r.getWaitingSince(ext, annotationReleasePendingSince).IsZero() {
+	return r.clearMarkers(ctx, ext, annotationReleasePendingSince, annotationExtensionReleasePendingSince)
+}
+
+// clearMarkers drops the named wait markers in a single write, and makes no
+// write at all when none of them is set.
+func (r *InstallAIExtensionReconciler) clearMarkers(
+	ctx context.Context,
+	ext *v1alpha1.InstallAIExtension,
+	markers ...string,
+) error {
+	cleared := false
+	for _, marker := range markers {
+		if !r.getWaitingSince(ext, marker).IsZero() {
+			r.clearWaitingSince(ext, marker)
+			cleared = true
+		}
+	}
+	if !cleared {
 		return nil
 	}
-	r.clearWaitingSince(ext, annotationReleasePendingSince)
 	return r.updateAnnotations(ctx, ext)
 }
 
@@ -1294,6 +1340,10 @@ const (
 	// pass, so sharing a key would let either clear or inherit the other's start
 	// time and time out against the wrong clock.
 	annotationReleasePendingSince = "ai-factory.suse.com/release-pending-since"
+	// annotationExtensionReleasePendingSince times the same wait for the Helm
+	// source's second release, the extension chart installed after the server
+	// release. Distinct for the reason handlePendingReleaseMarker gives.
+	annotationExtensionReleasePendingSince = "ai-factory.suse.com/extension-release-pending-since"
 	// annotationServiceWaitingSince times the wait on the release's Service
 	// becoming resolvable. Distinct from annotationWaitingSince for the same
 	// reason annotationReleasePendingSince is: the deployment wait is cleared the
