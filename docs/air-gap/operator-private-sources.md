@@ -128,6 +128,31 @@ SSH is not part of this minimal contract. Supporting it safely requires an
 explicit private-key and known-hosts model; TLS or SSH host verification must
 not be disabled as a shortcut.
 
+## Partner blueprint catalog
+
+The chart enables the SUSE partner blueprint catalog by default (`blueprintCatalogs` contains `partner-blueprints`, synced from `https://github.com/suse/partner-blueprints.git`). An air-gapped cluster can't reach GitHub, so its Fleet `GitRepo` (`fleet-local/blueprint-catalog-partner-blueprints`) reports clone errors.
+
+The catalog is Helm-managed and can't be removed from the Settings page. Disable it at install or upgrade time:
+
+```bash
+helm upgrade --install aif-operator oci://ghcr.io/suse/chart/aif-operator \
+  --namespace aif-operator --reuse-values --set-json 'blueprintCatalogs=[]'
+```
+
+To keep the catalog, mirror the repository internally and point the entry at the mirror. Credential and CA Secrets must already exist in the operator namespace:
+
+```yaml
+blueprintCatalogs:
+  - name: partner-blueprints
+    repoURL: https://gitea.internal/mirrors/partner-blueprints.git
+    branch: main
+    paths: [partners]
+    credSecretRef: {name: git-credentials, key: token}
+    caBundleSecretRef: {name: private-ca, key: ca.crt}
+```
+
+Don't use `--reset-values` to remove it: that restores the chart default, which includes the partner catalog. These commands assume Helm 4, which the chart requires; with Helm 3 the removal can delete the entire `Settings` spec (see the chart README).
+
 ## Catalog logos
 
 The extension ships a manifest of raster logos keyed by library and chart name.

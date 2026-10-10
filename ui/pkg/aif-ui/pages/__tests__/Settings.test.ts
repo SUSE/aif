@@ -5,6 +5,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import Settings from '../Settings.vue';
+import { nextTick } from 'vue';
+import { LabeledInput } from '@components/Form/LabeledInput';
+import { getSettings, putSettings } from '../../utils/operator-api';
 
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn().mockResolvedValue({ spec: {} }),
@@ -78,10 +81,13 @@ async function mountSettings(options: { route?: { query?: Record<string, string>
     getters: { 'i18n/t': (key: string) => key },
   };
 
-  const t = (key: string, args: Record<string, string> = {}) => {
+  // Like Rancher's i18n t(): output is HTML-escaped unless raw is truthy, so a
+  // template that renders it with {{ }} must pass raw to avoid literal entities.
+  const t = (key: string, args: Record<string, string> = {}, raw?: unknown) => {
     const value = key.split('.').reduce<any>((current, part) => current?.[part], translations);
     if (typeof value !== 'string') return key;
-    return value.replace(/\{(\w+)\}/g, (_match, name) => args[name] ?? '');
+    const out = value.replace(/\{(\w+)\}/g, (_match, name) => args[name] ?? '');
+    return raw ? out : out.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   };
 
   const wrapper = mount(Settings, {
@@ -206,5 +212,112 @@ describe('Settings page - Custom Repositories', () => {
     expect((wrapper.vm as any).spec.customRepos.length).toBe(1);
     expect(wrapper.find('[data-testid="section-customRepo-0"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="confirm-delete-custom-repo"]').exists()).toBe(false);
+  });
+});
+
+const PARTNER = {
+  name: 'partner-blueprints', repoURL: 'https://github.com/suse/partner-blueprints.git', branch: 'main', paths: ['partners'],
+};
+const TEAM_A = { name: 'team-a', repoURL: 'https://git.example.com/a.git', branch: 'main' };
+
+function settingsWithHelmCatalog(catalogs: any[] = [PARTNER, TEAM_A], managed: string[] = ['partner-blueprints']) {
+  return {
+    metadata: { annotations: { 'ai-factory.suse.com/helm-managed': JSON.stringify({ blueprintCatalogs: managed }) } },
+    spec:     { blueprintCatalogs: catalogs },
+  };
+}
+
+async function mountWithCatalogs(settings: any) {
+  vi.mocked(getSettings).mockResolvedValueOnce(settings);
+  const wrapper = await mountSettings();
+
+  (wrapper.vm as any).expanded.blueprintCatalogs = true;
+  await nextTick();
+
+  return wrapper;
+}
+
+describe('Settings page - Helm-managed blueprint catalogs', () => {
+  it('renders a Helm catalog read-only with a badge and no remove button', async () => {
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog());
+    const helmRow = wrapper.find('[data-testid="catalog-row-0"]');
+    const uiRow = wrapper.find('[data-testid="catalog-row-1"]');
+
+    expect(helmRow.find('[data-testid="catalog-helm-badge-0"]').exists()).toBe(true);
+    expect(helmRow.find('[data-testid="catalog-remove-0"]').exists()).toBe(false);
+    expect(helmRow.findAllComponents(LabeledInput).every((c: any) => c.props('mode') === 'view')).toBe(true);
+
+    expect(uiRow.find('[data-testid="catalog-helm-badge-1"]').exists()).toBe(false);
+    expect(uiRow.find('[data-testid="catalog-remove-1"]').exists()).toBe(true);
+    expect(uiRow.findAllComponents(LabeledInput).every((c: any) => c.props('mode') === 'edit')).toBe(true);
+  });
+
+  it('never sends Helm catalogs on Apply', async () => {
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog());
+
+    vi.mocked(putSettings).mockClear();
+    vi.mocked(putSettings).mockResolvedValueOnce(settingsWithHelmCatalog());
+    await (wrapper.vm as any).save(() => {});
+
+    const sent = vi.mocked(putSettings).mock.calls[0][0];
+
+    expect(sent.blueprintCatalogs.map((c: any) => c.name)).toEqual(['team-a']);
+  });
+
+  it('keeps Helm rows read-only after saving, from the PUT response', async () => {
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog());
+
+    vi.mocked(putSettings).mockResolvedValueOnce(settingsWithHelmCatalog());
+    await (wrapper.vm as any).save(() => {});
+
+    expect((wrapper.vm as any).spec.blueprintCatalogs.map((c: any) => c.helmManaged)).toEqual([true, false]);
+  });
+
+  // Review Focus 2: Helm names are not held to the page's own name rules.
+  it('does not block Apply when a Helm catalog name breaks the page name rules', async () => {
+    const longName = 'a-very-long-helm-declared-catalog-name-over-forty-chars';
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog([{ ...PARTNER, name: longName }], [longName]));
+
+    expect((wrapper.vm as any).validateBlueprintCatalogs()).toEqual([]);
+  });
+
+  // Review Focus 5: a new row reusing a Helm-declared name gets a specific error.
+  it('rejects a new catalog that reuses a Helm-declared name', async () => {
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog([PARTNER]));
+    const vm = wrapper.vm as any;
+
+    vm.addCatalog();
+    vm.spec.blueprintCatalogs[1].name = 'partner-blueprints';
+    vm.spec.blueprintCatalogs[1].touched = true;
+
+    expect(vm.catalogNameError(vm.spec.blueprintCatalogs[1], 1)).toContain('declared in Helm values');
+    expect(vm.validateBlueprintCatalogs()).toHaveLength(1);
+  });
+
+  it('renders the Helm help text without HTML entities', async () => {
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog());
+    const text = wrapper.find('[data-testid="catalog-row-0"]').text();
+
+    expect(text).toContain("--set-json 'blueprintCatalogs=[]'");
+    expect(text).not.toContain('&#39;');
+  });
+
+  it('shows the Helm-name collision message without HTML entities', async () => {
+    const wrapper = await mountWithCatalogs(settingsWithHelmCatalog([PARTNER]));
+    const vm = wrapper.vm as any;
+
+    vm.addCatalog();
+    vm.spec.blueprintCatalogs[1].name = 'partner-blueprints';
+    vm.spec.blueprintCatalogs[1].touched = true;
+
+    expect(vm.catalogNameError(vm.spec.blueprintCatalogs[1], 1)).toBe('"partner-blueprints" is declared in Helm values; choose another name');
+  });
+
+  // Review Focus 3: no annotation means everything is editable, as before.
+  it('treats every catalog as editable when the annotation is absent', async () => {
+    const wrapper = await mountWithCatalogs({ spec: { blueprintCatalogs: [PARTNER] } });
+
+    expect((wrapper.vm as any).spec.blueprintCatalogs[0].helmManaged).toBe(false);
+    expect(wrapper.find('[data-testid="catalog-remove-0"]').exists()).toBe(true);
   });
 });
