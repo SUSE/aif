@@ -26,6 +26,7 @@ import {
   DEFAULT_TOKEN_SECRET_NAME, DEFAULT_TOKEN_SECRET_KEY,
 } from '../services/rancher-token';
 import { emptyCustomRepo, buildCustomReposCrd, buildCustomReposForm, validateCustomRepoForm } from '../utils/custom-repos';
+import { emptyHelmManaged, parseHelmManaged } from '../utils/helm-managed';
 
 function createEmptySpec() {
   return {
@@ -63,7 +64,7 @@ export default {
     try {
       const data = await getSettings();
 
-      this.spec   = this.buildSpec(data.spec);
+      this.spec   = this.buildSpec(data.spec, parseHelmManaged(data));
       this.syncCustomRepoExpanded();
       this.loaded = true;
       await this.loadTokenState();
@@ -181,7 +182,7 @@ export default {
       return createEmptySpec();
     },
 
-    buildSpec(crdSpec = {}) {
+    buildSpec(crdSpec = {}, helmManaged = emptyHelmManaged()) {
       const s = this.emptySpec();
 
       if (crdSpec.fleet) {
@@ -237,6 +238,8 @@ export default {
         caBundleSecretRef: c.caBundleSecretRef || null,
         testResult:        null,
         touched:           false,
+        // Declared in Helm values: shown read-only and never sent back.
+        helmManaged:       helmManaged.blueprintCatalogs.has(c.name),
       }));
 
       return s;
@@ -302,7 +305,7 @@ export default {
       }
 
       const cats = (spec.blueprintCatalogs || [])
-        .filter((c) => c.name)
+        .filter((c) => c.name && !c.helmManaged)
         .map((c) => {
           const o = { name: c.name };
 
@@ -330,7 +333,7 @@ export default {
 
     addCatalog() {
       this.spec.blueprintCatalogs.push({
-        name: '', path: '', repoURL: '', branch: 'main', credSecretRef: null, caBundleSecretRef: null, testResult: null, touched: false,
+        name: '', path: '', repoURL: '', branch: 'main', credSecretRef: null, caBundleSecretRef: null, testResult: null, touched: false, helmManaged: false,
       });
     },
 
@@ -338,9 +341,20 @@ export default {
       this.spec.blueprintCatalogs.splice(index, 1);
     },
 
+    catalogMode(cat) {
+      return cat.helmManaged ? 'view' : this.mode;
+    },
+
     catalogNameError(cat, index) {
+      // Helm rows are read-only and validated by the chart, not by this page; a
+      // name outside the page's rules must not block saving other settings.
+      if (cat?.helmManaged) {
+        return '';
+      }
+
       const name = cat?.name;
-      const otherNames = (this.spec?.blueprintCatalogs || [])
+      const rows = this.spec?.blueprintCatalogs || [];
+      const otherNames = rows
         .filter((_, i) => i !== index)
         .map((c) => c.name);
 
@@ -354,6 +368,12 @@ export default {
 
       if (!name?.trim() && !hasOtherContent && !cat?.touched && !this.saveAttempted) {
         return '';
+      }
+
+      const trimmed = (name || '').trim();
+
+      if (trimmed && rows.some((c, i) => i !== index && c.helmManaged && c.name === trimmed)) {
+        return this.t('suseai.pages.settings.sections.blueprintCatalogs.custom.name.helmManaged', { name: trimmed }, true);
       }
 
       const res = validateCatalogName(name, otherNames);
@@ -441,7 +461,7 @@ export default {
 
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
-        this.spec = this.buildSpec(data.spec);
+        this.spec = this.buildSpec(data.spec, parseHelmManaged(data));
         this.saveAttempted = false;
         this.syncCustomRepoExpanded();
         // Discard diagnostics of the previous saved configuration, including any
@@ -1409,14 +1429,30 @@ export default {
             v-for="(cat, index) in spec.blueprintCatalogs"
             :key="index"
             class="box mb-10"
+            :data-testid="`catalog-row-${ index }`"
           >
+            <div
+              v-if="cat.helmManaged"
+              class="row mb-10"
+            >
+              <div class="col span-12">
+                <BadgeState
+                  color="bg-info"
+                  :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.helmManaged.badge')"
+                  :data-testid="`catalog-helm-badge-${ index }`"
+                />
+                <p class="text-muted mt-5">
+                  {{ t('suseai.pages.settings.sections.blueprintCatalogs.custom.helmManaged.help', {}, true) }}
+                </p>
+              </div>
+            </div>
             <div class="row mb-10">
               <div class="col span-6">
                 <LabeledInput
                   v-model:value="cat.name"
                   :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.name.label')"
                   :status="catalogNameError(cat, index) ? 'error' : undefined"
-                  :mode="mode"
+                  :mode="catalogMode(cat)"
                   required
                   @update:value="cat.touched = true"
                   @blur="cat.touched = true"
@@ -1432,7 +1468,7 @@ export default {
                 <LabeledInput
                   v-model:value="cat.repoURL"
                   :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.repoURL.label')"
-                  :mode="mode"
+                  :mode="catalogMode(cat)"
                 />
               </div>
             </div>
@@ -1442,21 +1478,25 @@ export default {
                 <LabeledInput
                   v-model:value="cat.branch"
                   :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.branch.label')"
-                  :mode="mode"
+                  :mode="catalogMode(cat)"
                 />
               </div>
               <div class="col span-5">
                 <LabeledInput
                   v-model:value="cat.path"
                   :label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.path.label')"
-                  :mode="mode"
+                  :mode="catalogMode(cat)"
                 />
               </div>
-              <div class="col span-1 trash-col">
+              <div
+                v-if="!cat.helmManaged"
+                class="col span-1 trash-col"
+              >
                 <button
                   type="button"
                   class="btn role-secondary"
                   :aria-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.remove')"
+                  :data-testid="`catalog-remove-${ index }`"
                   @click="removeCatalog(index)"
                 >
                   <i class="icon icon-trash" />
@@ -1475,7 +1515,7 @@ export default {
                   :show-key-selector="true"
                   :secret-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.credSecretRef.secretNameLabel')"
                   :key-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.credSecretRef.keyNameLabel')"
-                  :mode="mode"
+                  :mode="catalogMode(cat)"
                   @update:value="cat.credSecretRef = fromSelectorValue($event)"
                 />
               </div>
@@ -1492,7 +1532,7 @@ export default {
                   :show-key-selector="true"
                   :secret-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.caBundleSecretRef.secretNameLabel')"
                   :key-name-label="t('suseai.pages.settings.sections.blueprintCatalogs.custom.caBundleSecretRef.keyNameLabel')"
-                  :mode="mode"
+                  :mode="catalogMode(cat)"
                   @update:value="cat.caBundleSecretRef = fromSelectorValue($event)"
                 />
               </div>

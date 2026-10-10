@@ -181,3 +181,34 @@ tests:
     asserts:
       - notExists:
           path: spec.blueprintCatalogs
+
+  - it: default values mark the partner catalog as Helm-managed
+    asserts:
+      - equal:
+          path: metadata.annotations["ai-factory.suse.com/helm-managed"]
+          value: '{"blueprintCatalogs":["partner-blueprints"]}'
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  - it: every Helm-declared catalog is listed in the helm-managed annotation
+    set:
+      blueprintCatalogs:
+        - name: partner-blueprints
+          repoURL: https://github.com/suse/partner-blueprints.git
+        - name: team-a
+          repoURL: https://git.example.com/a.git
+    asserts:
+      - equal:
+          path: metadata.annotations["ai-factory.suse.com/helm-managed"]
+          value: '{"blueprintCatalogs":["partner-blueprints","team-a"]}'
+
+  - it: no Helm-declared catalogs means no helm-managed annotation
+    set:
+      blueprintCatalogs: []
+    asserts:
+      - notExists:
+          path: metadata.annotations["ai-factory.suse.com/helm-managed"]
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep

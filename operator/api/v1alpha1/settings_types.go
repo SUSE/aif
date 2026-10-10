@@ -164,6 +164,14 @@ type AppCatalogSettings struct {
 	RemoteURL string `json:"remoteUrl,omitempty"`
 }
 
+// SettingsHelmManagedAnnotation is set by the aif-operator chart on the Settings
+// CR. Its JSON value lists the values the chart declared, e.g.
+// {"blueprintCatalogs":["partner-blueprints"]}. Helm-declared values are changed
+// only through Helm: the operator API refuses to change them and never applies
+// them, so it never becomes a co-owner that would keep them alive after they are
+// removed from the chart values.
+const SettingsHelmManagedAnnotation = "ai-factory.suse.com/helm-managed"
+
 // SettingsSpec defines the desired state of Settings.
 type SettingsSpec struct {
 	// Fleet configures Fleet GitOps integration.
