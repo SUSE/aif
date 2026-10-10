@@ -16,7 +16,7 @@ It integrates with Rancher catalogs and UI plugins to enable declarative install
 ## Prerequisites
 
 - Kubernetes 1.24+
-- Helm 3.x
+- Helm 4.x (or any deployment tool that uses server-side apply, such as Rancher 2.15+ Apps & Marketplace or Fleet 0.16+). See [Blueprint catalogs](#blueprint-catalogs) for why Helm 3 is not supported.
 - Rancher installed (for UIPlugin and ClusterRepo integration)
 
 The following CRDs must exist before adding the operator:
@@ -366,6 +366,24 @@ When `defaultBlueprints.enabled=true`, the chart renders the curated `Blueprint`
 | `defaultBlueprints.enabled`  | Create the bundled default `Blueprint` CRs on install | `true`  |
 
 The defaults are Helm-managed: `helm upgrade` reconciles them to the chart's current set and `helm uninstall` removes them. Each rendered Blueprint carries the marker label `ai-factory.suse.com/source: bundled`. Set `defaultBlueprints.enabled=false` to manage blueprints exclusively by other means.
+
+### Blueprint catalogs
+
+| Name                | Description                                                       | Default                     |
+| ------------------- | ----------------------------------------------------------------- | --------------------------- |
+| `blueprintCatalogs` | Git-sourced blueprint catalogs, each synced by one Fleet `GitRepo` | `[partner-blueprints]`      |
+
+Catalogs declared here are Helm-managed. The chart lists them in the `ai-factory.suse.com/helm-managed` annotation on the `Settings` resource. The Settings page shows them read-only, and the operator API refuses to change them. Change or remove them only with `helm upgrade`:
+
+```bash
+# Remove every Helm-declared catalog, keeping your other values
+helm upgrade aif-operator oci://ghcr.io/suse/chart/aif-operator --namespace aif-operator \
+  --reuse-values --set-json 'blueprintCatalogs=[]'
+```
+
+`--reset-values` restores the default list (which includes `partner-blueprints`), and a plain `helm upgrade` with no values flags reuses the previous values, so neither removes a catalog. Helm replaces lists rather than merging them: setting your own list drops `partner-blueprints` unless you list it again. Catalogs added on the Settings page aren't affected by `helm upgrade`.
+
+This relies on server-side apply, which Helm 4, Rancher 2.15+ Apps & Marketplace and Fleet 0.16+ use. Helm 3 and Argo CD's default client-side apply update the `Settings` resource with a JSON merge patch instead. That replaces the whole catalog list whenever the Helm-declared list changes, which drops catalogs added on the Settings page. If the chart stops rendering `spec` (for example after `--set-json 'blueprintCatalogs=[]'` with no other Settings values), the patch deletes the entire `Settings` spec. Use Helm 4, or enable server-side apply in Argo CD (`ServerSideApply=true`).
 
 ## Bundled blueprints
 

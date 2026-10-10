@@ -264,8 +264,24 @@ defaultBlueprints:
 # Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo that
 # syncs Blueprint CRs from the given repo/paths. The bundled default catalog is
 # always present and is NOT listed here. credSecretRef/caBundleSecretRef must
-# reference Secrets you pre-create in the operator namespace.
-blueprintCatalogs: []
+# reference Secrets you pre-create in the operator namespace. The SUSE partner
+# catalog is enabled by default; overriding this list replaces it (re-list
+# partner-blueprints to keep it alongside your own catalogs).
+#
+# Catalogs listed here are Helm-managed: the Settings page shows them read-only,
+# and they are changed or removed only with helm upgrade. To remove them, set
+# the list explicitly, e.g.:
+#   helm upgrade ... --reuse-values --set-json 'blueprintCatalogs=[]'
+# --reset-values restores this default list, and a plain helm upgrade with no
+# values flags reuses your previous values, so neither removes a catalog.
+# Catalogs added on the Settings page are not affected by helm upgrade.
+# This needs server-side apply (Helm 4, Rancher 2.15+ Apps, Fleet 0.16+). Helm 3
+# and Argo CD client-side apply replace the whole list (see README).
+blueprintCatalogs:
+  - name: partner-blueprints
+    repoURL: https://github.com/suse/partner-blueprints.git
+    branch: main
+    paths: [partners]
 #  - name: partner-acme
 #    repoURL: https://github.com/acme/blueprints.git
 #    branch: main

@@ -127,6 +127,32 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The live CR drives two adjustments to the request, so it is always read.
+	// A transient read error fails the save rather than risk applying without
+	// them (silently wiping remoteUrl, or co-owning Helm-declared catalogs).
+	var existing aiplatformv1alpha1.Settings
+	if err := h.client.Get(r.Context(), types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &existing); err != nil && !k8serrors.IsNotFound(err) {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	// On NotFound (first-ever save) existing stays empty: nothing is Helm-managed
+	// and there is no remoteUrl to preserve.
+
+	// Blueprint catalogs the chart declared are changed only through Helm. They are
+	// never applied here, so aif-operator-api never co-owns them and removing them
+	// from the chart values removes them from the cluster.
+	managed, err := parseHelmManaged(existing.Annotations)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	cats, err := filterHelmManagedCatalogs(s.Spec.BlueprintCatalogs, existing.Spec.BlueprintCatalogs, managed)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	s.Spec.BlueprintCatalogs = cats
+
 	// The request spec is applied verbatim under a single field owner, so zero-value
 	// fields overwrite configured values (intentional — the Settings page round-trips
 	// every field it owns, e.g. clearing fleet/registry). appCatalog.remoteUrl is the
@@ -135,19 +161,7 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	// Preserve only RemoteURL, not the whole AppCatalog struct: any field added to
 	// AppCatalogSettings later that the Settings page does own must round-trip normally.
 	if s.Spec.AppCatalog.RemoteURL == "" {
-		var existing aiplatformv1alpha1.Settings
-		err := h.client.Get(r.Context(), types.NamespacedName{Namespace: h.namespace, Name: settingsName}, &existing)
-		switch {
-		case err == nil:
-			s.Spec.AppCatalog.RemoteURL = existing.Spec.AppCatalog.RemoteURL
-		case k8serrors.IsNotFound(err):
-			// First-ever save: nothing to preserve.
-		default:
-			// Fail rather than risk silently wiping a configured remoteUrl on a
-			// transient read error (the apply would overwrite it with an empty value).
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		s.Spec.AppCatalog.RemoteURL = existing.Spec.AppCatalog.RemoteURL
 	}
 
 	if err := h.client.Patch(

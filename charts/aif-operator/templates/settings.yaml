@@ -1,6 +1,17 @@
 {{- $credentials := index .Values "credentials" -}}
 {{- $rc := .Values.rancherCatalog -}}
 {{- $rcSecret := $rc.tokenSecret.name | default (printf "%s-rancher-catalog" (include "aif-operator.fullname" .)) -}}
+{{- /*
+  helm-managed lists what this chart declared in Settings, so the operator API and
+  Settings page treat those values as read-only (they are changed through Helm
+  only). Built from the same values as the spec below so the two cannot drift.
+*/ -}}
+{{- $helmManaged := dict -}}
+{{- $catalogNames := list -}}
+{{- range .Values.blueprintCatalogs }}
+{{- if .name }}{{- $catalogNames = append $catalogNames .name -}}{{- end }}
+{{- end }}
+{{- if $catalogNames }}{{- $_ := set $helmManaged "blueprintCatalogs" $catalogNames -}}{{- end }}
 apiVersion: ai-factory.suse.com/v1alpha1
 kind: Settings
 metadata:
@@ -10,6 +21,9 @@ metadata:
     {{- include "aif-operator.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
+    {{- if $helmManaged }}
+    ai-factory.suse.com/helm-managed: {{ $helmManaged | toJson | quote }}
+    {{- end }}
 {{- if or (and $credentials.applicationCollection.username $credentials.applicationCollection.password)
           (and $credentials.nvidia.username $credentials.nvidia.password)
           (and $credentials.suseRegistry.username $credentials.suseRegistry.password)
