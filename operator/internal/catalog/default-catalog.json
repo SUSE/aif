@@ -255,6 +255,21 @@
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/blueprint"
     },
     {
+      "name": "auto-discovery-service",
+      "slug_name": "auto-discovery-service",
+      "description": "Auto-Discovery Service Helm Chart: automatically discovers microservices within a Kubernetes cluster and provides a unified API for querying them.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-10-07T00:49:48.106Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
       "name": "Boltz2 NIM",
       "slug_name": "boltz2-nim",
       "description": "Helm Chart for Boltz2 NIM",
@@ -533,7 +548,7 @@
       "slug_name": "envoy-auth-extension",
       "description": "Auth extension used with Envoy and the Omniverse Storage APIs.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-04-13T23:24:09.393Z",
+      "last_updated_at": "2026-10-07T00:49:11.285Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -548,7 +563,7 @@
       "slug_name": "event-aggregation-service",
       "description": "Omniverse Storage APIs Notification Aggregation service.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-07-13T23:10:12.958Z",
+      "last_updated_at": "2026-10-07T00:49:07.831Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -563,7 +578,7 @@
       "slug_name": "event-consumer-service",
       "description": "Omniverse Storage API Notification Consumer Chart.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-07-13T23:10:13.982Z",
+      "last_updated_at": "2026-10-07T00:49:08.897Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -715,11 +730,26 @@
       ]
     },
     {
+      "name": "live-edit-service",
+      "slug_name": "live-edit-service",
+      "description": "Live Edit allows multiple users to collaborate on Omniverse scene layers in a shared live session.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-10-07T00:49:49.752Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
       "name": "Microsoft Graph User Info Chart",
       "slug_name": "microsoft-graph-userinfo-service",
       "description": "Omniverse Storage API Sample User Info Chart",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-08-04T21:16:16.074Z",
+      "last_updated_at": "2026-10-07T00:49:46.637Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -845,7 +875,7 @@
       "slug_name": "nim-llm",
       "description": "Helm Chart for NVIDIA NIM for LLMs",
       "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
-      "last_updated_at": "2026-09-16T23:52:28.476Z",
+      "last_updated_at": "2026-10-09T03:25:50.073Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim",
       "labels": [
@@ -1451,7 +1481,7 @@
       "slug_name": "permission-service",
       "description": "Omniverse Storage APIs Permissions Service Chart.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-08-04T21:16:10.828Z",
+      "last_updated_at": "2026-10-07T00:49:12.625Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1547,7 +1577,7 @@
       "slug_name": "storage-api-integration-tests",
       "description": "Integration test suite for validating Storage APIs service stack",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-08-04T21:16:14.608Z",
+      "last_updated_at": "2026-10-07T00:49:45.358Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1562,7 +1592,7 @@
       "slug_name": "storage-navigator",
       "description": "Omniverse Storage APIs - Storage Navigator file browser UI.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-08-04T21:16:12.326Z",
+      "last_updated_at": "2026-10-07T00:49:14.024Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1577,7 +1607,7 @@
       "slug_name": "storage-service",
       "description": "Omniverse Storage APIs Storage Service Chart.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-08-04T21:16:07.516Z",
+      "last_updated_at": "2026-10-07T00:49:10.182Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1624,6 +1654,21 @@
       "last_updated_at": "2024-12-17T02:49:24.853Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim/nvidia",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
+      "name": "thumbnail-service",
+      "slug_name": "thumbnail-service",
+      "description": "Thumbnails enables generation, storage, and retrieval of thumbnail images for storage resources, providing visual previews of files and assets.",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-10-07T00:49:51.220Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
         {
           "code": "supported",
