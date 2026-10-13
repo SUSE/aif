@@ -15,7 +15,7 @@ export interface BlueprintComponent {
 // stays `source`; only the type identifier differs. Mirrors the Go-side
 // rename in aif-operator/api/v1alpha1/blueprint_types.go. Must match the CRD
 // enum (pinned by blueprint-crd-parity.test.ts).
-export const BLUEPRINT_ORIGINS = ['SUSE', 'Nvidia', 'Partner', 'Custom'] as const;
+export const BLUEPRINT_ORIGINS = ['SUSE', 'Nvidia', 'Partner', 'Community', 'Custom'] as const;
 export type BlueprintOrigin = typeof BLUEPRINT_ORIGINS[number];
 
 export interface BlueprintSpec {
@@ -45,7 +45,7 @@ export interface BlueprintList {
 
 export const BLUEPRINT_NAME_LABEL    = 'ai-factory.suse.com/blueprint-name';
 // Provenance label the Helm chart stamps on product-shipped ("bundled") blueprints.
-// Distinct from spec.source (the BlueprintOrigin enum SUSE/Nvidia/Partner/Custom).
+// Distinct from spec.source (the BlueprintOrigin enum SUSE/Nvidia/Partner/Community/Custom).
 export const BLUEPRINT_SOURCE_LABEL   = 'ai-factory.suse.com/source';
 export const BLUEPRINT_SOURCE_BUNDLED = 'bundled';
 // Label Fleet stamps on Blueprints it syncs from a catalog GitRepo. Mirrors
