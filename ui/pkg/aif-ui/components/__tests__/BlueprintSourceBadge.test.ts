@@ -45,6 +45,15 @@ describe('BlueprintSourceBadge', () => {
     expect(wrapper.attributes('aria-label')).toBe('Source: Partner');
   });
 
+  it('renders the Community text label', () => {
+    const wrapper = mount(BlueprintSourceBadge, { props: { source: 'Community' } });
+
+    expect(wrapper.classes()).toEqual(expect.arrayContaining(['tag', 'source-badge', 'source-badge--community']));
+    expect(wrapper.text()).toBe('Community');
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.attributes('aria-label')).toBe('Source: Community');
+  });
+
   it('has no icon prop: provenance is never replaced by a partner image', () => {
     const wrapper = mount(BlueprintSourceBadge, {
       props: { source: 'Custom' },

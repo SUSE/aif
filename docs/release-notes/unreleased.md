@@ -79,3 +79,15 @@ Updating a blueprint with an invalid spec now returns HTTP 422 instead of 500.
 which the chart applies on upgrade. aif-operator 2.2.0 rejects `source: Partner`,
 so catalog authors must not use it until the minimum supported operator version
 includes this change.
+
+## Community blueprint source
+
+Blueprints accept **`source: Community`** for blueprints published through the
+community catalog. It renders as a text badge on the Blueprints page and, like
+every `source` value, is declared by the blueprint author and not verified by
+the operator. `icon` works the same as for Partner blueprints.
+
+**Compatibility:** needs the Blueprint CRD shipped with this release, which the
+chart applies on upgrade. Older operators reject `source: Community`, so catalog
+authors must not use it until the minimum supported operator version includes
+this change.
