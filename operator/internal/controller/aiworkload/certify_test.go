@@ -65,7 +65,7 @@ func TestBundleCertified(t *testing.T) {
 func fakeClient(objs ...client.Object) client.Client {
 	s := runtime.NewScheme()
 	_ = aiplatformv1alpha1.AddToScheme(s)
-	for _, gvk := range []schema.GroupVersionKind{bundleGVK, bundleDeploymentGVK, helmOpGVK} {
+	for _, gvk := range []schema.GroupVersionKind{bundleGVK, bundleDeploymentGVK, helmOpGVK, fleetClusterGVK} {
 		s.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		lg := gvk
 		lg.Kind += "List"

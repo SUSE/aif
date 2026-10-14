@@ -1511,6 +1511,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 ) ([]aiplatformv1alpha1.AIWorkloadComponentStatus, error) {
 	cells := []aiplatformv1alpha1.AIWorkloadComponentStatus{}
 	epoch := r.retryEpochValue(w)
+	resolvedClusters := map[string]string{}
 	for _, k := range keys {
 		b, err := r.getBundle(ctx, k.Namespace, k.Name)
 		if err != nil {
@@ -1537,7 +1538,12 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 		seenClusters := make(map[string]bool)
 		for i := range bdList.Items {
 			bd := &bdList.Items[i]
-			clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
+			// Key by management cluster ID so the cell matches the expected
+			// IDs from spec.targetClusters below.
+			clusterID, err := r.bundleDeploymentClusterID(ctx, bd, resolvedClusters)
+			if err != nil {
+				return nil, err
+			}
 			if clusterID == "" {
 				continue
 			}

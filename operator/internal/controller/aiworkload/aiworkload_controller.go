@@ -89,6 +89,7 @@ var (
 	bundleDeploymentGVK = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleDeployment"}
 	bundleGVK           = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Bundle"}
 	helmOpGVK           = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "HelmOp"}
+	fleetClusterGVK     = schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "Cluster"}
 	fleetNamespaces     = []string{"fleet-local", "fleet-default"}
 )
 
@@ -125,6 +126,7 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=fleet.cattle.io,resources=clusters,verbs=get
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=helmops,verbs=get;list;watch;create;patch;delete
@@ -535,8 +537,12 @@ func (r *AIWorkloadReconciler) mirrorFleetStatus(ctx context.Context, w *aiplatf
 	}
 
 	statuses := make([]aiplatformv1alpha1.AIWorkloadClusterStatus, 0, len(bdList.Items))
+	resolvedClusters := map[string]string{}
 	for _, bd := range bdList.Items {
-		clusterID, _, _ := unstructured.NestedString(bd.Object, "metadata", "labels", "fleet.cattle.io/cluster")
+		clusterID, err := r.bundleDeploymentClusterID(ctx, &bd, resolvedClusters)
+		if err != nil {
+			return err
+		}
 		if clusterID == "" {
 			continue
 		}
