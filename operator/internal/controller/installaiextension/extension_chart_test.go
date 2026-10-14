@@ -223,6 +223,10 @@ func TestCleanupUninstallsTheExtensionChartForEitherSourceKind(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stub := &stubHelmClient{}
+			// A real Installed CR, not a freshly-created one: cleanup must only ever
+			// act on a name a reconcile actually confirmed, never on spec.Extension.Name
+			// taken on faith. See TestCleanupNeverTouchesAnExtensionItNeverInstalled.
+			tt.ext.Status.ActiveExtensionName = tt.ext.Spec.Extension.Name
 			if tt.ext.Spec.Source.Kind == v1alpha1.ExtensionSourceKindHelm {
 				tt.ext.Status.HelmReleaseName = releaseName
 			}
@@ -284,5 +288,33 @@ func TestHelmSourceRefusesAnExtensionNamedLikeItsServerRelease(t *testing.T) {
 				t.Errorf("%s = %+v, want False/ExtensionNameCollision", conditionTypeReady, cond)
 			}
 		})
+	}
+}
+
+// A CR's finalizer must never uninstall a release by spec.Extension.Name alone:
+// that field is user-supplied and, on a CR that was refused before ever
+// installing anything — the name-collision guard, a rejected chart URL, any
+// failure before the extension chart is reached — it names a release this CR
+// never created. If that name happens to match a release some other CR (or a
+// manual install) owns, deleting it on cleanup takes that one down too.
+// Status.ActiveExtensionName is set once, only after a full successful
+// reconcile (see reconcile()'s tail), so it is the one name cleanup may act on.
+func TestCleanupNeverTouchesAnExtensionItNeverInstalled(t *testing.T) {
+	ext := helmExtension()
+	ext.Spec.Extension.Name = "someone-elses-release"
+	// Never set: this CR never reached a successful reconcile, e.g. refused by
+	// the name-collision guard before anything was installed.
+	ext.Status.ActiveExtensionName = ""
+
+	stub := &stubHelmClient{}
+	r := wiringReconciler(t, ext, stub)
+	r.rancherMgr = &stubRancherManager{}
+
+	if err := r.cleanup(context.Background(), ext); err != nil {
+		t.Fatalf("cleanup() error = %v", err)
+	}
+	if slices.Contains(stub.deleted, "someone-elses-release") {
+		t.Errorf("cleanup deleted %q, a release this CR never installed; deleted %v",
+			"someone-elses-release", stub.deleted)
 	}
 }

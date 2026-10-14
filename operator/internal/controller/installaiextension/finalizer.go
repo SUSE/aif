@@ -77,16 +77,17 @@ func (r *InstallAIExtensionReconciler) cleanup(
 	logger := log.FromContext(ctx)
 	namespace := r.ExtensionNamespace
 
-	names := []string{ext.Spec.Extension.Name}
-	if ext.Status.ActiveExtensionName != "" && ext.Status.ActiveExtensionName != ext.Spec.Extension.Name {
-		names = append(names, ext.Status.ActiveExtensionName)
-	}
-	errs := make([]error, 0, len(names)+1)
+	errs := make([]error, 0, 2)
 
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
+	// ActiveExtensionName, never spec.Extension.Name on its own: it is set once,
+	// only after a full successful reconcile (reconcile()'s tail), so it is the
+	// one name this CR has actually confirmed it installed. spec.Extension.Name
+	// is user-supplied and, on a CR that was refused before ever reaching an
+	// install — the name-collision guard, a rejected chart URL, any earlier
+	// failure — can be any string, including the name of a release that belongs
+	// to a different, unrelated CR. Deleting by that name alone would take the
+	// other one down along with it.
+	if name := ext.Status.ActiveExtensionName; name != "" {
 		errs = append(errs, r.removeExtension(ctx, name, namespace))
 	}
 
