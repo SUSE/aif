@@ -70,8 +70,11 @@ type ReleaseSpec struct {
 	Version   string
 	Values    map[string]interface{}
 	// Labels are stamped on the stored release record, the SDK equivalent of
-	// `helm install --labels`. Helm keeps labels it was not asked about, so this
-	// adds to a release's labels and never strips any.
+	// `helm install --labels`. Helm merges them onto whatever the stored release
+	// already has (mergeCustomLabels): a changed value for a key still listed
+	// here is corrected (see labelDrift), but a key dropped from this map stays
+	// on the release forever — nothing here asks Helm to remove one (its
+	// "null"-value convention for that is never used).
 	Labels map[string]string
 	// RegistryAuth optionally authenticates the chart pull. In-memory only.
 	RegistryAuth *RegistryAuth

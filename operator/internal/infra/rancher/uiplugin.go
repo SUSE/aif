@@ -34,6 +34,12 @@ import (
 // certification come from. An extension installed without it is shown as a
 // "Third-Party" card with no logo, next to a second, uninstalled copy of itself
 // under Available.
+//
+// On Rancher 2.10–2.14 (the minimum this operator supports; see
+// charts/aif-ui/README.md's Prerequisites) the Extensions page pairs an
+// installed plugin to its catalog chart by chart name instead, so the install
+// still gets its logo and description there with or without this label — it is
+// harmless on those versions, just not what does the pairing.
 const labelClusterRepoName = "catalog.cattle.io/cluster-repo-name"
 
 // ExtensionChartLabels returns the release labels that tie an extension chart
