@@ -359,3 +359,30 @@ func TestRenamingALiveExtensionToCollideDoesNotDeleteTheServer(t *testing.T) {
 		t.Errorf("Status.HelmReleaseName was cleared even though the guard is supposed to leave the server untouched")
 	}
 }
+
+// A release the extension chart's EnsureRelease has started — Helm already has
+// a record of it, pending or not — must still be found by cleanup if the CR is
+// deleted before the wait settles. ActiveExtensionName used to be set only
+// after a full successful reconcile, so a CR deleted mid-wait leaked whatever
+// the pending install had already created: cleanup saw an empty
+// ActiveExtensionName and removed nothing.
+func TestPendingExtensionInstallIsStillFoundOnDelete(t *testing.T) {
+	ext := helmExtension()
+	stub := &stubHelmClient{ensureErrFor: map[string]error{extensionReleaseName: pendingErr("pending-install")}}
+	r, _ := helmSourceReconciler(t, ext, stub)
+
+	if _, err := r.reconcileHelmSource(context.Background(), ext, wiringNamespace); err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+	if ext.Status.Phase == v1alpha1.InstallAIExtensionPhaseInstalled {
+		t.Fatalf("test setup: expected the extension install to still be pending, got Installed")
+	}
+
+	if err := r.cleanup(context.Background(), ext); err != nil {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	if !slices.Contains(stub.deleted, extensionReleaseName) {
+		t.Errorf("cleanup did not attempt to remove the pending extension release %q; deleted %v",
+			extensionReleaseName, stub.deleted)
+	}
+}

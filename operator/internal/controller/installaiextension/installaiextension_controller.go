@@ -759,6 +759,16 @@ func (r *InstallAIExtensionReconciler) installExtensionChart(
 	pendingMarker string,
 	installedMessage string,
 ) (ctrl.Result, bool, error) {
+	// Recorded before the attempt, not only on confirmed success: EnsureRelease
+	// below can leave a real release behind — deployed, or still pending — and
+	// return anything from a wait to an unrelated later failure. cleanupStaleResources
+	// and the finalizer's cleanup both key off ActiveExtensionName/ActiveSourceKind to
+	// find what this CR owns; setting them only after a full successful reconcile
+	// left a release created here undiscoverable for as long as the pass that
+	// created it never fully settled — a CR deleted mid-wait leaked it outright.
+	ext.Status.ActiveExtensionName = ext.Spec.Extension.Name
+	ext.Status.ActiveSourceKind = ext.Spec.Source.Kind
+
 	pluginErr := r.ensureExtensionChart(ctx, ext, namespace, repoURL, values)
 	result, handled, err := r.handlePendingReleaseMarker(ctx, ext, conditionTypeUIPlugin, pendingMarker, pluginErr)
 	if err != nil || handled {
