@@ -270,7 +270,10 @@ func TestHelmSourceRefusesAnExtensionNamedLikeItsServerRelease(t *testing.T) {
 			stub := &stubHelmClient{}
 			r, _ := helmSourceReconciler(t, ext, stub)
 
-			result, err := r.reconcileHelmSource(context.Background(), ext, wiringNamespace)
+			// reconcile(), not reconcileHelmSource(): the guard now runs ahead of
+			// cleanupStaleResources, at the top of reconcile(). See
+			// TestRenamingALiveExtensionToCollideDoesNotDeleteTheServer for why.
+			result, err := r.reconcile(context.Background(), ext)
 			if err != nil {
 				t.Fatalf("reconcile error = %v", err)
 			}
@@ -316,5 +319,43 @@ func TestCleanupNeverTouchesAnExtensionItNeverInstalled(t *testing.T) {
 	if slices.Contains(stub.deleted, "someone-elses-release") {
 		t.Errorf("cleanup deleted %q, a release this CR never installed; deleted %v",
 			"someone-elses-release", stub.deleted)
+	}
+}
+
+// Renaming a live extension to match its own server release name must not
+// delete anything: the guard in reconcileHelmSource is supposed to refuse it
+// before any Helm call. But cleanupStaleResources — which reconcile() runs
+// before reconcileHelmSource ever sees the new name — reacts to the name
+// change on its own, and (for a Helm source) unconditionally uninstalls
+// Status.HelmReleaseName whenever the extension name changes. That makes the
+// guard's own comment ("a refused spec touches no release") false for a CR
+// that was already running: the live server release is gone before the guard
+// is ever reached.
+func TestRenamingALiveExtensionToCollideDoesNotDeleteTheServer(t *testing.T) {
+	ext := helmExtension()
+	ext.Status.ActiveExtensionName = "aif-ui"
+	ext.Status.ActiveSourceKind = v1alpha1.ExtensionSourceKindHelm
+	ext.Status.HelmReleaseName = releaseName // "aif-ui-server", the live server
+	ext.Status.HelmReleaseRevision = 1
+
+	// Collides with the server release derived from the (unchanged) chart URL.
+	ext.Spec.Extension.Name = releaseName
+
+	stub := &stubHelmClient{}
+	r, _ := helmSourceReconciler(t, ext, stub)
+
+	if _, err := r.reconcile(context.Background(), ext); err != nil {
+		t.Fatalf("reconcile error = %v", err)
+	}
+
+	if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
+		t.Errorf("phase = %s, want Failed", ext.Status.Phase)
+	}
+	if slices.Contains(stub.deleted, releaseName) {
+		t.Errorf("the live server release %q was deleted by cleanupStaleResources before "+
+			"the collision guard ever ran; deleted %v", releaseName, stub.deleted)
+	}
+	if ext.Status.HelmReleaseName == "" {
+		t.Errorf("Status.HelmReleaseName was cleared even though the guard is supposed to leave the server untouched")
 	}
 }

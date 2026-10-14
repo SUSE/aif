@@ -385,6 +385,25 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 
 	ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseInstalling
 
+	// Ahead of cleanupStaleResources, not inside reconcileHelmSource where this
+	// used to live: cleanupStaleResources reacts to a changed extension name on
+	// its own, and for a Helm source it unconditionally uninstalls
+	// Status.HelmReleaseName (the server) whenever the name changes. A CR already
+	// running that gets renamed into this collision would have its live server
+	// taken down by that cleanup before reconcileHelmSource ever saw the new
+	// name, contradicting this guard's whole point. Checked here, nothing below
+	// it runs at all.
+	if extensionCollidesWithServer(ext) {
+		releaseName := deriveReleaseName(ext.Spec.Source.Helm.ChartURL)
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"ExtensionNameCollision",
+			fmt.Sprintf("spec.extension.name %q is also the name of the release this chart URL installs the "+
+				"extension server as; rename the extension or the chart", releaseName),
+			ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.cleanupStaleResources(ctx, ext, namespace); err != nil {
 		logger.Error(err, "stale resource cleanup failed, retrying")
 		return ctrl.Result{}, err
@@ -507,20 +526,9 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 
 	releaseName := deriveReleaseName(helmSource.ChartURL)
 
-	// The extension chart is installed as a release named after the extension
-	// (see ensureExtensionChart), so the two names must differ. If they agree,
-	// every pass installs one chart over the other, and the finalizer's uninstall
-	// of the extension release takes the server with it. Checked before the
-	// chart-URL-change uninstall below, so a refused spec touches no release.
-	if ext.Spec.Extension.Name == releaseName {
-		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
-			"ExtensionNameCollision",
-			fmt.Sprintf("spec.extension.name %q is also the name of the release this chart URL installs the "+
-				"extension server as; rename the extension or the chart", releaseName),
-			ext.Generation)
-		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
-		return ctrl.Result{}, nil
-	}
+	// The collision this name would cause is checked at the very top of
+	// reconcile(), before cleanupStaleResources, not here. See
+	// extensionCollidesWithServer.
 
 	if ext.Status.HelmReleaseName != "" && ext.Status.HelmReleaseName != releaseName {
 		logger.Info("chart URL changed, uninstalling old release", "old", ext.Status.HelmReleaseName, "new", releaseName)
@@ -868,6 +876,18 @@ func (r *InstallAIExtensionReconciler) cleanupStaleResources(
 	}
 
 	return stderrors.Join(errs...)
+}
+
+// extensionCollidesWithServer reports whether a Helm-source extension would
+// install its extension chart as the same release the server chart installs
+// as, derived from the chart URL. Checked at the very top of reconcile(); see
+// the comment there for why cleanupStaleResources cannot be trusted to still
+// be holding the old name by the time a check inside reconcileHelmSource runs.
+func extensionCollidesWithServer(ext *v1alpha1.InstallAIExtension) bool {
+	if ext.Spec.Source.Kind != v1alpha1.ExtensionSourceKindHelm || ext.Spec.Source.Helm == nil {
+		return false
+	}
+	return ext.Spec.Extension.Name == deriveReleaseName(ext.Spec.Source.Helm.ChartURL)
 }
 
 func deriveReleaseName(chartURL string) string {

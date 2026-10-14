@@ -204,12 +204,11 @@ jobs:
           ENDPOINT=$(yq '.plugin.endpoint' "${EXT_CHART}/values.yaml")
           echo "extension chart plugin.endpoint: ${ENDPOINT}"
 
-          SVC_NAME=$(helm template ci-check "$GITHUB_WORKSPACE/$CHART_PATH" \
+          RENDERED_SERVICE=$(helm template ci-check "$GITHUB_WORKSPACE/$CHART_PATH" \
             --namespace cattle-ui-plugin-system --set standalone=true \
-            --show-only templates/service.yaml | yq '.metadata.name')
-          SVC_PORT=$(helm template ci-check "$GITHUB_WORKSPACE/$CHART_PATH" \
-            --namespace cattle-ui-plugin-system --set standalone=true \
-            --show-only templates/service.yaml | yq '.spec.ports[0].port')
+            --show-only templates/service.yaml)
+          SVC_NAME=$(yq '.metadata.name' <<< "$RENDERED_SERVICE")
+          SVC_PORT=$(yq '.spec.ports[0].port' <<< "$RENDERED_SERVICE")
           EXPECTED_PREFIX="http://${SVC_NAME}.cattle-ui-plugin-system:${SVC_PORT}/"
 
           if [[ "${ENDPOINT}" != "${EXPECTED_PREFIX}"* ]]; then
