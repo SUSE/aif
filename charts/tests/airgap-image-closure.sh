@@ -158,7 +158,7 @@ printf '== Lint shared air-gap values ==\n'
 helm lint "${OPERATOR_CHART}" \
   -f "${AIRGAP_VALUES}" \
   --set-string "aiExtension.source.helm.chartURL=${CHART_URL}"
-helm lint "${UI_CHART}" -f "${AIRGAP_VALUES}" --set standalone=true
+helm lint "${UI_CHART}" --namespace cattle-ui-plugin-system -f "${AIRGAP_VALUES}" --set standalone=true
 
 printf '== Render combined deployment ==\n'
 helm template aif-operator "${OPERATOR_CHART}" \
@@ -190,7 +190,7 @@ helm template aif-operator "${OPERATOR_CHART}" \
   -f "${AIRGAP_VALUES}" \
   --set aiExtension.enabled=false \
   > "${TMP_ROOT}/operator-separate.yaml"
-helm template aif-ui "${UI_CHART}" \
+helm template aif-ui-server "${UI_CHART}" \
   --namespace cattle-ui-plugin-system \
   -f "${AIRGAP_VALUES}" \
   --set standalone=true \
