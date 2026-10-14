@@ -8,11 +8,20 @@ import Settings from '../Settings.vue';
 import { nextTick } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import { getSettings, putSettings } from '../../utils/operator-api';
+import { listCatalogs } from '../../utils/catalog-api';
 
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn().mockResolvedValue({ spec: {} }),
   putSettings: vi.fn().mockResolvedValue({ spec: {} }),
   validateCredentials: vi.fn().mockResolvedValue({ results: [] }),
+}));
+
+vi.mock('../../utils/catalog-api', () => ({
+  listCatalogs: vi.fn().mockResolvedValue({ items: [] }),
+}));
+
+vi.mock('../../utils/blueprint-api', () => ({
+  listBlueprints: vi.fn().mockResolvedValue({ items: [] }),
 }));
 
 vi.mock('../../utils/operator-config', () => ({
@@ -298,7 +307,7 @@ describe('Settings page - Helm-managed blueprint catalogs', () => {
     const wrapper = await mountWithCatalogs(settingsWithHelmCatalog());
     const text = wrapper.find('[data-testid="catalog-row-0"]').text();
 
-    expect(text).toContain("--set-json 'blueprintCatalogs=[]'");
+    expect(text).toContain("--reuse-values --set-json 'blueprintCatalogs=[]'");
     expect(text).not.toContain('&#39;');
   });
 
@@ -319,5 +328,38 @@ describe('Settings page - Helm-managed blueprint catalogs', () => {
 
     expect((wrapper.vm as any).spec.blueprintCatalogs[0].helmManaged).toBe(false);
     expect(wrapper.find('[data-testid="catalog-remove-0"]').exists()).toBe(true);
+  });
+});
+
+describe('Settings page - SUSE partner catalog', () => {
+  async function mountExpanded() {
+    const wrapper = await mountSettings();
+
+    (wrapper.vm as any).expanded.blueprintCatalogs = true;
+    await nextTick();
+
+    return wrapper.find('[data-testid="partner-catalog"]');
+  }
+
+  it('reports the partner catalog as synced once Fleet has created its BlueprintCatalog', async () => {
+    vi.mocked(listCatalogs).mockResolvedValueOnce({ items: [{ metadata: { name: 'partner-catalog' } }] } as any);
+    const row = await mountExpanded();
+
+    expect(row.text()).toContain('SUSE Partner Catalog');
+    expect(row.text()).toContain('Synced');
+    expect(row.text()).toContain('partnerBlueprints.enabled');
+  });
+
+  it('reports the partner catalog as not synced when its BlueprintCatalog is absent', async () => {
+    const row = await mountExpanded();
+
+    expect(row.text()).toContain('Not synced');
+  });
+
+  it('reports an unknown partner catalog status when catalogs cannot be listed', async () => {
+    vi.mocked(listCatalogs).mockRejectedValueOnce(new Error('boom'));
+    const row = await mountExpanded();
+
+    expect(row.text()).toContain('Unknown');
   });
 });

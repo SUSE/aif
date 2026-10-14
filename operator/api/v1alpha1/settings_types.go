@@ -166,7 +166,7 @@ type AppCatalogSettings struct {
 
 // SettingsHelmManagedAnnotation is set by the aif-operator chart on the Settings
 // CR. Its JSON value lists the values the chart declared, e.g.
-// {"blueprintCatalogs":["partner-blueprints"]}. Helm-declared values are changed
+// {"blueprintCatalogs":["team-a"]}. Helm-declared values are changed
 // only through Helm: the operator API refuses to change them and never applies
 // them, so it never becomes a co-owner that would keep them alive after they are
 // removed from the chart values.

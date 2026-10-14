@@ -26,3 +26,7 @@ export interface BlueprintCatalogList {
 
 // The built-in default catalog's name (matches operator BlueprintCatalogDefault).
 export const CATALOG_DEFAULT_NAME = 'suse-default';
+
+// The SUSE partner catalog's name: metadata.name of partners/catalog.yaml in
+// github.com/suse/partner-blueprints, synced by the chart's partner GitRepo.
+export const CATALOG_PARTNER_NAME = 'partner-catalog';

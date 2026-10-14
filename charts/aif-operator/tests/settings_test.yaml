@@ -1,4 +1,4 @@
-suite: settings CR — the spec block is opt-in
+suite: settings CR — spec fields are opt-in
 templates:
   - templates/settings.yaml
 chart:
@@ -8,7 +8,10 @@ release:
   name: my-release
   namespace: aif-operator
 tests:
-  - it: default values enable only the SUSE partner blueprint catalog
+  # The partner catalog is a chart-rendered GitRepo, never a Settings entry, and
+  # an empty spec (not a missing one) keeps client-side apply from deleting the
+  # whole spec when the chart later stops declaring a field.
+  - it: default values produce a Settings resource with an empty spec
     asserts:
       - containsDocument:
           kind: Settings
@@ -17,19 +20,7 @@ tests:
           namespace: aif-operator
       - equal:
           path: spec
-          value:
-            blueprintCatalogs:
-              - name: partner-blueprints
-                repoURL: https://github.com/suse/partner-blueprints.git
-                branch: main
-                paths: [partners]
-
-  - it: disabling the partner catalog produces a bare Settings resource with no spec
-    set:
-      blueprintCatalogs: []
-    asserts:
-      - notExists:
-          path: spec
+          value: {}
 
   # The operator, not Helm, owns this resource after install. Losing the
   # resource-policy annotation would make `helm uninstall` delete user settings.
@@ -89,14 +80,14 @@ tests:
 
   # Documented behaviour: a caBundle with no token has nothing to authenticate,
   # so rancherCatalog is intentionally left out of the spec.
-  - it: a ca bundle on its own does not open the spec block
+  - it: a ca bundle on its own leaves the spec empty
     set:
-      blueprintCatalogs: []
       rancherCatalog.caBundle: |
         -----BEGIN CERTIFICATE-----
     asserts:
-      - notExists:
+      - equal:
           path: spec
+          value: {}
 
   - it: insecureSkipVerify is emitted only when a token is present
     set:
@@ -124,11 +115,11 @@ tests:
 
   - it: a half-filled credential pair is ignored
     set:
-      blueprintCatalogs: []
       credentials.nvidia.username: user
     asserts:
-      - notExists:
+      - equal:
           path: spec
+          value: {}
 
   - it: each registry credential maps to its own secret
     set:
@@ -175,37 +166,29 @@ tests:
           path: spec.blueprintCatalogs[0].caBundleSecretRef
           value: {name: acme-ca, key: ca.crt}
 
-  - it: an empty blueprint catalog list does not open the spec block
+  - it: an empty blueprint catalog list renders no blueprintCatalogs
     set:
       blueprintCatalogs: []
     asserts:
       - notExists:
           path: spec.blueprintCatalogs
 
-  - it: default values mark the partner catalog as Helm-managed
+  - it: every Helm-declared catalog is listed in the helm-managed annotation
+    set:
+      blueprintCatalogs:
+        - name: team-a
+          repoURL: https://git.example.com/a.git
+        - name: team-b
+          repoURL: https://git.example.com/b.git
     asserts:
       - equal:
           path: metadata.annotations["ai-factory.suse.com/helm-managed"]
-          value: '{"blueprintCatalogs":["partner-blueprints"]}'
+          value: '{"blueprintCatalogs":["team-a","team-b"]}'
       - equal:
           path: metadata.annotations["helm.sh/resource-policy"]
           value: keep
 
-  - it: every Helm-declared catalog is listed in the helm-managed annotation
-    set:
-      blueprintCatalogs:
-        - name: partner-blueprints
-          repoURL: https://github.com/suse/partner-blueprints.git
-        - name: team-a
-          repoURL: https://git.example.com/a.git
-    asserts:
-      - equal:
-          path: metadata.annotations["ai-factory.suse.com/helm-managed"]
-          value: '{"blueprintCatalogs":["partner-blueprints","team-a"]}'
-
-  - it: no Helm-declared catalogs means no helm-managed annotation
-    set:
-      blueprintCatalogs: []
+  - it: default values mean no helm-managed annotation
     asserts:
       - notExists:
           path: metadata.annotations["ai-factory.suse.com/helm-managed"]

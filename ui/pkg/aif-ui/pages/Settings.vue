@@ -13,7 +13,7 @@ import { getSettings, putSettings, validateCredentials } from '../utils/operator
 import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
 import { listCatalogs } from '../utils/catalog-api';
 import { listBlueprints } from '../utils/blueprint-api';
-import { CATALOG_DEFAULT_NAME } from '../types/catalog-types';
+import { CATALOG_DEFAULT_NAME, CATALOG_PARTNER_NAME } from '../types/catalog-types';
 import { validateCatalogName } from '../validators/catalog';
 import { BLUEPRINT_SOURCE_LABEL, BLUEPRINT_SOURCE_BUNDLED } from '../types/blueprint-types';
 import {
@@ -85,8 +85,10 @@ export default {
       const hasBundled    = (bl.items || []).some((b) => b.metadata.labels?.[BLUEPRINT_SOURCE_LABEL] === BLUEPRINT_SOURCE_BUNDLED);
 
       this.defaultCatalogStatus = hasGitDefault ? 'git' : hasBundled ? 'bundled' : 'disabled';
+      this.partnerCatalogStatus = (cl.items || []).some((c) => c.metadata.name === CATALOG_PARTNER_NAME) ? 'synced' : 'notSynced';
     } catch {
       this.defaultCatalogStatus = 'unknown';
+      this.partnerCatalogStatus = 'unknown';
     }
   },
 
@@ -96,6 +98,7 @@ export default {
       notFound:          false,
       spec:              createEmptySpec(),
       defaultCatalogStatus: 'unknown',
+      partnerCatalogStatus: 'unknown',
       fetchErrorMessage: null,
       errors:            [],
       saveAttempted:     false,
@@ -138,6 +141,16 @@ export default {
       const key = keys[this.defaultCatalogStatus] || 'statusUnknown';
 
       return this.t(`suseai.pages.settings.sections.blueprintCatalogs.default.${ key }`);
+    },
+
+    partnerCatalogStatusLabel() {
+      const keys = {
+        synced:    'statusSynced',
+        notSynced: 'statusNotSynced',
+      };
+      const key = keys[this.partnerCatalogStatus] || 'statusUnknown';
+
+      return this.t(`suseai.pages.settings.sections.blueprintCatalogs.partner.${ key }`);
     },
 
     categoriesString: {
@@ -1417,6 +1430,21 @@ export default {
               <p>{{ defaultCatalogStatusLabel }}</p>
               <p class="text-muted mt-5">
                 {{ t('suseai.pages.settings.sections.blueprintCatalogs.default.helmNote') }}
+              </p>
+            </div>
+          </div>
+
+          <div
+            class="row mb-15"
+            data-testid="partner-catalog"
+          >
+            <div class="col span-12">
+              <p class="text-label mb-5">
+                {{ t('suseai.pages.settings.sections.blueprintCatalogs.partner.title') }}
+              </p>
+              <p>{{ partnerCatalogStatusLabel }}</p>
+              <p class="text-muted mt-5">
+                {{ t('suseai.pages.settings.sections.blueprintCatalogs.partner.helmNote') }}
               </p>
             </div>
           </div>
