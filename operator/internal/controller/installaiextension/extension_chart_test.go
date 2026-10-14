@@ -240,3 +240,49 @@ func TestCleanupUninstallsTheExtensionChartForEitherSourceKind(t *testing.T) {
 		})
 	}
 }
+
+// The extension chart is installed as a release named after the extension, and
+// the server chart as one named after its chart URL. When the two names agree,
+// each pass would install one chart over the other, and the finalizer's
+// uninstall of the extension release would take the server with it. Such a
+// spec has to be refused before any Helm call, including the uninstall a
+// changed chart URL triggers.
+func TestHelmSourceRefusesAnExtensionNamedLikeItsServerRelease(t *testing.T) {
+	tests := []struct {
+		name     string
+		extName  string
+		chartURL string
+	}{
+		{name: "suffix added", extName: "aif-ui-server", chartURL: "oci://ghcr.io/suse/chart/aif-ui"},
+		{name: "suffix kept", extName: "aif-ui-server", chartURL: "oci://ghcr.io/suse/chart/aif-ui-server"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext := helmExtension()
+			ext.Spec.Extension.Name = tt.extName
+			ext.Spec.Source.Helm.ChartURL = tt.chartURL
+			ext.Status.HelmReleaseName = "previous-server"
+			stub := &stubHelmClient{}
+			r, _ := helmSourceReconciler(t, ext, stub)
+
+			result, err := r.reconcileHelmSource(context.Background(), ext, wiringNamespace)
+			if err != nil {
+				t.Fatalf("reconcile error = %v", err)
+			}
+			if result != (ctrl.Result{}) {
+				t.Errorf("result = %+v, want none; only a spec change can fix this", result)
+			}
+			if stub.ensureCalls != 0 || len(stub.deleted) != 0 {
+				t.Errorf("Helm touched: ensured %+v, uninstalled %v", stub.ensureSpecs, stub.deleted)
+			}
+			if ext.Status.Phase != v1alpha1.InstallAIExtensionPhaseFailed {
+				t.Errorf("phase = %s, want %s", ext.Status.Phase, v1alpha1.InstallAIExtensionPhaseFailed)
+			}
+			cond := meta.FindStatusCondition(ext.Status.Conditions, conditionTypeReady)
+			if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != "ExtensionNameCollision" {
+				t.Errorf("%s = %+v, want False/ExtensionNameCollision", conditionTypeReady, cond)
+			}
+		})
+	}
+}

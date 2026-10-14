@@ -507,6 +507,21 @@ func (r *InstallAIExtensionReconciler) reconcileHelmSource(
 
 	releaseName := deriveReleaseName(helmSource.ChartURL)
 
+	// The extension chart is installed as a release named after the extension
+	// (see ensureExtensionChart), so the two names must differ. If they agree,
+	// every pass installs one chart over the other, and the finalizer's uninstall
+	// of the extension release takes the server with it. Checked before the
+	// chart-URL-change uninstall below, so a refused spec touches no release.
+	if ext.Spec.Extension.Name == releaseName {
+		setCondition(&ext.Status.Conditions, conditionTypeReady, metav1.ConditionFalse,
+			"ExtensionNameCollision",
+			fmt.Sprintf("spec.extension.name %q is also the name of the release this chart URL installs the "+
+				"extension server as; rename the extension or the chart", releaseName),
+			ext.Generation)
+		ext.Status.Phase = v1alpha1.InstallAIExtensionPhaseFailed
+		return ctrl.Result{}, nil
+	}
+
 	if ext.Status.HelmReleaseName != "" && ext.Status.HelmReleaseName != releaseName {
 		logger.Info("chart URL changed, uninstalling old release", "old", ext.Status.HelmReleaseName, "new", releaseName)
 		helm, err := r.helmFor(namespace)
