@@ -1,4 +1,4 @@
-suite: settings CR — spec fields are opt-in
+suite: settings CR — the spec block is opt-in
 templates:
   - templates/settings.yaml
 chart:
@@ -8,19 +8,17 @@ release:
   name: my-release
   namespace: aif-operator
 tests:
-  # The partner catalog is a chart-rendered GitRepo, never a Settings entry, and
-  # an empty spec (not a missing one) keeps client-side apply from deleting the
-  # whole spec when the chart later stops declaring a field.
-  - it: default values produce a Settings resource with an empty spec
+  # The partner catalog is a chart-rendered GitRepo, never a Settings entry, so
+  # default values leave the spec out entirely.
+  - it: default values produce a bare Settings resource with no spec
     asserts:
       - containsDocument:
           kind: Settings
           apiVersion: ai-factory.suse.com/v1alpha1
           name: settings
           namespace: aif-operator
-      - equal:
+      - notExists:
           path: spec
-          value: {}
 
   # The operator, not Helm, owns this resource after install. Losing the
   # resource-policy annotation would make `helm uninstall` delete user settings.
@@ -80,14 +78,13 @@ tests:
 
   # Documented behaviour: a caBundle with no token has nothing to authenticate,
   # so rancherCatalog is intentionally left out of the spec.
-  - it: a ca bundle on its own leaves the spec empty
+  - it: a ca bundle on its own does not open the spec block
     set:
       rancherCatalog.caBundle: |
         -----BEGIN CERTIFICATE-----
     asserts:
-      - equal:
+      - notExists:
           path: spec
-          value: {}
 
   - it: insecureSkipVerify is emitted only when a token is present
     set:
@@ -117,9 +114,8 @@ tests:
     set:
       credentials.nvidia.username: user
     asserts:
-      - equal:
+      - notExists:
           path: spec
-          value: {}
 
   - it: each registry credential maps to its own secret
     set:

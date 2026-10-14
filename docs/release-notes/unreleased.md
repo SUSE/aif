@@ -98,10 +98,6 @@ They are changed or removed only with `helm upgrade`.
   `kubectl annotate settings.ai-factory.suse.com settings -n aif-operator ai-factory.suse.com/helm-managed-`
   to edit those catalogs on the Settings page again.
 
-The chart now always renders a `Settings` `spec`, empty when no Settings values
-are set. Previously, under client-side apply, removing the last chart-set value
-deleted the whole spec, including values saved on the Settings page.
-
 ## Blueprint partner icons and Partner source
 
 Blueprints accept two new optional `spec` values:

@@ -108,12 +108,4 @@ spec:
       {{- end }}
     {{- end }}
 {{- end }}
-{{- else }}
-{{- /*
-  An empty spec is still rendered so that, under client-side apply (Helm 3), a
-  later render without any Settings values patches only the fields this chart
-  stops declaring, rather than deleting the whole spec (and every value saved
-  on the Settings page) with it.
-*/}}
-spec: {}
 {{- end }}
