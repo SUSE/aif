@@ -29,13 +29,13 @@
           <span v-if="clusters.length > 1" class="cluster-count">({{ clusters.length }})</span>
         </label>
         <div v-if="clusters.length === 0" class="no-clusters">— none —</div>
-        <div v-else-if="clusters.length === 1" class="single-cluster">{{ clusters[0] }}</div>
+        <div v-else-if="clusters.length === 1" class="single-cluster">{{ clusterLabel(clusters[0]) }}</div>
         <div v-else class="cluster-chips">
           <span
             v-for="clusterId in clusters"
             :key="clusterId"
             class="cluster-chip"
-          >{{ clusterId }}</span>
+          >{{ clusterLabel(clusterId) }}</span>
         </div>
       </div>
     </div>
@@ -66,6 +66,7 @@ interface Props {
   chartName: string;
   chartVersion: string;
   clusters: string[]; // Array-based selection for both modes
+  clusterNames?: Record<string, string>; // cluster ID → display name
   values: Record<string, any>;
 }
 
@@ -74,6 +75,8 @@ const props = defineProps<Props>();
 const t = useT();
 
 const localValues = computed(() => props.values);
+
+const clusterLabel = (clusterId: string) => props.clusterNames?.[clusterId] || clusterId;
 </script>
 
 <style scoped>
