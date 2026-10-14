@@ -289,6 +289,33 @@ describe('Settings registry diagnostics', () => {
   });
 });
 
+describe('Settings registry diagnostics - nvidia target', () => {
+  const nvidiaConfiguration = {
+    url: '',
+    userSecretRef: { name: 'nvidia', key: 'user' },
+    tokenSecretRef: { name: 'nvidia', key: 'token' },
+    caBundleSecretRef: null,
+  };
+
+  it('shows the per-repository chart results that drive the summary when no mirror is set', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'nvidia', status: 'ok', host: 'nvcr.io', latencyMs: 452, message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue({
+      results: [
+        { repositoryUrl: 'https://helm.ngc.nvidia.com/nvidia', chartName: 'gpu-operator', status: 'ok', check: 'chartFile', latencyMs: 5 },
+        { repositoryUrl: 'https://helm.ngc.nvidia.com/nim/nvidia', chartName: 'nim-llm', status: 'failed', reason: 'accessDenied', httpStatus: 403, latencyMs: 5 },
+      ],
+    });
+    const wrapper = mountRCS({ target: 'nvidia', configuration: nvidiaConfiguration });
+    expect(wrapper.find('#nvidia-test-chart').exists()).toBe(false);
+    await runTest(wrapper);
+    expect(validateChartAccess).toHaveBeenCalledWith({ target: 'nvidia', configuration: nvidiaConfiguration, chartName: '' });
+    expect(wrapper.text()).toContain('Some checks failed.');
+    expect(wrapper.text()).not.toContain('do not apply to git repositories');
+    expect(wrapper.text()).toContain('https://helm.ngc.nvidia.com/nim/nvidia');
+    expect(wrapper.text()).toContain('Chart access failed (HTTP 403)');
+  });
+});
+
 describe('Settings registry diagnostics - customRepo target', () => {
   it('customRepo target starts with an empty sample chart and runs auth+chart-access', async () => {
     const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'helm', url: 'https://charts.example.com' } });
@@ -317,6 +344,17 @@ describe('Settings registry diagnostics - customRepo target', () => {
   it('git custom repo hides chart access (N/A)', async () => {
     const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'git', gitRepo: 'https://git.example.com/x.git' } });
     expect((wrapper.vm as any).sampleSelectable).toBe(false);
+  });
+
+  it('git custom repo does not let the skipped chart probe hold the summary at incomplete', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue({ results: [{ repositoryUrl: 'https://git.example.com/x.git', status: 'skipped', reason: 'noSampleChart', latencyMs: 0 }] });
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'git', gitRepo: 'https://git.example.com/x.git' }, repoName: 'x' });
+    await runTest(wrapper);
+    (wrapper.vm as any).result.chartRepositories = { repositories: [{ name: 'x', state: 'ready' }] };
+    await flushPromises();
+    expect((wrapper.vm as any).verificationSummary).toBe('ready');
+    expect(wrapper.text()).toContain('Chart access checks do not apply to git repositories.');
   });
 
   describe('private network hint', () => {
