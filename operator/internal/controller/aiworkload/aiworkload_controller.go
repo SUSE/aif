@@ -59,6 +59,9 @@ const (
 	reasonAwaitingUninstall    = "AwaitingUninstall"
 	reasonUninstalling         = "Uninstalling"
 	reasonRancherTokenRejected = "RancherTokenRejected"
+	// reasonInvalidComponentDependencies: a Blueprint's components[].dependsOn
+	// names an unknown component, the component itself, or forms a cycle.
+	reasonInvalidComponentDependencies = "InvalidComponentDependencies"
 )
 
 // setCondition upserts a status condition on the AIWorkload, mirroring the
