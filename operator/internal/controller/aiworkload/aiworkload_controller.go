@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -111,6 +112,10 @@ type AIWorkloadReconciler struct {
 	// are unaffected.
 	CatalogClient *rancher.Holder
 	Recorder      record.EventRecorder
+
+	// fleetClusterForbiddenOnce limits the "cannot read Fleet Clusters" log to
+	// once per process; see bundleDeploymentClusterID.
+	fleetClusterForbiddenOnce sync.Once
 }
 
 // event records a Kubernetes event, tolerating a nil Recorder (unit tests / early boot).
@@ -126,6 +131,8 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=aiworkloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=bundledeployments,verbs=get;list;watch
+// get alone suffices: the client does not cache unstructured objects, so Fleet
+// Cluster reads go straight to the API server. Caching them needs list;watch.
 // +kubebuilder:rbac:groups=fleet.cattle.io,resources=clusters,verbs=get
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=blueprints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos,verbs=get;list;watch
