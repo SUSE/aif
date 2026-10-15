@@ -7,7 +7,9 @@ replicaCount: 1
 # deploying aif-operator chart.
 #
 # To deploy aif-ui chart separately, you must set enable standalone deploy
-# by setting the value to "true".
+# by setting the value to "true". This chart then deploys the extension
+# catalog (server, Service and ClusterRepo), and the extension itself is
+# installed and updated from Rancher's Extensions page. See README.md.
 #
 standalone: false
 

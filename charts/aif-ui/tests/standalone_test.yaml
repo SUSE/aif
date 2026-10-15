@@ -1,7 +1,6 @@
-suite: standalone mode — ClusterRepo and UIPlugin
+suite: standalone mode — extension catalog
 templates:
-  - templates/clusterrepo.yaml
-  - templates/uiplugin.yaml
+  - templates/*.yaml
 release:
   name: my-rel
   namespace: cattle-ui-plugin-system
@@ -9,13 +8,27 @@ chart:
   version: 9.9.9
   appVersion: "2.2"
 tests:
-  - it: renders neither resource when embedded in aif-operator
-    templates:
-      - templates/clusterrepo.yaml
-      - templates/uiplugin.yaml
+  - it: renders no ClusterRepo when embedded in aif-operator
+    template: templates/clusterrepo.yaml
     asserts:
       - hasDocuments:
           count: 0
+
+  # Standalone is an extension catalog, the shape Rancher's own "Import
+  # Extension Catalog" produces. Rancher installs the extension from it, which
+  # is what links the installed UIPlugin to its catalog chart (logo,
+  # description, no Third-Party tag). A UIPlugin rendered here would collide
+  # with the one that install creates.
+  # Every template in the chart, through the suite's glob, so a UIPlugin added
+  # back in a new file is caught too.
+  - it: renders no UIPlugin when standalone
+    set:
+      standalone: true
+    asserts:
+      - not: true
+        containsDocument:
+          kind: UIPlugin
+          apiVersion: catalog.cattle.io/v1
 
   - it: renders a ClusterRepo pointing at the service when standalone
     template: templates/clusterrepo.yaml
@@ -30,99 +43,55 @@ tests:
           value: my-rel-aif-ui
       - equal:
           path: spec.url
-          value: http://my-rel-aif-ui-svc.cattle-ui-plugin-system:8080
+          value: http://aif-ui-svc.cattle-ui-plugin-system:8080
 
-  - it: renders a UIPlugin with a version-pinned plugin endpoint when standalone
-    template: templates/uiplugin.yaml
+  # The extension chart's UIPlugin endpoint is fixed at build time to
+  # http://<image>-svc.cattle-ui-plugin-system:8080/..., so the Service has to
+  # carry that name however the release is called.
+  - it: names the service after the extension, not the release, when standalone
+    template: templates/service.yaml
     set:
       standalone: true
     asserts:
-      - containsDocument:
-          kind: UIPlugin
-          apiVersion: catalog.cattle.io/v1
       - equal:
           path: metadata.name
-          value: my-rel-aif-ui
-      - equal:
-          path: spec.plugin.name
-          value: aif-ui
-      - equal:
-          path: spec.plugin.endpoint
-          value: http://my-rel-aif-ui-svc.cattle-ui-plugin-system:8080/plugin/aif-ui-2.2
+          value: aif-ui-svc
 
-  - it: quotes the plugin version so semver-like values stay strings
-    template: templates/uiplugin.yaml
+  - it: refuses a release named after the extension
+    template: templates/clusterrepo.yaml
+    release:
+      name: aif-ui
     set:
       standalone: true
     asserts:
-      - equal:
-          path: spec.plugin.version
-          value: "2.2"
-      - isType:
-          path: spec.plugin.version
-          type: string
+      - failedTemplate:
+          errorPattern: "must not be named \"aif-ui\""
 
-  - it: declares the Rancher and extension version constraints
-    template: templates/uiplugin.yaml
+  - it: refuses a namespace other than cattle-ui-plugin-system
+    template: templates/clusterrepo.yaml
+    release:
+      namespace: other-ns
     set:
       standalone: true
     asserts:
-      - equal:
-          path: spec.plugin.metadata["catalog.cattle.io/display-name"]
-          value: SUSE AI Factory
-      - equal:
-          path: spec.plugin.metadata["catalog.cattle.io/rancher-version"]
-          value: ">= 2.10.0"
-      - equal:
-          path: spec.plugin.metadata["catalog.cattle.io/ui-extensions-version"]
-          value: ">= 3.0.0 < 4.0.0"
+      - failedTemplate:
+          errorPattern: "install into the cattle-ui-plugin-system namespace"
 
-  - it: requires auth and caching to stay enabled
-    template: templates/uiplugin.yaml
-    set:
-      standalone: true
-    asserts:
-      - equal:
-          path: spec.plugin.noAuth
-          value: false
-      - equal:
-          path: spec.plugin.noCache
-          value: false
-
-  - it: tracks a custom service port in both resources
-    templates:
-      - templates/clusterrepo.yaml
-      - templates/uiplugin.yaml
+  - it: refuses a service port other than 8080
+    template: templates/clusterrepo.yaml
     set:
       standalone: true
       service.port: 9090
     asserts:
-      - matchRegex:
-          path: spec.url
-          pattern: :9090$
-        template: templates/clusterrepo.yaml
-      - matchRegex:
-          path: spec.plugin.endpoint
-          pattern: :9090/plugin/
-        template: templates/uiplugin.yaml
+      - failedTemplate:
+          errorPattern: "service.port must be 8080"
 
-  # Regression companion to service_test.yaml: the service DNS name is
-  # interpolated into both resources, so a name-length overflow would land here
-  # too.
-  - it: keeps the service host within 63 characters for a maximum-length release name
-    templates:
-      - templates/clusterrepo.yaml
-      - templates/uiplugin.yaml
+  - it: allows any of those when embedded in aif-operator
+    template: templates/clusterrepo.yaml
     release:
-      name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      name: aif-ui
+      namespace: other-ns
     set:
-      standalone: true
+      service.port: 9090
     asserts:
-      - matchRegex:
-          path: spec.url
-          pattern: ^http://.{1,63}\.cattle-ui-plugin-system:8080$
-        template: templates/clusterrepo.yaml
-      - matchRegex:
-          path: spec.plugin.endpoint
-          pattern: ^http://.{1,63}\.cattle-ui-plugin-system:8080/
-        template: templates/uiplugin.yaml
+      - notFailedTemplate: {}

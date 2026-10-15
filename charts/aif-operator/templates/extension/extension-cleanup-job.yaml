@@ -52,10 +52,17 @@ spec:
                 echo "Remaining CR state:"
                 kubectl get installaiextension "$CR_NAME" -o yaml 2>/dev/null || true
                 echo ""
+                echo "This is usually a Helm release the finalizer could not uninstall (the"
+                echo "extension chart, or the extension server chart for a Helm source), not a"
+                echo "stuck finalizer by itself. Check for one still present in {{ include "aif-operator.extensionsNamespace" . }}:"
+                echo "  helm list -n {{ include "aif-operator.extensionsNamespace" . }}"
+                echo ""
                 echo "The operator is still running and may complete cleanup. Retry 'helm uninstall' later."
                 echo "To force removal (requires cluster-admin), after verifying no resources are leaked:"
                 echo "  kubectl patch installaiextension $CR_NAME --type=merge -p '{\"metadata\":{\"finalizers\":[]}}'"
                 echo "(This command must be run with cluster-admin credentials, not the cleanup job's service account.)"
+                echo "Forcing removal only drops the finalizer; it does not uninstall a Helm"
+                echo "release found above — remove that separately with 'helm uninstall'."
                 exit 1
               fi
               echo "Cleanup complete"

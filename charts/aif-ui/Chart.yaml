@@ -15,14 +15,14 @@ annotations:
 apiVersion: v2
 name: aif-ui
 version: 2.3.0-rc.5
-description: SUSE AI Rancher UI Extension
+description: Rancher UI Extension for SUSE AI Factory to manage AI Workloads
 type: application
 keywords:
   - rancher
   - extension
   - ai
 home: https://github.com/SUSE/aif
-icon: https://raw.githubusercontent.com/SUSE/aif/main/pkg/aif-ui/assets/logo.svg
+icon: https://raw.githubusercontent.com/SUSE/aif/main/ui/pkg/aif-ui/assets/logo.svg
 sources:
   - https://github.com/SUSE/aif
 appVersion: 2.3.0-rc.5

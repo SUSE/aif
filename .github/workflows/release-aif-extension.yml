@@ -164,6 +164,70 @@ jobs:
           TAG="aif-ui-${{ needs.prepare.outputs.VERSION }}"
           yarn publish-pkgs -c -i '' -r ghcr.io -o 'suse' -t "$TAG"
 
+      # Standalone mode (charts/aif-ui, aif-ui.serviceName) assumes the extension
+      # chart @rancher/shell's publish-pkgs just built points its UIPlugin at
+      # "<chart name>-svc.cattle-ui-plugin-system:8080" — the Service name and
+      # port that chart's own "Import Extension Catalog" dialog would have
+      # created. That assumption holds only as long as: the `-i ''` above keeps
+      # IMAGE_PREFIX empty, ui/package.json's name matches both
+      # pkg/aif-ui/package.json's name (which feeds BASE_EXT into helmpatch) and
+      # charts/aif-ui's own Chart.yaml name (which aif-ui.serviceName renders
+      # from), and the chart's icon actually resolves against what the server
+      # serves. None of that is caught by `helm template` or the extension's own
+      # build — a silent mismatch here only ever shows up as the Extensions page
+      # failing to load the plugin after install. Verify it here, before the
+      # chart is pushed.
+      - name: Verify the extension chart matches the server chart it expects
+        run: |
+          set -euo pipefail
+
+          BASE_EXT=$(jq -r .name package.json)
+          PKG_NAME=$(jq -r .name "pkg/${BASE_EXT}/package.json")
+          SUSE_CHART_NAME=$(yq '.name' "$GITHUB_WORKSPACE/$CHART_PATH/Chart.yaml")
+
+          echo "ui/package.json name:              ${BASE_EXT}"
+          echo "pkg/${BASE_EXT}/package.json name: ${PKG_NAME}"
+          echo "$CHART_PATH Chart.yaml name:        ${SUSE_CHART_NAME}"
+
+          if [[ "${BASE_EXT}" != "${PKG_NAME}" || "${BASE_EXT}" != "${SUSE_CHART_NAME}" ]]; then
+            echo "::error::extension name mismatch between ui/package.json (${BASE_EXT}), pkg/${BASE_EXT}/package.json (${PKG_NAME}) and $CHART_PATH/Chart.yaml (${SUSE_CHART_NAME}). These three names have to agree: BASE_EXT (derived from ui/package.json) drives the <BASE_EXT>-svc host @rancher/shell's helmpatch bakes into the extension chart, and it only matches a real Service if $CHART_PATH's Chart.yaml carries the same name."
+            exit 1
+          fi
+
+          PKG_VERSION=$(jq -r .version "pkg/${BASE_EXT}/package.json")
+          EXT_CHART="charts/${BASE_EXT}/${PKG_VERSION}"
+          if [[ ! -f "${EXT_CHART}/values.yaml" || ! -f "${EXT_CHART}/Chart.yaml" ]]; then
+            echo "::error::extension chart not found at ui/${EXT_CHART} after publish-pkgs; its layout (ui/charts/<pkg>/<version>) may have changed upstream in @rancher/shell"
+            exit 1
+          fi
+
+          ENDPOINT=$(yq '.plugin.endpoint' "${EXT_CHART}/values.yaml")
+          echo "extension chart plugin.endpoint: ${ENDPOINT}"
+
+          RENDERED_SERVICE=$(helm template ci-check "$GITHUB_WORKSPACE/$CHART_PATH" \
+            --namespace cattle-ui-plugin-system --set standalone=true \
+            --show-only templates/service.yaml)
+          SVC_NAME=$(yq '.metadata.name' <<< "$RENDERED_SERVICE")
+          SVC_PORT=$(yq '.spec.ports[0].port' <<< "$RENDERED_SERVICE")
+          EXPECTED_PREFIX="http://${SVC_NAME}.cattle-ui-plugin-system:${SVC_PORT}/"
+
+          if [[ "${ENDPOINT}" != "${EXPECTED_PREFIX}"* ]]; then
+            echo "::error::extension chart's plugin.endpoint (${ENDPOINT}) does not start with ${EXPECTED_PREFIX}, the Service $CHART_PATH renders in standalone mode (aif-ui.serviceName). The endpoint is fixed at build time by @rancher/shell's helmpatch script from IMAGE_PREFIX and BASE_EXT; a changed image prefix or a shell upgrade would break standalone mode silently at install time."
+            exit 1
+          fi
+
+          ICON=$(yq '.icon' "${EXT_CHART}/Chart.yaml")
+          if [[ "${ICON}" != plugin/* ]]; then
+            echo "::error::extension chart's icon (${ICON}) is not a path under plugin/, so it will not resolve against the server's ClusterRepo URL"
+            exit 1
+          fi
+          if ! grep -qF "/home/plugin-server/plugin-contents/${ICON}" "$GITHUB_WORKSPACE/build/Dockerfile.ui"; then
+            echo "::error::build/Dockerfile.ui has no COPY placing a file at plugin-contents/${ICON}; the Extensions page icon (${ICON}) will 404"
+            exit 1
+          fi
+
+          echo "Extension chart endpoint and icon verified against $CHART_PATH and build/Dockerfile.ui."
+
       - name: Rebase image onto patched BCI 15.7
         working-directory: .
         run: |
