@@ -47,8 +47,9 @@ var orgNGCPaths = map[string]bool{
 // no-auth ClusterRepo downloads the chart, gets a JSON 403 body, tries to gunzip
 // it and fails with "gzip: invalid header" at install time.
 var publicNGCPaths = map[string]bool{
-	"/nvidia/doca": true,
-	"/nim":         true,
+	"/nim":              true,
+	"/nvidia/ai-dynamo": true,
+	"/nvidia/doca":      true,
 }
 
 // Gated team repos require NGC auth for their chart tarballs (chart .tgz 403
