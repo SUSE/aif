@@ -1,0 +1,32 @@
+{{- /*
+SUSE partner catalog: a Fleet GitRepo syncing partner-contributed Blueprint CRs
+and their BlueprintCatalog CR from the configured git source. Helm-managed
+(app.kubernetes.io/managed-by=Helm via common labels) like the git-sourced
+default catalog, and for the same reasons it is not a Settings blueprintCatalogs
+entry: a chart-owned object never shares a list with catalogs added on the
+Settings page, so client-side apply (Helm 3, or Helm 4 upgrading a Helm 3
+release) cannot replace them. The name sits outside the operator's
+blueprint-catalog-<name> scheme so no Settings catalog can map onto it, and it
+deliberately does NOT carry the ai-factory.suse.com/blueprint-catalog-repo prune
+marker, so the Settings controller's pruneCatalogRepos never deletes it.
+
+`helm upgrade --reuse-values` renders with the previous release's values, not
+this chart's defaults, so partnerBlueprints is absent on the first such upgrade
+from an older chart. The defaults are repeated here so that upgrade renders (and
+enables) the catalog the same way a fresh install does.
+*/ -}}
+{{- $pb := .Values.partnerBlueprints | default dict -}}
+{{- $git := $pb.git | default dict -}}
+{{- if (hasKey $pb "enabled" | ternary $pb.enabled true) }}
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: aif-partner-blueprints
+  namespace: fleet-local
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+spec:
+  repo: {{ $git.repoURL | default "https://github.com/suse/partner-blueprints.git" | quote }}
+  branch: {{ $git.branch | default "main" | quote }}
+  paths: {{ $git.paths | default (list "partners") | toJson }}
+{{- end }}

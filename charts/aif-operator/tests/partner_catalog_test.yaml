@@ -1,0 +1,66 @@
+suite: partner catalog GitRepo — a chart resource, not a Settings entry
+templates:
+  - templates/partner-catalog-gitrepo.yaml
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: default values render the SUSE partner catalog GitRepo
+    asserts:
+      - containsDocument:
+          kind: GitRepo
+          apiVersion: fleet.cattle.io/v1alpha1
+          name: aif-partner-blueprints
+          namespace: fleet-local
+      - equal:
+          path: spec
+          value:
+            repo: https://github.com/suse/partner-blueprints.git
+            branch: main
+            paths: [partners]
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+
+  # Without the operator's prune marker, the Settings controller never deletes
+  # the GitRepo; Helm alone owns its lifecycle.
+  - it: the GitRepo does not carry the operator's catalog prune marker
+    asserts:
+      - notExists:
+          path: metadata.labels["ai-factory.suse.com/blueprint-catalog-repo"]
+
+  - it: the git source can point at a mirror
+    set:
+      partnerBlueprints.git.repoURL: https://gitea.internal/mirrors/partner-blueprints.git
+      partnerBlueprints.git.branch: release
+      partnerBlueprints.git.paths: [partners, extra]
+    asserts:
+      - equal:
+          path: spec
+          value:
+            repo: https://gitea.internal/mirrors/partner-blueprints.git
+            branch: release
+            paths: [partners, extra]
+
+  - it: disabling the partner catalog renders nothing
+    set:
+      partnerBlueprints.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # `helm upgrade --reuse-values` from a chart without partnerBlueprints renders
+  # with the old values only, so the key is missing rather than defaulted.
+  - it: a missing partnerBlueprints value still renders the default GitRepo
+    set:
+      partnerBlueprints: null
+    asserts:
+      - equal:
+          path: spec
+          value:
+            repo: https://github.com/suse/partner-blueprints.git
+            branch: main
+            paths: [partners]

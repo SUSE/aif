@@ -56,6 +56,48 @@ Rancher to retry a saved repository download; it cannot grant registry permissio
 After correcting credentials or mirror content, use Refresh and then Test again.
 Deploy the matching operator and extension versions to enable direct chart checks.
 
+## SUSE partner blueprint catalog
+
+The chart now syncs the SUSE partner blueprint catalog by default. It renders a
+Fleet `GitRepo`, `fleet-local/aif-partner-blueprints`, that tracks the `partners`
+folder of `https://github.com/suse/partner-blueprints.git` on `main`. Partner
+blueprints appear on the Blueprints page as Fleet syncs them.
+
+- **Turning it off:** set `partnerBlueprints.enabled=false` (with
+  `--reuse-values`). Fleet then removes the synced partner blueprints.
+- **Air-gapped clusters:** the `GitRepo` reports clone errors until the catalog
+  is disabled or pointed at an internal mirror with `partnerBlueprints.git.*`.
+  Mirrors that need credentials or a private CA are added as an ordinary catalog
+  instead. See the air-gap guide.
+- **Existing catalogs:** if you already added a catalog on the Settings page
+  that points at the partner repository, remove it after upgrading. Otherwise
+  two `GitRepo`s sync the same blueprints and conflict.
+
+The partner catalog is a chart resource, not a Settings page entry, so upgrading
+the chart never touches catalogs added on the Settings page.
+
+### Helm-declared catalogs are read-only
+
+Catalogs declared in the chart's `blueprintCatalogs` value are now listed in the
+`ai-factory.suse.com/helm-managed` annotation on the `Settings` resource. The
+Settings page shows them with a **Managed by Helm** badge and no edit controls.
+They are changed or removed only with `helm upgrade`.
+
+- `PUT /api/v1/settings` returns HTTP 400 if a request changes a Helm-declared
+  catalog. It returns HTTP 500 if the live `Settings` resource can't be read or
+  its `helm-managed` annotation is malformed.
+- A catalog added on the Settings page with the same name as a Helm-declared one
+  but a different repository, branch or paths makes `helm upgrade` fail with a
+  server-side apply conflict. Remove or rename it before upgrading.
+- Keeping Settings-page catalogs next to Helm-declared ones needs server-side
+  apply. Releases first installed with Helm 3, including ones upgraded through
+  Rancher Apps, keep client-side apply until one `helm upgrade --server-side=true`.
+  This only matters when `blueprintCatalogs` is not empty.
+- After `helm uninstall` the annotation stays on the kept `Settings` resource.
+  Remove it with
+  `kubectl annotate settings.ai-factory.suse.com settings -n aif-operator ai-factory.suse.com/helm-managed-`
+  to edit those catalogs on the Settings page again.
+
 ## Blueprint partner icons and Partner source
 
 Blueprints accept two new optional `spec` values:
