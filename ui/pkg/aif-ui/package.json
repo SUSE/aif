@@ -1,7 +1,7 @@
 {
   "name": "aif-ui",
   "description": "Rancher UI Extension for SUSE AI Factory to manage AI Workloads",
-  "version": "2.3.0-rc.5",
+  "version": "2.3.1-rc.1",
   "private": false,
   "license": "Apache-2.0",
   "rancher": {
