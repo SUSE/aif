@@ -222,3 +222,79 @@ func TestBuildComponentMatrix_CarriesReleaseName(t *testing.T) {
 		t.Errorf("want componentName=qdrant releaseName=saif-qdrant, got name=%q release=%q", cells[0].ComponentName, cells[0].ReleaseName)
 	}
 }
+
+// newFleetCluster returns a downstream (fleet-default) Fleet Cluster whose
+// metadata.name is the Fleet cluster name and whose management label carries
+// the Rancher cluster ID.
+func newFleetCluster(name, managementID string) *unstructured.Unstructured {
+	c := &unstructured.Unstructured{Object: map[string]any{}}
+	c.SetGroupVersionKind(fleetClusterGVK)
+	c.SetNamespace("fleet-default")
+	c.SetName(name)
+	c.SetLabels(map[string]string{"management.cattle.io/cluster-name": managementID})
+	return c
+}
+
+// Fleet names a downstream cluster's BundleDeployments after the Fleet Cluster
+// (fleet.cattle.io/cluster), which can differ from the Rancher management ID
+// held in spec.targetClusters. The matrix must key cells by the management ID,
+// or the deployed cluster is never recognised as the expected one and a second,
+// permanently Pending cell keeps the workload Degraded.
+func TestBuildComponentMatrix_FleetClusterNameDiffersFromManagementID(t *testing.T) {
+	ctx := context.Background()
+
+	name := blueprintBundleName("renamed", "chart-a")
+	keys := []HelmOpKey{{Namespace: "fleet-default", Name: name, ExpectedClusters: 1}}
+	digests := map[string]string{"fleet-default/" + name: "sha256:current"}
+
+	b := &unstructured.Unstructured{Object: map[string]any{}}
+	b.SetGroupVersionKind(bundleGVK)
+	b.SetName(name)
+	b.SetNamespace("fleet-default")
+	b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue("sha256:current")})
+
+	w := &aiplatformv1alpha1.AIWorkload{
+		Spec: aiplatformv1alpha1.AIWorkloadSpec{TargetClusters: []string{"c-m-alpha"}},
+	}
+
+	bdObj := &unstructured.Unstructured{Object: map[string]any{}}
+	bdObj.SetGroupVersionKind(bundleDeploymentGVK)
+	bdObj.SetName(name)
+	bdObj.SetNamespace("cluster-fleet-default-gpu-alpha-0123456789ab")
+	bdObj.SetLabels(map[string]string{
+		"fleet.cattle.io/bundle-name":       name,
+		"fleet.cattle.io/bundle-namespace":  "fleet-default",
+		"fleet.cattle.io/cluster":           "gpu-alpha",
+		"fleet.cattle.io/cluster-namespace": "fleet-default",
+	})
+	_ = unstructured.SetNestedField(bdObj.Object, "s1", "spec", "deploymentID")
+	_ = unstructured.SetNestedField(bdObj.Object, "s1", "status", "appliedDeploymentID")
+	_ = unstructured.SetNestedField(bdObj.Object, "Ready", "status", "display", "state")
+
+	cl := fakeClient(b, bdObj, newFleetCluster("gpu-alpha", "c-m-alpha"))
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(bundleGVK)
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(b), fetched); err != nil {
+		t.Fatalf("failed to fetch bundle: %v", err)
+	}
+	_ = unstructured.SetNestedField(fetched.Object, fetched.GetGeneration(), "status", "observedGeneration")
+	if err := cl.Update(ctx, fetched); err != nil {
+		t.Fatalf("failed to update bundle status: %v", err)
+	}
+
+	r := &AIWorkloadReconciler{Client: cl, Scheme: cl.Scheme()}
+	cells, err := r.buildComponentMatrix(ctx, w, keys, digests)
+	if err != nil {
+		t.Fatalf("buildComponentMatrix failed: %v", err)
+	}
+	if len(cells) != 1 {
+		t.Fatalf("expected 1 cell keyed by the management ID, got %d: %+v", len(cells), cells)
+	}
+	if cells[0].ClusterID != "c-m-alpha" {
+		t.Errorf("cell ClusterID = %q, want management ID %q", cells[0].ClusterID, "c-m-alpha")
+	}
+	if got := phaseFromCells(cells); got != aiplatformv1alpha1.AIWorkloadPhaseRunning {
+		t.Errorf("phase = %s, want Running", got)
+	}
+}

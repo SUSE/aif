@@ -9,7 +9,7 @@
       <div class="review-row"><span class="label">{{ t('suseai.wizard.form.deploymentType', 'Deployment Type') }}</span><span>{{ deployType }}</span></div>
       <div class="review-row">
         <span class="label">{{ t('suseai.wizard.labels.clusters', 'Clusters') }}</span>
-        <span>{{ clusters.join(', ') || '—' }}</span>
+        <span>{{ clusters.map(clusterLabel).join(', ') || '—' }}</span>
       </div>
     </div>
 
@@ -56,12 +56,15 @@ interface Props {
   componentCount:    number;
   deployType:        string;
   clusters:          string[];
+  clusterNames?:     Record<string, string>; // cluster ID → display name
   components:        BlueprintComponent[];
   componentValues?:  ComponentValueOverride[];
 }
 const props = defineProps<Props>();
 
 const t = useT();
+
+const clusterLabel = (clusterId: string) => props.clusterNames?.[clusterId] || clusterId;
 
 const excludedNames = computed(() => new Set(
   (props.componentValues || []).filter((ov) => ov.enabled === false).map((ov) => ov.componentName),

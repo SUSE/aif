@@ -21,7 +21,6 @@ import {
   ensureServiceAccountPullSecret,
   ensurePullSecretOnAllSAs,
   waitForAppInstall,
-  getClusters,
   getInstalledHelmDetails,
   inferClusterRepoForChart,
   listClusterRepos,
@@ -34,6 +33,7 @@ import { installRecordingWorkloadsFirst } from '../../services/helm-install-orde
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
+import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets, injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import { crNameForCluster } from '../../utils/workload-name';
@@ -233,6 +233,7 @@ watch(helmOversized, (oversized) => {
 });
 
 const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
+const { clusterNames, clusterDisplayName, loadClusterDisplayNames } = useClusterDisplayNames(store);
 
 watch(fleetGitConfigured, (configured) => {
   if (!configured && form.value.deployType === 'GitOps') {
@@ -284,6 +285,8 @@ const basicInfoForm = computed({
 });
 
 onMounted(async () => {
+  // Not awaited: names are only needed by the review step and progress modal.
+  void loadClusterDisplayNames();
   try {
     await initializeWizard();
     loadingNamespaces.value = true;
@@ -809,17 +812,6 @@ function navigateAfterSuccess() {
   leaveWizard();
 }
 
-// Get cluster name for display (used in progress modal)
-async function getClusterDisplayName(clusterId: string): Promise<string> {
-  try {
-    const clusters = await getClusters(store);
-    const cluster = clusters.find((c: any) => c.id === clusterId);
-    return cluster?.name || clusterId;
-  } catch {
-    return clusterId;
-  }
-}
-
 // Concurrency limit for parallel installations
 const INSTALL_CONCURRENCY = 3;
 
@@ -828,15 +820,13 @@ async function performMultiClusterInstall() {
   const targetClusters = form.value.clusters;
 
   // Initialize progress for all clusters
-  installProgress.value = await Promise.all(
-    targetClusters.map(async (clusterId) => ({
-      clusterId,
-      clusterName: await getClusterDisplayName(clusterId),
-      status: 'pending' as const,
-      progress: 0,
-      message: 'Waiting to start...'
-    }))
-  );
+  installProgress.value = targetClusters.map((clusterId) => ({
+    clusterId,
+    clusterName: clusterDisplayName(clusterId),
+    status: 'pending' as const,
+    progress: 0,
+    message: 'Waiting to start...'
+  }));
 
   showProgressModal.value = true;
 
@@ -888,7 +878,7 @@ function applyPerClusterResults(results: PromiseSettledResult<unknown>[], succes
 async function performFleetBundleInstall() {
   installProgress.value = form.value.clusters.map(clusterId => ({
     clusterId,
-    clusterName: clusterId,
+    clusterName: clusterDisplayName(clusterId),
     status:      'installing' as const,
     progress:    10,
     message:     'Creating imagePullSecrets on target clusters...',
@@ -979,7 +969,7 @@ async function performFleetBundleInstall() {
 async function performGitOpsInstall() {
   installProgress.value = form.value.clusters.map(clusterId => ({
     clusterId,
-    clusterName: clusterId,
+    clusterName: clusterDisplayName(clusterId),
     status:      'installing' as const,
     progress:    10,
     message:     'Creating imagePullSecrets on target clusters...',
@@ -1437,7 +1427,7 @@ async function performUpgrade() {
 
   installProgress.value = [{
     clusterId,
-    clusterName: await getClusterDisplayName(clusterId),
+    clusterName: clusterDisplayName(clusterId),
     status: 'pending' as const,
     progress: 0,
     message: 'Waiting to start...'
@@ -1464,7 +1454,7 @@ async function performFleetBundleUpgrade() {
 
   installProgress.value = form.value.clusters.map(clusterId => ({
     clusterId,
-    clusterName: clusterId,
+    clusterName: clusterDisplayName(clusterId),
     status:      'installing' as const,
     progress:    10,
     message:     'Updating Fleet Bundle...',
@@ -1534,7 +1524,7 @@ async function performGitOpsUpgrade() {
 
   installProgress.value = form.value.clusters.map(clusterId => ({
     clusterId,
-    clusterName: clusterId,
+    clusterName: clusterDisplayName(clusterId),
     status:      'installing' as const,
     progress:    10,
     message:     'Publishing updated Fleet Bundle YAML to git...',
@@ -1792,6 +1782,7 @@ function previousStep() {
             :chart-name="form.chartName"
             :chart-version="form.chartVersion"
             :clusters="form.clusters"
+            :cluster-names="clusterNames"
             :values="form.values"
           />
         </div>
