@@ -117,6 +117,7 @@ suseai:
           title: Repositories
         appCollection:
           title: SUSE Application Collection
+          tooltip: '<p>SUSE Application Collection provides SUSE AI application charts such as Ollama, Open WebUI, Milvus and vLLM. From this section, AI Factory creates the <code>application-collection</code> chart repository in Rancher and adds the credentials to the image pull secret of the SUSE workloads it deploys.</p> <p>The repository is created only when both a username and an access token are available. Without them it is removed, even when a private mirror is set.</p> <p><b>Air-gapped environments:</b> set the Chart Repository to your private OCI mirror and select the credentials for that mirror, plus a CA bundle if it uses a private CA. The Rancher repository keeps its name, so existing apps and Blueprints keep working. The mirror must contain the same chart names and versions. Container images are not rewritten: mirror them and configure node-level registry mirrors (for example, RKE2 <code>registries.yaml</code>).</p>'
           endpoint:
             label: Chart Repository (OCI)
             placeholder: 'oci://dp.apps.rancher.io/charts'
@@ -137,6 +138,7 @@ suseai:
             placeholder: 'ai, nlp, vision'
         suseRegistry:
           title: SUSE Registry
+          tooltip: '<p>SUSE Registry provides SUSE AI charts such as LiteLLM, Qdrant and Kubeflow. From this section, AI Factory creates the <code>suse-ai-registry</code> chart repository in Rancher and adds the credentials to the image pull secret of the SUSE workloads it deploys.</p> <p>The repository is created only when both a username and an access token are available. Without them it is removed, even when a private mirror is set.</p> <p><b>Air-gapped environments:</b> set the Chart Repository to your private OCI mirror and select the credentials for that mirror, plus a CA bundle if it uses a private CA. The Rancher repository keeps its name, so existing apps and Blueprints keep working. The mirror must contain the same chart names and versions. Container images are not rewritten: mirror them and configure node-level registry mirrors (for example, RKE2 <code>registries.yaml</code>).</p>'
           endpoint:
             label: Chart Repository (OCI)
             placeholder: 'oci://registry.suse.com/ai/charts'
@@ -156,6 +158,7 @@ suseai:
             label: NIM Index Refresh (minutes)
         nvidia:
           title: NVIDIA AI Library
+          tooltip: '<p>NVIDIA AI Library provides NVIDIA charts from NGC, including NIM microservices and NVIDIA Blueprints. With NGC credentials (username <code>$oauthtoken</code> and an NGC API key), AI Factory creates the <code>nvidia</code> and <code>nvidia-blueprints</code> chart repositories in Rancher, plus one repository per NGC team. Public repositories are added without credentials; gated ones, such as NIM, NeMo microservices and Omniverse, use the API key. The key is also used to pull gated NVIDIA images from nvcr.io.</p> <p>If neither credentials nor a mirror are configured, no NVIDIA repositories are created.</p> <p><b>Air-gapped environments:</b> set the Mirrored Chart Repository to a single private OCI mirror. Every NVIDIA repository keeps its name and points at that mirror, so it must contain the charts and versions from all NVIDIA sources. Credentials are optional for the mirror; leave them empty for an anonymous mirror. Container images still reference nvcr.io: mirror them and configure node-level registry mirrors.</p>'
           description: 'NGC credentials pull gated NVIDIA images from nvcr.io. Leave the mirror empty to use the public NGC chart repositories; configure it only for a private OCI mirror. Username is conventionally “$oauthtoken”.'
           endpoint:
             label: Mirrored Chart Repository (OCI, optional)
