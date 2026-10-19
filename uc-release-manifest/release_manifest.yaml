@@ -4,7 +4,7 @@ metadata:
   version: 2.3.1-rc.1
   creationDate: "2026-07-15"
 corePlatform:
-  image: registry.suse.com/elemental/rke2/rke2-manifest:sha256-f8b602e1e1482d6889538fcdf8e93ab0e044562c76a68574426845da57093da7.sig
+  image: registry.suse.com/elemental/rke2/rke2-manifest:1.35.8-62.1
 components:
   systemd:
     extensions:
