@@ -232,13 +232,19 @@ type InstallAIExtensionStatus struct {
 	// +optional
 	HelmReleaseRevision int32 `json:"helmReleaseRevision,omitempty"`
 
-	// ActiveExtensionName is the extension name last successfully reconciled.
-	// Used to detect name changes and clean up orphaned resources.
+	// ActiveExtensionName is the extension name this CR has last attempted to
+	// install. Recorded before the attempt, not only once it is confirmed to have
+	// succeeded, so a release created by a reconcile that is later interrupted
+	// (pending, a later step failing, operator shutdown) is still found by a
+	// subsequent name change or by the finalizer on delete. Used to detect name
+	// changes and clean up orphaned resources.
 	// +optional
 	ActiveExtensionName string `json:"activeExtensionName,omitempty"`
 
-	// ActiveSourceKind is the source kind last successfully reconciled.
-	// Used to detect source switches and clean up old source's resources.
+	// ActiveSourceKind is the source kind this CR has last attempted to install
+	// under, recorded at the same point as ActiveExtensionName and for the same
+	// reason. Used to detect source switches and clean up the old source's
+	// resources.
 	// +optional
 	ActiveSourceKind ExtensionSourceKind `json:"activeSourceKind,omitempty"`
 }

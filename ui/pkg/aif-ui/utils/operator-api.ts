@@ -149,7 +149,7 @@ export interface ChartAccessResult {
   chartName?: string;
   version?: string;
   check?: 'manifest' | 'chartFile';
-  status: 'ok' | 'failed' | 'error';
+  status: 'ok' | 'failed' | 'error' | 'skipped';
   reason?: string;
   httpStatus?: number;
   latencyMs: number;

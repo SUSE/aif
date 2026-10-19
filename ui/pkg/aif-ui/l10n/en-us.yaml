@@ -202,6 +202,12 @@ suseai:
             statusGit: Git-Sourced
             statusDisabled: Disabled
             statusUnknown: Unknown
+          partner:
+            title: SUSE Partner Catalog
+            helmNote: 'The partner catalog is configured via Helm values (partnerBlueprints.enabled / partnerBlueprints.git).'
+            statusSynced: Synced
+            statusNotSynced: Not synced (disabled in Helm values, or Fleet has not synced it yet)
+            statusUnknown: Unknown
           custom:
             title: Custom Catalogs
             add: Add Catalog
@@ -213,6 +219,7 @@ suseai:
               invalid: Catalog name must be lowercase alphanumeric and hyphens only, and must start and end with an alphanumeric character
               reserved: '"{name}" is reserved for the default catalog'
               duplicate: Catalog name must be unique
+              helmManaged: '"{name}" is declared in Helm values; choose another name'
             path:
               label: Paths (comma-separated)
             repoURL:
@@ -227,6 +234,9 @@ suseai:
               label: HTTPS CA Bundle (optional)
               secretNameLabel: CA Secret Name
               keyNameLabel: CA Bundle Key
+            helmManaged:
+              badge: Managed by Helm
+              help: "Declared in Helm values (blueprintCatalogs). To change or remove it, run helm upgrade with an updated blueprintCatalogs list, e.g. --reuse-values --set-json 'blueprintCatalogs=[]' to remove all Helm-declared catalogs while keeping your other values."
         rancherCatalog:
           title: Rancher API Access
           description: 'Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.'

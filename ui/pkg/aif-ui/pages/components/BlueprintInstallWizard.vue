@@ -13,6 +13,7 @@ import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredent
 import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
 import { crNameForCluster } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
+import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import type { Blueprint } from '../../types/blueprint-types';
 import type { AIWorkloadDeployStrategy, ComponentValueOverride } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
@@ -24,6 +25,7 @@ interface Props {
 }
 const props   = withDefaults(defineProps<Props>(), { mode: 'install' });
 const vm      = getCurrentInstance()!.proxy as any;
+const store   = vm.$store;
 const router  = vm.$router;
 const route   = vm.$route;
 
@@ -45,6 +47,7 @@ const componentValues = ref<ComponentValueOverride[]>([]);
 const componentValuesValid = ref(true);
 const runningComponentNames = ref<string[]>([]);
 const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
+const { clusterNames, clusterDisplayName, loadClusterDisplayNames } = useClusterDisplayNames(store);
 
 watch(fleetGitConfigured, (configured) => {
   if (!configured && deployType.value === 'GitOps') {
@@ -85,6 +88,8 @@ const missingCredsLabel = computed(() =>
 );
 
 onMounted(async () => {
+  // Not awaited: names are only needed by the review step and progress modal.
+  void loadClusterDisplayNames();
   try {
     const crName = blueprintCRName(props.blueprintName, props.blueprintVersion);
     blueprint.value = await getBlueprint(crName);
@@ -209,7 +214,7 @@ async function onInstall() {
     );
     const collisions = targets.filter((t) => existingNames.has(t.crName));
     if (collisions.length > 0) {
-      const list = collisions.map((c) => `${workloadName.value} on ${c.clusterId}`).join(', ');
+      const list = collisions.map((c) => `${workloadName.value} on ${clusterDisplayName(c.clusterId)}`).join(', ');
       error.value = `Already deployed: ${list}. Pick different clusters or manage the existing deployments.`;
       submitting.value = false;
       return;
@@ -220,7 +225,7 @@ async function onInstall() {
 
   installProgress.value = targets.map((t) => ({
     clusterId:   t.clusterId,
-    clusterName: t.clusterId,
+    clusterName: clusterDisplayName(t.clusterId),
     status:      'installing' as const,
     progress:    10,
     message:     'Creating AIWorkload CR...',
@@ -259,7 +264,7 @@ async function onInstall() {
     }
     const e: any = r.reason;
     const errMsg = e?.status === 409
-      ? `A deployment for "${workloadName.value}" already exists on ${p.clusterId}.`
+      ? `A deployment for "${workloadName.value}" already exists on ${clusterDisplayName(p.clusterId)}.`
       : (e?.message || 'Unknown error');
     return { ...p, status: 'failed', message: errMsg, error: errMsg };
   });
@@ -360,6 +365,7 @@ function onProgressCancel() { showProgressModal.value = false; }
               :component-count="blueprint?.spec.components.length || 0"
               :deploy-type="deployType"
               :clusters="clusters"
+              :cluster-names="clusterNames"
               :components="blueprint?.spec.components || []"
               :component-values="componentValues"
             />

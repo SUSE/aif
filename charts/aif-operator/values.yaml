@@ -106,7 +106,7 @@ manager:
   image:
     registry: ghcr.io
     repository: suse/aif-operator
-    tag: "2.3.0"
+    tag: "2.3.1-rc.1"
     pullPolicy: IfNotPresent
 
   imagePullSecrets: []
@@ -193,7 +193,7 @@ aiExtension:
     kind: Helm
     helm:
       chartURL: "oci://ghcr.io/suse/chart/aif-ui"
-      version: "2.3.0"
+      version: "2.3.1-rc.1"
       # values are merged onto the aif-ui chart's default values. The top-level
       # global image registry and pull Secrets are forwarded here automatically.
       # Existing per-component overrides remain supported, for example:
@@ -219,7 +219,7 @@ aiExtension:
       #   # acknowledgeInsecure: true                    #   manager.allowInsecureRegistryTLS=true
   extension:
     name: "aif-ui"
-    version: "2.3.0"
+    version: "2.3.1-rc.1"
   cleanup:
     image:
       registry: registry.suse.com
@@ -254,17 +254,43 @@ defaultBlueprints:
   # When true, the default blueprints (and their catalog) are synced by Fleet
   # from the git source below instead of the chart-bundled files. Default false
   # = bundled (shipped in the chart, air-gap friendly). Switching this is a
-  # deliberate Helm-time change; partner catalogs are managed at runtime instead.
+  # deliberate Helm-time change. The SUSE partner catalog is set separately under
+  # partnerBlueprints.
   gitSourced: false
   git:
     repoURL: https://github.com/SUSE/aif.git
     branch: main
     paths: [charts/aif-operator/files/blueprints]
 
-# Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo that
-# syncs Blueprint CRs from the given repo/paths. The bundled default catalog is
-# always present and is NOT listed here. credSecretRef/caBundleSecretRef must
-# reference Secrets you pre-create in the operator namespace.
+# SUSE partner blueprint catalog. When enabled, the chart renders a Fleet GitRepo
+# (fleet-local/aif-partner-blueprints) that syncs partner-contributed Blueprint
+# CRs and their BlueprintCatalog from the git source below. Like the git-sourced
+# default catalog it is a chart resource, not a Settings entry, so helm upgrade
+# never touches catalogs added on the Settings page, whatever the Helm version or
+# apply method. Set enabled=false to remove it; Fleet then garbage-collects the
+# synced blueprints. Air-gapped clusters: disable it, or mirror the repo and add
+# the mirror under blueprintCatalogs below, which supports credentials and a CA.
+partnerBlueprints:
+  enabled: true
+  git:
+    repoURL: https://github.com/suse/partner-blueprints.git
+    branch: main
+    paths: [partners]
+
+# Your own git-sourced blueprint catalogs. Each becomes one Fleet GitRepo that
+# syncs Blueprint CRs from the given repo/paths. The default and partner catalogs
+# above are NOT listed here. credSecretRef/caBundleSecretRef must reference
+# Secrets you pre-create in the operator namespace.
+#
+# Catalogs listed here are Helm-managed: the Settings page shows them read-only,
+# and they are changed or removed only with helm upgrade. To remove them, set
+# the list explicitly, e.g.:
+#   helm upgrade ... --reuse-values --set-json 'blueprintCatalogs=[]'
+# Catalogs added on the Settings page are kept only when the chart is applied
+# with server-side apply: a fresh Helm 4 install, Rancher 2.15+ Apps or Fleet
+# 0.16+. Helm 3, Argo CD client-side apply, and Helm 4 upgrades of a release
+# first installed with Helm 3 (unless run once with --server-side=true) replace
+# the whole list (see README).
 blueprintCatalogs: []
 #  - name: partner-acme
 #    repoURL: https://github.com/acme/blueprints.git

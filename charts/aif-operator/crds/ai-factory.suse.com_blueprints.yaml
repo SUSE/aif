@@ -136,14 +136,16 @@ spec:
               source:
                 description: |-
                   Source identifies where this blueprint came from: SUSE, Nvidia, Partner
-                  (for the partner catalog), or Custom. It is declared by the blueprint
-                  author and not verified by the operator.
+                  (for the partner catalog), Community (for the community catalog), or
+                  Custom. It is declared by the blueprint author and not verified by the
+                  operator.
                   To leave the source unset, omit the field entirely; the enum does not
                   include the empty string, so setting `source: ""` will fail admission.
                 enum:
                 - SUSE
                 - Nvidia
                 - Partner
+                - Community
                 - Custom
                 type: string
               version:

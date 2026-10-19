@@ -27,7 +27,7 @@ const (
 
 	// BlueprintSourceLabel is a provenance marker: the Helm chart stamps
 	// BlueprintSourceBundled on blueprints shipped with the product. This is
-	// distinct from spec.source (the BlueprintOrigin enum SUSE/Nvidia/Partner/Custom).
+	// distinct from spec.source (the BlueprintOrigin enum SUSE/Nvidia/Partner/Community/Custom).
 	BlueprintSourceLabel   = "ai-factory.suse.com/source"
 	BlueprintSourceBundled = "bundled"
 
@@ -54,14 +54,15 @@ const (
 // Named "Origin" (not "Source") to avoid collision with the existing
 // BlueprintSource struct in aiworkload_types.go, which is a reference type.
 // The user-visible field name remains "source" via the JSON tag.
-// +kubebuilder:validation:Enum=SUSE;Nvidia;Partner;Custom
+// +kubebuilder:validation:Enum=SUSE;Nvidia;Partner;Community;Custom
 type BlueprintOrigin string
 
 const (
-	BlueprintOriginSUSE    BlueprintOrigin = "SUSE"
-	BlueprintOriginNvidia  BlueprintOrigin = "Nvidia"
-	BlueprintOriginPartner BlueprintOrigin = "Partner"
-	BlueprintOriginCustom  BlueprintOrigin = "Custom"
+	BlueprintOriginSUSE      BlueprintOrigin = "SUSE"
+	BlueprintOriginNvidia    BlueprintOrigin = "Nvidia"
+	BlueprintOriginPartner   BlueprintOrigin = "Partner"
+	BlueprintOriginCommunity BlueprintOrigin = "Community"
+	BlueprintOriginCustom    BlueprintOrigin = "Custom"
 )
 
 // BlueprintComponent defines one Helm chart in a Blueprint.
@@ -124,8 +125,9 @@ type BlueprintSpec struct {
 	// +kubebuilder:validation:Pattern=`^(data:image\/(png|gif|jpeg|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s"'<>]+)$`
 	Icon string `json:"icon,omitempty"`
 	// Source identifies where this blueprint came from: SUSE, Nvidia, Partner
-	// (for the partner catalog), or Custom. It is declared by the blueprint
-	// author and not verified by the operator.
+	// (for the partner catalog), Community (for the community catalog), or
+	// Custom. It is declared by the blueprint author and not verified by the
+	// operator.
 	// To leave the source unset, omit the field entirely; the enum does not
 	// include the empty string, so setting `source: ""` will fail admission.
 	// +optional

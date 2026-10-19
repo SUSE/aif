@@ -171,6 +171,12 @@ rules:
 - apiGroups:
   - fleet.cattle.io
   resources:
+  - clusters
+  verbs:
+  - get
+- apiGroups:
+  - fleet.cattle.io
+  resources:
   - helmops
   verbs:
   - create
