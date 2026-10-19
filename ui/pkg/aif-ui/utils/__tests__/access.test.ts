@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isAdminUser } from '@shell/store/type-map';
-import { canAccessExtension, invalidateAccessCache, MANAGEMENT_READY_TIMEOUT_MS } from '../access';
+import {
+  canAccessExtension, invalidateAccessCache, ManagementNotReadyError, MANAGEMENT_READY_TIMEOUT_MS, CRTB_TYPE
+} from '../access';
 import type { RancherStore } from '../../types/rancher-types';
 
 vi.mock('@shell/store/type-map', () => ({ isAdminUser: vi.fn() }));
@@ -98,15 +100,75 @@ describe('canAccessExtension', () => {
     vi.mocked(isAdminUser).mockReset().mockReturnValue(true);
 
     const result = canAccessExtension(store);
+    const settled = expect(result).rejects.toBeInstanceOf(ManagementNotReadyError);
 
     await vi.advanceTimersByTimeAsync(MANAGEMENT_READY_TIMEOUT_MS);
 
-    await expect(result).resolves.toBe(false);
+    await settled;
     expect(isAdminUser).not.toHaveBeenCalled();
     expect(watchers[0].active).toBe(false);
 
     // Not cached: once the store loads, the next navigation is allowed
     setReady(true);
     await expect(canAccessExtension(store)).resolves.toBe(true);
+  });
+
+  it('shares one wait between concurrent calls', async () => {
+    const { store, setReady } = createStore(false);
+
+    vi.mocked(isAdminUser).mockReset().mockReturnValue(true);
+
+    const results = [canAccessExtension(store), canAccessExtension(store), canAccessExtension(store)];
+
+    expect(store.watch).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    setReady(true);
+
+    await expect(Promise.all(results)).resolves.toEqual([true, true, true]);
+    expect(isAdminUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one CRTB findAll between concurrent calls', async () => {
+    const { store } = createStore(true);
+    const getters = store.getters as Record<string, unknown>;
+    let finishFindAll: () => void = () => {};
+
+    vi.mocked(isAdminUser).mockReset().mockReturnValue(false);
+    getters['management/schemaFor'] = vi.fn(() => ({ collectionMethods: ['post'] }));
+    getters['auth/principalId'] = 'local://u-owner';
+    getters['management/all'] = vi.fn(() => [
+      { metadata: { namespace: 'local' }, roleTemplateName: 'cluster-owner', userPrincipalName: 'local://u-owner' }
+    ]);
+    vi.mocked(store.dispatch).mockImplementation(() => new Promise<void>((resolve) => {
+      finishFindAll = resolve;
+    }));
+
+    const results = [canAccessExtension(store), canAccessExtension(store)];
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.dispatch).toHaveBeenCalledTimes(1);
+    expect(store.dispatch).toHaveBeenCalledWith('management/findAll', expect.objectContaining({ type: CRTB_TYPE }));
+
+    finishFindAll();
+
+    await expect(Promise.all(results)).resolves.toEqual([true, true]);
+  });
+
+  it('starts a new check after a timed-out one', async () => {
+    const { store, watchers } = createStore(false);
+
+    vi.mocked(isAdminUser).mockReset().mockReturnValue(true);
+
+    const first = canAccessExtension(store);
+    const settled = expect(first).rejects.toBeInstanceOf(ManagementNotReadyError);
+
+    await vi.advanceTimersByTimeAsync(MANAGEMENT_READY_TIMEOUT_MS);
+    await settled;
+
+    void canAccessExtension(store).catch(() => {});
+    expect(store.watch).toHaveBeenCalledTimes(2);
+    expect(watchers[1].active).toBe(true);
+    await vi.advanceTimersByTimeAsync(MANAGEMENT_READY_TIMEOUT_MS);
   });
 });

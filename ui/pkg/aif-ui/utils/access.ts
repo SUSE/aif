@@ -15,9 +15,24 @@ interface CrtbBinding {
   userPrincipalName?: string;
 }
 
+/**
+ * Thrown by canAccessExtension when the management store does not load within
+ * the timeout, so callers can tell "could not check" apart from "denied".
+ */
+export class ManagementNotReadyError extends Error {
+  constructor() {
+    super(`Management store not ready after ${ MANAGEMENT_READY_TIMEOUT_MS / 1000 }s`);
+    this.name = 'ManagementNotReadyError';
+  }
+}
+
 // Cached so the CRTB scan runs at most once per session. Invalidated on CRTB
 // store changes so mid-session role revocations are caught on next navigation.
 let cachedDecision: boolean | null = null;
+
+// Shared by navigations that arrive while a check is running, so they reuse one
+// managementReady watcher, one timer and one CRTB findAll.
+let inFlight: Promise<boolean> | null = null;
 
 export function invalidateAccessCache(): void {
   cachedDecision = null;
@@ -103,7 +118,9 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
 /**
  * Returns true if the current user is allowed to access the extension.
  * Result is cached for the session; invalidated when CRTBs change in the store.
- * Waits for the management store first; if it never loads, returns false.
+ * Waits for the management store first; if it never loads, rejects with
+ * ManagementNotReadyError and caches nothing, so the next navigation checks again.
+ * Concurrent calls share one in-flight check.
  *
  *  1. isAdminUser  — schema-based fast path for global admins.
  *  2. CRTB POST    — eliminates cluster members and standard users.
@@ -112,8 +129,16 @@ async function resolveAccess(store: RancherStore): Promise<boolean> {
  */
 export async function canAccessExtension(store: RancherStore): Promise<boolean> {
   if (cachedDecision !== null) return cachedDecision;
-  // Fail closed without caching, so the next navigation checks again.
-  if (!(await waitForManagementReady(store))) return false;
-  cachedDecision = await resolveAccess(store);
-  return cachedDecision;
+  if (inFlight) return inFlight;
+
+  inFlight = (async () => {
+    if (!(await waitForManagementReady(store))) throw new ManagementNotReadyError();
+    cachedDecision = await resolveAccess(store);
+
+    return cachedDecision;
+  })().finally(() => {
+    inFlight = null;
+  });
+
+  return inFlight;
 }
