@@ -465,7 +465,7 @@
       "slug_name": "dpf-operator",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of DPF.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-08-27T11:24:16.173Z",
+      "last_updated_at": "2026-10-12T12:11:43.048Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -481,7 +481,7 @@
       "slug_name": "dpf-storage",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of the DPF Storage Subsystem.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-08-27T11:24:21.941Z",
+      "last_updated_at": "2026-10-12T12:11:48.511Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -497,7 +497,23 @@
       "slug_name": "dpf-vpc-ovn",
       "description": "OVN VPC System Helm chart",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-08-27T11:24:18.051Z",
+      "last_updated_at": "2026-10-12T12:11:44.951Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
+      "name": "DOCA Weave Service Helm Chart",
+      "slug_name": "dpf-weave",
+      "description": "Helm chart for deploying the DOCA Weave Service, which provides secure multi-tenant east-west network isolation for AI factories using ASTRA, BlueField-4 DPUs, and ConnectX-9 NICs.",
+      "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
+      "last_updated_at": "2026-10-12T17:22:15.271Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -527,7 +543,7 @@
       "slug_name": "dpu-networking",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart is deployed by the DPF Operator and is responsible for setting up networking related components required on the DPU.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-08-27T11:24:14.018Z",
+      "last_updated_at": "2026-10-12T12:11:41.073Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -564,7 +580,7 @@
       "slug_name": "dynamo-platform-enterprise",
       "description": "The Dynamo Platform Helm chart installs the Dynamo operator and its optional dependencies. Eligible for NVIDIA Enterprise Support. No functional or binary differences from its corresponding OSS artifact.",
       "logo_url": "https://s3.amazonaws.com/cms.ipressroom.com/219/files/20237/64e3dc1a3d6332319b2dfd35_NVIDIA-logo-white-16x9/NVIDIA-logo-white-16x9_927581a6-fc31-4fa5-85c6-379680c6aa6c-prv.png",
-      "last_updated_at": "2026-09-29T02:18:51.701Z",
+      "last_updated_at": "2026-10-07T01:43:36.085Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/ai-dynamo",
       "labels": [
@@ -642,7 +658,7 @@
       "slug_name": "gpu-operator",
       "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
       "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
-      "last_updated_at": "2026-09-23T01:02:27.810Z",
+      "last_updated_at": "2026-10-13T03:06:06.223Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "source": "ngc"
@@ -1558,7 +1574,7 @@
       "slug_name": "ovn-chart",
       "description": "This Helm Chart deploys the OVN for DPF VPC",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-08-27T11:24:20.062Z",
+      "last_updated_at": "2026-10-12T12:11:46.864Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
