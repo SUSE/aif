@@ -133,3 +133,11 @@ the operator. `icon` works the same as for Partner blueprints.
 chart applies on upgrade. Older operators reject `source: Community`, so catalog
 authors must not use it until the minimum supported operator version includes
 this change.
+
+## Random default namespace for new installs
+
+The app and Blueprint install wizards now suggest a namespace with a random
+suffix, such as `coredns-k3x9q2a`, instead of `coredns-system`. Installing the
+same app twice no longer fails because a deployment with the same instance name
+already exists in the shared default namespace. The field can still be changed,
+and existing installs keep their namespace.
