@@ -15,7 +15,7 @@ This operator exists to:
 - docker v17.03+
 - kubectl v1.11.3+
 - Access to a Kubernetes v1.11.3+ cluster
-- Helm 3.x
+- Helm 3.x or 4.x
 - Rancher installed (for UIPlugin and ClusterRepo integration)
 
 The following CRDs must exist before adding the operator:

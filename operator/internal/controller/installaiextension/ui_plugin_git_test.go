@@ -30,20 +30,44 @@ import (
 // stubHelmClient stands in for the Helm backend so the reconcile paths can be
 // driven over a chosen release state without a cluster or a chart.
 type stubHelmClient struct {
-	deployed    *helmClient.ReleaseInfo
-	last        *helmClient.ReleaseInfo
-	ensureErr   error
-	ensureCalls int
-	ensureSpec  helmClient.ReleaseSpec
+	deployed  *helmClient.ReleaseInfo
+	last      *helmClient.ReleaseInfo
+	ensureErr error
+	// ensureErrFor fails EnsureRelease for the named release only, overriding
+	// ensureErr, for a path that ensures more than one release.
+	ensureErrFor map[string]error
+	ensureCalls  int
+	ensureSpec   helmClient.ReleaseSpec
+	// ensureSpecs is every spec EnsureRelease was handed, in order.
+	ensureSpecs []helmClient.ReleaseSpec
+	// deleted is every release DeleteRelease was asked to remove, in order.
+	deleted []string
 }
 
 func (s *stubHelmClient) EnsureRelease(_ context.Context, spec helmClient.ReleaseSpec) error {
 	s.ensureCalls++
 	s.ensureSpec = spec
+	s.ensureSpecs = append(s.ensureSpecs, spec)
+	if err, ok := s.ensureErrFor[spec.Name]; ok {
+		return err
+	}
 	return s.ensureErr
 }
 
-func (s *stubHelmClient) DeleteRelease(_ context.Context, _ string) error { return nil }
+// specFor returns the last spec EnsureRelease was handed for the named release.
+func (s *stubHelmClient) specFor(name string) (helmClient.ReleaseSpec, bool) {
+	for i := len(s.ensureSpecs) - 1; i >= 0; i-- {
+		if s.ensureSpecs[i].Name == name {
+			return s.ensureSpecs[i], true
+		}
+	}
+	return helmClient.ReleaseSpec{}, false
+}
+
+func (s *stubHelmClient) DeleteRelease(_ context.Context, name string) error {
+	s.deleted = append(s.deleted, name)
+	return nil
+}
 
 func (s *stubHelmClient) LastRelease(_ context.Context, _ string) (*helmClient.ReleaseInfo, error) {
 	return s.last, nil
@@ -86,7 +110,7 @@ func withStub(stub *stubHelmClient) *InstallAIExtensionReconciler {
 // revision sits above it. The git path used to answer that with its own
 // version-equality check and return success without ever consulting Helm, while
 // the Helm path requeued for the identical cluster state.
-func TestEnsureUIPluginGit_SurfacesPendingReleaseAtRequestedVersion(t *testing.T) {
+func TestEnsureExtensionChart_SurfacesPendingReleaseAtRequestedVersion(t *testing.T) {
 	stub := &stubHelmClient{
 		deployed:  &helmClient.ReleaseInfo{Version: requestedVersion, Status: helmClient.StatusDeployed, Revision: 1},
 		last:      &helmClient.ReleaseInfo{Version: requestedVersion, Status: helmClient.StatusPendingUpgrade, Revision: 2},
@@ -94,11 +118,11 @@ func TestEnsureUIPluginGit_SurfacesPendingReleaseAtRequestedVersion(t *testing.T
 	}
 	r := withStub(stub)
 
-	err := r.ensureUIPluginGit(context.Background(), gitExtension(),
-		"https://raw.githubusercontent.com/example/aif-ui/main", "cattle-ui-plugin-system")
+	err := r.ensureExtensionChart(context.Background(), gitExtension(), "cattle-ui-plugin-system",
+		"https://raw.githubusercontent.com/example/aif-ui/main", nil)
 
 	if !errors.Is(err, helmClient.ErrReleasePending) {
-		t.Fatalf("ensureUIPluginGit() error = %v, want ErrReleasePending", err)
+		t.Fatalf("ensureExtensionChart() error = %v, want ErrReleasePending", err)
 	}
 	if stub.ensureCalls != 1 {
 		t.Errorf("EnsureRelease calls = %d, want 1; the pending state is only visible through it",
@@ -109,16 +133,16 @@ func TestEnsureUIPluginGit_SurfacesPendingReleaseAtRequestedVersion(t *testing.T
 // The skip decision still has to happen — it just belongs to EnsureRelease, which
 // weighs values as well as version and knows about in-flight operations. This pins
 // that removing the local check delegated the decision rather than dropping it.
-func TestEnsureUIPluginGit_DelegatesTheSkipDecision(t *testing.T) {
+func TestEnsureExtensionChart_DelegatesTheSkipDecision(t *testing.T) {
 	stub := &stubHelmClient{
 		deployed: &helmClient.ReleaseInfo{Version: requestedVersion, Status: helmClient.StatusDeployed, Revision: 1},
 		last:     &helmClient.ReleaseInfo{Version: requestedVersion, Status: helmClient.StatusDeployed, Revision: 1},
 	}
 	r := withStub(stub)
 
-	if err := r.ensureUIPluginGit(context.Background(), gitExtension(),
-		"https://raw.githubusercontent.com/example/aif-ui/main", "cattle-ui-plugin-system"); err != nil {
-		t.Fatalf("ensureUIPluginGit() error = %v", err)
+	if err := r.ensureExtensionChart(context.Background(), gitExtension(), "cattle-ui-plugin-system",
+		"https://raw.githubusercontent.com/example/aif-ui/main", nil); err != nil {
+		t.Fatalf("ensureExtensionChart() error = %v", err)
 	}
 	if stub.ensureCalls != 1 {
 		t.Fatalf("EnsureRelease calls = %d, want 1", stub.ensureCalls)

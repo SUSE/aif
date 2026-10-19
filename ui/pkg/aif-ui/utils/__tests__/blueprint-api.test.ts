@@ -29,6 +29,7 @@ describe('sourceFor', () => {
     expect(sourceFor(mockBlueprint({ source: 'Nvidia' }))).toBe('Nvidia');
     expect(sourceFor(mockBlueprint({ source: 'Custom' }))).toBe('Custom');
     expect(sourceFor(mockBlueprint({ source: 'Partner' }))).toBe('Partner');
+    expect(sourceFor(mockBlueprint({ source: 'Community' }))).toBe('Community');
   });
 });
 

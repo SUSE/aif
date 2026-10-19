@@ -1,4 +1,5 @@
 {{- if .Values.standalone }}
+{{- include "aif-ui.validateStandalone" . }}
 apiVersion: catalog.cattle.io/v1
 kind: ClusterRepo
 metadata:

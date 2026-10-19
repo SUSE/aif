@@ -8,6 +8,8 @@ release:
   name: my-release
   namespace: aif-operator
 tests:
+  # The partner catalog is a chart-rendered GitRepo, never a Settings entry, so
+  # default values leave the spec out entirely.
   - it: default values produce a bare Settings resource with no spec
     asserts:
       - containsDocument:
@@ -160,7 +162,32 @@ tests:
           path: spec.blueprintCatalogs[0].caBundleSecretRef
           value: {name: acme-ca, key: ca.crt}
 
-  - it: an empty blueprint catalog list does not open the spec block
+  - it: an empty blueprint catalog list renders no blueprintCatalogs
+    set:
+      blueprintCatalogs: []
     asserts:
       - notExists:
           path: spec.blueprintCatalogs
+
+  - it: every Helm-declared catalog is listed in the helm-managed annotation
+    set:
+      blueprintCatalogs:
+        - name: team-a
+          repoURL: https://git.example.com/a.git
+        - name: team-b
+          repoURL: https://git.example.com/b.git
+    asserts:
+      - equal:
+          path: metadata.annotations["ai-factory.suse.com/helm-managed"]
+          value: '{"blueprintCatalogs":["team-a","team-b"]}'
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  - it: default values mean no helm-managed annotation
+    asserts:
+      - notExists:
+          path: metadata.annotations["ai-factory.suse.com/helm-managed"]
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep

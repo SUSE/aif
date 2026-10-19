@@ -128,6 +128,41 @@ SSH is not part of this minimal contract. Supporting it safely requires an
 explicit private-key and known-hosts model; TLS or SSH host verification must
 not be disabled as a shortcut.
 
+## Partner blueprint catalog
+
+The chart enables the SUSE partner blueprint catalog by default (`partnerBlueprints.enabled=true`). It renders a Fleet `GitRepo`, `fleet-local/aif-partner-blueprints`, that syncs from `https://github.com/suse/partner-blueprints.git`. An air-gapped cluster can't reach GitHub, so that `GitRepo` reports clone errors.
+
+The catalog is a chart resource and doesn't appear in the Settings page catalog list. Disable it at install or upgrade time:
+
+```bash
+helm upgrade --install aif-operator oci://ghcr.io/suse/chart/aif-operator \
+  --namespace aif-operator --reuse-values --set partnerBlueprints.enabled=false
+```
+
+To keep the catalog, mirror the repository internally. If the mirror needs no credentials and its certificate is trusted by Fleet, point the chart at it:
+
+```bash
+helm upgrade --install aif-operator oci://ghcr.io/suse/chart/aif-operator \
+  --namespace aif-operator --reuse-values \
+  --set partnerBlueprints.git.repoURL=https://gitea.internal/mirrors/partner-blueprints.git
+```
+
+If the mirror needs credentials or a private CA, disable `partnerBlueprints` and add the mirror as a catalog instead, either on the Settings page or in `blueprintCatalogs`. The credential and CA Secrets must already exist in the operator namespace:
+
+```yaml
+partnerBlueprints:
+  enabled: false
+blueprintCatalogs:
+  - name: partner-blueprints
+    repoURL: https://gitea.internal/mirrors/partner-blueprints.git
+    branch: main
+    paths: [partners]
+    credSecretRef: {name: git-credentials, key: token}
+    caBundleSecretRef: {name: private-ca, key: ca.crt}
+```
+
+Keep `--reuse-values` on these commands. Without it, Helm drops every value set earlier, and `--reset-values` turns the partner catalog back on.
+
 ## Catalog logos
 
 The extension ships a manifest of raster logos keyed by library and chart name.

@@ -36,6 +36,11 @@ type Label struct {
 	Name string `json:"name"`
 }
 
+// SourceNGC marks a catalog entry the generate-catalog tool owns: it is rebuilt
+// from NGC on every refresh and removed once NGC no longer publishes the chart.
+// The marker is generator-only; Normalize clears it before entries are served.
+const SourceNGC = "ngc"
+
 // Item is a single application catalog entry (mirrors the UI's AppCollectionItem).
 type Item struct {
 	Name              string  `json:"name"`
@@ -53,6 +58,7 @@ type Item struct {
 	RepositoryName    string  `json:"repository_name,omitempty"`
 	Library           string  `json:"library,omitempty"`
 	Labels            []Label `json:"labels,omitempty"`
+	Source            string  `json:"source,omitempty"`
 }
 
 // bundled is normalized once at startup from the embedded default catalog.
@@ -142,6 +148,8 @@ func finalize(items []Item) []Item {
 			}
 		}
 		it.Labels = cleanLabels(it.Labels)
+		// Ownership is a generate-catalog concern; never expose it to API consumers.
+		it.Source = ""
 		out = append(out, it)
 	}
 	// Alphabetical (case-insensitive) by name within each library.

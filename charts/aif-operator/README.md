@@ -16,7 +16,7 @@ It integrates with Rancher catalogs and UI plugins to enable declarative install
 ## Prerequisites
 
 - Kubernetes 1.24+
-- Helm 3.x
+- Helm 3.x or 4.x. Declaring catalogs in `blueprintCatalogs` while also adding catalogs on the Settings page needs server-side apply; see [Blueprint catalogs](#blueprint-catalogs).
 - Rancher installed (for UIPlugin and ClusterRepo integration)
 
 The following CRDs must exist before adding the operator:
@@ -218,7 +218,7 @@ helm upgrade --install aif-operator \
   -f charts/values-airgap-images.example.yaml \
   --set aiExtension.enabled=false
 
-helm upgrade --install aif-ui \
+helm upgrade --install aif-ui-server \
   oci://registry.example.com/ai-factory/charts/aif-ui \
   --namespace cattle-ui-plugin-system \
   --create-namespace \
@@ -226,6 +226,10 @@ helm upgrade --install aif-ui \
   -f charts/values-airgap-images.example.yaml \
   --set standalone=true
 ```
+
+The standalone UI chart deploys the extension catalog only. Install the
+extension itself from Rancher's **Extensions** page, and update it there after
+each upgrade of the UI chart; see the aif-ui chart's README, "Standalone mode".
 
 The shared override covers images rendered by these charts only. Application
 images referenced by catalogs and Blueprints must be mirrored and configured as
@@ -349,7 +353,7 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 
 #### Source types
 
-**Helm** (`aiExtension.source.kind=Helm`): The operator installs a Helm chart that deploys a container serving extension assets. It then creates a ClusterRepo pointing to the in-cluster Service and a UIPlugin CR for Rancher to load the extension.
+**Helm** (`aiExtension.source.kind=Helm`): The operator installs a Helm chart that deploys a container serving extension assets. It then creates a ClusterRepo pointing to the in-cluster Service and installs the extension chart from that repository, the same way Rancher's Extensions page installs extensions: a Helm release named after the extension, tagged with the ClusterRepo it came from. That release creates the UIPlugin CR that Rancher loads the extension from. Because Rancher can match the release to its catalog entry, the Extensions page shows the extension's logo and description, and does not mark it Third-Party. Everything is served from inside the cluster, so this also works air-gapped.
 
 ### RBAC helper roles
 
@@ -366,6 +370,50 @@ When `defaultBlueprints.enabled=true`, the chart renders the curated `Blueprint`
 | `defaultBlueprints.enabled`  | Create the bundled default `Blueprint` CRs on install | `true`  |
 
 The defaults are Helm-managed: `helm upgrade` reconciles them to the chart's current set and `helm uninstall` removes them. Each rendered Blueprint carries the marker label `ai-factory.suse.com/source: bundled`. Set `defaultBlueprints.enabled=false` to manage blueprints exclusively by other means.
+
+### Partner blueprint catalog
+
+The chart enables the SUSE partner blueprint catalog by default. It renders a Fleet `GitRepo` (`fleet-local/aif-partner-blueprints`) that syncs partner-contributed `Blueprint` CRs and their `BlueprintCatalog` from `https://github.com/suse/partner-blueprints.git`.
+
+| Name                            | Description                                         | Default                                          |
+| ------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| `partnerBlueprints.enabled`     | Render the partner catalog `GitRepo`                | `true`                                           |
+| `partnerBlueprints.git.repoURL` | Git repository the partner catalog is synced from   | `https://github.com/suse/partner-blueprints.git` |
+| `partnerBlueprints.git.branch`  | Branch to sync                                      | `main`                                           |
+| `partnerBlueprints.git.paths`   | Repository folders Fleet scans                      | `[partners]`                                     |
+
+Like the git-sourced default catalog, the `GitRepo` is a chart resource rather than a `Settings` entry. `helm upgrade` changes or removes it, and `helm uninstall` removes it; Fleet then garbage-collects the synced blueprints. Because it never shares the `Settings` catalog list, upgrading the chart leaves catalogs added on the Settings page alone, with any Helm version or apply method. To disable it:
+
+```bash
+helm upgrade aif-operator oci://ghcr.io/suse/chart/aif-operator --namespace aif-operator \
+  --reuse-values --set partnerBlueprints.enabled=false
+```
+
+If a catalog added on the Settings page points at the same repository, remove it after upgrading. Otherwise two Fleet `GitRepo`s sync the same blueprints and conflict.
+
+### Blueprint catalogs
+
+| Name                | Description                                                                  | Default |
+| ------------------- | ---------------------------------------------------------------------------- | ------- |
+| `blueprintCatalogs` | Your own git-sourced blueprint catalogs, each synced by one Fleet `GitRepo`  | `[]`    |
+
+Catalogs declared here are Helm-managed. The chart lists them in the `ai-factory.suse.com/helm-managed` annotation on the `Settings` resource. The Settings page shows them read-only, and the operator API refuses to change them. Change or remove them only with `helm upgrade`:
+
+```bash
+# Remove every Helm-declared catalog, keeping your other values
+helm upgrade aif-operator oci://ghcr.io/suse/chart/aif-operator --namespace aif-operator \
+  --reuse-values --set-json 'blueprintCatalogs=[]'
+```
+
+Without `--reuse-values`, Helm drops every value you set earlier, not just the catalogs. Helm replaces lists rather than merging them, so list every catalog you want to keep. A Settings-page catalog with the same name but a different repository, branch or paths makes `helm upgrade` fail with a server-side apply conflict; remove or rename it first.
+
+Keeping catalogs added on the Settings page alongside Helm-declared ones relies on server-side apply. A fresh Helm 4 install, Rancher 2.15+ Apps & Marketplace on a fresh install, and Fleet 0.16+ use it. Helm 3 and Argo CD's default client-side apply update the `Settings` resource with a JSON merge patch instead, which replaces the whole catalog list whenever the Helm-declared list changes and drops catalogs added on the Settings page. Helm 4 keeps using client-side apply when it upgrades a release first installed with Helm 3, and so does Rancher Apps, which does not pass `--server-side`. Run one upgrade with `helm upgrade --server-side=true` to switch the release to server-side apply; later upgrades keep it. With Argo CD, enable `ServerSideApply=true`. None of this applies while `blueprintCatalogs` is empty.
+
+After `helm uninstall`, the `Settings` resource is kept (`helm.sh/resource-policy: keep`), and so is its `helm-managed` annotation, so formerly Helm-declared catalogs stay read-only. To manage them from the Settings page again, remove the annotation:
+
+```bash
+kubectl annotate settings.ai-factory.suse.com settings -n aif-operator ai-factory.suse.com/helm-managed-
+```
 
 ## Bundled blueprints
 
