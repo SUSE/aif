@@ -28,8 +28,11 @@ async function setup() {
   const router = { push, replace: vi.fn().mockResolvedValue(undefined) } as unknown as Router;
   const route = { params: { cluster: 'local' }, query: {} } as unknown as RouteLocationNormalizedLoaded;
   const store = { getters: { 'i18n/t': t }, dispatch: vi.fn(), commit: vi.fn() };
+  // $fetchState is required by @rancher/shell's `fetch.client` mixin typings; the
+  // page under test doesn't read it, so a stub satisfying the shape suffices.
+  const $fetchState = { pending: false, error: null, timestamp: 0 };
   const wrapper = mount(Apps, { global: {
-    config: { globalProperties: { $router: router, $route: route, $store: store, t, $t: t } },
+    config: { globalProperties: { $router: router, $route: route, $store: store, t, $t: t, $fetchState } },
     stubs: { RouterLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.name"><slot /></a>' } },
   } });
   mounted.push(wrapper);
