@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -81,7 +82,7 @@ const chartFingerprintAnnotation = "ai-factory.suse.com/git-chart-fingerprint"
 // git-backed component installs identically to an http/oci one. The chart version
 // is pinned by the fetched archive itself, so spec.helm.version is omitted.
 func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
-	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any) (*unstructured.Unstructured, error) {
+	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any, dependsOn []any) (*unstructured.Unstructured, error) {
 	if len(tgz) > maxChartArchiveBytes {
 		return nil, fmt.Errorf(
 			"%w: chart %q archive is %d bytes, over the %d-byte limit for a git-backed repo; host it via an OCI or HTTP ClusterRepo instead",
@@ -128,8 +129,45 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		targets = []any{}
 	}
 	_ = unstructured.SetNestedSlice(b.Object, targets, "spec", "targets")
+	if len(dependsOn) > 0 {
+		_ = unstructured.SetNestedSlice(b.Object, dependsOn, "spec", "dependsOn")
+	}
 	_ = unstructured.SetNestedSlice(b.Object, resources, "spec", "resources")
 	return b, nil
+}
+
+// rejectUnsafePath rejects archive/overlay entries that escape their root.
+func rejectUnsafePath(name string) error {
+	if name == ".." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
+		return fmt.Errorf("path %q escapes the bundle root", name)
+	}
+	return nil
+}
+
+// overlayFilesToResources converts an inline Kustomize overlay (path->content)
+// into sorted Fleet bundle resources, applying the same path-escape guard and
+// 1 MiB payload cap as embedded charts.
+func overlayFilesToResources(files map[string]string) ([]any, error) {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var total int64
+	resources := make([]any, 0, len(names))
+	for _, name := range names {
+		clean := path.Clean(name)
+		if err := rejectUnsafePath(clean); err != nil {
+			return nil, err
+		}
+		content := files[name]
+		total += int64(len(clean) + len(content))
+		if total > maxBundleResourcesBytes {
+			return nil, fmt.Errorf("%w: kustomize overlay exceeds the %d-byte Fleet bundle payload limit", errChartTooLarge, maxBundleResourcesBytes)
+		}
+		resources = append(resources, map[string]any{"name": clean, "content": content})
+	}
+	return resources, nil
 }
 
 // chartTgzToBundleResources expands a Helm chart .tgz into Fleet bundle
@@ -157,11 +195,8 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 			continue
 		}
 		name := path.Clean(h.Name)
-		// Reject entries that escape the chart root. path.Clean leaves a leading
-		// ../ intact and keeps absolute paths absolute, so a crafted archive could
-		// otherwise write a bundle resource outside the chart directory.
-		if name == ".." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
-			return nil, "", fmt.Errorf("archive entry %q escapes the chart root", h.Name)
+		if err := rejectUnsafePath(name); err != nil {
+			return nil, "", err
 		}
 		if i := strings.IndexByte(name, '/'); i > 0 && chartDir == "" {
 			chartDir = name[:i]
@@ -256,7 +291,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
-	fingerprint := gitChartFingerprint(c, ns, repoInfo.Commit, vals, localTargets, downstreamTargets)
+	dependsOn := resolveDependsOnNames(w, c.DependsOn)
+	depObjs := resolveDependsOn(w, c.DependsOn)
+	fingerprint := gitChartFingerprint(c, ns, repoInfo.Commit, vals, dependsOn, localTargets, downstreamTargets)
 	pairs := []struct {
 		ns      string
 		targets []any
@@ -275,7 +312,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 			if len(pair.targets) == 0 {
 				continue
 			}
-			b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
+			b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets, depObjs)
 			if err != nil {
 				return "", err
 			}
@@ -321,7 +358,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		if len(pair.targets) == 0 {
 			continue
 		}
-		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
+		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets, depObjs)
 		if err != nil {
 			return "", err
 		}
@@ -368,7 +405,7 @@ func (r *AIWorkloadReconciler) gitChartBundleMatches(ctx context.Context, ns, bu
 //
 // A change in any of these means the Bundle must be rebuilt — and the chart
 // re-fetched, since the archive is the one input we cannot diff without it.
-func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit string, vals map[string]any, targetSets ...[]any) string {
+func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit string, vals map[string]any, dependsOn []string, targetSets ...[]any) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, c.ReleaseName, ns, repoCommit)
 	// json.Marshal sorts map keys, so equivalent values hash equally.
@@ -378,6 +415,15 @@ func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit
 		return ""
 	}
 	h.Write(valsJSON)
+	// Only hash dependsOn when non-empty, so a component with no deps fingerprints
+	// identically to before this field existed (frictionless upgrade).
+	if len(dependsOn) > 0 {
+		depJSON, err := json.Marshal(dependsOn)
+		if err != nil {
+			return ""
+		}
+		h.Write(depJSON)
+	}
 	for _, ts := range targetSets {
 		tsJSON, err := json.Marshal(ts)
 		if err != nil {

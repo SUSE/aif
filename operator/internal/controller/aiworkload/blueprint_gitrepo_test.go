@@ -286,3 +286,33 @@ func TestEnsureBlueprintHelmOp_GitRepoNoCatalogClient(t *testing.T) {
 		t.Fatalf("expected errCatalogClientNotConfigured, got %v", err)
 	}
 }
+
+// A git-backed ClusterRepo has no HTTP/OCI URL a kustomize-enabled HelmOp/Bundle
+// could resolve overlays against, so kustomize on a git-backed chart repo must be
+// rejected up front rather than silently ignored.
+func TestEnsureBlueprintHelmOp_GitRepoKustomizeNotSupported(t *testing.T) {
+	scheme := gitRepoTestScheme()
+	repo := repoObj("rancher-charts", map[string]any{
+		"gitRepo": "https://git.rancher.io/charts", "gitBranch": "release-v2.14",
+	})
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme} // CatalogClient nil: guard must fire first
+
+	w := &aiplatformv1alpha1.AIWorkload{}
+	w.Name = "wl"
+	w.Spec.TargetClusters = []string{"local"}
+
+	c := gitComponent()
+	c.Kustomize = &aiplatformv1alpha1.ComponentKustomize{
+		Dir:   "overlay",
+		Files: map[string]string{"overlay/kustomization.yaml": "resources: []"},
+	}
+
+	_, err := r.ensureBlueprintHelmOp(context.Background(), w, c, "wl-agent")
+	if err == nil {
+		t.Fatal("expected error for kustomize on a git-backed chart repository")
+	}
+	if !strings.Contains(err.Error(), "not supported for git-backed chart repositories") {
+		t.Fatalf("error = %v, want the git-backed-kustomize guard message", err)
+	}
+}

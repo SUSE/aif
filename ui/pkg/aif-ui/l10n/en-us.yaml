@@ -496,6 +496,22 @@ suseai:
       includeComponent: Include
       componentExcluded: Excluded — this component will not be deployed.
       excluded: Excluded
+      dependsOn: Deploys after
+      kustomizeOverlay: Kustomize overlay
+      kustomizeDir: Overlay directory
+      kustomizeChartRepo: Git ClusterRepo
+      kustomizePath: Path in repo
+      kustomizeNone: None
+      kustomizeInline: Inline
+      kustomizeGit: Git
+      kustomizeInlineHint: Inline supports a single kustomization.yaml. For overlays that reference patch or resource files, use the Git source instead.
+      deployOrder: Deploy Order
+      deploysAfter: deploys after
+      patched: Patched
+      ordered: Ordered
+    hints:
+      patched: This component has a kustomize patch applied.
+      ordered: This component has a deploy-order dependency.
     errors:
       allComponentsDisabled: At least one component must remain enabled.
     warnings:

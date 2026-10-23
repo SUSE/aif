@@ -73,6 +73,63 @@ spec:
                       description: ChartVersion is the semver chart version.
                       minLength: 1
                       type: string
+                    dependsOn:
+                      description: |-
+                        DependsOn lists sibling component chartNames (this blueprint's listMapKey)
+                        that must be Ready before this component deploys. Maps to Fleet's
+                        HelmOp/Bundle spec.dependsOn.
+                      items:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      maxItems: 32
+                      type: array
+                      x-kubernetes-list-type: set
+                    kustomize:
+                      description: |-
+                        Kustomize post-renders the component's rendered Helm output. Optional.
+                        Absent means the component deploys exactly as before this field existed.
+                      properties:
+                        dir:
+                          description: |-
+                            Dir is the directory holding kustomization.yaml, relative to the embedded
+                            overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
+                            HelmOp/Bundle spec.kustomize.dir.
+                          minLength: 1
+                          type: string
+                        files:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Files is the inline overlay: path -> file content. Embedded verbatim into
+                            the rendered bundle's spec.resources.
+                          type: object
+                        gitRef:
+                          description: |-
+                            GitRef fetches the overlay from a git-backed Rancher ClusterRepo, then
+                            embeds it the same way as Files.
+                          properties:
+                            chartRepo:
+                              description: |-
+                                ChartRepo is a git-backed Rancher ClusterRepo name (resolved via
+                                resolveClusterRepo, reusing its git credentials).
+                              minLength: 1
+                              type: string
+                            path:
+                              description: Path is the directory within the repo to
+                                embed.
+                              minLength: 1
+                              type: string
+                          required:
+                          - chartRepo
+                          - path
+                          type: object
+                      required:
+                      - dir
+                      type: object
+                      x-kubernetes-validations:
+                      - message: set exactly one of files or gitRef
+                        rule: has(self.files) != has(self.gitRef)
                     releaseName:
                       description: |-
                         ReleaseName optionally pins this component's Helm release name.
@@ -110,6 +167,9 @@ spec:
                   - chartRepo
                   - chartVersion
                   type: object
+                  x-kubernetes-validations:
+                  - message: a component cannot depend on itself
+                    rule: '!has(self.dependsOn) || !(self.chartName in self.dependsOn)'
                 minItems: 1
                 type: array
                 x-kubernetes-list-map-keys:
