@@ -189,8 +189,8 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 		raw += int64(len(data))
 		if raw > maxChartUnpackedBytes {
 			return nil, "", fmt.Errorf(
-				"%w: chart expands past %d bytes unpacked; host it via an OCI or HTTP ClusterRepo instead",
-				errChartTooLarge, maxChartUnpackedBytes)
+				"%w: chart unpacks past %d MiB",
+				errChartTooLarge, maxChartUnpackedBytes>>20)
 		}
 		// Every file is stored gzip-compressed and base64-encoded (Fleet's "base64+gz"
 		// resource encoding), text and binary alike. What the API server and etcd keep is
@@ -212,8 +212,8 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 		stored += int64(len(content)) + int64(len(name))
 		if stored > maxBundleResourcesBytes {
 			return nil, "", fmt.Errorf(
-				"%w: chart exceeds the %d-byte Fleet bundle payload limit even compressed; host it via an OCI or HTTP ClusterRepo instead",
-				errChartTooLarge, maxBundleResourcesBytes)
+				"%w: chart exceeds the %d MiB Fleet bundle payload limit even compressed; host it via an OCI or HTTP ClusterRepo instead",
+				errChartTooLarge, maxBundleResourcesBytes>>20)
 		}
 		resources = append(resources, map[string]any{"name": name, "encoding": "base64+gz", "content": content})
 	}
