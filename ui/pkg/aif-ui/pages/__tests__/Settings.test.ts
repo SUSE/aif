@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import type { DirectiveBinding } from 'vue';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import strippedAriaLabel from '@shell/directives/strip-html-aria-label';
 import Settings from '../Settings.vue';
 import { nextTick } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
@@ -83,6 +85,13 @@ vi.mock('@shell/components/form/SecretSelector', () => ({
 
 const translations = yaml.load(readFileSync(path.resolve(__dirname, '../../l10n/en-us.yaml'), 'utf8'));
 
+// Records the tooltip content on the element instead of rendering floating-vue.
+const setTooltipContent = (el: HTMLElement, binding: DirectiveBinding) => {
+  const content = typeof binding.value === 'string' ? binding.value : binding.value?.content;
+  if (content) el.dataset.tooltip = content;
+};
+const cleanTooltip = { mounted: setTooltipContent, updated: setTooltipContent };
+
 async function mountSettings(options: { route?: { query?: Record<string, string> } } = {}) {
   const query = options.route?.query || {};
   const store = {
@@ -105,6 +114,10 @@ async function mountSettings(options: { route?: { query?: Record<string, string>
         $store: store,
         $route: { query },
         t,
+      },
+      directives: {
+        'clean-tooltip':       cleanTooltip,
+        'stripped-aria-label': strippedAriaLabel,
       },
     },
   });
@@ -137,6 +150,29 @@ describe('Settings page - Repositories grouping', () => {
     const wrapper = await mountSettings({ route: { query: { section: 'nvidia' } } });
     expect((wrapper.vm as any).expanded.repositories).toBe(true);
     expect((wrapper.vm as any).expanded.nvidia).toBe(true);
+  });
+});
+
+describe('Settings page - registry section tooltips', () => {
+  it.each(['appCollection', 'suseRegistry', 'nvidia'])('%s header shows an info tooltip beside the accordion toggle', async (section) => {
+    const wrapper = await mountSettings();
+    const box = wrapper.find(`[data-testid="section-${ section }"]`);
+    const icon = box.find(`[data-testid="section-info-${ section }"]`);
+    const tooltip = (translations as any).suseai.pages.settings.sections[section].tooltip;
+
+    expect(icon.exists()).toBe(true);
+    expect(icon.attributes('data-tooltip')).toBe(tooltip);
+    expect(icon.attributes('tabindex')).toBe('0');
+    // Screen readers get the same text without the tooltip's HTML markup.
+    expect(icon.attributes('aria-label')).toContain('Air-gapped environments:');
+    expect(icon.attributes('aria-label')).not.toMatch(/<[^>]+>/);
+
+    // The icon is not part of the toggle: clicking it leaves the section as is.
+    expect(box.find('.accordion-header [data-testid^="section-info-"]').exists()).toBe(false);
+    const expanded = (wrapper.vm as any).expanded[section];
+
+    await icon.trigger('click');
+    expect((wrapper.vm as any).expanded[section]).toBe(expanded);
   });
 });
 

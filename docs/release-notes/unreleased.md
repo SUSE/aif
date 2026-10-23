@@ -133,3 +133,12 @@ the operator. `icon` works the same as for Partner blueprints.
 chart applies on upgrade. Older operators reject `source: Community`, so catalog
 authors must not use it until the minimum supported operator version includes
 this change.
+
+## Registry section help in Settings
+
+The SUSE Application Collection, SUSE Registry and NVIDIA AI Library sections
+in Settings now show an info icon beside their titles. Hover over or focus the
+icon to see what the section configures, when AI Factory creates the matching
+Rancher chart repositories, and how the source behaves in an air-gapped
+installation: which endpoint to point at a private mirror, what the mirror must
+contain, and that container images still need node-level registry mirrors.
