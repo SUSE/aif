@@ -23,8 +23,10 @@ import (
 // SecretKeyRef is a reference to a key within a Kubernetes Secret.
 type SecretKeyRef struct {
 	// Name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// Key is the key within the Secret.
+	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
 }
 

@@ -249,6 +249,103 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 	}
 }
 
+// PUT that omits a built-in registry secret ref clears it even when another field
+// manager owns it. Server-side apply alone only drops fields the applier solely
+// owns, so an omitted ref co-owned by the settings controller or Helm would survive
+// (or be left as a partial ref missing its required name). The handler must null
+// omitted refs with a merge patch that ignores field ownership.
+func TestSettingsPut_ClearsOmittedRegistryRefs(t *testing.T) {
+	cr := sampleCR()
+	cr.Spec.ApplicationCollection.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "username"}
+	cr.Spec.ApplicationCollection.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "password"}
+	cr.Spec.SUSERegistry.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "username"}
+	cr.Spec.SUSERegistry.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "password"}
+	cr.Spec.Nvidia.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "ca.crt"}
+
+	var mergePatches []string
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(cr).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() == types.MergePatchType {
+					data, err := patch.Data(obj)
+					if err != nil {
+						return err
+					}
+					mergePatches = append(mergePatches, string(data))
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	// Application Collection and the NVIDIA CA are set to None; SUSE Registry keeps its refs.
+	body := `{"spec":{"suseRegistry":{` +
+		`"userSecretRef":{"name":"suse-registry","key":"username"},` +
+		`"tokenSecretRef":{"name":"suse-registry","key":"password"}}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	want := `{"spec":{"applicationCollection":{"tokenSecretRef":null,"userSecretRef":null},"nvidia":{"caBundleSecretRef":null}}}`
+	if len(mergePatches) != 1 || mergePatches[0] != want {
+		t.Fatalf("merge patches=%q want [%q]", mergePatches, want)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	if stored.Spec.ApplicationCollection.UserSecretRef != nil || stored.Spec.ApplicationCollection.TokenSecretRef != nil {
+		t.Errorf("applicationCollection refs=%+v/%+v want cleared",
+			stored.Spec.ApplicationCollection.UserSecretRef, stored.Spec.ApplicationCollection.TokenSecretRef)
+	}
+	if stored.Spec.Nvidia.CABundleSecretRef != nil {
+		t.Errorf("nvidia caBundleSecretRef=%+v want cleared", stored.Spec.Nvidia.CABundleSecretRef)
+	}
+	if stored.Spec.SUSERegistry.UserSecretRef == nil || stored.Spec.SUSERegistry.TokenSecretRef == nil {
+		t.Errorf("suseRegistry refs cleared; want kept")
+	}
+}
+
+// PUT that omits refs the existing Settings never had issues no merge patch.
+func TestSettingsPut_NoMergePatchWhenNothingToClear(t *testing.T) {
+	merged := false
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(sampleCR()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() == types.MergePatchType {
+					merged = true
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"spec":{}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if merged {
+		t.Error("unexpected merge patch when no refs needed clearing")
+	}
+}
+
 // PUT with invalid JSON returns 400.
 func TestSettingsPut_InvalidJSON_400(t *testing.T) {
 	c := newSettingsFakeClient(t)
@@ -1673,5 +1770,54 @@ func TestSettingsPut_NoAnnotationAppliesAllCatalogs(t *testing.T) {
 	}
 	if len(applied.Spec.BlueprintCatalogs) != 1 || applied.Spec.BlueprintCatalogs[0].Branch != "dev" {
 		t.Fatalf("applied catalogs=%+v; want the edited entry", applied.Spec.BlueprintCatalogs)
+	}
+}
+
+// Every secret ref in Settings must name both a secret and a key; a ref is either
+// complete or omitted (None).
+func TestIncompleteSecretRefs(t *testing.T) {
+	ref := func(name, key string) *aiplatformv1alpha1.SecretKeyRef {
+		return &aiplatformv1alpha1.SecretKeyRef{Name: name, Key: key}
+	}
+	cases := []struct {
+		name string
+		set  func(*aiplatformv1alpha1.SettingsSpec)
+		want []string
+	}{
+		{"complete and omitted refs pass", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.Nvidia.UserSecretRef = ref("nv", "user")
+			s.Nvidia.TokenSecretRef = ref("nv", "token")
+		}, nil},
+		{"fleet", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.Fleet.CredSecretRef = ref("git", "")
+			s.Fleet.CABundleSecretRef = ref("", "ca.crt")
+		}, []string{"spec.fleet.credSecretRef", "spec.fleet.caBundleSecretRef"}},
+		{"built-in registries", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.ApplicationCollection.UserSecretRef = ref("appco", "")
+			s.SUSERegistry.TokenSecretRef = ref("suse", "")
+			s.Nvidia.CABundleSecretRef = ref("nv-ca", "")
+		}, []string{
+			"spec.applicationCollection.userSecretRef",
+			"spec.suseRegistry.tokenSecretRef",
+			"spec.nvidia.caBundleSecretRef",
+		}},
+		{"rancher catalog", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.RancherCatalog.TokenSecretRef = ref("rancher", "")
+		}, []string{"spec.rancherCatalog.tokenSecretRef"}},
+		{"blueprint catalogs and custom repos", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.BlueprintCatalogs = []aiplatformv1alpha1.BlueprintCatalogSource{{Name: "a"}, {Name: "b"}}
+			s.BlueprintCatalogs[1].CredSecretRef = ref("git", "")
+			s.CustomRepos = []aiplatformv1alpha1.CustomRepoSpec{{Name: "r"}}
+			s.CustomRepos[0].SSHKeySecretRef = ref("ssh", "")
+		}, []string{"spec.blueprintCatalogs[1].credSecretRef", "spec.customRepos[0].sshKeySecretRef"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var spec aiplatformv1alpha1.SettingsSpec
+			tc.set(&spec)
+			if got := incompleteSecretRefs(&spec); fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("incompleteSecretRefs=%v want %v", got, tc.want)
+			}
+		})
 	}
 }

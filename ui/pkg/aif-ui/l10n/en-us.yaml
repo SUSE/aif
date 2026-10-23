@@ -38,6 +38,7 @@ suseai:
       title: Settings
       apply: Apply
       notConfigured: No settings configured yet. Fill in the form and save to create them.
+      secretKeyRequired: '{field}: select a key in Secret "{secret}", or set the Secret to None.'
       test:
         button: Test
         ok: Authenticated

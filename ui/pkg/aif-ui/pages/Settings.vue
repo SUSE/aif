@@ -472,6 +472,13 @@ export default {
           return false;
         }
 
+        const secretRefErrors = this.validateSecretRefs();
+        if (secretRefErrors.length > 0) {
+          this.errors = secretRefErrors;
+          buttonDone(false);
+          return false;
+        }
+
         const data = await putSettings(this.buildCrdSpec(this.spec));
 
         this.spec = this.buildSpec(data.spec, parseHelmManaged(data));
@@ -682,6 +689,63 @@ export default {
         }
       }
       return null;
+    },
+
+    // A secret reference is either complete or None. A Secret chosen without a
+    // key would otherwise be saved as a partial reference (or, for custom repos,
+    // silently dropped), so Apply is blocked and each such field is named.
+    // Opens the section of every offending field.
+    validateSecretRefs() {
+      const s = 'suseai.pages.settings.sections';
+      const refs = [];
+      const add = (open, prefix, labelKey, ref) => refs.push({ open, field: `${ prefix } - ${ this.t(labelKey, {}, true) }`, ref });
+
+      for (const [section, key] of [['appCollection', 'applicationCollection'], ['suseRegistry', 'suseRegistry'], ['nvidia', 'nvidia']]) {
+        const title = this.t(`${ s }.${ section }.title`, {}, true);
+        const open = () => this.openSection(section);
+
+        for (const field of ['userSecretRef', 'tokenSecretRef', 'caBundleSecretRef']) {
+          add(open, title, `${ s }.${ section }.${ field }.label`, this.spec[key]?.[field]);
+        }
+      }
+
+      (this.spec.customRepos || []).forEach((repo, i) => {
+        const title = repo.displayName || repo.name || `#${ i + 1 }`;
+        const open = () => { this.customRepoExpanded[i] = true; };
+        const fields = repo.type === 'git' ? ['sshKeySecretRef', 'caBundleSecretRef'] : ['userSecretRef', 'tokenSecretRef', 'caBundleSecretRef'];
+
+        for (const field of fields) {
+          add(open, title, `${ s }.customRepos.fields.${ field }.label`, repo[field]);
+        }
+      });
+
+      const fleetTitle = this.t(`${ s }.fleet.title`, {}, true);
+      for (const field of ['credSecretRef', 'caBundleSecretRef']) {
+        add(() => this.openSection('fleet'), fleetTitle, `${ s }.fleet.${ field }.label`, this.spec.fleet?.[field]);
+      }
+
+      // Helm-declared catalogs are read-only and never sent on Apply.
+      (this.spec.blueprintCatalogs || []).forEach((cat, i) => {
+        if (cat.helmManaged) return;
+        const title = `${ this.t(`${ s }.blueprintCatalogs.title`, {}, true) } (${ (cat.name || '').trim() || `#${ i + 1 }` })`;
+
+        for (const field of ['credSecretRef', 'caBundleSecretRef']) {
+          add(() => this.openSection('blueprintCatalogs'), title, `${ s }.blueprintCatalogs.custom.${ field }.label`, cat[field]);
+        }
+      });
+
+      const rancherTitle = this.t(`${ s }.rancherCatalog.title`, {}, true);
+      for (const field of ['tokenSecretRef', 'caBundleSecretRef']) {
+        add(() => this.openSection('rancherCatalog'), rancherTitle, `${ s }.rancherCatalog.${ field }.label`, this.spec.rancherCatalog?.[field]);
+      }
+
+      return refs
+        .filter(({ ref }) => ref?.name && !ref.key)
+        .map(({ open, field, ref }) => {
+          open();
+
+          return this.t('suseai.pages.settings.secretKeyRequired', { field, secret: ref.name }, true);
+        });
     },
 
     // Maps the custom repo edit form to RegistryConnectionStatus's configuration

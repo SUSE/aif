@@ -117,9 +117,11 @@ spec:
                                 properties:
                                   key:
                                     description: Key is the key within the Secret.
+                                    minLength: 1
                                     type: string
                                   name:
                                     description: Name is the Secret name.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - key
@@ -131,9 +133,11 @@ spec:
                                 properties:
                                   key:
                                     description: Key is the key within the Secret.
+                                    minLength: 1
                                     type: string
                                   name:
                                     description: Name is the Secret name.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - key
@@ -170,9 +174,11 @@ spec:
                                 properties:
                                   key:
                                     description: Key is the key within the Secret.
+                                    minLength: 1
                                     type: string
                                   name:
                                     description: Name is the Secret name.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - key
@@ -212,9 +218,11 @@ spec:
                             properties:
                               key:
                                 description: Key is the key within the Secret.
+                                minLength: 1
                                 type: string
                               name:
                                 description: Name is the Secret name.
+                                minLength: 1
                                 type: string
                             required:
                             - key

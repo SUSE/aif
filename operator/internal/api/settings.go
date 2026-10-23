@@ -107,6 +107,15 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	s.Namespace = h.namespace
 	s.Spec = body.Spec
 
+	// A secret ref is either complete or omitted (None). Reject a partial one here,
+	// before any write, rather than let the CRD reject the apply after omitted refs
+	// have already been cleared.
+	if refs := incompleteSecretRefs(&body.Spec); len(refs) > 0 {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %s must name both a secret and a key",
+			ErrInvalidInput, strings.Join(refs, ", ")))
+		return
+	}
+
 	// Validate custom repos before persisting. An invalid entry (reserved/duplicate
 	// name, type/scheme mismatch, git missing branch) must not be saved.
 	if err := credentials.ValidateCustomRepos(body.Spec.CustomRepos); err != nil {
@@ -162,6 +171,24 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	// AppCatalogSettings later that the Settings page does own must round-trip normally.
 	if s.Spec.AppCatalog.RemoteURL == "" {
 		s.Spec.AppCatalog.RemoteURL = existing.Spec.AppCatalog.RemoteURL
+	}
+
+	// Server-side apply only removes an omitted field when no other manager owns it.
+	// Built-in registry secret refs are also written by the settings controller
+	// (well-known secret discovery) and by Helm, so an omitted ref would survive the
+	// apply, or keep a co-owned key without its required name. Null omitted refs with
+	// a merge patch, which ignores field ownership, before applying. The controller
+	// still re-wires a registry whose well-known secret exists.
+	if cleared := omittedRegistryRefs(&existing, s); len(cleared) > 0 {
+		patch, err := json.Marshal(map[string]any{"spec": cleared})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := h.client.Patch(r.Context(), &existing, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	if err := h.client.Patch(
@@ -854,6 +881,75 @@ func savedRegistryRefs(
 		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, s.Spec.Nvidia.CABundleSecretRef
 	}
 	return nil, nil, nil
+}
+
+// incompleteSecretRefs returns the JSON path of every secret ref in spec that is
+// set but lacks a secret name or key.
+func incompleteSecretRefs(spec *aiplatformv1alpha1.SettingsSpec) []string {
+	type namedRef struct {
+		path string
+		ref  *aiplatformv1alpha1.SecretKeyRef
+	}
+	refs := []namedRef{
+		{"spec.fleet.credSecretRef", spec.Fleet.CredSecretRef},
+		{"spec.fleet.caBundleSecretRef", spec.Fleet.CABundleSecretRef},
+		{"spec.applicationCollection.userSecretRef", spec.ApplicationCollection.UserSecretRef},
+		{"spec.applicationCollection.tokenSecretRef", spec.ApplicationCollection.TokenSecretRef},
+		{"spec.applicationCollection.caBundleSecretRef", spec.ApplicationCollection.CABundleSecretRef},
+		{"spec.suseRegistry.userSecretRef", spec.SUSERegistry.UserSecretRef},
+		{"spec.suseRegistry.tokenSecretRef", spec.SUSERegistry.TokenSecretRef},
+		{"spec.suseRegistry.caBundleSecretRef", spec.SUSERegistry.CABundleSecretRef},
+		{"spec.nvidia.userSecretRef", spec.Nvidia.UserSecretRef},
+		{"spec.nvidia.tokenSecretRef", spec.Nvidia.TokenSecretRef},
+		{"spec.nvidia.caBundleSecretRef", spec.Nvidia.CABundleSecretRef},
+		{"spec.rancherCatalog.tokenSecretRef", spec.RancherCatalog.TokenSecretRef},
+		{"spec.rancherCatalog.caBundleSecretRef", spec.RancherCatalog.CABundleSecretRef},
+	}
+	for i, c := range spec.BlueprintCatalogs {
+		p := fmt.Sprintf("spec.blueprintCatalogs[%d]", i)
+		refs = append(refs,
+			namedRef{p + ".credSecretRef", c.CredSecretRef},
+			namedRef{p + ".caBundleSecretRef", c.CABundleSecretRef})
+	}
+	for i, r := range spec.CustomRepos {
+		p := fmt.Sprintf("spec.customRepos[%d]", i)
+		refs = append(refs,
+			namedRef{p + ".userSecretRef", r.UserSecretRef},
+			namedRef{p + ".tokenSecretRef", r.TokenSecretRef},
+			namedRef{p + ".sshKeySecretRef", r.SSHKeySecretRef},
+			namedRef{p + ".caBundleSecretRef", r.CABundleSecretRef})
+	}
+	var out []string
+	for _, r := range refs {
+		if r.ref != nil && !secretRefComplete(r.ref) {
+			out = append(out, r.path)
+		}
+	}
+	return out
+}
+
+// omittedRegistryRefs returns a merge-patch spec fragment that nulls each built-in
+// registry secret ref set in existing but absent from requested, keyed by registry
+// section. It is empty when there is nothing to clear.
+func omittedRegistryRefs(existing, requested *aiplatformv1alpha1.Settings) map[string]any {
+	fields := [3]string{"userSecretRef", "tokenSecretRef", "caBundleSecretRef"}
+	out := map[string]any{}
+	for _, target := range []string{"applicationCollection", "suseRegistry", "nvidia"} {
+		haveUser, haveToken, haveCA := savedRegistryRefs(target, existing)
+		wantUser, wantToken, wantCA := savedRegistryRefs(target, requested)
+		have := [3]*aiplatformv1alpha1.SecretKeyRef{haveUser, haveToken, haveCA}
+		want := [3]*aiplatformv1alpha1.SecretKeyRef{wantUser, wantToken, wantCA}
+		section := map[string]any{}
+		for i, field := range fields {
+			if have[i] != nil && want[i] == nil {
+				section[field] = nil
+			}
+		}
+		if len(section) > 0 {
+			out[target] = section
+		}
+	}
+	return out
 }
 
 // secretRefComplete reports whether a secret ref names both a secret and a key.
