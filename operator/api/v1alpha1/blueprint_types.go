@@ -66,6 +66,7 @@ const (
 )
 
 // BlueprintComponent defines one Helm chart in a Blueprint.
+// +kubebuilder:validation:XValidation:rule="!has(self.dependsOn) || !(self.chartName in self.dependsOn)",message="a component cannot depend on itself"
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
 	// ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
@@ -105,6 +106,50 @@ type BlueprintComponent struct {
 	// +kubebuilder:validation:MaxLength=53
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	ReleaseName string `json:"releaseName,omitempty"`
+	// Kustomize post-renders the component's rendered Helm output. Optional.
+	// Absent means the component deploys exactly as before this field existed.
+	// +optional
+	Kustomize *ComponentKustomize `json:"kustomize,omitempty"`
+
+	// DependsOn lists sibling component chartNames (this blueprint's listMapKey)
+	// that must be Ready before this component deploys. Maps to Fleet's
+	// HelmOp/Bundle spec.dependsOn.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	DependsOn []string `json:"dependsOn,omitempty"`
+}
+
+// ComponentKustomize configures a Kustomize post-render overlay for a component.
+// Exactly one content source (Files or GitRef) must be set.
+// +kubebuilder:validation:XValidation:rule="has(self.files) != has(self.gitRef)",message="set exactly one of files or gitRef"
+type ComponentKustomize struct {
+	// Dir is the directory holding kustomization.yaml, relative to the embedded
+	// overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
+	// HelmOp/Bundle spec.kustomize.dir.
+	// +kubebuilder:validation:MinLength=1
+	Dir string `json:"dir"`
+	// Files is the inline overlay: path -> file content. Embedded verbatim into
+	// the rendered bundle's spec.resources.
+	// +optional
+	Files map[string]string `json:"files,omitempty"`
+	// GitRef fetches the overlay from a git-backed Rancher ClusterRepo, then
+	// embeds it the same way as Files.
+	// +optional
+	GitRef *ComponentKustomizeGitRef `json:"gitRef,omitempty"`
+}
+
+// ComponentKustomizeGitRef references a directory inside a git-backed ClusterRepo.
+type ComponentKustomizeGitRef struct {
+	// ChartRepo is a git-backed Rancher ClusterRepo name (resolved via
+	// resolveClusterRepo, reusing its git credentials).
+	// +kubebuilder:validation:MinLength=1
+	ChartRepo string `json:"chartRepo"`
+	// Path is the directory within the repo to embed.
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.

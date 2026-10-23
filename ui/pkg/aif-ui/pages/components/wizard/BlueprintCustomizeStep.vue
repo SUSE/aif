@@ -22,6 +22,12 @@
         <span v-if="customizedNames.has(comp.chartName)" class="badge-customized">
           {{ t('suseai.wizard.labels.customized', 'Customized') }}
         </span>
+        <span v-if="comp.kustomize" class="badge-customized" :title="t('suseai.wizard.hints.patched', 'This component has a kustomize patch applied.')">
+          {{ t('suseai.wizard.labels.patched', 'Patched') }}
+        </span>
+        <span v-if="comp.dependsOn?.length" class="badge-customized" :title="t('suseai.wizard.hints.ordered', 'This component has a deploy-order dependency.')">
+          {{ t('suseai.wizard.labels.ordered', 'Ordered') }}
+        </span>
         <i :class="['icon', expandedPanels.has(idx) ? 'icon-chevron-up' : 'icon-chevron-down']" />
       </div>
 

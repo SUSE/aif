@@ -39,6 +39,13 @@
         <span>{{ ov.componentName }}</span>
       </div>
     </div>
+
+    <div v-if="waves.length > 1" class="review-section">
+      <h3 class="section-title">{{ t('suseai.wizard.labels.deployOrder', 'Deploy Order') }}</h3>
+      <ol class="deploy-order-list">
+        <li v-for="(wave, i) in waves" :key="i">{{ wave.join(', ') }}</li>
+      </ol>
+    </div>
   </div>
 </template>
 
@@ -47,6 +54,7 @@ import { computed } from 'vue';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 import { useT } from '../../../composables/useT';
+import { deployOrder } from '../../../utils/blueprint-customize';
 
 interface Props {
   workloadName:      string;
@@ -73,6 +81,9 @@ const excludedNames = computed(() => new Set(
 // excluded component — both already show up as the "Excluded" badge above, and re-listing an
 // excluded component here as "Customized" is misleading: it won't deploy, edited values or not.
 const customizedValues = computed(() => (props.componentValues || []).filter((ov) => ov.values !== undefined && ov.enabled !== false));
+// waves shows the dependency deploy order only when it's non-trivial (more than one
+// wave) — a flat list with a single wave carries no ordering information worth surfacing.
+const waves = computed(() => deployOrder(props.components));
 </script>
 
 <style lang="scss" scoped>
@@ -96,4 +107,5 @@ const customizedValues = computed(() => (props.componentValues || []).filter((ov
   border: 1px solid var(--border); border-radius: 10px; padding: 2px 8px;
 }
 .text-muted { color: var(--muted); font-size: 13px; }
+.deploy-order-list { margin: 0; padding-left: 20px; li { padding: 4px 0; } }
 </style>

@@ -53,9 +53,10 @@ import (
 const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
 
 const (
-	conditionTypeReady        = "Ready"
-	reasonClusterRepoNotReady = "ClusterRepoNotReady"
-	reasonReconciled          = "Reconciled"
+	conditionTypeReady              = "Ready"
+	conditionTypeDependencyExcluded = "DependencyExcluded"
+	reasonClusterRepoNotReady       = "ClusterRepoNotReady"
+	reasonReconciled                = "Reconciled"
 	// Deletion-path (uninstall safety-net) reasons, surfaced on the terminating CR.
 	reasonAwaitingUninstall    = "AwaitingUninstall"
 	reasonUninstalling         = "Uninstalling"

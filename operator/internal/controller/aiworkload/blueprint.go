@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -105,6 +106,12 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	if err := validateDependsOn(&bp, w); err != nil {
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "InvalidDependsOn", err.Error(), w.Generation)
+		w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+		return ctrl.Result{}, nil
 	}
 
 	// Step 2: populate FleetBundleNames from components on first reconcile.
@@ -258,8 +265,83 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	}
 	w.Status.Customized = customized
 
+	if edges := excludedDependencyEdges(w, enabledComponents); len(edges) > 0 {
+		setCondition(&w.Status.Conditions, conditionTypeDependencyExcluded, metav1.ConditionTrue, "DependencyExcluded",
+			"Deployed without excluded dependencies: "+strings.Join(edges, ", "), w.Generation)
+	} else {
+		setCondition(&w.Status.Conditions, conditionTypeDependencyExcluded, metav1.ConditionFalse, "NoExcludedDependencies",
+			"No dependencies were excluded.", w.Generation)
+	}
+
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
 	return ctrl.Result{}, nil
+}
+
+// validateDependsOn rejects unknown/self/duplicate references and dependency
+// cycles. It runs before rendering in reconcileBlueprintStatus. A dependency on
+// a component disabled for this workload is NOT an error here — resolveDependsOnNames
+// drops that edge from the rendered spec.dependsOn instead (see excludedDependencyEdges
+// for the resulting non-blocking condition).
+func validateDependsOn(bp *aiplatformv1alpha1.Blueprint, w *aiplatformv1alpha1.AIWorkload) error {
+	known := make(map[string]bool, len(bp.Spec.Components))
+	for _, c := range bp.Spec.Components {
+		known[c.ChartName] = true
+	}
+	graph := make(map[string][]string, len(bp.Spec.Components))
+	for _, c := range bp.Spec.Components {
+		seen := map[string]bool{}
+		for _, d := range c.DependsOn {
+			if d == c.ChartName {
+				return fmt.Errorf("component %q cannot depend on itself", c.ChartName)
+			}
+			if !known[d] {
+				return fmt.Errorf("component %q dependsOn unknown component %q", c.ChartName, d)
+			}
+			if seen[d] {
+				return fmt.Errorf("component %q lists duplicate dependency %q", c.ChartName, d)
+			}
+			seen[d] = true
+		}
+		graph[c.ChartName] = c.DependsOn
+	}
+	// DFS cycle detection (0=unvisited,1=on-stack,2=done). path holds the
+	// on-stack chain so the error reports the full cycle, e.g. "a -> b -> a".
+	state := map[string]int{}
+	var path []string
+	var visit func(n string) error
+	visit = func(n string) error {
+		state[n] = 1
+		path = append(path, n)
+		for _, m := range graph[n] {
+			switch state[m] {
+			case 1:
+				start := 0
+				for i, p := range path {
+					if p == m {
+						start = i
+						break
+					}
+				}
+				cycle := append(append([]string{}, path[start:]...), m)
+				return fmt.Errorf("component dependency cycle detected: %s", strings.Join(cycle, " -> "))
+			case 0:
+				if err := visit(m); err != nil {
+					return err
+				}
+			}
+		}
+		path = path[:len(path)-1]
+		state[n] = 2
+		return nil
+	}
+	for _, c := range bp.Spec.Components {
+		if state[c.ChartName] == 0 {
+			if err := visit(c.ChartName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // retryEpochValue reads the durable retry-epoch counter (default 0). Every desired HelmOp is
@@ -385,6 +467,58 @@ func ociChartRef(repoURL, chartName string) string {
 	return trimmed + "/" + chartName
 }
 
+// resolveDependsOn maps a component's DependsOn chartNames to Fleet spec.dependsOn
+// entries keyed by the deterministic bundle name. Returns nil for no deps so the
+// rendered HelmOp/Bundle omits the field entirely (byte-identical to today).
+func resolveDependsOn(w *aiplatformv1alpha1.AIWorkload, deps []string) []any {
+	names := resolveDependsOnNames(w, deps)
+	if names == nil {
+		return nil
+	}
+	out := make([]any, 0, len(names))
+	for _, n := range names {
+		out = append(out, map[string]any{"name": n})
+	}
+	return out
+}
+
+// resolveDependsOnNames returns the sorted bundle names for a component's ENABLED
+// dependencies. Dependencies excluded for this workload (ComponentValues.Enabled=false)
+// are dropped: their bundles are never rendered, so a spec.dependsOn on them would make
+// Fleet wait forever. Dropped edges are surfaced via the DependencyExcluded condition.
+func resolveDependsOnNames(w *aiplatformv1alpha1.AIWorkload, deps []string) []string {
+	if len(deps) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(deps))
+	for _, d := range deps {
+		if !isComponentEnabled(w, d) {
+			continue
+		}
+		names = append(names, blueprintBundleName(w.Name, d))
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	return names
+}
+
+// excludedDependencyEdges returns "<component> -> <excludedDep>" for each enabled
+// component whose dependency was dropped because it is excluded from this workload.
+func excludedDependencyEdges(w *aiplatformv1alpha1.AIWorkload, components []aiplatformv1alpha1.BlueprintComponent) []string {
+	var edges []string
+	for _, c := range components { // pass enabledComponents
+		for _, d := range c.DependsOn {
+			if !isComponentEnabled(w, d) {
+				edges = append(edges, c.ChartName+" -> "+d)
+			}
+		}
+	}
+	sort.Strings(edges)
+	return edges
+}
+
 // setHelmChartSource points a HelmOp helm spec at its chart. An HTTP repo takes
 // the repo URL plus a chart name; an OCI repo takes the full chart reference
 // in repo alone (see ociChartRef).
@@ -395,6 +529,86 @@ func setHelmChartSource(helmSpec map[string]any, repoURL, chartName string, isOC
 	}
 	helmSpec["repo"] = repoURL
 	helmSpec["chart"] = chartName
+}
+
+// resolveKustomizeOverlay returns the overlay files for a component's Kustomize
+// config, plus the resolved commit for a git-ref source ("" for inline Files —
+// there's nothing to move underneath an embedded overlay). Inline Files are
+// returned verbatim; a GitRef is resolved against its git-backed ClusterRepo,
+// cloned, and read.
+func (r *AIWorkloadReconciler) resolveKustomizeOverlay(ctx context.Context, c aiplatformv1alpha1.BlueprintComponent) (files map[string]string, commit string, err error) {
+	k := c.Kustomize
+	if k == nil {
+		return nil, "", nil
+	}
+	if len(k.Files) > 0 {
+		if !hasKustomization(k.Files, k.Dir) {
+			return nil, "", fmt.Errorf("kustomize overlay for %s has no kustomization.yaml under %q", c.ChartName, k.Dir)
+		}
+		return k.Files, "", nil
+	}
+	if k.GitRef == nil {
+		return nil, "", fmt.Errorf("kustomize for %s has neither files nor gitRef", c.ChartName)
+	}
+	info, err := r.resolveClusterRepo(ctx, k.GitRef.ChartRepo)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve overlay repo %q: %w", k.GitRef.ChartRepo, err)
+	}
+	if info.Kind != repoKindGit {
+		return nil, "", fmt.Errorf("kustomize gitRef repo %q is not git-backed", k.GitRef.ChartRepo)
+	}
+	var auth *gogithttp.BasicAuth
+	if info.ClientSecret != "" {
+		u, p, err := r.readBasicAuthSecret(ctx, info.ClientSecretNS, info.ClientSecret)
+		if err != nil {
+			return nil, "", fmt.Errorf("read clientSecret %q for overlay repo %q: %w", info.ClientSecret, k.GitRef.ChartRepo, err)
+		}
+		if p != "" {
+			auth = &gogithttp.BasicAuth{Username: u, Password: p}
+		}
+	}
+	gc := igit.NewForRepo(info.GitRepo, info.GitBranch, auth, nil)
+	raw, err := gc.ReadDir(ctx, k.GitRef.Path)
+	if err != nil {
+		return nil, "", fmt.Errorf("read overlay %q from %q: %w", k.GitRef.Path, k.GitRef.ChartRepo, err)
+	}
+	// ReadDir returns keys relative to k.GitRef.Path (the prefix stripped), but
+	// spec.kustomize.dir is rendered as c.Kustomize.Dir — Fleet looks for the
+	// overlay under "<Dir>/...". Re-key so the embedded files live under Dir,
+	// matching inline overlays (Task 7 already writes "<dir>/kustomization.yaml").
+	files = rekeyUnderDir(raw, k.Dir)
+	if !hasKustomization(files, k.Dir) {
+		return nil, "", fmt.Errorf("kustomize overlay for %s has no kustomization.yaml under %q in repo %q", c.ChartName, k.Dir, k.GitRef.ChartRepo)
+	}
+	return files, info.Commit, nil
+}
+
+// hasKustomization reports whether files contains a kustomize root file directly
+// under dir (the three names kustomize recognizes). Fleet's post-render runs
+// `kustomize build <dir>`, which fails without one — catch it here with a clear
+// message instead of at deploy time.
+func hasKustomization(files map[string]string, dir string) bool {
+	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
+		if _, ok := files[dir+"/"+name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// rekeyUnderDir prefixes every file key with dir + "/", so a files map whose
+// keys are relative to some external root (e.g. git.ReadDir's output, which
+// strips the cloned path prefix) lines up with spec.kustomize.dir, which Fleet
+// resolves against the bundle root.
+func rekeyUnderDir(in map[string]string, dir string) map[string]string {
+	if dir == "" {
+		return in
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[dir+"/"+k] = v
+	}
+	return out
 }
 
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
@@ -413,6 +627,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// operator fetches the chart from Rancher and deploys it as an embedded Fleet
 	// Bundle instead.
 	if repoInfo.Kind == repoKindGit {
+		if c.Kustomize != nil {
+			return "", fmt.Errorf("component %q: kustomize overlays are not supported for git-backed chart repositories (repo %q); host the chart via an OCI or HTTP ClusterRepo to use kustomize", c.ChartName, c.ChartRepo)
+		}
 		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, false)
 	}
 
@@ -466,6 +683,27 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		helmSpec["values"] = vals
 	}
 
+	// Kustomize overlay (resources + kustomize) is set at the HelmOp spec top
+	// level alongside targets/dependsOn, NOT under spec.helm — Fleet's HelmOpSpec
+	// embeds BundleSpec→BundleDeploymentOptions inline, so spec.resources and
+	// spec.kustomize are the real fields; spec.helm has no such keys.
+	var kustDigest map[string]any
+	var kustResources []any
+	var kustDir string
+	if c.Kustomize != nil {
+		files, commit, err := r.resolveKustomizeOverlay(ctx, c)
+		if err != nil {
+			return "", fmt.Errorf("resolve kustomize overlay for %s: %w", c.ChartName, err)
+		}
+		res, err := overlayFilesToResources(files)
+		if err != nil {
+			return "", fmt.Errorf("kustomize overlay for %s: %w", c.ChartName, err)
+		}
+		kustResources = res
+		kustDir = c.Kustomize.Dir
+		kustDigest = map[string]any{"dir": c.Kustomize.Dir, "files": files, "commit": commit}
+	}
+
 	epoch := r.retryEpochValue(w)
 
 	digest := perHelmOpRenderDigest(ComponentRenderInputs{
@@ -477,6 +715,8 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		RepoURL:      repoInfo.URL,
 		Targets:      w.Spec.TargetClusters,
 		Values:       vals,
+		DependsOn:    resolveDependsOnNames(w, c.DependsOn),
+		Kustomize:    kustDigest,
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
@@ -519,6 +759,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// schema declares spec.forceSyncGeneration and rejects spec.helm.forceSyncGeneration.
 		_ = unstructured.SetNestedField(ho.Object, epoch, "spec", "forceSyncGeneration")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
+		if dep := resolveDependsOn(w, c.DependsOn); dep != nil {
+			_ = unstructured.SetNestedSlice(ho.Object, dep, "spec", "dependsOn")
+		}
+		if kustResources != nil {
+			_ = unstructured.SetNestedSlice(ho.Object, kustResources, "spec", "resources")
+			_ = unstructured.SetNestedMap(ho.Object, map[string]any{"dir": kustDir}, "spec", "kustomize")
+		}
 		if repoInfo.ClientSecret != "" {
 			_ = unstructured.SetNestedField(ho.Object, repoInfo.ClientSecret, "spec", "helmSecretName")
 		}
@@ -757,6 +1004,17 @@ func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.Compone
 	return r.injectorFor(vendor)
 }
 
+// readBasicAuthSecret reads the username/password keys from a basic-auth Secret
+// (the shape Rancher ClusterRepo clientSecrets use). Returns ("", "", err) only
+// when the Secret itself cannot be read; a missing key just comes back empty.
+func (r *AIWorkloadReconciler) readBasicAuthSecret(ctx context.Context, ns, name string) (user, pass string, err error) {
+	src := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, src); err != nil {
+		return "", "", err
+	}
+	return string(src.Data["username"]), string(src.Data["password"]), nil
+}
+
 // ensureCombinedPullSecret creates (or updates) a single kubernetes.io/dockerconfigjson secret
 // in targetNamespace whose "auths" map covers ALL configured registries: the component's own
 // chartRepo, ApplicationCollection, and SUSERegistry from Settings. This ensures subchart
@@ -773,11 +1031,8 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc 
 	// under a bogus "" host in the dockerconfigjson.
 	if repoInfo.ClientSecret != "" && repoInfo.Kind != repoKindGit {
 		if host := registryurl.Host(repoInfo.URL); host != "" {
-			src := &corev1.Secret{}
-			if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
-				if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
-					auths[host] = dockerAuthEntry(u, p)
-				}
+			if u, p, err := r.readBasicAuthSecret(ctx, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err == nil && u != "" && p != "" {
+				auths[host] = dockerAuthEntry(u, p)
 			}
 		}
 	}
@@ -1008,6 +1263,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 	// Git-backed ClusterRepos: publish an embedded-chart Fleet Bundle git file
 	// rather than a HelmOp (which cannot pull from git).
 	if repoInfo.Kind == repoKindGit {
+		if c.Kustomize != nil {
+			return "", fmt.Errorf("component %q: kustomize overlays are not supported for git-backed chart repositories (repo %q); host the chart via an OCI or HTTP ClusterRepo to use kustomize", c.ChartName, c.ChartRepo)
+		}
 		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, true)
 	}
 
@@ -1054,6 +1312,26 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		helmSpec["values"] = vals
 	}
 
+	// Kustomize overlay goes at the HelmOp spec top level (spec.resources +
+	// spec.kustomize), NOT under spec.helm — see the same note on the direct
+	// HelmOp path. helmOpSpec below is the spec map itself.
+	var kustDigest map[string]any
+	var kustResources []any
+	var kustDir string
+	if c.Kustomize != nil {
+		files, commit, err := r.resolveKustomizeOverlay(ctx, c)
+		if err != nil {
+			return "", fmt.Errorf("resolve kustomize overlay for %s: %w", c.ChartName, err)
+		}
+		res, err := overlayFilesToResources(files)
+		if err != nil {
+			return "", fmt.Errorf("kustomize overlay for %s: %w", c.ChartName, err)
+		}
+		kustResources = res
+		kustDir = c.Kustomize.Dir
+		kustDigest = map[string]any{"dir": c.Kustomize.Dir, "files": files, "commit": commit}
+	}
+
 	epoch := r.retryEpochValue(w)
 
 	digest := perHelmOpRenderDigest(ComponentRenderInputs{
@@ -1065,6 +1343,8 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		RepoURL:      repoInfo.URL,
 		Targets:      w.Spec.TargetClusters,
 		Values:       vals,
+		DependsOn:    resolveDependsOnNames(w, c.DependsOn),
+		Kustomize:    kustDigest,
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
@@ -1104,6 +1384,13 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		}
 		if repoInfo.ClientSecret != "" {
 			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+		}
+		if dep := resolveDependsOn(w, c.DependsOn); dep != nil {
+			helmOpSpec["dependsOn"] = dep
+		}
+		if kustResources != nil {
+			helmOpSpec["resources"] = kustResources
+			helmOpSpec["kustomize"] = map[string]any{"dir": kustDir}
 		}
 		objects = append(objects, map[string]any{
 			"apiVersion": "fleet.cattle.io/v1alpha1",

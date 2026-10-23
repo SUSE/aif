@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   deepMergeValues, deepDiffValues, seedComponentValues, diffComponentValues,
   componentOverride, isComponentEnabled, seedComponentEnabled, diffComponentOverrides,
-  customizedComponentNames, resolveInitialFormState,
+  customizedComponentNames, resolveInitialFormState, deployOrder,
 } from '../blueprint-customize';
 import type { BlueprintComponent } from '../../types/blueprint-types';
 
@@ -379,5 +379,16 @@ describe('wizard multi-component workflows and navigation (bug fixes 1 and 2)', 
     expect(formState.enabled.comp3).toBe(false);
     customized = customizedComponentNames(defaults, formState.values, formState.enabled);
     expect(customized).toEqual(new Set(['comp1']));
+  });
+});
+
+describe('deployOrder', () => {
+  it('groups by dependency wave', () => {
+    const order = deployOrder([
+      { chartName: 'app', chartRepo: 'r', chartVersion: '1', dependsOn: ['db'] },
+      { chartName: 'db', chartRepo: 'r', chartVersion: '1' },
+    ] as any);
+    expect(order[0]).toContain('db');
+    expect(order[1]).toContain('app');
   });
 });

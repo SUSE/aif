@@ -1,5 +1,15 @@
 export type BlueprintComponentVendor = 'suse' | 'nvidia';
 
+export interface ComponentKustomizeGitRef {
+  chartRepo: string;
+  path:      string;
+}
+export interface ComponentKustomize {
+  dir:     string;
+  files?:  Record<string, string>;
+  gitRef?: ComponentKustomizeGitRef;
+}
+
 export interface BlueprintComponent {
   chartRepo:        string;
   chartName:        string;
@@ -8,6 +18,8 @@ export interface BlueprintComponent {
   values?:          Record<string, any>;
   targetNamespace?: string;
   releaseName?:     string;
+  kustomize?:       ComponentKustomize;
+  dependsOn?:       string[];
 }
 
 // BlueprintOrigin (not BlueprintSource) to avoid collision with the existing

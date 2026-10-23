@@ -163,6 +163,23 @@ export function customizedComponentNames(
   );
 }
 
+// deployOrder groups components into dependency waves for read-only display in
+// the install wizard (Task 8): each wave contains components whose dependsOn
+// are all already resolved by earlier waves. Assumes validated acyclic input
+// from authoring (Tasks 6-7); the cycle guard below only protects display
+// against unexpected bad data rather than being a validation mechanism.
+export function deployOrder(components: BlueprintComponent[]): string[][] {
+  const remaining = new Map(components.map((c) => [c.chartName, new Set(c.dependsOn || [])]));
+  const waves: string[][] = [];
+  while (remaining.size) {
+    const wave = [...remaining.entries()].filter(([, deps]) => [...deps].every((d) => !remaining.has(d))).map(([n]) => n);
+    if (!wave.length) { waves.push([...remaining.keys()]); break; } // cycle guard
+    wave.forEach((n) => remaining.delete(n));
+    waves.push(wave.sort());
+  }
+  return waves;
+}
+
 // resolveInitialFormState resolves the starting editedValues and editedEnabled
 // for the Customize step, prioritizing any active in-progress overrides (e.g.
 // across wizard step navigation) over the baseline overrides from the workload.
