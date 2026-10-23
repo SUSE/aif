@@ -51,9 +51,19 @@ import (
 // limit for targets, values, managedFields and Fleet's own status.
 const maxBundleResourcesBytes = 1 << 20 // 1 MiB
 
-// maxChartUnpackedBytes caps how far a chart may expand when unpacked, independent of how
-// well it compresses. Resources are stored gzip-compressed, so maxBundleResourcesBytes no
-// longer bounds the decompression work by itself; this does (decompression-bomb guard).
+// maxChartUnpackedBytes caps how far a chart may expand when unpacked, independent of how well
+// it compresses. Resources are stored gzip-compressed, so maxBundleResourcesBytes no longer
+// bounds the decompression work and a 4 MiB archive could expand to about 4 GB; this does
+// (decompression-bomb guard).
+//
+// Margin: across the Rancher, partner, RKE2 and Prime charts, the largest chart that fits
+// maxBundleResourcesBytes is 6.2 MiB unpacked (8.2 MiB overall), so a chart would have to grow
+// about 5x before being rejected here, which leaves room for the larger AI charts to come. A
+// chart over the cap, or a bomb, fails with errChartTooLarge after reading at most this many
+// bytes, instead of running the operator out of memory.
+//
+// Cost: one file, its compressed copy and its base64 string are held at a time, so the worst
+// case is about 3x this value (about 100 MiB) per reconcile.
 const maxChartUnpackedBytes = 32 << 20 // 32 MiB
 
 // maxChartArchiveBytes is a cheap pre-unpack rejection. Nothing above this can
