@@ -11,6 +11,7 @@ import type { BlueprintSpec } from '../../types/blueprint-types';
 import { SEMVER_PATTERN, DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../types/blueprint-types';
 import { createBlueprint, buildBlueprintSpec } from '../../utils/blueprint-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
+import { validateDependsOn } from '../../validators/blueprint';
 import { PRODUCT } from '../../config/suseai';
 
 interface BasicInfo {
@@ -47,6 +48,11 @@ const components = ref(
   props.prefill?.components?.map(c => ({ ...c })) || []
 );
 
+// Fed by BlueprintConfigStep's `update:valid`, mirroring how
+// BlueprintInstallWizard.vue consumes BlueprintCustomizeStep's `update:valid`
+// (componentValuesValid). Starts true since dependsOn starts empty/valid.
+const dependsOnValid = ref(true);
+
 const namespacesValid = computed(() => components.value.every((c) => {
   const ns = c.targetNamespace?.trim();
   return !ns || (ns.length <= 63 && DNS_LABEL_PATTERN.test(ns));
@@ -75,7 +81,7 @@ const releaseNamesUnique = computed(() => {
 });
 
 const componentsValid = computed(() =>
-  components.value.length > 0 && namespacesValid.value && releaseNamesValid.value && releaseNamesUnique.value
+  components.value.length > 0 && namespacesValid.value && releaseNamesValid.value && releaseNamesUnique.value && dependsOnValid.value
 );
 
 const wizardSteps = computed(() => [
@@ -119,6 +125,12 @@ async function onCreate() {
   }
   if (!releaseNamesUnique.value) {
     error.value = t('suseai.wizard.form.componentReleaseNamesDuplicate', 'Two or more components resolve to the same release name in the same namespace.');
+    submitting.value = false;
+    return;
+  }
+  const dependsOnError = validateDependsOn(components.value);
+  if (dependsOnError) {
+    error.value = dependsOnError;
     submitting.value = false;
     return;
   }
@@ -182,6 +194,7 @@ const reviewForm = computed<BlueprintSpec>(() => buildBlueprintSpec(basicInfo.va
           v-else-if="currentStep === 2"
           :components="components"
           @update:components="components = $event"
+          @update:valid="dependsOnValid = $event"
         />
         <BlueprintReviewCreateStep
           v-else-if="currentStep === 3"

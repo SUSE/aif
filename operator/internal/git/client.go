@@ -22,7 +22,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -108,6 +111,15 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 	return &Client{repoURL: s.Spec.Fleet.RepoURL, branch: branch, auth: auth, caBundle: caBundle}, nil
 }
 
+// NewForRepo constructs a Client for an arbitrary git-backed repository,
+// independent of the Settings GitOps repo. branch defaults to "main".
+func NewForRepo(repoURL, branch string, auth *gogithttp.BasicAuth, caBundle []byte) *Client {
+	if branch == "" {
+		branch = "main"
+	}
+	return &Client{repoURL: repoURL, branch: branch, auth: auth, caBundle: caBundle}
+}
+
 // CheckAuth verifies the configured repository is reachable and the credentials
 // authenticate, without cloning or writing. It is the equivalent of
 // `git ls-remote`. An empty remote (no commits yet) counts as reachable.
@@ -187,6 +199,69 @@ func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (string
 		return "", fmt.Errorf("git rm: %w", err)
 	}
 	return c.commitAndPush(ctx, repo, wt, commitMsg)
+}
+
+// ReadDir clones the repo (in-memory, shallow) and returns the regular files
+// under dirPath, keyed by their path relative to dirPath. Total content is
+// capped at 1 MiB to match the Fleet bundle payload limit.
+func (c *Client) ReadDir(ctx context.Context, dirPath string) (map[string]string, error) {
+	_, wt, err := c.clone(ctx)
+	if err != nil {
+		return nil, err
+	}
+	const capBytes = 1 << 20
+	out := map[string]string{}
+	var total int64
+	if _, err := wt.Filesystem.ReadDir(dirPath); err != nil {
+		return nil, fmt.Errorf("read dir %q: %w", dirPath, err)
+	}
+	var walk func(rel string) error
+	walk = func(rel string) error {
+		entries, err := wt.Filesystem.ReadDir(filepath.Join(dirPath, rel))
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			r := filepath.ToSlash(filepath.Join(rel, e.Name()))
+			// Guard against path traversal in overlay entries, mirroring
+			// aiworkload/gitchart.go's rejectUnsafePath. Duplicated here
+			// (rather than imported) to avoid a git -> aiworkload import
+			// cycle; kept intentionally tiny.
+			if r == ".." || strings.HasPrefix(r, "../") || path.IsAbs(r) {
+				return fmt.Errorf("path %q escapes the overlay root", r)
+			}
+			// Skip symlinks: embedding a symlink as its target's content is
+			// surprising, and a link out of the repo must never be followed.
+			if e.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			if e.IsDir() {
+				if err := walk(r); err != nil {
+					return err
+				}
+				continue
+			}
+			f, err := wt.Filesystem.Open(filepath.Join(dirPath, r))
+			if err != nil {
+				return err
+			}
+			b, err := io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				return err
+			}
+			total += int64(len(b))
+			if total > capBytes {
+				return fmt.Errorf("overlay under %q exceeds the %d-byte limit", dirPath, capBytes)
+			}
+			out[r] = string(b)
+		}
+		return nil
+	}
+	if err := walk("."); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *Client) clone(ctx context.Context) (*gogit.Repository, *gogit.Worktree, error) {

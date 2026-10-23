@@ -71,6 +71,10 @@ type ComponentRenderInputs struct {
 	RepoURL      string         `json:"repoURL"`
 	Targets      []string       `json:"targets"`
 	Values       map[string]any `json:"values"`
+	// DependsOn is the sorted set of resolved bundle names this component waits on.
+	DependsOn []string `json:"dependsOn,omitempty"`
+	// Kustomize is the dir + resolved overlay content (nil when unset).
+	Kustomize map[string]any `json:"kustomize,omitempty"`
 }
 
 // perHelmOpRenderDigest hashes the canonical form of one component's desired HelmOp render.

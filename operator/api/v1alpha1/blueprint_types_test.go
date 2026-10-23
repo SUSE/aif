@@ -71,3 +71,25 @@ func jsonHasKey(b []byte, key string) bool {
 	_, ok := m[key]
 	return ok
 }
+
+func TestComponentKustomizeRoundTrips(t *testing.T) {
+	c := BlueprintComponent{
+		ChartRepo: "r", ChartName: "n", ChartVersion: "1.0.0",
+		DependsOn:  []string{"other"},
+		Kustomize:  &ComponentKustomize{Dir: "overlay", Files: map[string]string{"overlay/kustomization.yaml": "resources: []"}},
+	}
+	got := c.DeepCopy()
+	if got.Kustomize == nil || got.Kustomize.Dir != "overlay" {
+		t.Fatalf("deepcopy dropped kustomize: %+v", got.Kustomize)
+	}
+	if got.Kustomize.Files["overlay/kustomization.yaml"] != "resources: []" {
+		t.Fatalf("deepcopy dropped inline files")
+	}
+	got.Kustomize.Files["overlay/kustomization.yaml"] = "mutated"
+	if c.Kustomize.Files["overlay/kustomization.yaml"] == "mutated" {
+		t.Fatalf("deepcopy is shallow — mutation leaked to original")
+	}
+	if len(got.DependsOn) != 1 || got.DependsOn[0] != "other" {
+		t.Fatalf("deepcopy dropped dependsOn")
+	}
+}
