@@ -1772,3 +1772,52 @@ func TestSettingsPut_NoAnnotationAppliesAllCatalogs(t *testing.T) {
 		t.Fatalf("applied catalogs=%+v; want the edited entry", applied.Spec.BlueprintCatalogs)
 	}
 }
+
+// Every secret ref in Settings must name both a secret and a key; a ref is either
+// complete or omitted (None).
+func TestIncompleteSecretRefs(t *testing.T) {
+	ref := func(name, key string) *aiplatformv1alpha1.SecretKeyRef {
+		return &aiplatformv1alpha1.SecretKeyRef{Name: name, Key: key}
+	}
+	cases := []struct {
+		name string
+		set  func(*aiplatformv1alpha1.SettingsSpec)
+		want []string
+	}{
+		{"complete and omitted refs pass", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.Nvidia.UserSecretRef = ref("nv", "user")
+			s.Nvidia.TokenSecretRef = ref("nv", "token")
+		}, nil},
+		{"fleet", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.Fleet.CredSecretRef = ref("git", "")
+			s.Fleet.CABundleSecretRef = ref("", "ca.crt")
+		}, []string{"spec.fleet.credSecretRef", "spec.fleet.caBundleSecretRef"}},
+		{"built-in registries", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.ApplicationCollection.UserSecretRef = ref("appco", "")
+			s.SUSERegistry.TokenSecretRef = ref("suse", "")
+			s.Nvidia.CABundleSecretRef = ref("nv-ca", "")
+		}, []string{
+			"spec.applicationCollection.userSecretRef",
+			"spec.suseRegistry.tokenSecretRef",
+			"spec.nvidia.caBundleSecretRef",
+		}},
+		{"rancher catalog", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.RancherCatalog.TokenSecretRef = ref("rancher", "")
+		}, []string{"spec.rancherCatalog.tokenSecretRef"}},
+		{"blueprint catalogs and custom repos", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.BlueprintCatalogs = []aiplatformv1alpha1.BlueprintCatalogSource{{Name: "a"}, {Name: "b"}}
+			s.BlueprintCatalogs[1].CredSecretRef = ref("git", "")
+			s.CustomRepos = []aiplatformv1alpha1.CustomRepoSpec{{Name: "r"}}
+			s.CustomRepos[0].SSHKeySecretRef = ref("ssh", "")
+		}, []string{"spec.blueprintCatalogs[1].credSecretRef", "spec.customRepos[0].sshKeySecretRef"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var spec aiplatformv1alpha1.SettingsSpec
+			tc.set(&spec)
+			if got := incompleteSecretRefs(&spec); fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("incompleteSecretRefs=%v want %v", got, tc.want)
+			}
+		})
+	}
+}

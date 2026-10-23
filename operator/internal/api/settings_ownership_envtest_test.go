@@ -323,4 +323,37 @@ func TestSettingsSecretRefs_Envtest(t *testing.T) {
 			t.Fatalf("refs=%+v/%+v want cleared", sr.UserSecretRef, sr.TokenSecretRef)
 		}
 	})
+
+	t.Run("a save with a secret but no key is rejected before any write", func(t *testing.T) {
+		resetSettings(t, c)
+		if err := c.Create(context.Background(), registryRefSettings("appco"), client.FieldOwner("manager")); err != nil {
+			t.Fatalf("create as controller: %v", err)
+		}
+		rec := putJSON(h, `{"spec":{"applicationCollection":{"userSecretRef":{"name":"other","key":""}}}}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("PUT status=%d want 400; body=%s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), "spec.applicationCollection.userSecretRef") {
+			t.Errorf("error %s does not name the incomplete ref", rec.Body)
+		}
+		ac := getSettingsCR(t, c).Spec.ApplicationCollection
+		if ac.UserSecretRef == nil || ac.UserSecretRef.Name != "appco" || ac.TokenSecretRef == nil {
+			t.Fatalf("refs=%+v/%+v want the saved appco refs untouched", ac.UserSecretRef, ac.TokenSecretRef)
+		}
+	})
+
+	// The CRD rejects partial refs from any client, not only the Settings page.
+	t.Run("the CRD rejects a ref with an empty name or key", func(t *testing.T) {
+		for name, ref := range map[string]aiplatformv1alpha1.SecretKeyRef{
+			"empty key":  {Name: "appco", Key: ""},
+			"empty name": {Name: "", Key: "username"},
+		} {
+			resetSettings(t, c)
+			s := registryRefSettings("appco")
+			s.Spec.ApplicationCollection.UserSecretRef = &ref
+			if err := c.Create(context.Background(), s); !apierrors.IsInvalid(err) {
+				t.Errorf("%s: create err=%v want Invalid", name, err)
+			}
+		}
+	})
 }

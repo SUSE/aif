@@ -107,6 +107,15 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	s.Namespace = h.namespace
 	s.Spec = body.Spec
 
+	// A secret ref is either complete or omitted (None). Reject a partial one here,
+	// before any write, rather than let the CRD reject the apply after omitted refs
+	// have already been cleared.
+	if refs := incompleteSecretRefs(&body.Spec); len(refs) > 0 {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %s must name both a secret and a key",
+			ErrInvalidInput, strings.Join(refs, ", ")))
+		return
+	}
+
 	// Validate custom repos before persisting. An invalid entry (reserved/duplicate
 	// name, type/scheme mismatch, git missing branch) must not be saved.
 	if err := credentials.ValidateCustomRepos(body.Spec.CustomRepos); err != nil {
@@ -872,6 +881,51 @@ func savedRegistryRefs(
 		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, s.Spec.Nvidia.CABundleSecretRef
 	}
 	return nil, nil, nil
+}
+
+// incompleteSecretRefs returns the JSON path of every secret ref in spec that is
+// set but lacks a secret name or key.
+func incompleteSecretRefs(spec *aiplatformv1alpha1.SettingsSpec) []string {
+	type namedRef struct {
+		path string
+		ref  *aiplatformv1alpha1.SecretKeyRef
+	}
+	refs := []namedRef{
+		{"spec.fleet.credSecretRef", spec.Fleet.CredSecretRef},
+		{"spec.fleet.caBundleSecretRef", spec.Fleet.CABundleSecretRef},
+		{"spec.applicationCollection.userSecretRef", spec.ApplicationCollection.UserSecretRef},
+		{"spec.applicationCollection.tokenSecretRef", spec.ApplicationCollection.TokenSecretRef},
+		{"spec.applicationCollection.caBundleSecretRef", spec.ApplicationCollection.CABundleSecretRef},
+		{"spec.suseRegistry.userSecretRef", spec.SUSERegistry.UserSecretRef},
+		{"spec.suseRegistry.tokenSecretRef", spec.SUSERegistry.TokenSecretRef},
+		{"spec.suseRegistry.caBundleSecretRef", spec.SUSERegistry.CABundleSecretRef},
+		{"spec.nvidia.userSecretRef", spec.Nvidia.UserSecretRef},
+		{"spec.nvidia.tokenSecretRef", spec.Nvidia.TokenSecretRef},
+		{"spec.nvidia.caBundleSecretRef", spec.Nvidia.CABundleSecretRef},
+		{"spec.rancherCatalog.tokenSecretRef", spec.RancherCatalog.TokenSecretRef},
+		{"spec.rancherCatalog.caBundleSecretRef", spec.RancherCatalog.CABundleSecretRef},
+	}
+	for i, c := range spec.BlueprintCatalogs {
+		p := fmt.Sprintf("spec.blueprintCatalogs[%d]", i)
+		refs = append(refs,
+			namedRef{p + ".credSecretRef", c.CredSecretRef},
+			namedRef{p + ".caBundleSecretRef", c.CABundleSecretRef})
+	}
+	for i, r := range spec.CustomRepos {
+		p := fmt.Sprintf("spec.customRepos[%d]", i)
+		refs = append(refs,
+			namedRef{p + ".userSecretRef", r.UserSecretRef},
+			namedRef{p + ".tokenSecretRef", r.TokenSecretRef},
+			namedRef{p + ".sshKeySecretRef", r.SSHKeySecretRef},
+			namedRef{p + ".caBundleSecretRef", r.CABundleSecretRef})
+	}
+	var out []string
+	for _, r := range refs {
+		if r.ref != nil && !secretRefComplete(r.ref) {
+			out = append(out, r.path)
+		}
+	}
+	return out
 }
 
 // omittedRegistryRefs returns a merge-patch spec fragment that nulls each built-in
