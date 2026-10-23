@@ -75,8 +75,8 @@ func TestChartTgzToBundleResources_StoresEveryFileAsBase64Gz(t *testing.T) {
 	}
 }
 
-// A chart bigger than the budget when plain, but small once compressed, now fits. This is the
-// alchemistudio-platform case (2.0 MB unpacked, 0.43 MB stored).
+// A chart bigger than the budget when plain, but small once compressed, now fits. A chart of about
+// 2.0 MB unpacked stores in about 0.43 MB.
 func TestChartTgzToBundleResources_CompressibleChartLargerThanBudgetFits(t *testing.T) {
 	files := map[string]string{"c/Chart.yaml": "apiVersion: v2\nname: c\nversion: 1.0.0\n"}
 	rawTotal := 0
@@ -126,12 +126,12 @@ func TestBuildGitChartBundle_ObjectStaysUnderEtcdLimit(t *testing.T) {
 
 // Optional: run the real chart without a cluster.
 //
-//	ALCHEMI_CHART_TGZ=/path/to/alchemistudio-platform-1.0.25.tgz \
+//	CHART_TGZ=/path/to/chart.tgz \
 //	  go test ./internal/controller/aiworkload/ -run RealChart -v
 func TestChartTgzToBundleResources_RealChart(t *testing.T) {
-	path := os.Getenv("ALCHEMI_CHART_TGZ")
+	path := os.Getenv("CHART_TGZ")
 	if path == "" {
-		t.Skip("ALCHEMI_CHART_TGZ not set")
+		t.Skip("CHART_TGZ not set")
 	}
 	tgz, err := os.ReadFile(path)
 	if err != nil {
@@ -159,8 +159,8 @@ func TestChartTgzToBundleResources_RealChart(t *testing.T) {
 		raw += len(data) + len(h.Name)
 	}
 
-	b, err := buildGitChartBundle("wl-real", "alchemi", "fp", tgz,
-		aiplatformv1alpha1.BlueprintComponent{ChartName: "alchemistudio-platform"}, nil, []any{map[string]any{"clusterName": "local"}})
+	b, err := buildGitChartBundle("wl-real", "ns", "fp", tgz,
+		aiplatformv1alpha1.BlueprintComponent{ChartName: "chart"}, nil, []any{map[string]any{"clusterName": "local"}})
 	if err != nil {
 		if errors.Is(err, errChartTooLarge) {
 			t.Fatalf("chart rejected as too large: %v", err)
