@@ -164,6 +164,24 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 		s.Spec.AppCatalog.RemoteURL = existing.Spec.AppCatalog.RemoteURL
 	}
 
+	// Server-side apply only removes an omitted field when no other manager owns it.
+	// Built-in registry secret refs are also written by the settings controller
+	// (well-known secret discovery) and by Helm, so an omitted ref would survive the
+	// apply, or keep a co-owned key without its required name. Null omitted refs with
+	// a merge patch, which ignores field ownership, before applying. The controller
+	// still re-wires a registry whose well-known secret exists.
+	if cleared := omittedRegistryRefs(&existing, s); len(cleared) > 0 {
+		patch, err := json.Marshal(map[string]any{"spec": cleared})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := h.client.Patch(r.Context(), &existing, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
 	if err := h.client.Patch(
 		r.Context(), s, client.Apply,
 		client.ForceOwnership,
@@ -854,6 +872,30 @@ func savedRegistryRefs(
 		return s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, s.Spec.Nvidia.CABundleSecretRef
 	}
 	return nil, nil, nil
+}
+
+// omittedRegistryRefs returns a merge-patch spec fragment that nulls each built-in
+// registry secret ref set in existing but absent from requested, keyed by registry
+// section. It is empty when there is nothing to clear.
+func omittedRegistryRefs(existing, requested *aiplatformv1alpha1.Settings) map[string]any {
+	fields := [3]string{"userSecretRef", "tokenSecretRef", "caBundleSecretRef"}
+	out := map[string]any{}
+	for _, target := range []string{"applicationCollection", "suseRegistry", "nvidia"} {
+		haveUser, haveToken, haveCA := savedRegistryRefs(target, existing)
+		wantUser, wantToken, wantCA := savedRegistryRefs(target, requested)
+		have := [3]*aiplatformv1alpha1.SecretKeyRef{haveUser, haveToken, haveCA}
+		want := [3]*aiplatformv1alpha1.SecretKeyRef{wantUser, wantToken, wantCA}
+		section := map[string]any{}
+		for i, field := range fields {
+			if have[i] != nil && want[i] == nil {
+				section[field] = nil
+			}
+		}
+		if len(section) > 0 {
+			out[target] = section
+		}
+	}
+	return out
 }
 
 // secretRefComplete reports whether a secret ref names both a secret and a key.

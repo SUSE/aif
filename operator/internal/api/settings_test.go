@@ -249,6 +249,103 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 	}
 }
 
+// PUT that omits a built-in registry secret ref clears it even when another field
+// manager owns it. Server-side apply alone only drops fields the applier solely
+// owns, so an omitted ref co-owned by the settings controller or Helm would survive
+// (or be left as a partial ref missing its required name). The handler must null
+// omitted refs with a merge patch that ignores field ownership.
+func TestSettingsPut_ClearsOmittedRegistryRefs(t *testing.T) {
+	cr := sampleCR()
+	cr.Spec.ApplicationCollection.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "username"}
+	cr.Spec.ApplicationCollection.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "password"}
+	cr.Spec.SUSERegistry.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "username"}
+	cr.Spec.SUSERegistry.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "password"}
+	cr.Spec.Nvidia.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "ca.crt"}
+
+	var mergePatches []string
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(cr).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() == types.MergePatchType {
+					data, err := patch.Data(obj)
+					if err != nil {
+						return err
+					}
+					mergePatches = append(mergePatches, string(data))
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	// Application Collection and the NVIDIA CA are set to None; SUSE Registry keeps its refs.
+	body := `{"spec":{"suseRegistry":{` +
+		`"userSecretRef":{"name":"suse-registry","key":"username"},` +
+		`"tokenSecretRef":{"name":"suse-registry","key":"password"}}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	want := `{"spec":{"applicationCollection":{"tokenSecretRef":null,"userSecretRef":null},"nvidia":{"caBundleSecretRef":null}}}`
+	if len(mergePatches) != 1 || mergePatches[0] != want {
+		t.Fatalf("merge patches=%q want [%q]", mergePatches, want)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	if stored.Spec.ApplicationCollection.UserSecretRef != nil || stored.Spec.ApplicationCollection.TokenSecretRef != nil {
+		t.Errorf("applicationCollection refs=%+v/%+v want cleared",
+			stored.Spec.ApplicationCollection.UserSecretRef, stored.Spec.ApplicationCollection.TokenSecretRef)
+	}
+	if stored.Spec.Nvidia.CABundleSecretRef != nil {
+		t.Errorf("nvidia caBundleSecretRef=%+v want cleared", stored.Spec.Nvidia.CABundleSecretRef)
+	}
+	if stored.Spec.SUSERegistry.UserSecretRef == nil || stored.Spec.SUSERegistry.TokenSecretRef == nil {
+		t.Errorf("suseRegistry refs cleared; want kept")
+	}
+}
+
+// PUT that omits refs the existing Settings never had issues no merge patch.
+func TestSettingsPut_NoMergePatchWhenNothingToClear(t *testing.T) {
+	merged := false
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(sampleCR()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() == types.MergePatchType {
+					merged = true
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"spec":{}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if merged {
+		t.Error("unexpected merge patch when no refs needed clearing")
+	}
+}
+
 // PUT with invalid JSON returns 400.
 func TestSettingsPut_InvalidJSON_400(t *testing.T) {
 	c := newSettingsFakeClient(t)
