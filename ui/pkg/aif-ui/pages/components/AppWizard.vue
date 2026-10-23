@@ -36,7 +36,7 @@ import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets, injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
-import { crNameForCluster } from '../../utils/workload-name';
+import { crNameForCluster, defaultInstallNamespace } from '../../utils/workload-name';
 import { readLibraryFilter, withLibraryFilter } from '../../utils/catalog-route';
 import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
 
@@ -92,9 +92,13 @@ const managedFleetBundleNames = ref<string[]>([]);
 const PKEY = `${props.mode}.${props.slug}`;
 const TTL = 1000 * 60 * 60;
 
+// Suggested namespace for a new install, generated once so it stays stable
+// while the wizard is open.
+const suggestedNamespace = defaultInstallNamespace(props.slug);
+
 const form = ref<WizardForm>({
   release:      props.slug,
-  namespace:    `${ props.slug }-system`,
+  namespace:    suggestedNamespace,
   clusters:     [],
   chartRepo:    '',
   chartName:    props.slug,
@@ -118,10 +122,11 @@ const versionOptions = computed(() =>
 
 async function fetchAllNamespaces() {
   if (!store) return;
-  const desiredDefault = `${props.slug}-system`;
-  namespaceOptions.value = await fetchUserNamespaces(store, desiredDefault);
   if (isInstallMode.value) {
-    form.value.namespace = desiredDefault;
+    namespaceOptions.value = await fetchUserNamespaces(store, suggestedNamespace);
+    form.value.namespace = suggestedNamespace;
+  } else {
+    namespaceOptions.value = await fetchUserNamespaces(store, form.value.namespace);
   }
 }
 
@@ -319,7 +324,7 @@ function populateFromUrlParams() {
   if (isInstallMode.value) {
     // For install mode, use simple pre-population
     form.value.release = props.slug;
-    form.value.namespace = `${props.slug}-system`;
+    form.value.namespace = suggestedNamespace;
     form.value.chartRepo = query.repo as string || '';
     form.value.chartName = props.slug;
   } else {
