@@ -30,7 +30,6 @@ import (
 	"io"
 	"path"
 	"strings"
-	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -41,21 +40,35 @@ import (
 )
 
 // maxBundleResourcesBytes caps the size of the payload we put in the Bundle's
-// spec.resources — the chart files UNPACKED, with binary files base64-inflated.
-// That payload, not the archive, is what the API server has to store: a Bundle is
-// a plain CR, so it is subject to the ~1.5 MiB etcd object limit with no
-// compression. Compression ratios on Helm charts are ~10x, so the compressed
-// archive is a badly misleading proxy: rancher-monitoring is 490 KiB as a .tgz
-// but ~3.9 MiB as bundle resources. Measuring the archive would let such a chart
-// pass this check and then fail at the API server with an opaque
-// "request entity too large". Budget 1 MiB and leave the remainder of the object
-// limit for targets, values, managedFields and Fleet's own status.
+// spec.resources: the chart files as stored, each gzip-compressed and
+// base64-encoded (encoding "base64+gz"), plus their names. That payload, not
+// the archive, is what the API server keeps: a Bundle is a plain CR, subject
+// to etcd's ~1.5 MiB request limit. The archive is not a reliable proxy, since
+// compressing each file separately and base64-encoding it makes the payload
+// larger than the .tgz (a 265 KB archive stores as ~0.43 MB). Budget 1 MiB and
+// leave the remainder of the object limit for targets, values, managedFields
+// and Fleet's own status.
 const maxBundleResourcesBytes = 1 << 20 // 1 MiB
 
-// maxChartArchiveBytes is a cheap pre-unpack rejection. Nothing above this can
-// possibly fit in maxBundleResourcesBytes once expanded, so we skip the work —
-// and it bounds how much a malicious archive can make us decompress before the
-// payload cap kicks in during extraction.
+// maxChartUnpackedBytes caps how far a chart may expand when unpacked, independent of how well
+// it compresses. Resources are stored gzip-compressed, so maxBundleResourcesBytes no longer
+// bounds the decompression work and a 4 MiB archive could expand to about 4 GB; this does
+// (decompression-bomb guard).
+//
+// Margin: across the Rancher, partner, RKE2 and Prime charts, the largest chart that fits
+// maxBundleResourcesBytes is 6.2 MiB unpacked (8.2 MiB overall), so a chart would have to grow
+// about 5x before being rejected here, which leaves room for the larger AI charts to come. A
+// chart over the cap, or a bomb, fails with errChartTooLarge after reading at most this many
+// bytes, instead of running the operator out of memory.
+//
+// Cost: one file, its compressed copy and its base64 string are held at a time, so the worst
+// case is about 3x this value (about 100 MiB) per reconcile.
+const maxChartUnpackedBytes = 32 << 20 // 32 MiB
+
+// maxChartArchiveBytes is a cheap pre-unpack rejection: an archive this large
+// would be far over maxBundleResourcesBytes once each file is stored as
+// base64+gz, so we skip the work. Decompression itself is bounded by
+// maxChartUnpackedBytes.
 const maxChartArchiveBytes = 4 << 20 // 4 MiB
 
 // errChartTooLarge marks a git-backed component whose chart cannot fit in a
@@ -144,7 +157,7 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
-	var total int64
+	var raw, stored int64
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -166,37 +179,64 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 		if i := strings.IndexByte(name, '/'); i > 0 && chartDir == "" {
 			chartDir = name[:i]
 		}
-		// Read at most the remaining payload budget +1, so an overrun is detectable
-		// without allocating past the cap. This doubles as the decompression-bomb
-		// guard: a bomb blows the budget on its first entry and is rejected here.
-		data, err := io.ReadAll(io.LimitReader(tr, maxBundleResourcesBytes-total+1))
+		// Read at most the remaining unpacked budget +1, so an overrun is detectable
+		// without allocating past the cap (decompression-bomb guard).
+		data, err := io.ReadAll(io.LimitReader(tr, maxChartUnpackedBytes-raw+1))
 		if err != nil {
 			return nil, "", fmt.Errorf("read %s: %w", name, err)
 		}
-		res := map[string]any{"name": name}
-		if utf8.Valid(data) {
-			res["content"] = string(data)
-			total += int64(len(data))
-		} else {
-			// Binary files are base64-encoded, which inflates them 4/3 in the
-			// stored object — charge the encoded size, not the raw size.
-			enc := base64.StdEncoding.EncodeToString(data)
-			res["content"] = enc
-			res["encoding"] = "base64"
-			total += int64(len(enc))
-		}
-		total += int64(len(name))
-		if total > maxBundleResourcesBytes {
+		raw += int64(len(data))
+		if raw > maxChartUnpackedBytes {
 			return nil, "", fmt.Errorf(
-				"%w: unpacked chart exceeds the %d-byte Fleet bundle payload limit; host it via an OCI or HTTP ClusterRepo instead",
-				errChartTooLarge, maxBundleResourcesBytes)
+				"%w: chart unpacks past %d MiB",
+				errChartTooLarge, maxChartUnpackedBytes>>20)
 		}
-		resources = append(resources, res)
+		// Every file is stored gzip-compressed and base64-encoded (Fleet's "base64+gz"
+		// resource encoding), text and binary alike. What the API server and etcd keep is
+		// this encoded string, so this is what is charged against the payload cap, and
+		// compressing is what lets a chart of several MiB fit in a Bundle (a chart of
+		// 2.0 MB unpacked is stored in 0.43 MB). Fleet decompresses it when it deploys the
+		// chart.
+		//
+		// Always compressing, instead of only when it helps, keeps one code path and one
+		// decode for every file; skipping tiny files would save a gzip header (about 20
+		// bytes) and still need the base64 step for binaries. It is not faster: it costs
+		// the operator about 0.14 s for a 165-file chart of 2.0 MB (0.28 s for the 622
+		// files of rancher-monitoring) each time a Bundle is rebuilt, which only happens
+		// when the chart fingerprint changes.
+		content, err := gzipBase64(data)
+		if err != nil {
+			return nil, "", fmt.Errorf("compress %s: %w", name, err)
+		}
+		stored += int64(len(content)) + int64(len(name))
+		if stored > maxBundleResourcesBytes {
+			return nil, "", fmt.Errorf(
+				"%w: chart exceeds the %d MiB Fleet bundle payload limit even compressed; host it via an OCI or HTTP ClusterRepo instead",
+				errChartTooLarge, maxBundleResourcesBytes>>20)
+		}
+		resources = append(resources, map[string]any{"name": name, "encoding": "base64+gz", "content": content})
 	}
 	if chartDir == "" || len(resources) == 0 {
 		return nil, "", fmt.Errorf("no chart directory found in archive")
 	}
 	return resources, chartDir, nil
+}
+
+// gzipBase64 compresses data with gzip and base64-encodes it, the form Fleet expects for a
+// Bundle resource with encoding "base64+gz".
+func gzipBase64(data []byte) (string, error) {
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return "", err
+	}
+	if _, err := zw.Write(data); err != nil {
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 // splitWorkloadTargets returns Fleet target selectors split by workspace:

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -93,7 +94,7 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	if own, _, _ := unstructured.NestedBool(b.Object, "spec", "helm", "takeOwnership"); !own {
 		t.Fatal("expected helm.takeOwnership=true")
 	}
-	// Every chart file is present as its own resource, path-preserved and inline.
+	// Every chart file is present as its own resource, path-preserved and stored gzip+base64.
 	res, _, _ := unstructured.NestedSlice(b.Object, "spec", "resources")
 	if len(res) != 3 {
 		t.Fatalf("want 3 chart-file resources, got %d", len(res))
@@ -102,8 +103,8 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	if !ok {
 		t.Fatalf("Chart.yaml resource missing; got %v", res)
 	}
-	if _, hasEnc := chartYaml["encoding"]; hasEnc {
-		t.Fatal("text chart file should be stored inline, not base64")
+	if enc, _ := chartYaml["encoding"].(string); enc != "base64+gz" {
+		t.Fatalf("chart file encoding = %q, want base64+gz", enc)
 	}
 	if _, ok, _ := unstructured.NestedMap(b.Object, "spec", "helm", "values"); !ok {
 		t.Fatal("expected helm.values to be set")
@@ -169,13 +170,11 @@ func TestChartTgzToBundleResources_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// The cap that matters is on the UNPACKED payload, because that is what the API
-// server stores: a Bundle is a plain CR with no compression. A chart can sit far
-// below the archive cap and still blow past it once expanded — that is the shape
-// of both a decompression bomb and of real charts like rancher-monitoring
-// (490 KiB compressed, ~3.9 MiB as bundle resources).
-func TestChartTgzToBundleResources_RejectsChartThatExpandsPastPayloadCap(t *testing.T) {
-	big := make([]byte, maxBundleResourcesBytes+1) // all-zero bytes: compresses to ~nothing
+// Files are stored gzip-compressed, so the stored payload no longer bounds the work done while
+// unpacking. A small archive of highly compressible data (a decompression bomb) must be stopped by
+// the unpacked-size cap instead.
+func TestChartTgzToBundleResources_RejectsChartThatExpandsPastUnpackedCap(t *testing.T) {
+	big := make([]byte, maxChartUnpackedBytes+1) // all-zero bytes: compresses to ~nothing
 	tgz := makeChartTgz(t, map[string]string{
 		"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
 		"chart/big.txt":    string(big),
@@ -183,25 +182,25 @@ func TestChartTgzToBundleResources_RejectsChartThatExpandsPastPayloadCap(t *test
 	if len(tgz) > maxChartArchiveBytes {
 		t.Fatalf("test archive is not sufficiently compressible: %d bytes", len(tgz))
 	}
-	if _, _, err := chartTgzToBundleResources(tgz); err == nil {
-		t.Fatal("expected payload-size-limit error")
+	if _, _, err := chartTgzToBundleResources(tgz); !errors.Is(err, errChartTooLarge) {
+		t.Fatalf("error = %v, want it to wrap errChartTooLarge", err)
 	}
 }
 
-// Binary files are base64-encoded into the Bundle, inflating them by 4/3. The
-// cap has to be charged against the encoded form, so a binary blob at ~80% of
-// the cap must be rejected even though its raw size fits.
-func TestChartTgzToBundleResources_ChargesBase64InflatedSize(t *testing.T) {
+// The cap is charged against the stored form (gzip + base64). Incompressible data gains nothing
+// from gzip and base64 inflates it 4/3, so a blob at ~80% of the cap must be rejected even though
+// its raw size fits.
+func TestChartTgzToBundleResources_ChargesEncodedSize(t *testing.T) {
 	raw := make([]byte, maxBundleResourcesBytes*8/10)
-	for i := range raw {
-		raw[i] = 0xff // invalid UTF-8 → stored as base64
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatal(err)
 	}
 	tgz := makeChartTgz(t, map[string]string{
 		"chart/Chart.yaml": "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
 		"chart/blob.bin":   string(raw),
 	})
-	if _, _, err := chartTgzToBundleResources(tgz); err == nil {
-		t.Fatal("expected payload-size-limit error for base64-inflated binary file")
+	if _, _, err := chartTgzToBundleResources(tgz); !errors.Is(err, errChartTooLarge) {
+		t.Fatalf("error = %v, want it to wrap errChartTooLarge", err)
 	}
 }
 
@@ -273,11 +272,15 @@ func TestSizeGuards_WrapErrChartTooLarge(t *testing.T) {
 	})
 
 	t.Run("unpacked payload cap", func(t *testing.T) {
-		// Highly compressible, so it slips past the archive pre-check and is only
-		// caught once expanded — the case the compressed-size proxy used to miss.
+		// Incompressible, so it stays over the cap after gzip + base64 but is still under the
+		// archive pre-check.
+		blob := make([]byte, maxBundleResourcesBytes)
+		if _, err := rand.Read(blob); err != nil {
+			t.Fatal(err)
+		}
 		tgz := makeChartTgz(t, map[string]string{
 			"c/Chart.yaml": "apiVersion: v2\nname: c\nversion: 1.0.0\n",
-			"c/big.txt":    strings.Repeat("a", maxBundleResourcesBytes+1),
+			"c/big.txt":    string(blob),
 		})
 		if len(tgz) > maxChartArchiveBytes {
 			t.Fatalf("fixture archive is %d bytes; it must stay under the pre-check to exercise the payload cap", len(tgz))
