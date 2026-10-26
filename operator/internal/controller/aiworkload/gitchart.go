@@ -40,15 +40,14 @@ import (
 )
 
 // maxBundleResourcesBytes caps the size of the payload we put in the Bundle's
-// spec.resources — the chart files UNPACKED, with binary files base64-inflated.
-// That payload, not the archive, is what the API server has to store: a Bundle is
-// a plain CR, so it is subject to the ~1.5 MiB etcd object limit with no
-// compression. Compression ratios on Helm charts are ~10x, so the compressed
-// archive is a badly misleading proxy: rancher-monitoring is 490 KiB as a .tgz
-// but ~3.9 MiB as bundle resources. Measuring the archive would let such a chart
-// pass this check and then fail at the API server with an opaque
-// "request entity too large". Budget 1 MiB and leave the remainder of the object
-// limit for targets, values, managedFields and Fleet's own status.
+// spec.resources: the chart files as stored, each gzip-compressed and
+// base64-encoded (encoding "base64+gz"), plus their names. That payload, not
+// the archive, is what the API server keeps: a Bundle is a plain CR, subject
+// to etcd's ~1.5 MiB request limit. The archive is not a reliable proxy, since
+// compressing each file separately and base64-encoding it makes the payload
+// larger than the .tgz (a 265 KB archive stores as ~0.43 MB). Budget 1 MiB and
+// leave the remainder of the object limit for targets, values, managedFields
+// and Fleet's own status.
 const maxBundleResourcesBytes = 1 << 20 // 1 MiB
 
 // maxChartUnpackedBytes caps how far a chart may expand when unpacked, independent of how well
@@ -66,10 +65,10 @@ const maxBundleResourcesBytes = 1 << 20 // 1 MiB
 // case is about 3x this value (about 100 MiB) per reconcile.
 const maxChartUnpackedBytes = 32 << 20 // 32 MiB
 
-// maxChartArchiveBytes is a cheap pre-unpack rejection. Nothing above this can
-// possibly fit in maxBundleResourcesBytes once expanded, so we skip the work —
-// and it bounds how much a malicious archive can make us decompress before the
-// payload cap kicks in during extraction.
+// maxChartArchiveBytes is a cheap pre-unpack rejection: an archive this large
+// would be far over maxBundleResourcesBytes once each file is stored as
+// base64+gz, so we skip the work. Decompression itself is bounded by
+// maxChartUnpackedBytes.
 const maxChartArchiveBytes = 4 << 20 // 4 MiB
 
 // errChartTooLarge marks a git-backed component whose chart cannot fit in a
