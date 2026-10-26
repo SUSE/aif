@@ -26,6 +26,16 @@ import {
   DEFAULT_TOKEN_SECRET_NAME, DEFAULT_TOKEN_SECRET_KEY,
 } from '../services/rancher-token';
 import { emptyCustomRepo, buildCustomReposCrd, buildCustomReposForm, validateCustomRepoForm } from '../utils/custom-repos';
+import { SUSEAI_PRODUCT } from '../config/suseai';
+
+// Each registry section's "Learn more" link opens its heading in the
+// post-deployment guide.
+const POST_DEPLOYMENT_DOCS_URL = `${ SUSEAI_PRODUCT.docsRoute }html/AI-Factory-deployment/ai-factory-post-deployment.html`;
+const SECTION_DOCS_URLS = {
+  appCollection: `${ POST_DEPLOYMENT_DOCS_URL }#ai-factory-sappco`,
+  suseRegistry:  `${ POST_DEPLOYMENT_DOCS_URL }#ai-factory-sregistry`,
+  nvidia:        `${ POST_DEPLOYMENT_DOCS_URL }#ai-factory-nvidia-registry`,
+};
 
 function createEmptySpec() {
   return {
@@ -91,6 +101,7 @@ export default {
 
   data() {
     return {
+      sectionDocsUrls:   SECTION_DOCS_URLS,
       loaded:            false,
       notFound:          false,
       spec:              createEmptySpec(),
@@ -726,13 +737,19 @@ export default {
                 <h2>{{ t('suseai.pages.settings.sections.appCollection.title') }}</h2>
               </div>
               <i
-                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.appCollection.tooltip', {}, true), triggers: ['hover', 'touch', 'focus'] }"
-                v-stripped-aria-label="t('suseai.pages.settings.sections.appCollection.tooltip', {}, true)"
+                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.appCollection.tooltip'), triggers: ['hover', 'touch', 'focus'] }"
+                v-stripped-aria-label="t('suseai.pages.settings.sections.appCollection.tooltip')"
                 class="icon icon-info"
                 tabindex="0"
                 role="tooltip"
                 data-testid="section-info-appCollection"
               />
+              <a
+                :href="sectionDocsUrls.appCollection"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="section-docs-appCollection"
+              >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
             </div>
 
             <div
@@ -838,13 +855,19 @@ export default {
                 <h2>{{ t('suseai.pages.settings.sections.suseRegistry.title') }}</h2>
               </div>
               <i
-                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.suseRegistry.tooltip', {}, true), triggers: ['hover', 'touch', 'focus'] }"
-                v-stripped-aria-label="t('suseai.pages.settings.sections.suseRegistry.tooltip', {}, true)"
+                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.suseRegistry.tooltip'), triggers: ['hover', 'touch', 'focus'] }"
+                v-stripped-aria-label="t('suseai.pages.settings.sections.suseRegistry.tooltip')"
                 class="icon icon-info"
                 tabindex="0"
                 role="tooltip"
                 data-testid="section-info-suseRegistry"
               />
+              <a
+                :href="sectionDocsUrls.suseRegistry"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="section-docs-suseRegistry"
+              >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
             </div>
 
             <div
@@ -952,13 +975,19 @@ export default {
                 <h2>{{ t('suseai.pages.settings.sections.nvidia.title') }}</h2>
               </div>
               <i
-                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.nvidia.tooltip', {}, true), triggers: ['hover', 'touch', 'focus'] }"
-                v-stripped-aria-label="t('suseai.pages.settings.sections.nvidia.tooltip', {}, true)"
+                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.nvidia.tooltip'), triggers: ['hover', 'touch', 'focus'] }"
+                v-stripped-aria-label="t('suseai.pages.settings.sections.nvidia.tooltip')"
                 class="icon icon-info"
                 tabindex="0"
                 role="tooltip"
                 data-testid="section-info-nvidia"
               />
+              <a
+                :href="sectionDocsUrls.nvidia"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="section-docs-nvidia"
+              >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
             </div>
 
             <div
@@ -1736,9 +1765,9 @@ export default {
   }
 }
 
-// Places a section's info icon beside its accordion toggle rather than inside
-// it, so clicking the icon does not toggle the section and the focusable icon
-// is not nested in the toggle's role="button".
+// Places a section's info icon and docs link beside its accordion toggle
+// rather than inside it, so clicking them does not toggle the section and the
+// focusable elements are not nested in the toggle's role="button".
 .section-header {
   display: flex;
   align-items: center;

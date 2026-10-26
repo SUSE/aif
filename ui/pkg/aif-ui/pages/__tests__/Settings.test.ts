@@ -73,10 +73,11 @@ vi.mock('@shell/components/form/SecretSelector', () => ({
 
 const translations = yaml.load(readFileSync(path.resolve(__dirname, '../../l10n/en-us.yaml'), 'utf8'));
 
-// Records the tooltip content on the element instead of rendering floating-vue.
+// Records the tooltip content and triggers on the element instead of rendering floating-vue.
 const setTooltipContent = (el: HTMLElement, binding: DirectiveBinding) => {
   const content = typeof binding.value === 'string' ? binding.value : binding.value?.content;
   if (content) el.dataset.tooltip = content;
+  if (binding.value?.triggers) el.dataset.tooltipTriggers = binding.value.triggers.join(',');
 };
 const cleanTooltip = { mounted: setTooltipContent, updated: setTooltipContent };
 
@@ -147,10 +148,10 @@ describe('Settings page - registry section tooltips', () => {
 
     expect(icon.exists()).toBe(true);
     expect(icon.attributes('data-tooltip')).toBe(tooltip);
+    expect(icon.attributes('aria-label')).toBe(tooltip);
+    // Keyboard users reach the icon with Tab and the tooltip opens on focus.
     expect(icon.attributes('tabindex')).toBe('0');
-    // Screen readers get the same text without the tooltip's HTML markup.
-    expect(icon.attributes('aria-label')).toContain('Air-gapped environments:');
-    expect(icon.attributes('aria-label')).not.toMatch(/<[^>]+>/);
+    expect(icon.attributes('data-tooltip-triggers')?.split(',')).toContain('focus');
 
     // The icon is not part of the toggle: clicking it leaves the section as is.
     expect(box.find('.accordion-header [data-testid^="section-info-"]').exists()).toBe(false);
@@ -158,6 +159,23 @@ describe('Settings page - registry section tooltips', () => {
 
     await icon.trigger('click');
     expect((wrapper.vm as any).expanded[section]).toBe(expanded);
+  });
+
+  it.each([
+    ['appCollection', 'ai-factory-sappco'],
+    ['suseRegistry', 'ai-factory-sregistry'],
+    ['nvidia', 'ai-factory-nvidia-registry'],
+  ])('%s header links to its section of the post-deployment docs', async (section, anchor) => {
+    const wrapper = await mountSettings();
+    const box = wrapper.find(`[data-testid="section-${ section }"]`);
+    const link = box.find(`[data-testid="section-docs-${ section }"]`);
+
+    expect(link.exists()).toBe(true);
+    expect(link.attributes('href')).toBe(`https://documentation.suse.com/suse-ai-factory/latest/html/AI-Factory-deployment/ai-factory-post-deployment.html#${ anchor }`);
+    expect(link.attributes('target')).toBe('_blank');
+    expect(link.attributes('rel')).toBe('noopener noreferrer');
+    expect(link.text()).toBe('Learn more');
+    expect(box.find('.accordion-header [data-testid^="section-docs-"]').exists()).toBe(false);
   });
 });
 
