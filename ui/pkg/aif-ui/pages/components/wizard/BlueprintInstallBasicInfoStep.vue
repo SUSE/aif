@@ -44,7 +44,6 @@ import { Banner } from '@components/Banner';
 import { useT } from '../../../composables/useT';
 import NamespaceAutocomplete from './NamespaceAutocomplete.vue';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
-import { defaultInstallNamespace } from '../../../utils/workload-name';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 
 interface Props {
@@ -91,14 +90,12 @@ const fixedNamespaceWarning = computed(
 onMounted(async () => {
   loadingNamespaces.value = true;
   try {
-    // Offer the wizard's own namespace (a random one for a new install) first.
-    namespaceOptions.value = await fetchUserNamespaces(store, localNs.value || defaultInstallNamespace(props.workloadName));
+    // The wizard owns the namespace (a random one for a new install, the
+    // workload's own when managing); offer it first. Never invent one here: an
+    // empty value means manage mode could not load the workload.
+    namespaceOptions.value = await fetchUserNamespaces(store, localNs.value);
   } finally {
     loadingNamespaces.value = false;
-  }
-  if (!localNs.value && namespaceOptions.value.length) {
-    localNs.value = namespaceOptions.value[0].value;
-    emit('update:namespace', localNs.value);
   }
 });
 
