@@ -174,12 +174,13 @@ func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Server-side apply only removes an omitted field when no other manager owns it.
-	// Built-in registry secret refs are also written by the settings controller
-	// (well-known secret discovery) and by Helm, so an omitted ref would survive the
-	// apply, or keep a co-owned key without its required name. Null omitted refs with
-	// a merge patch, which ignores field ownership, before applying. The controller
-	// still re-wires a registry whose well-known secret exists.
-	if cleared := omittedRegistryRefs(&existing, s); len(cleared) > 0 {
+	// Built-in registry and Rancher catalog secret refs are also written by Helm, and
+	// registry user/token refs by the settings controller (well-known secret
+	// discovery), so an omitted ref would survive the apply, or keep a co-owned key
+	// without its required name. Null omitted refs with a merge patch, which ignores
+	// field ownership, before applying. The controller still re-wires a registry
+	// whose well-known secret exists.
+	if cleared := omittedSecretRefs(&existing, s); len(cleared) > 0 {
 		patch, err := json.Marshal(map[string]any{"spec": cleared})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -928,26 +929,42 @@ func incompleteSecretRefs(spec *aiplatformv1alpha1.SettingsSpec) []string {
 	return out
 }
 
-// omittedRegistryRefs returns a merge-patch spec fragment that nulls each built-in
-// registry secret ref set in existing but absent from requested, keyed by registry
-// section. It is empty when there is nothing to clear.
-func omittedRegistryRefs(existing, requested *aiplatformv1alpha1.Settings) map[string]any {
-	fields := [3]string{"userSecretRef", "tokenSecretRef", "caBundleSecretRef"}
-	out := map[string]any{}
-	for _, target := range []string{"applicationCollection", "suseRegistry", "nvidia"} {
+// omittedSecretRefs returns a merge-patch spec fragment that nulls each secret ref
+// another field manager may also own, set in existing but absent from requested,
+// keyed by section. It is empty when there is nothing to clear. Registry CA refs are
+// written only by the Settings page today; they are cleared anyway so a future
+// writer of them cannot reintroduce refs that None does not remove.
+func omittedSecretRefs(existing, requested *aiplatformv1alpha1.Settings) map[string]any {
+	type ref struct {
+		section, field string
+		have, want     *aiplatformv1alpha1.SecretKeyRef
+	}
+	registries := []string{"applicationCollection", "suseRegistry", "nvidia"}
+	refs := make([]ref, 0, 3*len(registries)+2)
+	for _, target := range registries {
 		haveUser, haveToken, haveCA := savedRegistryRefs(target, existing)
 		wantUser, wantToken, wantCA := savedRegistryRefs(target, requested)
-		have := [3]*aiplatformv1alpha1.SecretKeyRef{haveUser, haveToken, haveCA}
-		want := [3]*aiplatformv1alpha1.SecretKeyRef{wantUser, wantToken, wantCA}
-		section := map[string]any{}
-		for i, field := range fields {
-			if have[i] != nil && want[i] == nil {
-				section[field] = nil
-			}
+		refs = append(refs,
+			ref{target, "userSecretRef", haveUser, wantUser},
+			ref{target, "tokenSecretRef", haveToken, wantToken},
+			ref{target, "caBundleSecretRef", haveCA, wantCA})
+	}
+	have, want := existing.Spec.RancherCatalog, requested.Spec.RancherCatalog
+	refs = append(refs,
+		ref{"rancherCatalog", "tokenSecretRef", have.TokenSecretRef, want.TokenSecretRef},
+		ref{"rancherCatalog", "caBundleSecretRef", have.CABundleSecretRef, want.CABundleSecretRef})
+
+	out := map[string]any{}
+	for _, r := range refs {
+		if r.have == nil || r.want != nil {
+			continue
 		}
-		if len(section) > 0 {
-			out[target] = section
+		section, _ := out[r.section].(map[string]any)
+		if section == nil {
+			section = map[string]any{}
+			out[r.section] = section
 		}
+		section[r.field] = nil
 	}
 	return out
 }

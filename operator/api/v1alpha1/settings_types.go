@@ -176,27 +176,38 @@ const SettingsHelmManagedAnnotation = "ai-factory.suse.com/helm-managed"
 
 // SettingsSpec defines the desired state of Settings.
 type SettingsSpec struct {
+	// The struct-valued sections are +nullable because server-side apply prunes a
+	// section to null once an applier removes the last field it owns there (for
+	// example, every secret ref set to None on the Settings page). Reading null
+	// yields the zero value.
+
 	// Fleet configures Fleet GitOps integration.
 	// +optional
+	// +nullable
 	Fleet FleetSettings `json:"fleet,omitempty"`
 	// ApplicationCollection configures SUSE Application Collection.
 	// +optional
+	// +nullable
 	ApplicationCollection ApplicationCollectionSettings `json:"applicationCollection,omitempty"`
 	// SUSERegistry configures SUSE Registry integration.
 	// +optional
+	// +nullable
 	SUSERegistry SUSERegistrySettings `json:"suseRegistry,omitempty"`
 	// Nvidia configures NVIDIA NGC integration.
 	// +optional
+	// +nullable
 	Nvidia NvidiaSettings `json:"nvidia,omitempty"`
 	// RegistryEndpoints configures custom chart repositories for air-gap deployments.
 	// +optional
 	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
 	// AppCatalog configures the static application catalog.
 	// +optional
+	// +nullable
 	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`
 	// RancherCatalog configures access to Rancher's catalog API, used to fetch
 	// charts from git-backed ClusterRepos.
 	// +optional
+	// +nullable
 	RancherCatalog RancherCatalogSettings `json:"rancherCatalog,omitempty"`
 	// BlueprintCatalogs is the list of git-sourced blueprint catalogs. The
 	// built-in bundled catalog is not represented here.

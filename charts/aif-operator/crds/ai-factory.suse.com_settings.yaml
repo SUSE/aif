@@ -50,6 +50,7 @@ spec:
             properties:
               appCatalog:
                 description: AppCatalog configures the static application catalog.
+                nullable: true
                 properties:
                   remoteUrl:
                     description: |-
@@ -62,6 +63,7 @@ spec:
                 type: object
               applicationCollection:
                 description: ApplicationCollection configures SUSE Application Collection.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -321,6 +323,7 @@ spec:
                 type: array
               fleet:
                 description: Fleet configures Fleet GitOps integration.
+                nullable: true
                 properties:
                   authType:
                     description: |-
@@ -377,6 +380,7 @@ spec:
                 type: object
               nvidia:
                 description: Nvidia configures NVIDIA NGC integration.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -433,6 +437,7 @@ spec:
                 description: |-
                   RancherCatalog configures access to Rancher's catalog API, used to fetch
                   charts from git-backed ClusterRepos.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -506,6 +511,7 @@ spec:
                 type: object
               suseRegistry:
                 description: SUSERegistry configures SUSE Registry integration.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-

@@ -324,6 +324,75 @@ func TestSettingsSecretRefs_Envtest(t *testing.T) {
 		}
 	})
 
+	// The chart renders rancherCatalog refs when rancherCatalog.token or tokenSecret
+	// is set, and the Settings page can set them to None.
+	helmRancherCatalog := func(t *testing.T) {
+		t.Helper()
+		u := chartSettings(false)
+		u.Object["spec"] = map[string]any{"rancherCatalog": map[string]any{
+			"url":               "https://rancher.cattle-system.svc",
+			"tokenSecretRef":    map[string]any{"name": "aif-operator-rancher-catalog", "key": "token"},
+			"caBundleSecretRef": map[string]any{"name": "aif-operator-rancher-catalog", "key": "ca.crt"},
+		}}
+		applyAsChart(t, c, helmManager, u)
+	}
+
+	t.Run("None clears Rancher catalog refs Helm applied", func(t *testing.T) {
+		resetSettings(t, c)
+		helmRancherCatalog(t)
+		if rec := putJSON(h, `{"spec":{"rancherCatalog":{"url":"https://rancher.cattle-system.svc"}}}`); rec.Code != http.StatusOK {
+			t.Fatalf("PUT None status=%d body=%s", rec.Code, rec.Body)
+		}
+		rc := getSettingsCR(t, c).Spec.RancherCatalog
+		if rc.TokenSecretRef != nil || rc.CABundleSecretRef != nil {
+			t.Fatalf("refs=%+v/%+v want cleared", rc.TokenSecretRef, rc.CABundleSecretRef)
+		}
+	})
+
+	// Authorize repoints the token ref to the Secret it minted, keeping the key name,
+	// so the page owns name while key stays co-owned with Helm.
+	t.Run("None clears a Rancher catalog token repointed from a Helm ref", func(t *testing.T) {
+		resetSettings(t, c)
+		helmRancherCatalog(t)
+		authorized := `{"spec":{"rancherCatalog":{"url":"https://rancher.cattle-system.svc",` +
+			`"tokenSecretRef":{"name":"aif-rancher-token","key":"token"}}}}`
+		if rec := putJSON(h, authorized); rec.Code != http.StatusOK {
+			t.Fatalf("PUT authorized status=%d body=%s", rec.Code, rec.Body)
+		}
+		if rec := putJSON(h, `{"spec":{}}`); rec.Code != http.StatusOK {
+			t.Fatalf("PUT None status=%d body=%s", rec.Code, rec.Body)
+		}
+		if rc := getSettingsCR(t, c).Spec.RancherCatalog; rc.TokenSecretRef != nil {
+			t.Fatalf("tokenSecretRef=%+v want cleared", rc.TokenSecretRef)
+		}
+	})
+
+	// Server-side apply prunes a section to null once the applier removes the last
+	// field it owns there, so the sections must accept null.
+	t.Run("None empties a section the page solely owned", func(t *testing.T) {
+		for name, set := range map[string]string{
+			"nvidia refs": `{"spec":{"nvidia":{` +
+				`"userSecretRef":{"name":"nv","key":"user"},"tokenSecretRef":{"name":"nv","key":"token"}}}}`,
+			"rancherCatalog refs": `{"spec":{"rancherCatalog":{` +
+				`"tokenSecretRef":{"name":"rc","key":"token"},"caBundleSecretRef":{"name":"rc","key":"ca.crt"}}}}`,
+			"rancherCatalog url and ref": `{"spec":{"rancherCatalog":{"url":"https://rancher.example.com",` +
+				`"tokenSecretRef":{"name":"rc","key":"token"}}}}`,
+		} {
+			resetSettings(t, c)
+			if rec := putJSON(h, set); rec.Code != http.StatusOK {
+				t.Fatalf("%s: PUT status=%d body=%s", name, rec.Code, rec.Body)
+			}
+			if rec := putJSON(h, `{"spec":{}}`); rec.Code != http.StatusOK {
+				t.Errorf("%s: PUT None status=%d body=%s", name, rec.Code, rec.Body)
+				continue
+			}
+			spec := getSettingsCR(t, c).Spec
+			if spec.Nvidia != (aiplatformv1alpha1.NvidiaSettings{}) || spec.RancherCatalog != (aiplatformv1alpha1.RancherCatalogSettings{}) {
+				t.Errorf("%s: nvidia=%+v rancherCatalog=%+v want empty", name, spec.Nvidia, spec.RancherCatalog)
+			}
+		}
+	})
+
 	t.Run("a save with a secret but no key is rejected before any write", func(t *testing.T) {
 		resetSettings(t, c)
 		if err := c.Create(context.Background(), registryRefSettings("appco"), client.FieldOwner("manager")); err != nil {

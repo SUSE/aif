@@ -249,18 +249,19 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 	}
 }
 
-// PUT that omits a built-in registry secret ref clears it even when another field
-// manager owns it. Server-side apply alone only drops fields the applier solely
+// PUT that omits a built-in registry or Rancher catalog secret ref clears it even
+// when another field manager owns it. Server-side apply alone only drops fields the applier solely
 // owns, so an omitted ref co-owned by the settings controller or Helm would survive
 // (or be left as a partial ref missing its required name). The handler must null
 // omitted refs with a merge patch that ignores field ownership.
-func TestSettingsPut_ClearsOmittedRegistryRefs(t *testing.T) {
+func TestSettingsPut_ClearsOmittedSecretRefs(t *testing.T) {
 	cr := sampleCR()
 	cr.Spec.ApplicationCollection.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "username"}
 	cr.Spec.ApplicationCollection.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "password"}
 	cr.Spec.SUSERegistry.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "username"}
 	cr.Spec.SUSERegistry.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "password"}
 	cr.Spec.Nvidia.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "ca.crt"}
+	cr.Spec.RancherCatalog.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "rancher-token", Key: "token"}
 
 	var mergePatches []string
 	c := fake.NewClientBuilder().
@@ -282,7 +283,8 @@ func TestSettingsPut_ClearsOmittedRegistryRefs(t *testing.T) {
 		Build()
 	h := newSettingsHandler(c, "aif-operator")
 
-	// Application Collection and the NVIDIA CA are set to None; SUSE Registry keeps its refs.
+	// Application Collection, the NVIDIA CA and the Rancher catalog token are set to
+	// None; SUSE Registry keeps its refs.
 	body := `{"spec":{"suseRegistry":{` +
 		`"userSecretRef":{"name":"suse-registry","key":"username"},` +
 		`"tokenSecretRef":{"name":"suse-registry","key":"password"}}}}`
@@ -294,7 +296,8 @@ func TestSettingsPut_ClearsOmittedRegistryRefs(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
 	}
-	want := `{"spec":{"applicationCollection":{"tokenSecretRef":null,"userSecretRef":null},"nvidia":{"caBundleSecretRef":null}}}`
+	want := `{"spec":{"applicationCollection":{"tokenSecretRef":null,"userSecretRef":null},` +
+		`"nvidia":{"caBundleSecretRef":null},"rancherCatalog":{"tokenSecretRef":null}}}`
 	if len(mergePatches) != 1 || mergePatches[0] != want {
 		t.Fatalf("merge patches=%q want [%q]", mergePatches, want)
 	}
@@ -309,6 +312,9 @@ func TestSettingsPut_ClearsOmittedRegistryRefs(t *testing.T) {
 	}
 	if stored.Spec.Nvidia.CABundleSecretRef != nil {
 		t.Errorf("nvidia caBundleSecretRef=%+v want cleared", stored.Spec.Nvidia.CABundleSecretRef)
+	}
+	if stored.Spec.RancherCatalog.TokenSecretRef != nil {
+		t.Errorf("rancherCatalog tokenSecretRef=%+v want cleared", stored.Spec.RancherCatalog.TokenSecretRef)
 	}
 	if stored.Spec.SUSERegistry.UserSecretRef == nil || stored.Spec.SUSERegistry.TokenSecretRef == nil {
 		t.Errorf("suseRegistry refs cleared; want kept")
