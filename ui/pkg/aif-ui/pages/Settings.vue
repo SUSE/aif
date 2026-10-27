@@ -735,8 +735,13 @@ export default {
       });
 
       const rancherTitle = this.t(`${ s }.rancherCatalog.title`, {}, true);
+      // The Rancher catalog secret fields sit under its collapsed Advanced panel.
+      const openRancher = () => {
+        this.showAdvanced.rancherCatalog = true;
+        this.openSection('rancherCatalog');
+      };
       for (const field of ['tokenSecretRef', 'caBundleSecretRef']) {
-        add(() => this.openSection('rancherCatalog'), rancherTitle, `${ s }.rancherCatalog.${ field }.label`, this.spec.rancherCatalog?.[field]);
+        add(openRancher, rancherTitle, `${ s }.rancherCatalog.${ field }.label`, this.spec.rancherCatalog?.[field]);
       }
 
       return refs

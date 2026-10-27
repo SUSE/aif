@@ -402,6 +402,9 @@ describe('Settings page - incomplete secret references', () => {
     expect(vm.errors.join('\n')).toContain('"appco-ca"');
     expect(vm.errors.join('\n')).toContain('"git-creds"');
     expect(vm.errors.join('\n')).toContain('"rancher-token"');
+    // The Rancher catalog secret fields sit under its collapsed Advanced panel.
+    expect(vm.expanded.rancherCatalog).toBe(true);
+    expect(vm.showAdvanced.rancherCatalog).toBe(true);
   });
 
   it('blocks Apply for a custom repository Secret without a key instead of dropping it', async () => {
