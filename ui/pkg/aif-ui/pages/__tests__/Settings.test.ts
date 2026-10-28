@@ -363,3 +363,81 @@ describe('Settings page - SUSE partner catalog', () => {
     expect(row.text()).toContain('Unknown');
   });
 });
+
+describe('Settings page - incomplete secret references', () => {
+  async function applyWith(edit: (spec: any) => void) {
+    const wrapper = await mountSettings();
+    const vm = wrapper.vm as any;
+
+    edit(vm.spec);
+    vi.mocked(putSettings).mockClear();
+    const saved = await vm.save(() => {});
+
+    return { vm, saved };
+  }
+
+  it('blocks Apply when a built-in registry Secret has no key, and names the field', async () => {
+    const { vm, saved } = await applyWith((spec) => {
+      spec.nvidia.userSecretRef = { name: 'nvidia-registry', key: '' };
+      spec.nvidia.tokenSecretRef = { name: 'nvidia-registry', key: 'token' };
+    });
+
+    expect(saved).toBe(false);
+    expect(putSettings).not.toHaveBeenCalled();
+    expect(vm.errors).toEqual([
+      'NVIDIA AI Library - Username Secret: select a key in Secret "nvidia-registry", or set the Secret to None.',
+    ]);
+    expect(vm.expanded.nvidia).toBe(true);
+  });
+
+  it('lists every incomplete reference across sections', async () => {
+    const { vm, saved } = await applyWith((spec) => {
+      spec.applicationCollection.caBundleSecretRef = { name: 'appco-ca' };
+      spec.fleet.credSecretRef = { name: 'git-creds', key: '' };
+      spec.rancherCatalog.tokenSecretRef = { name: 'rancher-token', key: '' };
+    });
+
+    expect(saved).toBe(false);
+    expect(vm.errors).toHaveLength(3);
+    expect(vm.errors.join('\n')).toContain('"appco-ca"');
+    expect(vm.errors.join('\n')).toContain('"git-creds"');
+    expect(vm.errors.join('\n')).toContain('"rancher-token"');
+    // The Rancher catalog secret fields sit under its collapsed Advanced panel.
+    expect(vm.expanded.rancherCatalog).toBe(true);
+    expect(vm.showAdvanced.rancherCatalog).toBe(true);
+  });
+
+  it('blocks Apply for a custom repository Secret without a key instead of dropping it', async () => {
+    const { vm, saved } = await applyWith((spec) => {
+      spec.customRepos = [{ name: 'team-charts', type: 'helm', userSecretRef: { name: 'team-creds', key: '' } }];
+    });
+
+    expect(saved).toBe(false);
+    expect(putSettings).not.toHaveBeenCalled();
+    expect(vm.errors[0]).toContain('team-charts');
+    expect(vm.errors[0]).toContain('"team-creds"');
+    expect(vm.customRepoExpanded[0]).toBe(true);
+  });
+
+  it('ignores fields that are hidden for the repository type or read-only', async () => {
+    const { saved } = await applyWith((spec) => {
+      // Basic auth is not shown for git repos, and Helm-declared catalogs are never sent.
+      spec.customRepos = [{ name: 'gitops', type: 'git', userSecretRef: { name: 'stale', key: '' } }];
+      spec.blueprintCatalogs = [{ name: 'partner', helmManaged: true, credSecretRef: { name: 'helm-creds', key: '' } }];
+    });
+
+    expect(saved).toBe(true);
+    expect(putSettings).toHaveBeenCalled();
+  });
+
+  it('allows complete references and None', async () => {
+    const { saved } = await applyWith((spec) => {
+      spec.suseRegistry.userSecretRef = { name: 'suse-registry', key: 'user' };
+      spec.suseRegistry.tokenSecretRef = { name: 'suse-registry', key: 'token' };
+      spec.nvidia.userSecretRef = null;
+    });
+
+    expect(saved).toBe(true);
+    expect(putSettings).toHaveBeenCalled();
+  });
+});
