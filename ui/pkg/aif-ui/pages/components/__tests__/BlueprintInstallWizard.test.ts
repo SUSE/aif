@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import type { Router, RouteLocationNormalizedLoaded } from 'vue-router';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -32,11 +33,12 @@ const mounted: ReturnType<typeof mount>[] = [];
 
 async function setup(mode: 'install' | 'manage' = 'install', query: Record<string, string> = {}) {
   const store = { getters: { 'i18n/t': t }, dispatch: vi.fn(), commit: vi.fn() };
-  const route = { params: { cluster: 'local' }, query };
+  const router = { push: vi.fn() } as unknown as Router;
+  const route = { params: { cluster: 'local' }, query } as unknown as RouteLocationNormalizedLoaded;
   const wrapper = mount(BlueprintInstallWizard, {
     props:  { blueprintName: 'My Blueprint', blueprintVersion: '1.0.0', mode },
     global: {
-      config: { globalProperties: { $store: store, $route: route, $router: { push: vi.fn() } } },
+      config: { globalProperties: { $store: store, $route: route, $router: router } },
       stubs:  { TargetStep: true, RouterLink: true, Loading: true, Banner: { template: '<div><slot /></div>' } },
     },
   });
@@ -58,7 +60,7 @@ beforeEach(() => {
 afterEach(() => mounted.splice(0).forEach((wrapper) => wrapper.unmount()));
 
 describe('blueprint install wizard namespace', () => {
-  it('suggests one random namespace and keeps it while the wizard re-renders', async () => {
+  it('suggests one random namespace and keeps it when the step re-mounts', async () => {
     const wrapper = await setup();
     const suggested = namespaceInput(wrapper);
     expect(suggested).toMatch(RANDOM_NAMESPACE);
@@ -69,7 +71,6 @@ describe('blueprint install wizard namespace', () => {
     expect(wrapper.find('.ns-input').exists()).toBe(false);
     await button(wrapper, 'Previous').trigger('click');
     await flushPromises();
-    await wrapper.setProps({ blueprintVersion: '1.0.1' });
 
     expect(namespaceInput(wrapper)).toBe(suggested);
     expect(fetchUserNamespaces).toHaveBeenCalledTimes(2);

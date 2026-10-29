@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import type { Router, RouteLocationNormalizedLoaded } from 'vue-router';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -37,11 +38,12 @@ const mounted: ReturnType<typeof mount>[] = [];
 
 async function setup(mode: 'install' | 'manage' = 'install', query: Record<string, string> = {}) {
   const store = { getters: { 'i18n/t': t }, dispatch: vi.fn(), commit: vi.fn() };
-  const route = { params: { cluster: 'local' }, query };
+  const router = { push: vi.fn() } as unknown as Router;
+  const route = { params: { cluster: 'local' }, query } as unknown as RouteLocationNormalizedLoaded;
   const wrapper = mount(AppWizard, {
     props:  { slug: 'coredns', mode },
     global: {
-      config: { globalProperties: { $store: store, $route: route, $router: { push: vi.fn() } } },
+      config: { globalProperties: { $store: store, $route: route, $router: router } },
       stubs:  {
         Loading:       true,
         Banner:        { template: '<div><slot /></div>' },
