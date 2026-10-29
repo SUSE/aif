@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import type { ComponentCustomProperties } from 'vue';
 import type { Router, RouteLocationNormalizedLoaded } from 'vue-router';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -43,7 +44,8 @@ async function setup(mode: 'install' | 'manage' = 'install', query: Record<strin
   const wrapper = mount(AppWizard, {
     props:  { slug: 'coredns', mode },
     global: {
-      config: { globalProperties: { $store: store, $route: route, $router: router } },
+      // Cast like the route/router: the shell augments these with t, $t and $fetchState, which the wizards don't use.
+      config: { globalProperties: { $store: store, $route: route, $router: router } as unknown as ComponentCustomProperties },
       stubs:  {
         Loading:       true,
         Banner:        { template: '<div><slot /></div>' },
