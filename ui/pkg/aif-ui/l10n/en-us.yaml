@@ -114,10 +114,12 @@ suseai:
           downloadFailed: Rancher could not download the chart repository index. Check the error below and open the repository in Rancher for details.
           refreshRequested: Refresh requested for the saved repository. The download has not been verified; Test again to check its status.
       sections:
+        learnMore: Learn more
         repositories:
           title: Repositories
         appCollection:
           title: SUSE Application Collection
+          summary: SUSE Application Collection provides SUSE AI application charts, such as Ollama, Open WebUI, Milvus and vLLM.
           endpoint:
             label: Chart Repository (OCI)
             placeholder: 'oci://dp.apps.rancher.io/charts'
@@ -138,6 +140,7 @@ suseai:
             placeholder: 'ai, nlp, vision'
         suseRegistry:
           title: SUSE Registry
+          summary: SUSE Registry provides SUSE AI charts, such as LiteLLM, Qdrant and Kubeflow.
           endpoint:
             label: Chart Repository (OCI)
             placeholder: 'oci://registry.suse.com/ai/charts'
@@ -157,6 +160,7 @@ suseai:
             label: NIM Index Refresh (minutes)
         nvidia:
           title: NVIDIA AI Library
+          summary: NVIDIA AI Library provides Helm charts from the NGC catalog, including NIM microservices and NVIDIA Blueprints.
           description: 'NGC credentials pull gated NVIDIA images from nvcr.io. Leave the mirror empty to use the public NGC chart repositories; configure it only for a private OCI mirror. Username is conventionally “$oauthtoken”.'
           endpoint:
             label: Mirrored Chart Repository (OCI, optional)

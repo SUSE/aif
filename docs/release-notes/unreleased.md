@@ -134,6 +134,13 @@ chart applies on upgrade. Older operators reject `source: Community`, so catalog
 authors must not use it until the minimum supported operator version includes
 this change.
 
+## Registry section help in Settings
+
+The SUSE Application Collection, SUSE Registry and NVIDIA AI Library sections
+in Settings now open with a one-line summary of what the source provides and a
+"Learn more" link to that source's section of the post-deployment guide, which
+covers credentials and air-gapped mirrors.
+
 ## Random default namespace for new installs
 
 The app and Blueprint install wizards now suggest a namespace with a random

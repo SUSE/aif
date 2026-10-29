@@ -140,6 +140,27 @@ describe('Settings page - Repositories grouping', () => {
   });
 });
 
+describe('Settings page - registry section summaries', () => {
+  it.each([
+    ['appCollection', 'ai-factory-sappco'],
+    ['suseRegistry', 'ai-factory-sregistry'],
+    ['nvidia', 'ai-factory-nvidia-registry'],
+  ])('%s body opens with a summary that links to its section of the post-deployment docs', async (section, anchor) => {
+    const wrapper = await mountSettings({ route: { query: { section } } });
+    const box = wrapper.find(`[data-testid="section-${ section }"]`);
+    const summary = box.find(`[data-testid="section-summary-${ section }"]`);
+    const link = summary.find(`[data-testid="section-docs-${ section }"]`);
+
+    expect(summary.text()).toContain((translations as any).suseai.pages.settings.sections[section].summary);
+    expect(link.attributes('href')).toBe(`https://documentation.suse.com/suse-ai-factory/latest/html/AI-Factory-deployment/ai-factory-post-deployment.html#${ anchor }`);
+    expect(link.attributes('target')).toBe('_blank');
+    expect(link.attributes('rel')).toBe('noopener noreferrer');
+    expect(link.text()).toBe('Learn more');
+    // The header is back to just the toggle and title.
+    expect(box.find('.accordion-header a, .accordion-header .icon-info').exists()).toBe(false);
+  });
+});
+
 describe('Settings page - Custom Repositories', () => {
   it('Add Repository appends a new custom-repo accordion, auto-expanded', async () => {
     const wrapper = await mountSettings();

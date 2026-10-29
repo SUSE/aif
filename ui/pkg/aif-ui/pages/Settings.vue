@@ -27,6 +27,16 @@ import {
 } from '../services/rancher-token';
 import { emptyCustomRepo, buildCustomReposCrd, buildCustomReposForm, validateCustomRepoForm } from '../utils/custom-repos';
 import { emptyHelmManaged, parseHelmManaged } from '../utils/helm-managed';
+import { SUSEAI_PRODUCT } from '../config/suseai';
+
+// Each registry section's "Learn more" link opens its heading in the
+// post-deployment guide.
+const POST_DEPLOYMENT_DOCS_URL = `${ SUSEAI_PRODUCT.docsRoute }html/AI-Factory-deployment/ai-factory-post-deployment.html`;
+const SECTION_DOCS_URLS = {
+  appCollection: `${ POST_DEPLOYMENT_DOCS_URL }#ai-factory-sappco`,
+  suseRegistry:  `${ POST_DEPLOYMENT_DOCS_URL }#ai-factory-sregistry`,
+  nvidia:        `${ POST_DEPLOYMENT_DOCS_URL }#ai-factory-nvidia-registry`,
+};
 
 function createEmptySpec() {
   return {
@@ -94,6 +104,7 @@ export default {
 
   data() {
     return {
+      sectionDocsUrls:   SECTION_DOCS_URLS,
       loaded:            false,
       notFound:          false,
       spec:              createEmptySpec(),
@@ -831,6 +842,15 @@ export default {
               v-if="expanded.appCollection"
               class="mt-15"
             >
+          <p class="text-muted mb-15" data-testid="section-summary-appCollection">
+            {{ t('suseai.pages.settings.sections.appCollection.summary') }}
+            <a
+              :href="sectionDocsUrls.appCollection"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="section-docs-appCollection"
+            >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+          </p>
           <div class="row mb-15">
             <div class="col span-8">
               <LabeledInput
@@ -933,6 +953,15 @@ export default {
               v-if="expanded.suseRegistry"
               class="mt-15"
             >
+          <p class="text-muted mb-15" data-testid="section-summary-suseRegistry">
+            {{ t('suseai.pages.settings.sections.suseRegistry.summary') }}
+            <a
+              :href="sectionDocsUrls.suseRegistry"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="section-docs-suseRegistry"
+            >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+          </p>
           <div class="row mb-15">
             <div class="col span-8">
               <LabeledInput
@@ -1037,8 +1066,15 @@ export default {
               v-if="expanded.nvidia"
               class="mt-15"
             >
-          <p class="text-muted mb-15">
+          <p class="text-muted mb-15" data-testid="section-summary-nvidia">
+            {{ t('suseai.pages.settings.sections.nvidia.summary') }}
             {{ t('suseai.pages.settings.sections.nvidia.description') }}
+            <a
+              :href="sectionDocsUrls.nvidia"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="section-docs-nvidia"
+            >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
           </p>
 
           <div class="row mb-15">
