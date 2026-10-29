@@ -11,7 +11,7 @@ import InstallProgressModal, { type ClusterInstallProgress } from './wizard/Inst
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
 import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
-import { crNameForCluster } from '../../utils/workload-name';
+import { crNameForCluster, defaultInstallNamespace } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import type { Blueprint } from '../../types/blueprint-types';
@@ -99,7 +99,7 @@ onMounted(async () => {
     } else {
       const slug = slugifyBlueprintName(props.blueprintName);
       workloadName.value = slug;
-      namespace.value    = `${ slug }-system`;
+      namespace.value    = defaultInstallNamespace(slug);
       initialComponentValues.value = [];
       componentValues.value = [];
     }

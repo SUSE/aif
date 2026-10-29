@@ -90,13 +90,12 @@ const fixedNamespaceWarning = computed(
 onMounted(async () => {
   loadingNamespaces.value = true;
   try {
-    namespaceOptions.value = await fetchUserNamespaces(store, `${props.workloadName}-system`);
+    // The wizard owns the namespace (a random one for a new install, the
+    // workload's own when managing); offer it first. Never invent one here: an
+    // empty value means manage mode could not load the workload.
+    namespaceOptions.value = await fetchUserNamespaces(store, localNs.value);
   } finally {
     loadingNamespaces.value = false;
-  }
-  if (!localNs.value && namespaceOptions.value.length) {
-    localNs.value = namespaceOptions.value[0].value;
-    emit('update:namespace', localNs.value);
   }
 });
 
