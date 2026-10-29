@@ -827,37 +827,30 @@ export default {
         <div v-if="expanded.repositories" class="repositories-group">
           <!-- SUSE Application Collection -->
           <div class="box mt-10" data-testid="section-appCollection">
-            <div class="section-header">
-              <div
-                class="accordion-header"
-                role="button"
-                tabindex="0"
-                @click="toggle('appCollection')"
-                @keydown.space.enter.prevent="toggle('appCollection')"
-              >
-                <i :class="expanded.appCollection ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-                <h2>{{ t('suseai.pages.settings.sections.appCollection.title') }}</h2>
-              </div>
-              <i
-                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.appCollection.tooltip'), triggers: ['hover', 'touch', 'focus'] }"
-                v-stripped-aria-label="t('suseai.pages.settings.sections.appCollection.tooltip')"
-                class="icon icon-info"
-                tabindex="0"
-                role="tooltip"
-                data-testid="section-info-appCollection"
-              />
-              <a
-                :href="sectionDocsUrls.appCollection"
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="section-docs-appCollection"
-              >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggle('appCollection')"
+              @keydown.space.enter.prevent="toggle('appCollection')"
+            >
+              <i :class="expanded.appCollection ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ t('suseai.pages.settings.sections.appCollection.title') }}</h2>
             </div>
 
             <div
               v-if="expanded.appCollection"
               class="mt-15"
             >
+          <p class="text-muted mb-15" data-testid="section-summary-appCollection">
+            {{ t('suseai.pages.settings.sections.appCollection.summary') }}
+            <a
+              :href="sectionDocsUrls.appCollection"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="section-docs-appCollection"
+            >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+          </p>
           <div class="row mb-15">
             <div class="col span-8">
               <LabeledInput
@@ -945,37 +938,30 @@ export default {
 
           <!-- SUSE Registry -->
           <div class="box mt-10" data-testid="section-suseRegistry">
-            <div class="section-header">
-              <div
-                class="accordion-header"
-                role="button"
-                tabindex="0"
-                @click="toggle('suseRegistry')"
-                @keydown.space.enter.prevent="toggle('suseRegistry')"
-              >
-                <i :class="expanded.suseRegistry ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-                <h2>{{ t('suseai.pages.settings.sections.suseRegistry.title') }}</h2>
-              </div>
-              <i
-                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.suseRegistry.tooltip'), triggers: ['hover', 'touch', 'focus'] }"
-                v-stripped-aria-label="t('suseai.pages.settings.sections.suseRegistry.tooltip')"
-                class="icon icon-info"
-                tabindex="0"
-                role="tooltip"
-                data-testid="section-info-suseRegistry"
-              />
-              <a
-                :href="sectionDocsUrls.suseRegistry"
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="section-docs-suseRegistry"
-              >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggle('suseRegistry')"
+              @keydown.space.enter.prevent="toggle('suseRegistry')"
+            >
+              <i :class="expanded.suseRegistry ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ t('suseai.pages.settings.sections.suseRegistry.title') }}</h2>
             </div>
 
             <div
               v-if="expanded.suseRegistry"
               class="mt-15"
             >
+          <p class="text-muted mb-15" data-testid="section-summary-suseRegistry">
+            {{ t('suseai.pages.settings.sections.suseRegistry.summary') }}
+            <a
+              :href="sectionDocsUrls.suseRegistry"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="section-docs-suseRegistry"
+            >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+          </p>
           <div class="row mb-15">
             <div class="col span-8">
               <LabeledInput
@@ -1065,39 +1051,30 @@ export default {
 
           <!-- NVIDIA -->
           <div class="box mt-10" data-testid="section-nvidia">
-            <div class="section-header">
-              <div
-                class="accordion-header"
-                role="button"
-                tabindex="0"
-                @click="toggle('nvidia')"
-                @keydown.space.enter.prevent="toggle('nvidia')"
-              >
-                <i :class="expanded.nvidia ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
-                <h2>{{ t('suseai.pages.settings.sections.nvidia.title') }}</h2>
-              </div>
-              <i
-                v-clean-tooltip="{ content: t('suseai.pages.settings.sections.nvidia.tooltip'), triggers: ['hover', 'touch', 'focus'] }"
-                v-stripped-aria-label="t('suseai.pages.settings.sections.nvidia.tooltip')"
-                class="icon icon-info"
-                tabindex="0"
-                role="tooltip"
-                data-testid="section-info-nvidia"
-              />
-              <a
-                :href="sectionDocsUrls.nvidia"
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="section-docs-nvidia"
-              >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
+            <div
+              class="accordion-header"
+              role="button"
+              tabindex="0"
+              @click="toggle('nvidia')"
+              @keydown.space.enter.prevent="toggle('nvidia')"
+            >
+              <i :class="expanded.nvidia ? 'icon icon-chevron-down' : 'icon icon-chevron-right'" />
+              <h2>{{ t('suseai.pages.settings.sections.nvidia.title') }}</h2>
             </div>
 
             <div
               v-if="expanded.nvidia"
               class="mt-15"
             >
-          <p class="text-muted mb-15">
+          <p class="text-muted mb-15" data-testid="section-summary-nvidia">
+            {{ t('suseai.pages.settings.sections.nvidia.summary') }}
             {{ t('suseai.pages.settings.sections.nvidia.description') }}
+            <a
+              :href="sectionDocsUrls.nvidia"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="section-docs-nvidia"
+            >{{ t('suseai.pages.settings.sections.learnMore') }} <i class="icon icon-external-link" /></a>
           </p>
 
           <div class="row mb-15">
@@ -1900,15 +1877,6 @@ export default {
     display: flex;
     align-items: center;
   }
-}
-
-// Places a section's info icon and docs link beside its accordion toggle
-// rather than inside it, so clicking them does not toggle the section and the
-// focusable elements are not nested in the toggle's role="button".
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .accordion-header {

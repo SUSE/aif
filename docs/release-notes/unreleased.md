@@ -137,7 +137,6 @@ this change.
 ## Registry section help in Settings
 
 The SUSE Application Collection, SUSE Registry and NVIDIA AI Library sections
-in Settings now show an info icon and a "Learn more" link beside their titles.
-Hover over or focus the icon for a one-line summary of what the source
-provides; the link opens that source's section of the post-deployment guide,
-which covers credentials and air-gapped mirrors.
+in Settings now open with a one-line summary of what the source provides and a
+"Learn more" link to that source's section of the post-deployment guide, which
+covers credentials and air-gapped mirrors.

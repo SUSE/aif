@@ -119,7 +119,7 @@ suseai:
           title: Repositories
         appCollection:
           title: SUSE Application Collection
-          tooltip: SUSE Application Collection provides SUSE AI application charts, such as Ollama, Open WebUI, Milvus and vLLM.
+          summary: SUSE Application Collection provides SUSE AI application charts, such as Ollama, Open WebUI, Milvus and vLLM.
           endpoint:
             label: Chart Repository (OCI)
             placeholder: 'oci://dp.apps.rancher.io/charts'
@@ -140,7 +140,7 @@ suseai:
             placeholder: 'ai, nlp, vision'
         suseRegistry:
           title: SUSE Registry
-          tooltip: SUSE Registry provides SUSE AI charts, such as LiteLLM, Qdrant and Kubeflow.
+          summary: SUSE Registry provides SUSE AI charts, such as LiteLLM, Qdrant and Kubeflow.
           endpoint:
             label: Chart Repository (OCI)
             placeholder: 'oci://registry.suse.com/ai/charts'
@@ -160,7 +160,7 @@ suseai:
             label: NIM Index Refresh (minutes)
         nvidia:
           title: NVIDIA AI Library
-          tooltip: NVIDIA AI Library provides Helm charts from the NGC catalog, including NIM microservices and NVIDIA Blueprints.
+          summary: NVIDIA AI Library provides Helm charts from the NGC catalog, including NIM microservices and NVIDIA Blueprints.
           description: 'NGC credentials pull gated NVIDIA images from nvcr.io. Leave the mirror empty to use the public NGC chart repositories; configure it only for a private OCI mirror. Username is conventionally “$oauthtoken”.'
           endpoint:
             label: Mirrored Chart Repository (OCI, optional)

@@ -5,9 +5,6 @@ declare module '@components/*';
 // @shell/components/*.vue files exist in node_modules but have no .d.ts — suppress TS errors.
 declare module '@shell/components/*';
 
-// @shell/directives/*.js files exist in node_modules but have no .d.ts — suppress TS errors.
-declare module '@shell/directives/*';
-
 // Side-effect CSS imports (e.g. `import './style/brand.css'`) carry no value
 // for the type system; webpack handles them at build time.
 declare module '*.css';
