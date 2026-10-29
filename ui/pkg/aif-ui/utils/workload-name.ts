@@ -49,3 +49,18 @@ export function crNameForCluster(release: string, clusterId: string): string {
 export function crNameForClusters(release: string, clusterIds: string[]): string[] {
   return clusterIds.map((c) => crNameForCluster(release, c));
 }
+
+// Length of the random suffix on a suggested install namespace.
+const NAMESPACE_SUFFIX_LEN = 7;
+const NAMESPACE_SUFFIX_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+// defaultInstallNamespace suggests `<slug>-<random>` for a new install. A fixed
+// `<slug>-system` made a second install of the same app collide with the first
+// AIWorkload in that namespace; a random suffix gives each install its own.
+export function defaultInstallNamespace(slug: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(NAMESPACE_SUFFIX_LEN));
+  const suffix = Array.from(bytes, (b) => NAMESPACE_SUFFIX_CHARS[b % NAMESPACE_SUFFIX_CHARS.length]).join('');
+  const head = sanitizeLabel(slug).slice(0, MAX_LABEL_LEN - NAMESPACE_SUFFIX_LEN - 1).replace(/-+$/, '');
+
+  return head ? `${head}-${suffix}` : suffix;
+}

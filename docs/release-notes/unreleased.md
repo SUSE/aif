@@ -140,3 +140,11 @@ The SUSE Application Collection, SUSE Registry and NVIDIA AI Library sections
 in Settings now open with a one-line summary of what the source provides and a
 "Learn more" link to that source's section of the post-deployment guide, which
 covers credentials and air-gapped mirrors.
+
+## Random default namespace for new installs
+
+The app and Blueprint install wizards now suggest a namespace with a random
+suffix, such as `coredns-k3x9q2a`, instead of `coredns-system`. Installing the
+same app twice no longer fails because a deployment with the same instance name
+already exists in the shared default namespace. The field can still be changed,
+and existing installs keep their namespace.

@@ -499,10 +499,10 @@ export async function fetchUserNamespaces(
     const sorted = [...allNs]
       .filter(ns => !SYSTEM_NAMESPACE_PREFIXES.some(p => ns.startsWith(p)))
       .sort();
-    if (!sorted.includes(suggestedDefault)) sorted.unshift(suggestedDefault);
+    if (suggestedDefault && !sorted.includes(suggestedDefault)) sorted.unshift(suggestedDefault);
     return sorted.map(ns => ({ label: ns, value: ns }));
   } catch {
-    return [{ label: suggestedDefault, value: suggestedDefault }];
+    return suggestedDefault ? [{ label: suggestedDefault, value: suggestedDefault }] : [];
   }
 }
 
