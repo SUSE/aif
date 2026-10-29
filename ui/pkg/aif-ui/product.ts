@@ -11,8 +11,8 @@ import {
 } from './config/suseai';
 import type { RancherStore } from './types/rancher-types';
 import { checkOperatorConnection } from './utils/operator-config';
-import { canAccessExtension, invalidateAccessCache, CRTB_TYPE, LOCAL_CLUSTER } from './utils/access';
-import { logger } from './utils/logger';
+import { invalidateAccessCache, CRTB_TYPE, LOCAL_CLUSTER } from './utils/access';
+import { createAccessNavGuard } from './utils/nav-guard';
 
 export { PRODUCT } from './config/suseai';
 
@@ -57,26 +57,7 @@ export function init($plugin: IPlugin, store: RancherStore) {
 
   if (router && typeof router.beforeEach === 'function') {
     removeNavGuard?.();
-    removeNavGuard = router.beforeEach(async (to, _from, next) => {
-      if (!to.name?.toString().startsWith(`c-cluster-${PRODUCT}-`)) return next();
-
-      try {
-        const canAccess = await canAccessExtension(store);
-
-        canAccess ? next() : next({ name: 'home' });
-      } catch (err) {
-        // canAccessExtension can throw if the management store is reset at
-        // runtime (logout, session expiry, network failure). Fail closed to
-        // avoid leaving the router in a hung state with next() never called.
-        logger.warn('canAccessExtension threw unexpectedly; failing closed', { action: 'nav-guard', data: err });
-        store.dispatch('growl/error', {
-          title:   'Access check failed',
-          message: 'Unable to verify extension access. Please reload the page.',
-          timeout: 8000,
-        });
-        next({ name: 'home' });
-      }
-    });
+    removeNavGuard = router.beforeEach(createAccessNavGuard(store, PRODUCT));
 
     // Invalidate the cached access decision when CRTBs change so a mid-session
     // role revocation is caught on the next navigation into the extension.

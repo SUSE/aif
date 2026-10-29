@@ -50,7 +50,10 @@ async function setup(options: { apps?: AppCollectionItem[], repos?: ManagedRepo[
           $route: route,
           $store: store,
           t,
-          $t: t
+          $t: t,
+          // Required by @rancher/shell's `fetch.client` mixin typings; the page
+          // under test doesn't read it, so a stub satisfying the shape suffices.
+          $fetchState: { pending: false, error: null, timestamp: 0 }
         }
       },
       stubs: {

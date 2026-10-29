@@ -37,4 +37,15 @@ echo "== disabled (enabled=false) =="
 out_off="$(helm template "$CHART_DIR" --set defaultBlueprints.enabled=false)"
 assert_no_catalog_cr "disabled" "$out_off"
 
+echo "== partner catalog (partnerBlueprints.enabled=true) =="
+out_partner="$(helm template "$CHART_DIR" --set partnerBlueprints.enabled=true)"
+assert_no_catalog_cr "partner" "$out_partner"
+grep -q "name: aif-partner-blueprints" <<< "$out_partner" || { echo "FAIL (partner): expected the partner Fleet GitRepo"; fail=1; }
+
+echo "== partner catalog disabled (partnerBlueprints.enabled=false) =="
+out_partner_off="$(helm template "$CHART_DIR" --set partnerBlueprints.enabled=false)"
+if grep -q "name: aif-partner-blueprints" <<< "$out_partner_off"; then
+  echo "FAIL (partner disabled): the partner Fleet GitRepo must not render"; fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then echo "PASS default-catalogs"; else echo "FAILED"; exit 1; fi

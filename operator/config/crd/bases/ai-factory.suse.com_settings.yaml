@@ -50,6 +50,7 @@ spec:
             properties:
               appCatalog:
                 description: AppCatalog configures the static application catalog.
+                nullable: true
                 properties:
                   remoteUrl:
                     description: |-
@@ -62,6 +63,7 @@ spec:
                 type: object
               applicationCollection:
                 description: ApplicationCollection configures SUSE Application Collection.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -71,9 +73,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -89,9 +93,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -102,9 +108,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -140,9 +148,11 @@ spec:
                       properties:
                         key:
                           description: Key is the key within the Secret.
+                          minLength: 1
                           type: string
                         name:
                           description: Name is the Secret name.
+                          minLength: 1
                           type: string
                       required:
                       - key
@@ -153,9 +163,11 @@ spec:
                       properties:
                         key:
                           description: Key is the key within the Secret.
+                          minLength: 1
                           type: string
                         name:
                           description: Name is the Secret name.
+                          minLength: 1
                           type: string
                       required:
                       - key
@@ -208,9 +220,11 @@ spec:
                       properties:
                         key:
                           description: Key is the key within the Secret.
+                          minLength: 1
                           type: string
                         name:
                           description: Name is the Secret name.
+                          minLength: 1
                           type: string
                       required:
                       - key
@@ -243,9 +257,11 @@ spec:
                       properties:
                         key:
                           description: Key is the key within the Secret.
+                          minLength: 1
                           type: string
                         name:
                           description: Name is the Secret name.
+                          minLength: 1
                           type: string
                       required:
                       - key
@@ -263,9 +279,11 @@ spec:
                       properties:
                         key:
                           description: Key is the key within the Secret.
+                          minLength: 1
                           type: string
                         name:
                           description: Name is the Secret name.
+                          minLength: 1
                           type: string
                       required:
                       - key
@@ -288,9 +306,11 @@ spec:
                       properties:
                         key:
                           description: Key is the key within the Secret.
+                          minLength: 1
                           type: string
                         name:
                           description: Name is the Secret name.
+                          minLength: 1
                           type: string
                       required:
                       - key
@@ -303,6 +323,7 @@ spec:
                 type: array
               fleet:
                 description: Fleet configures Fleet GitOps integration.
+                nullable: true
                 properties:
                   authType:
                     description: |-
@@ -323,9 +344,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -336,9 +359,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -355,6 +380,7 @@ spec:
                 type: object
               nvidia:
                 description: Nvidia configures NVIDIA NGC integration.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -365,9 +391,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -378,9 +406,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -392,9 +422,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -405,6 +437,7 @@ spec:
                 description: |-
                   RancherCatalog configures access to Rancher's catalog API, used to fetch
                   charts from git-backed ClusterRepos.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -414,9 +447,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -436,9 +471,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -474,6 +511,7 @@ spec:
                 type: object
               suseRegistry:
                 description: SUSERegistry configures SUSE Registry integration.
+                nullable: true
                 properties:
                   caBundleSecretRef:
                     description: |-
@@ -483,9 +521,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -501,9 +541,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key
@@ -514,9 +556,11 @@ spec:
                     properties:
                       key:
                         description: Key is the key within the Secret.
+                        minLength: 1
                         type: string
                       name:
                         description: Name is the Secret name.
+                        minLength: 1
                         type: string
                     required:
                     - key

@@ -249,6 +249,109 @@ func TestSettingsPut_RoundTripsRegistryCABundleRefs(t *testing.T) {
 	}
 }
 
+// PUT that omits a built-in registry or Rancher catalog secret ref clears it even
+// when another field manager owns it. Server-side apply alone only drops fields the applier solely
+// owns, so an omitted ref co-owned by the settings controller or Helm would survive
+// (or be left as a partial ref missing its required name). The handler must null
+// omitted refs with a merge patch that ignores field ownership.
+func TestSettingsPut_ClearsOmittedSecretRefs(t *testing.T) {
+	cr := sampleCR()
+	cr.Spec.ApplicationCollection.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "username"}
+	cr.Spec.ApplicationCollection.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "appco", Key: "password"}
+	cr.Spec.SUSERegistry.UserSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "username"}
+	cr.Spec.SUSERegistry.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "suse-registry", Key: "password"}
+	cr.Spec.Nvidia.CABundleSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "nvidia-ca", Key: "ca.crt"}
+	cr.Spec.RancherCatalog.TokenSecretRef = &aiplatformv1alpha1.SecretKeyRef{Name: "rancher-token", Key: "token"}
+
+	var mergePatches []string
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(cr).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() == types.MergePatchType {
+					data, err := patch.Data(obj)
+					if err != nil {
+						return err
+					}
+					mergePatches = append(mergePatches, string(data))
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	// Application Collection, the NVIDIA CA and the Rancher catalog token are set to
+	// None; SUSE Registry keeps its refs.
+	body := `{"spec":{"suseRegistry":{` +
+		`"userSecretRef":{"name":"suse-registry","key":"username"},` +
+		`"tokenSecretRef":{"name":"suse-registry","key":"password"}}}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	want := `{"spec":{"applicationCollection":{"tokenSecretRef":null,"userSecretRef":null},` +
+		`"nvidia":{"caBundleSecretRef":null},"rancherCatalog":{"tokenSecretRef":null}}}`
+	if len(mergePatches) != 1 || mergePatches[0] != want {
+		t.Fatalf("merge patches=%q want [%q]", mergePatches, want)
+	}
+
+	var stored aiplatformv1alpha1.Settings
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "aif-operator", Name: "settings"}, &stored); err != nil {
+		t.Fatalf("Get after PUT: %v", err)
+	}
+	if stored.Spec.ApplicationCollection.UserSecretRef != nil || stored.Spec.ApplicationCollection.TokenSecretRef != nil {
+		t.Errorf("applicationCollection refs=%+v/%+v want cleared",
+			stored.Spec.ApplicationCollection.UserSecretRef, stored.Spec.ApplicationCollection.TokenSecretRef)
+	}
+	if stored.Spec.Nvidia.CABundleSecretRef != nil {
+		t.Errorf("nvidia caBundleSecretRef=%+v want cleared", stored.Spec.Nvidia.CABundleSecretRef)
+	}
+	if stored.Spec.RancherCatalog.TokenSecretRef != nil {
+		t.Errorf("rancherCatalog tokenSecretRef=%+v want cleared", stored.Spec.RancherCatalog.TokenSecretRef)
+	}
+	if stored.Spec.SUSERegistry.UserSecretRef == nil || stored.Spec.SUSERegistry.TokenSecretRef == nil {
+		t.Errorf("suseRegistry refs cleared; want kept")
+	}
+}
+
+// PUT that omits refs the existing Settings never had issues no merge patch.
+func TestSettingsPut_NoMergePatchWhenNothingToClear(t *testing.T) {
+	merged := false
+	c := fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(sampleCR()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() == types.MergePatchType {
+					merged = true
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	h := newSettingsHandler(c, "aif-operator")
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"spec":{}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if merged {
+		t.Error("unexpected merge patch when no refs needed clearing")
+	}
+}
+
 // PUT with invalid JSON returns 400.
 func TestSettingsPut_InvalidJSON_400(t *testing.T) {
 	c := newSettingsFakeClient(t)
@@ -1518,5 +1621,209 @@ func TestUnsafeProbeTarget(t *testing.T) {
 		if msg := unsafeProbeTarget(u); msg != "" {
 			t.Errorf("unsafeProbeTarget(%q)=%q, want allowed", u, msg)
 		}
+	}
+}
+
+// helmManagedCR returns a Settings CR as the 2.3.1 chart renders it: one
+// Helm-declared catalog plus the annotation naming it.
+func helmManagedCR() *aiplatformv1alpha1.Settings {
+	cr := sampleCR()
+	cr.Annotations = map[string]string{
+		aiplatformv1alpha1.SettingsHelmManagedAnnotation: `{"blueprintCatalogs":["partner-blueprints"]}`,
+	}
+	cr.Spec.BlueprintCatalogs = []aiplatformv1alpha1.BlueprintCatalogSource{{
+		Name:          "partner-blueprints",
+		Paths:         []string{"partners"},
+		GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: "https://github.com/suse/partner-blueprints.git", Branch: "main"},
+	}}
+	return cr
+}
+
+// capturingClient records the object handed to Patch so tests can assert on
+// exactly what the API applied.
+func capturingClient(t *testing.T, applied **aiplatformv1alpha1.Settings, objects ...client.Object) client.Client {
+	t.Helper()
+	return fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithStatusSubresource(&aiplatformv1alpha1.Settings{}).
+		WithObjects(objects...).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if s, ok := obj.(*aiplatformv1alpha1.Settings); ok {
+					*applied = s.DeepCopy()
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+}
+
+func putJSON(h http.Handler, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// A Settings page that sends back the Helm entry unchanged (any 2.3.0 UI does)
+// must not apply it, otherwise aif-operator-api co-owns it.
+func TestSettingsPut_HelmCatalogRoundTripIsNotApplied(t *testing.T) {
+	var applied *aiplatformv1alpha1.Settings
+	h := newSettingsHandler(capturingClient(t, &applied, helmManagedCR()), "aif-operator")
+
+	rec := putJSON(h, `{"spec":{"blueprintCatalogs":[
+		{"name":"partner-blueprints","repoURL":"https://github.com/suse/partner-blueprints.git","branch":"main","paths":["partners"]},
+		{"name":"team-a","repoURL":"https://git.example.com/a.git","branch":"main"}]}}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if applied == nil {
+		t.Fatal("Patch was not called")
+	}
+	if n := len(applied.Spec.BlueprintCatalogs); n != 1 || applied.Spec.BlueprintCatalogs[0].Name != "team-a" {
+		t.Fatalf("applied catalogs=%+v; want only team-a", applied.Spec.BlueprintCatalogs)
+	}
+}
+
+// Review Focus 1: the 2.3.0 page sends branch "main" for a Helm entry whose
+// branch is empty; that must still save.
+func TestSettingsPut_HelmCatalogEmptyBranchRoundTrip_200(t *testing.T) {
+	cr := helmManagedCR()
+	cr.Spec.BlueprintCatalogs[0].Branch = ""
+	var applied *aiplatformv1alpha1.Settings
+	h := newSettingsHandler(capturingClient(t, &applied, cr), "aif-operator")
+
+	rec := putJSON(h, `{"spec":{"blueprintCatalogs":[
+		{"name":"partner-blueprints","repoURL":"https://github.com/suse/partner-blueprints.git","branch":"main","paths":["partners"]}]}}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if len(applied.Spec.BlueprintCatalogs) != 0 {
+		t.Fatalf("applied catalogs=%+v; want none", applied.Spec.BlueprintCatalogs)
+	}
+}
+
+func TestSettingsPut_HelmCatalogChanged_400(t *testing.T) {
+	h := newSettingsHandler(newSettingsFakeClient(t, helmManagedCR()), "aif-operator")
+
+	rec := putJSON(h, `{"spec":{"blueprintCatalogs":[
+		{"name":"partner-blueprints","repoURL":"https://github.com/suse/partner-blueprints.git","branch":"dev","paths":["partners"]}]}}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400; body=%s", rec.Code, rec.Body)
+	}
+	var apiErr APIError
+	if err := json.Unmarshal(rec.Body.Bytes(), &apiErr); err != nil {
+		t.Fatalf("unmarshal APIError: %v", err)
+	}
+	if apiErr.Code != ErrCodeInvalidInput {
+		t.Errorf("code=%q want %q", apiErr.Code, ErrCodeInvalidInput)
+	}
+	if !strings.Contains(apiErr.Message, `"partner-blueprints" is managed by Helm values; change it with helm upgrade`) {
+		t.Errorf("message=%q", apiErr.Message)
+	}
+}
+
+// Review Focus 5: a UI entry reusing a Helm-declared name before Helm's entry
+// exists in the live spec is rejected, not silently co-owned.
+func TestSettingsPut_NewEntryWithHelmName_400(t *testing.T) {
+	cr := helmManagedCR()
+	cr.Spec.BlueprintCatalogs = nil
+	h := newSettingsHandler(newSettingsFakeClient(t, cr), "aif-operator")
+
+	rec := putJSON(h, `{"spec":{"blueprintCatalogs":[{"name":"partner-blueprints","repoURL":"https://fork.example.com/p.git"}]}}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// Review Focus 4: a broken annotation fails loudly instead of applying Helm values.
+func TestSettingsPut_InvalidHelmManagedAnnotation_500(t *testing.T) {
+	cr := helmManagedCR()
+	cr.Annotations[aiplatformv1alpha1.SettingsHelmManagedAnnotation] = `{"blueprintCatalogs":`
+	var applied *aiplatformv1alpha1.Settings
+	h := newSettingsHandler(capturingClient(t, &applied, cr), "aif-operator")
+
+	rec := putJSON(h, `{"spec":{"fleet":{"repoURL":"https://git.example.com"}}}`)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d want 500; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "helm upgrade --reuse-values --force-conflicts") {
+		t.Errorf("body=%s; want recovery hint", rec.Body)
+	}
+	if applied != nil {
+		t.Error("Patch must not be called when the annotation cannot be read")
+	}
+}
+
+// Review Focus 3: without the annotation every entry is the UI's, as before.
+func TestSettingsPut_NoAnnotationAppliesAllCatalogs(t *testing.T) {
+	cr := helmManagedCR()
+	cr.Annotations = nil
+	var applied *aiplatformv1alpha1.Settings
+	h := newSettingsHandler(capturingClient(t, &applied, cr), "aif-operator")
+
+	rec := putJSON(h, `{"spec":{"blueprintCatalogs":[
+		{"name":"partner-blueprints","repoURL":"https://github.com/suse/partner-blueprints.git","branch":"dev","paths":["partners"]}]}}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rec.Code, rec.Body)
+	}
+	if len(applied.Spec.BlueprintCatalogs) != 1 || applied.Spec.BlueprintCatalogs[0].Branch != "dev" {
+		t.Fatalf("applied catalogs=%+v; want the edited entry", applied.Spec.BlueprintCatalogs)
+	}
+}
+
+// Every secret ref in Settings must name both a secret and a key; a ref is either
+// complete or omitted (None).
+func TestIncompleteSecretRefs(t *testing.T) {
+	ref := func(name, key string) *aiplatformv1alpha1.SecretKeyRef {
+		return &aiplatformv1alpha1.SecretKeyRef{Name: name, Key: key}
+	}
+	cases := []struct {
+		name string
+		set  func(*aiplatformv1alpha1.SettingsSpec)
+		want []string
+	}{
+		{"complete and omitted refs pass", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.Nvidia.UserSecretRef = ref("nv", "user")
+			s.Nvidia.TokenSecretRef = ref("nv", "token")
+		}, nil},
+		{"fleet", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.Fleet.CredSecretRef = ref("git", "")
+			s.Fleet.CABundleSecretRef = ref("", "ca.crt")
+		}, []string{"spec.fleet.credSecretRef", "spec.fleet.caBundleSecretRef"}},
+		{"built-in registries", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.ApplicationCollection.UserSecretRef = ref("appco", "")
+			s.SUSERegistry.TokenSecretRef = ref("suse", "")
+			s.Nvidia.CABundleSecretRef = ref("nv-ca", "")
+		}, []string{
+			"spec.applicationCollection.userSecretRef",
+			"spec.suseRegistry.tokenSecretRef",
+			"spec.nvidia.caBundleSecretRef",
+		}},
+		{"rancher catalog", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.RancherCatalog.TokenSecretRef = ref("rancher", "")
+		}, []string{"spec.rancherCatalog.tokenSecretRef"}},
+		{"blueprint catalogs and custom repos", func(s *aiplatformv1alpha1.SettingsSpec) {
+			s.BlueprintCatalogs = []aiplatformv1alpha1.BlueprintCatalogSource{{Name: "a"}, {Name: "b"}}
+			s.BlueprintCatalogs[1].CredSecretRef = ref("git", "")
+			s.CustomRepos = []aiplatformv1alpha1.CustomRepoSpec{{Name: "r"}}
+			s.CustomRepos[0].SSHKeySecretRef = ref("ssh", "")
+		}, []string{"spec.blueprintCatalogs[1].credSecretRef", "spec.customRepos[0].sshKeySecretRef"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var spec aiplatformv1alpha1.SettingsSpec
+			tc.set(&spec)
+			if got := incompleteSecretRefs(&spec); fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("incompleteSecretRefs=%v want %v", got, tc.want)
+			}
+		})
 	}
 }

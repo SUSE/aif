@@ -43,7 +43,7 @@ jobs:
           # A chart with no suites exits 0, so a deleted tests/ directory would
           # pass silently. Require the expected suite count so removals fail CI.
           # When adding new suites, update EXPECTED_SUITES below.
-          EXPECTED_SUITES=7
+          EXPECTED_SUITES=12
           suites=$(sed -nE 's/^Test Suites:.*[, ]([0-9]+) total$/\1/p' unittest.out)
           if [ -z "$suites" ] || [ "$suites" -lt "$EXPECTED_SUITES" ]; then
             echo "::error::expected ${EXPECTED_SUITES} helm-unittest suites, got ${suites:-0} — suite files may be missing"
@@ -55,7 +55,7 @@ jobs:
       - name: Render charts under Helm 4
         run: |
           helm template charts/aif-ui > /dev/null
-          helm template charts/aif-ui --set standalone=true > /dev/null
+          helm template aif-ui-server charts/aif-ui -n cattle-ui-plugin-system --set standalone=true > /dev/null
           helm template charts/aif-operator > /dev/null
 
       - name: Guard the image annotation against appVersion drift

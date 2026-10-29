@@ -356,10 +356,38 @@
         }
       }
     },
+    "partnerBlueprints": {
+      "type": "object",
+      "description": "SUSE partner blueprint catalog, synced by a chart-rendered Fleet GitRepo (fleet-local/aif-partner-blueprints).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "git": {
+          "type": "object",
+          "properties": {
+            "repoURL": {
+              "type": "string",
+              "default": "https://github.com/suse/partner-blueprints.git"
+            },
+            "branch": {
+              "type": "string",
+              "default": "main"
+            },
+            "paths": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["partners"]
+            }
+          }
+        }
+      }
+    },
     "blueprintCatalogs": {
       "type": "array",
       "default": [],
-      "description": "Additional git-sourced blueprint catalogs. Each becomes one Fleet GitRepo syncing Blueprint CRs from the given repo/paths.",
+      "description": "Your own git-sourced blueprint catalogs (the default and partner catalogs are configured separately). Each becomes one Fleet GitRepo syncing Blueprint CRs from the given repo/paths. Shown read-only on the Settings page.",
       "items": {
         "type": "object",
         "required": ["name", "repoURL"],

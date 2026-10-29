@@ -23,8 +23,10 @@ import (
 // SecretKeyRef is a reference to a key within a Kubernetes Secret.
 type SecretKeyRef struct {
 	// Name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// Key is the key within the Secret.
+	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
 }
 
@@ -164,29 +166,48 @@ type AppCatalogSettings struct {
 	RemoteURL string `json:"remoteUrl,omitempty"`
 }
 
+// SettingsHelmManagedAnnotation is set by the aif-operator chart on the Settings
+// CR. Its JSON value lists the values the chart declared, e.g.
+// {"blueprintCatalogs":["team-a"]}. Helm-declared values are changed
+// only through Helm: the operator API refuses to change them and never applies
+// them, so it never becomes a co-owner that would keep them alive after they are
+// removed from the chart values.
+const SettingsHelmManagedAnnotation = "ai-factory.suse.com/helm-managed"
+
 // SettingsSpec defines the desired state of Settings.
 type SettingsSpec struct {
+	// The struct-valued sections are +nullable because server-side apply prunes a
+	// section to null once an applier removes the last field it owns there (for
+	// example, every secret ref set to None on the Settings page). Reading null
+	// yields the zero value.
+
 	// Fleet configures Fleet GitOps integration.
 	// +optional
+	// +nullable
 	Fleet FleetSettings `json:"fleet,omitempty"`
 	// ApplicationCollection configures SUSE Application Collection.
 	// +optional
+	// +nullable
 	ApplicationCollection ApplicationCollectionSettings `json:"applicationCollection,omitempty"`
 	// SUSERegistry configures SUSE Registry integration.
 	// +optional
+	// +nullable
 	SUSERegistry SUSERegistrySettings `json:"suseRegistry,omitempty"`
 	// Nvidia configures NVIDIA NGC integration.
 	// +optional
+	// +nullable
 	Nvidia NvidiaSettings `json:"nvidia,omitempty"`
 	// RegistryEndpoints configures custom chart repositories for air-gap deployments.
 	// +optional
 	RegistryEndpoints *RegistryEndpointsSettings `json:"registryEndpoints,omitempty"`
 	// AppCatalog configures the static application catalog.
 	// +optional
+	// +nullable
 	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`
 	// RancherCatalog configures access to Rancher's catalog API, used to fetch
 	// charts from git-backed ClusterRepos.
 	// +optional
+	// +nullable
 	RancherCatalog RancherCatalogSettings `json:"rancherCatalog,omitempty"`
 	// BlueprintCatalogs is the list of git-sourced blueprint catalogs. The
 	// built-in bundled catalog is not represented here.

@@ -67,6 +67,7 @@ func (c *helmClient) install(
 	// narrower alternative, stamping ownership metadata onto the one ConfigMap
 	// ahead of the install, is what this replaced.
 	install.TakeOwnership = true
+	install.Labels = spec.Labels
 	if spec.RepoURL != "" {
 		install.RepoURL = spec.RepoURL
 	}
@@ -150,6 +151,7 @@ func newUpgradeAction(cfg *action.Configuration, spec ReleaseSpec) *action.Upgra
 	// See install's TakeOwnership comment (SUSEAI-1039) — the same adoption gap
 	// applies on upgrade.
 	up.TakeOwnership = true
+	up.Labels = spec.Labels
 
 	return up
 }
@@ -301,6 +303,7 @@ func releaseInfoFrom(rel *release.Release) *ReleaseInfo {
 	info := &ReleaseInfo{
 		Values:   rel.Config,
 		Revision: rel.Version,
+		Labels:   rel.Labels,
 	}
 	if rel.Chart != nil && rel.Chart.Metadata != nil {
 		info.ChartName = rel.Chart.Metadata.Name
@@ -438,10 +441,32 @@ func decideRelease(
 }
 
 func releaseNeedsUpgrade(info *ReleaseInfo, spec ReleaseSpec) bool {
-	if versionDrift(info, spec) {
+	if versionDrift(info, spec) || labelDrift(info, spec) {
 		return true
 	}
 	return !valuesEqual(info.Values, spec.Values)
+}
+
+// labelDrift reports whether the stored release lacks any of the labels the
+// spec asks for. Only the requested keys are compared, because Helm adds system
+// labels of its own.
+//
+// Kept apart from versionDrift because EnsureRelease has to act on it
+// differently. Release labels never reach the rendered manifest, so the
+// manifest diff that settles every other disagreement would call such a release
+// up-to-date and latch that verdict, and the labels would never be written. A
+// release installed before the spec asked for a label, still at the version the
+// spec requests, is exactly that case.
+func labelDrift(info *ReleaseInfo, spec ReleaseSpec) bool {
+	if info == nil {
+		return false
+	}
+	for k, v := range spec.Labels {
+		if got, ok := info.Labels[k]; !ok || got != v {
+			return true
+		}
+	}
+	return false
 }
 
 // versionDrift reports whether an installed release's chart version differs from
@@ -528,6 +553,13 @@ func (c *helmClient) EnsureRelease(ctx context.Context, spec ReleaseSpec) error 
 	if versionDrift(deployed, spec) {
 		log.Info("deployed Helm release version differs from requested version",
 			"requestedVersion", spec.Version, "deployedVersion", deployed.Version)
+	}
+
+	// Ahead of the latch and the manifest diff, both of which are blind to it:
+	// see labelDrift.
+	if labelDrift(deployed, spec) {
+		log.Info("Helm release is missing requested release labels, upgrading")
+		return c.upgrade(ctx, cfg, spec)
 	}
 
 	// The manifest diff below is the only thing that can clear this disagreement,

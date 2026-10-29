@@ -161,7 +161,7 @@ func TestHandlePendingRelease_AppliesToBothSourceKinds(t *testing.T) {
 	}
 }
 
-// A wrapped sentinel still has to be recognised: ensureUIPluginGit returns the
+// A wrapped sentinel still has to be recognised: ensureExtensionChart returns the
 // EnsureRelease error through its own call chain.
 func TestHandlePendingRelease_MatchesWrappedSentinel(t *testing.T) {
 	ext := &v1alpha1.InstallAIExtension{}
