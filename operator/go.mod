@@ -12,9 +12,9 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
-	k8s.io/apimachinery v0.35.9
+	k8s.io/apimachinery v0.35.10
 	k8s.io/client-go v0.35.9
-	oras.land/oras-go/v2 v2.6.4
+	oras.land/oras-go/v2 v2.7.0
 	sigs.k8s.io/controller-runtime v0.23.3
 )
 
