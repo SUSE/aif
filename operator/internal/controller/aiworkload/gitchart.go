@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -319,6 +320,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 			if err != nil {
 				return "", err
 			}
+			if refs := dependsOnRefs(w.Name, c.DependsOn); refs != nil {
+				_ = unstructured.SetNestedSlice(b.Object, refs, "spec", "dependsOn")
+			}
 			b.SetNamespace(pair.ns)
 			objects = append(objects, b.Object)
 		}
@@ -364,6 +368,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets)
 		if err != nil {
 			return "", err
+		}
+		if refs := dependsOnRefs(w.Name, c.DependsOn); refs != nil {
+			_ = unstructured.SetNestedSlice(b.Object, refs, "spec", "dependsOn")
 		}
 		b.SetNamespace(pair.ns)
 		if err := r.Patch(ctx, b, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator")); err != nil {
@@ -424,6 +431,13 @@ func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit
 			return ""
 		}
 		h.Write(tsJSON)
+	}
+	// Hashed only when set, so components without dependencies keep the
+	// fingerprint they had before the field existed.
+	if len(c.DependsOn) > 0 {
+		deps := append([]string{}, c.DependsOn...)
+		sort.Strings(deps)
+		h.Write([]byte("\x00dependsOn\x00" + strings.Join(deps, "\x00")))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
