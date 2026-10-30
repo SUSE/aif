@@ -155,13 +155,32 @@
     {
       "name": "vLLM",
       "slug_name": "vllm",
-      "description": "A high-throughput and memory-efficient inference and serving engine for LLMs.",
+      "description": "A high-throughput and memory-efficient inference and serving engine for LLMs. Note that this application is superseded by the vLLM Production Stack application and soon will be deprecated",
       "project_url": "https://github.com/vllm-project/vllm",
       "documentation_url": "https://docs.vllm.ai/en/stable",
       "source_code_url": "https://github.com/vllm-project/vllm",
       "logo_url": "https://apps.rancher.io/logos/vllm.png",
       "changelog_url": "https://github.com/vllm-project/vllm/releases",
       "last_updated_at": "2025-09-30T08:22:20.607991Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "oci://dp.apps.rancher.io/charts",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
+      "name": "vLLM Production Stack",
+      "slug_name": "vllm-stack",
+      "description": "The vLLM Production Stack project provides a reference implementation on how to build an inference stack on top of vLLM with LMCache. It allows you to scale from single vLLM instance to distributed vLLM deployment without changing any application code, monitor the metrics through a web dashboard, and enjoy the performance benefits brought by request routing and KV cache offloading.",
+      "project_url": "https://github.com/vllm-project/production-stack",
+      "documentation_url": "https://docs.vllm.ai/projects/production-stack/en/latest/",
+      "source_code_url": "https://github.com/vllm-project/production-stack",
+      "logo_url": "https://apps.rancher.io/logos/vllm-stack.png",
+      "changelog_url": "https://github.com/vllm-project/production-stack/releases",
+      "last_updated_at": "2026-10-30T17:41:29.838891Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "oci://dp.apps.rancher.io/charts",
       "labels": [
@@ -221,6 +240,44 @@
       "last_updated_at": "2026-01-17T19:55:30Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "oci://registry.suse.com/ai/charts",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
+      "name": "Slurm Operator",
+      "slug_name": "slurm-operator",
+      "description": "Slurm Operator contains a Kubernetes operator to deploy and manage certain components of Slurm clusters.",
+      "project_url": "https://www.nvidia.com/en-us/software/slinky/",
+      "documentation_url": "https://slinky.schedmd.com/docs/",
+      "source_code_url": "https://github.com/SlinkyProject/slurm-operator",
+      "logo_url": "https://apps.rancher.io/logos/slurm-operator.png",
+      "changelog_url": "https://github.com/SlinkyProject/slurm-operator/tree/main/CHANGELOG",
+      "last_updated_at": "2026-10-30T18:09:09.241419Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "oci://dp.apps.rancher.io/charts",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
+    },
+    {
+      "name": "Slurm Bridge",
+      "slug_name": "slurm-bridge",
+      "description": "Slurm Bridge contains a Kubernetes scheduler to manage select workloads from Kubernetes, which allows for co-location of Kubernetes and Slurm workloads within the same cluster.",
+      "project_url": "https://www.nvidia.com/en-us/software/slinky/",
+      "documentation_url": "https://slinky.schedmd.com/docs/",
+      "source_code_url": "https://github.com/SlinkyProject/slurm-bridge",
+      "logo_url": "https://apps.rancher.io/logos/slurm-bridge.png",
+      "changelog_url": "https://github.com/SlinkyProject/slurm-bridge/tree/main/CHANGELOG",
+      "last_updated_at": "2026-10-30T18:13:30.367455Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "oci://dp.apps.rancher.io/charts",
       "labels": [
         {
           "code": "supported",
