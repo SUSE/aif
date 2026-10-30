@@ -33,7 +33,7 @@
     "kubernetes-cluster-autoscaler": "https://apps.rancher.io/logos/kubernetes-cluster-autoscaler.png",
     "kubernetes-csi-driver-nfs": "https://apps.rancher.io/logos/kubernetes-csi-driver-nfs.png",
     "kured": "https://apps.rancher.io/logos/kured.png",
-    "litellm": "https://raw.githubusercontent.com/BerriAI/litellm/refs/heads/main/litellm/proxy/logo.jpg",
+    "litellm": "https://raw.githubusercontent.com/BerriAI/litellm/refs/heads/main/litellm/proxy/logo.png",
     "local-path-provisioner": "https://apps.rancher.io/logos/local-path-provisioner.png",
     "local-path-provisioner-fips": "https://apps.rancher.io/logos/local-path-provisioner-fips.png",
     "mariadb": "https://apps.rancher.io/logos/mariadb.png",
@@ -66,6 +66,8 @@
     "qdrant": "https://qdrant.github.io/qdrant-helm/logo_with_text.svg",
     "redis": "https://apps.rancher.io/logos/redis.png",
     "secrets-store-csi-driver": "https://apps.rancher.io/logos/secrets-store-csi-driver.png",
+    "slurm-bridge": "https://apps.rancher.io/logos/slurm-bridge.png",
+    "slurm-operator": "https://apps.rancher.io/logos/slurm-operator.png",
     "strimzi-kafka-operator": "https://apps.rancher.io/logos/strimzi-kafka-operator.png",
     "suse-ai-deployer": "https://apps.rancher.io/logos/suse-ai-deployer.png",
     "suse-ai-observability-extension": "https://apps.rancher.io/logos/suse-ai-observability-extension.png",
@@ -80,6 +82,7 @@
     "valkey": "https://apps.rancher.io/logos/valkey.png",
     "vault": "https://apps.rancher.io/logos/vault.png",
     "velero": "https://apps.rancher.io/logos/velero.png",
-    "vllm": "https://apps.rancher.io/logos/vllm.png"
+    "vllm": "https://apps.rancher.io/logos/vllm.png",
+    "vllm-stack": "https://apps.rancher.io/logos/vllm-stack.png"
   }
 }
