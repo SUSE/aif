@@ -72,10 +72,11 @@ const maxChartUnpackedBytes = 32 << 20 // 32 MiB
 // maxChartUnpackedBytes.
 const maxChartArchiveBytes = 4 << 20 // 4 MiB
 
-// errChartTooLarge marks a git-backed component whose chart cannot fit in a
-// Fleet Bundle. Unlike a fetch or apply failure this is a property of the chart
-// itself, so retrying can never succeed: every attempt re-downloads the archive
-// from Rancher and fails identically. Reconcile turns it into a terminal
+// errChartTooLarge marks a component whose chart cannot be embedded in a Fleet
+// Bundle (a git-backed chart, or one embedded because of its Kustomize overlay).
+// Unlike a fetch or apply failure this is a property of the chart itself, so
+// retrying can never succeed: every attempt re-downloads the archive and fails
+// identically. Reconcile turns it into a terminal
 // Ready=False condition instead of returning it, which both stops the hot retry
 // loop and replaces the stale "Component bundles reconciled" message the
 // AIWorkload would otherwise keep showing while failing.
@@ -83,10 +84,10 @@ var errChartTooLarge = stderrors.New("chart too large for a Fleet bundle")
 
 // chartFingerprintAnnotation records what the Bundle was built from, so a
 // reconcile can tell an up-to-date Bundle from a stale one without downloading
-// the chart again. See gitChartFingerprint.
+// the chart again. See embeddedChartFingerprint.
 const chartFingerprintAnnotation = "ai-factory.suse.com/git-chart-fingerprint"
 
-// buildGitChartBundle assembles a self-contained Fleet Bundle from a fetched
+// buildEmbeddedChartBundle assembles a self-contained Fleet Bundle from a fetched
 // chart archive. Fleet does NOT unpack a .tgz supplied as a single bundle
 // resource — doing so yields a silent empty release — so the archive is expanded
 // into one bundle resource per chart file (path-preserving) with spec.helm.chart
@@ -94,17 +95,33 @@ const chartFingerprintAnnotation = "ai-factory.suse.com/git-chart-fingerprint"
 // for HelmOps (releaseName/takeOwnership/disablePreProcess/values) so a
 // git-backed component installs identically to an http/oci one. The chart version
 // is pinned by the fetched archive itself, so spec.helm.version is omitted.
-func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
-	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any, dependsOn []any) (*unstructured.Unstructured, error) {
+func buildEmbeddedChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
+	c aiplatformv1alpha1.BlueprintComponent, vals map[string]any, targets []any, dependsOn []any,
+	overlay *overlayRender, epoch int64, overlayOnly bool) (*unstructured.Unstructured, error) {
 	if len(tgz) > maxChartArchiveBytes {
-		return nil, fmt.Errorf(
-			"%w: chart %q archive is %d bytes, over the %d-byte limit for a git-backed repo; host it via an OCI or HTTP ClusterRepo instead",
-			errChartTooLarge, c.ChartName, len(tgz), maxChartArchiveBytes)
+		return nil, chartTooLarge(c, overlayOnly, fmt.Sprintf("its archive is %d MiB, over the %d MiB limit",
+			len(tgz)>>20, maxChartArchiveBytes>>20), "for a git-backed repo; host it via an OCI or HTTP ClusterRepo instead")
 	}
 
 	resources, chartDir, err := chartTgzToBundleResources(tgz)
 	if err != nil {
+		if overlayOnly && stderrors.Is(err, errChartTooLarge) {
+			return nil, chartTooLarge(c, true, "it is too large to embed in a Fleet bundle", "")
+		}
 		return nil, fmt.Errorf("unpack chart %q: %w", c.ChartName, err)
+	}
+
+	if overlay != nil {
+		if dir := path.Clean(overlay.Dir); dir == chartDir || strings.HasPrefix(dir, chartDir+"/") {
+			return nil, fmt.Errorf("kustomize overlay dir %q for %q is inside the chart directory %q", overlay.Dir, c.ChartName, chartDir)
+		}
+		// One stored-size budget for the whole Bundle: the encoded chart files and
+		// the plain overlay files are what the API server and etcd keep together.
+		if storedResourceBytes(resources)+storedResourceBytes(overlay.Resources) > maxBundleResourcesBytes {
+			return nil, chartTooLarge(c, overlayOnly, fmt.Sprintf("the chart plus its Kustomize overlay exceed the %d MiB Fleet bundle payload limit",
+				maxBundleResourcesBytes>>20), "")
+		}
+		resources = append(resources, overlay.Resources...)
 	}
 
 	helm := map[string]any{
@@ -132,8 +149,8 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		b.SetAnnotations(map[string]string{chartFingerprintAnnotation: fingerprint})
 		// renderDigestLabel mirrors the HelmOp path: certifyDeployedSource and
 		// buildComponentMatrix compare this label against the per-component
-		// expected digest (the fingerprint returned by ensureBlueprintGitChartBundle),
-		// so a git-backed Bundle certifies the same way an http/oci one does.
+		// expected digest (the fingerprint returned by ensureEmbeddedChartBundle),
+		// so an embedded Bundle certifies the same way a HelmOp does.
 		b.SetLabels(map[string]string{renderDigestLabel: renderDigestLabelValue(fingerprint)})
 	}
 	_ = unstructured.SetNestedField(b.Object, namespace, "spec", "defaultNamespace")
@@ -146,7 +163,56 @@ func buildGitChartBundle(bundleName, namespace, fingerprint string, tgz []byte,
 		_ = unstructured.SetNestedSlice(b.Object, dependsOn, "spec", "dependsOn")
 	}
 	_ = unstructured.SetNestedSlice(b.Object, resources, "spec", "resources")
+	if overlay != nil {
+		// Fleet post-renders the chart with the kustomization under this dir.
+		_ = unstructured.SetNestedMap(b.Object, map[string]any{"dir": overlay.Dir}, "spec", "kustomize")
+	}
+	if epoch > 0 {
+		// Same as the HelmOp path: a Retry bumps the epoch, which forces Fleet to
+		// re-sync and lets retrySyncSettled observe syncGeneration >= epoch.
+		_ = unstructured.SetNestedField(b.Object, epoch, "spec", "forceSyncGeneration")
+	}
 	return b, nil
+}
+
+// labelOwner marks an embedded Bundle with the workload that owns it, the same
+// label HelmOps carry, so a later kind switch can tell it apart from a Bundle
+// it must never touch.
+func labelOwner(b *unstructured.Unstructured, w *aiplatformv1alpha1.AIWorkload) {
+	labels := b.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[workloadUIDLabel] = string(w.UID)
+	b.SetLabels(labels)
+}
+
+// chartTooLarge builds the terminal errChartTooLarge for a chart that cannot be
+// embedded. A component embedded only because it has a Kustomize overlay (an
+// http/oci chart that would otherwise deploy as a HelmOp) is told so, since
+// removing the overlay is its way out; otherwise the given advice applies.
+func chartTooLarge(c aiplatformv1alpha1.BlueprintComponent, overlayOnly bool, detail, advice string) error {
+	if overlayOnly {
+		return fmt.Errorf("%w: chart %q cannot be embedded: %s; it is embedded only because this component has a Kustomize overlay, remove the overlay to deploy the chart normally",
+			errChartTooLarge, c.ChartName, detail)
+	}
+	if advice != "" {
+		return fmt.Errorf("%w: chart %q: %s %s", errChartTooLarge, c.ChartName, detail, advice)
+	}
+	return fmt.Errorf("%w: chart %q: %s", errChartTooLarge, c.ChartName, detail)
+}
+
+// storedResourceBytes is what a resource list costs the API server: the stored
+// content (encoded or plain) plus the name, as charged by chartTgzToBundleResources.
+func storedResourceBytes(resources []any) int64 {
+	var n int64
+	for _, r := range resources {
+		m, _ := r.(map[string]any)
+		content, _ := m["content"].(string)
+		name, _ := m["name"].(string)
+		n += int64(len(content) + len(name))
+	}
+	return n
 }
 
 // rejectUnsafePath rejects archive/overlay entries that escape their root.
@@ -295,11 +361,13 @@ func splitWorkloadTargets(w *aiplatformv1alpha1.AIWorkload) (local, downstream [
 	return local, downstream
 }
 
-// ensureBlueprintGitChartBundle fetches a git-backed ClusterRepo's chart from
-// Rancher and applies (gitOps=false) or git-publishes (gitOps=true) a
-// self-contained Fleet Bundle carrying the chart. It reuses the same value and
-// pull-secret injection and per-workspace target split as the HelmOp path.
-func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
+// ensureEmbeddedChartBundle renders a component as a self-contained Fleet Bundle
+// carrying its chart (and its Kustomize overlay, if any), and applies it
+// (gitOps=false) or git-publishes it (gitOps=true). Used for git-backed charts,
+// which a HelmOp cannot pull, and for any component with an overlay, because a
+// HelmOp cannot carry overlay files. It reuses the same value and pull-secret
+// injection and per-workspace target split as the HelmOp path.
+func (r *AIWorkloadReconciler) ensureEmbeddedChartBundle(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
 	c aiplatformv1alpha1.BlueprintComponent,
@@ -307,60 +375,45 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	repoInfo clusterRepoInfo,
 	gitOps bool,
 ) (string, error) {
-	var fetcher rancher.ChartFetcher
-	if r.CatalogClient != nil {
-		fetcher = r.CatalogClient.Get()
-	}
-	if fetcher == nil {
-		return "", fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
-	}
-
-	// Resolve values and inject pull secrets BEFORE deciding whether to re-fetch:
-	// the injector mutates vals (it appends imagePullSecrets), so the fingerprint
-	// has to be taken after it runs, and secret delivery must happen on every
-	// reconcile regardless of whether the chart itself changed.
-	vals, err := resolveComponentValues(w, c)
+	plan, err := r.planEmbedded(ctx, w, c, repoInfo)
 	if err != nil {
-		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
+		return "", err
 	}
-	ns := componentNamespace(w, c)
-	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	if len(plan.workspaces) == 0 {
+		return "", fmt.Errorf("blueprint component %q has no target clusters", c.ChartName)
+	}
+
+	// Skip the chart download entirely when every Bundle in the cluster is
+	// already at this fingerprint (for GitOps, the Bundles the GitRepo deployed
+	// from the published file). Without this the operator re-downloads the
+	// chart on every reconcile, and a healthy workload reconciles continuously
+	// as its BundleDeployment status churns.
+	upToDate := true
+	for _, ws := range plan.workspaces {
+		if !r.embeddedBundleMatches(ctx, ws.ns, bundleName, plan.fingerprint) {
+			upToDate = false
+			break
+		}
+	}
+	if upToDate {
+		return plan.fingerprint, nil
+	}
+
+	if err := r.loadOverlay(ctx, w, c, plan); err != nil {
+		return "", err
+	}
+	tgz, err := r.fetchChartArchive(ctx, c, repoInfo)
 	if err != nil {
-		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+		return "", err
 	}
-	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
-
-	localTargets, downstreamTargets := splitWorkloadTargets(w)
-	dependsOn := resolveDependsOnNames(w, c.DependsOn)
-	depObjs := resolveDependsOn(w, c.DependsOn)
-	fingerprint := gitChartFingerprint(c, ns, repoInfo.Commit, vals, dependsOn, localTargets, downstreamTargets)
-	pairs := []struct {
-		ns      string
-		targets []any
-	}{
-		{"fleet-local", localTargets},
-		{"fleet-default", downstreamTargets},
+	bundles, err := plan.bundles(w, c, bundleName, tgz)
+	if err != nil {
+		return "", err
 	}
-
 	if gitOps {
-		tgz, err := fetchGitChart(ctx, fetcher, c)
-		if err != nil {
-			return "", err
-		}
-		objects := make([]map[string]any, 0, len(pairs))
-		for _, pair := range pairs {
-			if len(pair.targets) == 0 {
-				continue
-			}
-			b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets, depObjs)
-			if err != nil {
-				return "", err
-			}
-			b.SetNamespace(pair.ns)
+		objects := make([]map[string]any, 0, len(bundles))
+		for _, b := range bundles {
 			objects = append(objects, b.Object)
-		}
-		if len(objects) == 0 {
-			return "", fmt.Errorf("GitOps blueprint component %q has no target clusters", c.ChartName)
 		}
 		content, err := marshalGitResources(objects)
 		if err != nil {
@@ -369,45 +422,136 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		if err := r.publishBlueprintGitFile(ctx, w, bundleName, content); err != nil {
 			return "", err
 		}
-		return fingerprint, nil
+		return plan.fingerprint, nil
 	}
-
-	// Skip the chart download entirely when every Bundle we would write is
-	// already at this fingerprint. Without this the operator re-downloads the
-	// chart from Rancher on every reconcile, and a healthy workload reconciles
-	// continuously as its BundleDeployment status churns.
-	upToDate := true
-	for _, pair := range pairs {
-		if len(pair.targets) == 0 {
-			continue
-		}
-		if !r.gitChartBundleMatches(ctx, pair.ns, bundleName, fingerprint) {
-			upToDate = false
-			break
-		}
-	}
-	if upToDate {
-		return fingerprint, nil
-	}
-
-	tgz, err := fetchGitChart(ctx, fetcher, c)
-	if err != nil {
-		return "", err
-	}
-	for _, pair := range pairs {
-		if len(pair.targets) == 0 {
-			continue
-		}
-		b, err := buildGitChartBundle(bundleName, ns, fingerprint, tgz, c, vals, pair.targets, depObjs)
-		if err != nil {
-			return "", err
-		}
-		b.SetNamespace(pair.ns)
+	for _, b := range bundles {
 		if err := r.Patch(ctx, b, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator")); err != nil {
-			return "", fmt.Errorf("patch Bundle %s/%s: %w", pair.ns, bundleName, err)
+			return "", fmt.Errorf("patch Bundle %s/%s: %w", b.GetNamespace(), bundleName, err)
 		}
 	}
-	return fingerprint, nil
+	return plan.fingerprint, nil
+}
+
+// embeddedPlan is everything needed to build one component's embedded-chart
+// Bundles except the chart archive itself.
+type embeddedPlan struct {
+	ns              string
+	vals            map[string]any
+	depObjs         []any
+	overlay         *overlayRender
+	overlayDeferred bool
+	epoch           int64
+	overlayOnly     bool
+	fingerprint     string
+	workspaces      []fleetWorkspace
+}
+
+// planEmbedded resolves a component's values, pull secrets, overlay and
+// fingerprint for an embedded-chart Bundle.
+func (r *AIWorkloadReconciler) planEmbedded(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, repoInfo clusterRepoInfo) (*embeddedPlan, error) {
+	// A git-backed repo is unusable without the Rancher catalog client; report
+	// that up front rather than only when a re-fetch is needed.
+	if repoInfo.Kind == repoKindGit && (r.CatalogClient == nil || r.CatalogClient.Get() == nil) {
+		return nil, fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
+	}
+
+	// Resolve values and inject pull secrets BEFORE deciding whether to re-fetch:
+	// the injector mutates vals (it appends imagePullSecrets), so the fingerprint
+	// has to be taken after it runs, and secret delivery must happen on every
+	// reconcile regardless of whether the chart itself changed.
+	vals, err := resolveComponentValues(w, c)
+	if err != nil {
+		return nil, fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
+	}
+	ns := componentNamespace(w, c)
+	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
+	if err != nil {
+		return nil, fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
+	}
+	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
+
+	ovDigest, overlay, err := r.overlayFingerprint(ctx, w, c)
+	if err != nil {
+		return nil, fmt.Errorf("resolve kustomize overlay for %s: %w", c.ChartName, err)
+	}
+	epoch := r.retryEpochValue(w)
+	// A git-backed repo tracks a branch, so its indexed commit pins the archive;
+	// an http/oci chart version is immutable, so the repo URL identifies the source.
+	sourceRevision := repoInfo.Commit
+	if repoInfo.Kind != repoKindGit {
+		sourceRevision = repoInfo.URL
+	}
+	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	return &embeddedPlan{
+		ns:              ns,
+		vals:            vals,
+		depObjs:         resolveDependsOn(w, c.DependsOn),
+		overlay:         overlay,
+		overlayDeferred: overlay == nil && ovDigest != "",
+		epoch:           epoch,
+		// overlayOnly: the chart is embedded only because of its overlay
+		// (http/oci), which changes the advice in a size error.
+		overlayOnly: repoInfo.Kind != repoKindGit,
+		fingerprint: embeddedChartFingerprint(c, ns, sourceRevision, vals, resolveDependsOnNames(w, c.DependsOn), ovDigest, epoch, localTargets, downstreamTargets),
+		workspaces:  targetedWorkspaces(w),
+	}, nil
+}
+
+// bundles builds the plan's Bundles, one per targeted workspace, from tgz.
+func (p *embeddedPlan) bundles(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, bundleName string, tgz []byte) ([]*unstructured.Unstructured, error) {
+	out := make([]*unstructured.Unstructured, 0, len(p.workspaces))
+	for _, ws := range p.workspaces {
+		b, err := buildEmbeddedChartBundle(bundleName, p.ns, p.fingerprint, tgz, c, p.vals, ws.targets, p.depObjs, p.overlay, p.epoch, p.overlayOnly)
+		if err != nil {
+			return nil, err
+		}
+		b.SetNamespace(ws.ns)
+		labelOwner(b, w)
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// loadOverlay fetches the gitRef overlay planEmbedded deferred.
+func (r *AIWorkloadReconciler) loadOverlay(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, p *embeddedPlan) error {
+	if !p.overlayDeferred {
+		return nil
+	}
+	o, err := r.resolveEffectiveOverlay(ctx, w, c)
+	if err != nil {
+		return fmt.Errorf("resolve kustomize overlay for %s: %w", c.ChartName, err)
+	}
+	p.overlay, p.overlayDeferred = o, false
+	return nil
+}
+
+// validateEmbedded builds a component's embedded-chart Bundles without writing
+// them, proving the chart can be fetched and embedded with its overlay.
+func (r *AIWorkloadReconciler) validateEmbedded(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, bundleName string, repoInfo clusterRepoInfo) error {
+	plan, err := r.planEmbedded(ctx, w, c, repoInfo)
+	if err != nil {
+		return err
+	}
+	if err := r.loadOverlay(ctx, w, c, plan); err != nil {
+		return err
+	}
+	tgz, err := r.fetchChartArchive(ctx, c, repoInfo)
+	if err != nil {
+		return err
+	}
+	_, err = plan.bundles(w, c, bundleName, tgz)
+	return err
+}
+
+// embeddedValidator returns the check a kind switch runs before its first
+// destructive step: for a switch to an embedded Bundle, that the new Bundle can
+// be built. A switch to a HelmOp needs none (rendering a HelmOp cannot fail
+// that way).
+func (r *AIWorkloadReconciler) embeddedValidator(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, bundleName string, repoInfo clusterRepoInfo, want renderKind) func() error {
+	if want != kindEmbeddedBundle {
+		return nil
+	}
+	return func() error { return r.validateEmbedded(ctx, w, c, bundleName, repoInfo) }
 }
 
 func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatformv1alpha1.BlueprintComponent) ([]byte, error) {
@@ -418,9 +562,9 @@ func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatfo
 	return tgz, nil
 }
 
-// gitChartBundleMatches reports whether the Bundle in ns already carries this
+// embeddedBundleMatches reports whether the Bundle in ns already carries this
 // fingerprint. Any read error (including NotFound) means "rebuild it".
-func (r *AIWorkloadReconciler) gitChartBundleMatches(ctx context.Context, ns, bundleName, fingerprint string) bool {
+func (r *AIWorkloadReconciler) embeddedBundleMatches(ctx context.Context, ns, bundleName, fingerprint string) bool {
 	b := &unstructured.Unstructured{}
 	b.SetGroupVersionKind(bundleGVK)
 	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: bundleName}, b); err != nil {
@@ -429,25 +573,27 @@ func (r *AIWorkloadReconciler) gitChartBundleMatches(ctx context.Context, ns, bu
 	return b.GetAnnotations()[chartFingerprintAnnotation] == fingerprint
 }
 
-// gitChartFingerprint identifies everything that feeds the generated Bundle,
-// including the chart archive and the per-app release-name override. The archive
-// is NOT pinned by (repo, name, version) here: this path only ever serves a
-// git-backed repo, which tracks a branch, and re-pushing a chart without bumping
-// Chart.yaml's version is the normal development workflow the feature exists to
-// support. What does pin the archive is the repo's indexed commit (ClusterRepo
-// status.commit), so that is hashed too — without it a chart that changes in
-// place is never re-fetched and the Bundle serves the old chart forever.
+// embeddedChartFingerprint identifies everything that feeds the generated Bundle,
+// including the chart archive, the overlay and the per-app release-name override.
+// sourceRevision pins the archive: for a git-backed repo, which tracks a branch
+// (re-pushing a chart without bumping Chart.yaml's version is the normal
+// development workflow there), it is the repo's indexed commit (ClusterRepo
+// status.commit) — without it a chart that changes in place is never re-fetched.
+// For an http/oci repo, whose published versions are immutable, it is the repo
+// URL. The overlay digest and retry epoch are hashed only when set, so existing
+// git-backed components keep their fingerprint.
 //
 // c.ReleaseName is hashed because it is baked into the Bundle's Helm options
-// (see the "releaseName" key in buildGitChartBundle); without it, changing only
+// (see the "releaseName" key in buildEmbeddedChartBundle); without it, changing only
 // the release name on an existing component would leave the fingerprint
 // unchanged and the override would never reach the cluster.
 //
 // A change in any of these means the Bundle must be rebuilt — and the chart
 // re-fetched, since the archive is the one input we cannot diff without it.
-func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit string, vals map[string]any, dependsOn []string, targetSets ...[]any) string {
+func embeddedChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, sourceRevision string, vals map[string]any, dependsOn []string,
+	overlayDigest string, epoch int64, targetSets ...[]any) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, c.ReleaseName, ns, repoCommit)
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, c.ReleaseName, ns, sourceRevision)
 	// json.Marshal sorts map keys, so equivalent values hash equally.
 	valsJSON, err := json.Marshal(vals)
 	if err != nil {
@@ -463,6 +609,14 @@ func gitChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, repoCommit
 			return ""
 		}
 		h.Write(depJSON)
+	}
+	// Overlay and retry epoch are only hashed when set, so an existing git-backed
+	// component (no overlay, epoch 0) keeps its fingerprint across the upgrade.
+	if overlayDigest != "" {
+		_, _ = fmt.Fprintf(h, "overlay\x00%s\x00", overlayDigest)
+	}
+	if epoch > 0 {
+		_, _ = fmt.Fprintf(h, "epoch\x00%d\x00", epoch)
 	}
 	for _, ts := range targetSets {
 		tsJSON, err := json.Marshal(ts)

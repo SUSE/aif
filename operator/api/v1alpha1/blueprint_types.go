@@ -128,8 +128,10 @@ type BlueprintComponent struct {
 type ComponentKustomize struct {
 	// Dir is the directory holding kustomization.yaml, relative to the embedded
 	// overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
-	// HelmOp/Bundle spec.kustomize.dir.
+	// HelmOp/Bundle spec.kustomize.dir. Must be a clean relative path: no empty,
+	// "." or ".." segments and no leading or trailing slash.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+)(/([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+))*$`
 	Dir string `json:"dir"`
 	// Files is the inline overlay: path -> file content. Embedded verbatim into
 	// the rendered bundle's spec.resources.

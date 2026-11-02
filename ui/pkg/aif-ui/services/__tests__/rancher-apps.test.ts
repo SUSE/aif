@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ensurePullSecretOnAllSAs,
   ensureServiceAccountPullSecret,
+  listGitClusterRepoNames,
   listServiceAccounts,
 } from '../rancher-apps';
 import { log as logger } from '../../utils/logger';
@@ -545,5 +546,20 @@ describe('ServiceAccount discovery and sweep', () => {
         message:   'serviceaccounts is forbidden',
       },
     });
+  });
+});
+
+describe('listGitClusterRepoNames', () => {
+  it('lists only custom HTTPS git repos from AI Factory settings', async() => {
+    const items = [
+      { metadata: { name: 'rancher-charts' }, spec: { gitRepo: 'https://git.rancher.io/charts' } },
+      { metadata: { name: 'overlays', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'https://git.example.com/o' } },
+      { metadata: { name: 'custom-http', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { url: 'https://charts.example.com' } },
+      { metadata: { name: 'ssh-scp', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'git@git.example.com:org/o.git' } },
+      { metadata: { name: 'ssh-url', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'ssh://git@git.example.com/org/o.git' } },
+    ];
+    const store = { dispatch: vi.fn().mockResolvedValue({ data: { items } }) } as unknown as Dispatchable;
+
+    expect(await listGitClusterRepoNames(store)).toEqual(['overlays']);
   });
 });

@@ -107,7 +107,7 @@ func TestReadDir_ReturnsFilesUnderPath(t *testing.T) {
 		"other/ignored.yaml":         "kind: ConfigMap\n",
 	})
 
-	c := igit.NewForRepo(remote, "main", nil, nil)
+	c := igit.NewForRepo(remote, "main", nil, nil, false)
 	got, err := c.ReadDir(context.Background(), "overlay")
 	require.NoError(t, err)
 
@@ -117,13 +117,34 @@ func TestReadDir_ReturnsFilesUnderPath(t *testing.T) {
 	}, got)
 }
 
+func TestReadDir_RootAndLeadingSlash(t *testing.T) {
+	remote := newReadDirTestRemote(t, map[string]string{
+		"kustomization.yaml":      "patches: []\n",
+		"overlay/deployment.yaml": "kind: Deployment\n",
+	})
+	c := igit.NewForRepo(remote, "main", nil, nil, false)
+
+	for _, p := range []string{".", "/", ""} {
+		got, err := c.ReadDir(context.Background(), p)
+		require.NoError(t, err, "path %q", p)
+		require.Equal(t, map[string]string{
+			"kustomization.yaml":      "patches: []\n",
+			"overlay/deployment.yaml": "kind: Deployment\n",
+		}, got, "path %q", p)
+	}
+
+	got, err := c.ReadDir(context.Background(), "/overlay/")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"deployment.yaml": "kind: Deployment\n"}, got)
+}
+
 func TestReadDir_RejectsOversizeTree(t *testing.T) {
 	big := strings.Repeat("a", (1<<20)+1)
 	remote := newReadDirTestRemote(t, map[string]string{
 		"overlay/big.yaml": big,
 	})
 
-	c := igit.NewForRepo(remote, "main", nil, nil)
+	c := igit.NewForRepo(remote, "main", nil, nil, false)
 	_, err := c.ReadDir(context.Background(), "overlay")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds")
@@ -140,10 +161,26 @@ func TestNewForRepo_DefaultsBranch(t *testing.T) {
 		"overlay/kustomization.yaml": "resources:\n- deployment.yaml\n",
 	})
 
-	c := igit.NewForRepo(remote, "", nil, nil)
+	c := igit.NewForRepo(remote, "", nil, nil, false)
 	got, err := c.ReadDir(context.Background(), "overlay")
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{
 		"kustomization.yaml": "resources:\n- deployment.yaml\n",
 	}, got)
+}
+
+func TestReadFile_ReturnsContentAndExistence(t *testing.T) {
+	remote := newReadDirTestRemote(t, map[string]string{"workloads/a.yaml": "kind: Bundle\n", "workloads/b.yaml": "other\n"})
+	c := igit.NewForRepo(remote, "main", nil, nil, false)
+
+	got, ok, err := c.ReadFile(context.Background(), "workloads/a.yaml", 1<<20)
+	if err != nil || !ok || got != "kind: Bundle\n" {
+		t.Fatalf("ReadFile = %q, %v, %v; want the file content", got, ok, err)
+	}
+	if _, ok, err := c.ReadFile(context.Background(), "workloads/missing.yaml", 1<<20); err != nil || ok {
+		t.Fatalf("missing file: ok=%v err=%v, want ok=false and no error", ok, err)
+	}
+	if _, _, err := c.ReadFile(context.Background(), "workloads/a.yaml", 4); err == nil {
+		t.Fatalf("want an error for a file over maxBytes")
+	}
 }

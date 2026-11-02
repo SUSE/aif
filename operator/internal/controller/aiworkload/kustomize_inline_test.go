@@ -34,12 +34,3 @@ func TestOverlayFilesRejectsOversize(t *testing.T) {
 		t.Fatalf("expected oversize rejection")
 	}
 }
-
-func TestKustomizeDigestChangesOutput(t *testing.T) {
-	base := ComponentRenderInputs{ChartName: "n"}
-	with := base
-	with.Kustomize = map[string]any{"dir": "overlay", "files": map[string]string{"overlay/kustomization.yaml": "a: 1"}}
-	if perHelmOpRenderDigest(base) == perHelmOpRenderDigest(with) {
-		t.Fatalf("kustomize overlay must change the render digest")
-	}
-}

@@ -32,15 +32,18 @@
         <span v-if="comp.dependsOn?.length" class="comp-depends text-muted">
           {{ comp.chartName }} &rarr; {{ t('suseai.wizard.labels.deploysAfter', 'deploys after') }} {{ comp.dependsOn.join(', ') }}
         </span>
-        <span v-if="comp.kustomize" class="comp-kustomize badge">
-          {{ t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay') }}
-        </span>
+        <BadgeState
+          v-if="comp.kustomize"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay')"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
+import { BadgeState } from '@components/BadgeState';
 import type { BlueprintSpec } from '../../../types/blueprint-types';
 import { useT } from '../../../composables/useT';
 
@@ -74,8 +77,4 @@ const t = useT();
   .comp-depends { font-size: 12px; flex-basis: 100%; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
-.badge {
-  font-size: 11px; padding: 2px 8px; border-radius: 10px;
-  background: var(--sortable-table-header-bg); color: var(--body-text);
-}
 </style>
