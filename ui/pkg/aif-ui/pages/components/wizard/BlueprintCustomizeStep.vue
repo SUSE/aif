@@ -1,11 +1,14 @@
 <template>
   <div class="step-content">
     <p class="text-muted mb-20">
-      {{ t('suseai.wizard.sections.customizeDesc', "Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Leave a component untouched to keep the blueprint's defaults.") }}
+      {{ t('suseai.wizard.sections.customizeDesc', "Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Use the Advanced tab to change the deploy order or add a Kustomize overlay. Leave a component untouched to keep the blueprint's defaults.") }}
     </p>
 
     <Banner v-if="allDisabled" color="error" class="mb-20">
       {{ t('suseai.wizard.errors.allComponentsDisabled', 'At least one component must remain enabled.') }}
+    </Banner>
+    <Banner v-if="advancedError" color="error" class="mb-20">
+      {{ advancedError }}
     </Banner>
 
     <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel" :class="{ 'is-disabled': !editedEnabled[comp.chartName] }">
@@ -19,15 +22,24 @@
         />
         <span class="panel-title">{{ comp.chartName }}</span>
         <span class="panel-meta text-muted">{{ comp.chartVersion }}</span>
-        <span v-if="customizedNames.has(comp.chartName)" class="badge-customized">
-          {{ t('suseai.wizard.labels.customized', 'Customized') }}
-        </span>
-        <span v-if="comp.kustomize" class="badge-customized" :title="t('suseai.wizard.hints.patched', 'This component has a kustomize patch applied.')">
-          {{ t('suseai.wizard.labels.patched', 'Patched') }}
-        </span>
-        <span v-if="comp.dependsOn?.length" class="badge-customized" :title="t('suseai.wizard.hints.ordered', 'This component has a deploy-order dependency.')">
-          {{ t('suseai.wizard.labels.ordered', 'Ordered') }}
-        </span>
+        <BadgeState
+          v-if="customizedNames.has(comp.chartName)"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.customized', 'Customized')"
+          :title="t('suseai.wizard.hints.customized', 'This component differs from the blueprint for this deployment.')"
+        />
+        <BadgeState
+          v-if="comp.kustomize || editedKustomize[comp.chartName]"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.patched', 'Patched')"
+          :title="t('suseai.wizard.hints.patched', 'This component has a kustomize patch applied.')"
+        />
+        <BadgeState
+          v-if="editedDependsOn[comp.chartName]?.length"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.ordered', 'Ordered')"
+          :title="t('suseai.wizard.hints.ordered', 'This component has a deploy-order dependency.')"
+        />
         <i :class="['icon', expandedPanels.has(idx) ? 'icon-chevron-up' : 'icon-chevron-down']" />
       </div>
 
@@ -38,24 +50,88 @@
         <p v-if="!editedEnabled[comp.chartName]" class="text-muted">
           {{ t('suseai.wizard.labels.componentExcluded', 'Excluded — this component will not be deployed.') }}
         </p>
-        <ValuesStep
+        <Tabbed
           v-else
-          :values="editedValues[comp.chartName] || {}"
-          :chart-repo="comp.chartRepo"
-          :chart-name="comp.chartName"
-          :chart-version="comp.chartVersion"
-          :loading-values="!!loadingMap[comp.chartName]"
-          :version-dirty="false"
-          :has-questions="!!(versionInfoMap[comp.chartName]?.questions)"
-          :questions-source="versionInfoMap[comp.chartName] || null"
-          :questions-loading="!!questionsLoadingMap[comp.chartName]"
-          :ignore-variables="[]"
-          :target-namespace="''"
-          :mode="mode"
-          :in-store="'cluster'"
-          @update:values="onValuesUpdate(comp.chartName, $event)"
-          @load-defaults="onValuesUpdate(comp.chartName, JSON.parse(JSON.stringify(blueprintDefaults[comp.chartName] || {})))"
-        />
+          default-tab="values"
+          :use-hash="false"
+          :show-extension-tabs="false"
+        >
+          <Tab
+            name="values"
+            :label="t('suseai.wizard.labels.valuesTab', 'Values')"
+            :weight="2"
+          >
+            <ValuesStep
+              :values="editedValues[comp.chartName] || {}"
+              :chart-repo="comp.chartRepo"
+              :chart-name="comp.chartName"
+              :chart-version="comp.chartVersion"
+              :loading-values="!!loadingMap[comp.chartName]"
+              :version-dirty="false"
+              :has-questions="!!(versionInfoMap[comp.chartName]?.questions)"
+              :questions-source="versionInfoMap[comp.chartName] || null"
+              :questions-loading="!!questionsLoadingMap[comp.chartName]"
+              :ignore-variables="[]"
+              :target-namespace="''"
+              :mode="mode"
+              :in-store="'cluster'"
+              @update:values="onValuesUpdate(comp.chartName, $event)"
+              @load-defaults="onValuesUpdate(comp.chartName, JSON.parse(JSON.stringify(blueprintDefaults[comp.chartName] || {})))"
+            />
+          </Tab>
+
+          <Tab
+            name="advanced"
+            :label="t('suseai.wizard.labels.advancedTab', 'Advanced')"
+            :weight="1"
+          >
+            <h3>{{ t('suseai.wizard.labels.deployOrder', 'Deploy Order') }}</h3>
+            <Banner v-if="staleDeps[comp.chartName]" color="warning">
+              {{ t('suseai.wizard.labels.staleDependsOn', 'These dependencies no longer exist in this Blueprint version and will be removed when you save: {names}', { names: staleDeps[comp.chartName].join(', ') }) }}
+            </Banner>
+            <div class="row mb-30">
+              <div class="col span-6">
+                <LabeledSelect
+                  v-if="siblingNames(comp.chartName).length"
+                  :value="editedDependsOn[comp.chartName] || []"
+                  :options="siblingNames(comp.chartName)"
+                  :multiple="true"
+                  :clearable="true"
+                  :close-on-select="false"
+                  :label="t('suseai.wizard.labels.dependsOn', 'Deploys after')"
+                  :tooltip="t('suseai.wizard.labels.dependsOnTooltip', 'This application is deployed only after the selected applications are Ready.')"
+                  :mode="'edit'"
+                  @update:value="onDependsOnUpdate(comp.chartName, $event)"
+                />
+                <p v-else class="text-muted">
+                  {{ t('suseai.wizard.labels.dependsOnSingleApp', 'This blueprint has a single application, so there is nothing to order it after.') }}
+                </p>
+              </div>
+            </div>
+
+            <h3>{{ t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay') }}</h3>
+            <template v-if="comp.kustomize">
+              <h4>{{ t('suseai.wizard.labels.blueprintOverlay', 'Blueprint overlay (read-only)') }}</h4>
+              <KustomizeOverlayEditor
+                :value="comp.kustomize"
+                :name="`${comp.chartName}-blueprint`"
+                :git-repo-options="gitRepoNames"
+                mode="view"
+                class="mb-20"
+              />
+            </template>
+            <h4>{{ t('suseai.wizard.labels.installOverlay', 'Overlay for this deployment') }}</h4>
+            <p class="text-muted mb-10">
+              {{ t('suseai.wizard.labels.installOverlayHint', 'Applied after the blueprint overlay.') }}
+            </p>
+            <KustomizeOverlayEditor
+              :value="editedKustomize[comp.chartName]"
+              :name="comp.chartName"
+              :git-repo-options="gitRepoNames"
+              @update:value="onKustomizeUpdate(comp.chartName, $event)"
+            />
+          </Tab>
+        </Tabbed>
       </div>
     </div>
   </div>
@@ -66,9 +142,19 @@ import { ref, computed, watch, getCurrentInstance } from 'vue';
 import { useT } from '../../../composables/useT';
 import { Banner } from '@components/Banner';
 import { Checkbox } from '@components/Form/Checkbox';
+import { BadgeState } from '@components/BadgeState';
+import LabeledSelect from '@shell/components/form/LabeledSelect';
+import Tabbed from '@shell/components/Tabbed';
+import Tab from '@shell/components/Tabbed/Tab';
 import ValuesStep from './ValuesStep.vue';
-import { seedComponentValues, seedComponentEnabled, diffComponentOverrides, customizedComponentNames, resolveInitialFormState } from '../../../utils/blueprint-customize';
-import type { BlueprintComponent } from '../../../types/blueprint-types';
+import KustomizeOverlayEditor from './KustomizeOverlayEditor.vue';
+import { listGitClusterRepoNames } from '../../../services/rancher-apps';
+import { validateDependsOn } from '../../../validators/blueprint';
+import {
+  seedComponentValues, seedComponentEnabled, seedComponentDependsOn, staleDependsOn, diffComponentOverrides,
+  customizedComponentNames, resolveInitialFormState,
+} from '../../../utils/blueprint-customize';
+import type { BlueprintComponent, ComponentKustomize } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 
 interface Props {
@@ -90,9 +176,9 @@ interface Props {
 }
 interface Emits {
   (e: 'update:modelValue', v: ComponentValueOverride[]): void;
-  // valid is false when every component has been excluded — the wizard uses
-  // this to block advancing to Review, mirroring the API's own rejection of
-  // an all-disabled spec.
+  // valid is false when every component has been excluded, or the edited
+  // deploy order is invalid — the wizard uses this to block advancing to
+  // Review, mirroring the API's own rejection of those specs.
   (e: 'update:valid', v: boolean): void;
 }
 
@@ -125,6 +211,26 @@ const editedValues = ref<Record<string, Record<string, any>>>(
   Object.fromEntries(Object.entries(initialFormState.values).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))])),
 );
 const editedEnabled = ref<Record<string, boolean>>({ ...initialFormState.enabled });
+// Advanced tab: deploy order (replaces the blueprint's per component when it
+// differs) and install-time overlays (layered after the blueprint's).
+const blueprintDependsOn = computed(() => seedComponentDependsOn(props.components, []));
+const editedDependsOn = ref<Record<string, string[]>>({ ...initialFormState.dependsOn });
+const editedKustomize = ref<Record<string, ComponentKustomize | undefined>>({ ...initialFormState.kustomize });
+// Dependencies an existing override names that this Blueprint version no longer
+// has (after an upgrade): shown, and dropped from the overrides emitted below.
+const staleDeps = staleDependsOn(props.components, props.modelValue !== undefined ? props.modelValue : props.existingValues || []);
+const advancedEdits = computed(() => ({
+  blueprintDependsOn: blueprintDependsOn.value, editedDependsOn: editedDependsOn.value, editedKustomize: editedKustomize.value,
+}));
+
+// Custom git ClusterRepo names: the sources a Git overlay can be fetched from (null while loading).
+const gitRepoNames = ref<string[] | null>(null);
+listGitClusterRepoNames(store).then((names) => {
+  gitRepoNames.value = names;
+}).catch(() => {
+  // Empty: the ClusterRepo select falls back to free-typing (taggable).
+  gitRepoNames.value = [];
+});
 
 // customizedNames surfaces the "Customized" badge only on enabled components whose
 // values differ from the blueprint definition. Excluded components are not customized.
@@ -133,11 +239,15 @@ const customizedNames = computed(() =>
     blueprintDefaults.value,
     editedValues.value,
     editedEnabled.value,
+    advancedEdits.value,
   ),
 );
 const allDisabled = computed(() => props.components.length > 0 && props.components.every((c) => !editedEnabled.value[c.chartName]));
 
-watch(allDisabled, (v) => emit('update:valid', !v), { immediate: true });
+// Advanced-tab error: an invalid edited deploy order (the API rejects it too).
+const advancedError = computed(() => validateDependsOn(props.components.map((c) => ({ chartName: c.chartName, dependsOn: editedDependsOn.value[c.chartName] }))));
+
+watch([allDisabled, advancedError], ([disabled, err]) => emit('update:valid', !disabled && err === null), { immediate: true });
 
 if (props.components.length > 0) {
   const first = props.components[0];
@@ -177,7 +287,7 @@ async function loadChartInfo(chartName: string, chartRepo: string, chartVersion:
 }
 
 function emitOverrides() {
-  emit('update:modelValue', diffComponentOverrides(blueprintDefaults.value, editedValues.value, blueprintEnabled.value, editedEnabled.value));
+  emit('update:modelValue', diffComponentOverrides(blueprintDefaults.value, editedValues.value, blueprintEnabled.value, editedEnabled.value, advancedEdits.value));
 }
 
 function onValuesUpdate(chartName: string, newValues: Record<string, any>) {
@@ -187,6 +297,26 @@ function onValuesUpdate(chartName: string, newValues: Record<string, any>) {
 
 function onEnabledUpdate(chartName: string, value: boolean) {
   editedEnabled.value = { ...editedEnabled.value, [chartName]: value };
+  emitOverrides();
+}
+
+function siblingNames(self: string) {
+  return props.components.map((c) => c.chartName).filter((n) => n !== self);
+}
+
+function onDependsOnUpdate(chartName: string, deps: string[]) {
+  editedDependsOn.value = { ...editedDependsOn.value, [chartName]: deps };
+  emitOverrides();
+}
+
+function onKustomizeUpdate(chartName: string, kustomize: ComponentKustomize | undefined) {
+  editedKustomize.value = { ...editedKustomize.value, [chartName]: kustomize };
+  emitOverrides();
+}
+
+// Persist the stale-dependency cleanup even if nothing else is edited:
+// otherwise saving would resend the removed names and the API would reject it.
+if (Object.keys(staleDeps).length) {
   emitOverrides();
 }
 </script>
@@ -209,9 +339,7 @@ function onEnabledUpdate(chartName: string, value: boolean) {
 .accordion-panel.is-disabled .panel-meta { opacity: 0.6; }
 .panel-title { font-weight: 600; font-size: 14px; flex: 1; }
 .panel-meta  { font-size: 12px; color: var(--muted); }
-.badge-customized {
-  font-size: 11px; font-weight: 600; color: var(--primary);
-  border: 1px solid var(--primary); border-radius: 10px; padding: 2px 8px;
-}
 .accordion-body { padding: 16px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-30 { margin-bottom: 30px; }
 </style>

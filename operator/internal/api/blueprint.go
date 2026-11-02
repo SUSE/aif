@@ -24,11 +24,24 @@ import (
 	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/kustomizeoverlay"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var nonAlphanumRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+// validateComponentOverlays runs the controller's structural kustomize checks
+// on every component overlay, so a bad one is rejected on save rather than
+// surfacing later as a failed install.
+func validateComponentOverlays(components []aiplatformv1alpha1.BlueprintComponent) error {
+	for _, c := range components {
+		if err := kustomizeoverlay.Validate(c.Kustomize); err != nil {
+			return fmt.Errorf("%w: components[%s].kustomize: %v", ErrInvalidInput, c.ChartName, err)
+		}
+	}
+	return nil
+}
 
 // BlueprintHandler serves Blueprint CRUD endpoints.
 type BlueprintHandler struct {
@@ -92,6 +105,10 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 	}
 	if body.Spec.Version == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: version is required", ErrInvalidInput))
+		return
+	}
+	if err := validateComponentOverlays(body.Spec.Components); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 	// Determine the grouping family. A brand-new blueprint derives it from the
@@ -230,6 +247,10 @@ func (h *BlueprintHandler) updateBlueprint(w http.ResponseWriter, r *http.Reques
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
+		return
+	}
+	if err := validateComponentOverlays(body.Spec.Components); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
 

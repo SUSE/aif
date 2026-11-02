@@ -35,8 +35,9 @@
 
     <div v-if="customizedValues.length" class="review-section">
       <h3 class="section-title">{{ t('suseai.wizard.labels.customized', 'Customized') }} ({{ customizedValues.length }})</h3>
-      <div v-for="ov in customizedValues" :key="ov.componentName" class="component-row">
-        <span>{{ ov.componentName }}</span>
+      <div v-for="row in customizedValues" :key="row.componentName" class="component-row">
+        <span>{{ row.componentName }}</span>
+        <span class="text-muted">{{ row.changes.map(changeLabel).join(', ') }}</span>
       </div>
     </div>
 
@@ -54,7 +55,9 @@ import { computed } from 'vue';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 import { useT } from '../../../composables/useT';
-import { deployOrder } from '../../../utils/blueprint-customize';
+import {
+  customizedOverrides, effectiveDeployOrder, type OverrideChange,
+} from '../../../utils/blueprint-customize';
 
 interface Props {
   workloadName:      string;
@@ -77,13 +80,20 @@ const clusterLabel = (clusterId: string) => props.clusterNames?.[clusterId] || c
 const excludedNames = computed(() => new Set(
   (props.componentValues || []).filter((ov) => ov.enabled === false).map((ov) => ov.componentName),
 ));
-// customizedValues excludes entries with no values (only toggled enabled) and entries for an
+// customizedValues excludes entries that change nothing (only toggled enabled) and entries for an
 // excluded component — both already show up as the "Excluded" badge above, and re-listing an
 // excluded component here as "Customized" is misleading: it won't deploy, edited values or not.
-const customizedValues = computed(() => (props.componentValues || []).filter((ov) => ov.values !== undefined && ov.enabled !== false));
-// waves shows the dependency deploy order only when it's non-trivial (more than one
-// wave) — a flat list with a single wave carries no ordering information worth surfacing.
-const waves = computed(() => deployOrder(props.components));
+const customizedValues = computed(() => customizedOverrides(props.componentValues));
+const changeLabels: Record<OverrideChange, string> = {
+  values:  t('suseai.wizard.labels.reviewChangeValues', 'Helm values'),
+  overlay: t('suseai.wizard.labels.reviewChangeOverlay', 'Kustomize overlay'),
+  order:   t('suseai.wizard.labels.reviewChangeOrder', 'Deploy order'),
+};
+const changeLabel = (change: OverrideChange) => changeLabels[change];
+// waves shows the effective dependency deploy order (install-time overrides applied, excluded
+// components dropped) only when it's non-trivial (more than one wave) — a flat list with a
+// single wave carries no ordering information worth surfacing.
+const waves = computed(() => effectiveDeployOrder(props.components, props.componentValues));
 </script>
 
 <style lang="scss" scoped>

@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -53,6 +52,8 @@ type Client struct {
 	branch   string
 	auth     *gogithttp.BasicAuth
 	caBundle []byte
+	// insecureSkipTLS disables HTTPS certificate verification.
+	insecureSkipTLS bool
 }
 
 // NewFromSettings constructs a Client from the Fleet section of a Settings CR.
@@ -113,11 +114,11 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 
 // NewForRepo constructs a Client for an arbitrary git-backed repository,
 // independent of the Settings GitOps repo. branch defaults to "main".
-func NewForRepo(repoURL, branch string, auth *gogithttp.BasicAuth, caBundle []byte) *Client {
+func NewForRepo(repoURL, branch string, auth *gogithttp.BasicAuth, caBundle []byte, insecureSkipTLS bool) *Client {
 	if branch == "" {
 		branch = "main"
 	}
-	return &Client{repoURL: repoURL, branch: branch, auth: auth, caBundle: caBundle}
+	return &Client{repoURL: repoURL, branch: branch, auth: auth, caBundle: caBundle, insecureSkipTLS: insecureSkipTLS}
 }
 
 // CheckAuth verifies the configured repository is reachable and the credentials
@@ -131,7 +132,7 @@ func (c *Client) CheckAuth(ctx context.Context) error {
 		Name: gogit.DefaultRemoteName,
 		URLs: []string{c.repoURL},
 	})
-	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth, CABundle: c.caBundle})
+	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth, CABundle: c.caBundle, InsecureSkipTLS: c.insecureSkipTLS})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		return nil
 	}
@@ -201,64 +202,91 @@ func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (string
 	return c.commitAndPush(ctx, repo, wt, commitMsg)
 }
 
-// ReadDir clones the repo (in-memory, shallow) and returns the regular files
-// under dirPath, keyed by their path relative to dirPath. Total content is
-// capped at 1 MiB to match the Fleet bundle payload limit.
-func (c *Client) ReadDir(ctx context.Context, dirPath string) (map[string]string, error) {
+// ReadFile clones the repo (in-memory, shallow) and returns the content of filePath.
+// ok is false (with no error) when the file does not exist; a file larger than
+// maxBytes is an error.
+func (c *Client) ReadFile(ctx context.Context, filePath string, maxBytes int64) (content string, ok bool, err error) {
 	_, wt, err := c.clone(ctx)
 	if err != nil {
-		return nil, err
+		return "", false, err
 	}
+	f, err := wt.Filesystem.Open(filePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("open %q: %w", filePath, err)
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return "", false, fmt.Errorf("read %q: %w", filePath, err)
+	}
+	if int64(len(b)) > maxBytes {
+		return "", false, fmt.Errorf("file %q exceeds %d bytes", filePath, maxBytes)
+	}
+	return string(b), true, nil
+}
+
+// ReadDir returns the regular files under dirPath at the branch head, keyed by
+// their path relative to dirPath. It reads the commit tree without checking out
+// a worktree, and checks blob sizes against the 1 MiB cap before reading them.
+func (c *Client) ReadDir(ctx context.Context, dirPath string) (map[string]string, error) {
+	repo, err := gogit.CloneContext(ctx, memory.NewStorage(), nil, &gogit.CloneOptions{
+		URL:             c.repoURL,
+		ReferenceName:   plumbing.NewBranchReferenceName(c.branch),
+		SingleBranch:    true,
+		Depth:           1,
+		NoCheckout:      true,
+		Auth:            c.auth,
+		CABundle:        c.caBundle,
+		InsecureSkipTLS: c.insecureSkipTLS,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("clone: %w", err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("resolve head: %w", err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		return nil, fmt.Errorf("read commit: %w", err)
+	}
+	root, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("read tree: %w", err)
+	}
+	// go-git resolves neither "." nor a leading "/" as the repo root.
+	tree := root
+	if rel := strings.Trim(filepath.ToSlash(filepath.Clean(dirPath)), "/"); rel != "" && rel != "." {
+		if tree, err = root.Tree(rel); err != nil {
+			return nil, fmt.Errorf("read dir %q: %w", dirPath, err)
+		}
+	}
+
 	const capBytes = 1 << 20
 	out := map[string]string{}
 	var total int64
-	if _, err := wt.Filesystem.ReadDir(dirPath); err != nil {
-		return nil, fmt.Errorf("read dir %q: %w", dirPath, err)
-	}
-	var walk func(rel string) error
-	walk = func(rel string) error {
-		entries, err := wt.Filesystem.ReadDir(filepath.Join(dirPath, rel))
+	err = tree.Files().ForEach(func(f *object.File) error {
+		if !f.Mode.IsRegular() {
+			return nil
+		}
+		if f.Name == ".." || strings.HasPrefix(f.Name, "../") || strings.HasPrefix(f.Name, "/") {
+			return fmt.Errorf("path %q escapes the overlay root", f.Name)
+		}
+		total += f.Size
+		if total > capBytes {
+			return fmt.Errorf("overlay under %q exceeds the %d-byte limit", dirPath, capBytes)
+		}
+		content, err := f.Contents()
 		if err != nil {
 			return err
 		}
-		for _, e := range entries {
-			r := filepath.ToSlash(filepath.Join(rel, e.Name()))
-			// Guard against path traversal in overlay entries, mirroring
-			// aiworkload/gitchart.go's rejectUnsafePath. Duplicated here
-			// (rather than imported) to avoid a git -> aiworkload import
-			// cycle; kept intentionally tiny.
-			if r == ".." || strings.HasPrefix(r, "../") || path.IsAbs(r) {
-				return fmt.Errorf("path %q escapes the overlay root", r)
-			}
-			// Skip symlinks: embedding a symlink as its target's content is
-			// surprising, and a link out of the repo must never be followed.
-			if e.Mode()&os.ModeSymlink != 0 {
-				continue
-			}
-			if e.IsDir() {
-				if err := walk(r); err != nil {
-					return err
-				}
-				continue
-			}
-			f, err := wt.Filesystem.Open(filepath.Join(dirPath, r))
-			if err != nil {
-				return err
-			}
-			b, err := io.ReadAll(f)
-			f.Close()
-			if err != nil {
-				return err
-			}
-			total += int64(len(b))
-			if total > capBytes {
-				return fmt.Errorf("overlay under %q exceeds the %d-byte limit", dirPath, capBytes)
-			}
-			out[r] = string(b)
-		}
+		out[f.Name] = content
 		return nil
-	}
-	if err := walk("."); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -266,12 +294,13 @@ func (c *Client) ReadDir(ctx context.Context, dirPath string) (map[string]string
 
 func (c *Client) clone(ctx context.Context) (*gogit.Repository, *gogit.Worktree, error) {
 	repo, err := gogit.CloneContext(ctx, memory.NewStorage(), memfs.New(), &gogit.CloneOptions{
-		URL:           c.repoURL,
-		ReferenceName: plumbing.NewBranchReferenceName(c.branch),
-		SingleBranch:  true,
-		Depth:         1,
-		Auth:          c.auth,
-		CABundle:      c.caBundle,
+		URL:             c.repoURL,
+		ReferenceName:   plumbing.NewBranchReferenceName(c.branch),
+		SingleBranch:    true,
+		Depth:           1,
+		Auth:            c.auth,
+		CABundle:        c.caBundle,
+		InsecureSkipTLS: c.insecureSkipTLS,
 	})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		// A freshly created GitOps repo has no commits yet, so go-git cannot
@@ -330,10 +359,11 @@ func (c *Client) commitAndPush(ctx context.Context, repo *gogit.Repository, wt *
 	// previously-empty remote (where there is no tracking config to default to).
 	branchRef := plumbing.NewBranchReferenceName(c.branch)
 	if err := repo.PushContext(ctx, &gogit.PushOptions{
-		RemoteName: gogit.DefaultRemoteName,
-		RefSpecs:   []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", branchRef, branchRef))},
-		Auth:       c.auth,
-		CABundle:   c.caBundle,
+		RemoteName:      gogit.DefaultRemoteName,
+		RefSpecs:        []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", branchRef, branchRef))},
+		Auth:            c.auth,
+		CABundle:        c.caBundle,
+		InsecureSkipTLS: c.insecureSkipTLS,
 	}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
 		return "", fmt.Errorf("push: %w", err)
 	}

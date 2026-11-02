@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildInlineKustomize, buildGitRefKustomize } from '../wizard/kustomize-authoring';
+import {
+  buildInlineKustomize, buildGitRefKustomize, initialInlineBody, KUSTOMIZE_INLINE_STARTER,
+} from '../wizard/kustomize-authoring';
 
 describe('buildInlineKustomize', () => {
   it('wraps editor content into a files map under dir', () => {
@@ -9,6 +11,28 @@ describe('buildInlineKustomize', () => {
   });
   it('returns undefined for empty content', () => {
     expect(buildInlineKustomize('overlay', '   ')).toBeUndefined();
+  });
+  it('returns undefined for comment-only content', () => {
+    expect(buildInlineKustomize('overlay', '# just a note\n  # indented\n\n')).toBeUndefined();
+  });
+  it('treats the untouched starter as no overlay', () => {
+    expect(buildInlineKustomize('overlay', KUSTOMIZE_INLINE_STARTER)).toBeUndefined();
+  });
+  it('keeps comments alongside real content', () => {
+    const body = '# add a label\npatches: []\n';
+    expect(buildInlineKustomize('overlay', body)!.files!['overlay/kustomization.yaml']).toBe(body);
+  });
+});
+
+describe('initialInlineBody', () => {
+  it('returns the starter when there is no existing overlay', () => {
+    expect(initialInlineBody(undefined)).toBe(KUSTOMIZE_INLINE_STARTER);
+  });
+  it('returns the existing inline kustomization.yaml', () => {
+    expect(initialInlineBody({ dir: 'ov', files: { 'ov/kustomization.yaml': 'patches: []\n' } })).toBe('patches: []\n');
+  });
+  it('returns the starter for a gitRef overlay', () => {
+    expect(initialInlineBody({ dir: 'overlay', gitRef: { chartRepo: 'r', path: 'p' } })).toBe(KUSTOMIZE_INLINE_STARTER);
   });
 });
 

@@ -3,8 +3,8 @@
     <h2 class="step-title">{{ t('suseai.wizard.sections.configureApps', 'Configure Applications') }}</h2>
     <p class="text-muted mb-20">{{ t('suseai.wizard.sections.configureAppsDesc', 'Set default Helm values for each application in this blueprint.') }}</p>
 
-    <Banner v-if="dependsOnError" color="error" class="mb-20">
-      {{ dependsOnError }}
+    <Banner v-if="stepError" color="error" class="mb-20">
+      {{ stepError }}
     </Banner>
 
     <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel">
@@ -14,94 +14,88 @@
       >
         <span class="panel-title">{{ comp.chartName }}</span>
         <span class="panel-meta text-muted">{{ comp.chartVersion }}</span>
+        <BadgeState
+          v-if="comp.kustomize"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.patched', 'Patched')"
+          :title="t('suseai.wizard.hints.patched', 'This component has a kustomize patch applied.')"
+        />
+        <BadgeState
+          v-if="comp.dependsOn?.length"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.ordered', 'Ordered')"
+          :title="t('suseai.wizard.hints.ordered', 'This component has a deploy-order dependency.')"
+        />
         <i :class="['icon', expandedPanels.has(idx) ? 'icon-chevron-up' : 'icon-chevron-down']" />
       </div>
 
       <div v-if="expandedPanels.has(idx)" class="accordion-body">
-        <LabeledSelect
-          :value="comp.dependsOn || []"
-          :options="siblingNames(comp.chartName)"
-          :multiple="true"
-          :label="t('suseai.wizard.labels.dependsOn', 'Deploys after')"
-          :mode="'edit'"
-          class="mb-20"
-          @update:value="onDependsOnUpdate(comp.chartName, $event)"
-        />
-        <ValuesStep
-          :key="`${comp.chartName}-${valuesKeys[comp.chartName] || 0}`"
-          :values="compValues[comp.chartName] || {}"
-          :chart-repo="comp.chartRepo"
-          :chart-name="comp.chartName"
-          :chart-version="comp.chartVersion"
-          :loading-values="!!loadingMap[comp.chartName]"
-          :version-dirty="false"
-          :has-questions="!!(versionInfoMap[comp.chartName]?.questions)"
-          :questions-source="versionInfoMap[comp.chartName] || null"
-          :questions-loading="!!questionsLoadingMap[comp.chartName]"
-          :ignore-variables="[]"
-          :target-namespace="''"
-          mode="install"
-          :in-store="'cluster'"
-          @update:values="onValuesUpdate(comp.chartName, $event)"
-          @load-defaults="reloadDefaults(comp.chartName, comp.chartRepo, comp.chartVersion)"
-          @values-edited="() => onValuesUpdate(comp.chartName, compValues[comp.chartName] || {})"
-        />
+        <Tabbed
+          default-tab="values"
+          :use-hash="false"
+          :show-extension-tabs="false"
+        >
+          <Tab
+            name="values"
+            :label="t('suseai.wizard.labels.valuesTab', 'Values')"
+            :weight="2"
+          >
+            <ValuesStep
+              :key="`${comp.chartName}-${valuesKeys[comp.chartName] || 0}`"
+              :values="compValues[comp.chartName] || {}"
+              :chart-repo="comp.chartRepo"
+              :chart-name="comp.chartName"
+              :chart-version="comp.chartVersion"
+              :loading-values="!!loadingMap[comp.chartName]"
+              :version-dirty="false"
+              :has-questions="!!(versionInfoMap[comp.chartName]?.questions)"
+              :questions-source="versionInfoMap[comp.chartName] || null"
+              :questions-loading="!!questionsLoadingMap[comp.chartName]"
+              :ignore-variables="[]"
+              :target-namespace="''"
+              mode="install"
+              :in-store="'cluster'"
+              @update:values="onValuesUpdate(comp.chartName, $event)"
+              @load-defaults="reloadDefaults(comp.chartName, comp.chartRepo, comp.chartVersion)"
+              @values-edited="() => onValuesUpdate(comp.chartName, compValues[comp.chartName] || {})"
+            />
+          </Tab>
 
-        <div class="kustomize-section">
-          <h4 class="kustomize-title">{{ t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay (optional)') }}</h4>
-          <RadioGroup
-            :name="`kustomize-source-${comp.chartName}`"
-            :options="kustomizeSourceOptions"
-            :value="kustomizeSourceMap[comp.chartName] || 'none'"
-            :row="true"
-            class="mb-20"
-            @update:value="onKustomizeSourceUpdate(comp.chartName, $event)"
-          />
+          <Tab
+            name="advanced"
+            :label="t('suseai.wizard.labels.advancedTab', 'Advanced')"
+            :weight="1"
+          >
+            <h3>{{ t('suseai.wizard.labels.deployOrder', 'Deploy Order') }}</h3>
+            <div class="row mb-30">
+              <div class="col span-6">
+                <LabeledSelect
+                  v-if="siblingNames(comp.chartName).length"
+                  :value="comp.dependsOn || []"
+                  :options="siblingNames(comp.chartName)"
+                  :multiple="true"
+                  :clearable="true"
+                  :close-on-select="false"
+                  :label="t('suseai.wizard.labels.dependsOn', 'Deploys after')"
+                  :tooltip="t('suseai.wizard.labels.dependsOnTooltip', 'This application is deployed only after the selected applications are Ready.')"
+                  :mode="'edit'"
+                  @update:value="onDependsOnUpdate(comp.chartName, $event)"
+                />
+                <p v-else class="text-muted">
+                  {{ t('suseai.wizard.labels.dependsOnSingleApp', 'This blueprint has a single application, so there is nothing to order it after.') }}
+                </p>
+              </div>
+            </div>
 
-          <template v-if="kustomizeSourceMap[comp.chartName] === 'inline'">
-            <Banner color="info" class="mb-20">
-              {{ t('suseai.wizard.labels.kustomizeInlineHint', 'Inline supports a single kustomization.yaml. For overlays that reference patch or resource files, use the Git source instead.') }}
-            </Banner>
-            <LabeledInput
-              :value="kustomizeDirMap[comp.chartName] || ''"
-              :label="t('suseai.wizard.labels.kustomizeDir', 'Overlay directory')"
-              placeholder="overlay"
-              class="mb-20"
-              @update:value="onKustomizeDirUpdate(comp.chartName, $event)"
+            <h3>{{ t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay') }}</h3>
+            <KustomizeOverlayEditor
+              :value="kustomizeMap[comp.chartName]"
+              :name="comp.chartName"
+              :git-repo-options="gitClusterRepoOptions"
+              @update:value="onKustomizeUpdate(comp.chartName, $event)"
             />
-            <YamlEditor
-              :value="kustomizeBodyMap[comp.chartName] || ''"
-              class="kustomize-editor"
-              @update:value="onKustomizeBodyUpdate(comp.chartName, $event)"
-            />
-          </template>
-
-          <template v-else-if="kustomizeSourceMap[comp.chartName] === 'git'">
-            <LabeledSelect
-              :value="kustomizeChartRepoMap[comp.chartName] || ''"
-              :options="gitClusterRepoOptions"
-              :label="t('suseai.wizard.labels.kustomizeChartRepo', 'Git ClusterRepo')"
-              :mode="'edit'"
-              :taggable="true"
-              class="mb-20"
-              @update:value="onKustomizeChartRepoUpdate(comp.chartName, $event)"
-            />
-            <LabeledInput
-              :value="kustomizePathMap[comp.chartName] || ''"
-              :label="t('suseai.wizard.labels.kustomizePath', 'Path in repo')"
-              placeholder="overlays/prod"
-              class="mb-20"
-              @update:value="onKustomizePathUpdate(comp.chartName, $event)"
-            />
-            <LabeledInput
-              :value="kustomizeDirMap[comp.chartName] || ''"
-              :label="t('suseai.wizard.labels.kustomizeDir', 'Overlay directory')"
-              placeholder="overlay"
-              class="mb-20"
-              @update:value="onKustomizeDirUpdate(comp.chartName, $event)"
-            />
-          </template>
-        </div>
+          </Tab>
+        </Tabbed>
       </div>
     </div>
   </div>
@@ -112,15 +106,15 @@ import { ref, computed, watch, getCurrentInstance } from 'vue';
 import { useT } from '../../../composables/useT';
 import yaml from 'js-yaml';
 import { Banner } from '@components/Banner';
+import { BadgeState } from '@components/BadgeState';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
-import { LabeledInput } from '@components/Form/LabeledInput';
-import { RadioGroup } from '@components/Form/Radio';
-import YamlEditor from '@shell/components/YamlEditor';
+import Tabbed from '@shell/components/Tabbed';
+import Tab from '@shell/components/Tabbed/Tab';
 import ValuesStep from './ValuesStep.vue';
-import { fetchChartDefaultValues, listClusterRepos } from '../../../services/rancher-apps';
+import KustomizeOverlayEditor from './KustomizeOverlayEditor.vue';
+import { fetchChartDefaultValues, listGitClusterRepoNames } from '../../../services/rancher-apps';
 import { validateDependsOn } from '../../../validators/blueprint';
-import { buildInlineKustomize, buildGitRefKustomize } from './kustomize-authoring';
-import type { BlueprintComponent } from '../../../types/blueprint-types';
+import type { BlueprintComponent, ComponentKustomize } from '../../../types/blueprint-types';
 
 interface Props { components: BlueprintComponent[] }
 interface Emits {
@@ -131,12 +125,15 @@ interface Emits {
 const props = defineProps<Props>();
 const emit  = defineEmits<Emits>();
 
-const dependsOnError = computed(() => validateDependsOn(props.components));
+// Custom git ClusterRepo names: the sources a Git overlay can be fetched from (null while loading).
+const gitClusterRepoOptions = ref<string[] | null>(null);
+
+const stepError = computed(() => validateDependsOn(props.components));
 
 // Surfaces validity to the wizard the same way BlueprintCustomizeStep does
 // (watch + immediate emit), so Next/Create is gated on a valid dependsOn graph
 // instead of only showing the Banner.
-watch(dependsOnError, (err) => emit('update:valid', err === null), { immediate: true });
+watch(stepError, (err) => emit('update:valid', err === null), { immediate: true });
 
 function siblingNames(self: string) {
   return props.components.map(c => c.chartName).filter(n => n !== self);
@@ -160,62 +157,23 @@ const compValues = ref<Record<string, Record<string, any>>>(
   Object.fromEntries(props.components.map(c => [c.chartName, { ...(c.values || {}) }]))
 );
 
-// Kustomize overlay authoring state, keyed by chartName.
-type KustomizeSource = 'none' | 'inline' | 'git';
-const kustomizeSourceMap = ref<Record<string, KustomizeSource>>(
-  Object.fromEntries(props.components.map(c => [c.chartName, c.kustomize?.gitRef ? 'git' : c.kustomize ? 'inline' : 'none']))
+// Kustomize overlay per chartName; KustomizeOverlayEditor owns the authoring state.
+const kustomizeMap = ref<Record<string, ComponentKustomize | undefined>>(
+  Object.fromEntries(props.components.map(c => [c.chartName, c.kustomize]))
 );
-const kustomizeDirMap = ref<Record<string, string>>(
-  Object.fromEntries(props.components.map(c => [c.chartName, c.kustomize?.dir || '']))
-);
-const kustomizeBodyMap = ref<Record<string, string>>(
-  Object.fromEntries(props.components.map(c => [c.chartName, c.kustomize?.dir ? (c.kustomize.files?.[`${c.kustomize.dir}/kustomization.yaml`] || '') : '']))
-);
-const kustomizeChartRepoMap = ref<Record<string, string>>(
-  Object.fromEntries(props.components.map(c => [c.chartName, c.kustomize?.gitRef?.chartRepo || '']))
-);
-const kustomizePathMap = ref<Record<string, string>>(
-  Object.fromEntries(props.components.map(c => [c.chartName, c.kustomize?.gitRef?.path || '']))
-);
-const kustomizeSourceOptions = [
-  { value: 'none', label: t('suseai.wizard.labels.kustomizeNone', 'None') },
-  { value: 'inline', label: t('suseai.wizard.labels.kustomizeInline', 'Inline') },
-  { value: 'git', label: t('suseai.wizard.labels.kustomizeGit', 'Git') },
-];
 
-// git-backed ClusterRepos available as the overlay source. Reuses the same
-// listClusterRepos() call the app-selector step already makes (via
-// inferClusterRepoForChart) rather than standing up new store plumbing.
-const gitClusterRepoOptions = ref<string[]>([]);
 async function loadGitClusterRepos() {
   try {
-    const repos = await listClusterRepos(store);
-    gitClusterRepoOptions.value = repos
-      .filter(r => !!r?.spec?.gitRepo)
-      .map(r => r?.metadata?.name)
-      .filter((n): n is string => !!n);
-  } catch { /* leave empty — the ClusterRepo select falls back to free-typing (taggable) */ }
+    gitClusterRepoOptions.value = await listGitClusterRepoNames(store);
+  } catch {
+    // Empty: the ClusterRepo select falls back to free-typing (taggable).
+    gitClusterRepoOptions.value = [];
+  }
 }
 loadGitClusterRepos();
 
-function onKustomizeSourceUpdate(chartName: string, value: KustomizeSource) {
-  kustomizeSourceMap.value = { ...kustomizeSourceMap.value, [chartName]: value };
-  emitComponents();
-}
-function onKustomizeDirUpdate(chartName: string, dir: string) {
-  kustomizeDirMap.value = { ...kustomizeDirMap.value, [chartName]: dir };
-  emitComponents();
-}
-function onKustomizeBodyUpdate(chartName: string, body: string) {
-  kustomizeBodyMap.value = { ...kustomizeBodyMap.value, [chartName]: body };
-  emitComponents();
-}
-function onKustomizeChartRepoUpdate(chartName: string, chartRepo: string) {
-  kustomizeChartRepoMap.value = { ...kustomizeChartRepoMap.value, [chartName]: chartRepo };
-  emitComponents();
-}
-function onKustomizePathUpdate(chartName: string, path: string) {
-  kustomizePathMap.value = { ...kustomizePathMap.value, [chartName]: path };
+function onKustomizeUpdate(chartName: string, kustomize: ComponentKustomize | undefined) {
+  kustomizeMap.value = { ...kustomizeMap.value, [chartName]: kustomize };
   emitComponents();
 }
 
@@ -316,15 +274,7 @@ function emitComponents() {
     values: Object.keys(compValues.value[c.chartName] || {}).length > 0
       ? compValues.value[c.chartName]
       : undefined,
-    kustomize: kustomizeSourceMap.value[c.chartName] === 'inline'
-      ? buildInlineKustomize(kustomizeDirMap.value[c.chartName] || '', kustomizeBodyMap.value[c.chartName] || '')
-      : kustomizeSourceMap.value[c.chartName] === 'git'
-      ? buildGitRefKustomize(
-          kustomizeDirMap.value[c.chartName] || '',
-          kustomizeChartRepoMap.value[c.chartName] || '',
-          kustomizePathMap.value[c.chartName] || '',
-        )
-      : undefined,
+    kustomize: kustomizeMap.value[c.chartName],
   })));
 }
 </script>
@@ -345,7 +295,5 @@ function emitComponents() {
 .panel-title { font-weight: 600; font-size: 14px; flex: 1; }
 .panel-meta  { font-size: 12px; color: var(--muted); }
 .accordion-body { padding: 16px; }
-.kustomize-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-.kustomize-title { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
-.kustomize-editor { min-height: 240px; }
+.mb-30 { margin-bottom: 30px; }
 </style>

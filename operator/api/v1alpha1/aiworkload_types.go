@@ -112,7 +112,9 @@ type AIWorkloadSource struct {
 }
 
 // ComponentValueOverride holds per-component customizations: Helm value
-// overrides and/or an enable/disable toggle.
+// overrides, an enable/disable toggle, a deploy-order override, and/or an
+// install-time Kustomize overlay.
+// +kubebuilder:validation:XValidation:rule="!has(self.dependsOn) || !(self.componentName in self.dependsOn)",message="a component cannot depend on itself"
 type ComponentValueOverride struct {
 	// ComponentName matches source.app.chartName (App) or a Blueprint component name.
 	// +kubebuilder:validation:MinLength=1
@@ -127,6 +129,21 @@ type ComponentValueOverride struct {
 	// component list to select from.
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// Kustomize is an install-time overlay layered on top of the Blueprint
+	// component's own overlay (applied after it). Optional. Blueprint sources only.
+	// +optional
+	Kustomize *ComponentKustomize `json:"kustomize,omitempty"`
+
+	// DependsOn, when set, replaces the Blueprint component's dependsOn for this
+	// workload. nil = use the Blueprint's; an empty list = no dependencies.
+	// Blueprint sources only.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	DependsOn *[]string `json:"dependsOn,omitempty"`
 }
 
 // AIWorkloadSpec defines the desired state of AIWorkload.

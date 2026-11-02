@@ -94,8 +94,10 @@ spec:
                           description: |-
                             Dir is the directory holding kustomization.yaml, relative to the embedded
                             overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
-                            HelmOp/Bundle spec.kustomize.dir.
+                            HelmOp/Bundle spec.kustomize.dir. Must be a clean relative path: no empty,
+                            "." or ".." segments and no leading or trailing slash.
                           minLength: 1
+                          pattern: ^([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+)(/([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+))*$
                           type: string
                         files:
                           additionalProperties:

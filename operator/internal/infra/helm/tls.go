@@ -52,12 +52,25 @@ func (c *helmClient) ociRegistryClient(auth *RegistryAuth, tlsCfg *tls.Config) (
 	if auth == nil && tlsCfg == nil {
 		return c.registry, nil
 	}
-	opts := []registry.ClientOption{registry.ClientOptDebug(c.settings.Debug)}
-	if tlsCfg != nil {
+	return newRegistryClient(auth, tlsCfg, false, c.settings.Debug, nil)
+}
+
+// newRegistryClient builds an OCI registry client carrying in-memory auth and
+// TLS, and optionally plain HTTP. httpClient, when set, is used as is (it
+// already carries the TLS transport and a timeout). Shared by release pulls and
+// PullChartArchive.
+func newRegistryClient(auth *RegistryAuth, tlsCfg *tls.Config, plainHTTP, debug bool, httpClient *http.Client) (*registry.Client, error) {
+	opts := []registry.ClientOption{registry.ClientOptDebug(debug)}
+	if httpClient != nil {
+		opts = append(opts, registry.ClientOptHTTPClient(httpClient))
+	} else if tlsCfg != nil {
 		opts = append(opts, registry.ClientOptHTTPClient(&http.Client{Transport: defaultTransportClone(tlsCfg)}))
 	}
 	if auth != nil {
 		opts = append(opts, registry.ClientOptBasicAuth(auth.Username, auth.Password))
+	}
+	if plainHTTP {
+		opts = append(opts, registry.ClientOptPlainHTTP())
 	}
 	return registry.NewClient(opts...)
 }

@@ -302,7 +302,7 @@ func TestEnsureBlueprintGitFile_AppliesComponentValueOverride(t *testing.T) {
 // a fake rancher.ChartFetcher wired through r.CatalogClient (same pattern as
 // blueprint_gitrepo_test.go's fakeCatalog/rancher.NewHolder helpers) so the
 // reconcile runs past the errCatalogClientNotConfigured gate and all the way
-// to a rendered Bundle. Before the Step 3 fix, ensureBlueprintGitChartBundle
+// to a rendered Bundle. Before the Step 3 fix, ensureEmbeddedChartBundle (then ensureBlueprintGitChartBundle)
 // built vals via a bare json.Unmarshal of c.Values and never consulted
 // w.Spec.ComponentValues, so this override would be silently dropped.
 func TestEnsureBlueprintGitChartBundle_AppliesComponentValueOverride(t *testing.T) {
