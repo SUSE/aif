@@ -637,7 +637,7 @@
       "slug_name": "dynamo-platform-enterprise",
       "description": "The Dynamo Platform Helm chart installs the Dynamo operator and its optional dependencies. Eligible for NVIDIA Enterprise Support. No functional or binary differences from its corresponding OSS artifact.",
       "logo_url": "https://s3.amazonaws.com/cms.ipressroom.com/219/files/20237/64e3dc1a3d6332319b2dfd35_NVIDIA-logo-white-16x9/NVIDIA-logo-white-16x9_927581a6-fc31-4fa5-85c6-379680c6aa6c-prv.png",
-      "last_updated_at": "2026-10-22T20:43:18.835Z",
+      "last_updated_at": "2026-10-27T20:08:08.496Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/ai-dynamo",
       "labels": [
@@ -746,7 +746,7 @@
       "slug_name": "k8s-nim-operator",
       "description": "Helm chart for NIM Operator for deployment and maintenance of NVIDIA NIMs and NeMo microservices in a Kubernetes environment",
       "logo_url": "https://assets.ngc.nvidia.com/products/catalog/logos/NIMOperator.png",
-      "last_updated_at": "2026-08-10T19:39:35.361Z",
+      "last_updated_at": "2026-10-26T18:58:25.424Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -1003,7 +1003,7 @@
       "slug_name": "nim-llm",
       "description": "Helm Chart for NVIDIA NIM for LLMs",
       "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
-      "last_updated_at": "2026-10-09T03:25:50.073Z",
+      "last_updated_at": "2026-10-27T05:39:11.473Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim",
       "labels": [
