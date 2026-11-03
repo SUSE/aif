@@ -42,6 +42,7 @@
     "metallb-fips": "https://apps.rancher.io/logos/metallb-fips.png",
     "milvus": "https://apps.rancher.io/logos/milvus.png",
     "minio": "https://apps.rancher.io/logos/minio.png",
+    "mlflow": "https://apps.rancher.io/logos/mlflow.png",
     "nats": "https://apps.rancher.io/logos/nats.png",
     "node-exporter": "https://apps.rancher.io/logos/node-exporter.png",
     "oauth2-proxy": "https://apps.rancher.io/logos/oauth2-proxy.png",
