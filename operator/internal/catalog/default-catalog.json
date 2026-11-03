@@ -284,6 +284,25 @@
           "name": "Supported"
         }
       ]
+    },
+    {
+      "name": "MLflow",
+      "slug_name": "mlflow",
+      "description": "MLflow is an open source platform for the complete machine learning lifecycle.",
+      "project_url": "https://mlflow.org/",
+      "documentation_url": "https://mlflow.org/docs/latest/index.html",
+      "source_code_url": "https://github.com/mlflow/mlflow",
+      "logo_url": "https://apps.rancher.io/logos/mlflow.png",
+      "changelog_url": "https://mlflow.org/releases",
+      "last_updated_at": "2026-11-03T10:28:20.529182Z",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "oci://dp.apps.rancher.io/charts",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ]
     }
   ],
   "nvidia": [
