@@ -304,6 +304,9 @@ onMounted(async () => {
   }
 });
 
+// Version requested through the install URL; consumed by the first refreshVersions().
+let requestedVersion = '';
+
 async function initializeWizard() {
   // Populate from URL parameters first
   populateFromUrlParams();
@@ -327,6 +330,7 @@ function populateFromUrlParams() {
     form.value.namespace = suggestedNamespace;
     form.value.chartRepo = query.repo as string || '';
     form.value.chartName = props.slug;
+    requestedVersion = typeof query.version === 'string' ? query.version : '';
   } else {
     // For manage mode, get from URL path parameters
     form.value.release = query.instanceName as string || props.slug;
@@ -509,6 +513,14 @@ async function refreshVersions() {
   try {
     const vs = await listChartVersions(store, REPO_CLUSTER, form.value.chartRepo, form.value.chartName);
     versions.value = Array.from(new Set(vs));
+
+    // A version chosen in the app detail panel arrives as ?version=. Like ?repo=
+    // it is untrusted, so it only applies when the repository offers it, and
+    // only once so later refreshes keep the user's own choice.
+    if (requestedVersion && vs.includes(requestedVersion)) {
+      form.value.chartVersion = requestedVersion;
+    }
+    requestedVersion = '';
 
     // Set initial version if not already set
     if (!form.value.chartVersion && vs.length > 0) {

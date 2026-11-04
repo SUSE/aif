@@ -702,6 +702,32 @@ export async function listChartVersions(
   return [];
 }
 
+export interface ChartVersionEntry {
+  version: string;
+  created?: string;
+}
+
+/**
+ * Like listChartVersions, but keeps each version's `created` timestamp so
+ * callers can show when it was published. Same matching and ordering as the
+ * install wizard's version list, so both offer exactly the same versions.
+ */
+export async function listChartVersionEntries(
+  $store: Dispatchable,
+  repoName: string,
+  chartName: string
+): Promise<ChartVersionEntry[]> {
+  const index = await getRepoIndex($store, repoName);
+  const match = index?.entries ? Object.keys(index.entries).find((n: string) => sameName(n, chartName)) : undefined;
+  if (!match || !index) return [];
+
+  const entries: Array<{ version: string; created?: string }> = index.entries[match] || [];
+  return filterAndSortVersions(entries.map((e) => e.version)).map((version) => {
+    const created = entries.find((e) => e.version === version)?.created;
+    return created ? { version, created } : { version };
+  });
+}
+
 /* ======================= values.yaml extraction (robust) ======================= */
 
 function decodeMaybeB64(s?: string): string {

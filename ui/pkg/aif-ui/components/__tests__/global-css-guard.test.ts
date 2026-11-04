@@ -12,6 +12,7 @@ const files = [
   '../BlueprintSourceBadge.vue',
   '../BlueprintPartnerLogo.vue',
   '../../pages/Apps.vue',
+  '../AppDetailPanel.vue',
 ];
 
 function compiledSelectors(rel: string): string[] {
