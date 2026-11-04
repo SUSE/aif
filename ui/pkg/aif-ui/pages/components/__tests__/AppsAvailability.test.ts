@@ -49,26 +49,33 @@ beforeEach(() => {
 afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()));
 
 describe('unavailable application interaction', () => {
-  it('keeps a failed app visible and blocks mouse, Enter and Space installation', async () => {
+  it('keeps a failed app visible, shows the repository status where Install was, and never installs', async () => {
     const { wrapper, push } = await setup();
     const tile = wrapper.get('.app-tile');
-    expect(tile.attributes('aria-disabled')).toBe('true');
-    expect(tile.text()).toContain('Repository unavailable: 401 Unauthorized');
-    expect(tile.get('a').attributes('href')).toBe('c-cluster-suseai-settings');
+    const footer = tile.get('.tile-footer');
+    expect(tile.find('[data-testid="app-install"]').exists()).toBe(false);
+    expect(footer.get('.availability-message').text()).toContain('Repository unavailable: 401 Unauthorized');
+    expect(footer.get('a').attributes('href')).toBe('c-cluster-suseai-settings');
+    expect(tile.get('.tile-content').find('.availability-message').exists()).toBe(false);
+    // Tile activation opens the detail panel rather than installing.
     await tile.trigger('click');
     await tile.trigger('keydown.enter');
     await tile.trigger('keydown.space');
+    await flushPromises();
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('also blocks installation in list view', async () => {
+  it('also shows the repository status in place of Install in list view', async () => {
     const { wrapper, push } = await setup();
     await wrapper.get('[aria-label="List View"]').trigger('click');
     const row = wrapper.get('.main-row');
-    expect(row.attributes('aria-disabled')).toBe('true');
-    expect(row.text()).toContain('401 Unauthorized');
+    expect(row.find('[data-testid="app-install"]').exists()).toBe(false);
+    expect(row.get('.col-actions .availability-message').text()).toContain('401 Unauthorized');
+    expect(row.get('.col-actions a').attributes('href')).toBe('c-cluster-suseai-settings');
+    expect(row.get('.col-description').find('.availability-message').exists()).toBe(false);
     await row.trigger('click');
     await row.trigger('keydown.enter');
+    await flushPromises();
     expect(push).not.toHaveBeenCalled();
   });
 
@@ -77,9 +84,11 @@ describe('unavailable application interaction', () => {
     vi.mocked(fetchManagedRepos).mockResolvedValue([{ ...repository, ready: true, message: undefined }]);
     await wrapper.get('[aria-label="Refresh applications"]').trigger('click');
     await flushPromises();
-    const tile = wrapper.get('.app-tile');
-    expect(tile.attributes('aria-disabled')).toBe('false');
-    await tile.trigger('keydown.enter');
+    const install = wrapper.get('.app-tile [data-testid="app-install"]');
+    expect(install.attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('.app-tile .availability-message').exists()).toBe(false);
+    await install.trigger('click');
+    await flushPromises();
     expect(push).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({ repo: 'suse-ai-registry' }) }));
   });
 
