@@ -251,3 +251,17 @@ func TestBundled_SourceMarkedEntriesAreNGC(t *testing.T) {
 		t.Fatal("no bundled entry is marked source ngc")
 	}
 }
+
+func TestNormalize_PreservesOverviewAndLatestVersion(t *testing.T) {
+	raw := []byte(`{"nvidia":[{"name":"A","slug_name":"a","overview":"## Hi\n[docs](https://x)","latest_version":"v1.2.3"}]}`)
+	got := Normalize(raw)
+	if len(got) != 1 {
+		t.Fatalf("want 1 item, got %d", len(got))
+	}
+	if got[0].Overview != "## Hi\n[docs](https://x)" {
+		t.Errorf("Overview = %q, want \"## Hi\\n[docs](https://x)\"", got[0].Overview)
+	}
+	if got[0].LatestVersion != "v1.2.3" {
+		t.Errorf("LatestVersion = %q, want \"v1.2.3\"", got[0].LatestVersion)
+	}
+}

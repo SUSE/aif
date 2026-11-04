@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -88,7 +89,14 @@ func gpuOperator(supported bool) ngcResource {
 
 func mustSync(t *testing.T, cat string, res []ngcResource, ov overrides) (catalogDoc, report, []byte) {
 	t.Helper()
-	out, rep, err := syncNVAIE([]byte(cat), res, ov)
+	return mustSyncDetails(t, cat, res, ov, nil)
+}
+
+func mustSyncDetails(
+	t *testing.T, cat string, res []ngcResource, ov overrides, details detailsByChart,
+) (catalogDoc, report, []byte) {
+	t.Helper()
+	out, rep, err := syncNVAIE([]byte(cat), res, ov, details)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,14 +469,14 @@ func TestSyncNVAIE_DedupeEqualRankIsDeterministic(t *testing.T) {
 func TestSyncNVAIE_FailsOnOwnedEntryWithNonNGCURL(t *testing.T) {
 	cat := nvidiaCatalog(`{"name":"Odd","slug_name":"odd",` +
 		`"repository_url":"oci://example.com/charts","source":"ngc"}`)
-	_, _, err := syncNVAIE([]byte(cat), []ngcResource{gpuOperator(true)}, overrides{})
+	_, _, err := syncNVAIE([]byte(cat), []ngcResource{gpuOperator(true)}, overrides{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "non-NGC repository_url") {
 		t.Fatalf("want non-NGC repository_url error, got %v", err)
 	}
 }
 
 func TestSyncNVAIE_RejectsUnknownLibrary(t *testing.T) {
-	_, _, err := syncNVAIE([]byte(`{"nvidia":[],"other":[]}`), nil, overrides{})
+	_, _, err := syncNVAIE([]byte(`{"nvidia":[],"other":[]}`), nil, overrides{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "unrecognized top-level catalog library") {
 		t.Fatalf("want unknown library error, got %v", err)
 	}
@@ -500,5 +508,127 @@ func TestSyncNVAIE_Idempotent(t *testing.T) {
 	}
 	if len(rep2.Unclassified) != 1 {
 		t.Fatalf("unclassified paths must be reported on every run: %+v", rep2.Unclassified)
+	}
+}
+
+const (
+	ownSlug    = "own"
+	handSlug   = "hand"
+	searchDate = "2026-10-01T00:00:00Z" // dateModified the search API reports in enrichment tests
+)
+
+func TestSyncNVAIE_AppliesDetailsToOwnedAndHandAdded(t *testing.T) {
+	cat := nvidiaCatalog(`{"name":"Hand","slug_name":"hand",` +
+		`"repository_url":"https://helm.ngc.nvidia.com/nvidia","documentation_url":"https://d"}`)
+	res := []ngcResource{chart("nvidia", "", ownSlug, "Own", true)}
+	details := detailsByChart{
+		chartKey(nvidiaHelmRepo, ownSlug): {
+			Overview: "own overview", LatestVersion: "3.0", UpdatedDate: "2026-10-02T00:00:00Z",
+		},
+		chartKey(nvidiaHelmRepo, handSlug): {
+			Overview: "hand overview", LatestVersion: "4.0", UpdatedDate: "2026-10-03T00:00:00Z",
+		},
+	}
+	doc, _, _ := mustSyncDetails(t, cat, res, overrides{}, details)
+
+	own := findNVIDIA(doc, ownSlug)
+	if own == nil || own.Overview != "own overview" || own.LatestVersion != "3.0" ||
+		own.LastUpdatedAt != "2026-10-02T00:00:00Z" {
+		t.Fatalf("owned entry not enriched: %+v", own)
+	}
+	hand := findNVIDIA(doc, handSlug)
+	if hand == nil || hand.Overview != "hand overview" || hand.LatestVersion != "4.0" ||
+		hand.LastUpdatedAt != "2026-10-03T00:00:00Z" {
+		t.Fatalf("hand-added entry not enriched: %+v", hand)
+	}
+	if hand.DocumentationURL != "https://d" || hand.Name != "Hand" || hand.Source != "" {
+		t.Fatalf("hand-curated fields changed: %+v", hand)
+	}
+}
+
+func TestSyncNVAIE_NoDetailsCarriesOverview(t *testing.T) {
+	cat := nvidiaCatalog(
+		`{"name":"Own","slug_name":"own","repository_url":"https://helm.ngc.nvidia.com/nvidia",`+
+			`"overview":"old","latest_version":"1.0","source":"ngc"}`,
+		`{"name":"Lost","slug_name":"lost","repository_url":"https://helm.ngc.nvidia.com/nvidia",`+
+			`"overview":"lost old","source":"ngc"}`,
+		`{"name":"Hand","slug_name":"hand","repository_url":"https://helm.ngc.nvidia.com/nvidia",`+
+			`"overview":"h"}`,
+	)
+	own := chart("nvidia", "", ownSlug, "Own", true)
+	own.Attributes = []ngcAttribute{{Key: ngcLatestVersionAttr, Value: "2.0"}}
+	own.DateModified = searchDate
+	res := []ngcResource{own, chart("nvidia", "", "lost", "Lost", false)}
+	doc, _, _ := mustSyncDetails(t, cat, res, overrides{}, nil)
+
+	e := findNVIDIA(doc, ownSlug)
+	if e == nil || e.Overview != "old" || e.LatestVersion != "2.0" || e.LastUpdatedAt != searchDate {
+		t.Fatalf("owned entry: want carried overview and fresh version/date, got %+v", e)
+	}
+	if l := findNVIDIA(doc, "lost"); l == nil || l.Overview != "lost old" || len(l.Labels) != 0 {
+		t.Fatalf("delabeled owned entry did not carry overview: %+v", l)
+	}
+	if h := findNVIDIA(doc, handSlug); h == nil || h.Overview != "h" {
+		t.Fatalf("hand-added overview changed: %+v", h)
+	}
+}
+
+func TestSyncNVAIE_OverrideBeatsDetails(t *testing.T) {
+	res := []ngcResource{chart("nvidia", "", ownSlug, "Own", true)}
+	details := detailsByChart{chartKey(nvidiaHelmRepo, ownSlug): {Overview: "ngc", LatestVersion: "3.0"}}
+	ov := mustOverrides(t, `{"own":{"overview":"pinned overview"}}`)
+	doc, _, _ := mustSyncDetails(t, nvidiaCatalog(), res, ov, details)
+	e := findNVIDIA(doc, ownSlug)
+	if e == nil || e.Overview != "pinned overview" || e.LatestVersion != "3.0" {
+		t.Fatalf("override must win over details: %+v", e)
+	}
+}
+
+func TestEnrichmentTargets(t *testing.T) {
+	cat := nvidiaCatalog(
+		`{"name":"X","slug_name":"x","repository_url":"https://helm.ngc.nvidia.com/nvidia","source":"ngc"}`,
+		`{"name":"H","slug_name":"h","repository_url":"https://helm.ngc.nvidia.com/nvidia"}`,
+	)
+	res := []ngcResource{
+		chart("nvidia", "", "d", "D", true),
+		chart("nvidia", "", "u", "U", false),
+	}
+	targets, err := enrichmentTargets([]byte(cat), res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(targets))
+	for _, it := range targets {
+		got = append(got, it.SlugName)
+	}
+	sort.Strings(got)
+	if want := []string{"d", "h", "x"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("target slugs = %v, want %v", got, want)
+	}
+}
+
+func TestSyncNVAIE_EmptyDetailFieldsKeepExistingValues(t *testing.T) {
+	cat := nvidiaCatalog(
+		`{"name":"Own","slug_name":"own","repository_url":"https://helm.ngc.nvidia.com/nvidia",`+
+			`"overview":"old","latest_version":"1.0","source":"ngc"}`,
+		`{"name":"Hand","slug_name":"hand","repository_url":"https://helm.ngc.nvidia.com/nvidia",`+
+			`"overview":"h","latest_version":"1.0","last_updated_at":"2026-01-01T00:00:00Z"}`,
+	)
+	own := chart("nvidia", "", ownSlug, "Own", true)
+	own.Attributes = []ngcAttribute{{Key: ngcLatestVersionAttr, Value: "2.0"}}
+	own.DateModified = searchDate
+	details := detailsByChart{
+		chartKey(nvidiaHelmRepo, ownSlug):  {},
+		chartKey(nvidiaHelmRepo, handSlug): {},
+	}
+	doc, _, _ := mustSyncDetails(t, cat, []ngcResource{own}, overrides{}, details)
+
+	e := findNVIDIA(doc, ownSlug)
+	if e == nil || e.Overview != "old" || e.LatestVersion != "2.0" || e.LastUpdatedAt != searchDate {
+		t.Fatalf("owned entry: empty details must keep carried overview and search version/date, got %+v", e)
+	}
+	h := findNVIDIA(doc, handSlug)
+	if h == nil || h.Overview != "h" || h.LatestVersion != "1.0" || h.LastUpdatedAt != "2026-01-01T00:00:00Z" {
+		t.Fatalf("hand-added entry changed by empty details: %+v", h)
 	}
 }

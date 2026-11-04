@@ -11,13 +11,20 @@ search API. Generator-owned entries — `nvidia`-library entries marked
   removed.
 
 Hand-added entries (no `source`) and the entire `suse-ai` library are preserved
-untouched. Run manually or via the weekly `refresh-catalog` CI workflow; commit the
-result.
+untouched, apart from the overview enrichment below. Run manually or via the weekly
+`refresh-catalog` CI workflow; commit the result.
 
 ## Usage
 
     cd operator
-    GOTOOLCHAIN=auto go run ./hack/generate-catalog
+    NGC_API_KEY=... GOTOOLCHAIN=auto go run ./hack/generate-catalog
+
+Environment:
+- `NGC_API_KEY` (optional) NGC API key used to fetch each chart's full overview
+  from NGC's authenticated per-chart details endpoint. Without it the run still
+  completes and logs `warning: NGC_API_KEY not set; skipping overview enrichment`.
+  The key is only sent as a request header; it is never logged or written out. The
+  CI workflow reads it from the `NGC_API_KEY` repository secret.
 
 Flags:
 - `-catalog` path to `default-catalog.json` (default `internal/catalog/default-catalog.json`).
@@ -37,19 +44,31 @@ Flags:
    - **unclassified** paths are skipped and reported — add them to
      `internal/catalog/ngc_repos.go` before they can be listed;
    - org/public/gated paths are kept and become owned entries with the Supported chip.
-3. Derives NGC-only fields (name, slug, description, logo, last-updated, repo URL);
-   the project/docs/source/changelog/reference URLs NGC does not provide are left empty.
-4. Applies any pinned fields from `catalog-overrides.json` on top of the derived
+3. Derives NGC-only fields (name, slug, description, logo, last-updated, latest
+   version, repo URL); the project/docs/source/changelog/reference URLs NGC does not
+   provide are left empty.
+4. Enriches entries from NGC's per-chart details (when `NGC_API_KEY` is set): every
+   existing `nvidia` entry on an NGC Helm repo, owned or hand-added, plus every
+   supported chart. Details found set `overview`, `latest_version` and
+   `last_updated_at` (the date only when NGC reports one). When a chart's details
+   are unavailable (no key, or that chart's request failed — logged, never fatal):
+   - owned entries keep their existing `overview`, while `latest_version` and
+     `last_updated_at` stay fresh from the search API;
+   - hand-added entries are left untouched.
+
+   Hand-added entries only ever get those three fields written; every other
+   hand-curated field is preserved.
+5. Applies any pinned fields from `catalog-overrides.json` on top of the derived
    values (see Overrides below), then sets the chip from the NGC designation and the
    `source` marker.
-5. Reconciles every other owned entry by its NGC resource key (repo path from
+6. Reconciles every other owned entry by its NGC resource key (repo path from
    `repository_url` plus `slug_name`): still published on a deployable path → kept,
    refreshed, without the chip; otherwise removed. A chart that moves to another
    repo counts as removed at the old location.
-6. Preserves unowned entries, unless a supported chart takes the same slug
+7. Preserves unowned entries, unless a supported chart takes the same slug
    (promotion). The `nvidia` array is sorted by `slug_name`, so re-runs with
    unchanged NGC data and overrides produce no diff.
-7. Reports added, removed (with reason), delabeled and relabeled apps, and
+8. Reports added, removed (with reason), delabeled and relabeled apps, and
    unclassified paths with their charts and versions — in the log, and in
    `report.json`/`summary.md` when `-report-dir` is set.
 
@@ -67,7 +86,8 @@ present are pinned:
     }
 
 - Only the listed fields overwrite the NGC-derived values; every other field stays
-  fresh from the search API. A slice-valued key (e.g. `labels`) is replaced
+  fresh from the search API. Overrides apply after the details enrichment, so
+  `overview` and `latest_version` can be pinned too. A slice-valued key (e.g. `labels`) is replaced
   wholesale, not merged — but the Supported chip always follows the NGC designation
   afterward, so an override can add other labels yet never add or strip the chip.
 - `repository_url`, `slug_name` and `source` cannot be overridden: they tie an owned
