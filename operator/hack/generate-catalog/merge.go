@@ -81,11 +81,14 @@ func deployable(kind catalog.NGCPathKind) bool {
 	return kind == catalog.NGCPathOrg || kind == catalog.NGCPathPublic || kind == catalog.NGCPathGated
 }
 
-// buildOwned derives a generator-owned entry from res: fresh NGC fields, pinned
-// overrides on top, then the Supported chip and source marker set from NGC state
-// so an override can neither add nor strip the chip, nor change ownership.
-func buildOwned(res ngcResource, supported bool, ov overrides) (catalog.Item, error) {
+// buildOwned derives a generator-owned entry from res: fresh NGC fields, NGC
+// details enrichment, pinned overrides on top (so an override can pin the
+// overview or latest version), then the Supported chip and source marker set
+// from NGC state so an override can neither add nor strip the chip, nor change
+// ownership.
+func buildOwned(res ngcResource, supported bool, ov overrides, en enrichment) (catalog.Item, error) {
 	it := deriveItem(res)
+	en.applyOwned(&it)
 	if supported {
 		it.Labels = supportedLabel
 	}
@@ -123,7 +126,7 @@ type ngcState struct {
 	unclassified map[string][]unclassifiedChart // supported charts on unknown paths, by path
 }
 
-func indexNGC(resources []ngcResource, ov overrides) (ngcState, error) {
+func indexNGC(resources []ngcResource, ov overrides, en enrichment) (ngcState, error) {
 	st := ngcState{
 		byKey:        make(map[string]ngcResource, len(resources)),
 		unclassified: map[string][]unclassifiedChart{},
@@ -137,7 +140,7 @@ func indexNGC(resources []ngcResource, ov overrides) (ngcState, error) {
 		kind := catalog.ClassifyNGCPath(path)
 		switch {
 		case deployable(kind):
-			it, err := buildOwned(res, true, ov)
+			it, err := buildOwned(res, true, ov, en)
 			if err != nil {
 				return ngcState{}, err
 			}
@@ -157,7 +160,9 @@ func indexNGC(resources []ngcResource, ov overrides) (ngcState, error) {
 // keep=false with a removal reason when NGC no longer publishes the chart or its
 // path is no longer deployable; otherwise the chart is still published without
 // nvaie_supported, so it stays, refreshed, without the Supported chip.
-func reconcileOwned(e catalog.Item, st ngcState, ov overrides) (it catalog.Item, keep bool, reason string, err error) {
+func reconcileOwned(
+	e catalog.Item, st ngcState, ov overrides, en enrichment,
+) (it catalog.Item, keep bool, reason string, err error) {
 	key, path, err := ownedResourceKey(e)
 	if err != nil {
 		return catalog.Item{}, false, "", err
@@ -169,7 +174,7 @@ func reconcileOwned(e catalog.Item, st ngcState, ov overrides) (it catalog.Item,
 	if !deployable(catalog.ClassifyNGCPath(path)) {
 		return catalog.Item{}, false, reasonPathPrefix + path, nil
 	}
-	it, err = buildOwned(res, false, ov)
+	it, err = buildOwned(res, false, ov, en)
 	return it, err == nil, "", err
 }
 
@@ -179,11 +184,18 @@ func reconcileOwned(e catalog.Item, st ngcState, ov overrides) (it catalog.Item,
 //     chip, taking over any existing entry with the same slug (refresh or promotion).
 //   - Other owned entries stay, refreshed and without the chip, while NGC still
 //     publishes them on a deployable path; otherwise they are removed.
-//   - Unowned entries and the suse-ai library are preserved untouched.
+//   - Unowned entries are preserved, except that NGC details, when fetched,
+//     refresh their overview, latest version and update date. The suse-ai
+//     library is preserved untouched.
+//
+// details may be nil (no API key): owned entries then carry over their existing
+// overview and take version and date from the search API.
 //
 // The nvidia array is sorted by slug_name so identical inputs give identical
 // output. The report lists app-level changes and unclassified paths.
-func syncNVAIE(catalogJSON []byte, resources []ngcResource, ov overrides) ([]byte, report, error) {
+func syncNVAIE(
+	catalogJSON []byte, resources []ngcResource, ov overrides, details detailsByChart,
+) ([]byte, report, error) {
 	// The tool round-trips the file through catalogDoc's fixed fields, so an
 	// unrecognized top-level library key would be silently dropped on re-marshal.
 	// Fail loudly instead: add a field to catalogDoc before regenerating.
@@ -202,7 +214,8 @@ func syncNVAIE(catalogJSON []byte, resources []ngcResource, ov overrides) ([]byt
 		return nil, report{}, fmt.Errorf("parse catalog: %w", err)
 	}
 
-	st, err := indexNGC(resources, ov)
+	en := newEnrichment(details, doc.NVIDIA)
+	st, err := indexNGC(resources, ov, en)
 	if err != nil {
 		return nil, report{}, err
 	}
@@ -220,9 +233,10 @@ func syncNVAIE(catalogJSON []byte, resources []ngcResource, ov overrides) ([]byt
 		case labeledSlugs[e.SlugName]:
 			// Replaced by the freshly built supported entry below.
 		case !isOwned(e):
+			en.applyUnowned(&e)
 			result = append(result, e)
 		default:
-			it, keep, reason, err := reconcileOwned(e, st, ov)
+			it, keep, reason, err := reconcileOwned(e, st, ov, en)
 			if err != nil {
 				return nil, report{}, err
 			}

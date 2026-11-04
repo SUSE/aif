@@ -67,6 +67,7 @@ func deriveItem(res ngcResource) catalog.Item {
 		LastUpdatedAt:   res.DateModified,
 		PackagingFormat: helmChart,
 		RepositoryURL:   ngcRepoURL(res),
+		LatestVersion:   ngcLatestVersion(res),
 	}
 }
 

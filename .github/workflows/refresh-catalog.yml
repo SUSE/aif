@@ -29,6 +29,8 @@ jobs:
 
       - name: Regenerate catalog
         working-directory: operator
+        env:
+          NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
         run: go run ./hack/generate-catalog -report-dir "$RUNNER_TEMP/catalog-report"
 
       - name: Publish job summary
