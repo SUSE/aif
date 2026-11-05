@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,6 +60,17 @@ func TestValidateDir_MatchesCRDPattern(t *testing.T) {
 				t.Errorf("%s: dir %q: CRD pattern accepts=%v, ValidateDir accepts=%v", crd, dir, crdOK, goOK)
 			}
 		}
+	}
+}
+
+// TestFileNamesLiteral pins FileNames. The UI hard-codes the same list
+// (ui/pkg/aif-ui/pages/components/wizard/kustomize-authoring.ts,
+// KUSTOMIZATION_FILE_NAMES) and blueprint-config-kustomize.test.ts carries the
+// TS half of this pin. Change BOTH together.
+func TestFileNamesLiteral(t *testing.T) {
+	want := []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
+	if !slices.Equal(FileNames, want) {
+		t.Errorf("FileNames drifted: %q, want %q", FileNames, want)
 	}
 }
 
