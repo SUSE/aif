@@ -512,7 +512,20 @@ suseai:
       kustomizeNone: None
       kustomizeInline: Inline
       kustomizeGit: Git
-      kustomizeInlineHint: Patches the chart's rendered manifests after Helm renders them. Write a single kustomization.yaml with inline patches. For overlays made of several files, use the Git source. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
+      kustomizeInlineHint: Patches the chart's rendered manifests after Helm renders them. Write patches in kustomization.yaml. To add new resources or patch files, use Add file and list them under resources or patches in kustomization.yaml. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
+      kustomizeAddFile: Add file
+      kustomizeAddFileConfirm: Add
+      kustomizeAddFileCancel: Cancel
+      kustomizeRemoveFile: Remove {name}
+      kustomizeFileName: File name
+      kustomizeFileNameInvalid: Use a relative path without empty, "." or ".." segments.
+      kustomizeFileNameReserved: The kustomization file already exists.
+      kustomizeFileNameDuplicate: A file with this name already exists.
+      kustomizeUnreferencedFiles: "Kustomize ignores files the kustomization file doesn't reference: {names}. List new objects under resources and patch files under patches."
+      kustomizeUnreferencedFile: Not referenced from the kustomization file
+      kustomizeEmptyReferencedFiles: "These files are listed in the kustomization file but are empty or only comments, so they add nothing: {names}. Uncomment their content."
+      kustomizeOutsideDirFiles: 'These files are outside the overlay directory "{dir}": {names}. They are kept unchanged, but the operator rejects the overlay until they are moved under it or removed.'
+      kustomizeWrapperWarning: This editor holds the contents of kustomization.yaml itself, not the kustomize/dir/files block of the resource. Put each file in its own tab with Add file instead.
       kustomizeGitHint: Fetches a directory containing a kustomization.yaml and its patch files from a Git-type repository added in AI Factory Settings. The repository must use an HTTPS URL (SSH repositories are not supported and are not listed) and doesn't need to contain any Helm charts. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
       kustomizeNoGitRepos: No Git-type repositories with an HTTPS URL found. Add a repository of type Git with an HTTPS URL in AI Factory Settings to use it as an overlay source; SSH repositories are not supported. It doesn't need to contain any Helm charts.
       reviewChangeValues: Helm values
