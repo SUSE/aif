@@ -27,6 +27,8 @@ import (
 	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintdeps"
+	"github.com/SUSE/aif-operator/internal/kustomizeoverlay"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,16 +53,21 @@ func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *ai
 // validateBlueprintComponentValues rejects ComponentValues entries whose
 // componentName doesn't match any component of the referenced Blueprint, and
 // rejects a spec that disables every component (a workload that deploys
-// nothing is a user error, not a valid state). A typo'd or stale component
+// nothing is a user error, not a valid state). Install-time dependsOn and
+// kustomize overrides are Blueprint-only; dependsOn must name known sibling
+// components and keep the effective deploy order acyclic. A typo'd or stale component
 // name would otherwise silently no-op at render time (the operator's
 // resolveComponentValues skips unmatched entries defensively, since reconcile
 // loops must stay self-healing) — this catches it here instead, at submit
 // time, with a clear error.
 func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context, spec aiplatformv1alpha1.AIWorkloadSpec) error {
-	if spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint || len(spec.ComponentValues) == 0 {
+	if spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint {
+		if usesBlueprintOnlyOverrides(spec.ComponentValues) {
+			return fmt.Errorf("%w: kustomize and dependsOn are only supported for Blueprint workloads", ErrInvalidInput)
+		}
 		return nil
 	}
-	if spec.Source.Blueprint == nil {
+	if len(spec.ComponentValues) == 0 || spec.Source.Blueprint == nil {
 		return nil
 	}
 	crName := blueprintCRName(spec.Source.Blueprint.Name, spec.Source.Blueprint.Version)
@@ -89,7 +96,89 @@ func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context
 	if enabledCount == 0 {
 		return fmt.Errorf("%w: at least one component must remain enabled", ErrInvalidInput)
 	}
+	return validateInstallOverrides(bp.Spec.Components, spec.ComponentValues, known)
+}
+
+// validateInstallOverrides checks install-time dependsOn overrides against the
+// Blueprint's components (known indexes their chartNames), and runs the same
+// structural kustomize checks the controller runs before embedding an overlay.
+// Whether a gitRef repo exists and holds the overlay is left to the controller:
+// that can change after submit.
+func validateInstallOverrides(components []aiplatformv1alpha1.BlueprintComponent, overrides []aiplatformv1alpha1.ComponentValueOverride, known map[string]bool) error {
+	for _, ov := range overrides {
+		if err := kustomizeoverlay.Validate(ov.Kustomize); err != nil {
+			return fmt.Errorf("%w: componentValues[%s].kustomize: %v", ErrInvalidInput, ov.ComponentName, err)
+		}
+		if ov.DependsOn == nil {
+			continue
+		}
+		for _, d := range *ov.DependsOn {
+			if d == ov.ComponentName {
+				return fmt.Errorf("%w: componentValues[%s].dependsOn: a component cannot depend on itself", ErrInvalidInput, ov.ComponentName)
+			}
+			if !known[d] {
+				return fmt.Errorf("%w: componentValues[%s].dependsOn references unknown component %q", ErrInvalidInput, ov.ComponentName, d)
+			}
+		}
+	}
+	order := make([]string, len(components))
+	for i, c := range components {
+		order[i] = c.ChartName
+	}
+	if cycle := blueprintdeps.Cycle(order, blueprintdeps.EffectiveGraph(components, overrides)); cycle != nil {
+		return fmt.Errorf("%w: deploy order has a dependency cycle: %s", ErrInvalidInput, strings.Join(cycle, " -> "))
+	}
 	return nil
+}
+
+// usesBlueprintOnlyOverrides reports whether any override sets an install-time
+// field that only Blueprint workloads support (and that an outdated AIWorkload
+// CRD would silently prune).
+func usesBlueprintOnlyOverrides(overrides []aiplatformv1alpha1.ComponentValueOverride) bool {
+	for _, ov := range overrides {
+		if ov.Kustomize != nil || ov.DependsOn != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// droppedOverrideFields lists the install-time override fields that were sent
+// set but came back unset from the API server, which prunes fields its stored
+// CRD schema doesn't know.
+func droppedOverrideFields(sent, stored []aiplatformv1alpha1.ComponentValueOverride) []string {
+	var dropped []string
+	for i, ov := range sent {
+		var got aiplatformv1alpha1.ComponentValueOverride
+		if i < len(stored) {
+			got = stored[i]
+		}
+		if ov.Kustomize != nil && got.Kustomize == nil {
+			dropped = append(dropped, fmt.Sprintf("componentValues[%s].kustomize", ov.ComponentName))
+		}
+		if ov.DependsOn != nil && got.DependsOn == nil {
+			dropped = append(dropped, fmt.Sprintf("componentValues[%s].dependsOn", ov.ComponentName))
+		}
+	}
+	return dropped
+}
+
+// writeWithCRDGuard runs write, preceded by a server-side dry run of the same
+// write when the spec uses fields an outdated AIWorkload CRD would silently
+// prune (Helm never upgrades CRDs). If the dry run drops any of them, nothing
+// is persisted and an ErrInvalidInput naming the fix is returned.
+func writeWithCRDGuard(wl *aiplatformv1alpha1.AIWorkload, write func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error) error {
+	if usesBlueprintOnlyOverrides(wl.Spec.ComponentValues) {
+		probe := wl.DeepCopy()
+		if err := write(probe, true); err != nil {
+			return err
+		}
+		if dropped := droppedOverrideFields(wl.Spec.ComponentValues, probe.Spec.ComponentValues); len(dropped) > 0 {
+			return fmt.Errorf("%w: AIWorkload CRD is outdated (%s were dropped); apply charts/aif-operator/crds/ai-factory.suse.com_aiworkloads.yaml",
+				ErrInvalidInput, strings.Join(dropped, ", "))
+		}
+	}
+	return write(wl, false)
 }
 
 // effectiveComponentEnabled resolves whether a component is enabled the same way the
@@ -205,7 +294,17 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	wl.Namespace = namespace
 	wl.Spec = body.Spec
 
-	if err := h.client.Create(r.Context(), wl); err != nil {
+	err := writeWithCRDGuard(wl, func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error {
+		if dryRun {
+			return h.client.Create(r.Context(), obj, client.DryRunAll)
+		}
+		return h.client.Create(r.Context(), obj)
+	})
+	if err != nil {
+		if stderrors.Is(err, ErrInvalidInput) {
+			writeError(w, http.StatusUnprocessableEntity, err)
+			return
+		}
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, fmt.Errorf(
 				"deployment %q already exists in namespace %q — choose a different instance name or use Manage to update it",
@@ -280,11 +379,18 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	wl.Namespace = namespace
 	wl.Spec = body.Spec
 
-	if err := h.client.Patch(
-		r.Context(), wl, client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(aiWorkloadFieldOwner),
-	); err != nil {
+	err := writeWithCRDGuard(wl, func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error {
+		opts := []client.PatchOption{client.ForceOwnership, client.FieldOwner(aiWorkloadFieldOwner)}
+		if dryRun {
+			opts = append(opts, client.DryRunAll)
+		}
+		return h.client.Patch(r.Context(), obj, client.Apply, opts...)
+	})
+	if err != nil {
+		if stderrors.Is(err, ErrInvalidInput) {
+			writeError(w, http.StatusUnprocessableEntity, err)
+			return
+		}
 		if errors.IsInvalid(err) {
 			writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 			return

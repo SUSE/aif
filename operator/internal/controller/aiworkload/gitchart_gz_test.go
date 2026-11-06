@@ -109,8 +109,8 @@ func TestBuildGitChartBundle_ObjectStaysUnderEtcdLimit(t *testing.T) {
 	for i := 0; i < 165; i++ {
 		files[fmt.Sprintf("c/templates/f%03d.yaml", i)] = strings.Repeat(fmt.Sprintf("line %03d of a repetitive template\n", i), 400)
 	}
-	b, err := buildGitChartBundle("wl-c", "ns", "fp", makeChartTgz(t, files),
-		aiplatformv1alpha1.BlueprintComponent{ChartName: "c"}, nil, []any{map[string]any{"clusterName": "local"}})
+	b, err := buildEmbeddedChartBundle("wl-c", "ns", "fp", makeChartTgz(t, files),
+		aiplatformv1alpha1.BlueprintComponent{ChartName: "c"}, nil, []any{map[string]any{"clusterName": "local"}}, nil, nil, 0, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,8 +159,8 @@ func TestChartTgzToBundleResources_RealChart(t *testing.T) {
 		raw += len(data) + len(h.Name)
 	}
 
-	b, err := buildGitChartBundle("wl-real", "ns", "fp", tgz,
-		aiplatformv1alpha1.BlueprintComponent{ChartName: "chart"}, nil, []any{map[string]any{"clusterName": "local"}})
+	b, err := buildEmbeddedChartBundle("wl-real", "ns", "fp", tgz,
+		aiplatformv1alpha1.BlueprintComponent{ChartName: "chart"}, nil, []any{map[string]any{"clusterName": "local"}}, nil, nil, 0, false)
 	if err != nil {
 		if errors.Is(err, errChartTooLarge) {
 			t.Fatalf("chart rejected as too large: %v", err)

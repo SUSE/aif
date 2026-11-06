@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   deepMergeValues, deepDiffValues, seedComponentValues, diffComponentValues,
   componentOverride, isComponentEnabled, seedComponentEnabled, diffComponentOverrides,
-  customizedComponentNames, resolveInitialFormState,
+  customizedComponentNames, resolveInitialFormState, deployOrder,
+  seedComponentDependsOn, staleDependsOn, seedComponentKustomize, effectiveComponents,
 } from '../blueprint-customize';
-import type { BlueprintComponent } from '../../types/blueprint-types';
+import type { BlueprintComponent, ComponentKustomize } from '../../types/blueprint-types';
 
 describe('deepMergeValues', () => {
   it('overrides scalar keys', () => {
@@ -379,5 +380,100 @@ describe('wizard multi-component workflows and navigation (bug fixes 1 and 2)', 
     expect(formState.enabled.comp3).toBe(false);
     customized = customizedComponentNames(defaults, formState.values, formState.enabled);
     expect(customized).toEqual(new Set(['comp1']));
+  });
+});
+
+describe('deployOrder', () => {
+  it('groups by dependency wave', () => {
+    const order = deployOrder([
+      { chartName: 'app', chartRepo: 'r', chartVersion: '1', dependsOn: ['db'] },
+      { chartName: 'db', chartRepo: 'r', chartVersion: '1' },
+    ] as any);
+    expect(order[0]).toContain('db');
+    expect(order[1]).toContain('app');
+  });
+});
+
+describe('install-time deploy order and overlay overrides', () => {
+  const comp = (chartName: string, dependsOn?: string[]): BlueprintComponent => ({
+    chartRepo: 'r', chartName, chartVersion: '1.0.0', ...(dependsOn ? { dependsOn } : {}),
+  });
+  const components = [comp('a'), comp('b', ['a']), comp('c', ['a'])];
+  const overlay: ComponentKustomize = { dir: 'overlay', files: { 'overlay/kustomization.yaml': 'patches: []' } };
+  const noValues = { a: {}, b: {}, c: {} };
+  const allEnabled = { a: true, b: true, c: true };
+
+  it('seeds dependsOn from an override, else the blueprint', () => {
+    expect(seedComponentDependsOn(components, [{ componentName: 'c', dependsOn: ['b'] }])).toEqual({ a: [], b: ['a'], c: ['b'] });
+  });
+
+  it('seeds an empty override as no dependencies', () => {
+    expect(seedComponentDependsOn(components, [{ componentName: 'b', dependsOn: [] }]).b).toEqual([]);
+  });
+
+  it('removes names the blueprint no longer has and reports them', () => {
+    const existing = [{ componentName: 'b', dependsOn: ['a', 'gone'] }];
+
+    expect(seedComponentDependsOn(components, existing).b).toEqual(['a']);
+    expect(staleDependsOn(components, existing)).toEqual({ b: ['gone'] });
+    expect(staleDependsOn(components, [])).toEqual({});
+  });
+
+  it('seeds install overlays only', () => {
+    expect(seedComponentKustomize(components, [{ componentName: 'a', kustomize: overlay }, { componentName: 'b', values: { x: 1 } }])).toEqual({ a: overlay });
+  });
+
+  it('ignores install overlays of components this blueprint version no longer has', () => {
+    const existing = [{ componentName: 'gone', kustomize: overlay }];
+    const state = resolveInitialFormState(components, existing);
+    const advanced = { blueprintDependsOn: state.dependsOn, editedDependsOn: state.dependsOn, editedKustomize: state.kustomize };
+
+    expect(seedComponentKustomize(components, existing)).toEqual({});
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([]);
+  });
+
+  it('applies dependsOn overrides for display', () => {
+    const eff = effectiveComponents(components, [{ componentName: 'c', dependsOn: [] }]);
+
+    expect(eff.find((c) => c.chartName === 'c')?.dependsOn).toEqual([]);
+    expect(eff.find((c) => c.chartName === 'b')?.dependsOn).toEqual(['a']);
+    expect(components[2].dependsOn).toEqual(['a']);
+  });
+
+  const blueprintDependsOn = { a: [], b: ['a'], c: ['a'] };
+
+  it('omits dependsOn equal to the blueprint as a set', () => {
+    const multi = { ...blueprintDependsOn, c: ['a', 'b'] };
+    const advanced = { blueprintDependsOn: multi, editedDependsOn: { ...multi, c: ['b', 'a'] }, editedKustomize: {} };
+
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([]);
+  });
+
+  it('emits an empty dependsOn when clearing the blueprint order', () => {
+    const advanced = { blueprintDependsOn, editedDependsOn: { ...blueprintDependsOn, b: [] }, editedKustomize: {} };
+
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([{ componentName: 'b', dependsOn: [] }]);
+  });
+
+  it('emits a kustomize-only entry without values', () => {
+    const advanced = { blueprintDependsOn, editedDependsOn: blueprintDependsOn, editedKustomize: { a: overlay } };
+
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([{ componentName: 'a', kustomize: overlay }]);
+  });
+
+  it('flags order-only and overlay-only changes as customized, but not excluded components', () => {
+    const advanced = {
+      blueprintDependsOn, editedDependsOn: { ...blueprintDependsOn, b: [] }, editedKustomize: { a: overlay, c: overlay },
+    };
+    const got = customizedComponentNames(noValues, noValues, { ...allEnabled, c: false }, advanced);
+
+    expect([...got].sort()).toEqual(['a', 'b']);
+  });
+
+  it('seeds dependsOn and kustomize in the initial form state', () => {
+    const state = resolveInitialFormState(components, [{ componentName: 'a', kustomize: overlay }, { componentName: 'b', dependsOn: [] }]);
+
+    expect(state.dependsOn).toEqual({ a: [], b: [], c: ['a'] });
+    expect(state.kustomize).toEqual({ a: overlay });
   });
 });

@@ -71,7 +71,7 @@ func TestResolveClusterRepo_GitBranch(t *testing.T) {
 
 // A git-backed repo tracks a branch, so the same chart version can change
 // underneath us. status.commit is the only input that reveals it, and the chart
-// fingerprint depends on it — see gitChartFingerprint.
+// fingerprint depends on it — see embeddedChartFingerprint.
 func TestResolveClusterRepo_GitCommit(t *testing.T) {
 	repo := repoObj("repo", map[string]any{
 		"gitRepo": "https://git.rancher.io/charts", "gitBranch": "release-v2.14",

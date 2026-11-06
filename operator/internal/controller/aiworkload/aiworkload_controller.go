@@ -53,9 +53,10 @@ import (
 const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
 
 const (
-	conditionTypeReady        = "Ready"
-	reasonClusterRepoNotReady = "ClusterRepoNotReady"
-	reasonReconciled          = "Reconciled"
+	conditionTypeReady              = "Ready"
+	conditionTypeDependencyExcluded = "DependencyExcluded"
+	reasonClusterRepoNotReady       = "ClusterRepoNotReady"
+	reasonReconciled                = "Reconciled"
 	// Deletion-path (uninstall safety-net) reasons, surfaced on the terminating CR.
 	reasonAwaitingUninstall    = "AwaitingUninstall"
 	reasonUninstalling         = "Uninstalling"
@@ -112,6 +113,9 @@ type AIWorkloadReconciler struct {
 	// are unaffected.
 	CatalogClient *rancher.Holder
 	Recorder      record.EventRecorder
+	// ChartPuller downloads chart archives from http/oci repos for components
+	// rendered as embedded-chart Bundles. nil means the Helm SDK default (see chartPuller).
+	ChartPuller chartArchivePuller
 
 	// fleetClusterForbiddenOnce limits the "cannot read Fleet Clusters" log to
 	// once per process; see bundleDeploymentClusterID.
@@ -588,6 +592,11 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 			}
 		}
 	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
+		if wait, err := r.releaseKeepResources(ctx, w); err != nil {
+			l.Error(err, "clearing keepResources failed — proceeding with deletion")
+		} else if wait {
+			return ctrl.Result{RequeueAfter: switchRequeue}, nil
+		}
 		for _, name := range w.Spec.FleetBundleNames {
 			// Delete the HelmOp first so Fleet does not re-create the Bundle,
 			// then delete the Bundle directly (Fleet links them by label only —
@@ -613,6 +622,11 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 		// controller then removes the generated HelmOp and Bundle. Do NOT delete
 		// the Bundle directly here (as the FleetBundle case does): the git state
 		// still references it, so Fleet would race to re-create it.
+		if wait, err := r.releaseKeepResources(ctx, w); err != nil {
+			l.Error(err, "clearing keepResources failed — proceeding with deletion")
+		} else if wait {
+			return ctrl.Result{RequeueAfter: switchRequeue}, nil
+		}
 		for _, name := range w.Spec.FleetBundleNames {
 			if err := r.deleteGitFileByName(ctx, w, name); err != nil {
 				l.Error(err, "git file deletion failed — proceeding with finalizer removal", "name", name)

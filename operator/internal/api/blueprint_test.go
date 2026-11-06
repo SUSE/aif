@@ -461,3 +461,23 @@ func TestUpdateBlueprint_InvalidSpec_Returns422(t *testing.T) {
 		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestBlueprint_RejectsInvalidKustomizeOverlay(t *testing.T) {
+	// The overlay file sits outside dir, so it would land beside the chart.
+	body := `{"spec":{"displayName":"Acme","version":"1.0.0","components":[{"chartRepo":"suse-ai","chartName":"ollama","chartVersion":"1.0.0",` +
+		`"kustomize":{"dir":"overlay","files":{"overlay/kustomization.yaml":"patches: []\n","ollama/values.yaml":"a: 1\n"}}}]}}`
+	existing := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: "acme-1-0-0"}}
+	h := newBlueprintHandlerWithClient(t, fake.NewClientBuilder().WithScheme(newBlueprintScheme(t)).WithObjects(existing).Build())
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/v1/blueprints", strings.NewReader(body)),
+		httptest.NewRequest(http.MethodPut, "/api/v1/blueprints/acme-1-0-0", strings.NewReader(body)),
+	} {
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "components[ollama].kustomize") ||
+			!strings.Contains(w.Body.String(), "outside overlay dir") {
+			t.Fatalf("%s: want 422 naming the overlay, got %d: %s", req.Method, w.Code, w.Body.String())
+		}
+	}
+}

@@ -1,4 +1,6 @@
 // pkg/aif-ui/types/aiworkload-types.ts
+import type { ComponentKustomize } from './blueprint-types';
+
 export type AIWorkloadSourceType = 'App' | 'Blueprint';
 export type AIWorkloadDeployStrategy = 'Helm' | 'FleetBundle' | 'GitOps';
 export type AIWorkloadPhase = 'Pending' | 'Running' | 'Degraded' | 'Failed';
@@ -28,6 +30,10 @@ export interface ComponentValueOverride {
   // Enabled controls whether this Blueprint component is deployed at all.
   // Defaults to true (omitted/undefined == enabled).
   enabled?:      boolean;
+  // Install-time Kustomize overlay, applied after the Blueprint component's own overlay.
+  kustomize?:    ComponentKustomize;
+  // Replaces the Blueprint component's dependsOn when set; [] means no dependencies.
+  dependsOn?:    string[];
 }
 
 export interface AIWorkloadSpec {
