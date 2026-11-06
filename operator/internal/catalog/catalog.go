@@ -53,6 +53,8 @@ type Item struct {
 	LogoURL           string  `json:"logo_url,omitempty"`
 	ChangelogURL      string  `json:"changelog_url,omitempty"`
 	LastUpdatedAt     string  `json:"last_updated_at,omitempty"`
+	Overview          string  `json:"overview,omitempty"`
+	LatestVersion     string  `json:"latest_version,omitempty"`
 	PackagingFormat   string  `json:"packaging_format,omitempty"`
 	RepositoryURL     string  `json:"repository_url,omitempty"`
 	RepositoryName    string  `json:"repository_name,omitempty"`

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { findChartInRepo, listChartVersions } from '../rancher-apps';
+import { findChartInRepo, listChartVersionEntries, listChartVersions } from '../rancher-apps';
 import type { Dispatchable } from '../../types/rancher-types';
 
 const REPO_NAME = 'suse-ai-registry';
@@ -146,5 +146,33 @@ describe('ready repository indexes', () => {
       chartName: 'qdrant', version: '1.2.0',
     });
     await expect(listChartVersions(store, 'local', REPO_NAME, 'qdrant')).resolves.toEqual(['1.2.0', '1.0.0']);
+  });
+});
+
+describe('chart version entries for the app detail panel', () => {
+  it('returns versions newest first with their created dates, using the wizard ordering', async () => {
+    const store = makeStore({ indexConfigMapName: 'repo-index' }, {
+      indexPayload: {
+        entries: {
+          qdrant: [
+            { version: '1.0.0', created: '2025-01-10T00:00:00Z' },
+            { version: '1.2.0', created: '2025-07-30T00:00:00Z' },
+            { version: '1.2.0', created: '2025-07-31T00:00:00Z' },
+            { version: 'not-a-version' },
+          ],
+        },
+      },
+    });
+
+    await expect(listChartVersionEntries(store, REPO_NAME, 'QDRANT')).resolves.toEqual([
+      { version: '1.2.0', created: '2025-07-30T00:00:00Z' },
+      { version: '1.0.0', created: '2025-01-10T00:00:00Z' },
+    ]);
+  });
+
+  it('returns an empty list when the chart is not in the index', async () => {
+    const store = makeStore({ indexConfigMapName: 'repo-index' });
+
+    await expect(listChartVersionEntries(store, REPO_NAME, 'missing')).resolves.toEqual([]);
   });
 });

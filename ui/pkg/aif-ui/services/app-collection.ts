@@ -29,6 +29,8 @@ export interface AppCollectionItem {
   logo_url?: string;
   changelog_url?: string;
   last_updated_at?: string;
+  overview?: string;
+  latest_version?: string;
   packaging_format?: PackagingFormat;
   repository_url?: string;
   // The authoritative operator-managed ClusterRepo name this app installs from.
@@ -508,7 +510,8 @@ export async function fetchAppsFromRepositoryResult(
         project_url:     latestVersion.home || '',
         source_code_url: Array.isArray(latestVersion.sources) ? latestVersion.sources[0] : latestVersion.sources,
         logo_url:        latestVersion.icon ? normalizeLogoUrl(latestVersion.icon) : undefined,
-        last_updated_at: latestVersion.created || new Date().toISOString(),
+        last_updated_at: latestVersion.created || undefined,
+        latest_version:  latestVersion.version || undefined,
         packaging_format: 'HELM_CHART',
       });
     }
@@ -539,12 +542,15 @@ export async function fetchAppsFromRepository($store: any, repoName: string): Pr
  * Precedence:
  *  - curated wins (enrichment/identity the Helm index lacks, + logo for air-gap):
  *    labels, documentation_url, reference_guide_url, changelog_url, logo_url,
- *    repository_name. The logical repository name remains source-specific even
- *    when every live ClusterRepo alias points at one aggregate mirror URL.
+ *    repository_name, overview. The logical repository name remains
+ *    source-specific even when every live ClusterRepo alias points at one
+ *    aggregate mirror URL.
  *  - live wins, curated fallback (chart-intrinsic, fresh in the live index):
  *    name, description, project_url, source_code_url, packaging_format.
  *  - live always wins (identity/volatile): slug_name, library, repository_url,
- *    last_updated_at.
+ *    last_updated_at, latest_version. A curated latest_version reflects NGC,
+ *    not what the cluster can actually install (e.g. a lagging private mirror),
+ *    so it must never leak onto a discovered app.
  * Discovered apps with no curated match pass through unchanged; curated entries
  * with no discovered match are dropped (existence is discovery-driven).
  */
@@ -573,13 +579,17 @@ export function overlayCuratedMetadata(
       changelog_url:       c.changelog_url       || app.changelog_url,
       logo_url:            browserSafeCatalogLogo(c.logo_url) || browserSafeCatalogLogo(app.logo_url),
       repository_name:     c.repository_name || app.repository_name,
+      overview:            c.overview || app.overview,
       // live wins, curated fallback
       name:            app.name            || c.name,
       description:     app.description     || c.description,
       project_url:     app.project_url     || c.project_url,
       source_code_url: app.source_code_url || c.source_code_url,
       packaging_format: app.packaging_format || c.packaging_format,
-      // live always wins: slug_name, library, repository_url, last_updated_at (from ...app)
+      // live always wins: slug_name, library, repository_url, last_updated_at
+      // (from ...app). latest_version is set explicitly below so a curated
+      // value can never leak in.
+      latest_version: app.latest_version,
     };
   });
 }

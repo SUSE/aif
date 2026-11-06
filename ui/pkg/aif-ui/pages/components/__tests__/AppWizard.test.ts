@@ -7,7 +7,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import AppWizard from '../AppWizard.vue';
-import { fetchUserNamespaces } from '../../../services/rancher-apps';
+import { fetchUserNamespaces, findChartInRepo, listChartVersions } from '../../../services/rancher-apps';
+import { isManagedRepoName } from '../../../services/app-collection';
 
 vi.mock('../../../services/rancher-apps', async (original) => ({
   ...await original<typeof import('../../../services/rancher-apps')>(),
@@ -15,6 +16,8 @@ vi.mock('../../../services/rancher-apps', async (original) => ({
   getAllClusters:            vi.fn().mockResolvedValue([]),
   inferClusterRepoForChart:  vi.fn().mockResolvedValue(null),
   getInstalledHelmDetails:   vi.fn().mockResolvedValue({}),
+  findChartInRepo:           vi.fn().mockResolvedValue(null),
+  listChartVersions:         vi.fn().mockResolvedValue([]),
 }));
 vi.mock('../../../services/app-collection', async (original) => ({
   ...await original<typeof import('../../../services/app-collection')>(),
@@ -93,5 +96,34 @@ describe('app install wizard namespace', () => {
     const wrapper = await setup('manage', { instanceName: 'coredns', instanceNamespace: 'coredns-system', instanceCluster: 'local' });
     expect(namespaceInput(wrapper)).toBe('coredns-system');
     expect(fetchUserNamespaces).toHaveBeenCalledWith(expect.anything(), 'coredns-system');
+  });
+});
+
+describe('app install wizard version from the detail panel', () => {
+  const selectedVersion = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent({ name: 'BasicInfoStep' }).props('form').chartVersion;
+
+  beforeEach(() => {
+    vi.mocked(isManagedRepoName).mockResolvedValue(true);
+    vi.mocked(findChartInRepo).mockResolvedValue({ chartName: 'coredns', version: '2.0.0' });
+    vi.mocked(listChartVersions).mockResolvedValue(['2.0.0', '1.5.0', '1.0.0']);
+  });
+  afterEach(() => vi.mocked(isManagedRepoName).mockResolvedValue(false));
+
+  it('preselects the version passed in the URL', async () => {
+    const wrapper = await setup('install', { repo: 'repo-a', version: '1.5.0' });
+
+    expect(selectedVersion(wrapper)).toBe('1.5.0');
+  });
+
+  it('keeps the latest version when the URL version is not offered by the repository', async () => {
+    const wrapper = await setup('install', { repo: 'repo-a', version: '9.9.9' });
+
+    expect(selectedVersion(wrapper)).toBe('2.0.0');
+  });
+
+  it('keeps the latest version when no version is passed', async () => {
+    const wrapper = await setup('install', { repo: 'repo-a' });
+
+    expect(selectedVersion(wrapper)).toBe('2.0.0');
   });
 });

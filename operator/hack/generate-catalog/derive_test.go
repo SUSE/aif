@@ -87,6 +87,13 @@ func TestNGCResourceKey(t *testing.T) {
 	}
 }
 
+func TestDeriveItem_LatestVersion(t *testing.T) {
+	res := ngcResource{Attributes: []ngcAttribute{{Key: ngcLatestVersionAttr, Value: "v2.6.0"}}}
+	if got := deriveItem(res).LatestVersion; got != "v2.6.0" {
+		t.Errorf("LatestVersion = %q, want %q", got, "v2.6.0")
+	}
+}
+
 func TestNGCLatestVersion(t *testing.T) {
 	r := ngcResource{Attributes: []ngcAttribute{{Key: ngcLatestVersionAttr, Value: " 1.5.0 "}}}
 	if got := ngcLatestVersion(r); got != "1.5.0" {

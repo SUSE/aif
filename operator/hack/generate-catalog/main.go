@@ -3,9 +3,13 @@
 // are rebuilt from the current NGC data each run: NVAIE-supported charts carry the
 // Supported chip, owned charts that lose the designation stay without it, and
 // owned charts NGC no longer publishes are removed. Hand-added entries and the
-// suse-ai library are preserved. Pinned fields in catalog-overrides.json are
-// applied on top of the fresh NGC values. Manual runs and the weekly
-// refresh-catalog CI workflow both invoke it; commit the result. See README.md.
+// suse-ai library are preserved. When NGC_API_KEY is set, NVIDIA entries (owned
+// and hand-added) are enriched from NGC's authenticated per-chart details with
+// the full overview, latest version and update date; without it, or for a chart
+// whose details fail, owned entries keep their existing overview. Pinned fields
+// in catalog-overrides.json are applied on top of the fresh NGC values. Manual
+// runs and the weekly refresh-catalog CI workflow both invoke it; commit the
+// result. See README.md.
 package main
 
 import (
@@ -55,7 +59,22 @@ func main() {
 		log.Fatalf("load overrides: %v", err)
 	}
 
-	out, rep, err := syncNVAIE(catIn, resources, ov)
+	// Details enrichment is best-effort: a missing key or a failed chart never
+	// fails the run, and the key is only ever sent as a request header.
+	var details detailsByChart
+	if apiKey := os.Getenv("NGC_API_KEY"); apiKey == "" {
+		log.Printf("warning: NGC_API_KEY not set; skipping overview enrichment")
+	} else {
+		targets, err := enrichmentTargets(catIn, resources)
+		if err != nil {
+			log.Fatalf("enrichment targets: %v", err)
+		}
+		detailsCtx, detailsCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		details = fetchAllDetails(detailsCtx, http.DefaultClient, ngcAPIBase, apiKey, targets)
+		detailsCancel()
+	}
+
+	out, rep, err := syncNVAIE(catIn, resources, ov, details)
 	if err != nil {
 		log.Fatalf("sync catalog: %v", err)
 	}
@@ -64,9 +83,9 @@ func main() {
 	}
 
 	fmt.Printf("updated %s (%d NGC resources, %d added, %d removed, %d delabeled, %d relabeled, "+
-		"%d unclassified paths)\n",
+		"%d unclassified paths, %d enriched)\n",
 		*catalogPath, len(resources), len(rep.Added), len(rep.Removed), len(rep.Delabeled),
-		len(rep.Relabeled), len(rep.Unclassified))
+		len(rep.Relabeled), len(rep.Unclassified), len(details))
 	logReport(rep)
 	if *reportDir != "" {
 		if err := writeReport(*reportDir, rep); err != nil {
