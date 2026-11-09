@@ -382,7 +382,7 @@
       "slug_name": "control-plane",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-09-23T19:48:26.632Z",
+      "last_updated_at": "2026-11-05T22:24:13.926Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
@@ -525,7 +525,7 @@
       "slug_name": "doca-telemetry",
       "description": "helm chart to start the latest DOCA Telemetry Service container.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-09-01T17:20:59.545Z",
+      "last_updated_at": "2026-11-06T19:57:51.060Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -656,7 +656,7 @@
       "slug_name": "dynamo-platform-enterprise",
       "description": "The Dynamo Platform Helm chart installs the Dynamo operator and its optional dependencies. Eligible for NVIDIA Enterprise Support. No functional or binary differences from its corresponding OSS artifact.",
       "logo_url": "https://s3.amazonaws.com/cms.ipressroom.com/219/files/20237/64e3dc1a3d6332319b2dfd35_NVIDIA-logo-white-16x9/NVIDIA-logo-white-16x9_927581a6-fc31-4fa5-85c6-379680c6aa6c-prv.png",
-      "last_updated_at": "2026-10-27T20:08:08.496Z",
+      "last_updated_at": "2026-11-05T20:00:37.465Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/ai-dynamo",
       "labels": [
@@ -765,7 +765,7 @@
       "slug_name": "k8s-nim-operator",
       "description": "Helm chart for NIM Operator for deployment and maintenance of NVIDIA NIMs and NeMo microservices in a Kubernetes environment",
       "logo_url": "https://assets.ngc.nvidia.com/products/catalog/logos/NIMOperator.png",
-      "last_updated_at": "2026-10-26T18:58:25.424Z",
+      "last_updated_at": "2026-11-02T18:03:50.471Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -1022,7 +1022,7 @@
       "slug_name": "nim-llm",
       "description": "Helm Chart for NVIDIA NIM for LLMs",
       "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
-      "last_updated_at": "2026-10-27T05:39:11.473Z",
+      "last_updated_at": "2026-11-03T12:26:34.720Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim",
       "labels": [
@@ -1752,7 +1752,7 @@
       "slug_name": "runai-cluster",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-09-23T19:44:41.443Z",
+      "last_updated_at": "2026-11-05T22:00:11.060Z",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
