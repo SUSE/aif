@@ -44,6 +44,16 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+          # NOTE: The major.minor tag follows the latest patch release of a release
+          # branch so consumers don't need to change when a patch is released. It is
+          # only set for a release version (x.y.z) built from a release branch, so
+          # release candidates and main never move it.
+          minor=""
+          if [[ "$GITHUB_REF" == refs/heads/release-* && "$version" =~ ^([0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+            minor="${BASH_REMATCH[1]}"
+          fi
+          echo "minor=$minor" >> "$GITHUB_OUTPUT"
+
       # NOTE: The image is FROM scratch with only a COPY so there is nothing to execute
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
@@ -57,7 +67,9 @@ jobs:
 
       # NOTE: latest follows main, the branch name tag (slashes sanitized by the
       # action) follows release branches, and the manifest version and commit SHA
-      # tags allow consumers to pin a specific manifest
+      # tags allow consumers to pin a specific manifest. The major.minor tag
+      # follows the latest patch release and the version label records which one
+      # it is.
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
@@ -69,9 +81,13 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch,enable=${{ github.ref_name != github.event.repository.default_branch }}
             type=raw,value=${{ steps.manifest.outputs.version }}
+            type=raw,value=${{ steps.manifest.outputs.minor }},enable=${{ steps.manifest.outputs.minor != '' }}
             type=sha
+          labels: |
+            org.opencontainers.image.version=${{ steps.manifest.outputs.version }}
 
       - name: Build and push multi-arch image
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: uc-release-manifest
@@ -80,3 +96,22 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # NOTE: Record the full image references and digest so it is clear which
+      # tags point to which manifest version after a run
+      - name: Log pushed image
+        shell: bash
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### UC release manifest image"
+            echo "Manifest version: \`${VERSION}\`"
+            echo "Digest: \`${DIGEST}\`"
+            echo "Tags:"
+            while read -r tag; do
+              echo "- \`${tag}\`"
+            done <<< "${TAGS}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
