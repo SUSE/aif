@@ -372,6 +372,52 @@ describe('fetchSuseAiApps', () => {
     const requested = store.dispatch.mock.calls.map(c => c[1].url).join('\n');
     expect(requested).not.toContain('link=index');
   });
+
+  it('sets latest_version from the newest Helm index entry', async () => {
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac' }, status: ready() },
+    ], {
+      'application-collection': {
+        foo: [
+          { name: 'foo', version: '1.2.0', created: '2026-01-02T00:00:00Z' },
+          { version: '1.1.0' },
+        ],
+      },
+    });
+    const { apps } = await fetchSuseAiApps(store);
+    expect(apps.find(a => a.slug_name === 'foo')?.latest_version).toBe('1.2.0');
+  });
+
+  it('leaves last_updated_at undefined when the Helm index entry has no created date', async () => {
+    const store = makeStore([
+      { metadata: { name: 'application-collection', labels: { [MANAGED]: 'true' } }, spec: { url: 'oci://ac' }, status: ready() },
+    ], {
+      'application-collection': { foo: [{ name: 'foo', version: '1.2.0' }] },
+    });
+    const { apps } = await fetchSuseAiApps(store);
+    expect(apps.find(a => a.slug_name === 'foo')?.last_updated_at).toBeUndefined();
+  });
+});
+
+describe('overlayCuratedMetadata (overview and latest_version)', () => {
+  it('overlays curated overview but never curated latest_version', () => {
+    const discovered = [
+      { name: 'a', slug_name: 'a', library: 'nvidia' },
+    ];
+    const curated = [
+      { name: 'a', slug_name: 'a', library: 'nvidia', overview: '## O', latest_version: '9.9.9' },
+    ];
+
+    const [result] = overlayCuratedMetadata(discovered, curated);
+    expect(result.overview).toBe('## O');
+    expect(result.latest_version).toBeUndefined();
+
+    const discoveredWithVersion = [
+      { name: 'a', slug_name: 'a', library: 'nvidia', latest_version: '1.0.0' },
+    ];
+    const [result2] = overlayCuratedMetadata(discoveredWithVersion, curated);
+    expect(result2.latest_version).toBe('1.0.0');
+  });
 });
 
 describe('fetchNvidiaApps', () => {

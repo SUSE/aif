@@ -114,14 +114,13 @@
           <div
             v-for="app in filteredApps"
             :key="app.slug_name"
-            :class="['app-tile', { 'clickable-tile': !isUnavailable(app), 'unavailable-app': isUnavailable(app) }]"
-            @click="onTileClick(app)"
-            :aria-label="isUnavailable(app) ? `${app.name}: ${availabilityMessage(app)}` : `Install ${ app.name }`"
-            :aria-disabled="isUnavailable(app)"
+            :class="['app-tile', 'clickable-tile', { 'unavailable-app': isUnavailable(app) }]"
+            :aria-label="appAriaLabel(app)"
             role="button"
             tabindex="0"
-            @keydown.enter="onTileClick(app)"
-            @keydown.space.prevent="onTileClick(app)"
+            @click="openDetail(app)"
+            @keydown.enter="openDetail(app)"
+            @keydown.space.prevent="openDetail(app)"
           >
             <div class="tile-header">
               <template v-if="app.library === 'nvidia'">
@@ -152,10 +151,25 @@
 
             <div class="tile-content">
               <p class="tile-description">{{ app.description || '—' }}</p>
+            </div>
+
+            <!-- An unavailable app shows its repository status where Install would be. -->
+            <div class="tile-footer">
               <div v-if="isUnavailable(app)" class="availability-message">
                 <strong>{{ availabilityMessage(app) }}</strong>
                 <router-link :to="settingsLink" aria-disabled="false" @click.stop @keydown.stop>{{ t('suseai.repositoryHealth.settings', 'Open Settings') }}</router-link>
               </div>
+              <button
+                v-else
+                class="btn role-primary btn-sm"
+                type="button"
+                data-testid="app-install"
+                @click.stop="installApp(app)"
+                @keydown.enter.stop
+                @keydown.space.stop
+              >
+                {{ t('suseai.apps.detail.install', 'Install') }}
+              </button>
             </div>
           </div>
           <div
@@ -165,70 +179,79 @@
           ></div>
         </div>
 
-      <!-- List view -->
-      <div v-else class="list-view">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t('suseai.apps.name', 'Name') }}</th>
-              <th>{{ t('suseai.apps.description', 'Description') }}</th>
-              <th class="text-right">{{ t('suseai.apps.actions', 'Actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!filteredApps.length && items.length > 0" class="empty-row">
-              <td colspan="3" class="text-center text-muted">{{ t('suseai.apps.noApps', 'No applications found') }}</td>
-            </tr>
-            <tr
-              v-else
-              v-for="app in filteredApps"
-              :key="app.slug_name"
-              :class="['main-row', { 'clickable-row': !isUnavailable(app), 'unavailable-app': isUnavailable(app) }]"
-              @click="onTileClick(app)"
-              :aria-label="isUnavailable(app) ? `${app.name}: ${availabilityMessage(app)}` : `Install ${ app.name }`"
-              :aria-disabled="isUnavailable(app)"
-              role="button"
-              tabindex="0"
-              @keydown.enter="onTileClick(app)"
-              @keydown.space.prevent="onTileClick(app)"
-            >
-              <!-- Name column with logo -->
-              <td class="col-name">
-                <div class="name-cell">
-                  <template v-if="app.library === 'nvidia'">
-                    <img :src="nvidiaLogo" alt="" class="table-logo nvidia-logo--light" />
-                    <img :src="nvidiaLogoDark" alt="" class="table-logo nvidia-logo--dark" />
-                  </template>
-                  <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="table-logo" />
-                  <div class="name-info">
-                    <div class="app-name">{{ app.name }}</div>
-                    <div v-if="app.packaging_format || (app.labels && app.labels.length)" class="app-meta">
-                      <span v-if="app.packaging_format" class="list-pkg">
-                        {{ formatPackagingType(app.packaging_format) }}
-                      </span>
-                      <AppLabels :labels="app.labels" />
+        <!-- List view -->
+        <div v-else class="list-view">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ t('suseai.apps.name', 'Name') }}</th>
+                <th>{{ t('suseai.apps.description', 'Description') }}</th>
+                <th class="text-right">{{ t('suseai.apps.actions', 'Actions') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!filteredApps.length && items.length > 0" class="empty-row">
+                <td colspan="3" class="text-center text-muted">{{ t('suseai.apps.noApps', 'No applications found') }}</td>
+              </tr>
+              <tr
+                v-else
+                v-for="app in filteredApps"
+                :key="app.slug_name"
+                :class="['main-row', 'clickable-row', { 'unavailable-app': isUnavailable(app) }]"
+                :aria-label="appAriaLabel(app)"
+                role="button"
+                tabindex="0"
+                @click="openDetail(app)"
+                @keydown.enter="openDetail(app)"
+                @keydown.space.prevent="openDetail(app)"
+              >
+                <!-- Name column with logo -->
+                <td class="col-name">
+                  <div class="name-cell">
+                    <template v-if="app.library === 'nvidia'">
+                      <img :src="nvidiaLogo" alt="" class="table-logo nvidia-logo--light" />
+                      <img :src="nvidiaLogoDark" alt="" class="table-logo nvidia-logo--dark" />
+                    </template>
+                    <img v-else :src="logoFor(app)" alt="" @error="onImgError($event, app)" class="table-logo" />
+                    <div class="name-info">
+                      <div class="app-name">{{ app.name }}</div>
+                      <div v-if="app.packaging_format || (app.labels && app.labels.length)" class="app-meta">
+                        <span v-if="app.packaging_format" class="list-pkg">
+                          {{ formatPackagingType(app.packaging_format) }}
+                        </span>
+                        <AppLabels :labels="app.labels" />
+                      </div>
                     </div>
                   </div>
-                </div>
-              </td>
+                </td>
 
-              <!-- Description -->
-              <td class="col-description">
-                <span class="list-description">{{ app.description || '—' }}</span>
-                <div v-if="isUnavailable(app)" class="availability-message">
-                  <strong>{{ availabilityMessage(app) }}</strong>
-                  <router-link :to="settingsLink" aria-disabled="false" @click.stop @keydown.stop>{{ t('suseai.repositoryHealth.settings', 'Open Settings') }}</router-link>
-                </div>
-              </td>
+                <!-- Description -->
+                <td class="col-description">
+                  <span class="list-description">{{ app.description || '—' }}</span>
+                </td>
 
-              <!-- Actions -->
-              <td class="col-actions text-right">
-                <i class="icon icon-chevron-right" aria-hidden="true"></i>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+                <!-- Actions -->
+                <td class="col-actions text-right">
+                  <div v-if="isUnavailable(app)" class="availability-message">
+                    <strong>{{ availabilityMessage(app) }}</strong>
+                    <router-link :to="settingsLink" aria-disabled="false" @click.stop @keydown.stop>{{ t('suseai.repositoryHealth.settings', 'Open Settings') }}</router-link>
+                  </div>
+                  <button
+                    v-else
+                    class="btn role-primary btn-sm"
+                    type="button"
+                    data-testid="app-install"
+                    @click.stop="installApp(app)"
+                    @keydown.enter.stop
+                    @keydown.space.stop
+                  >
+                    {{ t('suseai.apps.detail.install', 'Install') }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <!-- Empty state: static catalog mode with an empty catalog (no registry config applies) -->
         <div v-if="!loading && !items.length && isStaticMode && !error" class="empty-state-content">
@@ -283,15 +306,42 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="detailApp"
+      class="app-detail-backdrop"
+      @click="closeDetail"
+    />
+    <transition name="app-detail-drawer">
+      <div
+        v-if="detailApp"
+        class="app-detail-drawer"
+      >
+        <div class="app-detail-drawer-body">
+          <AppDetailPanel
+            :app="detailApp"
+            :unavailable="isUnavailable(detailApp)"
+            :availability-message="availabilityMessage(detailApp)"
+            :settings-link="settingsLink"
+            :versions="detailVersions"
+            :versions-loading="detailVersionsLoading"
+            :versions-error="detailVersionsError"
+            @select-version="(version) => installApp(detailApp, version)"
+            @close="closeDetail"
+          />
+        </div>
+      </div>
+    </transition>
   </main>
 </template>
 
 <script lang="ts">
-import { defineComponent, computed, getCurrentInstance, onMounted, ref, watch } from 'vue';
+import { defineComponent, computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useT } from '../composables/useT';
 import type { AppCollectionItem, ManagedRepo } from '../services/app-collection';
 import AppLabels from '../formatters/AppLabels.vue';
+import AppDetailPanel from '../components/AppDetailPanel.vue';
 import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
 import { appRepository, includeUnavailableApps } from '../services/repository-health';
 import { requestErrorMessage } from '../services/rancher-token';
@@ -300,6 +350,8 @@ import nvidiaLogoDark from '../assets/nvidia-logo-light.svg';
 import genericLogo from '../assets/generic-app.svg';
 import { fetchSuseAiApps, fetchNvidiaApps, fetchCustomRepoApps, fetchManagedRepos, fetchSettingsOrNull, resolveInstallRepoName, overlayCuratedMetadata, fetchCuratedOverlayOrEmpty, buildWarnings, isAppSupported } from '../services/app-collection';
 import { fetchStaticCatalog } from '../services/static-catalog';
+import { listChartVersionEntries } from '../services/rancher-apps';
+import type { ChartVersionEntry } from '../services/rancher-apps';
 import { getUseStaticCatalog, loadOperatorConfig } from '../utils/operator-config';
 import { resolveCatalogLogo, onCatalogLogoError } from '../utils/catalog-logo';
 import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
@@ -307,7 +359,7 @@ import { readLibraryFilter, withLibraryFilter } from '../utils/catalog-route';
 export default defineComponent({
   name: 'SuseAIApps',
 
-  components: { AppLabels, RepositoryHealthBanner },
+  components: { AppLabels, AppDetailPanel, RepositoryHealthBanner },
 
   setup() {
     const vm = getCurrentInstance();
@@ -493,6 +545,8 @@ export default defineComponent({
     };
 
     const refresh = async () => {
+      // Repositories may have synced new versions since they were cached.
+      versionCache.clear();
       loading.value = true;
       error.value = null;
       try {
@@ -597,7 +651,17 @@ export default defineComponent({
       return `${t('suseai.repositoryHealth.unavailableApp', 'Repository unavailable')}${repo.message ? `: ${repo.message}` : ''}`;
     };
 
-    const onTileClick = async (app: AppCollectionItem) => {
+    const appAriaLabel = (app: AppCollectionItem) => {
+      const label = t('suseai.apps.detail.viewDetails', 'View details for {name}', { name: app.name });
+      return isUnavailable(app) ? `${label}: ${availabilityMessage(app)}` : label;
+    };
+
+    // The repository the wizard installs from; versions are listed from it too.
+    const repositoryNameFor = async (app: AppCollectionItem): Promise<string | null> => (
+      appRepository(app, managedRepos.value)?.name || await resolveInstallRepoName(store, app)
+    );
+
+    const installApp = async (app: AppCollectionItem, version?: string) => {
       if (isUnavailable(app)) return;
       const route: RouteLocationRaw = {
         name:   `c-cluster-suseai-install`,
@@ -609,17 +673,85 @@ export default defineComponent({
         query: withLibraryFilter({ n: app.name }, selectedRepo.value),
       };
 
-      const repoName = appRepository(app, managedRepos.value)?.name || await resolveInstallRepoName(store, app);
+      const repoName = await repositoryNameFor(app);
       if (repoName) {
         route.query = { ...route.query, repo: repoName };
+      }
+      if (version) {
+        route.query = { ...route.query, version };
       }
 
       await $router.push(route);
     };
 
+    // Detail drawer. Availability is derived from the app on each render, not
+    // captured here, so it stays current if repository status changes while open.
+    const detailApp = ref<AppCollectionItem | null>(null);
+
+    // Versions come from the same repository index the wizard reads, cached per
+    // repository and chart while the page is open.
+    const detailVersions = ref<ChartVersionEntry[] | null>(null);
+    const detailVersionsLoading = ref(false);
+    const detailVersionsError = ref(false);
+    const versionCache = new Map<string, Promise<ChartVersionEntry[]>>();
+
+    const loadDetailVersions = async (app: AppCollectionItem) => {
+      detailVersions.value = null;
+      detailVersionsError.value = false;
+      if (isUnavailable(app)) return;
+
+      detailVersionsLoading.value = true;
+      try {
+        const repoName = await repositoryNameFor(app);
+        if (!repoName) throw new Error(`No repository found for ${ app.slug_name }`);
+        const key = `${ repoName }|${ app.slug_name }`;
+        let pending = versionCache.get(key);
+        if (!pending) {
+          // Drop failures so a later open can retry.
+          pending = listChartVersionEntries(store, repoName, app.slug_name).catch((e) => {
+            versionCache.delete(key);
+            throw e;
+          });
+          versionCache.set(key, pending);
+        }
+        const versions = await pending;
+        if (detailApp.value === app) detailVersions.value = versions;
+      } catch {
+        if (detailApp.value === app) detailVersionsError.value = true;
+      } finally {
+        if (detailApp.value === app) detailVersionsLoading.value = false;
+      }
+    };
+
+    const openDetail = (app: AppCollectionItem) => {
+      detailApp.value = app;
+    };
+    const closeDetail = () => {
+      detailApp.value = null;
+      detailVersions.value = null;
+      detailVersionsLoading.value = false;
+      detailVersionsError.value = false;
+    };
+
+    // Load versions whenever the drawer shows a different available app: on
+    // open, when switching apps while it is open (keyboard users can reach other
+    // tiles), and when the open app's repository becomes available (for example
+    // once the initial load finishes).
+    watch(() => (detailApp.value && !isUnavailable(detailApp.value) ? detailApp.value : null), (app) => {
+      if (app) void loadDetailVersions(app);
+    });
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && detailApp.value) closeDetail();
+    };
+
     // Initialize
     onMounted(() => {
+      document.addEventListener('keydown', onKeydown);
       refresh();
+    });
+
+    onUnmounted(() => {
+      document.removeEventListener('keydown', onKeydown);
     });
 
     const t = useT();
@@ -645,6 +777,7 @@ export default defineComponent({
       managedRepos,
       isUnavailable,
       availabilityMessage,
+      appAriaLabel,
       settingsLink,
       filteredApps,
       settingsData,
@@ -653,7 +786,13 @@ export default defineComponent({
 
       // Methods
       refresh,
-      onTileClick,
+      installApp,
+      detailApp,
+      detailVersions,
+      detailVersionsLoading,
+      detailVersionsError,
+      openDetail,
+      closeDetail,
       formatPackagingType,
       logoFor,
       onImgError,
@@ -1007,6 +1146,14 @@ export default defineComponent({
     gap: 12px;
   }
 
+  .tile-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
 .tile-description {
   margin: 0;
   color: var(--body-text);
@@ -1075,13 +1222,6 @@ export default defineComponent({
         &:focus {
           outline: 2px solid var(--primary);
           outline-offset: -2px;
-        }
-
-        .col-actions {
-          .icon-chevron-right {
-            color: var(--muted);
-            font-size: 16px;
-          }
         }
       }
     }
@@ -1378,7 +1518,6 @@ export default defineComponent({
 .list-view .table .main-row.unavailable-app {
   background: var(--disabled-bg);
   border-style: dashed;
-  cursor: default;
 }
 .availability-message {
   display: flex;
@@ -1386,6 +1525,60 @@ export default defineComponent({
   gap: 6px;
   margin-top: 8px;
   overflow-wrap: anywhere;
+}
+
+// In place of the Install button: fill the tile footer, or right-align in the
+// list's actions column like the button it replaces.
+.tile-footer .availability-message {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+
+.col-actions .availability-message {
+  align-items: flex-end;
+  margin-top: 0;
+  text-align: right;
+}
+
+.app-detail-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 899;
+  background: transparent;
+}
+
+.app-detail-drawer {
+  position: fixed;
+  top: 55px;
+  right: 0;
+  width: 580px;
+  height: calc(100vh - 55px);
+  background: var(--body-bg);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 900;
+
+  // No side padding here: the panel pads its own content so its divider
+  // can run edge to edge.
+  .app-detail-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 0;
+  }
+}
+
+.app-detail-drawer-enter-active,
+.app-detail-drawer-leave-active {
+  transition: transform 0.3s ease;
+}
+.app-detail-drawer-enter-from,
+.app-detail-drawer-leave-to {
+  transform: translateX(100%);
 }
 </style>
 

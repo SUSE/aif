@@ -399,6 +399,22 @@ suseai:
       inference: Inference
       training: Training
       workflow: Workflow
+    detail:
+      viewDetails: View details for {name}
+      install: Install
+      close: Close
+      latestVersion: Latest version
+      lastUpdated: Last updated
+      repository: Repository
+      documentation: Documentation
+      project: Project page
+      viewOnNgc: View on NGC
+      overview: Overview
+      description: Description
+      versions: Versions
+      versionsUnavailable: Versions unavailable
+      showAllVersions: Show all {count} versions
+      showFewerVersions: Show fewer
   instances:
     search: Search instances
     install: Install
