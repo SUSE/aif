@@ -293,6 +293,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	if err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
+	adaptPullSecretShapeForChart(c.ChartName, vals)
 	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
