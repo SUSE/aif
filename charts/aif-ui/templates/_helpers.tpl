@@ -27,6 +27,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- define "aif-ui.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "aif-ui.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app: aif-ui
 {{- end }}
 
 {{- define "aif-ui.podLabels" -}}
