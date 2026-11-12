@@ -93,6 +93,51 @@ rules:
   - apiGroups:
       - ai-factory.suse.com
     resources:
+      - labs
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
+      - labcatalogs
+    verbs:
+      - create
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
+      - labcatalogs/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
+      - labs/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
+      - labs/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
       - installaiextensions
     verbs:
       - create

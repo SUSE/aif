@@ -115,6 +115,31 @@ suseai:
           refreshRequested: Refresh requested for the saved repository. The download has not been verified; Test again to check its status.
       sections:
         learnMore: Learn more
+        labs:
+          title: Labs
+          experimentalBadge: experimental
+          experimentalBanner: Labs are experimental, unsupported previews. They may change or be removed without notice. Do not use them in production.
+          reloadHint: After a lab becomes Ready, reload the browser to load its UI.
+          empty: No labs available.
+          enable: Enabled
+          readOnly: You do not have permission to change labs.
+          source:
+            builtin: Built-in
+            catalog: 'Catalog: {name}'
+            custom: Custom
+          catalogs:
+            title: Lab catalogs
+            help: Catalog URL must be public https and point at a JSON array in the same format as the built-in catalog.
+            empty: No external lab catalogs configured.
+            name: Name
+            url: URL
+            labCount: Labs
+            lastFetched: Last fetched
+            pending: Pending
+            readOnly: You do not have permission to change lab catalogs.
+            skipped: '{count} skipped (duplicate or rejected entries)'
+            add: Add catalog
+            remove: Remove
         repositories:
           title: Repositories
         appCollection:

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aif-lab-token-factory.serviceName" . }}
+  labels:
+    {{- include "aif-lab-token-factory.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "aif-lab-token-factory.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,28 @@
+{
+  "name": "aif-lab-token-factory",
+  "description": "SUSE AI Factory Lab (experimental): mock Token Factory for metered, key-protected model endpoints",
+  "version": "0.1.0",
+  "private": false,
+  "license": "Apache-2.0",
+  "rancher": {
+    "annotations": {
+      "catalog.cattle.io/rancher-version": ">= 2.10.0",
+      "catalog.cattle.io/display-name": "AI Factory Lab: Token Factory",
+      "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
+    }
+  },
+  "icon": "plugin/aif-lab-token-factory/logo.svg",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0",
+    "@vue/cli-service": "~5.0.0"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+}

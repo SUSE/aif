@@ -8,6 +8,7 @@ import { LabeledInput } from '@components/Form/LabeledInput';
 import { Checkbox }     from '@components/Form/Checkbox';
 import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import SecretSelector   from '@shell/components/form/SecretSelector';
+import LabsSettings from './components/LabsSettings.vue';
 import RegistryConnectionStatus from './components/RegistryConnectionStatus.vue';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
 import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
@@ -67,6 +68,7 @@ export default {
     LabeledSelect,
     SecretSelector,
     RegistryConnectionStatus,
+    LabsSettings,
   },
 
   async fetch() {
@@ -1846,6 +1848,8 @@ export default {
           </div>
         </div>
       </div>
+
+      <LabsSettings />
 
       <div class="footer-bar">
         <AsyncButton

@@ -203,6 +203,21 @@
         "affinity": { "type": "object", "default": {} }
       }
     },
+    "labs": {
+      "type": "object",
+      "properties": {
+        "adminGlobalRole": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Create the Rancher GlobalRole aif-labs-admin (full access to labs and labcatalogs)."
+            }
+          }
+        }
+      }
+    },
     "rbacHelpers": {
       "type": "object",
       "properties": {

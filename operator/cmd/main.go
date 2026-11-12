@@ -47,6 +47,8 @@ import (
 	"github.com/SUSE/aif-operator/internal/config"
 	aiworkloadctrl "github.com/SUSE/aif-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/aif-operator/internal/controller/installaiextension"
+	labctrl "github.com/SUSE/aif-operator/internal/controller/lab"
+	labcatalogctrl "github.com/SUSE/aif-operator/internal/controller/labcatalog"
 	settingsctrl "github.com/SUSE/aif-operator/internal/controller/settings"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	// +kubebuilder:scaffold:imports
@@ -339,6 +341,20 @@ func main() {
 		AllowedRegistryHosts:     allowedHosts,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
+		os.Exit(1)
+	}
+	if err := (&labctrl.LabReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Lab")
+		os.Exit(1)
+	}
+	if err := (&labcatalogctrl.LabCatalogReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "LabCatalog")
 		os.Exit(1)
 	}
 	// Shared holder: the Settings controller builds the Rancher catalog client
