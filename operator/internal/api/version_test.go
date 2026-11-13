@@ -24,8 +24,7 @@ import (
 )
 
 func TestGetVersion(t *testing.T) {
-	mux := http.NewServeMux()
-	NewVersionHandler("1.2.3", "abc1234", "0.1.0-dev.3").Register(mux)
+	mux := newTestMux(NewVersionHandler("1.2.3", "abc1234", "0.1.0-dev.3"))
 
 	req := httptest.NewRequest("GET", "/api/v1/version", nil)
 	w := httptest.NewRecorder()

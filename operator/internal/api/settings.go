@@ -56,13 +56,13 @@ func NewSettingsHandler(c client.Client, namespace string) *SettingsHandler {
 }
 
 // Register wires the handler's routes onto the mux.
-func (h *SettingsHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/settings", h.getSettings)
-	mux.HandleFunc("PUT /api/v1/settings", h.putSettings)
-	mux.HandleFunc("GET /api/v1/settings/registry-credentials", h.getRegistryCredentials)
-	mux.HandleFunc("POST /api/v1/settings/validate-credentials", h.validateCredentials)
-	mux.HandleFunc("POST /api/v1/settings/validate-chart-access", h.validateChartAccess)
-	mux.HandleFunc("POST /api/v1/git/publish", h.publishToGit)
+func (h *SettingsHandler) Register(a *Authorizer, mux *http.ServeMux) {
+	a.HandleFunc(mux, "GET /api/v1/settings", h.getSettings)
+	a.HandleFunc(mux, "PUT /api/v1/settings", h.putSettings)
+	a.HandleFunc(mux, "GET /api/v1/settings/registry-status", h.getRegistryStatus)
+	a.HandleFunc(mux, "POST /api/v1/settings/validate-credentials", h.validateCredentials)
+	a.HandleFunc(mux, "POST /api/v1/settings/validate-chart-access", h.validateChartAccess)
+	a.HandleFunc(mux, "POST /api/v1/git/publish", h.publishToGit)
 }
 
 func (h *SettingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -211,87 +211,59 @@ const (
 	defaultNvidiaHost        = "nvcr.io"
 )
 
-// RegistryCredentials holds decoded registry credentials from Settings secret refs.
-type RegistryCredentials struct {
-	ApplicationCollection *RegistryCred `json:"applicationCollection,omitempty"`
-	SUSERegistry          *RegistryCred `json:"suseRegistry,omitempty"`
-	Nvidia                *RegistryCred `json:"nvidia,omitempty"`
+// RegistryStatus reports, per registry, whether a usable credential pair is
+// configured. It deliberately carries booleans only: the API never returns
+// secret values.
+type RegistryStatus struct {
+	ApplicationCollection bool `json:"applicationCollection"`
+	SUSERegistry          bool `json:"suseRegistry"`
+	Nvidia                bool `json:"nvidia"`
 }
 
-// RegistryCred is a single registry's decoded credentials.
-type RegistryCred struct {
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	RegistryHost string `json:"registryHost"`
-}
-
-func (h *SettingsHandler) getRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+func (h *SettingsHandler) getRegistryStatus(w http.ResponseWriter, r *http.Request) {
 	var s aiplatformv1alpha1.Settings
 	key := types.NamespacedName{Namespace: h.namespace, Name: settingsName}
 	if err := h.client.Get(r.Context(), key, &s); err != nil {
-		writeJSON(w, http.StatusOK, &RegistryCredentials{})
+		writeJSON(w, http.StatusOK, &RegistryStatus{})
 		return
 	}
 
-	creds := &RegistryCredentials{}
-
-	appHost := defaultAppCollectionHost
-	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-		appHost = registryurl.Host(s.Spec.RegistryEndpoints.ApplicationCollection)
-	}
 	// Resolve credentials the same way the operator's Settings controller does
 	// (EffectiveRefs), so credentials supplied via well-known secret names — not
 	// just spec refs — are reported as configured. This keeps the UI pre-flight
 	// in lockstep with what the operator will actually be able to create.
-	acUser, acToken := credentials.EffectiveRefs(r.Context(), h.client, h.namespace,
-		s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef,
-		credentials.RegistryApplicationCollection)
-	if acUser != nil && acToken != nil {
-		user, err1 := h.readSecretKey(r.Context(), acUser)
-		pass, err2 := h.readSecretKey(r.Context(), acToken)
-		if err1 == nil && err2 == nil {
-			creds.ApplicationCollection = &RegistryCred{
-				Username: user, Password: pass, RegistryHost: appHost,
-			}
-		}
-	}
-
-	suseHost := defaultSUSERegistryHost
-	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-		suseHost = registryurl.Host(s.Spec.RegistryEndpoints.SUSERegistry)
-	}
-	srUser, srToken := credentials.EffectiveRefs(r.Context(), h.client, h.namespace,
-		s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef,
-		credentials.RegistrySUSERegistry)
-	if srUser != nil && srToken != nil {
-		user, err1 := h.readSecretKey(r.Context(), srUser)
-		pass, err2 := h.readSecretKey(r.Context(), srToken)
-		if err1 == nil && err2 == nil {
-			creds.SUSERegistry = &RegistryCred{
-				Username: user, Password: pass, RegistryHost: suseHost,
-			}
-		}
-	}
-
-	// NVIDIA images are pulled from nvcr.io in connected installs. The registryEndpoints.nvidia
-	// field is the chart-repo OCI URL (not an image host); air-gap image redirection is handled
-	// by a node-level registry proxy, so the pull-secret host is always nvcr.io here.
-	nvUser, nvToken := credentials.EffectiveRefs(r.Context(), h.client, h.namespace,
-		s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef,
-		credentials.RegistryNvidia)
-	if nvUser != nil && nvToken != nil {
-		user, err1 := h.readSecretKey(r.Context(), nvUser)
-		pass, err2 := h.readSecretKey(r.Context(), nvToken)
-		if err1 == nil && err2 == nil {
-			creds.Nvidia = &RegistryCred{
-				Username: user, Password: pass, RegistryHost: defaultNvidiaHost,
-			}
-		}
-	}
-
-	writeJSON(w, http.StatusOK, creds)
+	writeJSON(w, http.StatusOK, &RegistryStatus{
+		ApplicationCollection: h.registryConfigured(r.Context(),
+			s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef,
+			credentials.RegistryApplicationCollection),
+		SUSERegistry: h.registryConfigured(r.Context(),
+			s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef,
+			credentials.RegistrySUSERegistry),
+		Nvidia: h.registryConfigured(r.Context(),
+			s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef,
+			credentials.RegistryNvidia),
+	})
 }
 
+// registryConfigured reports whether the effective refs for registry resolve
+// to a non-empty username/token pair. The values are read only to check them
+// and are discarded.
+func (h *SettingsHandler) registryConfigured(
+	ctx context.Context,
+	explicitUser, explicitToken *aiplatformv1alpha1.SecretKeyRef,
+	registry credentials.Registry,
+) bool {
+	userRef, tokenRef := credentials.EffectiveRefs(ctx, h.client, h.namespace, explicitUser, explicitToken, registry)
+	_, _, ok, _ := credentials.ReadPair(ctx, h.client, h.namespace, userRef, tokenRef)
+	return ok
+}
+
+// readSecretKey resolves ref in the operator namespace only. The
+// validate-credentials overrides let a caller name any Secret here and send its
+// value as basic auth to a URL of their choice, so every Secret in the operator
+// namespace is effectively readable by Settings writers. That is why Rancher's
+// aggregation tunnel Secret lives outside it (aggregation.secretNamespace,
+// default cattle-system); see config.GetAggregationSecretNamespace.
 func (h *SettingsHandler) readSecretKey(ctx context.Context, ref *aiplatformv1alpha1.SecretKeyRef) (string, error) {
 	var secret corev1.Secret
 	if err := h.client.Get(ctx, types.NamespacedName{

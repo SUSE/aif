@@ -57,6 +57,13 @@ tests:
       - failedTemplate:
           errorPattern: "at '/operator': additional properties .*bogus.* not allowed"
 
+  - it: still accepts the deprecated operator.service property
+    template: templates/deployment.yaml
+    set:
+      operator.service: aif-operator
+    asserts:
+      - notFailedTemplate: {}
+
   - it: rejects an unknown appCatalog property
     template: templates/deployment.yaml
     set:

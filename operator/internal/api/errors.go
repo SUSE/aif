@@ -29,6 +29,14 @@ const (
 	ErrCodeConflict     = "CONFLICT"
 	ErrCodeForbidden    = "FORBIDDEN"
 	ErrCodeInternal     = "INTERNAL_ERROR"
+
+	// ErrCodeUnauthorized is returned when the request carries no usable
+	// caller identity (see IdentityFromImpersonation).
+	ErrCodeUnauthorized = "UNAUTHORIZED"
+	// ErrCodeCSRF and ErrCodeUnsupportedMediaType are returned by the
+	// request guards RequireCSRFForCookieWrites and RequireJSONForWrites.
+	ErrCodeCSRF                 = "CSRF_FAILED"
+	ErrCodeUnsupportedMediaType = "UNSUPPORTED_MEDIA_TYPE"
 )
 
 var (

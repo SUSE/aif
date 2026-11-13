@@ -17,7 +17,6 @@ import {
   listChartVersions,
   fetchChartDefaultValues,
   fetchChartArchiveSize,
-  ensureRegistrySecretSimple,
   ensureServiceAccountPullSecret,
   ensurePullSecretOnAllSAs,
   waitForAppInstall,
@@ -31,14 +30,16 @@ import { validateReleaseName, instanceNameError } from '../../validators/appInst
 import { fetchSuseAiApps, resolveInstallRepoName, getLibraryForClusterRepo, isManagedRepoName } from '../../services/app-collection';
 import { installRecordingWorkloadsFirst } from '../../services/helm-install-order';
 import { isChartArchiveOversized } from '../../services/chart-values';
-import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus } from '../../utils/operator-api';
+import { operatorErrorMessage } from '../../utils/operator-config';
+import { mergeImagePullSecrets, operatorPullSecretNames } from '../../utils/pull-secrets';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets, injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../../services/fleet-bundle';
 import { publishToFleetGit }                          from '../../services/git-publish';
 import { crNameForCluster, defaultInstallNamespace } from '../../utils/workload-name';
 import { readLibraryFilter, withLibraryFilter } from '../../utils/catalog-route';
-import type { AIWorkloadClusterStatus, AIWorkloadPhase } from '../../types/aiworkload-types';
+import type { AIWorkloadClusterStatus, AIWorkloadPhase, RegistryStatus } from '../../types/aiworkload-types';
 
 const REPO_CLUSTER = 'local' as const;
 
@@ -583,7 +584,7 @@ async function loadDefaultValues(options: { skipVersionInfoFetch?: boolean } = {
       }
     }
   } catch (e: any) {
-    error.value = e?.message || 'Failed to fetch default values.';
+    error.value = operatorErrorMessage(e, t, 'Failed to fetch default values.');
   } finally {
     loadingValues.value = false;
   }
@@ -603,7 +604,7 @@ async function onLoadDefaults() {
 }
 
 /**
- * Resolve pull secret names from Settings registry credentials,
+ * Resolve the operator-delivered pull secret names for the chart,
  * then inject them into form.values so the user can see them in the Configuration step.
  */
 async function resolvePullSecretNames() {
@@ -621,20 +622,33 @@ async function resolvePullSecretNames() {
       return;
     }
 
-    const creds = await getRegistryCredentials(5000);
-    const secrets = [creds.applicationCollection, creds.suseRegistry, creds.nvidia]
-      .filter(Boolean)
-      .map(cred => ({
-        name: `suse-ai-pull-secret-${ cred!.registryHost.replace(/[^a-z0-9]/g, '-') }`,
-      }));
-    if (secrets.length > 0) {
-      form.value.values.global = form.value.values.global || {};
-      form.value.values.global.imagePullSecrets = secrets;
-      form.value.values.imagePullSecrets = secrets;
-    }
+    mergeImagePullSecrets(form.value.values, await resolveOperatorPullSecretNames(library, 'Configuration'));
   } catch (e: any) {
     console.warn('[SUSE-AI] Failed to resolve pull secret names:', e?.message || e);
   }
+}
+
+// resolveOperatorPullSecretNames returns the names of the pull secrets the
+// operator delivers to the target namespace for this chart's library. The
+// operator creates them from the AIWorkload, so the browser never handles
+// registry credentials. Fail-soft: no names when the status is unavailable.
+async function resolveOperatorPullSecretNames(library: string | undefined, context: string): Promise<string[]> {
+  let status: RegistryStatus | null = null;
+  try {
+    status = await getRegistryStatus(5000);
+  } catch (e: any) {
+    console.warn(`[SUSE-AI] ${ context }: registry status unavailable:`, e?.message || e);
+  }
+  return operatorPullSecretNames(library, status);
+}
+
+// applySuseImagePullSecrets adds the given operator-delivered secrets to the
+// pod-spec imagePullSecrets of a suse-ai chart, dropping legacy browser-created
+// names but keeping the user's own entries. No names (e.g. registry status
+// unavailable) leaves the values untouched.
+function applySuseImagePullSecrets(values: Record<string, any>, library: string | undefined, names: string[]) {
+  if (library !== 'suse-ai' || names.length === 0) return;
+  mergeImagePullSecrets(values, names);
 }
 
 async function ensureVersionInfoLoaded() {
@@ -820,7 +834,7 @@ async function submit() {
       }
     }
   } catch (e: any) {
-    error.value = e?.message || 'Operation failed';
+    error.value = operatorErrorMessage(e, t, 'Operation failed');
     submitting.value = false;
   }
 }
@@ -898,7 +912,7 @@ async function performFleetBundleInstall() {
     clusterName: clusterDisplayName(clusterId),
     status:      'installing' as const,
     progress:    10,
-    message:     'Creating imagePullSecrets on target clusters...',
+    message:     'Resolving image pull secrets...',
   }));
   showProgressModal.value = true;
 
@@ -914,31 +928,14 @@ async function performFleetBundleInstall() {
       );
     }
 
-    // Pre-create pull secrets for ALL configured registries so subchart images from a
-    // different registry than the parent chart are also covered.
-    let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
-    try { creds = await getRegistryCredentials(5000); } catch (e) {
-      console.warn('[SUSE-AI] FleetBundle: registry credentials unavailable:', e);
-    }
-    const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
-    const secretResults = await Promise.all(
-      form.value.clusters.flatMap(clusterId =>
-        activeCreds.map(async cred => {
-          try {
-            const hostSlug = cred!.registryHost.replace(/[^a-z0-9]/g, '-');
-            return await ensureRegistrySecretSimple(
-              store, clusterId, form.value.namespace,
-              cred!.registryHost, hostSlug, cred!.username, cred!.password,
-            );
-          } catch (e) { console.warn('[SUSE-AI] FleetBundle: pull-secret skipped:', e); return null; }
-        })
-      )
-    );
-    const extraPullSecretNames = [...new Set(secretResults.filter((n): n is string => !!n))];
-
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
+
+    // Reference the operator-delivered pull secrets, which cover every configured
+    // registry, so subchart images from a different registry are covered too.
+    const extraPullSecretNames = await resolveOperatorPullSecretNames(library, 'FleetBundle');
 
     updateAllProgress(50, 'Creating Fleet Bundles (one per cluster)...');
     // One bundle per cluster — Fleet's per-workspace name uniqueness means
@@ -968,7 +965,7 @@ async function performFleetBundleInstall() {
         targetNamespace:           form.value.namespace,
         targetClusterIds:          [clusterId],
         additionalPullSecretNames: extraPullSecretNames,
-        library:                   getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
+        library,
       });
     }));
 
@@ -989,7 +986,7 @@ async function performGitOpsInstall() {
     clusterName: clusterDisplayName(clusterId),
     status:      'installing' as const,
     progress:    10,
-    message:     'Creating imagePullSecrets on target clusters...',
+    message:     'Resolving image pull secrets...',
   }));
   showProgressModal.value = true;
 
@@ -1004,35 +1001,20 @@ async function performGitOpsInstall() {
       );
     }
 
-    const creds = await getRegistryCredentials(5000);
-    const pullSecretNames: string[] = [];
-    for (const clusterId of form.value.clusters) {
-      for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
-        if (!cred) continue;
-        try {
-          const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
-          const name = await ensureRegistrySecretSimple(
-            store, clusterId, form.value.namespace,
-            cred.registryHost, hostSlug, cred.username, cred.password,
-          );
-          if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
-        } catch (e) {
-          console.warn('[SUSE-AI] pull-secret skipped for GitOps:', e);
-        }
-      }
-    }
-
-    updateAllProgress(60, 'Publishing Fleet Bundle YAML(s) to git...');
-
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
     const helmSecretName = (() => { const cs = repoObj?.spec?.clientSecret; return typeof cs === 'object' ? (cs?.name || null) : (cs || null); })();
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
+
+    const pullSecretNames = await resolveOperatorPullSecretNames(library, 'GitOps');
+
+    updateAllProgress(60, 'Publishing Fleet Bundle YAML(s) to git...');
 
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds into the bundle values too (the SA's
     // imagePullSecrets are ignored once the chart sets pod-spec imagePullSecrets).
-    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'suse-ai') {
+    if (library === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1055,7 +1037,7 @@ async function performGitOpsInstall() {
           pullSecretNames,
           targetClusterIds: [clusterId],
           targetNamespace:  form.value.namespace,
-          library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
+          library,
         });
         await recordAIWorkload(bundleNamesByCluster, 'GitOps', clusterId, { phase: 'Pending', clusterStatuses: [] });
         results.push({ status: 'fulfilled', value: undefined });
@@ -1319,42 +1301,11 @@ async function installToCluster(
   clusterId: string,
   onProgress: (progress: number, message: string) => void
 ) {
-  const allPullSecrets = new Set<string>();
-
   onProgress(15, 'Preparing namespace...');
 
   await ensureNamespace(store, clusterId, form.value.namespace);
 
-  onProgress(25, 'Setting up registry credentials...');
-
-  let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
-  try {
-    creds = await getRegistryCredentials(5000);
-  } catch (e: any) {
-    console.warn('[SUSE-AI] Registry credentials unavailable, skipping pull secret setup:', e?.message || e);
-  }
-
-  for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
-    if (!cred) continue;
-    try {
-      const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
-      const secretName = await ensureRegistrySecretSimple(
-        store, clusterId, form.value.namespace,
-        cred.registryHost,
-        hostSlug,
-        cred.username,
-        cred.password,
-      );
-      if (secretName) allPullSecrets.add(secretName);
-    } catch (e: any) {
-      console.error('[SUSE-AI] pull-secret creation skipped:', e?.message || e);
-    }
-  }
-
-  onProgress(45, 'Configuring image pull secrets...');
-
-  const v = JSON.parse(JSON.stringify(form.value.values || {}));
-  const pullSecrets = Array.from(allPullSecrets);
+  onProgress(25, 'Resolving image pull secrets...');
 
   // Determine library type from repository URL
   const repos = await listClusterRepos(store);
@@ -1362,12 +1313,14 @@ async function installToCluster(
   const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
   const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
 
-  // Only add pull secrets to values for suse-ai library charts
-  if (pullSecrets.length > 0 && library === 'suse-ai') {
-    const secrets = pullSecrets.map(name => ({ name }));
-    v.global = { ...(v.global || {}), imagePullSecrets: secrets };
-    v.imagePullSecrets = secrets;
-  }
+  // The operator delivers these secrets from the AIWorkload recorded before the install.
+  const pullSecrets = await resolveOperatorPullSecretNames(library, 'Helm');
+
+  onProgress(45, 'Configuring image pull secrets...');
+
+  const v = JSON.parse(JSON.stringify(form.value.values || {}));
+
+  applySuseImagePullSecrets(v, library, pullSecrets);
 
   // NVIDIA charts reference the operator-delivered ngc-secret / ngc-api by name
   // in their vendor-specific value shapes. Without this, team-repo NIM charts
@@ -1479,29 +1432,11 @@ async function performFleetBundleUpgrade() {
   showProgressModal.value = true;
 
   try {
-    let creds: { applicationCollection?: any; suseRegistry?: any; nvidia?: any } = {};
-    try { creds = await getRegistryCredentials(5000); } catch (e) {
-      console.warn('[SUSE-AI] FleetBundle upgrade: registry credentials unavailable:', e);
-    }
-    const activeCreds = [creds.applicationCollection, creds.suseRegistry, creds.nvidia].filter(Boolean);
-    const secretResults = await Promise.all(
-      form.value.clusters.flatMap(clusterId =>
-        activeCreds.map(async cred => {
-          try {
-            const hostSlug = cred!.registryHost.replace(/[^a-z0-9]/g, '-');
-            return await ensureRegistrySecretSimple(
-              store, clusterId, form.value.namespace,
-              cred!.registryHost, hostSlug, cred!.username, cred!.password,
-            );
-          } catch (e) { console.warn('[SUSE-AI] FleetBundle upgrade: pull-secret skipped:', e); return null; }
-        })
-      )
-    );
-    const extraPullSecretNames = [...new Set(secretResults.filter((n): n is string => !!n))];
-
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
+    const extraPullSecretNames = await resolveOperatorPullSecretNames(library, 'FleetBundle upgrade');
 
     updateAllProgress(60, 'Updating Fleet Bundle...');
     await createFleetBundle(store, {
@@ -1515,7 +1450,7 @@ async function performFleetBundleUpgrade() {
       targetNamespace:          form.value.namespace,
       targetClusterIds:         form.value.clusters,
       additionalPullSecretNames: extraPullSecretNames,
-      library:                  getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
+      library,
     });
 
     updateAllProgress(100, 'Update scheduled — Fleet will reconcile to new version');
@@ -1549,33 +1484,18 @@ async function performGitOpsUpgrade() {
   showProgressModal.value = true;
 
   try {
-    const creds = await getRegistryCredentials(5000);
-    const pullSecretNames: string[] = [];
-    for (const clusterId of form.value.clusters) {
-      for (const cred of [creds.applicationCollection, creds.suseRegistry, creds.nvidia]) {
-        if (!cred) continue;
-        try {
-          const hostSlug = cred.registryHost.replace(/[^a-z0-9]/g, '-');
-          const name = await ensureRegistrySecretSimple(
-            store, clusterId, form.value.namespace,
-            cred.registryHost, hostSlug, cred.username, cred.password,
-          );
-          if (name && !pullSecretNames.includes(name)) pullSecretNames.push(name);
-        } catch (e) {
-          console.warn('[SUSE-AI] pull-secret skipped for GitOps upgrade:', e);
-        }
-      }
-    }
-
-    updateAllProgress(60, 'Publishing updated Fleet Bundle YAML to git...');
-
     const repos = await listClusterRepos(store);
     const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
     const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+    const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
+
+    const pullSecretNames = await resolveOperatorPullSecretNames(library, 'GitOps upgrade');
+
+    updateAllProgress(60, 'Publishing updated Fleet Bundle YAML to git...');
 
     // SUSE-registry charts can bundle subcharts whose images come from
     // AppCollection — wire those creds in too (see performGitOpsInstall).
-    if (getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels) === 'suse-ai') {
+    if (library === 'suse-ai') {
       await ensureAppCollectionPullSecrets(store, form.value.namespace, form.value.clusters, pullSecretNames);
     }
 
@@ -1590,7 +1510,7 @@ async function performGitOpsUpgrade() {
       pullSecretNames,
       targetClusterIds: form.value.clusters,
       targetNamespace:  form.value.namespace,
-      library:          getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels),
+      library,
     });
 
     updateAllProgress(100, 'Changes committed to git — Fleet will sync and reconcile');
@@ -1647,9 +1567,19 @@ async function upgradeToCluster(
   onProgress(15, 'Preparing namespace...');
   await ensureNamespace(store, clusterId, form.value.namespace);
 
+  // Installed values may still name a legacy per-registry secret that nothing
+  // refreshes any more; switch suse-ai charts to the operator-delivered one.
+  const repos = await listClusterRepos(store);
+  const repoObj = repos.find((r: any) => r?.metadata?.name === form.value.chartRepo);
+  const chartRepoUrl = repoObj?.spec?.url || repoObj?.spec?.ociRepo || '';
+  const library = getLibraryForClusterRepo(form.value.chartRepo, chartRepoUrl, repoObj?.metadata?.labels);
+  const pullSecrets = await resolveOperatorPullSecretNames(library, 'Helm upgrade');
+
   onProgress(40, 'Upgrading Helm chart...');
 
   const v = JSON.parse(JSON.stringify(form.value.values || {}));
+
+  applySuseImagePullSecrets(v, library, pullSecrets);
 
   console.log('[SUSE-AI] calling upgrade ', {
     cluster: clusterId,

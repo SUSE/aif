@@ -43,6 +43,7 @@ import type {
 import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
+import { LEGACY_SUSE_PULL_SECRET_PREFIX } from '../utils/pull-secrets';
 import { isRepoReady, MANAGED_REPO_LABEL, repoNotReadyMessage } from './app-collection';
 import { repositoryFailureMessage } from './repository-health';
 
@@ -1316,7 +1317,7 @@ export async function ensureRegistrySecretSimple(
   }));
 
   // 2. Define a predictable name based on the desiredName
-  const secretName = `suse-ai-pull-secret-${desiredName.replace(/[^a-z0-9-]/g, '-')}`;
+  const secretName = `${LEGACY_SUSE_PULL_SECRET_PREFIX}${desiredName.replace(/[^a-z0-9-]/g, '-')}`;
 
   logger.debug('Creating secret with predictable name', {
     component: 'RancherApps',

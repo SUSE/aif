@@ -38,11 +38,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/aggregation"
 	"github.com/SUSE/aif-operator/internal/api"
 	"github.com/SUSE/aif-operator/internal/config"
 	aiworkloadctrl "github.com/SUSE/aif-operator/internal/controller/aiworkload"
@@ -155,8 +157,8 @@ func managerOptions(
 		//
 		// Safe here because nothing runs after the manager stops — main returns
 		// straight into process exit, with no defers and no cleanup. The API
-		// server's shutdown goroutine is not an exception: it is triggered by the
-		// same cancelled context and runs alongside the drain, not after it.
+		// tunnel is not an exception: it is a manager runnable, stopped by the
+		// same cancelled context alongside the drain, not after it.
 		// controller-runtime orders the release after the drain — the
 		// leader-election cancel is a defer in engageStopProcedure, so it runs
 		// once the runnable groups have stopped. Ordered, not guaranteed: that
@@ -223,8 +225,6 @@ func main() {
 	flag.StringVar(&allowedRegistryHosts, "allowed-registry-hosts", "",
 		"Comma-separated allowlist of registry hosts the operator may contact (and send credentials to) for "+
 			"extension chart pulls, e.g. \"harbor.example.com,ghcr.io\". Empty (default) allows all hosts.")
-	var apiBindAddr string
-	flag.StringVar(&apiBindAddr, "api-bind-address", ":8080", "The address the operator API binds to.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -377,35 +377,62 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start the operator HTTP API server.
+	// The operator API is served only over Rancher's APIService aggregation
+	// tunnel; there is no listening port.
 	mux := http.NewServeMux()
-	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(mux)
-	api.NewAIWorkloadHandler(mgr.GetClient()).Register(mux)
-	api.NewBlueprintHandler(mgr.GetClient()).Register(mux)
-	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(mux)
-	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(mux)
-	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(mux)
-	srv := &http.Server{Addr: apiBindAddr, Handler: api.Chain(mux)}
+	authz := api.NewAuthorizer(mgr.GetClient(), api.DefaultRules(operatorNamespace))
+	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(authz, mux)
+	api.NewAIWorkloadHandler(mgr.GetClient()).Register(authz, mux)
+	api.NewBlueprintHandler(mgr.GetClient()).Register(authz, mux)
+	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(authz, mux)
+	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(authz, mux)
+	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(authz, mux)
+	// The connection Secret is read from the environment, not a flag, so an
+	// older operator image (helm upgrade --reuse-values) does not exit on an
+	// unknown flag. It lives outside the operator namespace (cattle-system by
+	// default): the Settings API resolves caller-supplied Secret refs in the
+	// operator namespace and sends their values to caller-chosen URLs, so the
+	// tunnel token must not be resolvable there.
+	aggregationSecretName := config.GetAggregationSecretName()
+	aggregationSecretNamespace := config.GetAggregationSecretNamespace()
+	if aggregationSecretName != "" && aggregationSecretNamespace == operatorNamespace {
+		setupLog.Info("WARNING: the aggregation Secret is in the operator namespace; validate-credentials "+
+			"overrides can reference it. Set aggregation.secretNamespace to another namespace (default cattle-system)",
+			"secret", aggregationSecretNamespace+"/"+aggregationSecretName)
+	}
+	if aggregationSecretName == "" {
+		// Never fall back to a network listener: the handlers trust the
+		// Impersonate-* headers, which is safe only behind Rancher's tunnel.
+		setupLog.Error(nil, "operator API disabled: AGGREGATION_SECRET_NAME is empty "+
+			"(chart value aggregation.enabled=false); the UI extension cannot reach the operator")
+	} else if err := mgr.Add(apiRunnable(mgr.GetClient(), aggregationSecretNamespace, aggregationSecretName,
+		api.NewAggregatedHandler(mux))); err != nil {
+		setupLog.Error(err, "unable to set up the operator API")
+		os.Exit(1)
+	}
 
 	ctx := ctrl.SetupSignalHandler()
-	go func() {
-		setupLog.Info("starting operator API", "address", apiBindAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			setupLog.Error(err, "operator API server exited unexpectedly")
-		}
-	}()
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			setupLog.Error(err, "HTTP server shutdown failed")
-		}
-	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// everyReplica is a manager runnable that does not need leader election, so
+// the manager starts it on every replica (and stops it on shutdown).
+type everyReplica struct{ manager.RunnableFunc }
+
+func (everyReplica) NeedLeaderElection() bool { return false }
+
+// apiRunnable serves handler over Rancher's aggregation tunnel for the
+// lifetime of the manager. It runs on every replica: they share the
+// connection token and Rancher routes requests to any connected backend.
+func apiRunnable(c client.Reader, namespace, secretName string, handler http.Handler) manager.Runnable {
+	return everyReplica{RunnableFunc: func(ctx context.Context) error {
+		setupLog.Info("serving operator API over Rancher aggregation", "secret", namespace+"/"+secretName)
+		aggregation.Run(ctx, c, namespace, secretName, handler)
+		return nil
+	}}
 }

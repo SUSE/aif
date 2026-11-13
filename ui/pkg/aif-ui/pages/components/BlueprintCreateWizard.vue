@@ -10,6 +10,7 @@ const BlueprintReviewCreateStep = defineAsyncComponent(() => import('./wizard/Bl
 import type { BlueprintSpec } from '../../types/blueprint-types';
 import { SEMVER_PATTERN, DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../types/blueprint-types';
 import { createBlueprint, buildBlueprintSpec } from '../../utils/blueprint-api';
+import { operatorErrorMessage } from '../../utils/operator-config';
 import { PRODUCT } from '../../config/suseai';
 
 interface BasicInfo {
@@ -128,7 +129,7 @@ async function onCreate() {
     await createBlueprint(spec, props.editName);
     router.push({ name: `c-cluster-${ PRODUCT }-blueprints`, params: { cluster } });
   } catch (e: any) {
-    error.value = e?.message || 'Failed to create blueprint';
+    error.value = operatorErrorMessage(e, t, 'Failed to create blueprint');
   } finally {
     submitting.value = false;
   }

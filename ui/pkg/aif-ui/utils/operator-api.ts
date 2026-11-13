@@ -1,5 +1,5 @@
 import { operatorFetch } from './operator-config';
-import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryCredentials } from '../types/aiworkload-types';
+import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryStatus } from '../types/aiworkload-types';
 
 export function getSettings(signal?: AbortSignal): Promise<any> {
   return operatorFetch('/api/v1/settings', { signal });
@@ -12,11 +12,11 @@ export function putSettings(spec: any): Promise<any> {
   });
 }
 
-export function getRegistryCredentials(timeoutMs = 30000): Promise<RegistryCredentials> {
+export function getRegistryStatus(timeoutMs = 30000): Promise<RegistryStatus> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  return operatorFetch('/api/v1/settings/registry-credentials', { signal: controller.signal })
+  return operatorFetch('/api/v1/settings/registry-status', { signal: controller.signal })
     .finally(() => clearTimeout(timer));
 }
 

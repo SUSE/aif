@@ -8,11 +8,12 @@ vi.mock('../../utils/cluster-operations', () => ({
 
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn(async () => null),
-  getRegistryCredentials: vi.fn(async () => ({})),
+  getRegistryStatus: vi.fn(async () => ({ applicationCollection: false, suseRegistry: false, nvidia: false })),
   getCatalog: vi.fn(async () => []),
 }));
 
-import { getRegistryCredentials, getCatalog } from '../../utils/operator-api';
+import { getRegistryStatus, getCatalog, getSettings } from '../../utils/operator-api';
+import { toOperatorError } from '../../utils/operator-config';
 import { resolveCatalogLogo } from '../../utils/catalog-logo';
 import { TIMEOUT_VALUES } from '../../utils/constants';
 
@@ -22,6 +23,7 @@ import {
   fetchNvidiaApps,
   overlayCuratedMetadata,
   fetchCustomRepoApps,
+  fetchSettingsOrNull,
   resolveInstallRepoName,
   isManagedRepoName,
   CLUSTERREPOS_URL,
@@ -82,6 +84,20 @@ function makeStore(repos: RawRepo[], indexByRepo: Record<string, any> = {}) {
 }
 
 const MANAGED = MANAGED_REPO_LABEL;
+
+describe('fetchSettingsOrNull', () => {
+  const shellError = (status: number, body: Record<string, unknown>) => toOperatorError(Object.defineProperty({ ...body }, '_status', { value: status }));
+
+  it('returns null when the operator answers its own NOT_FOUND (no Settings yet)', async () => {
+    vi.mocked(getSettings).mockRejectedValueOnce(shellError(404, { error: 'NOT_FOUND', message: 'settings not found' }));
+    await expect(fetchSettingsOrNull()).resolves.toBeNull();
+  });
+
+  it('rethrows a Rancher 404 (no APIService, operator unreachable) instead of treating it as no Settings', async () => {
+    vi.mocked(getSettings).mockRejectedValueOnce(shellError(404, { type: 'error', status: 404, code: 'NotFound' }));
+    await expect(fetchSettingsOrNull()).rejects.toMatchObject({ unreachable: true });
+  });
+});
 
 describe('fetchManagedRepos', () => {
   it('includes only provenance-labeled repos, classified by library', async () => {
@@ -504,7 +520,7 @@ describe('fetchNvidiaApps', () => {
   });
 
   it('reports "not created yet" when nvidia creds are effectively configured but no managed repo exists', async () => {
-    (getRegistryCredentials as any).mockResolvedValueOnce({ nvidia: { username: '$oauthtoken' } });
+    (getRegistryStatus as any).mockResolvedValueOnce({ applicationCollection: false, suseRegistry: false, nvidia: true });
     const store = makeStore([]);
     const { apps, failedRepos } = await fetchNvidiaApps(store, { spec: {} });
     expect(apps).toEqual([]);
@@ -518,7 +534,7 @@ describe('fetchNvidiaApps', () => {
     // registryEndpoints.nvidia is set, so a creds-only gate would stay silent
     // while the mirror is pending. Banner must fire on the endpoint alone, and at
     // the endpoint URL.
-    (getRegistryCredentials as any).mockResolvedValueOnce({});
+    (getRegistryStatus as any).mockResolvedValueOnce({ applicationCollection: false, suseRegistry: false, nvidia: false });
     const store = makeStore([]);
     const { apps, failedRepos } = await fetchNvidiaApps(store, {
       spec: { registryEndpoints: { nvidia: 'oci://mirror.local/nvidia' } },
@@ -527,6 +543,20 @@ describe('fetchNvidiaApps', () => {
     expect(failedRepos).toEqual([
       { url: 'oci://mirror.local/nvidia', reason: 'not-ready', message: 'repository not created yet' },
     ]);
+  });
+
+  it('stays silent when nvidia is not configured and no endpoint is set', async () => {
+    (getRegistryStatus as any).mockResolvedValueOnce({ applicationCollection: true, suseRegistry: true, nvidia: false });
+    const { apps, failedRepos } = await fetchNvidiaApps(makeStore([]), { spec: {} });
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([]);
+  });
+
+  it('stays silent when the registry status cannot be read', async () => {
+    (getRegistryStatus as any).mockRejectedValueOnce(new Error('operator unreachable'));
+    const { apps, failedRepos } = await fetchNvidiaApps(makeStore([]), { spec: {} });
+    expect(apps).toEqual([]);
+    expect(failedRepos).toEqual([]);
   });
 });
 

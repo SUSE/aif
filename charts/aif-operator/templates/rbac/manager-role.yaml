@@ -258,6 +258,14 @@ rules:
       - list
       - patch
       - watch
+  # The API authorizes each request forwarded by Rancher's APIService
+  # aggregation with a SubjectAccessReview for the impersonated user.
+  - apiGroups:
+      - authorization.k8s.io
+    resources:
+      - subjectaccessreviews
+    verbs:
+      - create
 
 ---
 

@@ -41,12 +41,12 @@ func NewBlueprintHandler(c client.Client) *BlueprintHandler {
 }
 
 // Register wires the handler's routes onto the mux.
-func (h *BlueprintHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/blueprints", h.listBlueprints)
-	mux.HandleFunc("POST /api/v1/blueprints", h.createBlueprint)
-	mux.HandleFunc("GET /api/v1/blueprints/{name}", h.getBlueprint)
-	mux.HandleFunc("PUT /api/v1/blueprints/{name}", h.updateBlueprint)
-	mux.HandleFunc("DELETE /api/v1/blueprints/{name}", h.deleteBlueprint)
+func (h *BlueprintHandler) Register(a *Authorizer, mux *http.ServeMux) {
+	a.HandleFunc(mux, "GET /api/v1/blueprints", h.listBlueprints)
+	a.HandleFunc(mux, "POST /api/v1/blueprints", h.createBlueprint)
+	a.HandleFunc(mux, "GET /api/v1/blueprints/{name}", h.getBlueprint)
+	a.HandleFunc(mux, "PUT /api/v1/blueprints/{name}", h.updateBlueprint)
+	a.HandleFunc(mux, "DELETE /api/v1/blueprints/{name}", h.deleteBlueprint)
 }
 
 func (h *BlueprintHandler) listBlueprints(w http.ResponseWriter, r *http.Request) {

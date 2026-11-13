@@ -193,8 +193,7 @@
         },
         "service": {
           "type": "string",
-          "default": "aif-operator",
-          "description": "Service name of the SUSE AI operator"
+          "description": "Deprecated and ignored. The operator API is served through Rancher's APIService aggregation, so there is no operator Service. Still accepted so existing values files keep working with helm upgrade."
         }
       }
     },

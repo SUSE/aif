@@ -10,7 +10,7 @@ import {
   PAGE_TYPES
 } from './config/suseai';
 import type { RancherStore } from './types/rancher-types';
-import { checkOperatorConnection } from './utils/operator-config';
+import { checkOperatorConnection, setOperatorStore } from './utils/operator-config';
 import { invalidateAccessCache, CRTB_TYPE, LOCAL_CLUSTER } from './utils/access';
 import { createAccessNavGuard } from './utils/nav-guard';
 
@@ -23,6 +23,7 @@ let removeCrtbWatch:  (() => void) | null = null;
 
 export function init($plugin: IPlugin, store: RancherStore) {
   store.registerModule?.(PRODUCT, suseaiStore);
+  setOperatorStore(store);
 
   const { product, virtualType, basicType, weightType } = $plugin.DSL(store, PRODUCT);
 

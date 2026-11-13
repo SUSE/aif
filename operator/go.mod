@@ -7,9 +7,11 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-logr/logr v1.4.4
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/rancher/remotedialer v0.6.1
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 	k8s.io/apimachinery v0.35.10
@@ -166,7 +168,7 @@ require (
 	helm.sh/helm/v3 v3.21.1
 	k8s.io/api v0.35.10
 	k8s.io/apiextensions-apiserver v0.35.10
-	k8s.io/apiserver v0.35.10 // indirect
+	k8s.io/apiserver v0.35.10
 	k8s.io/component-base v0.35.10 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20250910181357-589584f1c912 // indirect

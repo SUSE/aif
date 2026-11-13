@@ -119,14 +119,14 @@ func NewAIWorkloadHandler(c client.Client) *AIWorkloadHandler {
 }
 
 // Register wires the handler's routes onto the mux.
-func (h *AIWorkloadHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/aiworkloads", h.listAIWorkloads)
-	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
-	mux.HandleFunc("PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
-	mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.deleteAIWorkload)
-	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade", h.upgradeAIWorkload)
-	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback", h.rollbackAIWorkload)
-	mux.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry", h.retryAIWorkload)
+func (h *AIWorkloadHandler) Register(a *Authorizer, mux *http.ServeMux) {
+	a.HandleFunc(mux, "GET /api/v1/aiworkloads", h.listAIWorkloads)
+	a.HandleFunc(mux, "POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
+	a.HandleFunc(mux, "PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
+	a.HandleFunc(mux, "DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.deleteAIWorkload)
+	a.HandleFunc(mux, "POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade", h.upgradeAIWorkload)
+	a.HandleFunc(mux, "POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback", h.rollbackAIWorkload)
+	a.HandleFunc(mux, "POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry", h.retryAIWorkload)
 }
 
 func (h *AIWorkloadHandler) listAIWorkloads(w http.ResponseWriter, r *http.Request) {

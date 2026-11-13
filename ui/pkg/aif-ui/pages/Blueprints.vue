@@ -337,7 +337,7 @@ import {
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
 import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/catalog-api';
-import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import { checkOperatorConnection, getConnectionError, operatorErrorMessage } from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import BlueprintSourceBadge from '../components/BlueprintSourceBadge.vue';
@@ -560,7 +560,7 @@ export default defineComponent({
           selectedVersions.value = { ...selectedVersions.value, ...updates };
         }
       } catch (e: any) {
-        error.value = e?.message || 'Failed to load blueprints';
+        error.value = operatorErrorMessage(e, t, 'Failed to load blueprints');
       } finally {
         loading.value = false;
       }
@@ -671,7 +671,7 @@ export default defineComponent({
         deleteModal.show = false;
         await refresh();
       } catch (e: any) {
-        error.value = e?.message || 'Failed to delete blueprint';
+        error.value = operatorErrorMessage(e, t, 'Failed to delete blueprint');
         deleteModal.show = false;
       } finally {
         deleteModal.deleting = false;
@@ -710,7 +710,7 @@ export default defineComponent({
         deprecateModal.show = false;
         await refresh();
       } catch (e: any) {
-        error.value = e?.message || 'Failed to update blueprint';
+        error.value = operatorErrorMessage(e, t, 'Failed to update blueprint');
         deprecateModal.show = false;
       } finally {
         deprecateModal.saving = false;

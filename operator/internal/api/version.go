@@ -31,8 +31,8 @@ func NewVersionHandler(version, commit, chartVersion string) *VersionHandler {
 }
 
 // Register wires the handler's route onto the mux.
-func (h *VersionHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/version", h.getVersion)
+func (h *VersionHandler) Register(a *Authorizer, mux *http.ServeMux) {
+	a.HandleFunc(mux, "GET /api/v1/version", h.getVersion)
 }
 
 func (h *VersionHandler) getVersion(w http.ResponseWriter, _ *http.Request) {

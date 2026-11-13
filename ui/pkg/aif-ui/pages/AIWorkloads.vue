@@ -6,7 +6,7 @@ import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
-import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import { checkOperatorConnection, getConnectionError, operatorErrorMessage } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
 import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
@@ -233,7 +233,7 @@ async function refresh() {
     clusters.value   = clResult;
     void refreshPodStatus();
   } catch (e: any) {
-    error.value = e?.message || 'Failed to load workloads';
+    error.value = operatorErrorMessage(e, t, 'Failed to load workloads');
   } finally {
     loading.value = false;
   }
@@ -292,7 +292,7 @@ async function executeDelete() {
     );
     deleteModal.show = false;
   } catch (e: any) {
-    error.value = e?.message || 'Failed to delete workload';
+    error.value = operatorErrorMessage(e, t, 'Failed to delete workload');
     deleteModal.show = false;
   } finally {
     deleteModal.deleting = false;
@@ -348,7 +348,7 @@ async function executeUpgrade() {
     upgradeModal.show = false;
     await refresh();
   } catch (e: any) {
-    upgradeError.value = e?.message || String(e);
+    upgradeError.value = operatorErrorMessage(e, t);
     upgradeModal.show = false;
   } finally {
     upgradeModal.upgrading = false;
@@ -384,7 +384,7 @@ async function confirmRollback() {
     await refresh();
   } catch (e: any) {
     rollbackModal.show = false;
-    upgradeError.value = e?.message || String(e);
+    upgradeError.value = operatorErrorMessage(e, t);
   } finally {
     rollbackModal.rolling = false;
   }
@@ -397,7 +397,7 @@ async function doRetry(w: AIWorkload) {
     await refresh();
   } catch (e: any) {
     // 409 (operation in flight) surfaces here.
-    upgradeError.value = e?.message || String(e);
+    upgradeError.value = operatorErrorMessage(e, t);
   }
 }
 </script>

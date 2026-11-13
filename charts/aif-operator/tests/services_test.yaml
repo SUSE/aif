@@ -1,45 +1,24 @@
-suite: services — api and metrics endpoints
+suite: services — metrics endpoint only; the operator API has no Service
+# Every template is listed so the no-API-Service and upgrade assertions below
+# cover the whole chart, not a hand-picked subset. The other tests pin their
+# template explicitly.
 templates:
-  - templates/api-service.yaml
-  - templates/metrics/controller-manager-metrics-service.yaml
+  - templates/*.yaml
+  - templates/**/*.yaml
 chart:
   version: 9.9.9
   appVersion: 9.9.9
+# The chart refuses pinned versions older than its appVersion (upgrade guard,
+# see upgrade_guard_test.yaml); pin them to the suite's appVersion so the
+# release workflow's version rewrites cannot break these assertions.
+set:
+  manager.image.tag: "9.9.9"
+  aiExtension.source.helm.version: "9.9.9"
+  aiExtension.extension.version: "9.9.9"
 release:
   name: my-release
   namespace: aif-operator
 tests:
-  - it: the api service exposes the api port in the release namespace
-    template: templates/api-service.yaml
-    asserts:
-      - containsDocument:
-          kind: Service
-          apiVersion: v1
-          name: aif-operator
-          namespace: aif-operator
-      - equal:
-          path: spec.type
-          value: ClusterIP
-      - equal:
-          path: spec.ports
-          value:
-            - name: http
-              port: 8080
-              targetPort: 8080
-              protocol: TCP
-
-  - it: the api service port follows api.port
-    template: templates/api-service.yaml
-    set:
-      api.port: 9090
-    asserts:
-      - equal:
-          path: spec.ports[0].port
-          value: 9090
-      - equal:
-          path: spec.ports[0].targetPort
-          value: 9090
-
   - it: the metrics service is rendered by default
     template: templates/metrics/controller-manager-metrics-service.yaml
     asserts:
@@ -76,17 +55,60 @@ tests:
           path: spec.ports[0].targetPort
           value: 9443
 
-  - it: both services select the operator pods
+  - it: the metrics service selects the operator pods
+    template: templates/metrics/controller-manager-metrics-service.yaml
     asserts:
       - equal:
           path: spec.selector
           value:
             app.kubernetes.io/name: aif-operator
             app.kubernetes.io/instance: my-release
-        template: templates/api-service.yaml
+
+  # The operator API is served only over Rancher's APIService aggregation
+  # tunnel, so the chart exposes no API port: the only Service is metrics.
+  - it: the only Service in the chart is the metrics service, and none exposes port 8080
+    documentSelector:
+      path: kind
+      value: Service
+      matchMany: true
+      skipEmptyTemplates: true
+    asserts:
       - equal:
-          path: spec.selector
-          value:
-            app.kubernetes.io/name: aif-operator
-            app.kubernetes.io/instance: my-release
-        template: templates/metrics/controller-manager-metrics-service.yaml
+          path: metadata.name
+          value: aif-operator-metrics
+      - notContains:
+          path: spec.ports
+          content:
+            port: 8080
+          any: true
+
+  # A values file or earlier release (2.4.0) may still set the removed api.port.
+  # The schema has no additionalProperties: false, so it validates, and nothing
+  # reads it.
+  - it: a stale api.port value from an earlier release is ignored
+    set:
+      api:
+        port: 8080
+    asserts:
+      - notContains:
+          path: spec.ports
+          content:
+            port: 8080
+          any: true
+        documentSelector:
+          path: kind
+          value: Service
+          matchMany: true
+          skipEmptyTemplates: true
+
+  - it: with stale api.port set, the manager has no API port or bind-address flag
+    template: templates/manager/manager.yaml
+    set:
+      api:
+        port: 8080
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].ports
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --api-bind-address=:8080

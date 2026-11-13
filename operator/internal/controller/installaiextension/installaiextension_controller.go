@@ -457,10 +457,13 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 	return ctrl.Result{RequeueAfter: healthCheckInterval}, nil
 }
 
-// syncUIConfigMap writes the operator namespace and service name into the
-// aif-ui-config ConfigMap so the UI extension can reach the operator without
-// manual configuration. It runs on every successful reconcile loop, giving
-// self-healing behaviour if the ConfigMap is deleted or corrupted.
+// syncUIConfigMap writes the operator namespace into the aif-ui-config
+// ConfigMap so the UI extension can find the operator without manual
+// configuration. (The UI reaches the operator API through Rancher's APIService
+// aggregation, so no service name is needed; a stale operatorService key from
+// an earlier release is left alone and ignored.) It runs on every successful
+// reconcile loop, giving self-healing behaviour if the ConfigMap is deleted or
+// corrupted.
 // The ConfigMap is intentionally not deleted when the CR is removed — the UI
 // retains the last-known operator coordinates so it remains functional. This
 // operator never deletes it directly; the chart's own configmap.yaml carries a
@@ -476,8 +479,8 @@ func (r *InstallAIExtensionReconciler) reconcile(ctx context.Context, ext *v1alp
 // PR history for SUSEAI-1039 if reintroducing anything like it.
 func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) error {
 	logger := log.FromContext(ctx)
-	ns, svc := config.GetOperatorNamespace(), config.GetOperatorService()
-	logger.V(1).Info("syncing UI ConfigMap", "operatorNamespace", ns, "operatorService", svc)
+	ns := config.GetOperatorNamespace()
+	logger.V(1).Info("syncing UI ConfigMap", "operatorNamespace", ns)
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      uiConfigMapName,
@@ -489,7 +492,6 @@ func (r *InstallAIExtensionReconciler) syncUIConfigMap(ctx context.Context) erro
 			cm.Data = make(map[string]string)
 		}
 		cm.Data["operatorNamespace"] = ns
-		cm.Data["operatorService"] = svc
 		return nil
 	})
 	return err

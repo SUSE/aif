@@ -55,8 +55,7 @@ func newAIWorkloadHandlerWithInterceptor(t *testing.T, funcs interceptor.Funcs, 
 		WithObjects(objs...).
 		WithInterceptorFuncs(funcs).
 		Build()
-	mux := http.NewServeMux()
-	NewAIWorkloadHandler(c).Register(mux)
+	mux := newTestMux(NewAIWorkloadHandler(c))
 	return mux, c
 }
 
