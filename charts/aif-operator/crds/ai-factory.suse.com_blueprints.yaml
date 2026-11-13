@@ -73,6 +73,21 @@ spec:
                       description: ChartVersion is the semver chart version.
                       minLength: 1
                       type: string
+                    dependsOn:
+                      description: |-
+                        DependsOn lists the chartName of other components in this blueprint that
+                        must be ready before this component is deployed. The operator maps each
+                        entry to the dependency's Fleet bundle in spec.dependsOn, so Fleet holds
+                        this component until the dependency's bundle is Ready. Entries must name
+                        another component of the same blueprint and must not form a cycle; an
+                        entry naming a component the workload disabled is ignored.
+                      items:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      maxItems: 32
+                      type: array
+                      x-kubernetes-list-type: set
                     releaseName:
                       description: |-
                         ReleaseName optionally pins this component's Helm release name.
@@ -110,6 +125,9 @@ spec:
                   - chartRepo
                   - chartVersion
                   type: object
+                  x-kubernetes-validations:
+                  - message: a component cannot depend on itself
+                    rule: '!has(self.dependsOn) || !(self.chartName in self.dependsOn)'
                 minItems: 1
                 type: array
                 x-kubernetes-list-map-keys:

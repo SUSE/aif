@@ -8,6 +8,9 @@ export interface BlueprintComponent {
   values?:          Record<string, any>;
   targetNamespace?: string;
   releaseName?:     string;
+  // chartName of other components in the same blueprint that must be Ready
+  // before this one deploys. Mirrors BlueprintComponent.dependsOn (Go).
+  dependsOn?:       string[];
 }
 
 // BlueprintOrigin (not BlueprintSource) to avoid collision with the existing
