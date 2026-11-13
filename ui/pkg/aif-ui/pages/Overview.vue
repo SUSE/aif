@@ -4,7 +4,8 @@ import { Banner }    from '@components/Banner';
 import { BadgeState } from '@components/BadgeState';
 import CountBox      from '@shell/components/CountBox';
 import Loading       from '@shell/components/Loading';
-import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import { checkOperatorConnection, getConnectionError, operatorErrorMessage } from '../utils/operator-config';
+import { useT } from '../composables/useT';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import { listAIWorkloads }           from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, latestVersion } from '../utils/blueprint-api';
@@ -21,6 +22,7 @@ import { requestErrorMessage } from '../services/rancher-token';
 import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
 
 const vm      = getCurrentInstance()!.proxy as any;
+const t       = useT();
 const router  = vm.$router;
 const route   = vm.$route;
 const cluster = (route?.params?.cluster as string) || '_';
@@ -98,7 +100,7 @@ async function refresh() {
     blueprints.value = bpResult.items || [];
     clusters.value   = clResult;
   } catch (e: any) {
-    error.value = e?.message || 'Failed to load overview data';
+    error.value = operatorErrorMessage(e, t, 'Failed to load overview data');
   } finally {
     loading.value = false;
   }

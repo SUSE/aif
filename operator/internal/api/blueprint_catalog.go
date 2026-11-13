@@ -34,8 +34,8 @@ func NewBlueprintCatalogHandler(c client.Client) *BlueprintCatalogHandler {
 }
 
 // Register wires the handler's routes onto the mux.
-func (h *BlueprintCatalogHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/blueprint-catalogs", h.listCatalogs)
+func (h *BlueprintCatalogHandler) Register(a *Authorizer, mux *http.ServeMux) {
+	a.HandleFunc(mux, "GET /api/v1/blueprint-catalogs", h.listCatalogs)
 }
 
 func (h *BlueprintCatalogHandler) listCatalogs(w http.ResponseWriter, r *http.Request) {

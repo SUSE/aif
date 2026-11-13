@@ -1,6 +1,8 @@
 <script lang="ts" setup>
 import { Banner } from '@components/Banner';
 
+// operatorError is the code from getConnectionError() (OPERATOR_UNREACHABLE);
+// the text comes from l10n.
 defineProps<{ operatorError: string }>();
 defineEmits<{ retry: [] }>();
 </script>
@@ -12,17 +14,15 @@ defineEmits<{ retry: [] }>();
   >
     <div class="operator-error-body">
       <div class="operator-error-text">
-        <div>{{ operatorError }}</div>
-        <div>
-          Verify the operator deployment and the <code>aif-ui-config</code> ConfigMap, then retry.
-        </div>
+        <div>{{ t('suseai.operator.unreachable') }}</div>
+        <div>{{ t('suseai.operator.verifyHint') }}</div>
       </div>
       <button
         class="btn-retry"
         type="button"
         @click="$emit('retry')"
       >
-        Retry Connection
+        {{ t('suseai.operator.retry') }}
       </button>
     </div>
   </Banner>

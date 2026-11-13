@@ -1,25 +1,31 @@
 suite: helpers — naming, labels, and image pull secrets
 templates:
-  - templates/api-service.yaml
   - templates/manager/manager.yaml
   - templates/metrics/controller-manager-metrics-service.yaml
 # Pinned so the release workflow's version rewrites cannot break these assertions.
 chart:
   version: 9.9.9
   appVersion: 9.9.9
+# The chart refuses pinned versions older than its appVersion (upgrade guard,
+# see upgrade_guard_test.yaml); pin them to the suite's appVersion so the
+# release workflow's version rewrites cannot break these assertions.
+set:
+  manager.image.tag: "9.9.9"
+  aiExtension.source.helm.version: "9.9.9"
+  aiExtension.extension.version: "9.9.9"
 release:
   name: my-release
   namespace: aif-operator
 tests:
   - it: fullname is the chart name and deliberately ignores the release name
-    template: templates/api-service.yaml
+    template: templates/manager/manager.yaml
     asserts:
       - equal:
           path: metadata.name
           value: aif-operator
 
   - it: nameOverride changes the generated name
-    template: templates/api-service.yaml
+    template: templates/manager/manager.yaml
     set:
       nameOverride: custom-op
     asserts:
@@ -28,7 +34,7 @@ tests:
           value: custom-op
 
   - it: fullnameOverride wins over nameOverride
-    template: templates/api-service.yaml
+    template: templates/manager/manager.yaml
     set:
       nameOverride: custom-op
       fullnameOverride: pinned-name
@@ -38,7 +44,7 @@ tests:
           value: pinned-name
 
   - it: common labels carry the control-plane marker and chart metadata
-    template: templates/api-service.yaml
+    template: templates/manager/manager.yaml
     asserts:
       - equal:
           path: metadata.labels
@@ -54,10 +60,10 @@ tests:
   # `helm upgrade` into a failure that only shows up against an existing release,
   # so the set of selector labels is pinned exactly rather than spot-checked.
   - it: selector labels stay at exactly two keys
-    template: templates/api-service.yaml
+    template: templates/manager/manager.yaml
     asserts:
       - equal:
-          path: spec.selector
+          path: spec.selector.matchLabels
           value:
             app.kubernetes.io/name: aif-operator
             app.kubernetes.io/instance: my-release

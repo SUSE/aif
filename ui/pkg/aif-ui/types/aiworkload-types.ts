@@ -97,14 +97,9 @@ export interface AIWorkload {
   status?:    AIWorkloadStatus;
 }
 
-export interface RegistryCred {
-  username:     string;
-  password:     string;
-  registryHost: string;
-}
-
-export interface RegistryCredentials {
-  applicationCollection?: RegistryCred;
-  suseRegistry?:          RegistryCred;
-  nvidia?:                RegistryCred;
+/** Whether the operator can resolve each registry's credentials. */
+export interface RegistryStatus {
+  applicationCollection: boolean;
+  suseRegistry:          boolean;
+  nvidia:                boolean;
 }

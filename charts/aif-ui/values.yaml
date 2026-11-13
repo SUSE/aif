@@ -85,7 +85,9 @@ rollingUpdate:
 
 operator:
   namespace: "aif-operator"
-  service:   "aif-operator"
+  # service: deprecated and ignored. The operator API is served through Rancher's
+  # APIService aggregation and has no Service; still accepted so old values
+  # files keep working with `helm upgrade`.
 
 appCatalog:
   # useStaticCatalog: serve the bundled, pre-curated catalog (true, default) or

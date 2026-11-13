@@ -17,16 +17,18 @@ It integrates with Rancher catalogs and UI plugins to enable declarative install
 
 - Kubernetes 1.24+
 - Helm 3.x or 4.x. Declaring catalogs in `blueprintCatalogs` while also adding catalogs on the Settings page needs server-side apply; see [Blueprint catalogs](#blueprint-catalogs).
-- Rancher installed (for UIPlugin and ClusterRepo integration)
+- Rancher 2.13 or later installed (for UIPlugin and ClusterRepo integration, and for the APIService that serves the operator API; see [API aggregation parameters](#api-aggregation-parameters))
 
 The following CRDs must exist before adding the operator:
   - `uiplugins.catalog.cattle.io`
   - `clusterrepos.catalog.cattle.io`
+  - `apiservices.management.cattle.io` (unless `aggregation.enabled=false`)
 
 You can verify with:
 ```bash
 kubectl get crd uiplugins.catalog.cattle.io
 kubectl get crd clusterrepos.catalog.cattle.io
+kubectl get crd apiservices.management.cattle.io
 ```
 
 ## CRD Management
@@ -161,6 +163,17 @@ helm install aif-operator \
 ```
 
 The command deploys the SUSE AI Operator using the default configuration. See the [Parameters](#parameters) section for configurable options.
+
+### Upgrading the Chart
+
+Don't upgrade with plain `helm upgrade --reuse-values`: it keeps the previous release's pinned `manager.image.tag`, `aiExtension.source.helm.version` and `aiExtension.extension.version`, so the new chart would run the old operator image. Use `--reset-then-reuse-values` (Helm 3.14 or later), or pass the new versions explicitly. The chart refuses to render when one of these values is older (by major.minor) than the chart's `appVersion`; non-semver tags such as `latest` and empty values are not checked.
+
+```bash
+helm upgrade aif-operator \
+  -n aif-operator \
+  --reset-then-reuse-values \
+  oci://ghcr.io/suse/chart/aif-operator
+```
 
 ## Air-gapped image configuration
 
@@ -334,6 +347,19 @@ For example:
 | `metrics.port`   | Metrics HTTPS port      | `8443`  |
 
 > When enabled, a metrics Service and RBAC rules are created to support authenticated scraping.
+
+### API aggregation parameters
+
+| Name                          | Description                                                                                | Default         |
+| ----------------------------- | ------------------------------------------------------------------------------------------ | --------------- |
+| `aggregation.enabled`         | Register the operator API with Rancher's APIService aggregation                            | `true`          |
+| `aggregation.secretNamespace` | Namespace Rancher writes the connection Secret into; keep it outside the release namespace | `cattle-system` |
+
+> When enabled, the chart creates a cluster-scoped `management.cattle.io/v3` `APIService` named `<fullname>` (`aif-operator` by default). Rancher writes the connection Secret `<fullname>-aggregation` into `aggregation.secretNamespace` (`cattle-system` by default), the operator opens a tunnel to Rancher with it, and the UI reaches the operator API at `/v1/aif-operator` with the user's Rancher session. The operator has no other API endpoint: it does not listen on a port, and there is no operator API Service. Every request is authenticated by Rancher and authorized against the caller's permissions on the AI Factory objects.
+>
+> The operator requires this. With `aggregation.enabled=false` the operator API is disabled and the AI Factory UI extension does not work. Installing on a cluster without Rancher Manager fails unless it is set to `false`, because the `apiservices.management.cattle.io` CRD is missing.
+>
+> The connection Secret holds Rancher's tunnel token. Keep it outside the release namespace: Settings credential validation can use any Secret in the release namespace. The operator reads it with its cluster-wide Secret access and gets its name and namespace from the `AGGREGATION_SECRET_NAME` and `AGGREGATION_SECRET_NAMESPACE` environment variables. Keep the release namespace admin-only for the other credential Secrets: leave it unassigned to a Rancher project, or move it to the **System** project. If the operator uses an HTTPS proxy (`HTTPS_PROXY`), add the in-cluster Rancher service to `NO_PROXY` (for example `.svc` and `cattle-system`), or the tunnel goes through the proxy.
 
 ### AI Extension bundling
 

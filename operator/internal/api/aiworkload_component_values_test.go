@@ -27,8 +27,7 @@ func handlerWithObjects(t *testing.T, objs ...client.Object) http.Handler {
 	_ = aiplatformv1alpha1.AddToScheme(s)
 	_ = corev1.AddToScheme(s)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&aiplatformv1alpha1.AIWorkload{}).WithObjects(objs...).Build()
-	mux := http.NewServeMux()
-	NewAIWorkloadHandler(c).Register(mux)
+	mux := newTestMux(NewAIWorkloadHandler(c))
 	return mux
 }
 

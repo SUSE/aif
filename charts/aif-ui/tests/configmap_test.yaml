@@ -38,22 +38,33 @@ tests:
       - equal:
           path: data.operatorNamespace
           value: aif-operator
-      - equal:
+
+  # The operator API is served through Rancher's APIService aggregation; there
+  # is no operator Service any more, so the key must not be rendered.
+  - it: does not render the removed operatorService key
+    template: templates/configmap.yaml
+    asserts:
+      - notExists:
           path: data.operatorService
-          value: aif-operator
 
   - it: honours operator connection overrides
     template: templates/configmap.yaml
     set:
       operator.namespace: custom-ns
-      operator.service: custom-svc
     asserts:
       - equal:
           path: data.operatorNamespace
           value: custom-ns
-      - equal:
+
+  # operator.service is deprecated but still accepted, so `helm upgrade` with
+  # old values keeps working; it is ignored.
+  - it: ignores the deprecated operator.service value
+    template: templates/configmap.yaml
+    set:
+      operator.service: custom-svc
+    asserts:
+      - notExists:
           path: data.operatorService
-          value: custom-svc
 
   - it: serialises useStaticCatalog as the string "true" by default
     template: templates/configmap.yaml

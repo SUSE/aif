@@ -1,0 +1,196 @@
+suite: apiservice — operator API registered with Rancher APIService aggregation
+templates:
+  - templates/apiservice.yaml
+  - templates/manager/manager.yaml
+  - templates/rbac/manager-role.yaml
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+# The chart refuses pinned versions older than its appVersion (upgrade guard,
+# see upgrade_guard_test.yaml); pin them to the suite's appVersion so the
+# release workflow's version rewrites cannot break these assertions.
+set:
+  manager.image.tag: "9.9.9"
+  aiExtension.source.helm.version: "9.9.9"
+  aiExtension.extension.version: "9.9.9"
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: renders a cluster-scoped APIService with the aggregation spec by default
+    template: templates/apiservice.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - containsDocument:
+          kind: APIService
+          apiVersion: management.cattle.io/v3
+          name: aif-operator
+      - notExists:
+          path: metadata.namespace
+      - equal:
+          path: spec
+          value:
+            secretName: aif-operator-aggregation
+            secretNamespace: cattle-system
+            pathPrefixes:
+              - /v1/aif-operator/
+            paths:
+              - /v1/aif-operator
+
+  - it: carries the chart's standard labels
+    template: templates/apiservice.yaml
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: aif-operator
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: my-release
+      - equal:
+          path: metadata.labels["helm.sh/chart"]
+          value: aif-operator-9.9.9
+
+  # The validate-credentials overrides resolve Secret refs in the operator
+  # namespace, so the tunnel token must not live there: it stays in
+  # cattle-system whatever the release namespace is.
+  - it: names follow fullnameOverride and the Secret stays in cattle-system
+    template: templates/apiservice.yaml
+    release:
+      namespace: other-ns
+    set:
+      fullnameOverride: custom
+    asserts:
+      - containsDocument:
+          kind: APIService
+          apiVersion: management.cattle.io/v3
+          name: custom
+      - equal:
+          path: spec.secretName
+          value: custom-aggregation
+      - equal:
+          path: spec.secretNamespace
+          value: cattle-system
+
+  - it: aggregation.secretNamespace overrides the Secret namespace
+    template: templates/apiservice.yaml
+    set:
+      aggregation.secretNamespace: aif-tunnel
+    asserts:
+      - equal:
+          path: spec.secretNamespace
+          value: aif-tunnel
+
+  # Rendering stops at the first failure, which the manager's env var reaches
+  # before the APIService does.
+  - it: refuses aggregation.secretNamespace equal to the release namespace
+    template: templates/manager/manager.yaml
+    set:
+      aggregation.secretNamespace: aif-operator
+    asserts:
+      - failedTemplate:
+          errorMessage: "aggregation.secretNamespace (aif-operator) must not be the release namespace: the Secret holds Rancher's tunnel token and must stay outside the operator namespace. Set aggregation.secretNamespace to a namespace other than aif-operator."
+
+  - it: aggregation.enabled false renders no APIService
+    template: templates/apiservice.yaml
+    set:
+      aggregation.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the APIService when aggregation is absent (upgrade --reuse-values from 2.4.0)
+    template: templates/apiservice.yaml
+    set:
+      aggregation: null
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.secretName
+          value: aif-operator-aggregation
+
+  # Passed as environment variables, not a flag: an older operator image kept
+  # by `helm upgrade --reuse-values` exits on an unknown flag but ignores an
+  # unknown variable.
+  - it: the manager is told the aggregation Secret through env vars, not a flag
+    template: templates/manager/manager.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAME
+            value: aif-operator-aggregation
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAMESPACE
+            value: cattle-system
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --aggregation-secret-name=aif-operator-aggregation
+
+  - it: the env vars follow fullnameOverride and aggregation.secretNamespace, like the APIService
+    template: templates/manager/manager.yaml
+    set:
+      fullnameOverride: custom
+      aggregation.secretNamespace: aif-tunnel
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAME
+            value: custom-aggregation
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAMESPACE
+            value: aif-tunnel
+
+  - it: the manager keeps the aggregation env vars when aggregation is absent (upgrade --reuse-values from 2.4.0)
+    template: templates/manager/manager.yaml
+    set:
+      aggregation: null
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAME
+            value: aif-operator-aggregation
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAMESPACE
+            value: cattle-system
+
+  - it: aggregation.enabled false drops the aggregation env vars
+    template: templates/manager/manager.yaml
+    set:
+      aggregation.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAME
+            value: aif-operator-aggregation
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGGREGATION_SECRET_NAMESPACE
+            value: cattle-system
+
+  - it: the manager ClusterRole may create SubjectAccessReviews
+    template: templates/rbac/manager-role.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - authorization.k8s.io
+            resources:
+              - subjectaccessreviews
+            verbs:
+              - create

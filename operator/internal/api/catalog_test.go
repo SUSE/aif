@@ -21,7 +21,7 @@ const testNS = "aif-operator"
 // newCatalogMux builds a handler backed by a fake client. When remoteURL is
 // non-empty a Settings CR carrying it is seeded. The returned func restores the
 // fetchCatalogFn seam.
-func newCatalogMux(t *testing.T, remoteURL string) (*http.ServeMux, func()) {
+func newCatalogMux(t *testing.T, remoteURL string) (http.Handler, func()) {
 	t.Helper()
 	scheme := kruntime.NewScheme()
 	if err := aiplatformv1alpha1.AddToScheme(scheme); err != nil {
@@ -34,14 +34,13 @@ func newCatalogMux(t *testing.T, remoteURL string) (*http.ServeMux, func()) {
 		s.Spec.AppCatalog.RemoteURL = remoteURL
 		builder = builder.WithObjects(s)
 	}
-	mux := http.NewServeMux()
-	NewCatalogHandler(builder.Build(), testNS).Register(mux)
+	mux := newTestMux(NewCatalogHandler(builder.Build(), testNS))
 
 	orig := fetchCatalogFn
 	return mux, func() { fetchCatalogFn = orig }
 }
 
-func doGet(mux *http.ServeMux) *httptest.ResponseRecorder {
+func doGet(mux http.Handler) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -194,8 +193,7 @@ func TestCatalog_SettingsReadError_500(t *testing.T) {
 			},
 		}).
 		Build()
-	mux := http.NewServeMux()
-	NewCatalogHandler(c, testNS).Register(mux)
+	mux := newTestMux(NewCatalogHandler(c, testNS))
 
 	rec := doGet(mux)
 	if rec.Code != http.StatusInternalServerError {

@@ -245,13 +245,11 @@ export const ERROR_CODES = {
 } as const;
 
 
-// === Operator Service Coordinates ===
-// These constants build the Rancher proxy URL used by operator-api.ts.
-// OPERATOR_NAMESPACE must match the Helm release namespace (default: aif-operator).
+// === Operator Coordinates ===
+// OPERATOR_NAMESPACE is the fallback when the aif-ui-config ConfigMap has no
+// operatorNamespace; it must match the Helm release namespace (default: aif-operator).
 export const MANAGEMENT_CLUSTER  = 'local';
 export const OPERATOR_NAMESPACE  = 'aif-operator';
-export const OPERATOR_SERVICE    = 'aif-operator';
-export const OPERATOR_PORT       = 8080;
 
 // === Type Exports (for TypeScript) ===
 export type StoreModule = typeof STORE_MODULES[keyof typeof STORE_MODULES];

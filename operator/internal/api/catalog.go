@@ -60,8 +60,8 @@ func NewCatalogHandler(c client.Client, namespace string) *CatalogHandler {
 }
 
 // Register wires the handler's route onto the mux.
-func (h *CatalogHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/catalog", h.getCatalog)
+func (h *CatalogHandler) Register(a *Authorizer, mux *http.ServeMux) {
+	a.HandleFunc(mux, "GET /api/v1/catalog", h.getCatalog)
 }
 
 func (h *CatalogHandler) getCatalog(w http.ResponseWriter, r *http.Request) {

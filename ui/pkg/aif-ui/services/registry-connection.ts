@@ -10,6 +10,7 @@ import {
   resolveRegistryEndpoints, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL,
 } from './registry-endpoints';
 import { requestErrorMessage } from './rancher-token';
+import { isOperatorNotFound } from '../utils/operator-config';
 
 export type RegistryTarget = 'applicationCollection' | 'suseRegistry' | 'nvidia' | 'customRepo';
 export type RegistryConfiguration = Pick<ValidateOverride,
@@ -162,7 +163,7 @@ async function probeForm(target: RegistryTarget, configuration: RegistryConfigur
         return skipped('Apply the removal of the saved CA bundle before testing authentication.');
       }
     } catch (e) {
-      if ((e as { status?: number })?.status !== 404) {
+      if (!isOperatorNotFound(e)) {
         return skipped('Could not verify saved CA settings. Restore access to Settings and test again.');
       }
     }
@@ -202,7 +203,7 @@ function customRepositoryCheck(
       caBundleSecretRef: applied.caBundleSecretRef || null,
       insecureSkipVerify: !!applied.insecureSkipTLSVerify,
     } : null;
-  } else if (settings.reason?.status === 404) {
+  } else if (isOperatorNotFound(settings.reason)) {
     out.appliedConfiguration = null;
   } else {
     out.settingsError = requestErrorMessage(settings.reason);
@@ -256,7 +257,7 @@ export async function checkRegistryConnection(
     validateChartAccess({ target, configuration, chartName }),
   ]);
   const chartAccess = access.status === 'fulfilled' && Array.isArray(access.value?.results) && access.value.results.length > 0
-    ? access.value : { results: [], error: access.status === 'rejected' && access.reason?.status === 404
+    ? access.value : { results: [], error: access.status === 'rejected' && isOperatorNotFound(access.reason)
       ? 'Chart access checks require an updated AI Factory operator. Access has not been verified.'
       : access.status === 'rejected' ? requestErrorMessage(access.reason) : 'No chart access result returned.' };
   const authentication: ValidateResult = probe.status === 'fulfilled'
@@ -273,7 +274,7 @@ export async function checkRegistryConnection(
     chartRepositories.appliedConfiguration = {
       ...spec[target], url: resolveRegistryEndpoints(spec.registryEndpoints)[target],
     };
-  } else if (settings.reason?.status === 404) {
+  } else if (isOperatorNotFound(settings.reason)) {
     chartRepositories.appliedConfiguration = null;
   } else {
     chartRepositories.settingsError = requestErrorMessage(settings.reason);

@@ -6,10 +6,20 @@ import {
   checkRegistryConnection, refreshChartRepository, registryConfigurationFingerprint,
 } from '../registry-connection';
 import type { RegistryConfiguration, RegistryTarget } from '../registry-connection';
+import { toOperatorError } from '../../utils/operator-config';
 
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn(), validateCredentials: vi.fn(), validateChartAccess: vi.fn(),
 }));
+
+/** An OperatorError as operatorFetch throws it, from a shell rejection body. */
+function operatorError(status: number, body: Record<string, unknown>) {
+  return toOperatorError(Object.defineProperty({ ...body }, '_status', { value: status }));
+}
+// The operator's own "Settings not found" vs. Rancher's 404 when no APIService
+// is registered (an old operator): the latter means unreachable, not missing.
+const SETTINGS_MISSING = () => operatorError(404, { error: 'NOT_FOUND', message: 'settings not found' });
+const STEVE_404 = () => operatorError(404, { type: 'error', status: 404, code: 'NotFound', message: 'not found' });
 
 const TARGET = 'suseRegistry';
 const NAME = 'suse-ai-registry';
@@ -150,6 +160,26 @@ describe('independent registry checks', () => {
     expect(result.chartRepositories.settingsError).toBeUndefined();
   });
 
+  it('treats the operator\'s own NOT_FOUND 404 as absent settings', async () => {
+    vi.mocked(getSettings).mockRejectedValue(SETTINGS_MISSING());
+    const result = await checkRegistryConnection(storeWith([]), TARGET, CONFIG);
+    expect(result.chartRepositories.appliedConfiguration).toBeNull();
+    expect(result.chartRepositories.settingsError).toBeUndefined();
+  });
+
+  it('reports a Rancher 404 (operator unreachable) as a settings error, not absent settings', async () => {
+    vi.mocked(getSettings).mockRejectedValue(STEVE_404());
+    const result = await checkRegistryConnection(storeWith([]), TARGET, CONFIG);
+    expect(result.chartRepositories.appliedConfiguration).toBeUndefined();
+    expect(result.chartRepositories.settingsError).toBeTruthy();
+  });
+
+  it('does not claim an outdated operator when chart access is unreachable', async () => {
+    vi.mocked(validateChartAccess).mockRejectedValue(STEVE_404());
+    const result = await checkRegistryConnection(storeWith(), TARGET, CONFIG);
+    expect(result.chartAccess.error).not.toMatch(/updated AI Factory operator/);
+  });
+
   it('bounds the saved-settings read so a stalled operator cannot leave Test busy forever', async () => {
     vi.useFakeTimers();
     vi.mocked(getSettings).mockImplementation(signal => new Promise((_resolve, reject) => {
@@ -221,6 +251,20 @@ describe('cleared form inputs do not silently authenticate saved configuration',
     vi.mocked(getSettings).mockResolvedValue({ spec: { [TARGET]: { ...CONFIG, caBundleSecretRef: { name: 'saved-ca', key: 'ca.crt' } } } });
     const result = await checkRegistryConnection(storeWith(), TARGET, CONFIG);
     expect(result.authentication).toMatchObject({ status: 'skipped', message: 'Apply the removal of the saved CA bundle before testing authentication.' });
+    expect(validateCredentials).not.toHaveBeenCalled();
+  });
+
+  it('probes when no saved Settings exist yet (operator NOT_FOUND)', async () => {
+    vi.mocked(getSettings).mockRejectedValue(SETTINGS_MISSING());
+    const result = await checkRegistryConnection(storeWith([]), TARGET, CONFIG);
+    expect(validateCredentials).toHaveBeenCalled();
+    expect(result.authentication.status).toBe('ok');
+  });
+
+  it('skips the probe when the saved CA cannot be verified because the operator is unreachable', async () => {
+    vi.mocked(getSettings).mockRejectedValue(STEVE_404());
+    const result = await checkRegistryConnection(storeWith([]), TARGET, CONFIG);
+    expect(result.authentication).toMatchObject({ status: 'skipped', message: 'Could not verify saved CA settings. Restore access to Settings and test again.' });
     expect(validateCredentials).not.toHaveBeenCalled();
   });
 
@@ -411,6 +455,13 @@ describe('customRepo target', () => {
     const result = await checkRegistryConnection(storeWith([customRepo()]), 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
     expect(result.chartRepositories.appliedConfiguration).toBeNull();
     expect(result.chartRepositories.settingsError).toBeUndefined();
+  });
+
+  it('reports a Rancher 404 (operator unreachable) as a settings error for a custom repo', async () => {
+    vi.mocked(getSettings).mockRejectedValue(STEVE_404());
+    const result = await checkRegistryConnection(storeWith([customRepo()]), 'customRepo', CUSTOM_CONFIG, 'x', REPO_NAME);
+    expect(result.chartRepositories.appliedConfiguration).toBeUndefined();
+    expect(result.chartRepositories.settingsError).toBeTruthy();
   });
 
   it('does not break the built-in suseRegistry target after the customRepo branch was added', async () => {

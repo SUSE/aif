@@ -1,6 +1,7 @@
 import { getClusterContext } from '../utils/cluster-operations';
 import { log as logger } from '../utils/logger';
-import { getSettings, getRegistryCredentials } from '../utils/operator-api';
+import { getSettings, getRegistryStatus } from '../utils/operator-api';
+import { isOperatorNotFound } from '../utils/operator-config';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { browserSafeCatalogLogo } from '../utils/catalog-logo';
 import { fetchStaticCatalog } from './static-catalog';
@@ -156,15 +157,16 @@ export async function resolveInstallRepoName(
 }
 
 /**
- * Fetch the operator Settings, returning null only when none exist yet (404).
- * Real failures (operator unreachable, 5xx) are rethrown so callers don't silently
+ * Fetch the operator Settings, returning null only when none exist yet (the
+ * operator's own 404). Real failures (operator unreachable, including Rancher's
+ * 404 when no APIService is registered, and 5xx) are rethrown so callers don't silently
  * fall back to default/public registry URLs — which in air-gap is exactly wrong.
  */
 export async function fetchSettingsOrNull(): Promise<any | null> {
   try {
     return await getSettings();
   } catch (e: any) {
-    if (e?.status === 404) return null;
+    if (isOperatorNotFound(e)) return null;
     throw e;
   }
 }
@@ -253,7 +255,7 @@ async function loadAppsFromRepos(
  * so section presence is not usable). Any managed repo that exists is loaded; a
  * not-ready repo or an index fetch failure is reported via failedRepos. When no
  * managed repo exists, "not created yet" is surfaced only if NVIDIA credentials
- * effectively resolve (per the operator's /registry-credentials endpoint — which
+ * effectively resolve (per the operator's /registry-status endpoint — which
  * catches well-known secret names a spec check misses) so an unconfigured registry
  * stays silent. Works the same air-gapped or connected: name-based matching is
  * endpoint-independent, and each app's repository_url is the live repo's spec.url.
@@ -280,7 +282,7 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
 
   if (managed.length === 0) {
     // No managed repo. Nag ("not created yet") only when NVIDIA is effectively
-    // configured — either credentials resolve (per the operator's credentials
+    // configured — either credentials resolve (per the operator's registry-status
     // endpoint, EffectiveRefs — catches well-known secret names a
     // spec.nvidia.tokenSecretRef check misses) OR an air-gap
     // registryEndpoints.nvidia is set (the operator creates that mirror WITHOUT
@@ -289,8 +291,8 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
     const s = settings !== undefined ? settings : await fetchSettingsOrNull();
     let credsConfigured = false;
     try {
-      const creds = await getRegistryCredentials();
-      credsConfigured = Boolean(creds?.nvidia?.username);
+      const status = await getRegistryStatus();
+      credsConfigured = status?.nvidia === true;
     } catch { /* operator unreachable — fail silent, no false banner */ }
     const endpointConfigured = Boolean(s?.spec?.registryEndpoints?.nvidia);
     if (credsConfigured || endpointConfigured) {

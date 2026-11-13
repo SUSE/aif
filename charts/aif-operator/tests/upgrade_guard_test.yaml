@@ -1,0 +1,154 @@
+suite: upgrade guard — refuses pinned versions older than the chart
+# `helm upgrade --reuse-values` reuses the previous release's values, including
+# its pinned image tag and extension versions. Rendering a new chart with an
+# old operator image passes flags or settings that image does not know (2.4.0
+# exits on an unknown flag), so the chart refuses to render instead.
+templates:
+  - templates/manager/manager.yaml
+chart:
+  version: 2.5.0
+  appVersion: 2.5.0
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: fails on the 2.4.0 release's pinned manager.image.tag
+    set:
+      manager.image.tag: "2.4.0"
+      aiExtension.source.helm.version: "2.4.0"
+      aiExtension.extension.version: "2.4.0"
+    asserts:
+      - failedTemplate:
+          errorMessage: "manager.image.tag 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly."
+
+  - it: fails on an older aiExtension.source.helm.version
+    set:
+      manager.image.tag: "2.5.0"
+      aiExtension.source.helm.version: "2.4.0"
+      aiExtension.extension.version: "2.5.0"
+    asserts:
+      - failedTemplate:
+          errorMessage: "aiExtension.source.helm.version 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set aiExtension.source.helm.version explicitly."
+
+  - it: fails on an older aiExtension.extension.version
+    set:
+      manager.image.tag: "2.5.0"
+      aiExtension.source.helm.version: "2.5.0"
+      aiExtension.extension.version: "2.4.0"
+    asserts:
+      - failedTemplate:
+          errorMessage: "aiExtension.extension.version 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set aiExtension.extension.version explicitly."
+
+  - it: fails on an older major version
+    set:
+      manager.image.tag: "1.9.0"
+      aiExtension.source.helm.version: "2.5.0"
+      aiExtension.extension.version: "2.5.0"
+    asserts:
+      - failedTemplate: {}
+
+  - it: ignores older extension versions when aiExtension is disabled
+    set:
+      manager.image.tag: "2.5.0"
+      aiExtension.enabled: false
+      aiExtension.source.helm.version: "2.4.0"
+      aiExtension.extension.version: "2.4.0"
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: renders with the same minor (patch and pre-release differences pass)
+    chart:
+      appVersion: 2.4.0-rc.1
+    set:
+      manager.image.tag: "2.4.0"
+      aiExtension.source.helm.version: "2.4.1"
+      aiExtension.extension.version: "v2.4.0"
+    asserts:
+      - notFailedTemplate: {}
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/suse/aif-operator:2.4.0
+
+  - it: renders when a pinned version is newer than the chart
+    set:
+      manager.image.tag: "2.6.0"
+      aiExtension.source.helm.version: "3.0.0"
+      aiExtension.extension.version: "2.5.1"
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: skips non-semver tags and empty values
+    set:
+      manager.image.tag: latest
+      aiExtension.source.helm.version: ""
+      aiExtension.extension.version: "sha256:0123456789abcdef"
+    asserts:
+      - notFailedTemplate: {}
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/suse/aif-operator:latest
+
+  - it: skips the check when the chart appVersion is not semver
+    chart:
+      appVersion: dev
+    set:
+      manager.image.tag: "2.4.0"
+      aiExtension.source.helm.version: "2.4.0"
+      aiExtension.extension.version: "2.4.0"
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: renders when aiExtension is absent
+    set:
+      manager.image.tag: "2.5.0"
+      aiExtension: null
+    asserts:
+      - notFailedTemplate: {}
+
+  # Strings the semver parser rejects are skipped like any other non-semver tag,
+  # instead of aborting the render with a bare "invalid semantic version".
+  - it: skips malformed semver-like tags
+    set:
+      manager.image.tag: "2.4.0-"
+      aiExtension.source.helm.version: "2.4.0+"
+      aiExtension.extension.version: "2.4.0-rc..1"
+    asserts:
+      - notFailedTemplate: {}
+
+  # semver rejects numeric pre-release identifiers with a leading zero.
+  - it: skips pre-release identifiers with a leading zero
+    set:
+      manager.image.tag: "2.4.0-01"
+      aiExtension.source.helm.version: "2.4.0-rc.01"
+      aiExtension.extension.version: "2.4.0-01"
+    asserts:
+      - notFailedTemplate: {}
+
+  # semver parses each core segment as a uint64; larger values would abort the
+  # render with "value out of range", so they are skipped.
+  - it: skips core segments that overflow uint64
+    set:
+      manager.image.tag: "18446744073709551616.0.0"
+      aiExtension.source.helm.version: "2.4.99999999999999999999"
+      aiExtension.extension.version: "99999999999999999999.0.0"
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: renders with the largest uint64 segment and with long leading zeros
+    set:
+      manager.image.tag: "18446744073709551615.0.0"
+      aiExtension.source.helm.version: "0000000000000000000000003.0.0"
+      aiExtension.extension.version: "2.5.0-99999999999999999999"
+    asserts:
+      - notFailedTemplate: {}
+
+  # Leading zeros parse: 0000000000000000000000001.0.0 is version 1.0.0, so the
+  # guard compares it (and refuses it) rather than skipping or aborting.
+  - it: compares a core segment with long leading zeros numerically
+    set:
+      manager.image.tag: "0000000000000000000000001.0.0"
+      aiExtension.source.helm.version: "2.5.0"
+      aiExtension.extension.version: "2.5.0"
+    asserts:
+      - failedTemplate:
+          errorMessage: "manager.image.tag 0000000000000000000000001.0.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly."

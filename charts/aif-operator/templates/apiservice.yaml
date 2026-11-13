@@ -1,0 +1,26 @@
+{{- /*
+Registers the operator API with Rancher's APIService aggregation. Rancher
+creates ServiceAccount <name>-api-service in cattle-system and writes the
+connection Secret (secretName, in secretNamespace: cattle-system by default,
+never the operator namespace); the operator dials Rancher through that Secret,
+and Rancher routes /v1/aif-operator through the tunnel with the authenticated
+user's identity.
+
+Enablement, the Secret name and namespace are shared with the manager's
+AGGREGATION_SECRET_* env vars; see _helpers.tpl.
+*/}}
+{{- if eq (include "aif-operator.aggregationEnabled" .) "true" }}
+apiVersion: management.cattle.io/v3
+kind: APIService
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}
+spec:
+  secretName: {{ include "aif-operator.aggregationSecretName" . }}
+  secretNamespace: {{ include "aif-operator.aggregationSecretNamespace" . }}
+  pathPrefixes:
+    - /v1/aif-operator/
+  paths:
+    - /v1/aif-operator
+{{- end }}

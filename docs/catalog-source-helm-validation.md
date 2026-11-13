@@ -10,7 +10,10 @@ value `appCatalog.remoteUrl`):
   only, 5 MiB cap) and **falls back to bundled** on any error or empty result.
 
 This procedure validates switching between them across `helm upgrade`. Run against a
-test cluster in the `aif-operator` namespace.
+test cluster in the `aif-operator` namespace. The operator API is served only through
+Rancher, so the `kubectl get --raw` commands below need a kubeconfig that goes
+through Rancher (for example one downloaded from the Rancher UI for the cluster that
+runs the operator).
 
 ## 1. Install with the bundled catalog
 
@@ -21,8 +24,7 @@ test cluster in the `aif-operator` namespace.
 Confirm the endpoint serves the embedded set (expect the bundled entries, including
 the NVAIE "Supported" apps):
 
-    kubectl -n aif-operator port-forward svc/aif-operator 8080:8080 &
-    curl -s localhost:8080/api/v1/catalog | jq 'length'
+    kubectl get --raw /v1/aif-operator/api/v1/catalog | jq 'length'
 
 ## 2. Upgrade to a remote static catalog
 
@@ -34,7 +36,7 @@ Confirm the `Settings` CR updated and the served catalog now reflects the remote
 document:
 
     kubectl -n aif-operator get settings settings -o jsonpath='{.spec.appCatalog.remoteUrl}'; echo
-    curl -s localhost:8080/api/v1/catalog | jq 'length'
+    kubectl get --raw /v1/aif-operator/api/v1/catalog | jq 'length'
 
 Verify fallback: temporarily point `remoteUrl` at an unreachable URL and confirm the
 endpoint still returns the bundled catalog (non-empty) rather than erroring.

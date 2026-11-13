@@ -1,3 +1,4 @@
+{{- include "aif-operator.checkPinnedVersions" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,11 +42,6 @@ spec:
           {{- with .Values.manager.allowedRegistryHosts }}
             - --allowed-registry-hosts={{ join "," . }}
           {{- end }}
-            - --api-bind-address=:{{ .Values.api.port }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.api.port }}
-              protocol: TCP
           {{- if .Values.manager.probes.liveness.enabled }}
           livenessProbe:
             {{- omit .Values.manager.probes.liveness "enabled" | toYaml | nindent 12 }}
@@ -67,14 +63,16 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: OPERATOR_SERVICE
-              # Static at install time (chart-derived name); not a fieldRef because
-              # the service name is determined by the chart, not the pod's runtime state.
-              value: {{ include "aif-operator.fullname" . | quote }}
             - name: EXTENSION_NAMESPACE
               value: {{ include "aif-operator.extensionsNamespace" . | quote }}
             - name: CHART_VERSION
               value: {{ .Chart.Version | quote }}
+          {{- if eq (include "aif-operator.aggregationEnabled" .) "true" }}
+            - name: AGGREGATION_SECRET_NAME
+              value: {{ include "aif-operator.aggregationSecretName" . | quote }}
+            - name: AGGREGATION_SECRET_NAMESPACE
+              value: {{ include "aif-operator.aggregationSecretNamespace" . | quote }}
+          {{- end }}
           {{- range .Values.manager.env }}
             - {{ toYaml . | nindent 14 | trim }}
           {{- end }}

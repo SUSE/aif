@@ -75,8 +75,7 @@ func newSettingsFakeClient(t *testing.T, objects ...client.Object) client.Client
 }
 
 func newSettingsHandler(c client.Client, ns string) http.Handler {
-	mux := http.NewServeMux()
-	NewSettingsHandler(c, ns).Register(mux)
+	mux := newTestMux(NewSettingsHandler(c, ns))
 	return mux
 }
 
@@ -649,27 +648,35 @@ func TestSettingsPut_CustomRepoTestChartPersists(t *testing.T) {
 	}
 }
 
-func TestGetRegistryCredentials_NoSettings(t *testing.T) {
-	c := newSettingsFakeClient(t)
-	h := newSettingsHandler(c, "suse-ai-system")
-
-	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
+func getRegistryStatus(t *testing.T, h http.Handler) (*httptest.ResponseRecorder, RegistryStatus) {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/settings/registry-status", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var body map[string]any
+	var body RegistryStatus
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("parse body: %v", err)
 	}
-	if body["applicationCollection"] != nil || body["suseRegistry"] != nil || body["nvidia"] != nil {
-		t.Errorf("expected empty credentials when settings not found, got %v", body)
+	return w, body
+}
+
+func TestGetRegistryStatus_NoSettings(t *testing.T) {
+	c := newSettingsFakeClient(t)
+	h := newSettingsHandler(c, "suse-ai-system")
+
+	w, _ := getRegistryStatus(t, h)
+
+	const want = `{"applicationCollection":false,"suseRegistry":false,"nvidia":false}`
+	if got := strings.TrimSpace(w.Body.String()); got != want {
+		t.Errorf("body = %s, want %s", got, want)
 	}
 }
 
-func TestGetRegistryCredentials_Nvidia(t *testing.T) {
+func TestGetRegistryStatus_Nvidia(t *testing.T) {
 	const ns = "suse-ai-system"
 
 	userSecret := &corev1.Secret{
@@ -693,32 +700,23 @@ func TestGetRegistryCredentials_Nvidia(t *testing.T) {
 	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
 	h := newSettingsHandler(c, ns)
 
-	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	w, body := getRegistryStatus(t, h)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !body.Nvidia || body.ApplicationCollection || body.SUSERegistry {
+		t.Errorf("status = %+v, want only nvidia configured", body)
 	}
-	var body RegistryCredentials
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("parse body: %v", err)
-	}
-	if body.Nvidia == nil {
-		t.Fatalf("expected nvidia creds, got nil")
-	}
-	if body.Nvidia.Username != "$oauthtoken" || body.Nvidia.Password != "nvapi-secret" {
-		t.Errorf("unexpected creds: %+v", body.Nvidia)
-	}
-	if body.Nvidia.RegistryHost != "nvcr.io" {
-		t.Errorf("expected host nvcr.io, got %q", body.Nvidia.RegistryHost)
+	raw := w.Body.String()
+	for _, s := range []string{"nvapi-secret", "$oauthtoken", "password", "username"} {
+		if strings.Contains(raw, s) {
+			t.Errorf("registry-status must return only booleans, found %q in %s", s, raw)
+		}
 	}
 }
 
 // A credential supplied only as a well-known secret (no Settings spec refs) is
 // resolved via EffectiveRefs and reported as configured — the pre-flight relies
 // on this to match what the operator can actually create.
-func TestGetRegistryCredentials_DiscoversWellKnownSecret(t *testing.T) {
+func TestGetRegistryStatus_WellKnownSecretNames(t *testing.T) {
 	const ns = "aif-operator"
 
 	// "appco" is a well-known application-collection secret name.
@@ -734,70 +732,56 @@ func TestGetRegistryCredentials_DiscoversWellKnownSecret(t *testing.T) {
 	c := newSettingsFakeClient(t, cr, acSecret)
 	h := newSettingsHandler(c, ns)
 
-	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	_, body := getRegistryStatus(t, h)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !body.ApplicationCollection {
+		t.Errorf("expected applicationCollection configured via well-known secret, got %+v", body)
 	}
-	var body RegistryCredentials
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("parse body: %v", err)
-	}
-	if body.ApplicationCollection == nil {
-		t.Fatalf("expected application-collection creds discovered from well-known secret, got nil")
-	}
-	if body.ApplicationCollection.Username != "u" || body.ApplicationCollection.Password != "p" {
-		t.Errorf("unexpected discovered creds: %+v", body.ApplicationCollection)
+	if body.SUSERegistry || body.Nvidia {
+		t.Errorf("expected only applicationCollection configured, got %+v", body)
 	}
 }
 
-func TestGetRegistryCredentials_AppCollectionHostFromOCIURL(t *testing.T) {
+// A user secret without its token secret is not a usable pair, so the
+// registry is reported as not configured.
+func TestGetRegistryStatus_PartialPair(t *testing.T) {
 	const ns = "suse-ai-system"
 
 	userSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ac-user", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "su-user", Namespace: ns},
 		Data:       map[string][]byte{"username": []byte("u")},
-	}
-	tokenSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ac-token", Namespace: ns},
-		Data:       map[string][]byte{"token": []byte("p")},
 	}
 	cr := &aiplatformv1alpha1.Settings{
 		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
 		Spec: aiplatformv1alpha1.SettingsSpec{
-			RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
-				ApplicationCollection: "oci://registry.example.com/charts",
-			},
-			ApplicationCollection: aiplatformv1alpha1.ApplicationCollectionSettings{
-				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ac-user", Key: "username"},
-				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ac-token", Key: "token"},
+			SUSERegistry: aiplatformv1alpha1.SUSERegistrySettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "su-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "su-token", Key: "token"},
 			},
 		},
 	}
 
-	c := newSettingsFakeClient(t, cr, userSecret, tokenSecret)
+	c := newSettingsFakeClient(t, cr, userSecret)
 	h := newSettingsHandler(c, ns)
+
+	_, body := getRegistryStatus(t, h)
+
+	if body.SUSERegistry {
+		t.Errorf("expected suseRegistry not configured when token secret is missing, got %+v", body)
+	}
+}
+
+// registry-credentials was replaced by registry-status.
+func TestRegistryCredentialsRouteRemoved(t *testing.T) {
+	c := newSettingsFakeClient(t, sampleCR())
+	h := newSettingsHandler(c, "aif-operator")
 
 	req := httptest.NewRequest("GET", "/api/v1/settings/registry-credentials", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var body RegistryCredentials
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("parse body: %v", err)
-	}
-	if body.ApplicationCollection == nil {
-		t.Fatalf("expected applicationCollection creds, got nil")
-	}
-	// The endpoint override is a full OCI chart-repo URL; the image-pull-secret
-	// host must be just the registry host, not the whole URL.
-	if body.ApplicationCollection.RegistryHost != "registry.example.com" {
-		t.Errorf("expected host registry.example.com (base of OCI URL), got %q", body.ApplicationCollection.RegistryHost)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
