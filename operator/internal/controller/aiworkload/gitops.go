@@ -175,22 +175,42 @@ func (r *AIWorkloadReconciler) deleteAIWorkload(ctx context.Context, w *aiplatfo
 // deleteGitFileByName commits the removal of workloads/<bundleName>.yaml from git.
 // Errors are logged by the caller but do not block finalizer removal.
 func (r *AIWorkloadReconciler) deleteGitFileByName(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName string) error {
+	s, err := r.gitOpsSettings(ctx)
+	if err != nil {
+		return err
+	}
+	gc, err := r.gitOpsClient(ctx, s)
+	if err != nil {
+		return err
+	}
+	_, err = gc.DeleteFile(ctx, gitOpsFilePath(bundleName), "chore: remove workload "+bundleName)
+	return err
+}
+
+// gitOpsSettings reads the operator Settings, which hold the GitOps repository.
+func (r *AIWorkloadReconciler) gitOpsSettings(ctx context.Context) (*aiplatformv1alpha1.Settings, error) {
 	var s aiplatformv1alpha1.Settings
 	if err := r.Get(ctx, types.NamespacedName{
 		Namespace: r.OperatorNamespace,
 		Name:      operatorSettingsName,
 	}, &s); err != nil {
-		return fmt.Errorf("read settings: %w", err)
+		return nil, fmt.Errorf("read settings: %w", err)
 	}
+	return &s, nil
+}
 
-	gc, err := igit.NewFromSettings(ctx, &s, r.OperatorNamespace, &controllerSecretReader{r.Client})
+// gitOpsClient builds the git client for the GitOps repository configured in s.
+func (r *AIWorkloadReconciler) gitOpsClient(ctx context.Context, s *aiplatformv1alpha1.Settings) (*igit.Client, error) {
+	gc, err := igit.NewFromSettings(ctx, s, r.OperatorNamespace, &controllerSecretReader{r.Client})
 	if err != nil {
-		return fmt.Errorf("init git client: %w", err)
+		return nil, fmt.Errorf("init git client: %w", err)
 	}
+	return gc, nil
+}
 
-	filePath := "workloads/" + bundleName + ".yaml"
-	_, err = gc.DeleteFile(ctx, filePath, "chore: remove workload "+bundleName)
-	return err
+// gitOpsFilePath is where a blueprint component's Fleet objects are published.
+func gitOpsFilePath(bundleName string) string {
+	return "workloads/" + bundleName + ".yaml"
 }
 
 // controllerSecretReader implements git.SecretReader using the controller's client.Client.

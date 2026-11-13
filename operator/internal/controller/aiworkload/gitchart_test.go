@@ -62,7 +62,7 @@ func TestBuildGitChartBundle_UnpacksChart(t *testing.T) {
 	targets := []any{map[string]any{"clusterName": "local"}}
 	fingerprint := strings.Repeat("a", 64)
 
-	b, err := buildGitChartBundle("wl-agent", "cattle-ai-agent-system", fingerprint, tgz, c, vals, targets)
+	b, err := buildEmbeddedChartBundle("wl-agent", "cattle-ai-agent-system", fingerprint, tgz, c, vals, targets, nil, nil, 0, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildGitChartBundle_ReleaseNameOverride(t *testing.T) {
 		"milvus/Chart.yaml": "apiVersion: v2\nname: milvus\nversion: 1.0.0\n",
 	})
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "milvus", ChartVersion: "1.0.0", ReleaseName: "my-milvus"}
-	b, err := buildGitChartBundle("wl-milvus", "ns", "", tgz, c, nil, nil)
+	b, err := buildEmbeddedChartBundle("wl-milvus", "ns", "", tgz, c, nil, nil, nil, nil, 0, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,10 +125,24 @@ func TestBuildGitChartBundle_ReleaseNameOverride(t *testing.T) {
 	}
 }
 
+func TestBuildGitChartBundle_SetsDependsOn(t *testing.T) {
+	tgz := makeChartTgz(t, map[string]string{"y/Chart.yaml": "apiVersion: v2\nname: y\nversion: 1.0.0\n"})
+	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "y", ChartVersion: "1.0.0"}
+	dependsOn := []any{map[string]any{"name": "other-bundle"}}
+	b, err := buildEmbeddedChartBundle("wl-y", "ns", "", tgz, c, nil, nil, dependsOn, nil, 0, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, ok, _ := unstructured.NestedSlice(b.Object, "spec", "dependsOn")
+	if !ok || len(got) != 1 {
+		t.Fatalf("spec.dependsOn = %v, want %v", got, dependsOn)
+	}
+}
+
 func TestBuildGitChartBundle_NoValuesOmitsKey(t *testing.T) {
 	tgz := makeChartTgz(t, map[string]string{"x/Chart.yaml": "apiVersion: v2\nname: x\nversion: 1.0.0\n"})
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "x", ChartVersion: "1.0.0"}
-	b, err := buildGitChartBundle("wl-x", "ns", "", tgz, c, map[string]any{}, nil)
+	b, err := buildEmbeddedChartBundle("wl-x", "ns", "", tgz, c, map[string]any{}, nil, nil, nil, 0, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,14 +154,14 @@ func TestBuildGitChartBundle_NoValuesOmitsKey(t *testing.T) {
 func TestBuildGitChartBundle_RejectsOversizedArchive(t *testing.T) {
 	tgz := make([]byte, maxChartArchiveBytes+1)
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "huge", ChartVersion: "1.0.0"}
-	if _, err := buildGitChartBundle("wl-huge", "ns", "", tgz, c, nil, nil); err == nil {
+	if _, err := buildEmbeddedChartBundle("wl-huge", "ns", "", tgz, c, nil, nil, nil, nil, 0, false); err == nil {
 		t.Fatal("expected size-limit error")
 	}
 }
 
 func TestBuildGitChartBundle_RejectsNonChartArchive(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "bad", ChartVersion: "1.0.0"}
-	if _, err := buildGitChartBundle("wl-bad", "ns", "", []byte("not a gzip"), c, nil, nil); err == nil {
+	if _, err := buildEmbeddedChartBundle("wl-bad", "ns", "", []byte("not a gzip"), c, nil, nil, nil, nil, 0, false); err == nil {
 		t.Fatal("expected unpack error for non-archive bytes")
 	}
 }
@@ -226,11 +240,11 @@ func TestFetchGitChart_PreservesErrUnauthorized(t *testing.T) {
 func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "rancher-charts", ChartName: "x", ChartVersion: "1.0.0"}
 	targets := []any{map[string]any{"clusterName": "local"}}
-	base := gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, targets)
+	base := embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets)
 	if base == "" {
 		t.Fatal("fingerprint should not be empty for hashable inputs")
 	}
-	if got := gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, targets); got != base {
+	if got := embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets); got != base {
 		t.Fatal("fingerprint is not stable across identical inputs")
 	}
 
@@ -239,18 +253,21 @@ func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 	renamed := c
 	renamed.ReleaseName = "custom-release"
 	for name, got := range map[string]string{
-		"version":   gitChartFingerprint(bumped, "ns", "commit-aaa", map[string]any{"a": 1}, targets),
-		"namespace": gitChartFingerprint(c, "other-ns", "commit-aaa", map[string]any{"a": 1}, targets),
-		"values":    gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 2}, targets),
-		"targets":   gitChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, []any{map[string]any{"clusterName": "downstream"}}),
+		"version":   embeddedChartFingerprint(bumped, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets),
+		"namespace": embeddedChartFingerprint(c, "other-ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets),
+		"values":    embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 2}, nil, "", 0, targets),
+		"targets":   embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, []any{map[string]any{"clusterName": "downstream"}}),
 		// The release name is baked into the Bundle's Helm options, so changing
 		// only it must invalidate the fingerprint or the override never ships.
-		"release name": gitChartFingerprint(renamed, "ns", "commit-aaa", map[string]any{"a": 1}, targets),
+		"release name": embeddedChartFingerprint(renamed, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets),
 		// The reason this input exists: a git-backed repo tracks a branch, so a
 		// developer can re-push a corrected chart at the SAME version. Only the
 		// repo's indexed commit distinguishes the two, and without it the Bundle
 		// is judged up to date and the chart is never re-fetched.
-		"repo commit": gitChartFingerprint(c, "ns", "commit-bbb", map[string]any{"a": 1}, targets),
+		"repo commit": embeddedChartFingerprint(c, "ns", "commit-bbb", map[string]any{"a": 1}, nil, "", 0, targets),
+		// dependsOn is now hashed too — a differing depends-on set must invalidate
+		// the fingerprint so a Bundle picks up a spec.dependsOn change.
+		"depends on": embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, []string{"other-bundle"}, "", 0, targets),
 	} {
 		if got == base {
 			t.Errorf("fingerprint unchanged when %s changed", name)
@@ -264,8 +281,8 @@ func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 func TestSizeGuards_WrapErrChartTooLarge(t *testing.T) {
 	t.Run("archive pre-check", func(t *testing.T) {
 		oversized := make([]byte, maxChartArchiveBytes+1)
-		_, err := buildGitChartBundle("b", "ns", "fp", oversized,
-			aiplatformv1alpha1.BlueprintComponent{ChartName: "big"}, nil, nil)
+		_, err := buildEmbeddedChartBundle("b", "ns", "fp", oversized,
+			aiplatformv1alpha1.BlueprintComponent{ChartName: "big"}, nil, nil, nil, nil, 0, false)
 		if !errors.Is(err, errChartTooLarge) {
 			t.Fatalf("archive guard error = %v, want it to wrap errChartTooLarge", err)
 		}
@@ -285,8 +302,8 @@ func TestSizeGuards_WrapErrChartTooLarge(t *testing.T) {
 		if len(tgz) > maxChartArchiveBytes {
 			t.Fatalf("fixture archive is %d bytes; it must stay under the pre-check to exercise the payload cap", len(tgz))
 		}
-		_, err := buildGitChartBundle("b", "ns", "fp", tgz,
-			aiplatformv1alpha1.BlueprintComponent{ChartName: "c"}, nil, nil)
+		_, err := buildEmbeddedChartBundle("b", "ns", "fp", tgz,
+			aiplatformv1alpha1.BlueprintComponent{ChartName: "c"}, nil, nil, nil, nil, 0, false)
 		if !errors.Is(err, errChartTooLarge) {
 			t.Fatalf("payload guard error = %v, want it to wrap errChartTooLarge", err)
 		}

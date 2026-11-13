@@ -497,7 +497,7 @@ suseai:
       configureApps: Configure Applications
       configureAppsDesc: Set default Helm values for each application in this blueprint.
       customize: Customize
-      customizeDesc: Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Leave a component untouched to keep the blueprint's defaults.
+      customizeDesc: Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Use the Advanced tab to change the deploy order or add a Kustomize overlay. Leave a component untouched to keep the blueprint's defaults.
       configuration: Configuration
       reviewInstall: Review & Install
       reviewCreate: Review & Create
@@ -517,6 +517,48 @@ suseai:
       includeComponent: Include
       componentExcluded: Excluded — this component will not be deployed.
       excluded: Excluded
+      valuesTab: Values
+      advancedTab: Advanced
+      dependsOn: Deploys after
+      dependsOnTooltip: This application is deployed only after the selected applications are Ready.
+      dependsOnSingleApp: This blueprint has a single application, so there is nothing to order it after.
+      kustomizeOverlay: Kustomize overlay
+      kustomizeChartRepo: Git ClusterRepo
+      kustomizePath: Path in repo
+      kustomizeNone: None
+      kustomizeInline: Inline
+      kustomizeGit: Git
+      kustomizeInlineHint: Patches the chart's rendered manifests after Helm renders them. Write patches in kustomization.yaml. To add new resources or patch files, use Add file and list them under resources or patches in kustomization.yaml. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
+      kustomizeAddFile: Add file
+      kustomizeAddFileConfirm: Add
+      kustomizeAddFileCancel: Cancel
+      kustomizeRemoveFile: Remove {name}
+      kustomizeFileName: File name
+      kustomizeFileNameInvalid: Use a relative path without empty, "." or ".." segments.
+      kustomizeFileNameReserved: The kustomization file already exists.
+      kustomizeFileNameDuplicate: A file with this name already exists.
+      kustomizeUnreferencedFiles: "Kustomize ignores files the kustomization file doesn't reference: {names}. List new objects under resources and patch files under patches."
+      kustomizeUnreferencedFile: Not referenced from the kustomization file
+      kustomizeEmptyReferencedFiles: "These files are listed in the kustomization file but are empty or only comments, so they add nothing: {names}. Uncomment their content."
+      kustomizeOutsideDirFiles: 'These files are outside the overlay directory "{dir}": {names}. They are kept unchanged, but the operator rejects the overlay until they are moved under it or removed.'
+      kustomizeWrapperWarning: This editor holds the contents of kustomization.yaml itself, not the kustomize/dir/files block of the resource. Put each file in its own tab with Add file instead.
+      kustomizeGitHint: Fetches a directory containing a kustomization.yaml and its patch files from a Git-type repository added in AI Factory Settings. The repository must use an HTTPS URL (SSH repositories are not supported and are not listed) and doesn't need to contain any Helm charts. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
+      kustomizeNoGitRepos: No Git-type repositories with an HTTPS URL found. Add a repository of type Git with an HTTPS URL in AI Factory Settings to use it as an overlay source; SSH repositories are not supported. It doesn't need to contain any Helm charts.
+      reviewChangeValues: Helm values
+      reviewChangeOverlay: Kustomize overlay
+      reviewChangeOrder: Deploy order
+      blueprintOverlay: Blueprint overlay (read-only)
+      installOverlay: Overlay for this deployment
+      installOverlayHint: Applied after the blueprint overlay.
+      staleDependsOn: "These dependencies no longer exist in this Blueprint version and will be removed when you save: {names}"
+      deployOrder: Deploy Order
+      deploysAfter: deploys after
+      patched: Patched
+      ordered: Ordered
+    hints:
+      customized: This component differs from the blueprint for this deployment.
+      patched: This component has a kustomize patch applied.
+      ordered: This component has a deploy-order dependency.
     errors:
       allComponentsDisabled: At least one component must remain enabled.
     warnings:

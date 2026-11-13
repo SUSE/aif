@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -192,5 +195,111 @@ func TestCreateAIWorkload_AppSourceSkipsComponentNameValidation(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func blueprintSpec(componentValues []map[string]any) map[string]any {
+	return map[string]any{
+		"displayName": "wl", "targetNamespace": "ai", "targetClusters": []string{"local"},
+		"source":          map[string]any{"sourceType": "Blueprint", "blueprint": map[string]string{"name": "rag", "version": "1.0.0"}},
+		"componentValues": componentValues,
+	}
+}
+
+func inlineKustomize() map[string]any {
+	return map[string]any{"dir": "overlay", "files": map[string]string{"overlay/kustomization.yaml": "patches: []\n"}}
+}
+
+func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestCreateAIWorkload_AppSourceRejectsKustomizeAndDependsOn(t *testing.T) {
+	h := handlerWithObjects(t)
+	for _, ov := range []map[string]any{
+		{"componentName": "llama", "kustomize": inlineKustomize()},
+		{"componentName": "llama", "dependsOn": []string{}},
+	} {
+		rec := serve(h, createReq(map[string]any{
+			"displayName": "wl", "targetNamespace": "ai",
+			"source":          map[string]any{"sourceType": "App", "app": map[string]string{"chartRepo": "r", "chartName": "llama", "chartVersion": "1", "release": "llama-1"}},
+			"componentValues": []map[string]any{ov},
+		}))
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "kustomize and dependsOn are only supported for Blueprint workloads") {
+			t.Fatalf("override %v: want 422 Blueprint-only error, got %d: %s", ov, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestCreateAIWorkload_RejectsInvalidDependsOnOverride(t *testing.T) {
+	bp := testBlueprint("rag-1-0-0", "rag", "1.0.0", "milvus", "open-webui")
+	bp.Spec.Components[1].DependsOn = []string{"milvus"}
+	cases := map[string]struct {
+		ov   map[string]any
+		want string
+	}{
+		"unknown": {map[string]any{"componentName": "milvus", "dependsOn": []string{"gone"}}, "unknown component"},
+		"self":    {map[string]any{"componentName": "milvus", "dependsOn": []string{"milvus"}}, "cannot depend on itself"},
+		"cycle":   {map[string]any{"componentName": "milvus", "dependsOn": []string{"open-webui"}}, "cycle"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := serve(handlerWithObjects(t, bp), createReq(blueprintSpec([]map[string]any{tc.ov})))
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("want 422 containing %q, got %d: %s", tc.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateAIWorkload_RejectsInvalidKustomizeOverride(t *testing.T) {
+	bp := testBlueprint("rag-1-0-0", "rag", "1.0.0", "milvus", "open-webui")
+	root := map[string]string{"overlay/kustomization.yaml": "patches: []\n"}
+	cases := map[string]struct {
+		kustomize map[string]any
+		want      string
+	}{
+		"no root":      {map[string]any{"dir": "overlay", "files": map[string]string{"overlay/patch.yaml": "a: 1\n"}}, "no kustomization.yaml"},
+		"file outside": {map[string]any{"dir": "overlay", "files": map[string]string{"overlay/kustomization.yaml": "patches: []\n", "milvus/values.yaml": "a: 1\n"}}, "outside overlay dir"},
+		"bad dir":      {map[string]any{"dir": "./overlay", "files": root}, "clean relative path"},
+		"gitRef path":  {map[string]any{"dir": "overlay", "gitRef": map[string]string{"chartRepo": "overlays", "path": "../x"}}, "escapes"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := serve(handlerWithObjects(t, bp), createReq(blueprintSpec([]map[string]any{{"componentName": "milvus", "kustomize": tc.kustomize}})))
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "componentValues[milvus].kustomize") ||
+				!strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("want 422 containing %q, got %d: %s", tc.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateAIWorkload_AcceptsKustomizeOnGitBackedChart(t *testing.T) {
+	// Git-backed charts deploy as embedded-chart Bundles, which carry overlays.
+	bp := testBlueprint("rag-1-0-0", "rag", "1.0.0", "milvus", "open-webui")
+	repo := &unstructured.Unstructured{}
+	repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+	repo.SetName("suse-ai")
+	_ = unstructured.SetNestedField(repo.Object, "https://git.example.com/charts", "spec", "gitRepo")
+
+	rec := serve(handlerWithObjects(t, bp, repo), createReq(blueprintSpec([]map[string]any{{"componentName": "milvus", "kustomize": inlineKustomize()}})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAIWorkload_AcceptsValidOverrides(t *testing.T) {
+	bp := testBlueprint("rag-1-0-0", "rag", "1.0.0", "milvus", "open-webui")
+	h, c := newAIWorkloadHandlerWithClient(t, bp)
+	rec := serve(h, createReq(blueprintSpec([]map[string]any{{"componentName": "open-webui", "dependsOn": []string{"milvus"}, "kustomize": inlineKustomize()}})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ov := storedWorkload(t, c).Spec.ComponentValues[0]
+	if ov.DependsOn == nil || len(*ov.DependsOn) != 1 || ov.Kustomize == nil || ov.Kustomize.Files["overlay/kustomization.yaml"] == "" {
+		t.Fatalf("stored override = %+v, want dependsOn and kustomize intact", ov)
 	}
 }

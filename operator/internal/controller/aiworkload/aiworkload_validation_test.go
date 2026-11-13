@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
@@ -71,5 +72,61 @@ var _ = Describe("AIWorkload admission validation", func() {
 		Expect(k8sClient.Create(ctx, w)).To(Succeed())
 		w.Spec.DeployStrategy = aiplatformv1alpha1.AIWorkloadDeployGitOps
 		Expect(k8sClient.Update(ctx, w)).ToNot(Succeed())
+	})
+
+	It("rejects a componentValues override that depends on itself", func() {
+		w := blueprintWorkload("override-self-dep", aiplatformv1alpha1.AIWorkloadDeployFleetBundle, []string{"local"})
+		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "a", DependsOn: &[]string{"a"}}}
+		Expect(k8sClient.Create(ctx, w)).ToNot(Succeed())
+	})
+
+	It("accepts an override with kustomize files", func() {
+		w := blueprintWorkload("override-kustomize", aiplatformv1alpha1.AIWorkloadDeployFleetBundle, []string{"local"})
+		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{
+			ComponentName: "a",
+			DependsOn:     &[]string{},
+			Kustomize: &aiplatformv1alpha1.ComponentKustomize{
+				Dir:   "overlay",
+				Files: map[string]string{"overlay/kustomization.yaml": "patches: []\n"},
+			},
+		}}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+	})
+
+	It("round-trips an empty dependsOn override through create and server-side apply", func() {
+		w := blueprintWorkload("override-empty-deps", aiplatformv1alpha1.AIWorkloadDeployFleetBundle, []string{"local"})
+		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "a", DependsOn: &[]string{}}}
+		Expect(k8sClient.Create(ctx, w)).To(Succeed())
+
+		got := &aiplatformv1alpha1.AIWorkload{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), got)).To(Succeed())
+		Expect(got.Spec.ComponentValues[0].DependsOn).NotTo(BeNil())
+		Expect(*got.Spec.ComponentValues[0].DependsOn).To(BeEmpty())
+
+		// The API updates workloads with server-side apply; [] must survive it too.
+		applied := blueprintWorkload("override-empty-deps", aiplatformv1alpha1.AIWorkloadDeployFleetBundle, []string{"local"})
+		applied.APIVersion = aiplatformv1alpha1.GroupVersion.String()
+		applied.Kind = "AIWorkload"
+		applied.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "b", DependsOn: &[]string{}}}
+		Expect(k8sClient.Patch(ctx, applied, client.Apply, client.ForceOwnership, client.FieldOwner("aif-test"))).To(Succeed())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(w), got)).To(Succeed())
+		Expect(got.Spec.ComponentValues).To(HaveLen(1))
+		Expect(got.Spec.ComponentValues[0].ComponentName).To(Equal("b"))
+		Expect(got.Spec.ComponentValues[0].DependsOn).NotTo(BeNil())
+		Expect(*got.Spec.ComponentValues[0].DependsOn).To(BeEmpty())
+	})
+
+	It("rejects an override kustomize with both files and gitRef", func() {
+		w := blueprintWorkload("override-kustomize-both", aiplatformv1alpha1.AIWorkloadDeployFleetBundle, []string{"local"})
+		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{
+			ComponentName: "a",
+			Kustomize: &aiplatformv1alpha1.ComponentKustomize{
+				Dir:    "overlay",
+				Files:  map[string]string{"overlay/kustomization.yaml": "patches: []\n"},
+				GitRef: &aiplatformv1alpha1.ComponentKustomizeGitRef{ChartRepo: "repo", Path: "overlays/prod"},
+			},
+		}}
+		Expect(k8sClient.Create(ctx, w)).ToNot(Succeed())
 	})
 })

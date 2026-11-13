@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, getCurrentInstance } from 'vue';
 import { useT } from '../../composables/useT';
+import { provideKustomizeDrafts } from '../../composables/useKustomizeDrafts';
 import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
 import BlueprintInstallBasicInfoStep from './wizard/BlueprintInstallBasicInfoStep.vue';
@@ -30,6 +31,8 @@ const router  = vm.$router;
 const route   = vm.$route;
 
 const t = useT();
+// Steps unmount on navigation; overlay drafts outlive them here.
+provideKustomizeDrafts();
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading     = ref(true);

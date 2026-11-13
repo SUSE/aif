@@ -29,12 +29,21 @@
         <span v-if="comp.releaseName" class="comp-release text-muted">
           {{ t('suseai.wizard.labels.releaseName', 'Release') }}: {{ comp.releaseName }}
         </span>
+        <span v-if="comp.dependsOn?.length" class="comp-depends text-muted">
+          {{ comp.chartName }} &rarr; {{ t('suseai.wizard.labels.deploysAfter', 'deploys after') }} {{ comp.dependsOn.join(', ') }}
+        </span>
+        <BadgeState
+          v-if="comp.kustomize"
+          color="bg-info"
+          :label="t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay')"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
+import { BadgeState } from '@components/BadgeState';
 import type { BlueprintSpec } from '../../../types/blueprint-types';
 import { useT } from '../../../composables/useT';
 
@@ -65,6 +74,7 @@ const t = useT();
   .comp-repo    { font-size: 12px; }
   .comp-ns      { font-size: 12px; }
   .comp-release { font-size: 12px; }
+  .comp-depends { font-size: 12px; flex-basis: 100%; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

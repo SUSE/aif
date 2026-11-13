@@ -1,5 +1,5 @@
 import { isEqual, isPlainObject } from 'lodash';
-import type { BlueprintComponent } from '../types/blueprint-types';
+import type { BlueprintComponent, ComponentKustomize } from '../types/blueprint-types';
 import type { ComponentValueOverride } from '../types/aiworkload-types';
 
 // deepMergeValues recursively merges override onto base: override wins on
@@ -107,6 +107,93 @@ export function diffComponentValues(
   return overrides;
 }
 
+// firstOverride returns the componentValues entry the operator applies to a
+// component: the first one naming it (isComponentEnabled's convention).
+function firstOverride(overrides: ComponentValueOverride[] | undefined, chartName: string): ComponentValueOverride | undefined {
+  return (overrides || []).find((o) => o.componentName === chartName);
+}
+
+// seedComponentDependsOn computes each component's starting deploy order:
+// the existing override's dependsOn when it sets one ([] = no dependencies),
+// else the Blueprint's. Names this Blueprint version no longer has are dropped
+// (staleDependsOn reports them).
+export function seedComponentDependsOn(components: BlueprintComponent[], existing: ComponentValueOverride[] = []): Record<string, string[]> {
+  const known = new Set(components.map((c) => c.chartName));
+  const seed: Record<string, string[]> = {};
+
+  for (const c of components) {
+    const deps = firstOverride(existing, c.chartName)?.dependsOn ?? c.dependsOn ?? [];
+
+    seed[c.chartName] = deps.filter((d) => known.has(d) && d !== c.chartName);
+  }
+
+  return seed;
+}
+
+// staleDependsOn lists, per component, the override dependsOn names this
+// Blueprint version no longer has (possible after an upgrade).
+export function staleDependsOn(components: BlueprintComponent[], existing: ComponentValueOverride[] = []): Record<string, string[]> {
+  const known = new Set(components.map((c) => c.chartName));
+  const stale: Record<string, string[]> = {};
+
+  for (const c of components) {
+    const missing = (firstOverride(existing, c.chartName)?.dependsOn || []).filter((d) => !known.has(d));
+
+    if (missing.length) {
+      stale[c.chartName] = missing;
+    }
+  }
+
+  return stale;
+}
+
+// seedComponentKustomize returns each component's install-time overlay (only
+// components whose applied override sets one). Overrides for components this
+// Blueprint version no longer has are ignored, like the other seed helpers, so
+// they are never re-emitted (the API would reject them as unknown).
+export function seedComponentKustomize(components: BlueprintComponent[], existing: ComponentValueOverride[] = []): Record<string, ComponentKustomize | undefined> {
+  const seed: Record<string, ComponentKustomize | undefined> = {};
+
+  for (const c of components) {
+    const kustomize = firstOverride(existing, c.chartName)?.kustomize;
+
+    if (kustomize) {
+      seed[c.chartName] = kustomize;
+    }
+  }
+
+  return seed;
+}
+
+// effectiveComponents returns components with install-time dependsOn
+// overrides applied, for deploy-order display and validation.
+export function effectiveComponents(components: BlueprintComponent[], overrides: ComponentValueOverride[] = []): BlueprintComponent[] {
+  return components.map((c) => {
+    const deps = firstOverride(overrides, c.chartName)?.dependsOn;
+
+    return deps !== undefined ? { ...c, dependsOn: [...deps] } : c;
+  });
+}
+
+// AdvancedEdits carries the install wizard's Advanced-tab state: the
+// Blueprint's deploy order to diff against, the edited order, and the
+// install-time overlays.
+export interface AdvancedEdits {
+  blueprintDependsOn: Record<string, string[]>;
+  editedDependsOn:    Record<string, string[]>;
+  editedKustomize:    Record<string, ComponentKustomize | undefined>;
+}
+
+function sameSet(a: string[] = [], b: string[] = []): boolean {
+  return isEqual([...a].sort(), [...b].sort());
+}
+
+// dependsOnChanged reports whether a component's edited deploy order differs
+// from the Blueprint's (as a set: order of entries does not matter).
+function dependsOnChanged(advanced: AdvancedEdits | undefined, name: string): boolean {
+  return !!advanced && name in advanced.editedDependsOn && !sameSet(advanced.editedDependsOn[name], advanced.blueprintDependsOn[name]);
+}
+
 // seedComponentEnabled computes the starting per-component enabled state shown
 // in the Customize step, mirroring seedComponentValues: each component starts
 // enabled unless an existing override explicitly disabled it.
@@ -130,18 +217,26 @@ export function diffComponentOverrides(
   editedValues: Record<string, Record<string, any>>,
   seedEnabled: Record<string, boolean>,
   editedEnabled: Record<string, boolean>,
+  advanced?: AdvancedEdits,
 ): ComponentValueOverride[] {
   const changedValues = new Map(diffComponentValues(seedValues, editedValues).map((o) => [o.componentName, o.values]));
-  const names = new Set([...Object.keys(seedEnabled), ...Object.keys(editedEnabled), ...changedValues.keys()]);
+  const names = new Set([
+    ...Object.keys(seedEnabled), ...Object.keys(editedEnabled), ...changedValues.keys(),
+    ...Object.keys(advanced?.editedDependsOn || {}), ...Object.keys(advanced?.editedKustomize || {}),
+  ]);
   const overrides: ComponentValueOverride[] = [];
   for (const name of names) {
     const values = changedValues.get(name);
     const enabledChanged = (seedEnabled[name] ?? true) !== (editedEnabled[name] ?? true);
-    if (values === undefined && !enabledChanged) continue;
+    const orderChanged = dependsOnChanged(advanced, name);
+    const kustomize = advanced?.editedKustomize[name];
+    if (values === undefined && !enabledChanged && !orderChanged && !kustomize) continue;
     overrides.push({
       componentName: name,
       ...(values !== undefined ? { values } : {}),
       ...(enabledChanged ? { enabled: editedEnabled[name] } : {}),
+      ...(orderChanged ? { dependsOn: [...advanced!.editedDependsOn[name]] } : {}),
+      ...(kustomize ? { kustomize } : {}),
     });
   }
   return overrides;
@@ -154,13 +249,62 @@ export function customizedComponentNames(
   blueprintDefaults: Record<string, Record<string, any>>,
   currentValues: Record<string, Record<string, any>>,
   currentEnabled: Record<string, boolean>,
+  advanced?: AdvancedEdits,
 ): Set<string> {
-  const diffs = diffComponentValues(blueprintDefaults, currentValues);
-  return new Set(
-    diffs
-      .filter((o) => currentEnabled[o.componentName] !== false)
-      .map((o) => o.componentName),
-  );
+  const names = diffComponentValues(blueprintDefaults, currentValues).map((o) => o.componentName);
+  if (advanced) {
+    names.push(
+      ...Object.keys(advanced.editedDependsOn).filter((name) => dependsOnChanged(advanced, name)),
+      ...Object.keys(advanced.editedKustomize).filter((name) => !!advanced.editedKustomize[name]),
+    );
+  }
+  return new Set(names.filter((name) => currentEnabled[name] !== false));
+}
+
+export type OverrideChange = 'values' | 'overlay' | 'order';
+
+// customizedOverrides lists, for the install review, each enabled component
+// whose override changes something, and what: Helm values, an install-time
+// overlay, or the deploy order. Excluded components show as "Excluded" instead.
+export function customizedOverrides(overrides: ComponentValueOverride[] = []): { componentName: string; changes: OverrideChange[] }[] {
+  return overrides
+    .filter((ov) => ov.enabled !== false)
+    .map((ov) => ({
+      componentName: ov.componentName,
+      changes:       [
+        ...(ov.values !== undefined ? ['values' as const] : []),
+        ...(ov.kustomize ? ['overlay' as const] : []),
+        ...(ov.dependsOn !== undefined ? ['order' as const] : []),
+      ],
+    }))
+    .filter((row) => row.changes.length > 0);
+}
+
+// deployOrder groups components into dependency waves for read-only display in
+// the install wizard (Task 8): each wave contains components whose dependsOn
+// are all already resolved by earlier waves. Assumes validated acyclic input
+// from authoring (Tasks 6-7); the cycle guard below only protects display
+// against unexpected bad data rather than being a validation mechanism.
+export function deployOrder(components: BlueprintComponent[]): string[][] {
+  const remaining = new Map(components.map((c) => [c.chartName, new Set(c.dependsOn || [])]));
+  const waves: string[][] = [];
+  while (remaining.size) {
+    const wave = [...remaining.entries()].filter(([, deps]) => [...deps].every((d) => !remaining.has(d))).map(([n]) => n);
+    if (!wave.length) { waves.push([...remaining.keys()]); break; } // cycle guard
+    wave.forEach((n) => remaining.delete(n));
+    waves.push(wave.sort());
+  }
+  return waves;
+}
+
+// effectiveDeployOrder is the order the controller actually deploys in:
+// install-time dependsOn overrides applied and excluded components dropped.
+// deployOrder treats a dependency on a dropped component as already resolved,
+// matching the controller dropping edges to excluded components.
+export function effectiveDeployOrder(components: BlueprintComponent[], overrides: ComponentValueOverride[] = []): string[][] {
+  const enabled = components.filter((c) => isComponentEnabled(overrides, c.chartName));
+
+  return deployOrder(effectiveComponents(enabled, overrides));
 }
 
 // resolveInitialFormState resolves the starting editedValues and editedEnabled
@@ -173,10 +317,14 @@ export function resolveInitialFormState(
 ): {
   values: Record<string, Record<string, any>>;
   enabled: Record<string, boolean>;
+  dependsOn: Record<string, string[]>;
+  kustomize: Record<string, ComponentKustomize | undefined>;
 } {
   const overrides = currentOverrides !== undefined ? currentOverrides : existingOverrides;
   return {
     values: seedComponentValues(components, overrides),
     enabled: seedComponentEnabled(components, overrides),
+    dependsOn: seedComponentDependsOn(components, overrides),
+    kustomize: seedComponentKustomize(components, overrides),
   };
 }
