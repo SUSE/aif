@@ -268,7 +268,7 @@ export function buildFleetBundleYAML(params: {
     values.imagePullSecrets = secrets;
   }
   disableNvidiaChartSecrets(values, params.library);
-  injectNvidiaPullSecretRefs(values, params.library);
+  injectNvidiaPullSecretRefs(values, params.library, params.chartName);
 
   const isOCI = params.chartRepoUrl.startsWith('oci://');
   const spec: Record<string, any> = {
@@ -450,7 +450,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     // Reference the operator-delivered ngc-secret in the pull-secret value shapes
     // NVIDIA charts read, so team-repo NIM pods stop pulling with the hardcoded
     // nvcrimagepullsecret (which nothing creates) and use ngc-secret instead.
-    injectNvidiaPullSecretRefs(helmSpec.values, 'nvidia');
+    injectNvidiaPullSecretRefs(helmSpec.values, 'nvidia', params.chartName);
   }
 
   if (localClusters.length > 0) {
@@ -522,6 +522,10 @@ export function disableNvidiaChartSecrets(values: Record<string, any>, library?:
 // (operator/internal/controller/aiworkload/blueprint.go).
 const NVIDIA_IMAGE_PULL_SECRET_NAME = 'ngc-secret';
 
+// k8s-nim-operator is the one NVIDIA chart that reads its operator pull secrets
+// from operator.image.pullSecrets. KEEP IN SYNC with nimOperatorChartName (Go).
+const NIM_OPERATOR_CHART_NAME = 'k8s-nim-operator';
+
 // isPlainObject reports whether v is a non-null, non-array object — the only
 // shape into which these helpers write. Anything else (string, number, array)
 // is treated as deliberate author intent and left untouched.
@@ -547,7 +551,7 @@ function isPlainObject(v: any): v is Record<string, any> {
 // it to NVIDIA charts only. Sets the scalar global.ngcImagePullSecretName but
 // never forces the global.imagePullSecrets list shape (owned by the non-nvidia
 // code).
-export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
+export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia', chartName?: string): void {
   if (library !== 'nvidia') return;
   const name = NVIDIA_IMAGE_PULL_SECRET_NAME;
 
@@ -566,7 +570,12 @@ export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?
   // NIM workload shape: image.pullSecrets is a flat string list.
   injectFlatPullSecretList(values, 'image', name);
   // k8s-nim-operator shape: operator.image.pullSecrets, flat string list.
-  injectNestedFlatPullSecretList(values, 'operator', 'image', name);
+  // Other NVIDIA charts (GPU Operator, Network Operator) read operator.image as
+  // a scalar image name, so a created map would shadow it and render
+  // "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>". Missing maps are
+  // created only for k8s-nim-operator; an existing operator.image map is always
+  // honoured. Mirrors the Go copy.
+  injectNestedFlatPullSecretList(values, 'operator', 'image', name, chartName === NIM_OPERATOR_CHART_NAME);
   // Scalar name shape: a single string naming the pull secret, read by some
   // charts at the top level and by others under global.
   injectNgcImagePullSecretName(values, name);
@@ -613,16 +622,20 @@ function injectFlatPullSecretList(values: Record<string, any>, topKey: string, n
 // injectNestedFlatPullSecretList walks values[topKey][midKey].pullSecrets,
 // creating intermediate plain-object maps as needed. If any intermediate value
 // exists but isn't a plain object, leaves it untouched (author intent).
-function injectNestedFlatPullSecretList(values: Record<string, any>, topKey: string, midKey: string, name: string): void {
+function injectNestedFlatPullSecretList(values: Record<string, any>, topKey: string, midKey: string, name: string, createMissing: boolean): void {
   const topRaw = values[topKey];
   if (topRaw === undefined) {
-    values[topKey] = { [midKey]: { pullSecrets: [name] } };
+    if (createMissing) {
+      values[topKey] = { [midKey]: { pullSecrets: [name] } };
+    }
     return;
   }
   if (!isPlainObject(topRaw)) return;
   const midRaw = topRaw[midKey];
   if (midRaw === undefined) {
-    topRaw[midKey] = { pullSecrets: [name] };
+    if (createMissing) {
+      topRaw[midKey] = { pullSecrets: [name] };
+    }
     return;
   }
   if (!isPlainObject(midRaw)) return;
