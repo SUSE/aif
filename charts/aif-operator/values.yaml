@@ -175,6 +175,12 @@ manager:
   tolerations: []
   affinity: {}
 
+labs:
+  adminGlobalRole:
+    # Create a Rancher GlobalRole "aif-labs-admin" with full access to labs and
+    # labcatalogs. Admin-level: a lab's UI extension runs with full trust in Rancher.
+    enabled: true
+
 rbacHelpers:
   enable: false
 

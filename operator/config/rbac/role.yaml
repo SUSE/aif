@@ -66,6 +66,7 @@ rules:
   - aiworkloads
   - blueprints
   - installaiextensions
+  - labs
   - settings
   verbs:
   - create
@@ -80,6 +81,7 @@ rules:
   resources:
   - aiworkloads/finalizers
   - installaiextensions/finalizers
+  - labs/finalizers
   verbs:
   - update
 - apiGroups:
@@ -87,6 +89,8 @@ rules:
   resources:
   - aiworkloads/status
   - installaiextensions/status
+  - labcatalogs/status
+  - labs/status
   - settings/status
   verbs:
   - get
@@ -99,6 +103,17 @@ rules:
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - ai-factory.suse.com
+  resources:
+  - labcatalogs
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - apiextensions.k8s.io

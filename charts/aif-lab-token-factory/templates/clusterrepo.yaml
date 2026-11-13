@@ -1,0 +1,12 @@
+{{- if .Values.standalone }}
+{{- include "aif-lab-token-factory.validateStandalone" . }}
+apiVersion: catalog.cattle.io/v1
+kind: ClusterRepo
+metadata:
+  name: {{ include "aif-lab-token-factory.fullname" . }}
+  labels:
+    {{- include "aif-lab-token-factory.labels" . | nindent 4 }}
+spec:
+  url: http://{{ include "aif-lab-token-factory.serviceName" . }}.{{ .Release.Namespace }}:{{ .Values.service.port }}
+{{- end }}
+

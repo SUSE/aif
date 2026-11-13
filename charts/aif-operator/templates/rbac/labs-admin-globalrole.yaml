@@ -1,0 +1,17 @@
+{{- if .Values.labs.adminGlobalRole.enabled }}
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+metadata:
+  name: aif-labs-admin
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+displayName: AI Factory Labs Admin
+rules:
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
+      - labs
+      - labcatalogs
+    verbs:
+      - '*'
+{{- end }}

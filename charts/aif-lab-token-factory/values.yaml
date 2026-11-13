@@ -1,0 +1,94 @@
+replicaCount: 1
+
+#
+# Typically lab chart is embedded and deployed by aif-operator.
+# However, lab chart can be deployed standalone, separately from
+# aif-operator by setting ".Values.aiExtension.enabled" to "false" when
+# deploying aif-operator chart.
+#
+# To deploy lab chart separately, you must set enable standalone deploy
+# by setting the value to "true". This chart then deploys the extension
+# catalog (server, Service and ClusterRepo), and the extension itself is
+# installed and updated from Rancher's Extensions page. See README.md.
+#
+standalone: false
+
+global:
+  # Override the registry host (and optional path prefix) for the UI image.
+  # The aif-operator chart forwards its global value here in combined installs.
+  imageRegistry: ""
+  # Pull Secrets shared with the aif-operator chart's combined-install values.
+  imagePullSecrets: []
+
+image:
+  registry: ghcr.io
+  repository: suse/aif-lab-token-factory
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+probes:
+  liveness:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readiness:
+    enabled: true
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+rollingUpdate:
+  maxSurge: 25%
+  maxUnavailable: 25%
+
+# Sketch of a lab-owned backend (multi-container shape). Not built in the PoC.
+mockApi:
+  enabled: false
+  replicaCount: 1
+  port: 8081
+  image:
+    registry: ghcr.io
+    repository: suse/token-factory-gateway
+    tag: ""
