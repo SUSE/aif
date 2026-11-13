@@ -76,42 +76,30 @@
               <span v-else class="no-resource">—</span>
             </td>
             <td class="col-cpu">
-              <div v-if="cluster.resources.cpu.total > 0" class="resource-bar-container">
-                <ProgressBarMulti
-                  :values="[{ color: getResourceBarColor(cluster.resources.cpu.used, cluster.resources.cpu.total), value: cluster.resources.cpu.used }]"
-                  :max="cluster.resources.cpu.total"
-                  class="resource-bar"
-                />
-                <div class="resource-percentage">
-                  {{ Math.ceil((cluster.resources.cpu.used / cluster.resources.cpu.total) * 100) }}%
-                </div>
-              </div>
+              <PercentageBar
+                v-if="cluster.resources.cpu.total > 0"
+                :model-value="getUsagePercent(cluster.resources.cpu)"
+                show-percentage
+                class="resource-bar"
+              />
               <span v-else class="no-resource">Unknown</span>
             </td>
             <td class="col-memory">
-              <div v-if="cluster.resources.memory.total > 0" class="resource-bar-container">
-                <ProgressBarMulti
-                  :values="[{ color: getResourceBarColor(cluster.resources.memory.used, cluster.resources.memory.total), value: cluster.resources.memory.used }]"
-                  :max="cluster.resources.memory.total"
-                  class="resource-bar"
-                />
-                <div class="resource-percentage">
-                  {{ Math.ceil((cluster.resources.memory.used / cluster.resources.memory.total) * 100) }}%
-                </div>
-              </div>
+              <PercentageBar
+                v-if="cluster.resources.memory.total > 0"
+                :model-value="getUsagePercent(cluster.resources.memory)"
+                show-percentage
+                class="resource-bar"
+              />
               <span v-else class="no-resource">Unknown</span>
             </td>
             <td class="col-gpu">
-              <div v-if="cluster.resources.gpu && cluster.resources.gpu.total > 0" class="resource-bar-container">
-                <ProgressBarMulti
-                  :values="[{ color: getResourceBarColor(cluster.resources.gpu.used, cluster.resources.gpu.total), value: cluster.resources.gpu.used }]"
-                  :max="cluster.resources.gpu.total"
-                  class="resource-bar"
-                />
-                <div class="resource-percentage">
-                  {{ Math.ceil((cluster.resources.gpu.used / cluster.resources.gpu.total) * 100) }}%
-                </div>
-              </div>
+              <PercentageBar
+                v-if="cluster.resources.gpu && cluster.resources.gpu.total > 0"
+                :model-value="getUsagePercent(cluster.resources.gpu)"
+                show-percentage
+                class="resource-bar"
+              />
               <span v-else class="no-resource">—</span>
             </td>
             <td class="col-status">
@@ -165,7 +153,7 @@
 import { defineComponent, ref, computed, onMounted, PropType, getCurrentInstance } from 'vue';
 import { getAllClusters } from '../../services/rancher-apps';
 import { Checkbox } from '@components/Form/Checkbox';
-import ProgressBarMulti from '@shell/components/ProgressBarMulti';
+import PercentageBar from '@shell/components/PercentageBar';
 import StatusBadge from '@shell/components/StatusBadge';
 import {
   getAllClusterResourceMetrics,
@@ -176,7 +164,7 @@ let tableIdCounter = 0;
 
 export default defineComponent({
   name: 'ClusterResourceTable',
-  components: { Checkbox, ProgressBarMulti, StatusBadge },
+  components: { Checkbox, PercentageBar, StatusBadge },
   props: {
     // Array-based selection - works for both single and multi-select modes
     // For single-select, parent enforces array.length <= 1
@@ -331,12 +319,9 @@ export default defineComponent({
       return cluster.status === 'unavailable' ? 'chip-unavailable' : '';
     }
 
-    function getResourceBarColor(used: number, total: number): string {
-      if (total === 0) return 'bg-success';
-      const pct = (used / total) * 100;
-      if (pct >= 90) return 'bg-error';
-      if (pct >= 70) return 'bg-warning';
-      return 'bg-success';
+    function getUsagePercent(resource: { used: number; total: number }): number {
+      if (!resource.total) return 0;
+      return Math.min(100, Math.max(0, (resource.used / resource.total) * 100));
     }
 
     function getStatusBadgeStatus(status: ClusterResourceSummary['status']): 'success' | 'error' {
@@ -362,7 +347,7 @@ export default defineComponent({
       toggleSelectAllSelectable,
       getClusterName,
       getClusterChipClass,
-      getResourceBarColor,
+      getUsagePercent,
       getStatusBadgeStatus
     };
   }
@@ -508,24 +493,15 @@ export default defineComponent({
   color: var(--body-text, #111827);
 }
 
-.resource-bar-container {
-  display: flex;
+.resource-bar {
   align-items: center;
-  gap: 8px;
   min-width: 100px;
 }
 
-.resource-bar {
-  flex: 1;
-  min-width: 60px;
-}
-
-.resource-percentage {
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+.resource-bar :deep(.percentage-value) {
   font-size: 12px;
-  color: var(--body-text, #374151);
   font-weight: 600;
-  min-width: 35px;
+  min-width: 40px;
   text-align: right;
 }
 
@@ -639,18 +615,8 @@ export default defineComponent({
     width: 100px;
   }
   
-  .resource-bar-container {
+  .resource-bar {
     min-width: 80px;
-    gap: 6px;
-  }
-  
-  .resource-bar-track {
-    min-width: 40px;
-  }
-  
-  .resource-percentage {
-    font-size: 11px;
-    min-width: 30px;
   }
 }
 </style>
