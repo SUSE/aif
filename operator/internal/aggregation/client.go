@@ -313,11 +313,20 @@ func (tn *tunnel) connect(ctx context.Context, cfg connConfig) connectResult {
 // What is guaranteed is only that the mutation has completed; a client that
 // misses the response can re-read the resulting state.
 //
-// Nothing here closes a stream: remotedialer does not synchronise a stream
-// being closed from both ends at once, so streams are closed only when the
-// websocket closes, as on any other tunnel end. Requests that arrive during
-// the drain therefore get a 503 instead; another replica or the next tunnel
-// serves a retry.
+// This deliberately does not call http.Server.Shutdown. Shutdown closes idle
+// connections, and each tunnel connection is a remotedialer stream: closing one
+// from this side while the session is still reading the websocket is a data
+// race inside remotedialer (v0.6.1; reported by the race detector). Streams
+// are therefore closed only when the websocket closes, as on any other tunnel
+// end, and requests that arrive during the drain get a 503 instead.
+//
+// Rancher's tunnel server hands every request to the oldest session of a key:
+// it does not balance across sessions, and a 503 does not make it fail over.
+// During a rolling restart the draining replica therefore keeps receiving
+// requests and answers them 503 until it closes, which takes about a tenth of
+// a second when idle and longer only while a slow request is still in flight.
+// That brief window is the price of letting in-flight requests finish instead
+// of cutting them; once the websocket closes, Rancher moves to the next session.
 func (tn *tunnel) drain(d *drainer) {
 	if !d.drain(tn.timing.drain) {
 		tn.logger.Info("tunnel stopped before in-flight requests finished", "drainTimeout", tn.timing.drain)

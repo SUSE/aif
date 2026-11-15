@@ -65,7 +65,6 @@ const (
 	verbList   = "list"
 	verbCreate = "create"
 	verbUpdate = "update"
-	verbPatch  = "patch"
 	verbDelete = "delete"
 
 	resourceSettings          = "settings"
@@ -82,9 +81,11 @@ const (
 // the operator's stored credentials, which is equivalent to managing
 // Settings.
 //
-// Verbs follow Kubernetes request verbs and the calls the handlers make: HTTP
-// PUT maps to update, while PATCH and the workload action routes (upgrade,
-// rollback, retry) map to patch because their handlers issue Kubernetes patches.
+// Every modification of an existing object requires update: saving Settings,
+// editing a Blueprint or a workload, and the workload upgrade, rollback and
+// retry actions. A permission therefore never depends on whether a handler
+// issues an Update or a Patch to the Kubernetes API, which the operator does
+// with its own identity.
 func DefaultRules(operatorNamespace string) map[string]Rule {
 	settings := func(verb string) Rule {
 		return Rule{Verb: verb, Resource: resourceSettings, Namespace: operatorNamespace}
@@ -116,11 +117,11 @@ func DefaultRules(operatorNamespace string) map[string]Rule {
 		// An empty namespace on list means all namespaces.
 		"GET /api/v1/aiworkloads":                                         {Verb: verbList, Resource: resourceAIWorkloads},
 		"POST /api/v1/namespaces/{namespace}/aiworkloads":                 {Verb: verbCreate, Resource: resourceAIWorkloads, NamespaceFromPath: true},
-		"PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}":         workload(verbPatch),
+		"PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}":         workload(verbUpdate),
 		"DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}":        workload(verbDelete),
-		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade":  workload(verbPatch),
-		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback": workload(verbPatch),
-		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry":    workload(verbPatch),
+		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade":  workload(verbUpdate),
+		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback": workload(verbUpdate),
+		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry":    workload(verbUpdate),
 	}
 }
 

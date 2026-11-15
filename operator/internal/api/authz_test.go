@@ -110,11 +110,11 @@ func TestAuthz_DefaultRules(t *testing.T) {
 		"DELETE /api/v1/blueprints/{name}":                                {Verb: verbDelete, Resource: resourceBlueprints, Name: "obj-1"},
 		"GET /api/v1/aiworkloads":                                         {Verb: verbList, Resource: resourceAIWorkloads},
 		"POST /api/v1/namespaces/{namespace}/aiworkloads":                 {Verb: verbCreate, Resource: resourceAIWorkloads, Namespace: "team-a"},
-		"PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}":         {Verb: verbPatch, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
+		"PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}":         {Verb: verbUpdate, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
 		"DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}":        {Verb: verbDelete, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
-		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade":  {Verb: verbPatch, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
-		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback": {Verb: verbPatch, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
-		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry":    {Verb: verbPatch, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
+		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade":  {Verb: verbUpdate, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
+		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback": {Verb: verbUpdate, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
+		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/retry":    {Verb: verbUpdate, Resource: resourceAIWorkloads, Namespace: "team-a", Name: "obj-1"},
 	}
 	rules := DefaultRules(opNS)
 	if len(rules) != len(want) {
