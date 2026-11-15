@@ -81,6 +81,10 @@ const (
 // and git publish routes require update on settings because they act with
 // the operator's stored credentials, which is equivalent to managing
 // Settings.
+//
+// Verbs follow Kubernetes request verbs and the calls the handlers make: HTTP
+// PUT maps to update, while PATCH and the workload action routes (upgrade,
+// rollback, retry) map to patch because their handlers issue Kubernetes patches.
 func DefaultRules(operatorNamespace string) map[string]Rule {
 	settings := func(verb string) Rule {
 		return Rule{Verb: verb, Resource: resourceSettings, Namespace: operatorNamespace}
@@ -112,7 +116,7 @@ func DefaultRules(operatorNamespace string) map[string]Rule {
 		// An empty namespace on list means all namespaces.
 		"GET /api/v1/aiworkloads":                                         {Verb: verbList, Resource: resourceAIWorkloads},
 		"POST /api/v1/namespaces/{namespace}/aiworkloads":                 {Verb: verbCreate, Resource: resourceAIWorkloads, NamespaceFromPath: true},
-		"PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}":         workload(verbUpdate),
+		"PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}":         workload(verbPatch),
 		"DELETE /api/v1/namespaces/{namespace}/aiworkloads/{name}":        workload(verbDelete),
 		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/upgrade":  workload(verbPatch),
 		"POST /api/v1/namespaces/{namespace}/aiworkloads/{name}/rollback": workload(verbPatch),

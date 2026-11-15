@@ -19,7 +19,7 @@ tests:
       aiExtension.extension.version: "2.4.0"
     asserts:
       - failedTemplate:
-          errorMessage: "manager.image.tag 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly."
+          errorMessage: "manager.image.tag 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value."
 
   - it: fails on an older aiExtension.source.helm.version
     set:
@@ -28,7 +28,7 @@ tests:
       aiExtension.extension.version: "2.5.0"
     asserts:
       - failedTemplate:
-          errorMessage: "aiExtension.source.helm.version 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set aiExtension.source.helm.version explicitly."
+          errorMessage: "aiExtension.source.helm.version 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set aiExtension.source.helm.version explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value."
 
   - it: fails on an older aiExtension.extension.version
     set:
@@ -37,7 +37,7 @@ tests:
       aiExtension.extension.version: "2.4.0"
     asserts:
       - failedTemplate:
-          errorMessage: "aiExtension.extension.version 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set aiExtension.extension.version explicitly."
+          errorMessage: "aiExtension.extension.version 2.4.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set aiExtension.extension.version explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value."
 
   - it: fails on an older major version
     set:
@@ -151,4 +151,4 @@ tests:
       aiExtension.extension.version: "2.5.0"
     asserts:
       - failedTemplate:
-          errorMessage: "manager.image.tag 0000000000000000000000001.0.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly."
+          errorMessage: "manager.image.tag 0000000000000000000000001.0.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value."

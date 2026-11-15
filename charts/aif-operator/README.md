@@ -166,7 +166,7 @@ The command deploys the SUSE AI Operator using the default configuration. See th
 
 ### Upgrading the Chart
 
-Don't upgrade with plain `helm upgrade --reuse-values`: it keeps the previous release's pinned `manager.image.tag`, `aiExtension.source.helm.version` and `aiExtension.extension.version`, so the new chart would run the old operator image. Use `--reset-then-reuse-values` (Helm 3.14 or later), or pass the new versions explicitly. The chart refuses to render when one of these values is older (by major.minor) than the chart's `appVersion`; non-semver tags such as `latest` and empty values are not checked.
+Don't upgrade with plain `helm upgrade --reuse-values`: it keeps the previous release's pinned `manager.image.tag`, `aiExtension.source.helm.version` and `aiExtension.extension.version`, so the new chart would run the old operator image. Use `--reset-then-reuse-values` (Helm 3.14 or later), or pass the new versions explicitly. The chart refuses to render when one of these values is older (by major.minor) than the chart's `appVersion`; non-semver tags such as `latest` and empty values are not checked. In Rancher Apps & Marketplace an upgrade sends only the values that differ from the new chart's defaults; if the upgrade form shows a pinned `manager.image.tag` or `aiExtension` version from the previous release, edit it to the new version or remove it.
 
 ```bash
 helm upgrade aif-operator \

@@ -1,8 +1,8 @@
 import { operatorFetch } from './operator-config';
 import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryStatus } from '../types/aiworkload-types';
 
-export function getSettings(signal?: AbortSignal): Promise<any> {
-  return operatorFetch('/api/v1/settings', { signal });
+export function getSettings(timeoutMs?: number): Promise<any> {
+  return operatorFetch('/api/v1/settings', { timeout: timeoutMs });
 }
 
 export function putSettings(spec: any): Promise<any> {
@@ -13,11 +13,7 @@ export function putSettings(spec: any): Promise<any> {
 }
 
 export function getRegistryStatus(timeoutMs = 30000): Promise<RegistryStatus> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  return operatorFetch('/api/v1/settings/registry-status', { signal: controller.signal })
-    .finally(() => clearTimeout(timer));
+  return operatorFetch('/api/v1/settings/registry-status', { timeout: timeoutMs });
 }
 
 export function createAIWorkload(
@@ -91,21 +87,13 @@ export function publishToFleetGit(bundleName: string, bundleYAML: string): Promi
 }
 
 export function getVersion(timeoutMs = 5000): Promise<{ version: string; commit: string; chartVersion: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  return operatorFetch('/api/v1/version', { signal: controller.signal })
-    .finally(() => clearTimeout(timer));
+  return operatorFetch('/api/v1/version', { timeout: timeoutMs });
 }
 
 // Headroom over the operator's own 15s outbound fetch budget so a slow-but-
 // successful upstream isn't aborted client-side just as the operator responds.
 export function getCatalog(timeoutMs = 25000): Promise<any> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  return operatorFetch('/api/v1/catalog', { signal: controller.signal })
-    .finally(() => clearTimeout(timer));
+  return operatorFetch('/api/v1/catalog', { timeout: timeoutMs });
 }
 
 export interface ValidateOverride {
@@ -173,20 +161,16 @@ export function validateChartAccess(body: {
     },
     chartName: body.chartName,
   };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+
   return operatorFetch('/api/v1/settings/validate-chart-access', {
-    method: 'POST', body: JSON.stringify(payload), signal: controller.signal,
-  }).finally(() => clearTimeout(timer));
+    method: 'POST', body: JSON.stringify(payload), timeout: 25000,
+  });
 }
 
 export function validateCredentials(body: ValidateRequest, timeoutMs = 20000): Promise<ValidateResponse> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
   return operatorFetch('/api/v1/settings/validate-credentials', {
-    method: 'POST',
-    body:   JSON.stringify(body),
-    signal: controller.signal,
-  }).finally(() => clearTimeout(timer));
+    method:  'POST',
+    body:    JSON.stringify(body),
+    timeout: timeoutMs,
+  });
 }

@@ -23,6 +23,15 @@ export const OPERATOR_UNREACHABLE = 'OPERATOR_UNREACHABLE';
  *  The operator ignores unknown headers. */
 const PROBE_HEADERS = { 'X-Aif-Probe': '1' };
 
+/** Request headers that carry a request's timeout into that same dedupe key.
+ *  The steve store hands a GET that matches an in-flight one (headers + method
+ *  + url) the first caller's promise, ignoring its own `timeout`; without this a
+ *  5 s caller joining a 30 s request would wait the full 30 s. Callers with the
+ *  same timeout still share one request. */
+function timeoutHeaders(timeout?: number): Record<string, string> {
+  return timeout ? { 'X-Aif-Timeout': String(timeout) } : {};
+}
+
 const DEFAULT_CODES: Record<number, string> = {
   401: 'UNAUTHORIZED',
   403: 'FORBIDDEN',
@@ -48,8 +57,8 @@ export interface OperatorFetchOptions {
   /** JSON string, as produced by JSON.stringify. */
   body?:    string;
   headers?: Record<string, string>;
-  signal?:  AbortSignal;
-  /** Request timeout in milliseconds (axios). */
+  /** Request timeout in milliseconds (axios). Also keys the steve GET dedupe,
+   *  so it applies to every caller (see timeoutHeaders). */
   timeout?: number;
   /** Set to false to stop the shell from logging out on 401 (connection probe only). */
   redirectUnauthorized?: boolean;
@@ -173,12 +182,12 @@ export async function operatorFetch(path: string, options: OperatorFetchOptions 
     headers: {
       Accept: 'application/json',
       ...(safe ? {} : { 'Content-Type': 'application/json' }),
+      ...timeoutHeaders(options.timeout),
       ...(options.headers || {}),
     },
   };
 
   if (!safe) opt.data = options.body ? JSON.parse(options.body) : {};
-  if (options.signal) opt.signal = options.signal;
   if (options.timeout) opt.timeout = options.timeout;
   if (options.redirectUnauthorized === false) opt.redirectUnauthorized = false;
 

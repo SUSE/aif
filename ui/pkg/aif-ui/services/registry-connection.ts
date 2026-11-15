@@ -247,9 +247,7 @@ export async function checkRegistryConnection(
     tokenSecretRef: configuration.tokenSecretRef?.name ? configuration.tokenSecretRef : null,
     caBundleSecretRef: configuration.caBundleSecretRef?.name ? configuration.caBundleSecretRef : null,
   };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_VALUES.READ);
-  const settingsRequest = getSettings(controller.signal).finally(() => clearTimeout(timer));
+  const settingsRequest = getSettings(TIMEOUT_VALUES.READ);
   const [probe, settings, repos, access] = await Promise.allSettled([
     probeForm(target, configuration, settingsRequest),
     settingsRequest,

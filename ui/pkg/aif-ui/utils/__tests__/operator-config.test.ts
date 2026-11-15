@@ -15,7 +15,9 @@ import {
   setOperatorStore,
   toOperatorError,
 } from '../operator-config';
-import { deleteAIWorkload, retryAIWorkload, rollbackAIWorkload } from '../operator-api';
+import {
+  deleteAIWorkload, getRegistryStatus, getSettings, retryAIWorkload, rollbackAIWorkload,
+} from '../operator-api';
 
 const dispatch = vi.fn();
 
@@ -88,13 +90,13 @@ describe('operatorFetch transport', () => {
     expect(opt.data).toEqual({});
   });
 
-  it('passes the abort signal through to the request', async() => {
+  it('passes the timeout through to the request and sends no abort signal', async() => {
     dispatch.mockResolvedValue(shellResponse(200, {}));
-    const controller = new AbortController();
 
-    await operatorFetch('/api/v1/version', { signal: controller.signal });
+    await operatorFetch('/api/v1/version', { timeout: 5000 });
 
-    expect(lastRequest().signal).toBe(controller.signal);
+    expect(lastRequest().timeout).toBe(5000);
+    expect(lastRequest().signal).toBeUndefined();
   });
 
   it.each([
@@ -267,6 +269,96 @@ describe('checkOperatorConnection dedupe key', () => {
     // The steve request action dedupes on JSON.stringify(headers) + method + url.
     expect(JSON.stringify(probe.headers)).not.toBe(JSON.stringify(regular.headers));
     expect(regular.headers['X-Aif-Probe']).toBeUndefined();
+  });
+});
+
+describe('operatorFetch timeout dedupe key', () => {
+  async function headersFor(options?: { timeout?: number }): Promise<string> {
+    dispatch.mockResolvedValue(shellResponse(200, {}));
+    await operatorFetch('/api/v1/settings/registry-status', options);
+
+    return JSON.stringify(lastRequest().headers);
+  }
+
+  it('sends different headers for different timeouts so the steve store keeps the GETs apart', async() => {
+    const short = await headersFor({ timeout: 5000 });
+    const long  = await headersFor({ timeout: 30000 });
+
+    expect(short).not.toBe(long);
+    expect(JSON.parse(short)['X-Aif-Timeout']).toBe('5000');
+    expect(JSON.parse(long)['X-Aif-Timeout']).toBe('30000');
+  });
+
+  it('sends identical headers for the same timeout so those GETs still share one request', async() => {
+    expect(await headersFor({ timeout: 5000 })).toBe(await headersFor({ timeout: 5000 }));
+  });
+
+  it('sends no timeout header when no timeout is set', async() => {
+    expect(JSON.parse(await headersFor())['X-Aif-Timeout']).toBeUndefined();
+  });
+
+  /** A dispatch that merges concurrent GETs the way the steve request action
+   *  does (key: JSON.stringify(headers) + method + url) and records each
+   *  request that actually goes out. */
+  function dedupingDispatch() {
+    const sent: any[] = [];
+    const pending: Record<string, { opt: any; promise: Promise<any>; resolve:(v: any) => void }> = {};
+
+    dispatch.mockImplementation((_action: string, opt: any) => {
+      const key = JSON.stringify(opt.headers || {}) + opt.method.toLowerCase() + opt.url;
+
+      if (pending[key]) return pending[key].promise;
+
+      let resolve!: (v: any) => void;
+      const promise = new Promise((r) => {
+        resolve = r;
+      });
+
+      pending[key] = {
+        opt, promise, resolve
+      };
+      sent.push(opt);
+
+      return promise;
+    });
+
+    return {
+      sent,
+      settle: () => Object.values(pending).forEach(p => p.resolve(shellResponse(200, {}))),
+    };
+  }
+
+  it('keeps getRegistryStatus(5000) from joining an in-flight getRegistryStatus() and its 30 s timeout', async() => {
+    const steve = dedupingDispatch();
+    const long  = getRegistryStatus();
+    const short = getRegistryStatus(5000);
+
+    steve.settle();
+    await Promise.all([long, short]);
+
+    expect(steve.sent.map(o => o.timeout)).toEqual([30000, 5000]);
+  });
+
+  it('keeps getSettings(timeout) from joining an in-flight getSettings() without one', async() => {
+    const steve = dedupingDispatch();
+    const plain = getSettings();
+    const timed = getSettings(8000);
+
+    steve.settle();
+    await Promise.all([plain, timed]);
+
+    expect(steve.sent.map(o => o.timeout)).toEqual([undefined, 8000]);
+  });
+
+  it('still merges callers that use the same timeout', async() => {
+    const steve = dedupingDispatch();
+    const first  = getRegistryStatus();
+    const second = getRegistryStatus();
+
+    steve.settle();
+    await Promise.all([first, second]);
+
+    expect(steve.sent).toHaveLength(1);
   });
 });
 

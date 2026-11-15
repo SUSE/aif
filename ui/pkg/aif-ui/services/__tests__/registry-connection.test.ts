@@ -7,6 +7,7 @@ import {
 } from '../registry-connection';
 import type { RegistryConfiguration, RegistryTarget } from '../registry-connection';
 import { toOperatorError } from '../../utils/operator-config';
+import { TIMEOUT_VALUES } from '../../utils/constants';
 
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn(), validateCredentials: vi.fn(), validateChartAccess: vi.fn(),
@@ -181,13 +182,12 @@ describe('independent registry checks', () => {
   });
 
   it('bounds the saved-settings read so a stalled operator cannot leave Test busy forever', async () => {
-    vi.useFakeTimers();
-    vi.mocked(getSettings).mockImplementation(signal => new Promise((_resolve, reject) => {
-      signal?.addEventListener('abort', () => reject(new Error('Settings request timed out')));
-    }));
-    const checking = checkRegistryConnection(storeWith(), TARGET, CONFIG);
-    await vi.advanceTimersByTimeAsync(8000);
-    const result = await checking;
+    // operatorFetch turns axios's expired timeout into this OperatorError.
+    vi.mocked(getSettings).mockRejectedValue(
+      toOperatorError(Object.assign(new Error('Settings request timed out'), { code: 'ECONNABORTED' })),
+    );
+    const result = await checkRegistryConnection(storeWith(), TARGET, CONFIG);
+    expect(getSettings).toHaveBeenCalledWith(TIMEOUT_VALUES.READ);
     expect(result.chartRepositories.settingsError).toBe('Settings request timed out');
     expect(result.chartRepositories.repositories[0].state).toBe('ready');
     expect(result.authentication.status).toBe('skipped');

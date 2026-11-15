@@ -54,8 +54,9 @@ const (
 	waitTimeout = 15 * time.Second
 )
 
-// testTiming keeps poll and backoff short so the tests run fast.
-var testTiming = timing{poll: 20 * time.Millisecond, backoff: 20 * time.Millisecond}
+// testTiming keeps poll, backoff and the shutdown drain short so the tests
+// run fast.
+var testTiming = timing{poll: 20 * time.Millisecond, backoff: 20 * time.Millisecond, drain: 200 * time.Millisecond}
 
 // fakeRancher is a TLS remotedialer server standing in for Rancher's
 // /v3/connect endpoint. The bearer token is used as the remotedialer client
@@ -207,25 +208,34 @@ const tokenMarker = "s3cr3t"
 // token.
 func startRun(t *testing.T, c client.Reader, handler http.Handler) {
 	t.Helper()
+	startRunWithTiming(t, c, handler, testTiming)
+}
+
+// startRunWithTiming is startRun with explicit timing. It returns the cancel
+// function of Run's context and a channel closed when Run returns, for tests
+// that stop the tunnel themselves.
+func startRunWithTiming(t *testing.T, c client.Reader, handler http.Handler, tm timing) (context.CancelFunc, <-chan struct{}) {
+	t.Helper()
 	logs := &logBuffer{}
 	logger := funcr.New(logs.write, funcr.Options{Verbosity: 10})
 	ctx, cancel := context.WithCancel(log.IntoContext(context.Background(), logger))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		run(ctx, c, testNamespace, testSecret, handler, testTiming)
+		run(ctx, c, testNamespace, testSecret, handler, tm)
 	}()
 	t.Cleanup(func() {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(5*time.Second + tm.drain):
 			t.Error("Run did not return after its context was cancelled")
 		}
 		if out := logs.String(); strings.Contains(out, tokenMarker) {
 			t.Errorf("the tunnel log contains a token:\n%s", out)
 		}
 	})
+	return cancel, done
 }
 
 type logBuffer struct {
@@ -243,6 +253,21 @@ func (b *logBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sb.String()
+}
+
+// recvOrFail receives from ch, failing the test if nothing arrives within
+// waitTimeout, so a request that never reaches its handler cannot hang the
+// test.
+func recvOrFail[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(waitTimeout):
+		t.Fatalf("timed out after %s waiting for %s", waitTimeout, what)
+		var zero T
+		return zero
+	}
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {
@@ -442,6 +467,279 @@ func TestRun_MissingSecretWaits(t *testing.T) {
 		t.Fatalf("create secret: %v", err)
 	}
 	eventually(t, "a tunnel session once the Secret exists", func() bool { return f.rd.HasSession("s3cr3t-tok") })
+}
+
+// blockingHandler serves "/slow" by signalling started and then waiting for
+// release (or for the request to be aborted) before recording completed and
+// answering "drained".
+// Every other path answers "ok" at once. release is closed when the test ends,
+// so no handler outlives it.
+type blockingHandler struct {
+	started chan struct{}
+	release chan struct{}
+	aborted chan struct{} // closed when a /slow request's context ends first
+
+	completed atomic.Bool // the side effect of a /slow request that ran to the end
+	once      sync.Once
+}
+
+func newBlockingHandler(t *testing.T) *blockingHandler {
+	h := &blockingHandler{started: make(chan struct{}, 1), release: make(chan struct{}), aborted: make(chan struct{})}
+	t.Cleanup(h.unblock)
+	return h
+}
+
+func (h *blockingHandler) unblock() { h.once.Do(func() { close(h.release) }) }
+
+func (h *blockingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/slow" {
+		_, _ = io.WriteString(w, "ok")
+		return
+	}
+	h.started <- struct{}{}
+	select {
+	case <-h.release:
+		h.completed.Store(true)
+		_, _ = io.WriteString(w, "drained")
+	case <-r.Context().Done():
+		close(h.aborted)
+	}
+}
+
+type getResult struct {
+	status int
+	body   string
+	err    error
+}
+
+// getAsync sends a GET through the tunnel for token and delivers its outcome
+// on the returned channel.
+func (f *fakeRancher) getAsync(token, path string) <-chan getResult {
+	out := make(chan getResult, 1)
+	go func() {
+		resp, err := f.get(token, path)
+		if err != nil {
+			out <- getResult{err: err}
+			return
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		out <- getResult{status: resp.StatusCode, body: string(body), err: err}
+	}()
+	return out
+}
+
+// waitForRefusal waits until the tunnel for token answers new requests with
+// 503, which it does once it has started draining.
+func waitForRefusal(t *testing.T, f *fakeRancher, token string) {
+	t.Helper()
+	eventually(t, "the draining tunnel to answer new requests with 503", func() bool {
+		resp, err := f.get(token, "/new")
+		if err != nil {
+			t.Fatalf("a request during the drain failed instead of getting a 503: %v", err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusServiceUnavailable
+	})
+}
+
+// assertInFlight checks that the request behind res has not completed and the
+// tunnel for token is still connected.
+func assertInFlight(t *testing.T, f *fakeRancher, token string, res <-chan getResult) {
+	t.Helper()
+	select {
+	case r := <-res:
+		t.Fatalf("the in-flight request completed during the drain: %+v", r)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if !f.rd.HasSession(token) {
+		t.Fatal("the tunnel closed while a request was still in flight")
+	}
+}
+
+func assertDrainedResponse(t *testing.T, res <-chan getResult) {
+	t.Helper()
+	select {
+	case r := <-res:
+		if r.err != nil || r.status != http.StatusOK || r.body != "drained" {
+			t.Fatalf("drained request: %+v, want 200 %q", r, "drained")
+		}
+	case <-time.After(waitTimeout):
+		t.Fatal("the in-flight request did not complete after its handler was released")
+	}
+}
+
+func TestRun_DrainsInFlightRequestOnCancel(t *testing.T) {
+	f := newFakeRancher(t)
+	c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-tok", f.caPEM())).Build()
+	h := newBlockingHandler(t)
+	tm := testTiming
+	tm.drain = 3 * time.Second // long enough to observe the drain
+	cancel, done := startRunWithTiming(t, c, h, tm)
+
+	eventually(t, "the tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
+	res := f.getAsync("s3cr3t-tok", "/slow")
+	recvOrFail(t, h.started, "the handler to start")
+
+	cancel()
+	waitForRefusal(t, f, "s3cr3t-tok")
+	assertInFlight(t, f, "s3cr3t-tok", res)
+	select {
+	case <-done:
+		t.Fatal("Run returned while a request was still in flight")
+	default:
+	}
+
+	h.unblock()
+	assertDrainedResponse(t, res)
+	if !h.completed.Load() {
+		t.Fatal("the handler did not run to completion")
+	}
+	select {
+	case <-done:
+	case <-time.After(waitTimeout):
+		t.Fatal("Run did not return after the drain")
+	}
+	if f.rd.HasSession("s3cr3t-tok") {
+		// The server side notices the closed websocket asynchronously.
+		eventually(t, "the tunnel session to close", func() bool { return !f.rd.HasSession("s3cr3t-tok") })
+	}
+}
+
+func TestRun_DrainIsBounded(t *testing.T) {
+	f := newFakeRancher(t)
+	c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-tok", f.caPEM())).Build()
+	h := newBlockingHandler(t)
+	cancel, done := startRunWithTiming(t, c, h, testTiming)
+
+	eventually(t, "the tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
+	res := f.getAsync("s3cr3t-tok", "/slow")
+	recvOrFail(t, h.started, "the handler to start")
+
+	start := time.Now()
+	cancel()
+	const margin = time.Second
+	select {
+	case <-done:
+	case <-time.After(testTiming.drain + margin):
+		t.Fatalf("Run did not return within the drain timeout (%s) plus %s", testTiming.drain, margin)
+	}
+	if elapsed := time.Since(start); elapsed < testTiming.drain {
+		t.Fatalf("Run returned after %s, before the drain timeout of %s", elapsed, testTiming.drain)
+	}
+	eventually(t, "the tunnel session to close", func() bool { return !f.rd.HasSession("s3cr3t-tok") })
+	if r := recvOrFail(t, res, "the outcome of the request that outlived the drain"); r.err == nil {
+		t.Fatalf("the request that outlived the drain succeeded: %+v", r)
+	}
+	select {
+	case <-h.aborted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the handler's request context was not cancelled once the drain gave up")
+	}
+	if h.completed.Load() {
+		t.Fatal("the handler completed although it was never released")
+	}
+}
+
+func TestRun_SecretChangeDrains(t *testing.T) {
+	f := newFakeRancher(t)
+	c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-old", f.caPEM())).Build()
+	h := newBlockingHandler(t)
+	tm := testTiming
+	tm.drain = 3 * time.Second
+	startRunWithTiming(t, c, h, tm)
+
+	eventually(t, "a tunnel session for the old token", func() bool { return f.rd.HasSession("s3cr3t-old") })
+	res := f.getAsync("s3cr3t-old", "/slow")
+	recvOrFail(t, h.started, "the handler to start")
+
+	var s corev1.Secret
+	key := client.ObjectKey{Namespace: testNamespace, Name: testSecret}
+	if err := c.Get(context.Background(), key, &s); err != nil {
+		t.Fatalf("get secret: %v", err)
+	}
+	s.Data["token"] = []byte("s3cr3t-new")
+	if err := c.Update(context.Background(), &s); err != nil {
+		t.Fatalf("update secret: %v", err)
+	}
+
+	waitForRefusal(t, f, "s3cr3t-old")
+	assertInFlight(t, f, "s3cr3t-old", res)
+
+	h.unblock()
+	assertDrainedResponse(t, res)
+	if !h.completed.Load() {
+		t.Fatal("the handler did not run to completion")
+	}
+	eventually(t, "a tunnel session for the new token", func() bool { return f.rd.HasSession("s3cr3t-new") })
+	eventually(t, "the old-token session to close", func() bool { return !f.rd.HasSession("s3cr3t-old") })
+}
+
+// A handler writing a large response runs to completion during the drain even
+// though the client reads slowly. Delivery of the whole body is best effort,
+// so it is not asserted.
+func TestRun_DrainCompletesLargeResponseHandler(t *testing.T) {
+	const size = 4 << 20
+	f := newFakeRancher(t)
+	c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-tok", f.caPEM())).Build()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	var completed atomic.Bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/large" {
+			_, _ = io.WriteString(w, "ok")
+			return
+		}
+		chunk := strings.Repeat("x", 64<<10)
+		_, _ = io.WriteString(w, chunk)
+		w.(http.Flusher).Flush()
+		close(started)
+		<-release
+		for n := len(chunk); n < size; n += len(chunk) {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+		}
+		completed.Store(true)
+	})
+	tm := testTiming
+	tm.drain = 5 * time.Second
+	cancel, done := startRunWithTiming(t, c, handler, tm)
+	eventually(t, "the tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
+
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		resp, err := f.get("s3cr3t-tok", "/large")
+		if err != nil {
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		buf := make([]byte, 16<<10)
+		for {
+			if _, err := resp.Body.Read(buf); err != nil {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	recvOrFail(t, started, "the large-response handler to start")
+
+	cancel()
+	waitForRefusal(t, f, "s3cr3t-tok")
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(waitTimeout):
+		t.Fatal("Run did not return after the drain")
+	}
+	if !completed.Load() {
+		t.Fatal("the large-response handler did not run to completion before the tunnel closed")
+	}
+	recvOrFail(t, readDone, "the slow reader to finish")
 }
 
 // otherCAPEM returns a self-signed CA certificate unrelated to the server's.

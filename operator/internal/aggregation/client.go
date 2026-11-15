@@ -56,25 +56,44 @@ const (
 	defaultBackoff      = 5 * time.Second
 	handshakeTimeout    = 10 * time.Second
 	readHeaderTimeout   = 30 * time.Second
+
+	// defaultDrainTimeout bounds how long in-flight requests may finish when
+	// a tunnel is stopped (operator shutdown, or the connection Secret
+	// changing or being deleted). It matches the drain of the HTTP listener
+	// the operator API used before the tunnel, and must stay below the
+	// manager's graceful-shutdown timeout (managerGracefulShutdownTimeout in
+	// cmd/main.go) so that the drain finishes before the process exits.
+	defaultDrainTimeout = 10 * time.Second
+
+	// After the handlers return, the drain waits up to flushTimeout for the
+	// HTTP server to finish writing their responses, then flushSettle more
+	// for remotedialer to forward the last bytes to the websocket. Both are
+	// best effort; see tunnel.drain.
+	flushTimeout      = time.Second
+	flushSettle       = 100 * time.Millisecond
+	flushPollInterval = 5 * time.Millisecond
 )
 
 // timing holds the intervals Run uses; tests shorten them.
 type timing struct {
 	poll    time.Duration // how often the Secret is re-read
 	backoff time.Duration // delay before retrying a failed or short-lived tunnel
+	drain   time.Duration // how long a stopped tunnel waits for in-flight requests
 }
 
 // Run keeps a tunnel to Rancher open and serves handler over it. It reads the
 // url, token and ca.crt keys of the Secret namespace/secretName, waits while
 // the Secret is missing or incomplete, reconnects after a failure (5 s
 // backoff), restarts the tunnel when any of those keys change and closes it
-// when the Secret is deleted (the Secret is re-read every 10 s). It blocks
-// until ctx is done.
+// when the Secret is deleted (the Secret is re-read every 10 s). Stopping a
+// tunnel, for any of those reasons or because ctx is done, first lets
+// in-flight requests run to completion for up to 10 s. It blocks until ctx is
+// done and the last tunnel has stopped.
 //
 // handler is reachable only through the tunnel, i.e. only via Rancher, which
 // authenticates the user and sets the Impersonate-* headers.
 func Run(ctx context.Context, c client.Reader, namespace, secretName string, handler http.Handler) {
-	run(ctx, c, namespace, secretName, handler, timing{poll: defaultPollInterval, backoff: defaultBackoff})
+	run(ctx, c, namespace, secretName, handler, timing{poll: defaultPollInterval, backoff: defaultBackoff, drain: defaultDrainTimeout})
 }
 
 func run(ctx context.Context, c client.Reader, namespace, secretName string, handler http.Handler, t timing) {
@@ -241,16 +260,34 @@ func (tn *tunnel) connect(ctx context.Context, cfg connConfig) connectResult {
 	}
 	tn.logger.Info("tunnel connected", "host", wsURL.Host)
 
-	// session.Serve does not watch ctx; closing the websocket ends it.
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
+	// session.Serve does not watch ctx; closing the websocket ends it. When
+	// ctx is done, drain first.
+	d := newDrainer()
+	drained := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(drained)
+		tn.drain(d)
+		_ = conn.Close()
+	})
+	// If the drain has started, wait for it so it does not outlive connect.
+	defer func() {
+		if !stop() {
+			<-drained
+		}
+	}()
 	defer func() { _ = conn.Close() }()
 
+	// Handlers and the session run on a context that keeps ctx's values but
+	// is not cancelled with it: a stopped tunnel does not abort requests in
+	// flight, and the session keeps accepting streams (remotedialer dials
+	// them with this context) so that requests during the drain get a 503.
+	serveCtx := context.WithoutCancel(ctx)
 	l := newPipeListener()
 	srv := &http.Server{
-		Handler:           tn.handler,
+		Handler:           d.wrap(tn.handler),
 		ReadHeaderTimeout: readHeaderTimeout,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		BaseContext:       func(net.Listener) context.Context { return serveCtx },
+		ConnState:         d.connState,
 	}
 	go func() { _ = srv.Serve(l) }()
 	defer func() { _ = srv.Close() }()
@@ -261,11 +298,110 @@ func (tn *tunnel) connect(ctx context.Context, cfg connConfig) connectResult {
 	session := remotedialer.NewClientSessionWithDialer(allowAll, conn, l.Dial)
 	defer session.Close()
 
-	_, err = session.Serve(ctx)
+	_, err = session.Serve(serveCtx)
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	return connectResult{connected: true, err: err}
+}
+
+// drain lets the handlers in flight run to completion, up to the drain
+// timeout, so a mutation such as a Settings save is never cut off half
+// applied. Delivering their responses is best effort: once the handlers have
+// returned, the drain waits a bounded time for the bytes to leave, but a slow
+// reader can still miss the end of a response when the websocket closes.
+// What is guaranteed is only that the mutation has completed; a client that
+// misses the response can re-read the resulting state.
+//
+// Nothing here closes a stream: remotedialer does not synchronise a stream
+// being closed from both ends at once, so streams are closed only when the
+// websocket closes, as on any other tunnel end. Requests that arrive during
+// the drain therefore get a 503 instead; another replica or the next tunnel
+// serves a retry.
+func (tn *tunnel) drain(d *drainer) {
+	if !d.drain(tn.timing.drain) {
+		tn.logger.Info("tunnel stopped before in-flight requests finished", "drainTimeout", tn.timing.drain)
+	}
+}
+
+// drainer tracks the requests and connections in flight on one tunnel.
+type drainer struct {
+	mu       sync.Mutex
+	draining bool
+	handlers sync.WaitGroup        // handlers running; Add only under mu
+	busy     map[net.Conn]struct{} // connections in StateNew or StateActive
+}
+
+func newDrainer() *drainer {
+	return &drainer{busy: map[net.Conn]struct{}{}}
+}
+
+// wrap runs h unless draining, in which case it answers 503. The connection
+// stays open (no "Connection: close"); see tunnel.drain.
+func (d *drainer) wrap(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d.mu.Lock()
+		if d.draining {
+			d.mu.Unlock()
+			http.Error(w, "operator shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		d.handlers.Add(1)
+		d.mu.Unlock()
+		defer d.handlers.Done()
+		h.ServeHTTP(w, r)
+	})
+}
+
+// connState is the http.Server ConnState hook.
+func (d *drainer) connState(c net.Conn, state http.ConnState) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if state == http.StateNew || state == http.StateActive {
+		d.busy[c] = struct{}{}
+	} else {
+		delete(d.busy, c)
+	}
+}
+
+func (d *drainer) busyConns() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.busy)
+}
+
+// drain refuses new requests and waits up to timeout for the running
+// handlers to return, then briefly for their responses to be sent. It
+// reports whether the handlers returned in time.
+func (d *drainer) drain(timeout time.Duration) bool {
+	d.mu.Lock()
+	d.draining = true
+	d.mu.Unlock()
+
+	// A handler that outlives the drain keeps this waiter alive until it
+	// returns (its request is cancelled when the connection closes); that is
+	// accepted.
+	returned := make(chan struct{})
+	go func() {
+		d.handlers.Wait()
+		close(returned)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-returned:
+	case <-timer.C:
+		return false
+	}
+
+	// The server marks a connection idle once it has written the response
+	// to the stream; remotedialer may still be forwarding the last chunk to
+	// the websocket, which flushSettle allows for.
+	for deadline := time.Now().Add(flushTimeout); d.busyConns() > 0 && time.Now().Before(deadline); {
+		time.Sleep(flushPollInterval)
+	}
+	time.Sleep(flushSettle)
+	return true
 }
 
 // websocketURL converts the Secret's https URL into a wss URL. Errors never

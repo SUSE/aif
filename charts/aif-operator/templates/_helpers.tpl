@@ -103,7 +103,7 @@ zero, and build metadata is unrestricted. Anything else is skipped.
 {{- $have := semver $value -}}
 {{- $want := semver $app -}}
 {{- if or (lt $have.Major $want.Major) (and (eq $have.Major $want.Major) (lt $have.Minor $want.Minor)) -}}
-{{- fail (printf "%s %s is older than this chart (%s); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set %s explicitly." .name $value $app .name) -}}
+{{- fail (printf "%s %s is older than this chart (%s); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set %s explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value." .name $value $app .name) -}}
 {{- end -}}
 {{- end -}}
 {{- end }}
