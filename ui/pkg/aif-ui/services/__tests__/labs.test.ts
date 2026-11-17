@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildLabRows, setLabEnabled, labName, canEdit, addLabCatalog } from '../labs';
+import {
+  buildLabRows, setLabEnabled, acceptLabUpdate, labName, canEdit, addLabCatalog,
+} from '../labs';
 
 const cat = (name: string, entries: any[]): any => ({ metadata: { name }, spec: {}, status: { entries } });
 const lab = (name: string, spec: any, status?: any): any => ({ metadata: { name }, spec, status, save: vi.fn() });
@@ -14,8 +16,8 @@ describe('buildLabRows', () => {
     const rows = buildLabRows(catalogs, []);
 
     expect(rows.map((r) => [r.name, r.source, r.enabled, r.phase])).toEqual([
-      ['token-factory', 'builtin', false, 'Disabled'],
-      ['partner-demo', 'catalog', false, 'Disabled'],
+      [labName('builtin', 'token-factory'), 'builtin', false, 'Disabled'],
+      [labName('partner', 'demo'), 'catalog', false, 'Disabled'],
     ]);
     expect(rows[1].version).toBe('0.2.0');
   });
@@ -37,9 +39,16 @@ describe('buildLabRows', () => {
   });
 
   it('lab name rule', () => {
-    expect(labName('builtin', 'x')).toBe('x');
-    expect(labName('p', 'x')).toBe('p-x');
-    expect(labName('p', 'a'.repeat(80))).toHaveLength(63);
+    expect(labName('p', 'x')).toMatch(/^p-x-[0-9a-f]{8}$/);
+    expect(labName('p', 'x')).toBe(labName('p', 'x'));
+    // no collision between pairs that join to the same string
+    expect(labName('a-b', 'c')).not.toBe(labName('a', 'b-c'));
+    // trimmed, never ends the prefix with '-', and child "lab-<name>" fits 63 chars
+    const long = labName('p', `${ 'a'.repeat(47) }-${ 'b'.repeat(30) }`);
+
+    expect(long.length + 'lab-'.length).toBeLessThanOrEqual(63);
+    expect(long).not.toMatch(/--/);
+    expect(long).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
   });
 });
 
@@ -47,13 +56,17 @@ describe('setLabEnabled', () => {
   it('creates the Lab when none exists', async () => {
     const save = vi.fn();
     const store = { dispatch: vi.fn().mockResolvedValue({ save }) };
-    const [row] = buildLabRows([cat('partner', [{ name: 'demo' }])], []);
+    const [row] = buildLabRows([cat('partner', [{
+      name: 'demo', displayName: 'Demo', maturity: 'preview', source: { helm: { version: '1.2.0' } },
+    }])], []);
 
     await setLabEnabled(store, row, true);
     expect(store.dispatch).toHaveBeenCalledWith('management/create', {
       type:     'ai-factory.suse.com.lab',
-      metadata: { name: 'partner-demo' },
-      spec:     { enabled: true, catalogRef: { catalog: 'partner', entry: 'demo' } },
+      metadata: { name: labName('partner', 'demo') },
+      spec:     {
+        enabled: true, displayName: 'Demo', maturity: 'preview', catalogRef: { catalog: 'partner', entry: 'demo', version: '1.2.0' },
+      },
     });
     expect(save).toHaveBeenCalled();
   });
@@ -67,6 +80,37 @@ describe('setLabEnabled', () => {
     expect(l.spec.enabled).toBe(false);
     expect(l.save).toHaveBeenCalled();
     expect(store.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('re-enabling accepts the offered version', async () => {
+    const l = lab('x', { enabled: false, catalogRef: { catalog: 'builtin', entry: 'tf', version: '1' } });
+    const [row] = buildLabRows([cat('builtin', [{ name: 'tf', source: { helm: { version: '2' } } }])], [l]);
+
+    await setLabEnabled({}, row, true);
+    expect(l.spec).toMatchObject({ enabled: true, catalogRef: { version: '2' } });
+  });
+
+  it('restores the model when the save is rejected', async () => {
+    const l = lab('x', { enabled: false, catalogRef: { catalog: 'builtin', entry: 'tf', version: '1' } });
+
+    l.save.mockRejectedValue(new Error('forbidden'));
+    const [row] = buildLabRows([cat('builtin', [{ name: 'tf', source: { helm: { version: '2' } } }])], [l]);
+
+    await expect(setLabEnabled({}, row, true)).rejects.toThrow('forbidden');
+    expect(l.spec).toEqual({ enabled: false, catalogRef: { catalog: 'builtin', entry: 'tf', version: '1' } });
+  });
+});
+
+describe('acceptLabUpdate', () => {
+  it('sets catalogRef.version to the offered update', async () => {
+    const l = lab('x', { enabled: true, catalogRef: { catalog: 'builtin', entry: 'tf', version: '1' } },
+      { phase: 'Ready', resolvedVersion: '1', updateAvailable: '2' });
+    const [row] = buildLabRows([cat('builtin', [{ name: 'tf', source: { helm: { version: '2' } } }])], [l]);
+
+    expect(row).toMatchObject({ version: '1', updateAvailable: '2' });
+    await acceptLabUpdate(row);
+    expect(l.spec.catalogRef.version).toBe('2');
+    expect(l.save).toHaveBeenCalled();
   });
 });
 

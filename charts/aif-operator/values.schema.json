@@ -206,13 +206,18 @@
     "labs": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable SUSE AI Factory Labs (experimental, unsupported): run the Lab and LabCatalog controllers (the operator creates the builtin LabCatalog)."
+        },
         "adminGlobalRole": {
           "type": "object",
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true,
-              "description": "Create the Rancher GlobalRole aif-labs-admin (full access to labs and labcatalogs)."
+              "default": false,
+              "description": "Create the Rancher GlobalRole aif-labs-admin-full-trust (full access to labs and labcatalogs). Rendered only when labs.enabled."
             }
           }
         }

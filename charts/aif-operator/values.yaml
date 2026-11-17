@@ -175,11 +175,19 @@ manager:
   tolerations: []
   affinity: {}
 
+# SUSE AI Factory Labs: experimental, unsupported, not for production. Labs may
+# never become product features. See docs/labs.md.
 labs:
+  # Run the Lab and LabCatalog controllers (operator flag --enable-labs); the
+  # operator then creates the builtin LabCatalog. Off: the operator ignores the Lab
+  # APIs and the Settings page shows Labs as disabled. External catalogs additionally require
+  # manager.allowedRegistryHosts.
+  enabled: false
   adminGlobalRole:
-    # Create a Rancher GlobalRole "aif-labs-admin" with full access to labs and
-    # labcatalogs. Admin-level: a lab's UI extension runs with full trust in Rancher.
-    enabled: true
+    # Create the Rancher GlobalRole "aif-labs-admin-full-trust" (full access to labs
+    # and labcatalogs). Rendered only when labs.enabled. Admin-equivalent: a lab
+    # installs a Rancher UI extension that runs in every user's browser session.
+    enabled: false
 
 rbacHelpers:
   enable: false

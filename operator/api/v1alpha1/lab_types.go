@@ -34,6 +34,12 @@ type LabCatalogRef struct {
 	// Entry is the entry name inside the catalog.
 	// +kubebuilder:validation:MinLength=1
 	Entry string `json:"entry"`
+	// Version is the entry version the admin accepted. Once the child
+	// InstallAIExtension exists, catalog changes are not applied until Version is
+	// set to the version the catalog now offers (status.updateAvailable). Empty
+	// accepts whatever the catalog offers on first install only.
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 // LabSpec defines the desired state of Lab.
@@ -71,6 +77,10 @@ type LabStatus struct {
 	ResolvedChartURL string `json:"resolvedChartURL,omitempty"`
 	// +optional
 	ResolvedVersion string `json:"resolvedVersion,omitempty"`
+	// UpdateAvailable is the version the catalog offers when it differs from the
+	// installed one. Set spec.catalogRef.version to it to upgrade.
+	// +optional
+	UpdateAvailable string `json:"updateAvailable,omitempty"`
 	// ExtensionRef is the name of the child InstallAIExtension.
 	// +optional
 	ExtensionRef string `json:"extensionRef,omitempty"`

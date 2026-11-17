@@ -3,6 +3,10 @@
 **Status:** proof of concept on branch `poc/aif-labs`. Not production code. Use a test
 cluster only.
 
+Labs are **off by default**. Set the aif-operator Helm value `labs.enabled=true` to
+turn them on (`hack/labs-poc.sh` does this). While they are off, the operator does not
+run the Lab controllers and **Settings → Labs** shows a note on how to enable them.
+
 A **lab** is an optional extension to SUSE AI Factory (AIF). Each lab is its own Helm
 chart. An admin turns it on in **Settings → Labs**, and it then appears in the
 navigation under **SUSE AI Factory → Labs**. The example lab is **Token Factory**, a
@@ -48,8 +52,8 @@ before it changes anything. Then it:
 2. Pushes them to `ttl.sh/aif-labs-<random>`, with images pinned by digest. ttl.sh is
    public and anonymous, and everything in it expires after **24h**. Rerun the script
    to republish.
-3. Runs `helm upgrade` on your AIF release and keeps your existing values. The chart's
-   CRD hook Job adds the new CRDs.
+3. Runs `helm upgrade` on your AIF release with `labs.enabled=true` and keeps your
+   existing values. The chart's CRD hook Job adds the new CRDs.
 
 The first run takes about 10–20 minutes. `DEPLOY=0` builds and publishes without
 deploying.
@@ -183,10 +187,17 @@ metadata: { name: my-team }
 spec: { url: https://example.com/aif-labs/catalog.json }
 ```
 
+External catalogs need the operator's registry host allowlist
+(`manager.allowedRegistryHosts`). Without it, the catalog goes to `Error` and is not
+fetched. Entries must use a `Helm` source whose chart host is on the allowlist. `Git`
+entries are skipped, and `values`, `auth` and `tls` are dropped, so the lab must be
+pullable anonymously with its chart defaults (see [§4](#4-security)).
+
 Labs from this catalog show a "Catalog: my-team" badge. Ticking one creates a Lab named
-`my-team-<entry>` that follows the catalog, so a new version in the catalog upgrades
-it. The lab must be pullable anonymously, because `auth`/`tls` in external catalogs
-are ignored (see [§4](#4-security)).
+`my-team-<entry>-<hash>` that records the version offered at that moment in
+`spec.catalogRef.version`. A new version in the catalog does **not** upgrade the lab:
+the row shows **Update to vX**, and the upgrade happens only when an admin clicks it
+(or sets `spec.catalogRef.version`).
 
 **Hand-made Lab.** A Lab without a catalog (shows as "Custom"):
 
@@ -220,8 +231,11 @@ Lab controller ── resolves entry ──▶ child InstallAIExtension "lab-<na
 
 **LabCatalog** (`aiflabcat`):
 
-- `spec.url`: https. It is empty only for `builtin`, which the operator creates from
-  the embedded `catalog.json` and recreates if deleted.
+- `spec.url`: https. It is empty only for `builtin`, which the operator creates
+  (and recreates if deleted) when Labs are enabled. Its entries come from the
+  `catalog.json` embedded in the operator. The chart does not render it: Helm
+  checks templated objects before the pre-upgrade hook installs new CRDs, so a
+  chart-rendered LabCatalog would break the upgrade that adds the CRD.
 - `status`:
   - `phase`: Ready or Error
   - `message`, `lastFetched`
@@ -231,24 +245,40 @@ Lab controller ── resolves entry ──▶ child InstallAIExtension "lab-<na
 **Lab** (`aiflab`):
 
 - `spec.enabled`
-- **Either** `spec.catalogRef: {catalog, entry}` **or** an inline `spec.source` plus
-  `spec.extension`. A CEL rule enforces this.
+- **Either** `spec.catalogRef: {catalog, entry, version}` **or** an inline
+  `spec.source` plus `spec.extension`. A CEL rule enforces this. `version` is the
+  entry version the admin accepted.
 - `status`:
   - `phase`: Disabled, Pending, Installing, Ready or Failed
-  - `message`, `extensionRef`, `resolvedChartURL`, `resolvedVersion`
+  - `message`, `extensionRef`, `resolvedChartURL`, `resolvedVersion` (what is
+    installed)
+  - `updateAvailable`: the version the catalog offers when it differs from the
+    installed one
 
 ### 3.2 Controllers
 
 - **LabCatalog**:
   - fetches external catalogs with `safehttp`, which allows only public addresses,
     with a 10s timeout and a 1 MiB cap
-  - refetches when the spec changes and every 10 minutes
-  - drops invalid entries, strips `auth`/`tls`, and keeps the previous entries if a
-    fetch fails
+  - refuses external catalogs (phase `Error`, no fetch) while the operator has no
+    registry host allowlist
+  - refetches when the spec changes and every 10 minutes. Its own status writes do
+    not trigger a fetch (`GenerationChangedPredicate`), so a slow or failing host is
+    contacted once per 10 minutes at most
+  - validates each entry with the same rules as the CRD, plus Helm only and an
+    allowed chart host. A bad entry is skipped with a reason in `status.message`;
+    the other entries still update
+  - strips `values`, `auth` and `tls`, and keeps the previous entries if a fetch fails
 - **Lab**:
   - resolves the catalog entry or the inline spec, and applies the naming rule
+  - fails the Lab if another `InstallAIExtension` already uses its UIPlugin name or
+    Helm release (two children would share one release, and deleting one would
+    uninstall it for both). The older object wins
+  - never adopts, updates or deletes a `lab-<name>` object it does not own
   - when enabled, creates the child `InstallAIExtension` (owned by the Lab) and copies
-    its phase
+    its phase. For catalog labs, once the child exists, a changed entry is applied
+    only after `spec.catalogRef.version` is set to the offered version. A changed
+    entry with the same version is never applied (disable and re-enable to take it)
   - when disabled, deletes the child, whose finalizer uninstalls the release and the
     UIPlugin
   - watches LabCatalogs, so catalog updates reach the Labs that use them
@@ -266,8 +296,15 @@ the AIF UI (`aif-ui`) or with another extension. The code is in
   Requests run as the logged-in user, so Kubernetes RBAC decides, and the lists update
   live.
 - When the user lacks permission, the controls are disabled.
-- Labs settings take effect immediately. The page's **Apply** button covers only the
-  other settings.
+- Labs settings take effect immediately, and the section says so. The page's
+  **Apply** and **Cancel** buttons cover only the other settings. A rejected save
+  restores the previous state.
+- Removing a catalog asks for confirmation.
+- When the operator reports `labsEnabled: false` (`GET /api/v1/version`), the section
+  shows how to enable Labs. Labs still installed from before are listed with a
+  **Remove** button: nothing updates or disables them while Labs are off, but deleting
+  the Lab still uninstalls its extension (the child is garbage-collected and the
+  InstallAIExtension finalizer uninstalls it).
 - A lab extension's pages appear because the extension adds itself to the `suseai`
   product (see §2.1).
 
@@ -286,27 +323,36 @@ the AIF UI (`aif-ui`) or with another extension. The code is in
 
 ## 4. Security
 
+- **Off by default.** `labs.enabled=false` means no Lab controllers, no builtin
+  catalog and no labs RBAC for the operator.
 - **Who can turn on labs:** only Rancher global admins by default. The chart's Rancher
-  GlobalRole `aif-labs-admin` ("AI Factory Labs Admin", `labs.adminGlobalRole.enabled`)
-  grants it to others.
+  GlobalRole `aif-labs-admin-full-trust` (`labs.adminGlobalRole.enabled`, default
+  `false`, needs `labs.enabled`) grants it to others.
 - **A lab is fully trusted.** Rancher does not isolate UI extensions: a lab's
   JavaScript runs in every user's browser session. Being able to turn on labs or add
   catalogs is therefore equivalent to Rancher admin.
 - **Catalogs can't use the operator's credentials.** `auth`/`tls` are stripped from
   external entries. Otherwise an entry could name a Secret in the operator namespace
   together with an attacker's `chartURL`.
+- **Catalogs are bounded by the allowlist.** External catalogs work only with
+  `manager.allowedRegistryHosts` set, and only Helm entries whose chart host is on it
+  are accepted. `values` is dropped, so a catalog can't repoint the server image at
+  another registry. `Git` entries are rejected (the Git source has no host check).
+- **No silent upgrades.** A catalog change never changes an installed lab. The admin
+  accepts each new version.
 - **Lab CRDs** are installed by an admin, because the operator can't create CRDs.
 - **Labs are plain Kubernetes objects.** The UI reads and writes them through Rancher
   as the logged-in user, so Kubernetes RBAC applies to every change.
 
 **Open:**
 
-1. **Catalog trust.** Whoever controls a catalog URL controls its labs. Needed:
-   - pin charts by digest and verify signatures (cosign)
-   - require `manager.allowedRegistryHosts` when external catalogs exist
-   - ask the admin to confirm before installing
-2. **Silent upgrades.** Catalog labs follow updates with no confirmation. Consider
-   pinning versions.
+1. **Catalog trust.** Whoever controls a catalog URL still decides what an admin is
+   offered, and an allowlisted host is trusted for every repository on it (allowing
+   `ghcr.io` allows anyone's namespace). OCI tags are mutable, so an accepted version
+   can still change upstream. Needed: pin charts by digest and verify signatures
+   (cosign).
+2. **Name-conflict race.** Two Labs that claim the same name in the same instant can
+   both create their child before either sees the other.
 3. **ttl.sh is for throwaway clusters only.** Anyone who knows the path can push to
    it. Images are pinned by digest, but charts are pulled by version.
 
@@ -327,7 +373,10 @@ kubectl -n cattle-ui-plugin-system get pods,uiplugins
 | Pod `ImagePullBackOff`, and the image is a Helm chart | The chart and the image were pushed to the same OCI ref |
 | `exec format error` in pods | Wrong CPU architecture. The script uses the first node's architecture |
 | Registry host refused | `manager.allowedRegistryHosts` doesn't include it |
-| Catalog `Error` | See `kubectl get aiflabcat <name> -o yaml` → `status.message` |
+| Catalog `Error` | See `kubectl get aiflabcat <name> -o yaml` → `status.message`. "require a registry host allowlist": set `manager.allowedRegistryHosts` |
+| Entries missing from a catalog | `status.skipped` / `status.message` name the first rejected entry and why |
+| Lab stays on the old version | Expected: click **Update to vX** (or set `spec.catalogRef.version`) |
+| Settings → Labs says Labs are off | Set `labs.enabled=true` on the aif-operator release |
 | Ready but no menu entry | Browser not reloaded, or the extension's `product.ts` doesn't target `suseai` |
 | AIF UI not updated | `kubectl describe aifext aif-ui`, then a hard reload |
 | Script warns about `global.imageRegistry` | Unset it for the test. It overrides the ttl.sh images |
@@ -347,13 +396,14 @@ kubectl -n cattle-ui-plugin-system get pods,uiplugins
 **Not yet tested:**
 
 - the object-based version (LabCatalog and `catalogRef`) on a cluster: the CEL rules,
-  store saves and removes, permission checks, and recreating `builtin`
+  store saves and removes, permission checks, version acceptance, and the disabled
+  state
 - the full disable → re-enable cycle
 - the mock backend (`mockApi.enabled`)
 
 **Next:**
 
-1. Close the catalog trust gaps (§4).
+1. Close the remaining catalog trust gaps (§4): digests and signatures.
 2. A shared UI SDK for labs and a scaffolding command.
 3. `aifVersionRange` compatibility checks.
 4. A Lab status that reports missing lab-owned CRDs.

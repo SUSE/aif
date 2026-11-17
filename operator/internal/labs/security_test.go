@@ -34,6 +34,8 @@ func TestValidateNames(t *testing.T) {
 	}
 }
 
+var allow = []string{"evil", "x", "r"}
+
 func TestParseExternalSanitizes(t *testing.T) {
 	doc := `[
 	  {"name":"steal","source":{"kind":"Helm","helm":{"chartURL":"oci://evil/chart/aif-lab-steal","version":"1",
@@ -47,7 +49,7 @@ func TestParseExternalSanitizes(t *testing.T) {
 	  {"name":"Bad_Name","source":{"kind":"Helm","helm":{"chartURL":"oci://x/chart/aif-lab-b","version":"1"}},
 	   "extension":{"name":"aif-lab-b","version":"1"}}
 	]`
-	entries, skipped, msg, err := ParseExternal([]byte(doc))
+	entries, skipped, msg, err := ParseExternal([]byte(doc), allow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestParseExternalSanitizes(t *testing.T) {
 	if skipped != 3 || !strings.Contains(msg, "hijack") {
 		t.Errorf("skipped=%d msg=%q", skipped, msg)
 	}
-	if _, _, _, err := ParseExternal([]byte("nope")); err == nil {
+	if _, _, _, err := ParseExternal([]byte("nope"), allow); err == nil {
 		t.Error("want JSON error")
 	}
 }
@@ -75,8 +77,47 @@ func TestParseExternalCapsEntries(t *testing.T) {
 		fmt.Fprintf(&b, `{"name":"lab-%d","source":{"kind":"Helm","helm":{"chartURL":"oci://r/chart/aif-lab-%d","version":"1"}},"extension":{"name":"aif-lab-%d","version":"1"}}`, i, i, i)
 	}
 	b.WriteString("]")
-	entries, skipped, msg, err := ParseExternal([]byte(b.String()))
+	entries, skipped, msg, err := ParseExternal([]byte(b.String()), allow)
 	if err != nil || len(entries) != MaxEntries || skipped != 5 || !strings.Contains(msg, "more than") {
 		t.Fatalf("entries=%d skipped=%d msg=%q err=%v", len(entries), skipped, msg, err)
+	}
+}
+
+func TestParseExternalRequiresAllowlist(t *testing.T) {
+	if _, _, _, err := ParseExternal([]byte("[]"), nil); err != ErrNoAllowlist {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// One malformed entry must be skipped with a reason, not reach the status write
+// (where the CRD rules would reject the whole update).
+func TestParseExternalValidatesEachEntry(t *testing.T) {
+	ext := `"extension":{"name":"aif-lab-x","version":"1"}`
+	bad := map[string]string{
+		"no-helm":    `{"name":"no-helm","source":{"kind":"Helm"},` + ext + `}`,
+		"http-url":   `{"name":"http-url","source":{"kind":"Helm","helm":{"chartURL":"http://x/aif-lab-x","version":"1"}},` + ext + `}`,
+		"no-version": `{"name":"no-version","source":{"kind":"Helm","helm":{"chartURL":"oci://x/aif-lab-x","version":""}},` + ext + `}`,
+		"no-ext-ver": `{"name":"no-ext-ver","source":{"kind":"Helm","helm":{"chartURL":"oci://x/aif-lab-x","version":"1"}},"extension":{"name":"aif-lab-x"}}`,
+		"maturity":   `{"name":"maturity","maturity":"ga","source":{"kind":"Helm","helm":{"chartURL":"oci://x/aif-lab-x","version":"1"}},` + ext + `}`,
+		"git":        `{"name":"git","source":{"kind":"Git","git":{"repo":"https://x/r","branch":"gh-pages"}},` + ext + `}`,
+		"host":       `{"name":"host","source":{"kind":"Helm","helm":{"chartURL":"oci://other.io/aif-lab-x","version":"1"}},` + ext + `}`,
+	}
+	good := `{"name":"good","source":{"kind":"Helm","helm":{"chartURL":"oci://x/aif-lab-x","version":"1","values":{"image":{"repository":"evil.io/x"}}}},` + ext + `}`
+	for name, e := range bad {
+		entries, skipped, msg, err := ParseExternal([]byte("["+e+","+good+"]"), allow)
+		if err != nil || skipped != 1 || len(entries) != 1 || entries[0].Name != "good" || !strings.Contains(msg, name) {
+			t.Errorf("%s: entries=%v skipped=%d msg=%q err=%v", name, entries, skipped, msg, err)
+			continue
+		}
+		if entries[0].Source.Helm.Values != nil {
+			t.Errorf("values not stripped")
+		}
+	}
+}
+
+func TestHostAllowed(t *testing.T) {
+	if !HostAllowed([]string{"GHCR.io"}, "oci://ghcr.io/suse/chart/x") || !HostAllowed([]string{"r:5000"}, "oci://r:5000/x") ||
+		!HostAllowed([]string{"r"}, "oci://r:5000/x") || HostAllowed([]string{"ghcr.io"}, "oci://evil.io/x") || HostAllowed(nil, "oci://r/x") {
+		t.Error("host match")
 	}
 }

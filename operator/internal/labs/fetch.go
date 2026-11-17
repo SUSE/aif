@@ -41,17 +41,29 @@ func SafeFetch(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %s", resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxCatalogBytes {
+		return nil, fmt.Errorf("catalog larger than %d bytes", maxCatalogBytes)
+	}
+	return body, nil
 }
 
 // MaxEntries matches the MaxItems bound on LabCatalog status.entries.
 const MaxEntries = 100
 
-// ParseExternal parses an external catalog document. It drops entries with an
-// invalid or duplicate name or failing ValidateNames, strips auth/tls from the
-// rest, and returns the number skipped and a message naming the first reason.
-// At most MaxEntries entries are kept.
-func ParseExternal(doc []byte) (entries []Entry, skipped int, msg string, err error) {
+// ParseExternal parses an external catalog document. Each entry is sanitized
+// (auth, tls and values dropped) and validated (CRD rules, Helm-only source, chart
+// host on allowed, aif-lab- names); a failing or duplicate entry is skipped, so one
+// bad entry never blocks the rest. It returns the number skipped and a message
+// naming the first reason. At most MaxEntries entries are kept. An empty allowed
+// list rejects the whole catalog (ErrNoAllowlist).
+func ParseExternal(doc []byte, allowed []string) (entries []Entry, skipped int, msg string, err error) {
+	if len(allowed) == 0 {
+		return nil, 0, "", ErrNoAllowlist
+	}
 	var raw []Entry
 	if err := json.Unmarshal(doc, &raw); err != nil {
 		return nil, 0, "", fmt.Errorf("invalid catalog JSON: %w", err)
@@ -65,7 +77,7 @@ func ParseExternal(doc []byte) (entries []Entry, skipped int, msg string, err er
 	}
 	for _, e := range raw {
 		switch {
-		case !dnsLabel.MatchString(e.Name):
+		case !dnsLabel.MatchString(e.Name) || len(e.Name) > 63:
 			skip("entry %q skipped: invalid name", e.Name)
 			continue
 		case seen[e.Name]:
@@ -73,7 +85,7 @@ func ParseExternal(doc []byte) (entries []Entry, skipped int, msg string, err er
 			continue
 		}
 		e = sanitizeExternal(e)
-		if verr := ValidateNames(e.Source, e.Extension); verr != nil {
+		if verr := validateExternal(e, allowed); verr != nil {
 			skip("entry %q skipped: %v", e.Name, verr)
 			continue
 		}

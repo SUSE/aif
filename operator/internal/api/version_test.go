@@ -25,7 +25,7 @@ import (
 
 func TestGetVersion(t *testing.T) {
 	mux := http.NewServeMux()
-	NewVersionHandler("1.2.3", "abc1234", "0.1.0-dev.3").Register(mux)
+	NewVersionHandler("1.2.3", "abc1234", "0.1.0-dev.3").WithLabs(true).Register(mux)
 
 	req := httptest.NewRequest("GET", "/api/v1/version", nil)
 	w := httptest.NewRecorder()
@@ -35,17 +35,20 @@ func TestGetVersion(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if body["version"] != "1.2.3" {
-		t.Errorf("expected version %q, got %q", "1.2.3", body["version"])
+		t.Errorf("expected version %q, got %v", "1.2.3", body["version"])
 	}
 	if body["commit"] != "abc1234" {
-		t.Errorf("expected commit %q, got %q", "abc1234", body["commit"])
+		t.Errorf("expected commit %q, got %v", "abc1234", body["commit"])
 	}
 	if body["chartVersion"] != "0.1.0-dev.3" {
-		t.Errorf("expected chartVersion %q, got %q", "0.1.0-dev.3", body["chartVersion"])
+		t.Errorf("expected chartVersion %q, got %v", "0.1.0-dev.3", body["chartVersion"])
+	}
+	if body["labsEnabled"] != true {
+		t.Errorf("expected labsEnabled true, got %v", body["labsEnabled"])
 	}
 }

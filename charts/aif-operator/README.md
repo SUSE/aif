@@ -357,11 +357,18 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 
 ### Labs (proof of concept)
 
-Labs are optional AIF extensions, managed through the cluster-scoped `Lab` and `LabCatalog` resources (see `docs/labs.md`). By default only Rancher global admins can create them. The chart can create a Rancher GlobalRole that grants this to other users. Treat that role as admin-level: a lab's UI extension runs in every user's browser.
+Labs are optional AIF extensions, managed through the cluster-scoped `Lab` and `LabCatalog` resources (see `docs/labs.md`). They are experimental, unsupported and not for production, so they are **off by default**. With `labs.enabled=false` the operator does not run the Lab controllers and the Settings page shows Labs as disabled.
+
+By default only Rancher global admins can create labs. The chart can create a Rancher GlobalRole that grants this to other users. Treat that role as admin-level: a lab's UI extension runs in every user's browser.
+
+External lab catalogs are refused unless `manager.allowedRegistryHosts` is set; their entries may only use Helm charts from those hosts, and `values`, `auth` and `tls` are dropped.
+
+With `crds.manageWithJob=false`, apply the `labs` and `labcatalogs` CRDs before setting `labs.enabled=true`.
 
 | Name                            | Description                                                                        | Default |
 | ------------------------------- | ---------------------------------------------------------------------------------- | ------- |
-| `labs.adminGlobalRole.enabled`  | Create the Rancher GlobalRole `aif-labs-admin` with full access to labs and lab catalogs | `true`  |
+| `labs.enabled`                  | Run the Lab and LabCatalog controllers (the operator creates the builtin LabCatalog) | `false` |
+| `labs.adminGlobalRole.enabled`  | Create the Rancher GlobalRole `aif-labs-admin-full-trust` (full access to labs and lab catalogs). Needs `labs.enabled` | `false` |
 
 ### RBAC helper roles
 

@@ -15,7 +15,7 @@ export function init($plugin: IPlugin, store: any) {
 
   virtualType({
     name:  LAB_TYPE,
-    label: 'Token Factory',
+    labelKey: 'tokenFactory.title',
     icon:  'icon-key',
     route: {
       name:   LAB_ROUTE,

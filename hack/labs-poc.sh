@@ -35,6 +35,17 @@ STAMP=$(date -u +%Y%m%d%H%M)
 
 log() { printf '\n\033[1;32m>> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+# ttl.sh is a free public registry and times out now and then: retry pushes.
+retry() {
+  local n
+  for n in 1 2 3 4; do
+    "$@" && return 0
+    [[ $n == 4 ]] && break
+    printf 'WARN: attempt %s failed: %s; retrying in %ss\n' "$n" "$*" $((n * 10)) >&2
+    sleep $((n * 10))
+  done
+  die "failed after 4 attempts: $*"
+}
 
 for c in docker helm kubectl yarn jq yq node uuidgen; do
   command -v "$c" >/dev/null || die "missing command: $c"
@@ -108,7 +119,7 @@ build_ext() {
   sed 's|^FROM \${BASE} AS app|FROM --platform=$BUILDPLATFORM ${BASE} AS app|' \
     "$ROOT/$dockerfile" > "$TMPD/Dockerfile"
   docker build --platform "linux/$ARCH" -f "$TMPD/Dockerfile" --build-arg BASE="$base" -t "$img" "$ROOT"
-  docker push "$img"
+  retry docker push "$img"
   LAST_DIGEST=$(digest_of "$img")
   [[ "$LAST_DIGEST" == sha256:* ]] || die "no digest for $img"
 }
@@ -121,7 +132,7 @@ push_chart() {
   yq -i ".version = \"$v\" | .appVersion = \"$v\"" "$TMPD/chart/$chart/Chart.yaml"
   yq -i ".image.registry = \"ttl.sh\" | .image.repository = \"$repo\" | .image.tag = \"$tag\"" "$TMPD/chart/$chart/values.yaml"
   helm package "$TMPD/chart/$chart" -d "$TMPD/chart" >/dev/null
-  helm push "$TMPD/chart/$chart-$v.tgz" "oci://$REG/chart"   # charts under /chart: must not share a ref with images
+  retry helm push "$TMPD/chart/$chart-$v.tgz" "oci://$REG/chart"   # charts under /chart: must not share a ref with images
 }
 
 # --- 1. Extensions ------------------------------------------------------------
@@ -140,7 +151,7 @@ jq --arg name "$LAB_NAME" --arg url "oci://$REG/chart/$LAB" --arg v "$LAB_VER" \
 cp "$TMPD/catalog.json" "$ROOT/operator/internal/labs/catalog.json"
 docker build --platform "linux/$ARCH" -f "$ROOT/build/Dockerfile.operator" \
   --build-arg VERSION="labs-poc-$STAMP" -t "$REG/aif-operator:$OP_TAG" "$ROOT/operator"
-docker push "$REG/aif-operator:$OP_TAG"
+retry docker push "$REG/aif-operator:$OP_TAG"
 OP_DIGEST=$(digest_of "$REG/aif-operator:$OP_TAG")
 [[ "$OP_DIGEST" == sha256:* ]] || die "no digest for aif-operator"
 
@@ -149,6 +160,7 @@ HELM_SETS=(
   --set-string manager.image.repository="$TTL_NS/aif-operator"
   --set-string manager.image.tag="$OP_TAG@$OP_DIGEST"
   --set-string manager.image.pullPolicy=IfNotPresent
+  --set labs.enabled=true
   --set aiExtension.enabled=true
   --set-string aiExtension.source.kind=Helm
   --set-string aiExtension.source.helm.chartURL="oci://$REG/chart/aif-ui"
@@ -189,11 +201,13 @@ if [[ -d "$ROOT/charts/$LAB-crds/crds" ]]; then kubectl apply -f "$ROOT/charts/$
 helm upgrade "$REL" "$ROOT/charts/aif-operator" -n "$NS" --reset-then-reuse-values "${HELM_SETS[@]}"
 kubectl -n "$NS" rollout status deploy -l app.kubernetes.io/name=aif-operator --timeout=300s
 
-# Labs with spec.catalogRef follow the catalog. A Lab from an older PoC run has an
-# inline source pointing at an expired chart: drop it so the toggle recreates it.
-if [[ -n "$(kubectl get lab.ai-factory.suse.com "$LAB_NAME" --ignore-not-found -o jsonpath='{.spec.source}')" ]]; then
-  kubectl delete lab.ai-factory.suse.com "$LAB_NAME" --wait=true
-fi
+# Catalog labs stay on the version the admin accepted. This run republished the
+# builtin entry under a new version (the old artifacts expire), so accept it for
+# any existing Lab on that entry, as the Settings "Update" button would.
+for l in $(kubectl get lab.ai-factory.suse.com -o json | jq -r --arg e "$LAB_NAME" \
+    '.items[] | select(.spec.catalogRef.catalog == "builtin" and .spec.catalogRef.entry == $e) | .metadata.name'); do
+  kubectl patch lab.ai-factory.suse.com "$l" --type=merge -p "{\"spec\":{\"catalogRef\":{\"version\":\"$LAB_VER\"}}}"
+done
 
 log "Waiting for the new aif-ui extension (up to 5 min)"
 kubectl wait installaiextension.ai-factory.suse.com/aif-ui \
@@ -211,7 +225,7 @@ cat <<EOF
 
    Revert:
      kubectl delete aiflab --all --wait=true
-     kubectl delete aiflabcat --all
+     kubectl delete aiflabcat -l '!app.kubernetes.io/managed-by'
      helm rollback $REL $PREV_REV -n $NS
    (The added CRDs stay; they are harmless.)
 EOF

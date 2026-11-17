@@ -12,7 +12,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	v1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/labs"
@@ -29,12 +31,18 @@ type LabCatalogReconciler struct {
 	Fetch labs.Fetcher
 	// Now is injectable for tests; nil means time.Now.
 	Now func() time.Time
+	// AllowedRegistryHosts is the operator's registry host allowlist. External
+	// catalogs are refused while it is empty, and their entries must use a listed host.
+	AllowedRegistryHosts []string
 }
 
-// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=labcatalogs,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=ai-factory.suse.com,resources=labcatalogs,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=labcatalogs/status,verbs=get;update;patch
 
-// EnsureBuiltin creates the builtin LabCatalog if it does not exist.
+// EnsureBuiltin creates the builtin LabCatalog if it does not exist. The operator
+// creates it (rather than the chart) because Helm validates templated objects
+// before the pre-upgrade hook installs new CRDs, so a chart-rendered LabCatalog
+// breaks the upgrade that introduces the CRD.
 func EnsureBuiltin(ctx context.Context, c client.Client) error {
 	cat := &v1alpha1.LabCatalog{}
 	cat.Name = v1alpha1.LabCatalogBuiltin
@@ -78,13 +86,20 @@ func (r *LabCatalogReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	case cat.Spec.URL == "":
 		s.Phase, s.Message = v1alpha1.LabCatalogPhaseError, "spec.url is required"
 	default:
+		if len(r.AllowedRegistryHosts) == 0 {
+			// Not fetched at all: nothing to refresh until the operator is restarted
+			// with an allowlist.
+			s.Phase, s.Message, s.Skipped, s.Entries = v1alpha1.LabCatalogPhaseError, labs.ErrNoAllowlist.Error(), 0, nil
+			s.LastFetched = nil // never fetched
+			break
+		}
 		requeue.RequeueAfter = RefreshInterval
 		doc, err := fetch(ctx, cat.Spec.URL)
 		var entries []labs.Entry
 		var skipped int
 		var msg string
 		if err == nil {
-			entries, skipped, msg, err = labs.ParseExternal(doc)
+			entries, skipped, msg, err = labs.ParseExternal(doc, r.AllowedRegistryHosts)
 		}
 		if err != nil {
 			// keep previous entries
@@ -94,26 +109,33 @@ func (r *LabCatalogReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		s.Phase, s.Message, s.Skipped, s.Entries = v1alpha1.LabCatalogPhaseReady, msg, skipped, entries
 	}
 
-	// Builtin never refetches: skip the write when nothing changed. External
-	// catalogs always write so lastFetched stays current (one event per 10m).
-	if cat.Spec.URL == "" {
+	// Builtin and refused catalogs never refetch: skip the write when nothing
+	// changed. Fetched catalogs always write so lastFetched stays current; the
+	// GenerationChangedPredicate in SetupWithManager keeps that status write from
+	// re-triggering a fetch, so refresh happens only via RequeueAfter.
+	if requeue.RequeueAfter == 0 {
+		stamp := s.LastFetched != nil
 		prev := cat.Status.DeepCopy()
 		prev.LastFetched, s.LastFetched = nil, nil
 		if reflect.DeepEqual(*prev, s) {
 			return requeue, nil
 		}
-		s.LastFetched = &metav1.Time{Time: now()}
+		if stamp {
+			s.LastFetched = &metav1.Time{Time: now()}
+		}
 	}
 	cat.Status = s
 	return requeue, r.Status().Update(ctx, &cat)
 }
 
+// SetupWithManager registers the controller and a runnable that creates the
+// builtin LabCatalog once the manager has started.
 func (r *LabCatalogReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err := mgr.Add(ensureBuiltinRunnable{c: mgr.GetClient()}); err != nil {
 		return err
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.LabCatalog{}).
+		For(&v1alpha1.LabCatalog{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("labcatalog").
 		Complete(r)
 }

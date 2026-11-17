@@ -21,7 +21,7 @@ func newR(t *testing.T, fetch func(context.Context, string) ([]byte, error), obj
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(sch).WithStatusSubresource(&v1alpha1.LabCatalog{}).WithObjects(objs...).Build()
-	return &LabCatalogReconciler{Client: c, Scheme: sch, Fetch: fetch}, c
+	return &LabCatalogReconciler{Client: c, Scheme: sch, Fetch: fetch, AllowedRegistryHosts: []string{"x"}}, c
 }
 
 func reconcile(t *testing.T, r *LabCatalogReconciler, name string) ctrl.Result {
@@ -83,5 +83,19 @@ func TestExternalFetchKeepsEntriesOnError(t *testing.T) {
 	got = get(t, c, "partner")
 	if got.Status.Phase != v1alpha1.LabCatalogPhaseError || len(got.Status.Entries) != 1 {
 		t.Fatalf("entries must be kept on error: %+v", got.Status)
+	}
+}
+
+func TestExternalRefusedWithoutAllowlist(t *testing.T) {
+	cat := &v1alpha1.LabCatalog{ObjectMeta: metav1.ObjectMeta{Name: "partner"}, Spec: v1alpha1.LabCatalogSpec{URL: "https://x/c.json"}}
+	fetched := false
+	r, c := newR(t, func(context.Context, string) ([]byte, error) { fetched = true; return []byte(doc), nil }, cat)
+	r.AllowedRegistryHosts = nil
+	if res := reconcile(t, r, "partner"); res.RequeueAfter != 0 {
+		t.Errorf("requeue=%v", res.RequeueAfter)
+	}
+	got := get(t, c, "partner")
+	if fetched || got.Status.Phase != v1alpha1.LabCatalogPhaseError || len(got.Status.Entries) != 0 || got.Status.LastFetched != nil {
+		t.Fatalf("fetched=%v status=%+v", fetched, got.Status)
 	}
 }

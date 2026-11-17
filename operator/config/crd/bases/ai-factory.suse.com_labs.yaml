@@ -63,6 +63,13 @@ spec:
                     description: Entry is the entry name inside the catalog.
                     minLength: 1
                     type: string
+                  version:
+                    description: |-
+                      Version is the entry version the admin accepted. Once the child
+                      InstallAIExtension exists, catalog changes are not applied until Version is
+                      set to the version the catalog now offers (status.updateAvailable). Empty
+                      accepts whatever the catalog offers on first install only.
+                    type: string
                 required:
                 - catalog
                 - entry
@@ -427,6 +434,11 @@ spec:
                   chart reference.
                 type: string
               resolvedVersion:
+                type: string
+              updateAvailable:
+                description: |-
+                  UpdateAvailable is the version the catalog offers when it differs from the
+                  installed one. Set spec.catalogRef.version to it to upgrade.
                 type: string
             type: object
         required:

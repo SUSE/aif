@@ -90,17 +90,14 @@ rules:
       - delete
       - get
       - list
+{{- if .Values.labs.enabled }}
   - apiGroups:
       - ai-factory.suse.com
     resources:
       - labs
     verbs:
-      - create
-      - delete
       - get
       - list
-      - patch
-      - update
       - watch
   - apiGroups:
       - ai-factory.suse.com
@@ -110,31 +107,17 @@ rules:
       - create
       - get
       - list
-      - patch
-      - update
       - watch
   - apiGroups:
       - ai-factory.suse.com
     resources:
+      - labs/status
       - labcatalogs/status
     verbs:
       - get
       - patch
       - update
-  - apiGroups:
-      - ai-factory.suse.com
-    resources:
-      - labs/finalizers
-    verbs:
-      - update
-  - apiGroups:
-      - ai-factory.suse.com
-    resources:
-      - labs/status
-    verbs:
-      - get
-      - patch
-      - update
+{{- end }}
   - apiGroups:
       - ai-factory.suse.com
     resources:

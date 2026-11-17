@@ -96,3 +96,131 @@ func TestInlineAndNameValidation(t *testing.T) {
 		t.Fatalf("status: %+v", l.Status)
 	}
 }
+
+func ref(version string) *v1alpha1.LabCatalogRef {
+	return &v1alpha1.LabCatalogRef{Catalog: "partner", Entry: "demo", Version: version}
+}
+
+func reconcileAgain(t *testing.T, c client.Client) v1alpha1.Lab {
+	t.Helper()
+	r := &LabReconciler{Client: c, Scheme: c.Scheme()}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: "l"}}); err != nil {
+		t.Fatal(err)
+	}
+	var l v1alpha1.Lab
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "l"}, &l); err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func childVersion(t *testing.T, c client.Client) string {
+	t.Helper()
+	var child v1alpha1.InstallAIExtension
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "lab-l"}, &child); err != nil {
+		t.Fatal(err)
+	}
+	return child.Spec.Source.Helm.Version
+}
+
+func bumpCatalog(t *testing.T, c client.Client, version, chartURL string) {
+	t.Helper()
+	var cat v1alpha1.LabCatalog
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "partner"}, &cat); err != nil {
+		t.Fatal(err)
+	}
+	cat.Status.Entries[0].Source.Helm.Version = version
+	cat.Status.Entries[0].Source.Helm.ChartURL = chartURL
+	cat.Status.Entries[0].Extension.Version = version
+	if err := c.Status().Update(context.Background(), &cat); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setRefVersion(t *testing.T, c client.Client, version string) {
+	t.Helper()
+	var l v1alpha1.Lab
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "l"}, &l); err != nil {
+		t.Fatal(err)
+	}
+	l.Spec.CatalogRef.Version = version
+	if err := c.Update(context.Background(), &l); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A catalog change never changes what runs until the admin accepts the version.
+func TestCatalogUpdateNeedsAcceptance(t *testing.T) {
+	c, l := run(t, catalog("1"), labWith(v1alpha1.LabSpec{CatalogRef: ref("1")}))
+	if childVersion(t, c) != "1" || l.Status.UpdateAvailable != "" {
+		t.Fatalf("status: %+v", l.Status)
+	}
+
+	bumpCatalog(t, c, "2", "oci://x/chart/aif-lab-demo")
+	l = reconcileAgain(t, c)
+	if childVersion(t, c) != "1" || l.Status.UpdateAvailable != "2" || l.Status.ResolvedVersion != "1" {
+		t.Fatalf("not pinned: child=%s status=%+v", childVersion(t, c), l.Status)
+	}
+
+	setRefVersion(t, c, "2")
+	l = reconcileAgain(t, c)
+	if childVersion(t, c) != "2" || l.Status.UpdateAvailable != "" || l.Status.ResolvedVersion != "2" {
+		t.Fatalf("not upgraded: child=%s status=%+v", childVersion(t, c), l.Status)
+	}
+
+	// same version, different chart: never applied silently
+	bumpCatalog(t, c, "2", "oci://x/chart/aif-lab-other")
+	l = reconcileAgain(t, c)
+	var child v1alpha1.InstallAIExtension
+	_ = c.Get(context.Background(), client.ObjectKey{Name: "lab-l"}, &child)
+	if child.Spec.Source.Helm.ChartURL != "oci://x/chart/aif-lab-demo" || !strings.Contains(l.Status.Message, "without a new version") {
+		t.Fatalf("chart swapped: %+v status=%+v", child.Spec.Source.Helm, l.Status)
+	}
+}
+
+func TestAcceptedVersionNotOffered(t *testing.T) {
+	c, l := run(t, catalog("2"), labWith(v1alpha1.LabSpec{CatalogRef: ref("1")}))
+	if l.Status.Phase != v1alpha1.LabPhaseFailed || l.Status.UpdateAvailable != "2" {
+		t.Fatalf("status: %+v", l.Status)
+	}
+	var list v1alpha1.InstallAIExtensionList
+	if err := c.List(context.Background(), &list); err != nil || len(list.Items) != 0 {
+		t.Fatalf("child created: %v", list.Items)
+	}
+}
+
+func foreignChild() *v1alpha1.InstallAIExtension {
+	return &v1alpha1.InstallAIExtension{
+		ObjectMeta: metav1.ObjectMeta{Name: "lab-l"},
+		Spec: v1alpha1.InstallAIExtensionSpec{Source: helm("oci://x/chart/aif-lab-mine", "9"),
+			Extension: v1alpha1.ExtensionConfig{Name: "aif-lab-mine", Version: "9"}},
+	}
+}
+
+func TestForeignChildNeverAdoptedOrDeleted(t *testing.T) {
+	c, l := run(t, catalog("1"), foreignChild(), labWith(v1alpha1.LabSpec{CatalogRef: ref("")}))
+	if l.Status.Phase != v1alpha1.LabPhaseFailed || !strings.Contains(l.Status.Message, "not owned") || childVersion(t, c) != "9" {
+		t.Fatalf("status: %+v", l.Status)
+	}
+
+	disabled := labWith(v1alpha1.LabSpec{CatalogRef: ref("")})
+	disabled.Spec.Enabled = false
+	c, _ = run(t, catalog("1"), foreignChild(), disabled)
+	if childVersion(t, c) != "9" {
+		t.Fatal("foreign child deleted")
+	}
+}
+
+func TestNameConflictWithOtherExtension(t *testing.T) {
+	other := foreignChild()
+	other.Name = "someone-else"
+	other.Spec.Extension.Name = "aif-lab-demo" // same UIPlugin as the catalog entry
+	c, l := run(t, catalog("1"), other, labWith(v1alpha1.LabSpec{CatalogRef: ref("")}))
+	if l.Status.Phase != v1alpha1.LabPhaseFailed || !strings.Contains(l.Status.Message, "someone-else") {
+		t.Fatalf("status: %+v", l.Status)
+	}
+	var child v1alpha1.InstallAIExtension
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "lab-l"}, &child); err == nil {
+		t.Fatal("child created despite conflict")
+	}
+}

@@ -41,6 +41,9 @@ spec:
           {{- with .Values.manager.allowedRegistryHosts }}
             - --allowed-registry-hosts={{ join "," . }}
           {{- end }}
+          {{- if .Values.labs.enabled }}
+            - --enable-labs
+          {{- end }}
             - --api-bind-address=:{{ .Values.api.port }}
           ports:
             - name: http

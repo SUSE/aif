@@ -36,7 +36,8 @@ export interface Lab {
   metadata: { name: string };
   spec:     {
     enabled?:     boolean;
-    catalogRef?:  { catalog: string; entry: string };
+    /** version: the entry version the admin accepted (catalog changes wait for it). */
+    catalogRef?:  { catalog: string; entry: string; version?: string };
     source?:      LabCatalogEntry['source'];
     extension?:   LabCatalogEntry['extension'];
     displayName?: string;
@@ -44,8 +45,9 @@ export interface Lab {
     maturity?:    string;
     ui?:          LabUi;
   };
-  status?: { phase?: LabPhase; message?: string; resolvedVersion?: string };
+  status?: { phase?: LabPhase; message?: string; resolvedVersion?: string; updateAvailable?: string };
   save?:   () => Promise<any>;
+  remove?: () => Promise<any>;
 }
 
 export interface LabRow {
@@ -58,6 +60,10 @@ export interface LabRow {
   phase:       LabPhase;
   message?:    string;
   version?:    string;
+  /** Version the catalog offers when it differs from the installed one. */
+  updateAvailable?: string;
+  /** Version the catalog entry currently offers (accepted when enabling). */
+  offered?:    string;
   source:      'builtin' | 'catalog' | 'custom';
   catalog?:    string;
   entry?:      string;

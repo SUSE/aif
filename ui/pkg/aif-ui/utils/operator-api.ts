@@ -90,7 +90,7 @@ export function publishToFleetGit(bundleName: string, bundleYAML: string): Promi
   });
 }
 
-export function getVersion(timeoutMs = 5000): Promise<{ version: string; commit: string; chartVersion: string }> {
+export function getVersion(timeoutMs = 5000): Promise<{ version: string; commit: string; chartVersion: string; labsEnabled?: boolean }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
