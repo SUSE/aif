@@ -1,0 +1,21 @@
+{{- if and .Values.labs.enabled .Values.labs.adminGlobalRole.enabled }}
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+metadata:
+  name: aif-labs-admin-full-trust
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+displayName: AI Factory Labs Admin (full trust, admin-equivalent)
+description: >-
+  Install and remove SUSE AI Factory Labs. A lab installs a Rancher UI extension
+  that runs in every user's browser session, so grant this only to users you
+  would make Rancher administrators.
+rules:
+  - apiGroups:
+      - ai-factory.suse.com
+    resources:
+      - labs
+      - labcatalogs
+    verbs:
+      - '*'
+{{- end }}

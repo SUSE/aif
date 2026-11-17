@@ -1,0 +1,70 @@
+tokenFactory:
+  title: Token Factory
+  experimentalBanner: Labs · Experimental. This page shows mocked data only; no backend is connected.
+  tabs:
+    overview: Overview
+    endpoints: Model endpoints
+    keys: API keys
+    quotas: Quotas & billing
+    playground: Playground
+  overview:
+    vsYesterday: '{delta} vs yesterday'
+    chartTitle: Tokens per hour (millions, last 24h)
+    chartAria: Token usage chart
+    axis:
+      start: -24h
+      middle: -12h
+      end: now
+  endpoints:
+    publish: Publish model
+    headers:
+      model: Model
+      workload: AIWorkload
+      cluster: Cluster
+      url: OpenAI-compatible URL
+      status: Status
+      rateLimit: Rate limit
+    modal:
+      title: Publish model
+      description: Expose an existing AIWorkload as an OpenAI-compatible endpoint.
+      workload: AIWorkload
+      modelName: Published model name
+      cancel: Cancel
+      confirm: Publish
+  keys:
+    create: Create key
+    headers:
+      team: Team
+      key: Key
+      models: Models allowed
+      quota: Quota
+      used: Used
+      expiry: Expires
+    modal:
+      title: Create API key
+      team: Team / consumer
+      models: Models allowed
+      cancel: Cancel
+      confirm: Create
+      copyNotice: Copy this key now. It will not be shown again.
+      done: Done
+  quotas:
+    title: Per-team token quotas (monthly)
+    usage: '{used}M / {quota}M ({pct}%)'
+    chargeback: Chargeback
+    exportCsv: Export CSV
+    exportMessage: 'Mock export: usage-2026-11.csv would be downloaded here.'
+    total: 'Total: ${total}'
+    headers:
+      team: Team
+      used: Tokens used (M)
+      price: Price / 1M tokens
+      cost: Chargeback (USD, month to date)
+  playground:
+    model: Model
+    prompt: Prompt
+    defaultPrompt: Explain how Kubernetes schedules GPU workloads.
+    send: Send
+    stop: Stop
+    placeholder: Response will stream here (mock).
+    curl: curl

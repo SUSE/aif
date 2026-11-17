@@ -87,6 +87,8 @@ rules:
   resources:
   - aiworkloads/status
   - installaiextensions/status
+  - labcatalogs/status
+  - labs/status
   - settings/status
   verbs:
   - get
@@ -96,7 +98,17 @@ rules:
   - ai-factory.suse.com
   resources:
   - blueprintcatalogs
+  - labs
   verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ai-factory.suse.com
+  resources:
+  - labcatalogs
+  verbs:
+  - create
   - get
   - list
   - watch

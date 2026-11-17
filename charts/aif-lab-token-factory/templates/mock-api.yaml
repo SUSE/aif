@@ -1,0 +1,46 @@
+{{- if .Values.mockApi.enabled }}
+# Sketch only: a lab-owned backend that would serve the OpenAI-compatible gateway
+# and reconcile ModelRoute objects. No such image exists in the PoC.
+{{- $registry := coalesce .Values.global.imageRegistry .Values.mockApi.image.registry }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-factory-gateway
+  labels:
+    {{- include "aif-lab-token-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.mockApi.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: token-factory-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: token-factory-gateway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        ai-factory.suse.com/lab: token-factory
+    spec:
+      containers:
+        - name: gateway
+          image: {{ $registry }}/{{ .Values.mockApi.image.repository }}:{{ .Values.mockApi.image.tag | default .Chart.AppVersion }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mockApi.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-factory-gateway
+  labels:
+    {{- include "aif-lab-token-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  ports:
+    - port: {{ .Values.mockApi.port }}
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: token-factory-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

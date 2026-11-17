@@ -20,7 +20,6 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"path"
 	"strings"
 	"sync"
 	"time"
@@ -901,12 +900,7 @@ func extensionCollidesWithServer(ext *v1alpha1.InstallAIExtension) bool {
 }
 
 func deriveReleaseName(chartURL string) string {
-	u, err := urlpkg.Parse(chartURL)
-	if err != nil {
-		return strings.TrimSuffix(path.Base(chartURL), "-server") + "-server"
-	}
-	base := path.Base(u.Path)
-	return strings.TrimSuffix(base, "-server") + "-server"
+	return installaiextension.ReleaseName(chartURL)
 }
 
 func setCondition(conditions *[]metav1.Condition, condType string, status metav1.ConditionStatus, reason, message string, generation int64) {

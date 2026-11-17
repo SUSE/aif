@@ -355,6 +355,21 @@ When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR th
 
 **Helm** (`aiExtension.source.kind=Helm`): The operator installs a Helm chart that deploys a container serving extension assets. It then creates a ClusterRepo pointing to the in-cluster Service and installs the extension chart from that repository, the same way Rancher's Extensions page installs extensions: a Helm release named after the extension, tagged with the ClusterRepo it came from. That release creates the UIPlugin CR that Rancher loads the extension from. Because Rancher can match the release to its catalog entry, the Extensions page shows the extension's logo and description, and does not mark it Third-Party. Everything is served from inside the cluster, so this also works air-gapped.
 
+### Labs (proof of concept)
+
+Labs are optional AIF extensions, managed through the cluster-scoped `Lab` and `LabCatalog` resources (see `docs/labs.md`). They are experimental, unsupported and not for production, so they are **off by default**. With `labs.enabled=false` the operator does not run the Lab controllers and the Settings page shows Labs as disabled.
+
+By default only Rancher global admins can create labs. The chart can create a Rancher GlobalRole that grants this to other users. Treat that role as admin-level: a lab's UI extension runs in every user's browser.
+
+External lab catalogs are refused unless `manager.allowedRegistryHosts` is set; their entries may only use Helm charts from those hosts, and `values`, `auth` and `tls` are dropped.
+
+With `crds.manageWithJob=false`, apply the `labs` and `labcatalogs` CRDs before setting `labs.enabled=true`.
+
+| Name                            | Description                                                                        | Default |
+| ------------------------------- | ---------------------------------------------------------------------------------- | ------- |
+| `labs.enabled`                  | Run the Lab and LabCatalog controllers (the operator creates the builtin LabCatalog) | `false` |
+| `labs.adminGlobalRole.enabled`  | Create the Rancher GlobalRole `aif-labs-admin-full-trust` (full access to labs and lab catalogs). Needs `labs.enabled` | `false` |
+
 ### RBAC helper roles
 
 | Name                 | Description                                      | Default |

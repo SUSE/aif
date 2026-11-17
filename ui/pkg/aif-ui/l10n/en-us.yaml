@@ -115,6 +115,46 @@ suseai:
           refreshRequested: Refresh requested for the saved repository. The download has not been verified; Test again to check its status.
       sections:
         learnMore: Learn more
+        labs:
+          title: Labs
+          experimentalBadge: experimental
+          experimentalBanner: Labs are experimental, unsupported previews. They may change or be removed without notice. Do not use them in production.
+          reloadHint: After a lab becomes Ready, reload the browser to load its UI.
+          disabled: 'Labs are turned off. Labs are experimental, unsupported previews that may never become product features; do not use them in production. To try them, an administrator sets the aif-operator Helm value'
+          appliesImmediately: Changes in this section apply immediately. Apply and Cancel at the bottom of the page do not affect them.
+          update: 'Update to v{version}'
+          leftover: These labs are still installed. With Labs turned off nothing updates or disables them. Remove them to uninstall their extensions.
+          removeLab:
+            button: Remove
+            title: Remove lab
+            prompt: Remove lab
+            note: Its UI extension and server are uninstalled. Reload the browser afterwards.
+          empty: No labs available.
+          enable: Enabled
+          readOnly: You do not have permission to change labs.
+          source:
+            builtin: Built-in
+            catalog: 'Catalog: {name}'
+            custom: Custom
+          catalogs:
+            title: Lab catalogs
+            help: Catalog URL must be public https and point at a JSON array in the same format as the built-in catalog. External catalogs need the operator's registry host allowlist (manager.allowedRegistryHosts); only Helm entries from listed hosts are accepted.
+            empty: No external lab catalogs configured.
+            name: Name
+            url: URL
+            labCount: Labs
+            lastFetched: Last fetched
+            pending: Pending
+            readOnly: You do not have permission to change lab catalogs.
+            skipped: '{count} skipped (duplicate or rejected entries)'
+            add: Add catalog
+            remove: Remove
+            deleteModal:
+              title: Remove lab catalog
+              prompt: Remove lab catalog
+              note: Labs from this catalog stop receiving updates and cannot be re-enabled. Installed labs keep running until you disable them.
+              cancel: Cancel
+              confirm: Remove
         repositories:
           title: Repositories
         appCollection:

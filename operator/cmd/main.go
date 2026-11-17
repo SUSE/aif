@@ -47,6 +47,8 @@ import (
 	"github.com/SUSE/aif-operator/internal/config"
 	aiworkloadctrl "github.com/SUSE/aif-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/aif-operator/internal/controller/installaiextension"
+	labctrl "github.com/SUSE/aif-operator/internal/controller/lab"
+	labcatalogctrl "github.com/SUSE/aif-operator/internal/controller/labcatalog"
 	settingsctrl "github.com/SUSE/aif-operator/internal/controller/settings"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	// +kubebuilder:scaffold:imports
@@ -223,6 +225,10 @@ func main() {
 	flag.StringVar(&allowedRegistryHosts, "allowed-registry-hosts", "",
 		"Comma-separated allowlist of registry hosts the operator may contact (and send credentials to) for "+
 			"extension chart pulls, e.g. \"harbor.example.com,ghcr.io\". Empty (default) allows all hosts.")
+	var enableLabs bool
+	flag.BoolVar(&enableLabs, "enable-labs", false,
+		"Run the Lab and LabCatalog controllers (SUSE AI Factory Labs, experimental and unsupported). "+
+			"Off by default; when off the operator never touches the Lab or LabCatalog APIs.")
 	var apiBindAddr string
 	flag.StringVar(&apiBindAddr, "api-bind-address", ":8080", "The address the operator API binds to.")
 	opts := zap.Options{
@@ -341,6 +347,24 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
 	}
+	if enableLabs {
+		setupLog.Info("SUSE AI Factory Labs enabled (experimental, unsupported)")
+		if err := (&labctrl.LabReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Lab")
+			os.Exit(1)
+		}
+		if err := (&labcatalogctrl.LabCatalogReconciler{
+			Client:               mgr.GetClient(),
+			Scheme:               mgr.GetScheme(),
+			AllowedRegistryHosts: allowedHosts,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "LabCatalog")
+			os.Exit(1)
+		}
+	}
 	// Shared holder: the Settings controller builds the Rancher catalog client
 	// from Settings.Spec.RancherCatalog and swaps it in here; the AIWorkload
 	// reconciler reads it to fetch charts from git-backed ClusterRepos.
@@ -382,7 +406,7 @@ func main() {
 	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(mux)
 	api.NewAIWorkloadHandler(mgr.GetClient()).Register(mux)
 	api.NewBlueprintHandler(mgr.GetClient()).Register(mux)
-	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(mux)
+	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).WithLabs(enableLabs).Register(mux)
 	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(mux)
 	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(mux)
 	srv := &http.Server{Addr: apiBindAddr, Handler: api.Chain(mux)}

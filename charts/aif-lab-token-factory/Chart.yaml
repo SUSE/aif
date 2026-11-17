@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: APACHE-2.0
+annotations:
+  licenses: Apache-2.0
+  helm.sh/images: |
+    - image: ghcr.io/suse/aif-lab-token-factory:0.1.0
+      name: aif-lab-token-factory
+  catalog.cattle.io/display-name: "AI Factory Lab: Token Factory"
+  catalog.cattle.io/namespace: cattle-ui-plugin-system
+  catalog.cattle.io/os: linux
+  catalog.cattle.io/permits-os: linux
+  catalog.cattle.io/rancher-version: '>= 2.10.0-0'
+  catalog.cattle.io/scope: management
+apiVersion: v2
+name: aif-lab-token-factory
+version: 0.1.0
+description: SUSE AI Factory Lab (experimental) - mock Token Factory UI extension
+type: application
+keywords:
+  - rancher
+  - extension
+  - ai
+  - lab
+home: https://github.com/SUSE/aif
+icon: https://raw.githubusercontent.com/SUSE/aif/main/ui/pkg/aif-lab-token-factory/assets/logo.svg
+sources:
+  - https://github.com/SUSE/aif
+appVersion: 0.1.0
+maintainers:
+  - url: https://www.suse.com/
+    name: SUSE LLC

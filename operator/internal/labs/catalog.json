@@ -1,0 +1,24 @@
+[
+  {
+    "name": "token-factory",
+    "displayName": "Token Factory",
+    "description": "Expose models as metered, key-protected OpenAI-compatible endpoints.",
+    "maturity": "experimental",
+    "source": {
+      "kind": "Helm",
+      "helm": {
+        "chartURL": "oci://ghcr.io/suse/chart/aif-lab-token-factory",
+        "version": "0.1.0"
+      }
+    },
+    "extension": {
+      "name": "aif-lab-token-factory",
+      "version": "0.1.0"
+    },
+    "ui": {
+      "label": "Token Factory",
+      "icon": "icon-key",
+      "routeName": "c-cluster-suseai-lab-token-factory"
+    }
+  }
+]
