@@ -68,12 +68,11 @@ func sarClient(seen *[]*authorizationv1.SubjectAccessReview, decide func(*author
 // testUser. It lets handler tests exercise routes without exercising authz.
 func newTestMux(handlers ...Handler) http.Handler {
 	a := NewAuthorizer(sarClient(nil, func(*authorizationv1.SubjectAccessReview) (bool, error) { return true, nil }), DefaultRules(testNS))
-	mux := http.NewServeMux()
 	for _, h := range handlers {
-		h.Register(a, mux)
+		h.Register(a)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mux.ServeHTTP(w, withUser(r, testUser))
+		a.ServeHTTP(w, withUser(r, testUser))
 	})
 }
 
@@ -126,16 +125,15 @@ func TestAuthz_DefaultRules(t *testing.T) {
 			t.Run(pattern, func(t *testing.T) {
 				var seen []*authorizationv1.SubjectAccessReview
 				a := NewAuthorizer(sarClient(&seen, func(*authorizationv1.SubjectAccessReview) (bool, error) { return allowed, nil }), rules)
-				mux := http.NewServeMux()
 				called := false
-				a.HandleFunc(mux, pattern, func(w http.ResponseWriter, _ *http.Request) {
+				a.HandleFunc(pattern, func(w http.ResponseWriter, _ *http.Request) {
 					called = true
 					w.WriteHeader(http.StatusTeapot)
 				})
 
 				method, path := concretePath(pattern)
 				w := httptest.NewRecorder()
-				mux.ServeHTTP(w, withUser(httptest.NewRequest(method, path, nil), testUser))
+				a.ServeHTTP(w, withUser(httptest.NewRequest(method, path, nil), testUser))
 
 				if len(seen) != 1 {
 					t.Fatalf("expected 1 SAR, got %d", len(seen))
@@ -176,12 +174,11 @@ func TestAuthz_SARErrorFailsClosed(t *testing.T) {
 	a := NewAuthorizer(sarClient(nil, func(*authorizationv1.SubjectAccessReview) (bool, error) {
 		return false, errors.New("apiserver unavailable")
 	}), DefaultRules(testNS))
-	mux := http.NewServeMux()
 	called := false
-	a.HandleFunc(mux, "GET /api/v1/settings", func(http.ResponseWriter, *http.Request) { called = true })
+	a.HandleFunc("GET /api/v1/settings", func(http.ResponseWriter, *http.Request) { called = true })
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, withUser(httptest.NewRequest("GET", "/api/v1/settings", nil), testUser))
+	a.ServeHTTP(w, withUser(httptest.NewRequest("GET", "/api/v1/settings", nil), testUser))
 
 	if w.Code != http.StatusInternalServerError || called {
 		t.Fatalf("code=%d called=%v, want 500 and no handler call", w.Code, called)
@@ -194,12 +191,11 @@ func TestAuthz_SARErrorFailsClosed(t *testing.T) {
 func TestAuthz_NoUserIsUnauthorized(t *testing.T) {
 	var seen []*authorizationv1.SubjectAccessReview
 	a := NewAuthorizer(sarClient(&seen, func(*authorizationv1.SubjectAccessReview) (bool, error) { return true, nil }), DefaultRules(testNS))
-	mux := http.NewServeMux()
 	called := false
-	a.HandleFunc(mux, "GET /api/v1/settings", func(http.ResponseWriter, *http.Request) { called = true })
+	a.HandleFunc("GET /api/v1/settings", func(http.ResponseWriter, *http.Request) { called = true })
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/settings", nil))
+	a.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/settings", nil))
 
 	if w.Code != http.StatusUnauthorized || called || len(seen) != 0 {
 		t.Fatalf("code=%d called=%v sars=%d, want 401, no handler, no SAR", w.Code, called, len(seen))
@@ -213,13 +209,12 @@ func TestAuthz_PanicsOnUnknownPattern(t *testing.T) {
 			t.Fatal("expected panic for a pattern without a rule")
 		}
 	}()
-	a.HandleFunc(http.NewServeMux(), "GET /api/v1/nope", func(http.ResponseWriter, *http.Request) {})
+	a.HandleFunc("GET /api/v1/nope", func(http.ResponseWriter, *http.Request) {})
 }
 
 func TestAuthz_AllRoutesCovered(t *testing.T) {
 	rules := DefaultRules(testNS)
 	a := NewAuthorizer(sarClient(nil, nil), rules)
-	mux := http.NewServeMux()
 	c := fake.NewClientBuilder().Build()
 	handlers := []Handler{
 		NewSettingsHandler(c, testNS),
@@ -230,7 +225,7 @@ func TestAuthz_AllRoutesCovered(t *testing.T) {
 		NewBlueprintCatalogHandler(c),
 	}
 	for _, h := range handlers {
-		h.Register(a, mux) // panics on any route without a rule
+		h.Register(a) // panics on any route without a rule
 	}
 
 	registered := a.registered
@@ -247,11 +242,10 @@ func TestAuthz_AllRoutesCovered(t *testing.T) {
 func TestAuthz_ForbiddenBodyHasNoData(t *testing.T) {
 	c := sarClient(nil, func(*authorizationv1.SubjectAccessReview) (bool, error) { return false, nil })
 	a := NewAuthorizer(c, DefaultRules(testNS))
-	mux := http.NewServeMux()
-	NewSettingsHandler(c, testNS).Register(a, mux)
+	NewSettingsHandler(c, testNS).Register(a)
 
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, withUser(httptest.NewRequest("GET", "/api/v1/settings", nil), testUser))
+	a.ServeHTTP(w, withUser(httptest.NewRequest("GET", "/api/v1/settings", nil), testUser))
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("code=%d, want 403", w.Code)

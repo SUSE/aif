@@ -142,15 +142,17 @@ func Chain(handler http.Handler) http.Handler {
 // so the operator strips it before routing.
 const AggregationPathPrefix = "/v1/aif-operator"
 
-// NewAggregatedHandler wraps mux for serving over Rancher's aggregation
-// tunnel. Outermost first: request ID, strip AggregationPathPrefix (paths
-// outside AggregationPathPrefix + "/" get 404), the cookie CSRF check (which
-// reads Cookie, so it must run before the identity middleware strips it), the
-// JSON content-type check for writes, then the caller identity from Rancher's
-// Impersonate-* headers (401 without one).
-func NewAggregatedHandler(mux http.Handler) http.Handler {
+// NewAggregatedHandler wraps the routes of a for serving over Rancher's
+// aggregation tunnel. It takes the Authorizer rather than any http.Handler so
+// that only authorized routes can be served. Outermost first: request ID,
+// strip AggregationPathPrefix (paths outside AggregationPathPrefix + "/" get
+// 404), the cookie CSRF check (which reads Cookie, so it must run before the
+// identity middleware strips it), the JSON content-type check for writes,
+// then the caller identity from Rancher's Impersonate-* headers (401 without
+// one) that a authorizes each route against.
+func NewAggregatedHandler(a *Authorizer) http.Handler {
 	return Chain(requireAggregationPrefix(http.StripPrefix(AggregationPathPrefix,
-		RequireCSRFForCookieWrites(RequireJSONForWrites(IdentityFromImpersonation(mux))))))
+		RequireCSRFForCookieWrites(RequireJSONForWrites(IdentityFromImpersonation(a))))))
 }
 
 // requireAggregationPrefix answers 404 unless the path is below

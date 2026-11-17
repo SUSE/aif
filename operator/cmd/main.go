@@ -379,14 +379,15 @@ func main() {
 
 	// The operator API is served only over Rancher's APIService aggregation
 	// tunnel; there is no listening port.
-	mux := http.NewServeMux()
+	// Every route is registered through the Authorizer, which is also the
+	// handler served, so each request is checked with a SubjectAccessReview.
 	authz := api.NewAuthorizer(mgr.GetClient(), api.DefaultRules(operatorNamespace))
-	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(authz, mux)
-	api.NewAIWorkloadHandler(mgr.GetClient()).Register(authz, mux)
-	api.NewBlueprintHandler(mgr.GetClient()).Register(authz, mux)
-	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(authz, mux)
-	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(authz, mux)
-	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(authz, mux)
+	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(authz)
+	api.NewAIWorkloadHandler(mgr.GetClient()).Register(authz)
+	api.NewBlueprintHandler(mgr.GetClient()).Register(authz)
+	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(authz)
+	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(authz)
+	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(authz)
 	// The connection Secret is read from the environment, not a flag, so an
 	// older operator image (helm upgrade --reuse-values) does not exit on an
 	// unknown flag. It lives outside the operator namespace (cattle-system by
@@ -406,7 +407,7 @@ func main() {
 		setupLog.Error(nil, "operator API disabled: AGGREGATION_SECRET_NAME is empty "+
 			"(chart value aggregation.enabled=false); the UI extension cannot reach the operator")
 	} else if err := mgr.Add(apiRunnable(mgr.GetClient(), aggregationSecretNamespace, aggregationSecretName,
-		api.NewAggregatedHandler(mux))); err != nil {
+		api.NewAggregatedHandler(authz))); err != nil {
 		setupLog.Error(err, "unable to set up the operator API")
 		os.Exit(1)
 	}

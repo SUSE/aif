@@ -55,6 +55,10 @@ spec:
               wait_for_crd bundledeployments.fleet.cattle.io
               wait_for_crd clusterrepos.catalog.cattle.io
               wait_for_crd uiplugins.catalog.cattle.io
+              {{- if eq (include "aif-operator.aggregationEnabled" .) "true" }}
+              # templates/apiservice.yaml registers the operator API with Rancher.
+              wait_for_crd apiservices.management.cattle.io
+              {{- end }}
 
               echo "Wait indefinitely for namespace cattle-ui-plugin-system to be created ..."
               retry_wait --for=create namespace/cattle-ui-plugin-system

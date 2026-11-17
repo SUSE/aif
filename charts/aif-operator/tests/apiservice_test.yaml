@@ -3,6 +3,7 @@ templates:
   - templates/apiservice.yaml
   - templates/manager/manager.yaml
   - templates/rbac/manager-role.yaml
+  - templates/check-rancher-readiness-job.yaml
 chart:
   version: 9.9.9
   appVersion: 9.9.9
@@ -109,6 +110,34 @@ tests:
       - equal:
           path: spec.secretName
           value: aif-operator-aggregation
+
+  # The pre-install/pre-upgrade hook must wait for the APIService CRD, like
+  # the other Rancher CRDs the chart's resources use, so a cluster where
+  # Rancher is still bootstrapping does not race templates/apiservice.yaml.
+  - it: the Rancher readiness hook waits for the APIService CRD by default
+    template: templates/check-rancher-readiness-job.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: (?m)^wait_for_crd apiservices\.management\.cattle\.io$
+
+  - it: the Rancher readiness hook waits for the APIService CRD when aggregation is absent (upgrade --reuse-values from 2.4.0)
+    template: templates/check-rancher-readiness-job.yaml
+    set:
+      aggregation: null
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: (?m)^wait_for_crd apiservices\.management\.cattle\.io$
+
+  - it: the Rancher readiness hook does not wait for the APIService CRD when aggregation is disabled
+    template: templates/check-rancher-readiness-job.yaml
+    set:
+      aggregation.enabled: false
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: apiservices\.management\.cattle\.io
 
   # Passed as environment variables, not a flag: an older operator image kept
   # by `helm upgrade --reuse-values` exits on an unknown flag but ignores an

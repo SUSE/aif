@@ -1347,14 +1347,14 @@ async function installToCluster(
 
   onProgress(55, 'Installing Helm chart...');
 
+  // Never log the values: they can hold secrets typed into the chart's form.
   console.log('[SUSE-AI] calling install ', {
     cluster: clusterId,
     repo: form.value.chartRepo,
     chart: form.value.chartName,
     version: form.value.chartVersion,
     ns: form.value.namespace,
-    release: form.value.release,
-    values: v
+    release: form.value.release
   });
 
   const { upgraded } = await createOrUpgradeApp(
@@ -1581,14 +1581,14 @@ async function upgradeToCluster(
 
   applySuseImagePullSecrets(v, library, pullSecrets);
 
+  // Never log the values: they can hold secrets typed into the chart's form.
   console.log('[SUSE-AI] calling upgrade ', {
     cluster: clusterId,
     repo: form.value.chartRepo,
     chart: form.value.chartName,
     version: form.value.chartVersion,
     ns: form.value.namespace,
-    release: form.value.release,
-    values: v
+    release: form.value.release
   });
 
   await createOrUpgradeApp(

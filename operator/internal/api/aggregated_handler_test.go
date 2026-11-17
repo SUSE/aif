@@ -21,19 +21,27 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	authorizationv1 "k8s.io/api/authorization/v1"
 )
 
-// aggregatedRecorder is a mux with one GET and one POST route that records
-// what reached it, wrapped in NewAggregatedHandler.
+// aggregatedRecorder is an Authorizer with one GET and one POST route that
+// records what reached it and the SubjectAccessReviews made (always allowed),
+// wrapped in NewAggregatedHandler.
 type aggregatedRecorder struct {
 	reached bool
 	path    string
 	user    string
 	header  http.Header
+	sars    []*authorizationv1.SubjectAccessReview
 }
 
 func (rec *aggregatedRecorder) handler() http.Handler {
-	mux := http.NewServeMux()
+	rules := map[string]Rule{
+		"GET /api/v1/version":   {Verb: verbGet, Resource: resourceSettings, Namespace: testNS},
+		"POST /api/v1/settings": {Verb: verbUpdate, Resource: resourceSettings, Namespace: testNS},
+	}
+	a := NewAuthorizer(sarClient(&rec.sars, func(*authorizationv1.SubjectAccessReview) (bool, error) { return true, nil }), rules)
 	record := func(w http.ResponseWriter, r *http.Request) {
 		rec.reached = true
 		rec.path = r.URL.Path
@@ -43,9 +51,10 @@ func (rec *aggregatedRecorder) handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	}
-	mux.HandleFunc("GET /api/v1/version", record)
-	mux.HandleFunc("POST /api/v1/settings", record)
-	return NewAggregatedHandler(mux)
+	for pattern := range rules {
+		a.HandleFunc(pattern, record)
+	}
+	return NewAggregatedHandler(a)
 }
 
 func serveAggregated(req *http.Request) (*httptest.ResponseRecorder, *aggregatedRecorder) {
@@ -102,10 +111,26 @@ func TestAggregatedHandler_ServesAuthenticatedRequestWithPrefixStripped(t *testi
 	if rec.user != "user-bgmz8" {
 		t.Errorf("handler saw user %q, want user-bgmz8", rec.user)
 	}
+	if len(rec.sars) != 1 || rec.sars[0].Spec.User != "user-bgmz8" {
+		t.Errorf("want one SubjectAccessReview for user-bgmz8, got %d", len(rec.sars))
+	}
 	for _, h := range []string{"Cookie", "Authorization", "Impersonate-User"} {
 		if rec.header.Get(h) != "" {
 			t.Errorf("handler saw credential header %s", h)
 		}
+	}
+}
+
+// TestAggregatedHandler_UnregisteredRouteIsNotFound checks that the served
+// handler is the Authorizer's: a path no route was registered for never
+// reaches a handler.
+func TestAggregatedHandler_UnregisteredRouteIsNotFound(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, AggregationPathPrefix+"/api/v1/blueprints", nil)
+	rancherAdminHeaders(req.Header)
+	w, rec := serveAggregated(req)
+
+	if w.Code != http.StatusNotFound || rec.reached || len(rec.sars) != 0 {
+		t.Fatalf("status = %d, reached = %v, sars = %d; want 404, no handler, no SAR", w.Code, rec.reached, len(rec.sars))
 	}
 }
 

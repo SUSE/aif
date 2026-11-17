@@ -56,13 +56,13 @@ func NewSettingsHandler(c client.Client, namespace string) *SettingsHandler {
 }
 
 // Register wires the handler's routes onto the mux.
-func (h *SettingsHandler) Register(a *Authorizer, mux *http.ServeMux) {
-	a.HandleFunc(mux, "GET /api/v1/settings", h.getSettings)
-	a.HandleFunc(mux, "PUT /api/v1/settings", h.putSettings)
-	a.HandleFunc(mux, "GET /api/v1/settings/registry-status", h.getRegistryStatus)
-	a.HandleFunc(mux, "POST /api/v1/settings/validate-credentials", h.validateCredentials)
-	a.HandleFunc(mux, "POST /api/v1/settings/validate-chart-access", h.validateChartAccess)
-	a.HandleFunc(mux, "POST /api/v1/git/publish", h.publishToGit)
+func (h *SettingsHandler) Register(a *Authorizer) {
+	a.HandleFunc("GET /api/v1/settings", h.getSettings)
+	a.HandleFunc("PUT /api/v1/settings", h.putSettings)
+	a.HandleFunc("GET /api/v1/settings/registry-status", h.getRegistryStatus)
+	a.HandleFunc("POST /api/v1/settings/validate-credentials", h.validateCredentials)
+	a.HandleFunc("POST /api/v1/settings/validate-chart-access", h.validateChartAccess)
+	a.HandleFunc("POST /api/v1/git/publish", h.publishToGit)
 }
 
 func (h *SettingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {

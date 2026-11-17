@@ -79,6 +79,20 @@ async function setup(mode: 'install' | 'manage' = 'install', query: Record<strin
   return wrapper;
 }
 
+// wizardWith mounts the wizard for coredns from application-collection on
+// the local cluster, ready to submit with deployType and values.
+async function wizardWith(deployType: 'Helm' | 'FleetBundle' | 'GitOps', mode: 'install' | 'manage' = 'install', values: Record<string, any> = {}) {
+  const query: Record<string, string> = mode === 'manage' ? { instanceName: 'coredns', instanceNamespace: 'coredns-system', instanceCluster: 'local' } : {};
+  const wrapper = await setup(mode, query);
+  const vm = wrapper.vm as any;
+  Object.assign(vm.form, {
+    chartRepo: 'application-collection', chartName: 'coredns', chartVersion: '1.0.0', clusters: ['local'], values,
+  });
+  await flushPromises();
+  vm.form.deployType = deployType;
+  return vm;
+}
+
 const namespaceInput = (wrapper: ReturnType<typeof mount>) => (wrapper.get('.ns-input').element as HTMLInputElement).value;
 
 beforeEach(() => {
@@ -164,18 +178,6 @@ describe('app wizard image pull secrets', () => {
     vi.mocked(ensurePullSecretOnAllSAs).mockClear();
   });
   afterEach(() => vi.mocked(listClusterRepos).mockResolvedValue([]));
-
-  async function wizardWith(deployType: 'Helm' | 'FleetBundle' | 'GitOps', mode: 'install' | 'manage' = 'install', values: Record<string, any> = {}) {
-    const query: Record<string, string> = mode === 'manage' ? { instanceName: 'coredns', instanceNamespace: 'coredns-system', instanceCluster: 'local' } : {};
-    const wrapper = await setup(mode, query);
-    const vm = wrapper.vm as any;
-    Object.assign(vm.form, {
-      chartRepo: 'application-collection', chartName: 'coredns', chartVersion: '1.0.0', clusters: ['local'], values,
-    });
-    await flushPromises();
-    vm.form.deployType = deployType;
-    return vm;
-  }
 
   it('references the operator secret for a FleetBundle install without creating secrets', async () => {
     const vm = await wizardWith('FleetBundle');
@@ -343,5 +345,34 @@ describe('app wizard image pull secrets', () => {
     await vm.submit();
 
     expect(publishToFleetGit).toHaveBeenCalledWith(expect.objectContaining({ pullSecretNames: [] }));
+  });
+});
+
+describe('app wizard console logging', () => {
+  const SECRET = 'sk-typed-into-the-values-form';
+
+  beforeEach(() => {
+    vi.mocked(getRegistryStatus).mockReset().mockResolvedValue({ applicationCollection: false, suseRegistry: false, nvidia: false });
+    vi.mocked(createOrUpgradeApp).mockClear();
+  });
+
+  // Values typed into a chart's form (API keys, tokens) end up in devtools
+  // history and in HAR files or screenshots shared for support.
+  it.each([
+    ['install', 'install'],
+    ['upgrade', 'manage'],
+  ] as const)('does not log the chart values on a local Helm %s', async (_action, mode) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const vm = await wizardWith('Helm', mode, { apiKey: SECRET });
+      await vm.submit();
+      await flushPromises();
+
+      expect(createOrUpgradeApp).toHaveBeenCalled();
+      expect((vm.form.values as Record<string, any>).apiKey).toBe(SECRET);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(SECRET);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
