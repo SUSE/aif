@@ -70,3 +70,35 @@ export function mergeImagePullSecrets(values: Record<string, any>, names: string
   const global = values.global && typeof values.global === 'object' && !Array.isArray(values.global) ? values.global : {};
   values.global = { ...global, imagePullSecrets: mergePullSecretList(global.imagePullSecrets, names) };
 }
+
+// Keep in sync with the operator's chart_pullsecret_shape.go. Network Operator
+// wraps each entry as {name: entry}, so its operator-level override needs names
+// rather than objects. Leave root/global lists in the shape its subcharts use.
+const FLAT_STRING_PULL_SECRET_PATHS = new Map<string, string[]>([
+  ['network-operator', ['operator', 'imagePullSecrets']],
+]);
+
+export function adaptPullSecretShapeForChart(chartName: string, values: Record<string, any>): void {
+  const keys = FLAT_STRING_PULL_SECRET_PATHS.get(chartName.split('/').pop() || '');
+  if (!keys?.length || !Array.isArray(values.imagePullSecrets)) return;
+  const names: string[] = values.imagePullSecrets
+    .filter((entry: any) => entry && typeof entry.name === 'string' && entry.name !== '')
+    .map((entry: { name: string }) => entry.name);
+  if (names.length === 0) return;
+
+  let parent = values;
+  for (const key of keys.slice(0, -1)) {
+    const child = parent[key];
+    if (child === undefined || child === null) {
+      parent[key] = {};
+    } else if (typeof child !== 'object' || Array.isArray(child)) {
+      return;
+    }
+    parent = parent[key];
+  }
+  const leaf = keys[keys.length - 1];
+  const existing = parent[leaf];
+  if (existing !== undefined && existing !== null && !Array.isArray(existing)) return;
+  const list = existing || [];
+  parent[leaf] = [...names.filter(name => !list.includes(name)), ...list];
+}

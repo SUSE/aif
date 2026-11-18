@@ -23,6 +23,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash/fnv"
+	"path"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1346,7 +1347,7 @@ func injectNvidiaPullSecretRefs(vals map[string]any, chartName string) {
 	// "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>". So the missing
 	// maps are created only for the k8s-nim-operator chart; any chart whose
 	// values already carry operator.image as a map still gets the entry.
-	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets", chartName == nimOperatorChartName)
+	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets", path.Base(chartName) == nimOperatorChartName)
 
 	// Scalar name shape: some NVIDIA charts read a single string that names the
 	// pull secret to wire into pod specs, rather than a list.

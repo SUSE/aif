@@ -814,6 +814,17 @@ func TestInjectNvidiaPullSecretRefs_ExistingOperatorImageMapAnyChart(t *testing.
 	}
 }
 
+func TestInjectNvidiaPullSecretRefs_PrefixedNimOperatorChart(t *testing.T) {
+	vals := map[string]any{}
+	injectNvidiaPullSecretRefs(vals, "nvidia/k8s-nim-operator")
+	op, _ := vals["operator"].(map[string]any)
+	img, _ := op["image"].(map[string]any)
+	got, _ := img["pullSecrets"].([]any)
+	if !equalAnyStringSlice(got, []any{nvidiaImagePullSecretName}) {
+		t.Fatalf("operator.image.pullSecrets = %#v, want [%q]", got, nvidiaImagePullSecretName)
+	}
+}
+
 // TestInjectNvidiaPullSecretRefs_FlatListExplicitNull pins that an explicit null
 // at image.pullSecrets is treated the same as an absent key — the list is created.
 // Mirrors the UI copy so the operator and browser install paths never diverge.
