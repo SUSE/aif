@@ -59,6 +59,8 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
+            - name: TMPDIR
+              value: /tmp
             - name: OPERATOR_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -77,6 +79,8 @@ spec:
             - {{ toYaml . | nindent 14 | trim }}
           {{- end }}
           volumeMounts:
+            - mountPath: /tmp
+              name: temporary-files
             - mountPath: /home/nonroot/.cache
               name: helm-cache
       {{- include "aif-operator.imagePullSecrets" . | nindent 6 }}
@@ -95,6 +99,9 @@ spec:
       # from. cmd.TestShutdownFitsInTheGracePeriod reads this number.
       terminationGracePeriodSeconds: 60
       volumes:
+        - name: temporary-files
+          emptyDir:
+            sizeLimit: {{ .Values.manager.temporaryStorageSizeLimit | default "1Gi" | quote }}
         - emptyDir: {}
           name: helm-cache
       {{- with .Values.manager.podSecurityContext }}

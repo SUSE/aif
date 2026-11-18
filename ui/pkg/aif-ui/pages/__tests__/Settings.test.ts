@@ -42,17 +42,6 @@ vi.mock('../../services/registry-endpoints', () => ({
   registryEndpointOverrides: vi.fn().mockReturnValue({}),
 }));
 
-vi.mock('../../services/rancher-token', () => ({
-  mintOperatorToken: vi.fn(),
-  ensureTokenSecret: vi.fn(),
-  deleteToken: vi.fn(),
-  requestErrorMessage: vi.fn((e) => String(e)),
-  TOKEN_EXPIRES_ANNOTATION: 'suseai.io/token-expires-at',
-  TOKEN_NAME_ANNOTATION: 'suseai.io/token-name',
-  DEFAULT_TOKEN_SECRET_NAME: 'aif-rancher-token',
-  DEFAULT_TOKEN_SECRET_KEY: 'token',
-}));
-
 vi.mock('../../utils/custom-repos', () => ({
   emptyCustomRepo: vi.fn(() => ({})),
   buildCustomReposCrd: vi.fn(() => []),
@@ -125,6 +114,15 @@ async function mountSettings(options: { route?: { query?: Record<string, string>
 }
 
 describe('Settings page - loading errors', () => {
+  it('preserves legacy configuration without reading or creating a personal token', async () => {
+    const legacy = { tokenSecretRef: { name: 'retired-token', key: 'token' }, url: 'https://old-rancher.invalid' };
+    vi.mocked(getSettings).mockResolvedValueOnce({ spec: { rancherCatalog: legacy } });
+    const wrapper = await mountSettings();
+    const vm = wrapper.vm as any;
+    expect(wrapper.find('#rancherCatalog').exists()).toBe(false);
+    expect(vm.$store.dispatch).not.toHaveBeenCalled();
+    expect(vm.spec.rancherCatalog.tokenSecretRef).toEqual(legacy.tokenSecretRef);
+  });
   const shellError = (status: number, body: Record<string, unknown> | string) => toOperatorError(
     Object.defineProperty(typeof body === 'string' ? { data: body } : { ...body }, '_status', { value: status }),
   );
@@ -456,13 +454,10 @@ describe('Settings page - incomplete secret references', () => {
     });
 
     expect(saved).toBe(false);
-    expect(vm.errors).toHaveLength(3);
+    expect(vm.errors).toHaveLength(2);
     expect(vm.errors.join('\n')).toContain('"appco-ca"');
     expect(vm.errors.join('\n')).toContain('"git-creds"');
-    expect(vm.errors.join('\n')).toContain('"rancher-token"');
-    // The Rancher catalog secret fields sit under its collapsed Advanced panel.
-    expect(vm.expanded.rancherCatalog).toBe(true);
-    expect(vm.showAdvanced.rancherCatalog).toBe(true);
+    expect(vm.errors.join('\n')).not.toContain('"rancher-token"');
   });
 
   it('blocks Apply for a custom repository Secret without a key instead of dropping it', async () => {

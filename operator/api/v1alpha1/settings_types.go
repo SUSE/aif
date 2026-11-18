@@ -80,7 +80,7 @@ type BlueprintCatalogSource struct {
 	// Paths are the repo folders scanned for Blueprint YAMLs. Defaults to
 	// ["blueprints"] when empty.
 	// +optional
-	Paths []string `json:"paths,omitempty"`
+	Paths         []string `json:"paths,omitempty"`
 	GitRepoSource `json:",inline"`
 }
 
@@ -204,8 +204,8 @@ type SettingsSpec struct {
 	// +optional
 	// +nullable
 	AppCatalog AppCatalogSettings `json:"appCatalog,omitempty"`
-	// RancherCatalog configures access to Rancher's catalog API, used to fetch
-	// charts from git-backed ClusterRepos.
+	// RancherCatalog is deprecated and ignored. Retained for upgrade compatibility.
+	// Git charts use ClusterRepo credentials; uninstall uses the operator identity.
 	// +optional
 	// +nullable
 	RancherCatalog RancherCatalogSettings `json:"rancherCatalog,omitempty"`
@@ -220,30 +220,19 @@ type SettingsSpec struct {
 	CustomRepos []CustomRepoSpec `json:"customRepos,omitempty"`
 }
 
-// RancherCatalogSettings configures the Rancher Steve catalog client used to
-// fetch charts from git-backed ClusterRepos (spec.gitRepo), which have no
-// HTTP/OCI URL a Fleet HelmOp could pull from. HTTP/OCI ClusterRepos need none
-// of this. The Settings controller rebuilds the catalog client whenever these
-// fields (or the referenced Secrets) change, so updates take effect without
-// restarting the operator.
+// RancherCatalogSettings is deprecated and ignored. Retained so upgrades do not
+// prune existing configuration before administrators revoke old Rancher tokens.
 type RancherCatalogSettings struct {
-	// URL is the in-cluster Rancher API endpoint. Defaults to
-	// https://rancher.cattle-system.svc when empty.
+	// Deprecated: ignored; the operator no longer calls Rancher's catalog API.
 	// +optional
 	URL string `json:"url,omitempty"`
-	// TokenSecretRef references a Secret (in the operator namespace) holding a
-	// Rancher API token. Required for git-backed ClusterRepos — Rancher's Steve
-	// API rejects the operator ServiceAccount token. When unset, git-backed
-	// ClusterRepos are not installable.
+	// Deprecated: ignored. Revoke the old Rancher token before removing this Secret.
 	// +optional
 	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
-	// CABundleSecretRef references a Secret holding the PEM CA certificate(s)
-	// that signed Rancher's serving certificate. When unset, system roots are
-	// used (unless InsecureSkipVerify is set).
+	// Deprecated: ignored. Configure trust on the Git ClusterRepo instead.
 	// +optional
 	CABundleSecretRef *SecretKeyRef `json:"caBundleSecretRef,omitempty"`
-	// InsecureSkipVerify skips TLS verification of the Rancher API. Development
-	// only — do not use in production/air-gapped installs.
+	// Deprecated: ignored. Git chart downloads always verify TLS.
 	// +optional
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 }
@@ -279,6 +268,7 @@ type CustomRepoSpec struct {
 	// +optional
 	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
 	// SSHKeySecretRef references a Secret holding an SSH private key for git repos.
+	// The same Secret must include known_hosts for operator Git chart downloads.
 	// Mutually exclusive with basic auth.
 	// +optional
 	SSHKeySecretRef *SecretKeyRef `json:"sshKeySecretRef,omitempty"`

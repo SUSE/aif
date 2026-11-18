@@ -30,7 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 func rawJSON(t *testing.T, v map[string]any) *apixv1.JSON {
@@ -299,9 +298,8 @@ func TestEnsureBlueprintGitFile_AppliesComponentValueOverride(t *testing.T) {
 // third render path: a Blueprint component whose ClusterRepo is git-backed
 // (repoInfo.Kind == repoKindGit), reached via ensureBlueprintHelmOp exactly
 // the way TestEnsureBlueprintHelmOp_GitRepoEmitsBundle exercises it, but with
-// a fake rancher.ChartFetcher wired through r.CatalogClient (same pattern as
-// blueprint_gitrepo_test.go's fakeCatalog/rancher.NewHolder helpers) so the
-// reconcile runs past the errCatalogClientNotConfigured gate and all the way
+// a fake rancher.ChartFetcher wired through r.ChartFetcher (same pattern as
+// blueprint_gitrepo_test.go's fakeChartFetcher) so reconciliation proceeds
 // to a rendered Bundle. Before the Step 3 fix, ensureBlueprintGitChartBundle
 // built vals via a bare json.Unmarshal of c.Values and never consulted
 // w.Spec.ComponentValues, so this override would be silently dropped.
@@ -315,9 +313,7 @@ func TestEnsureBlueprintGitChartBundle_AppliesComponentValueOverride(t *testing.
 		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
 	})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	holder := rancher.NewHolder()
-	holder.Set(fakeCatalog{tgz: tgz})
-	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: holder}
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: fakeChartFetcher{tgz: tgz}}
 
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"

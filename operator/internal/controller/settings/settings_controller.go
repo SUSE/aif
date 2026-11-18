@@ -28,7 +28,6 @@ import (
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credentials"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,10 +48,6 @@ type SettingsReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
 	OperatorNamespace string
-	// CatalogHolder receives the Rancher catalog client this controller builds
-	// from Settings.Spec.RancherCatalog. The AIWorkload reconciler reads it to
-	// fetch charts from git-backed ClusterRepos. Nil disables that wiring.
-	CatalogHolder *rancher.Holder
 }
 
 // +kubebuilder:rbac:groups=ai-factory.suse.com,resources=settings,verbs=get;list;watch;create;update;patch;delete
@@ -94,21 +89,12 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// A custom-repo failure is per-repo and must not freeze the whole reconcile:
-	// the built-in registries, the Rancher catalog client, and status all live
-	// downstream of this call. Provisioning is already isolated per repo (a bad
-	// repo never blocks its siblings); surface the failure by requeueing AFTER the
-	// catalog client and status have been refreshed, so one wedged custom repo
-	// cannot stall status.lastApplied or disable git-backed ClusterRepo support.
+	// Surface per-repository failures after updating Settings status so one bad
+	// repository does not prevent the rest of Settings from being applied.
 	customErr := r.reconcileCustomRepos(ctx, &s)
 	if customErr != nil {
-		l.Error(customErr, "custom ClusterRepo reconcile had failures; continuing to refresh catalog client and status")
+		l.Error(customErr, "custom ClusterRepo reconcile had failures; continuing to refresh status")
 	}
-
-	// Best-effort: rebuild the Rancher catalog client from the current config.
-	// Never fails the reconcile — a missing/invalid token just disables
-	// git-backed ClusterRepo support (surfaced on the affected AIWorkloads).
-	r.reconcileRancherCatalogClient(ctx, &s)
 
 	if err := r.updateStatus(ctx, req.NamespacedName); err != nil {
 		l.Error(err, "failed to update settings status")
@@ -116,7 +102,7 @@ func (r *SettingsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	l.Info("reconciled settings", "name", s.Name)
-	// Requeue on a custom-repo failure only after status/catalog have been updated.
+	// Requeue on a custom-repo failure only after status has been updated.
 	return ctrl.Result{}, customErr
 }
 
@@ -137,95 +123,6 @@ func (r *SettingsReconciler) updateStatus(ctx context.Context, key types.Namespa
 		s.Status.ObservedGeneration = s.Generation
 		return r.Status().Update(ctx, &s)
 	})
-}
-
-// reconcileRancherCatalogClient (re)builds the Rancher catalog client from
-// Settings.Spec.RancherCatalog and swaps it into the shared holder that the
-// AIWorkload reconciler reads. Best-effort: any resolution problem disables the
-// client (holder set to nil) rather than failing the Settings reconcile.
-func (r *SettingsReconciler) reconcileRancherCatalogClient(ctx context.Context, s *aiplatformv1alpha1.Settings) {
-	if r.CatalogHolder == nil {
-		return
-	}
-	l := log.FromContext(ctx)
-	rc := s.Spec.RancherCatalog
-
-	if rc.TokenSecretRef == nil {
-		r.CatalogHolder.Set(nil)
-		return
-	}
-	token, err := r.readSecretKey(ctx, s.Namespace, rc.TokenSecretRef)
-	if err != nil || token == "" {
-		msg := ""
-		if err != nil {
-			msg = err.Error()
-		}
-		l.Info("Rancher catalog client disabled: token secret unavailable; git-backed ClusterRepos will not be installable",
-			"secret", rc.TokenSecretRef.Name, "error", msg)
-		r.CatalogHolder.Set(nil)
-		return
-	}
-
-	caPEM, caSource := r.resolveCABundle(ctx, s)
-
-	url := rc.URL
-	if url == "" {
-		url = rancher.DefaultBaseURL
-	}
-	client, err := rancher.NewCatalogClient(url, token, caPEM, rc.InsecureSkipVerify)
-	if err != nil {
-		l.Error(err, "failed to build Rancher catalog client")
-		r.CatalogHolder.Set(nil)
-		return
-	}
-	r.CatalogHolder.Set(client)
-	l.Info("Rancher catalog client configured", "url", url, "insecureSkipVerify", rc.InsecureSkipVerify, "customCA", len(caPEM) > 0, "caSource", caSource)
-}
-
-// resolveCABundle picks the CA the catalog client should trust, and reports
-// which source it came from as one of "settings", "settings-error",
-// "discovered" or "system". The source is logged so support can tell the paths
-// apart without reproducing the cluster.
-//
-// An explicit ref that cannot be read does NOT fall through to discovery. An
-// administrator who pinned a CA gets a loud failure rather than a silent
-// substitution with a different certificate.
-func (r *SettingsReconciler) resolveCABundle(ctx context.Context, s *aiplatformv1alpha1.Settings) ([]byte, string) {
-	l := log.FromContext(ctx)
-	ref := s.Spec.RancherCatalog.CABundleSecretRef
-
-	if ref != nil {
-		ca, err := r.readSecretKey(ctx, s.Namespace, ref)
-		if err != nil {
-			l.Error(err, "Rancher catalog CA secret unavailable; proceeding without a custom CA (not falling back to discovery, because a CA was explicitly configured)",
-				"secret", ref.Name)
-			return nil, "settings-error"
-		}
-		// readSecretKey returns ("", nil) for a Secret that exists but lacks the
-		// key, so an empty value is an unreadable ref, not a configured one.
-		// Reporting "settings" here would log caSource=settings customCA=false —
-		// which reads as "your configured CA is in use" when nothing was loaded.
-		if ca == "" {
-			l.Info("Rancher catalog CA secret has no usable value; proceeding without a custom CA (not falling back to discovery, because a CA was explicitly configured)",
-				"secret", ref.Name, "key", ref.Key)
-			return nil, "settings-error"
-		}
-		return []byte(ca), "settings"
-	}
-
-	// No CA configured: read the CA that signs Rancher's in-cluster serving
-	// certificate. The obvious alternative, the `cacerts` Setting, is a
-	// different CA and produces an x509 failure here.
-	ca, err := rancher.DiscoverInternalCA(ctx, r.Client)
-	switch {
-	case err == nil:
-		return ca, "discovered"
-	case stderrors.Is(err, rancher.ErrCANotFound):
-		l.Info("Rancher internal CA secret not found; using system roots")
-	default:
-		l.Error(err, "failed to read Rancher internal CA secret; using system roots")
-	}
-	return nil, "system"
 }
 
 // readSecretKey returns the value of key in the named Secret in ns.
@@ -319,8 +216,6 @@ func (r *SettingsReconciler) isReferencedSettingsSecret(ctx context.Context, nam
 		s.Spec.Nvidia.UserSecretRef,
 		s.Spec.Nvidia.TokenSecretRef,
 		s.Spec.Nvidia.CABundleSecretRef,
-		s.Spec.RancherCatalog.TokenSecretRef,
-		s.Spec.RancherCatalog.CABundleSecretRef,
 	}
 	for i := range s.Spec.BlueprintCatalogs {
 		cat := &s.Spec.BlueprintCatalogs[i]
@@ -916,7 +811,7 @@ func (r *SettingsReconciler) currentAuthSecretType(ctx context.Context, name str
 	return existing.Type, true
 }
 
-// applySSHAuthSecret writes a kubernetes.io/ssh-auth mirror (key: ssh-privatekey)
+// applySSHAuthSecret writes a kubernetes.io/ssh-auth mirror, including known_hosts
 // across authSecretNamespaces from the referenced source key. Mirrors
 // applyRegistryAuthSecret's namespace handling: cattle-system is mandatory, the
 // Fleet workspaces are best-effort (skipped when absent).
@@ -928,13 +823,18 @@ func (r *SettingsReconciler) applySSHAuthSecret(ctx context.Context, ns, secretN
 	if key == "" {
 		return "", false, nil
 	}
-	changed := r.sshAuthChanged(ctx, secretName, key)
+	var source corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, &source); err != nil {
+		return "", false, fmt.Errorf("read SSH host trust: %w", err)
+	}
+	knownHosts := source.Data["known_hosts"]
+	changed := r.sshAuthChanged(ctx, secretName, key, string(knownHosts))
 	for _, targetNS := range authSecretNamespaces {
 		mirror := &corev1.Secret{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNS},
 			Type:       corev1.SecretTypeSSHAuth,
-			Data:       map[string][]byte{corev1.SSHAuthPrivateKey: []byte(key)},
+			Data:       map[string][]byte{corev1.SSHAuthPrivateKey: []byte(key), "known_hosts": knownHosts},
 		}
 		if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
 			if targetNS != "cattle-system" && errors.IsNotFound(err) {
@@ -949,7 +849,7 @@ func (r *SettingsReconciler) applySSHAuthSecret(ctx context.Context, ns, secretN
 // sshAuthChanged reports whether the cattle-system ssh-auth mirror differs from
 // the freshly-read key. A missing mirror counts as changed; an unreadable one as
 // unchanged (mirrors registryAuthChanged).
-func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName, key string) bool {
+func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName, key, knownHosts string) bool {
 	var existing corev1.Secret
 	err := r.Get(ctx, types.NamespacedName{Namespace: "cattle-system", Name: secretName}, &existing)
 	if errors.IsNotFound(err) {
@@ -958,7 +858,7 @@ func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName, key
 	if err != nil {
 		return false
 	}
-	return string(existing.Data[corev1.SSHAuthPrivateKey]) != key
+	return string(existing.Data[corev1.SSHAuthPrivateKey]) != key || string(existing.Data["known_hosts"]) != knownHosts
 }
 
 // forceUpdateClusterRepo bumps spec.forceUpdate to now (RFC3339Nano) so Rancher

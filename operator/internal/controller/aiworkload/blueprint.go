@@ -43,7 +43,6 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 
@@ -66,14 +65,6 @@ const (
 // registry credentials are not configured. Reconcile surfaces this as a
 // Ready=False condition and auto-requeues instead of hard-failing.
 var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
-
-// errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
-// cannot be deployed because no Rancher catalog client is configured (the
-// operator has no Rancher API token). The catalog config is editable at runtime
-// via Settings, so reconcile surfaces this as a Ready=False condition and
-// requeues: it clears as soon as the token is supplied (the AIWorkload
-// controller also watches Settings, so recovery is usually immediate).
-var errCatalogClientNotConfigured = stderrors.New("rancher catalog client not configured")
 
 type clusterRepoInfo struct {
 	Name           string   // ClusterRepo metadata.name
@@ -139,31 +130,6 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			digest, err = r.ensureBlueprintGitFile(ctx, w, c, blueprintBundleName(w.Name, c.ChartName))
 		}
 		if err != nil {
-			if stderrors.Is(err, errCatalogClientNotConfigured) {
-				// A git-backed component needs a Rancher API token the operator
-				// wasn't given. The catalog config is editable at runtime via
-				// Settings, so surface a clear condition + Failed phase and requeue:
-				// the AIWorkload controller watches Settings and re-enqueues on the
-				// change, and this RequeueAfter is a race-safe net in case the
-				// holder is rebuilt after our watch fires.
-				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher API Access in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
-				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
-				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: time.Minute}, nil
-			}
-			if stderrors.Is(err, rancher.ErrUnauthorized) {
-				// The token exists but Rancher rejected it — typically because it
-				// expired. Rancher clamps a token's TTL to auth-token-max-ttl-minutes
-				// (90 days by default), so every configured token eventually lands
-				// here. Give it its own reason rather than folding it into the
-				// generic fetch error, so the UI can point at the fix. Requeue
-				// rather than fail terminally: re-authorizing in Settings resolves
-				// it, and the AIWorkload controller watches Settings.
-				msg := fmt.Sprintf("Rancher rejected the API token while fetching component %q from git-backed repo %q. The token may have expired — re-authorize under Settings → Rancher API Access in the AI Factory UI.", c.ChartName, c.ChartRepo)
-				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonRancherTokenRejected, msg, w.Generation)
-				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: time.Minute}, nil
-			}
 			if stderrors.Is(err, errChartTooLarge) {
 				// Terminal: the chart is too big for a Fleet Bundle and no amount
 				// of retrying changes that. Returning the error instead would spin
@@ -1275,8 +1241,8 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	}
 
 	// Git-backed ClusterRepos (spec.gitRepo + spec.gitBranch) have no url/ociRepo.
-	// Rancher clones and indexes them; the operator resolves the chart via the
-	// Rancher catalog API and republishes it as a self-contained Fleet Bundle.
+	// Rancher indexes them; the operator reads the indexed Git commit directly
+	// and republishes the chart as a self-contained Fleet Bundle.
 	gitRepo, _, _ := unstructured.NestedString(cr.Object, "spec", "gitRepo")
 	if gitRepo != "" {
 		info.Kind = repoKindGit

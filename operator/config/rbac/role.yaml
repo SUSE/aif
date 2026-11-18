@@ -55,6 +55,7 @@ rules:
   resources:
   - serviceaccounts
   verbs:
+  - delete
   - get
   - list
   - patch
@@ -130,9 +131,18 @@ rules:
 - apiGroups:
   - authorization.k8s.io
   resources:
+  - selfsubjectaccessreviews
   - subjectaccessreviews
   verbs:
   - create
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - delete
+  - get
 - apiGroups:
   - catalog.cattle.io
   resources:
@@ -191,6 +201,14 @@ rules:
   - list
   - patch
   - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - delete
+  - get
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

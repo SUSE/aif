@@ -1,15 +1,10 @@
-// Orchestrates uninstalling an AIWorkload. For the Helm (App) strategy the
-// uninstall is performed via Rancher's catalog action=uninstall under the
-// logged-in user's session (deleteApp), then the AIWorkload CR is removed. This
-// mirrors how install works and how the Apps page uninstalls — the operator's
-// finalizer is only a safety-net, so we must clear the release here.
-//
-// FleetBundle/GitOps workloads are torn down by the operator finalizer (it
-// deletes the Fleet HelmOp/Bundle or the git file), so we only delete the CR.
-import { deleteApp } from './rancher-apps';
+// Local Helm cleanup uses the operator ServiceAccount. Fleet/GitOps cleanup
+// uses Fleet. Direct downstream Helm still uses the caller's Rancher session;
+// no personal token is minted, stored, or sent to the operator.
+import { deleteApp, waitForAppUninstall } from './rancher-apps';
 import { deleteAIWorkload } from '../utils/operator-api';
 import type { AIWorkload } from '../types/aiworkload-types';
-import { isRancherError, type RancherError } from '../types/rancher-types';
+import { rancherHttpStatus } from '../utils/rancher-request';
 
 export function isHelmStrategy(workload: AIWorkload): boolean {
   // Strategy is optional on the CR; App-sourced workloads default to Helm.
@@ -17,33 +12,32 @@ export function isHelmStrategy(workload: AIWorkload): boolean {
   return (s ?? 'Helm') === 'Helm';
 }
 
-// True when the error indicates the App/release is already gone — uninstall is
-// then idempotently successful and we may proceed to delete the CR. Rancher
-// surfaces the HTTP status differently depending on the transport: a top-level
-// `status`/`code` (Steve store errors) or a nested `response.status`
-// (axios-style), so we check every shape.
-function isAlreadyGone(e: unknown): boolean {
-  if (isRancherError(e) && (e.status ?? e.code) === 404) {
-    return true;
-  }
-  // isRancherError only narrows on a numeric top-level status/code, so a 404
-  // carried solely on the nested response object still needs its own check.
-  return (e as RancherError | undefined)?.response?.status === 404;
-}
-
 export async function uninstallWorkload(store: any, workload: AIWorkload): Promise<void> {
   const { name, namespace } = workload.metadata;
+  const clusters = workload.spec.targetClusters || [];
+  const clusterId = clusters[0] || 'local';
+  if (isHelmStrategy(workload) && clusters.length > 1) {
+    throw new Error('Direct Helm uninstall requires a single Helm target.');
+  }
 
-  if (isHelmStrategy(workload)) {
+  if (isHelmStrategy(workload) && clusterId !== 'local') {
+    if (clusters.length !== 1 || !workload.metadata.uid) {
+      throw new Error('Refresh this workload before uninstalling: its identity and single Helm target are required.');
+    }
     const release = workload.spec.source.app?.release || name;
-    const clusterId = workload.spec.targetClusters?.[0] || 'local';
     try {
       await deleteApp(store, clusterId, workload.spec.targetNamespace, release);
     } catch (e) {
-      if (!isAlreadyGone(e)) {
+      if (rancherHttpStatus(e) !== 404) {
         throw e; // real failure — keep the CR so the user can retry
       }
     }
+    // An accepted Rancher operation is asynchronous. Confirm disappearance
+    // before allowing the local finalizer to release this workload.
+    await waitForAppUninstall(store, clusterId, workload.spec.targetNamespace, release);
+    const confirmation = [workload.metadata.uid, clusterId, workload.spec.targetNamespace, release].join('/');
+    await deleteAIWorkload(namespace, name, confirmation);
+    return;
   }
 
   await deleteAIWorkload(namespace, name);

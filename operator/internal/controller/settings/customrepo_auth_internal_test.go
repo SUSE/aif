@@ -83,10 +83,11 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 	})
 
 	t.Run("SSH", func(t *testing.T) {
-		sshKey := "-----BEGIN OPENSSH PRIVATE KEY-----\ntest-key-data\n-----END OPENSSH PRIVATE KEY-----"
+		// Mirroring treats key material as opaque bytes.
+		sshKey := "test-key-data"
 		sourceKey := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "git-ssh", Namespace: ns},
-			Data:       map[string][]byte{"ssh-privatekey": []byte(sshKey)},
+			Data:       map[string][]byte{"ssh-privatekey": []byte(sshKey), "known_hosts": []byte("mirror.example ssh-ed25519 public-key")},
 		}
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(sourceKey).Build()
 		r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
@@ -114,6 +115,9 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 			Name: expectedName, Namespace: "cattle-system",
 		}, &mirror); err != nil {
 			t.Fatalf("expected mirror in cattle-system: %v", err)
+		}
+		if string(mirror.Data["known_hosts"]) != "mirror.example ssh-ed25519 public-key" {
+			t.Fatal("SSH host trust was not mirrored")
 		}
 		if mirror.Type != corev1.SecretTypeSSHAuth {
 			t.Errorf("secret type = %q, want %q", mirror.Type, corev1.SecretTypeSSHAuth)
@@ -194,10 +198,10 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 	t.Run("AuthModeSwitchRecreatesSecret", func(t *testing.T) {
 		// Secret.type is immutable; switching basic-auth -> ssh-auth must delete and
 		// recreate rather than wedge on an "field is immutable" apply error.
-		sshKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nk\n-----END OPENSSH PRIVATE KEY-----"
+		sshKey := "test-key-data"
 		creds := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "src", Namespace: ns},
-			Data:       map[string][]byte{"user": []byte("u"), "token": []byte("t"), "ssh-privatekey": []byte(sshKey)},
+			Data:       map[string][]byte{"user": []byte("u"), "token": []byte("t"), "ssh-privatekey": []byte(sshKey), "known_hosts": []byte("mirror.example ssh-ed25519 public-key")},
 		}
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(creds).Build()
 		r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
@@ -225,6 +229,9 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 		var mirror corev1.Secret
 		if err := c.Get(context.Background(), types.NamespacedName{Name: expectedName, Namespace: "cattle-system"}, &mirror); err != nil {
 			t.Fatalf("expected recreated mirror: %v", err)
+		}
+		if string(mirror.Data["known_hosts"]) != "mirror.example ssh-ed25519 public-key" {
+			t.Fatal("SSH host trust was not mirrored")
 		}
 		if mirror.Type != corev1.SecretTypeSSHAuth {
 			t.Errorf("secret type = %q, want %q after switch", mirror.Type, corev1.SecretTypeSSHAuth)

@@ -1,0 +1,39 @@
+suite: personal Rancher tokens are retired
+templates:
+  - templates/secrets.yaml
+  - templates/manager/manager.yaml
+tests:
+  - it: reused legacy token and CA values never render a credential Secret
+    template: templates/secrets.yaml
+    set:
+      rancherCatalog.token: token-legacy:secret
+      rancherCatalog.tokenSecret.name: old-credential
+      rancherCatalog.caBundle: old-ca
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: Git fetches have bounded writable scratch space with a read-only root
+    template: templates/manager/manager.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: temporary-files
+            emptyDir:
+              sizeLimit: 1Gi
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            mountPath: /tmp
+            name: temporary-files
+  - it: scratch capacity is configurable for larger private mirrors
+    template: templates/manager/manager.yaml
+    set:
+      manager.temporaryStorageSizeLimit: 4Gi
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: temporary-files
+            emptyDir:
+              sizeLimit: 4Gi

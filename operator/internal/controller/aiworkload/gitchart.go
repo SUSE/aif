@@ -74,7 +74,7 @@ const maxChartArchiveBytes = 4 << 20 // 4 MiB
 // errChartTooLarge marks a git-backed component whose chart cannot fit in a
 // Fleet Bundle. Unlike a fetch or apply failure this is a property of the chart
 // itself, so retrying can never succeed: every attempt re-downloads the archive
-// from Rancher and fails identically. Reconcile turns it into a terminal
+// from Git and fails identically. Reconcile turns it into a terminal
 // Ready=False condition instead of returning it, which both stops the hot retry
 // loop and replaces the stale "Component bundles reconciled" message the
 // AIWorkload would otherwise keep showing while failing.
@@ -272,12 +272,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	repoInfo clusterRepoInfo,
 	gitOps bool,
 ) (string, error) {
-	var fetcher rancher.ChartFetcher
-	if r.CatalogClient != nil {
-		fetcher = r.CatalogClient.Get()
-	}
+	fetcher := r.ChartFetcher
 	if fetcher == nil {
-		return "", fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
+		return "", fmt.Errorf("Git chart fetcher is unavailable")
 	}
 
 	// Resolve values and inject pull secrets BEFORE deciding whether to re-fetch:
@@ -306,7 +303,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	}
 
 	if gitOps {
-		tgz, err := fetchGitChart(ctx, fetcher, c)
+		tgz, err := fetchGitChart(ctx, fetcher, c, repoInfo.Commit)
 		if err != nil {
 			return "", err
 		}
@@ -353,7 +350,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 		return fingerprint, nil
 	}
 
-	tgz, err := fetchGitChart(ctx, fetcher, c)
+	tgz, err := fetchGitChart(ctx, fetcher, c, repoInfo.Commit)
 	if err != nil {
 		return "", err
 	}
@@ -373,9 +370,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitChartBundle(
 	return fingerprint, nil
 }
 
-func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatformv1alpha1.BlueprintComponent) ([]byte, error) {
-	tgz, err := fetcher.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion)
+func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatformv1alpha1.BlueprintComponent, revision string) ([]byte, error) {
+	tgz, err := fetcher.FetchChart(ctx, c.ChartRepo, c.ChartName, c.ChartVersion, revision)
 	if err != nil {
+		if stderrors.Is(err, rancher.ErrChartTooLarge) {
+			return nil, fmt.Errorf("%w: %w", errChartTooLarge, err)
+		}
 		return nil, fmt.Errorf("fetch chart %s@%s from git repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
 	}
 	return tgz, nil
