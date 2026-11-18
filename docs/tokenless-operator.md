@@ -67,6 +67,11 @@ filesystem Git URLs, and disabling TLS verification are rejected.
 * HTTPS trust uses `spec.caBundle` (base64-encoded PEM or DER), or the credential
   Secret's `cacerts` PEM when the ClusterRepo has no CA bundle. System trust is
   used when no private CA is configured.
+  When a Git repository is configured through AIF Settings, its CA Secret must
+  contain one PEM certificate. AIF converts it to DER for Rancher's Git catalog
+  indexer; HTTP/OCI repositories retain their PEM bundles. Multiple CA certificates
+  are rejected for Git catalogs because Rancher's indexer accepts a single DER
+  certificate.
 * SSH requires `ssh-privatekey` and `known_hosts` in the credential Secret.
   Obtain host keys through a trusted channel. The Settings controller mirrors
   `known_hosts` from the Secret referenced by a custom repository's

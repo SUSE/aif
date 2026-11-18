@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	stderrors "errors"
 	"fmt"
 	"time"
@@ -1375,9 +1376,9 @@ func (r *SettingsReconciler) reconcileCustomRepos(ctx context.Context, s *aiplat
 }
 
 // applyCustomClusterRepo applies a custom repo's ClusterRepo using the git-aware
-// spec map and both marker labels. A non-empty caBundle (PEM) is written to
-// spec.caBundle so Rancher trusts a private CA; that is the only field Rancher
-// consults for a custom CA (the clientSecret cacerts key is ignored).
+// spec map and both marker labels. Rancher's Git catalog client expects DER
+// and wraps it in PEM before invoking git; HTTP/OCI catalogs accept PEM.
+// The clientSecret cacerts key is not used by Rancher for custom repository trust.
 func (r *SettingsReconciler) applyCustomClusterRepo(ctx context.Context, name string, repo aiplatformv1alpha1.CustomRepoSpec, clientSecretName string, caBundle []byte, extraLabels map[string]string) error {
 	labels := map[string]any{managedRepoMarkerLabel: managedRepoMarkerValue}
 	for k, v := range extraLabels {
@@ -1389,6 +1390,16 @@ func (r *SettingsReconciler) applyCustomClusterRepo(ctx context.Context, name st
 	// itself (mirrors the Fleet GitRepo caBundle path). Passing raw PEM would be
 	// base64-decoded by the API server into garbage ("malformed certificate").
 	if len(caBundle) > 0 {
+		if repo.Type == "git" {
+			block, rest := pem.Decode(caBundle)
+			if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+				return fmt.Errorf("custom repo %q: Rancher Git catalogs require exactly one PEM CA certificate", repo.Name)
+			}
+			if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+				return fmt.Errorf("custom repo %q: invalid Git CA certificate: %w", repo.Name, err)
+			}
+			caBundle = block.Bytes
+		}
 		spec["caBundle"] = base64.StdEncoding.EncodeToString(caBundle)
 	}
 	// When no CA is configured we omit caBundle entirely. Server-side apply with
