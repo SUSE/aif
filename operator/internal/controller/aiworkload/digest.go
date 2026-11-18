@@ -71,6 +71,9 @@ type ComponentRenderInputs struct {
 	RepoURL      string         `json:"repoURL"`
 	Targets      []string       `json:"targets"`
 	Values       map[string]any `json:"values"`
+	// DependsOn is omitted when empty so components without dependencies keep
+	// the digest they had before the field existed (no spurious re-render).
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // perHelmOpRenderDigest hashes the canonical form of one component's desired HelmOp render.
