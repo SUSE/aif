@@ -31,6 +31,9 @@ vi.mock('../../services/cluster-service', () => ({ getClusters: vi.fn().mockReso
 vi.mock('../../services/workload-pods', () => ({ fetchWorkloadPodStatus: vi.fn().mockResolvedValue([]) }));
 
 const POLL_MS = 10_000;
+// Errors as operatorFetch throws them (toOperatorError).
+const unreachable = Object.assign(new Error('Handler disconnected'), { status: 503, code: OPERATOR_UNREACHABLE, unreachable: true });
+const forbidden   = Object.assign(new Error('forbidden'), { status: 403, code: 'FORBIDDEN', unreachable: false });
 
 async function mountWorkloads() {
   const store = { getters: { 'i18n/t': (key: string) => key }, dispatch: vi.fn() };
@@ -91,6 +94,37 @@ describe('AI workloads operator banner', () => {
     expect(recheckOperatorConnection).toHaveBeenCalledTimes(1);
     expect(listAIWorkloads).not.toHaveBeenCalled();
     expect(banner(wrapper).exists()).toBe(true);
+  });
+
+  it('shows the banner when the operator stops answering while the page is open, and clears it once it is back', async() => {
+    vi.mocked(getConnectionError).mockReturnValue(null);
+    const wrapper = await mountWorkloads();
+
+    expect(banner(wrapper).exists()).toBe(false);
+
+    vi.mocked(listAIWorkloads).mockRejectedValueOnce(unreachable);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flushPromises();
+
+    expect(banner(wrapper).exists()).toBe(true);
+
+    vi.mocked(recheckOperatorConnection).mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flushPromises();
+
+    expect(recheckOperatorConnection).toHaveBeenCalledTimes(1);
+    expect(banner(wrapper).exists()).toBe(false);
+  });
+
+  it('keeps an error the operator answered out of the banner during the poll', async() => {
+    vi.mocked(getConnectionError).mockReturnValue(null);
+    const wrapper = await mountWorkloads();
+
+    vi.mocked(listAIWorkloads).mockRejectedValueOnce(forbidden);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await flushPromises();
+
+    expect(banner(wrapper).exists()).toBe(false);
   });
 
   it('polls the workloads without re-checking the connection while the operator is reachable', async() => {

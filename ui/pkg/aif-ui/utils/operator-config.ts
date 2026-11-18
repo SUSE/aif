@@ -152,6 +152,13 @@ export function isOperatorNotFound(e: any): boolean {
 
 const UNREACHABLE_CODES = [OPERATOR_UNREACHABLE, 'TIMEOUT', 'NETWORK_ERROR'];
 
+/** True when an operator call failed without reaching the operator (network
+ *  error, timeout, or a Rancher/proxy 404 or 5xx), as opposed to an error the
+ *  operator answered (403, 409, ...). */
+export function isOperatorUnreachable(e: any): boolean {
+  return !!e?.unreachable || UNREACHABLE_CODES.includes(e?.code);
+}
+
 /** Display text for an operator error: the l10n "operator is unreachable" text
  *  when the request never reached the operator (instead of raw "Handler
  *  disconnected" or "timeout of …ms exceeded"), else the error's own message,
@@ -159,7 +166,7 @@ const UNREACHABLE_CODES = [OPERATOR_UNREACHABLE, 'TIMEOUT', 'NETWORK_ERROR'];
 export function operatorErrorMessage(e: any, t: (key: string, ...rest: any[]) => string, fallback?: string): string {
   const raw = e?.message || fallback || String(e);
 
-  if (e?.unreachable || UNREACHABLE_CODES.includes(e?.code)) {
+  if (isOperatorUnreachable(e)) {
     return t('suseai.operator.unreachable') || raw;
   }
 

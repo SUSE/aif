@@ -9,6 +9,7 @@ import {
   getOperatorNamespace,
   getUseStaticCatalog,
   isOperatorNotFound,
+  isOperatorUnreachable,
   loadOperatorConfig,
   operatorErrorMessage,
   operatorFetch,
@@ -360,6 +361,18 @@ describe('operatorFetch timeout dedupe key', () => {
     await Promise.all([first, second]);
 
     expect(steve.sent).toHaveLength(1);
+  });
+});
+
+describe('isOperatorUnreachable', () => {
+  it.each([
+    ['Rancher 503 Handler disconnected', shellResponse(503, 'Handler disconnected'), true],
+    ['Rancher 404 without the operator envelope', shellResponse(404, { type: 'error', code: 'NotFound' }), true],
+    ['a timeout', Object.assign(new Error('timeout of 8000ms exceeded'), { code: 'ECONNABORTED' }), true],
+    ['the operator\'s 403', shellResponse(403, { error: 'FORBIDDEN', message: 'forbidden' }), false],
+    ['the operator\'s 500', shellResponse(500, { error: 'INTERNAL_ERROR', message: 'boom' }), false],
+  ])('classifies %s as unreachable: %s', (_name, raw, want) => {
+    expect(isOperatorUnreachable(toOperatorError(raw))).toBe(want);
   });
 });
 

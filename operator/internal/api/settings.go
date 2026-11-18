@@ -224,7 +224,15 @@ func (h *SettingsHandler) getRegistryStatus(w http.ResponseWriter, r *http.Reque
 	var s aiplatformv1alpha1.Settings
 	key := types.NamespacedName{Namespace: h.namespace, Name: settingsName}
 	if err := h.client.Get(r.Context(), key, &s); err != nil {
-		writeJSON(w, http.StatusOK, &RegistryStatus{})
+		// No Settings yet means nothing is configured, which the UI pre-flight
+		// reports as such. Any other error is a 500: reporting it as "not
+		// configured" would block a Blueprint install over configured
+		// credentials, while an error lets the UI skip the pre-flight.
+		if k8serrors.IsNotFound(err) {
+			writeJSON(w, http.StatusOK, &RegistryStatus{})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -232,30 +240,40 @@ func (h *SettingsHandler) getRegistryStatus(w http.ResponseWriter, r *http.Reque
 	// (EffectiveRefs), so credentials supplied via well-known secret names — not
 	// just spec refs — are reported as configured. This keeps the UI pre-flight
 	// in lockstep with what the operator will actually be able to create.
-	writeJSON(w, http.StatusOK, &RegistryStatus{
-		ApplicationCollection: h.registryConfigured(r.Context(),
-			s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef,
-			credentials.RegistryApplicationCollection),
-		SUSERegistry: h.registryConfigured(r.Context(),
-			s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef,
-			credentials.RegistrySUSERegistry),
-		Nvidia: h.registryConfigured(r.Context(),
-			s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef,
-			credentials.RegistryNvidia),
-	})
+	var status RegistryStatus
+	for _, reg := range []struct {
+		configured        *bool
+		userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef
+		registry          credentials.Registry
+	}{
+		{&status.ApplicationCollection, s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef,
+			credentials.RegistryApplicationCollection},
+		{&status.SUSERegistry, s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef,
+			credentials.RegistrySUSERegistry},
+		{&status.Nvidia, s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, credentials.RegistryNvidia},
+	} {
+		ok, err := h.registryConfigured(r.Context(), reg.userRef, reg.tokenRef, reg.registry)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		*reg.configured = ok
+	}
+	writeJSON(w, http.StatusOK, &status)
 }
 
 // registryConfigured reports whether the effective refs for registry resolve
-// to a non-empty username/token pair. The values are read only to check them
-// and are discarded.
+// to a non-empty username/token pair. A missing Secret or key is "not
+// configured"; any other error reading a Secret is returned. The values are
+// read only to check them and are discarded.
 func (h *SettingsHandler) registryConfigured(
 	ctx context.Context,
 	explicitUser, explicitToken *aiplatformv1alpha1.SecretKeyRef,
 	registry credentials.Registry,
-) bool {
+) (bool, error) {
 	userRef, tokenRef := credentials.EffectiveRefs(ctx, h.client, h.namespace, explicitUser, explicitToken, registry)
-	_, _, ok, _ := credentials.ReadPair(ctx, h.client, h.namespace, userRef, tokenRef)
-	return ok
+	_, _, ok, err := credentials.ReadPair(ctx, h.client, h.namespace, userRef, tokenRef)
+	return ok, err
 }
 
 // readSecretKey resolves ref in the operator namespace only. The

@@ -5,7 +5,8 @@ import { BadgeState } from '@components/BadgeState';
 import CountBox      from '@shell/components/CountBox';
 import Loading       from '@shell/components/Loading';
 import {
-  checkOperatorConnection, getConnectionError, operatorErrorMessage, recheckOperatorConnection,
+  OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, isOperatorUnreachable, operatorErrorMessage,
+  recheckOperatorConnection,
 } from '../utils/operator-config';
 import { useT } from '../composables/useT';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
@@ -138,7 +139,11 @@ async function silentRefresh() {
   try {
     const [wlResult] = await Promise.all([listAIWorkloads(), refreshRepositoryHealth()]);
     workloads.value = wlResult.items || [];
-  } catch { /* ignore */ }
+  } catch (e) {
+    // The operator stopped answering: show the banner, which the branch above
+    // clears once it is back. Other errors stay silent.
+    if (isOperatorUnreachable(e)) operatorError.value = OPERATOR_UNREACHABLE;
+  }
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;

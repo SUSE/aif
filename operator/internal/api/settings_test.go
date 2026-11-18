@@ -1811,3 +1811,54 @@ func TestIncompleteSecretRefs(t *testing.T) {
 		})
 	}
 }
+
+// errOnGet returns a settings fake client whose Get fails for the object named
+// name with a non-NotFound error, as a timed-out or unavailable API would.
+func errOnGet(t *testing.T, name string, objects ...client.Object) client.Client {
+	t.Helper()
+	return fake.NewClientBuilder().
+		WithScheme(newSettingsScheme(t)).
+		WithObjects(objects...).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if key.Name == name {
+					return apierrors.NewServiceUnavailable("apiserver unavailable")
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+}
+
+// A Settings read error is a 500, not "nothing configured": the Blueprint
+// install pre-flight would otherwise block an install over configured
+// credentials, while an error makes it skip the pre-flight.
+func TestGetRegistryStatus_SettingsReadErrorIs500(t *testing.T) {
+	h := newSettingsHandler(errOnGet(t, "settings"), "suse-ai-system")
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/settings/registry-status", nil))
+
+	assertErrorCode(t, w, http.StatusInternalServerError, ErrCodeInternal)
+}
+
+// Likewise for a credential Secret that exists but cannot be read; a missing
+// Secret stays "not configured" (TestGetRegistryStatus_PartialPair).
+func TestGetRegistryStatus_SecretReadErrorIs500(t *testing.T) {
+	const ns = "suse-ai-system"
+	cr := &aiplatformv1alpha1.Settings{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+		Spec: aiplatformv1alpha1.SettingsSpec{
+			Nvidia: aiplatformv1alpha1.NvidiaSettings{
+				UserSecretRef:  &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"},
+				TokenSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"},
+			},
+		},
+	}
+	h := newSettingsHandler(errOnGet(t, "ngc-user", cr), ns)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/settings/registry-status", nil))
+
+	assertErrorCode(t, w, http.StatusInternalServerError, ErrCodeInternal)
+}

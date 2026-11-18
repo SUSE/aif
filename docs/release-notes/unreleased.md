@@ -42,7 +42,9 @@ no longer works; integrators calling it must switch to `/v1/aif-operator`.
 - **The operator API no longer returns registry passwords.** The
   `GET /api/v1/settings/registry-credentials` endpoint is removed. The new
   `GET /api/v1/settings/registry-status` returns only whether App Collection,
-  SUSE Registry and NVIDIA credentials are configured.
+  SUSE Registry and NVIDIA credentials are configured. It answers 500 when
+  Settings or a credential Secret cannot be read, rather than reporting the
+  credentials as not configured.
 - **The App wizard no longer fetches registry passwords from the operator.**
   Installed apps reference the pull secrets the operator delivers to target
   clusters: `suse-ai-pull-combined` for App Collection and SUSE Registry charts,
@@ -51,11 +53,12 @@ no longer works; integrators calling it must switch to `/v1/aif-operator`.
   credentials, using the signed-in user's own permissions.
 - **Wildcard CORS removed.** The API no longer sends
   `Access-Control-Allow-Origin: *`.
-- **The "operator is unreachable" banner clears on its own.** Overview, Blueprints
-  and Workloads re-check the connection every 10 seconds while the banner is
-  shown and reload once the operator answers. Any answer from the operator also
-  clears the banner on pages opened later, so a brief outage (an operator
-  rollout or a Rancher restart) no longer needs a **Retry** click.
+- **The "operator is unreachable" banner follows the operator.** Overview,
+  Blueprints and Workloads show it when their 10-second refresh cannot reach the
+  operator, instead of silently keeping stale data, then re-check the connection
+  every 10 seconds and reload once the operator answers. Any answer from the
+  operator also clears the banner on pages opened later, so a brief outage (an
+  operator rollout or a Rancher restart) no longer needs a **Retry** click.
 - **New chart value `aggregation.enabled`** (default `true`) controls the
   `APIService`. Setting it to `false` disables the operator API, and the AI
   Factory UI extension does not work. Installing on a cluster without Rancher

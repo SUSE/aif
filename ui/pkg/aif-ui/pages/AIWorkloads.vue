@@ -7,7 +7,8 @@ import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
 import {
-  checkOperatorConnection, getConnectionError, operatorErrorMessage, recheckOperatorConnection,
+  OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, isOperatorUnreachable, operatorErrorMessage,
+  recheckOperatorConnection,
 } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
 import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
@@ -266,8 +267,11 @@ async function silentRefresh() {
     if (!wlResult.items) return;
     workloads.value = wlResult.items;
     void refreshPodStatus();
-  } catch {
-    // silently ignore — user can use the Refresh button if needed
+  } catch (e) {
+    // The operator stopped answering: show the banner, which the branch above
+    // clears once it is back. Other errors stay silent; the user can use the
+    // Refresh button.
+    if (isOperatorUnreachable(e)) operatorError.value = OPERATOR_UNREACHABLE;
   }
 }
 

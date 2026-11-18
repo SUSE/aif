@@ -338,7 +338,8 @@ import {
 import { listAIWorkloads } from '../utils/operator-api';
 import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/catalog-api';
 import {
-  checkOperatorConnection, getConnectionError, operatorErrorMessage, recheckOperatorConnection,
+  OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, isOperatorUnreachable, operatorErrorMessage,
+  recheckOperatorConnection,
 } from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
@@ -602,7 +603,11 @@ export default defineComponent({
         if (Object.keys(updates).length) {
           selectedVersions.value = { ...selectedVersions.value, ...updates };
         }
-      } catch { /* ignore during background poll */ }
+      } catch (e) {
+        // The operator stopped answering: show the banner, which the branch
+        // above clears once it is back. Other errors stay silent.
+        if (isOperatorUnreachable(e)) operatorError.value = OPERATOR_UNREACHABLE;
+      }
     }
 
     let pollTimer: ReturnType<typeof setInterval> | null = null;
