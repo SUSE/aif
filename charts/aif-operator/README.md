@@ -23,12 +23,21 @@ The following CRDs must exist before adding the operator:
   - `uiplugins.catalog.cattle.io`
   - `clusterrepos.catalog.cattle.io`
   - `apiservices.management.cattle.io` (unless `aggregation.enabled=false`)
+  - `gitrepos.fleet.cattle.io` (for the Git-sourced blueprint catalogs, enabled by default)
 
 You can verify with:
 ```bash
 kubectl get crd uiplugins.catalog.cattle.io
 kubectl get crd clusterrepos.catalog.cattle.io
 kubectl get crd apiservices.management.cattle.io
+kubectl get crd gitrepos.fleet.cattle.io
+```
+
+Helm checks every resource the chart renders against the cluster before it runs any hook, so a missing CRD fails the install with `no matches for kind ... ensure CRDs are installed first`. The chart's pre-install hook only waits for these CRDs to become `Established`. Automation that installs Rancher and the operator together should wait for them before running `helm install` (`--for=create` needs kubectl 1.31 or later; `--for=condition` alone fails at once on a CRD that does not exist yet):
+```bash
+CRDS="crd/uiplugins.catalog.cattle.io crd/clusterrepos.catalog.cattle.io crd/apiservices.management.cattle.io crd/gitrepos.fleet.cattle.io"
+kubectl wait --for=create --timeout=10m $CRDS
+kubectl wait --for=condition=Established --timeout=5m $CRDS
 ```
 
 ## CRD Management
@@ -166,7 +175,7 @@ The command deploys the SUSE AI Operator using the default configuration. See th
 
 ### Upgrading the Chart
 
-Don't upgrade with plain `helm upgrade --reuse-values`: it keeps the previous release's pinned `manager.image.tag`, `aiExtension.source.helm.version` and `aiExtension.extension.version`, so the new chart would run the old operator image. Use `--reset-then-reuse-values` (Helm 3.14 or later), or pass the new versions explicitly. The chart refuses to render when one of these values is older (by major.minor) than the chart's `appVersion`; non-semver tags such as `latest` and empty values are not checked. In Rancher Apps & Marketplace an upgrade sends only the values that differ from the new chart's defaults; if the upgrade form shows a pinned `manager.image.tag` or `aiExtension` version from the previous release, edit it to the new version or remove it.
+Don't upgrade with plain `helm upgrade --reuse-values`: it keeps the previous release's pinned `manager.image.tag`, `aiExtension.source.helm.version` and `aiExtension.extension.version`, so the new chart would run the old operator image. Use `--reset-then-reuse-values` (Helm 3.14 or later), or pass the new versions explicitly. The chart refuses to render when one of these values is older (by major.minor) than the chart's `appVersion`, or older than `2.5.0-dev.2`, the first version that serves the operator API through Rancher's APIService (so `2.5.0-dev.1` is refused too); non-semver tags such as `latest` or digests, and empty values, are not checked. In Rancher Apps & Marketplace an upgrade sends only the values that differ from the new chart's defaults; if the upgrade form shows a pinned `manager.image.tag` or `aiExtension` version from the previous release, edit it to the new version or remove it.
 
 ```bash
 helm upgrade aif-operator \
@@ -359,7 +368,7 @@ For example:
 >
 > The operator requires this. With `aggregation.enabled=false` the operator API is disabled and the AI Factory UI extension does not work. Installing on a cluster without Rancher Manager fails unless it is set to `false`, because the `apiservices.management.cattle.io` CRD is missing.
 >
-> The connection Secret holds Rancher's tunnel token. Keep it outside the release namespace: Settings credential validation can use any Secret in the release namespace. The operator reads it with its cluster-wide Secret access and gets its name and namespace from the `AGGREGATION_SECRET_NAME` and `AGGREGATION_SECRET_NAMESPACE` environment variables. Keep the release namespace admin-only for the other credential Secrets: leave it unassigned to a Rancher project, or move it to the **System** project. If the operator uses an HTTPS proxy (`HTTPS_PROXY`), add the in-cluster Rancher service to `NO_PROXY` (for example `.svc` and `cattle-system`), or the tunnel goes through the proxy.
+> The connection Secret holds Rancher's tunnel token. Keep it outside the release namespace: Settings credential validation can use any Secret in the release namespace. The operator reads it with its cluster-wide Secret access and gets its name and namespace from the `AGGREGATION_SECRET_NAME` and `AGGREGATION_SECRET_NAMESPACE` environment variables. Keep the release namespace admin-only for the other credential Secrets: leave it unassigned to a Rancher project, or move it to the **System** project. If the operator uses an HTTPS proxy (`HTTPS_PROXY`), add the cluster's Service CIDR (for example `10.43.0.0/16`, the RKE2 and K3s default) to `NO_PROXY`, or the tunnel goes through the proxy. The tunnel connects to the address Rancher writes into the connection Secret, which on Rancher 2.15 is the ClusterIP of the `rancher-internal` Service in `cattle-system` (`kubectl -n cattle-system get service rancher-internal`). `NO_PROXY` never matches an IP address against a domain suffix such as `.svc`, so list the CIDR or that ClusterIP.
 
 ### AI Extension bundling
 

@@ -6,7 +6,9 @@ import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
-import { checkOperatorConnection, getConnectionError, operatorErrorMessage } from '../utils/operator-config';
+import {
+  checkOperatorConnection, getConnectionError, operatorErrorMessage, recheckOperatorConnection,
+} from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
 import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
@@ -249,6 +251,13 @@ async function retryConnection() {
 
 async function silentRefresh() {
   if (loading.value) return;
+  // The banner is up: re-check the connection instead of polling, and reload
+  // once the operator is back so the banner clears.
+  if (operatorError.value) {
+    if (await recheckOperatorConnection()) await refresh();
+
+    return;
+  }
   try {
     const wlResult = await listAIWorkloads();
 

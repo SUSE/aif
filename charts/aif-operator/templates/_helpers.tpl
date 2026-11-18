@@ -82,8 +82,9 @@ chart's appVersion. `helm upgrade --reuse-values` reuses the previous
 release's values, pinned image tag and extension versions included, so a new
 chart would otherwise run an old operator with settings it does not know
 (2.4.0 exits on unknown flags). Patch and pre-release differences pass
-(2.4.0 vs 2.4.0-rc.1). Empty values, non-semver tags (latest, digests) and a
-non-semver appVersion skip the check.
+(2.4.0 vs 2.4.0-rc.1), except below aif-operator.aggregationMinVersion. Empty
+values, non-semver tags (latest, digests) and a non-semver appVersion skip the
+check.
 Takes a dict: context (root), name (value path for the message), value.
 */}}
 {{- define "aif-operator.failIfOlderThanChart" -}}
@@ -102,10 +103,26 @@ zero, and build metadata is unrestricted. Anything else is skipped.
 {{- if and (regexMatch $re $value) (regexMatch $re $app) -}}
 {{- $have := semver $value -}}
 {{- $want := semver $app -}}
+{{- $min := semver (include "aif-operator.aggregationMinVersion" .context) -}}
+{{- $fix := printf "a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set %s explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value." .name -}}
 {{- if or (lt $have.Major $want.Major) (and (eq $have.Major $want.Major) (lt $have.Minor $want.Minor)) -}}
-{{- fail (printf "%s %s is older than this chart (%s); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set %s explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value." .name $value $app .name) -}}
+{{- fail (printf "%s %s is older than this chart (%s); %s" .name $value $app $fix) -}}
+{{- else if and ($have.LessThan $min) (not ($want.LessThan $min)) -}}
+{{- fail (printf "%s %s is older than %s, the first version that serves the operator API through Rancher's APIService, and does not work with this chart (%s); %s" .name $value $min.Original $app $fix) -}}
 {{- end -}}
 {{- end -}}
+{{- end }}
+
+{{/*
+First operator and UI extension version that serves the operator API through
+Rancher's APIService (templates/apiservice.yaml). Older same-minor
+pre-releases (2.5.0-dev.1) still run the operator API on an unauthenticated
+in-cluster listener and the UI calls it through the removed Service, so
+aif-operator.failIfOlderThanChart refuses them even though the major.minor
+check alone would let them through. Charts older than this version skip it.
+*/}}
+{{- define "aif-operator.aggregationMinVersion" -}}
+2.5.0-dev.2
 {{- end }}
 
 {{/*

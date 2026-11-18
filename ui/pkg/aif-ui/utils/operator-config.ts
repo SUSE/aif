@@ -104,6 +104,12 @@ function errorText(e: any): string {
   return typeof e?.data === 'string' ? e.data : '';
 }
 
+/** True when a shell `request` error carries the operator's own envelope
+ *  ({ error: '<CODE>', message }), i.e. the request reached the operator. */
+function isOperatorAnswer(e: any): boolean {
+  return typeof e?.error === 'string';
+}
+
 /** Map an error from the shell's `request` action (the response body with a
  *  `_status` field, or an axios error when there was no response) onto
  *  OperatorError, so callers keep using `status`, `code` and `message`. */
@@ -122,9 +128,9 @@ export function toOperatorError(e: any): OperatorError {
     return err;
   }
 
-  // The operator always answers with { error: '<CODE>', message }; anything
-  // else on a 404 or 5xx came from Rancher or a proxy, not the operator.
-  const fromOperator = typeof e?.error === 'string';
+  // Anything but the operator's envelope on a 404 or 5xx came from Rancher or
+  // a proxy, not the operator.
+  const fromOperator = isOperatorAnswer(e);
   const unreachable  = !fromOperator && (status === 404 || status >= 500);
   const message      = (fromOperator && typeof e?.message === 'string' && e.message) || errorText(e) || e?._statusText || `HTTP ${ status }`;
 
@@ -196,9 +202,12 @@ export async function operatorFetch(path: string, options: OperatorFetchOptions 
       // The steve request action mutates opt (url), so pass a fresh copy each time.
       const res = await dispatch('management/request', { ...opt });
 
+      markReachable();
+
       return res?._status === 204 ? undefined : res;
     } catch (e) {
       if (safe && attempt === 0 && isTransient(e)) continue;
+      if (isOperatorAnswer(e)) markReachable();
       throw toOperatorError(e);
     }
   }
@@ -261,6 +270,25 @@ async function runConnectionCheck(): Promise<void> {
     // a page asks after sign-in.
     if (e?.status === 401) checkPromise = null;
   }
+}
+
+/** Any answer from the operator proves it reachable, so clear a cached
+ *  OPERATOR_UNREACHABLE: pages read getConnectionError() when they load, and
+ *  would otherwise keep showing the banner after the operator recovered. */
+function markReachable(): void {
+  if (connectionError) {
+    connectionError = null;
+    checkPromise = Promise.resolve();
+  }
+}
+
+/** Re-run the connection check (like a Retry click) and resolve true when the
+ *  operator is reachable. Pages showing the unreachable banner call it from
+ *  their background poll so the banner clears once the operator is back. */
+export async function recheckOperatorConnection(): Promise<boolean> {
+  await checkOperatorConnection(true);
+
+  return !connectionError;
 }
 
 /** Check whether the operator is reachable. Runs at most once per session;

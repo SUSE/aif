@@ -33,6 +33,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -92,19 +93,43 @@ type timing struct {
 //
 // handler is reachable only through the tunnel, i.e. only via Rancher, which
 // authenticates the user and sets the Impersonate-* headers.
-func Run(ctx context.Context, c client.Reader, namespace, secretName string, handler http.Handler) {
-	run(ctx, c, namespace, secretName, handler, timing{poll: defaultPollInterval, backoff: defaultBackoff, drain: defaultDrainTimeout})
+//
+// status reports whether a tunnel is connected; see Status.
+func Run(ctx context.Context, c client.Reader, namespace, secretName string, handler http.Handler, status *Status) {
+	run(ctx, c, namespace, secretName, handler, status, timing{poll: defaultPollInterval, backoff: defaultBackoff, drain: defaultDrainTimeout})
 }
 
-func run(ctx context.Context, c client.Reader, namespace, secretName string, handler http.Handler, t timing) {
+func run(ctx context.Context, c client.Reader, namespace, secretName string, handler http.Handler, status *Status, t timing) {
 	tn := &tunnel{
 		reader:  c,
 		key:     client.ObjectKey{Namespace: namespace, Name: secretName},
 		handler: handler,
+		status:  status,
 		timing:  t,
 		logger:  log.FromContext(ctx).WithName("aggregation").WithValues("secret", namespace+"/"+secretName),
 	}
 	tn.run(ctx)
+}
+
+// errNotConnected is Status.Check's error while no tunnel is connected.
+var errNotConnected = errors.New("operator API tunnel to Rancher is not connected")
+
+// Status reports whether Run has a tunnel to Rancher connected, i.e. whether
+// the operator API is reachable. The zero value reports not connected.
+type Status struct {
+	connected atomic.Bool
+}
+
+// Check matches healthz.Checker. It fails while no tunnel is connected: the
+// connection Secret is missing or incomplete, or the tunnel cannot be opened
+// (token, CA, proxy or network) or has dropped. Register it as a readiness
+// check only; a liveness failure would restart the operator whenever Rancher
+// is unavailable.
+func (s *Status) Check(*http.Request) error {
+	if !s.connected.Load() {
+		return errNotConnected
+	}
+	return nil
 }
 
 // connConfig is the connection data read from the Secret. Never log it.
@@ -122,6 +147,7 @@ type tunnel struct {
 	reader  client.Reader
 	key     client.ObjectKey
 	handler http.Handler
+	status  *Status
 	timing  timing
 	logger  logr.Logger
 }
@@ -259,6 +285,8 @@ func (tn *tunnel) connect(ctx context.Context, cfg connConfig) connectResult {
 		return connectResult{err: err}
 	}
 	tn.logger.Info("tunnel connected", "host", wsURL.Host)
+	tn.status.connected.Store(true)
+	defer tn.status.connected.Store(false)
 
 	// session.Serve does not watch ctx; closing the websocket ends it. When
 	// ctx is done, drain first.

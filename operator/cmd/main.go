@@ -406,10 +406,20 @@ func main() {
 		// Impersonate-* headers, which is safe only behind Rancher's tunnel.
 		setupLog.Error(nil, "operator API disabled: AGGREGATION_SECRET_NAME is empty "+
 			"(chart value aggregation.enabled=false); the UI extension cannot reach the operator")
-	} else if err := mgr.Add(apiRunnable(mgr.GetClient(), aggregationSecretNamespace, aggregationSecretName,
-		api.NewAggregatedHandler(authz))); err != nil {
-		setupLog.Error(err, "unable to set up the operator API")
-		os.Exit(1)
+	} else {
+		// The replica is ready only while its tunnel is connected, so a
+		// rollout or `helm --wait` does not succeed with an unreachable API.
+		// Liveness stays healthz.Ping: Rancher being down must not restart it.
+		tunnel := &aggregation.Status{}
+		if err := mgr.AddReadyzCheck("aggregation-tunnel", tunnel.Check); err != nil {
+			setupLog.Error(err, "unable to set up the operator API ready check")
+			os.Exit(1)
+		}
+		if err := mgr.Add(apiRunnable(mgr.GetClient(), aggregationSecretNamespace, aggregationSecretName,
+			api.NewAggregatedHandler(authz), tunnel)); err != nil {
+			setupLog.Error(err, "unable to set up the operator API")
+			os.Exit(1)
+		}
 	}
 
 	ctx := ctrl.SetupSignalHandler()
@@ -428,12 +438,15 @@ type everyReplica struct{ manager.RunnableFunc }
 func (everyReplica) NeedLeaderElection() bool { return false }
 
 // apiRunnable serves handler over Rancher's aggregation tunnel for the
-// lifetime of the manager. It runs on every replica: they share the
-// connection token and Rancher routes requests to any connected backend.
-func apiRunnable(c client.Reader, namespace, secretName string, handler http.Handler) manager.Runnable {
+// lifetime of the manager, reporting the tunnel state to status. It runs on
+// every replica: they share the connection token and Rancher routes requests
+// to any connected backend.
+func apiRunnable(
+	c client.Reader, namespace, secretName string, handler http.Handler, status *aggregation.Status,
+) manager.Runnable {
 	return everyReplica{RunnableFunc: func(ctx context.Context) error {
 		setupLog.Info("serving operator API over Rancher aggregation", "secret", namespace+"/"+secretName)
-		aggregation.Run(ctx, c, namespace, secretName, handler)
+		aggregation.Run(ctx, c, namespace, secretName, handler, status)
 		return nil
 	}}
 }

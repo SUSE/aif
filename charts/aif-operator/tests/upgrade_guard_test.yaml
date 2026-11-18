@@ -134,11 +134,13 @@ tests:
     asserts:
       - notFailedTemplate: {}
 
+  # The pre-release is on 2.5.1: a numeric identifier sorts before "dev", so
+  # 2.5.0-99999999999999999999 is older than the 2.5.0-dev.2 floor.
   - it: renders with the largest uint64 segment and with long leading zeros
     set:
       manager.image.tag: "18446744073709551615.0.0"
       aiExtension.source.helm.version: "0000000000000000000000003.0.0"
-      aiExtension.extension.version: "2.5.0-99999999999999999999"
+      aiExtension.extension.version: "2.5.1-99999999999999999999"
     asserts:
       - notFailedTemplate: {}
 
@@ -152,3 +154,53 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "manager.image.tag 0000000000000000000000001.0.0 is older than this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value."
+
+  # aif-operator.aggregationMinVersion: 2.5.0-dev.1 shares the chart's minor but
+  # predates the APIService, so its operator still serves the API on an
+  # unauthenticated listener. `--reuse-values` from 2.5.0-dev.1 keeps it.
+  - it: fails on the 2.5.0-dev.1 release's pinned manager.image.tag
+    set:
+      manager.image.tag: "2.5.0-dev.1"
+      aiExtension.source.helm.version: "2.5.0"
+      aiExtension.extension.version: "2.5.0"
+    asserts:
+      - failedTemplate:
+          errorMessage: "manager.image.tag 2.5.0-dev.1 is older than 2.5.0-dev.2, the first version that serves the operator API through Rancher's APIService, and does not work with this chart (2.5.0); a `helm upgrade --reuse-values` keeps the previous release's pinned versions. Upgrade with `--reset-then-reuse-values`, or set manager.image.tag explicitly. In Rancher Apps & Marketplace, edit the upgrade form's values (Edit YAML) and remove or update that value."
+
+  - it: fails on a pre-APIService aiExtension.source.helm.version
+    set:
+      manager.image.tag: "2.5.0"
+      aiExtension.source.helm.version: "v2.5.0-dev.1"
+      aiExtension.extension.version: "2.5.0"
+    asserts:
+      - failedTemplate:
+          errorPattern: "^aiExtension.source.helm.version v2.5.0-dev.1 is older than 2.5.0-dev.2, "
+
+  - it: fails on a pre-APIService aiExtension.extension.version
+    set:
+      manager.image.tag: "2.5.0"
+      aiExtension.source.helm.version: "2.5.0"
+      aiExtension.extension.version: "2.5.0-dev.1"
+    asserts:
+      - failedTemplate:
+          errorPattern: "^aiExtension.extension.version 2.5.0-dev.1 is older than 2.5.0-dev.2, "
+
+  - it: renders with versions from 2.5.0-dev.2 on
+    set:
+      manager.image.tag: "2.5.0-dev.2"
+      aiExtension.source.helm.version: "2.5.0-rc.1"
+      aiExtension.extension.version: "2.5.0-dev.10"
+    asserts:
+      - notFailedTemplate: {}
+
+  # A chart below the floor (main before the release that bumps it) renders
+  # with its own versions.
+  - it: skips the APIService floor when the chart predates it
+    chart:
+      appVersion: 2.5.0-dev.1
+    set:
+      manager.image.tag: "2.5.0-dev.1"
+      aiExtension.source.helm.version: "2.5.0-dev.1"
+      aiExtension.extension.version: "2.5.0-dev.1"
+    asserts:
+      - notFailedTemplate: {}

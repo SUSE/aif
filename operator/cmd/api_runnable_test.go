@@ -24,6 +24,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/SUSE/aif-operator/internal/aggregation"
 )
 
 // Every replica keeps its own tunnel open: Rancher load-balances across all
@@ -31,7 +33,7 @@ import (
 // election would leave non-leaders without a tunnel, so a request routed to
 // one of them would fail.
 func TestAPIRunnableRunsOnEveryReplica(t *testing.T) {
-	r := apiRunnable(fake.NewClientBuilder().Build(), "cattle-system", "aif-operator-aggregation", http.NotFoundHandler())
+	r := apiRunnable(fake.NewClientBuilder().Build(), "cattle-system", "aif-operator-aggregation", http.NotFoundHandler(), &aggregation.Status{})
 
 	le, ok := r.(manager.LeaderElectionRunnable)
 	if !ok {
@@ -46,7 +48,7 @@ func TestAPIRunnableRunsOnEveryReplica(t *testing.T) {
 // The tunnel stops with the manager: Start returns once its context is done,
 // so it does not hold up shutdown.
 func TestAPIRunnableStopsWithTheManager(t *testing.T) {
-	r := apiRunnable(fake.NewClientBuilder().Build(), "cattle-system", "aif-operator-aggregation", http.NotFoundHandler())
+	r := apiRunnable(fake.NewClientBuilder().Build(), "cattle-system", "aif-operator-aggregation", http.NotFoundHandler(), &aggregation.Status{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

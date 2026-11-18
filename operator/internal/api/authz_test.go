@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -228,14 +227,13 @@ func TestAuthz_AllRoutesCovered(t *testing.T) {
 		h.Register(a) // panics on any route without a rule
 	}
 
-	registered := a.registered
 	for pattern := range rules {
-		if !slices.Contains(registered, pattern) {
+		if !a.registered[pattern] {
 			t.Errorf("stale rule: %q is not registered by any handler", pattern)
 		}
 	}
-	if len(registered) != len(rules) {
-		t.Errorf("registered %d routes, have %d rules", len(registered), len(rules))
+	if len(a.registered) != len(rules) {
+		t.Errorf("registered %d routes, have %d rules", len(a.registered), len(rules))
 	}
 }
 
@@ -252,5 +250,39 @@ func TestAuthz_ForbiddenBodyHasNoData(t *testing.T) {
 	}
 	if got, want := strings.TrimSpace(w.Body.String()), `{"error":"FORBIDDEN","message":"forbidden"}`; got != want {
 		t.Errorf("body = %s, want %s", got, want)
+	}
+}
+
+// A route put on the mux without HandleFunc (reachable from this package)
+// has no SubjectAccessReview; ServeHTTP must refuse it before it runs.
+func TestAuthz_RouteRegisteredOnMuxDirectlyFailsClosed(t *testing.T) {
+	var seen []*authorizationv1.SubjectAccessReview
+	a := NewAuthorizer(sarClient(&seen, func(*authorizationv1.SubjectAccessReview) (bool, error) { return true, nil }), DefaultRules(testNS))
+	called := false
+	a.mux.HandleFunc("GET /api/v1/canary", func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, withUser(httptest.NewRequest("GET", "/api/v1/canary", nil), testUser))
+
+	if w.Code != http.StatusInternalServerError || called || len(seen) != 0 {
+		t.Fatalf("code=%d called=%v sars=%d, want 500, no handler, no SAR", w.Code, called, len(seen))
+	}
+}
+
+// The ServeMux's own answers match no pattern and are unaffected by the
+// dispatch check.
+func TestAuthz_MuxMethodNotAllowedPassesThrough(t *testing.T) {
+	var seen []*authorizationv1.SubjectAccessReview
+	a := NewAuthorizer(sarClient(&seen, func(*authorizationv1.SubjectAccessReview) (bool, error) { return true, nil }), DefaultRules(testNS))
+	a.HandleFunc("GET /api/v1/settings", func(http.ResponseWriter, *http.Request) {})
+
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, withUser(httptest.NewRequest("DELETE", "/api/v1/settings", nil), testUser))
+
+	if w.Code != http.StatusMethodNotAllowed || len(seen) != 0 {
+		t.Fatalf("code=%d sars=%d, want 405 and no SAR", w.Code, len(seen))
 	}
 }

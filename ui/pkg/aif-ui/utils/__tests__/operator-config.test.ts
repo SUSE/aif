@@ -12,6 +12,7 @@ import {
   loadOperatorConfig,
   operatorErrorMessage,
   operatorFetch,
+  recheckOperatorConnection,
   setOperatorStore,
   toOperatorError,
 } from '../operator-config';
@@ -359,6 +360,46 @@ describe('operatorFetch timeout dedupe key', () => {
     await Promise.all([first, second]);
 
     expect(steve.sent).toHaveLength(1);
+  });
+});
+
+describe('operator recovery after an unreachable check', () => {
+  beforeEach(async() => {
+    dispatch.mockRejectedValueOnce(shellResponse(503, 'Handler disconnected'));
+    await checkOperatorConnection(true);
+    expect(getConnectionError()).toBe(OPERATOR_UNREACHABLE);
+    dispatch.mockReset();
+  });
+
+  it.each([
+    ['a successful call', () => dispatch.mockResolvedValueOnce(shellResponse(200, { items: [] }))],
+    ['an operator error answer (403)', () => dispatch.mockRejectedValueOnce(shellResponse(403, { error: 'FORBIDDEN', message: 'forbidden' }))],
+  ])('clears the cached failure on %s, without probing again', async(_name, arrange) => {
+    arrange();
+
+    await operatorFetch('/api/v1/aiworkloads').catch(() => undefined);
+    await checkOperatorConnection();
+
+    expect(getConnectionError()).toBeNull();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the cached failure when the call does not reach the operator', async() => {
+    dispatch.mockRejectedValueOnce(shellResponse(503, 'Handler disconnected'));
+
+    await operatorFetch('/api/v1/aiworkloads').catch(() => undefined);
+
+    expect(getConnectionError()).toBe(OPERATOR_UNREACHABLE);
+  });
+
+  it('recheckOperatorConnection probes again and reports whether the operator is back', async() => {
+    dispatch.mockRejectedValueOnce(shellResponse(503, 'Handler disconnected'));
+    expect(await recheckOperatorConnection()).toBe(false);
+
+    dispatch.mockResolvedValueOnce(shellResponse(200, {}));
+    expect(await recheckOperatorConnection()).toBe(true);
+    expect(getConnectionError()).toBeNull();
+    expect(dispatch).toHaveBeenCalledTimes(2);
   });
 });
 

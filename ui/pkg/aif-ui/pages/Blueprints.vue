@@ -337,7 +337,9 @@ import {
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
 import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/catalog-api';
-import { checkOperatorConnection, getConnectionError, operatorErrorMessage } from '../utils/operator-config';
+import {
+  checkOperatorConnection, getConnectionError, operatorErrorMessage, recheckOperatorConnection,
+} from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import BlueprintSourceBadge from '../components/BlueprintSourceBadge.vue';
@@ -576,6 +578,13 @@ export default defineComponent({
 
     async function silentRefresh() {
       if (loading.value) return;
+      // The banner is up: re-check the connection instead of polling, and
+      // reload once the operator is back so the banner clears.
+      if (operatorError.value) {
+        if (await recheckOperatorConnection()) await refresh();
+
+        return;
+      }
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];

@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"io"
 	stdlog "log"
 	"math/big"
@@ -205,24 +206,26 @@ const tokenMarker = "s3cr3t"
 
 // startRun runs the tunnel client until the test ends, checks that it returns
 // once its context is cancelled, and checks that its log never contains a
-// token.
-func startRun(t *testing.T, c client.Reader, handler http.Handler) {
+// token. It returns the Status the client reports to.
+func startRun(t *testing.T, c client.Reader, handler http.Handler) *Status {
 	t.Helper()
-	startRunWithTiming(t, c, handler, testTiming)
+	_, _, status := startRunWithTiming(t, c, handler, testTiming)
+	return status
 }
 
-// startRunWithTiming is startRun with explicit timing. It returns the cancel
-// function of Run's context and a channel closed when Run returns, for tests
-// that stop the tunnel themselves.
-func startRunWithTiming(t *testing.T, c client.Reader, handler http.Handler, tm timing) (context.CancelFunc, <-chan struct{}) {
+// startRunWithTiming is startRun with explicit timing. It also returns the
+// cancel function of Run's context and a channel closed when Run returns, for
+// tests that stop the tunnel themselves.
+func startRunWithTiming(t *testing.T, c client.Reader, handler http.Handler, tm timing) (context.CancelFunc, <-chan struct{}, *Status) {
 	t.Helper()
+	status := &Status{}
 	logs := &logBuffer{}
 	logger := funcr.New(logs.write, funcr.Options{Verbosity: 10})
 	ctx, cancel := context.WithCancel(log.IntoContext(context.Background(), logger))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		run(ctx, c, testNamespace, testSecret, handler, tm)
+		run(ctx, c, testNamespace, testSecret, handler, status, tm)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -235,7 +238,7 @@ func startRunWithTiming(t *testing.T, c client.Reader, handler http.Handler, tm 
 			t.Errorf("the tunnel log contains a token:\n%s", out)
 		}
 	})
-	return cancel, done
+	return cancel, done, status
 }
 
 type logBuffer struct {
@@ -280,6 +283,9 @@ func eventually(t *testing.T, what string, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// connected reports whether status passes its readiness check.
+func connected(status *Status) bool { return status.Check(nil) == nil }
 
 func okHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -376,11 +382,14 @@ func TestRun_VerifiesTLS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFakeRancher(t)
 			c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-tok", tt.ca(t))).Build()
-			startRun(t, c, okHandler())
+			status := startRun(t, c, okHandler())
 
 			// The client must keep trying, and every attempt must fail the
 			// TLS handshake before the token is ever sent.
 			eventually(t, "several rejected TLS handshakes", func() bool { return f.handshakeErrors.Load() >= 3 })
+			if connected(status) {
+				t.Fatal("the readiness check passes although no tunnel could be opened")
+			}
 			if got := f.seenTokens(); len(got) != 0 {
 				t.Fatalf("the server received bearer tokens %v over unverified TLS", got)
 			}
@@ -423,9 +432,10 @@ func TestTLSConfigFor_EmptyCAUsesSystemRoots(t *testing.T) {
 func TestRun_SecretDeletedClosesTunnel(t *testing.T) {
 	f := newFakeRancher(t)
 	c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-tok", f.caPEM())).Build()
-	startRun(t, c, okHandler())
+	status := startRun(t, c, okHandler())
 
 	eventually(t, "the first tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
+	eventually(t, "the readiness check to pass", func() bool { return connected(status) })
 
 	if err := c.Delete(context.Background(), connectionSecret(f.url(), "s3cr3t-tok", nil)); err != nil {
 		t.Fatalf("delete secret: %v", err)
@@ -439,6 +449,8 @@ func TestRun_SecretDeletedClosesTunnel(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
+	eventually(t, "the readiness check to fail once the tunnel closed", func() bool { return !connected(status) })
+
 	// Back to waiting: no reconnect while the Secret is missing ...
 	before := len(f.seenTokens())
 	time.Sleep(10 * testTiming.poll)
@@ -450,23 +462,28 @@ func TestRun_SecretDeletedClosesTunnel(t *testing.T) {
 		t.Fatalf("create secret: %v", err)
 	}
 	eventually(t, "a tunnel session once the Secret is recreated", func() bool { return f.rd.HasSession("s3cr3t-tok-2") })
+	eventually(t, "the readiness check to pass again", func() bool { return connected(status) })
 }
 
 func TestRun_MissingSecretWaits(t *testing.T) {
 	f := newFakeRancher(t)
 	c := fake.NewClientBuilder().Build()
-	startRun(t, c, okHandler())
+	status := startRun(t, c, okHandler())
 
 	// Several poll intervals without a Secret: no connection attempt.
 	time.Sleep(10 * testTiming.poll)
 	if got := f.seenTokens(); len(got) != 0 || f.handshakeErrors.Load() != 0 {
 		t.Fatalf("connection attempted without a Secret (tokens %v)", got)
 	}
+	if err := status.Check(nil); !errors.Is(err, errNotConnected) {
+		t.Fatalf("readiness check without a Secret = %v, want errNotConnected", err)
+	}
 
 	if err := c.Create(context.Background(), connectionSecret(f.url(), "s3cr3t-tok", f.caPEM())); err != nil {
 		t.Fatalf("create secret: %v", err)
 	}
 	eventually(t, "a tunnel session once the Secret exists", func() bool { return f.rd.HasSession("s3cr3t-tok") })
+	eventually(t, "the readiness check to pass", func() bool { return connected(status) })
 }
 
 // blockingHandler serves "/slow" by signalling started and then waiting for
@@ -575,7 +592,7 @@ func TestRun_DrainsInFlightRequestOnCancel(t *testing.T) {
 	h := newBlockingHandler(t)
 	tm := testTiming
 	tm.drain = 3 * time.Second // long enough to observe the drain
-	cancel, done := startRunWithTiming(t, c, h, tm)
+	cancel, done, _ := startRunWithTiming(t, c, h, tm)
 
 	eventually(t, "the tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
 	res := f.getAsync("s3cr3t-tok", "/slow")
@@ -610,7 +627,7 @@ func TestRun_DrainIsBounded(t *testing.T) {
 	f := newFakeRancher(t)
 	c := fake.NewClientBuilder().WithObjects(connectionSecret(f.url(), "s3cr3t-tok", f.caPEM())).Build()
 	h := newBlockingHandler(t)
-	cancel, done := startRunWithTiming(t, c, h, testTiming)
+	cancel, done, _ := startRunWithTiming(t, c, h, testTiming)
 
 	eventually(t, "the tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
 	res := f.getAsync("s3cr3t-tok", "/slow")
@@ -647,7 +664,7 @@ func TestRun_SecretChangeDrains(t *testing.T) {
 	h := newBlockingHandler(t)
 	tm := testTiming
 	tm.drain = 3 * time.Second
-	startRunWithTiming(t, c, h, tm)
+	_, _, _ = startRunWithTiming(t, c, h, tm)
 
 	eventually(t, "a tunnel session for the old token", func() bool { return f.rd.HasSession("s3cr3t-old") })
 	res := f.getAsync("s3cr3t-old", "/slow")
@@ -707,7 +724,7 @@ func TestRun_DrainCompletesLargeResponseHandler(t *testing.T) {
 	})
 	tm := testTiming
 	tm.drain = 5 * time.Second
-	cancel, done := startRunWithTiming(t, c, handler, tm)
+	cancel, done, _ := startRunWithTiming(t, c, handler, tm)
 	eventually(t, "the tunnel session", func() bool { return f.rd.HasSession("s3cr3t-tok") })
 
 	readDone := make(chan struct{})

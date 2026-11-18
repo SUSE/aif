@@ -4,7 +4,9 @@ import { Banner }    from '@components/Banner';
 import { BadgeState } from '@components/BadgeState';
 import CountBox      from '@shell/components/CountBox';
 import Loading       from '@shell/components/Loading';
-import { checkOperatorConnection, getConnectionError, operatorErrorMessage } from '../utils/operator-config';
+import {
+  checkOperatorConnection, getConnectionError, operatorErrorMessage, recheckOperatorConnection,
+} from '../utils/operator-config';
 import { useT } from '../composables/useT';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import { listAIWorkloads }           from '../utils/operator-api';
@@ -126,6 +128,13 @@ async function retryConnection() {
 
 async function silentRefresh() {
   if (loading.value) return;
+  // The banner is up: re-check the connection instead of polling, and reload
+  // once the operator is back so the banner clears.
+  if (operatorError.value) {
+    if (await recheckOperatorConnection()) await refresh();
+
+    return;
+  }
   try {
     const [wlResult] = await Promise.all([listAIWorkloads(), refreshRepositoryHealth()]);
     workloads.value = wlResult.items || [];

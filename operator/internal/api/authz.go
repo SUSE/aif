@@ -50,14 +50,16 @@ type Rule struct {
 //
 // It owns the ServeMux and is itself the http.Handler that
 // NewAggregatedHandler serves, so handlers (Handler.Register) and main never
-// get a mux to register an unauthorized route on.
+// get a mux to register an unauthorized route on. Code in this package could
+// still reach the mux field, so ServeHTTP also refuses any route that was not
+// registered through HandleFunc.
 type Authorizer struct {
 	client client.Client
 	rules  map[string]Rule
 	// mux is written only by HandleFunc, which wraps every route in authorize.
 	mux *http.ServeMux
-	// registered lists the patterns registered so far, in order.
-	registered []string
+	// registered holds the patterns registered through HandleFunc.
+	registered map[string]bool
 }
 
 var _ http.Handler = (*Authorizer)(nil)
@@ -65,7 +67,7 @@ var _ http.Handler = (*Authorizer)(nil)
 // NewAuthorizer returns an Authorizer that checks requests against rules,
 // keyed by ServeMux pattern, using c to create SubjectAccessReviews.
 func NewAuthorizer(c client.Client, rules map[string]Rule) *Authorizer {
-	return &Authorizer{client: c, rules: rules, mux: http.NewServeMux()}
+	return &Authorizer{client: c, rules: rules, mux: http.NewServeMux(), registered: map[string]bool{}}
 }
 
 // Verbs and resources used by DefaultRules.
@@ -141,13 +143,22 @@ func (a *Authorizer) HandleFunc(pattern string, h http.HandlerFunc) {
 	if !ok {
 		panic(fmt.Sprintf("api: no authorization rule for route %q", pattern))
 	}
-	a.registered = append(a.registered, pattern)
+	a.registered[pattern] = true
 	a.mux.HandleFunc(pattern, a.authorize(rule, h))
 }
 
 // ServeHTTP routes r to the handler registered for it; unknown routes get
-// the ServeMux's 404 (or 405 for a known path with another method).
+// the ServeMux's 404 (or 405 for a known path with another method). A route
+// registered on mux without HandleFunc, and so without authorization, fails
+// closed with 500 before its handler runs.
 func (a *Authorizer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// The ServeMux's own 404 and 405 handlers match no pattern; a redirect to
+	// the canonical path reports the pattern it leads to.
+	if _, pattern := a.mux.Handler(r); pattern != "" && !a.registered[pattern] {
+		log.Printf("api: route %q was not registered through the Authorizer; refusing it", pattern)
+		writeError(w, http.StatusInternalServerError, &APIError{Code: ErrCodeInternal, Message: "route is not authorized"})
+		return
+	}
 	a.mux.ServeHTTP(w, r)
 }
 
