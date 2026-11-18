@@ -9,6 +9,7 @@ import { nextTick } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
 import { getSettings, putSettings } from '../../utils/operator-api';
 import { listCatalogs } from '../../utils/catalog-api';
+import { toOperatorError } from '../../utils/operator-config';
 
 vi.mock('../../utils/operator-api', () => ({
   getSettings: vi.fn().mockResolvedValue({ spec: {} }),
@@ -24,10 +25,17 @@ vi.mock('../../utils/blueprint-api', () => ({
   listBlueprints: vi.fn().mockResolvedValue({ items: [] }),
 }));
 
-vi.mock('../../utils/operator-config', () => ({
-  loadOperatorConfig: vi.fn().mockResolvedValue({}),
-  getOperatorNamespace: vi.fn().mockReturnValue('aif-operator'),
-}));
+vi.mock('../../utils/operator-config', async(importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/operator-config')>();
+
+  return {
+    toOperatorError:      actual.toOperatorError,
+    isOperatorNotFound:   actual.isOperatorNotFound,
+    operatorErrorMessage: actual.operatorErrorMessage,
+    loadOperatorConfig:   vi.fn().mockResolvedValue({}),
+    getOperatorNamespace: vi.fn().mockReturnValue('aif-operator'),
+  };
+});
 
 vi.mock('../../services/registry-endpoints', () => ({
   resolveRegistryEndpoints: vi.fn().mockReturnValue({}),
@@ -115,6 +123,35 @@ async function mountSettings(options: { route?: { query?: Record<string, string>
 
   return wrapper;
 }
+
+describe('Settings page - loading errors', () => {
+  const shellError = (status: number, body: Record<string, unknown> | string) => toOperatorError(
+    Object.defineProperty(typeof body === 'string' ? { data: body } : { ...body }, '_status', { value: status }),
+  );
+
+  it('shows the not-configured state when the operator answers its own NOT_FOUND', async () => {
+    vi.mocked(getSettings).mockRejectedValueOnce(shellError(404, { error: 'NOT_FOUND', message: 'settings not found' }));
+    const vm = (await mountSettings()).vm as any;
+
+    expect(vm.notFound).toBe(true);
+    expect(vm.fetchErrorMessage).toBeNull();
+  });
+
+  it('shows the operator-unreachable text, not the not-configured state, on a Rancher 404', async () => {
+    vi.mocked(getSettings).mockRejectedValueOnce(shellError(404, { type: 'error', status: 404, code: 'NotFound' }));
+    const vm = (await mountSettings()).vm as any;
+
+    expect(vm.notFound).toBe(false);
+    expect(vm.fetchErrorMessage).toMatch(/AI Factory operator is unreachable/);
+  });
+
+  it('shows the operator-unreachable text instead of a raw Handler disconnected', async () => {
+    vi.mocked(getSettings).mockRejectedValueOnce(shellError(503, 'Handler disconnected'));
+    const vm = (await mountSettings()).vm as any;
+
+    expect(vm.fetchErrorMessage).toMatch(/AI Factory operator is unreachable/);
+  });
+});
 
 describe('Settings page - Repositories grouping', () => {
   it('renders a Repositories parent that groups the built-in repo sections and the Add button', async () => {

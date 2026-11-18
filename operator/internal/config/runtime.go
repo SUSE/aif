@@ -36,11 +36,25 @@ func GetOperatorNamespace() string {
 	return DefaultOperatorNamespace
 }
 
-const DefaultOperatorService = "aif-operator"
+// GetAggregationSecretName returns the name of the Secret Rancher's APIService
+// controller writes the aggregation tunnel connection (url, token, ca.crt)
+// into. Empty disables the operator API; there is no default.
+func GetAggregationSecretName() string {
+	return os.Getenv("AGGREGATION_SECRET_NAME")
+}
 
-func GetOperatorService() string {
-	if svc := os.Getenv("OPERATOR_SERVICE"); svc != "" {
-		return svc
+// DefaultAggregationSecretNamespace matches the chart's
+// aggregation.secretNamespace default.
+const DefaultAggregationSecretNamespace = "cattle-system"
+
+// GetAggregationSecretNamespace returns the namespace of the aggregation
+// Secret. It must not be the operator namespace: the Settings API's
+// validate-credentials overrides resolve Secret refs in the operator
+// namespace and send their values as basic auth to a caller-chosen URL, so a
+// tunnel token stored there could be sent out.
+func GetAggregationSecretNamespace() string {
+	if ns := os.Getenv("AGGREGATION_SECRET_NAMESPACE"); ns != "" {
+		return ns
 	}
-	return DefaultOperatorService
+	return DefaultAggregationSecretNamespace
 }

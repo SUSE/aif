@@ -4,7 +4,11 @@ import { Banner }    from '@components/Banner';
 import { BadgeState } from '@components/BadgeState';
 import CountBox      from '@shell/components/CountBox';
 import Loading       from '@shell/components/Loading';
-import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import {
+  OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, isOperatorUnreachable, operatorErrorMessage,
+  recheckOperatorConnection,
+} from '../utils/operator-config';
+import { useT } from '../composables/useT';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import { listAIWorkloads }           from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, latestVersion } from '../utils/blueprint-api';
@@ -21,6 +25,7 @@ import { requestErrorMessage } from '../services/rancher-token';
 import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
 
 const vm      = getCurrentInstance()!.proxy as any;
+const t       = useT();
 const router  = vm.$router;
 const route   = vm.$route;
 const cluster = (route?.params?.cluster as string) || '_';
@@ -98,7 +103,7 @@ async function refresh() {
     blueprints.value = bpResult.items || [];
     clusters.value   = clResult;
   } catch (e: any) {
-    error.value = e?.message || 'Failed to load overview data';
+    error.value = operatorErrorMessage(e, t, 'Failed to load overview data');
   } finally {
     loading.value = false;
   }
@@ -124,10 +129,21 @@ async function retryConnection() {
 
 async function silentRefresh() {
   if (loading.value) return;
+  // The banner is up: re-check the connection instead of polling, and reload
+  // once the operator is back so the banner clears.
+  if (operatorError.value) {
+    if (await recheckOperatorConnection()) await refresh();
+
+    return;
+  }
   try {
     const [wlResult] = await Promise.all([listAIWorkloads(), refreshRepositoryHealth()]);
     workloads.value = wlResult.items || [];
-  } catch { /* ignore */ }
+  } catch (e) {
+    // The operator stopped answering: show the banner, which the branch above
+    // clears once it is back. Other errors stay silent.
+    if (isOperatorUnreachable(e)) operatorError.value = OPERATOR_UNREACHABLE;
+  }
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;

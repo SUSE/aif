@@ -9,13 +9,14 @@ import BlueprintCustomizeStep        from './wizard/BlueprintCustomizeStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryCredentials } from '../../utils/operator-api';
+import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus } from '../../utils/operator-api';
+import { operatorErrorMessage } from '../../utils/operator-config';
 import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
 import { crNameForCluster, defaultInstallNamespace } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import type { Blueprint } from '../../types/blueprint-types';
-import type { AIWorkloadDeployStrategy, ComponentValueOverride } from '../../types/aiworkload-types';
+import type { AIWorkloadDeployStrategy, ComponentValueOverride, RegistryStatus } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
 
 interface Props {
@@ -58,17 +59,16 @@ watch(fleetGitConfigured, (configured) => {
 const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
-const registryCreds = ref<any>(null);
+const registryStatus = ref<RegistryStatus | null>(null);
 // missingCreds recomputes as componentValues changes so excluding a component
 // (e.g. the only one that needs NVIDIA credentials) drops its credential
 // requirement immediately, instead of freezing the mount-time component list.
 const missingCreds = computed(() => {
-  if (!registryCreds.value) return [];
   const enabledComponents = (blueprint.value?.spec.components || []).filter((c) => {
     const override = componentValues.value.find((ov) => ov.componentName === c.chartName);
     return override?.enabled !== false;
   });
-  return missingCredentialsForBlueprint(enabledComponents, registryCreds.value);
+  return missingCredentialsForBlueprint(enabledComponents, registryStatus.value);
 });
 const CRED_LABELS: Record<RequiredCredential, string> = {
   applicationCollection: 'Application Collection',
@@ -105,17 +105,17 @@ onMounted(async () => {
     }
 
     try {
-      // Resolve credentials the operator's way (spec refs + well-known secrets)
+      // Read the operator's registry status (spec refs + well-known secrets)
       // so the pre-flight matches what the operator can actually create.
-      registryCreds.value = await getRegistryCredentials();
+      registryStatus.value = await getRegistryStatus();
     } catch (e) {
-      // If credentials can't be read, don't block — the operator status is the
+      // If the status can't be read, don't block — the operator status is the
       // backstop. Log for diagnosis.
-      console.warn('[SUSE-AI] Pre-flight credential check skipped (credentials unavailable):', e);
-      registryCreds.value = null;
+      console.warn('[SUSE-AI] Pre-flight credential check skipped (registry status unavailable):', e);
+      registryStatus.value = null;
     }
   } catch (e: any) {
-    error.value = e?.message || 'Failed to load blueprint';
+    error.value = operatorErrorMessage(e, t, 'Failed to load blueprint');
   } finally {
     loading.value = false;
   }
@@ -182,7 +182,7 @@ async function onInstall() {
       });
       router.push({ name: `c-cluster-${ PRODUCT }-workloads`, params: { cluster } });
     } catch (e: any) {
-      error.value = e?.message || 'Failed to save changes';
+      error.value = operatorErrorMessage(e, t, 'Failed to save changes');
     } finally {
       submitting.value = false;
     }

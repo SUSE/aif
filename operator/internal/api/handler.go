@@ -16,10 +16,9 @@ limitations under the License.
 
 package api
 
-import "net/http"
-
 // Handler is implemented by every API resource group.
-// Register wires the resource's routes onto the provided mux.
+// Register wires the resource's routes with a.HandleFunc, which authorizes
+// every request (see Authorizer). There is no mux to register on directly.
 type Handler interface {
-	Register(mux *http.ServeMux)
+	Register(a *Authorizer)
 }

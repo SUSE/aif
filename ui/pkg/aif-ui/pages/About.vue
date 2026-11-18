@@ -12,6 +12,7 @@ export default {
       operatorCommit:        null,
       chartVersion:          null,
       operatorVersionLoaded: false,
+      operatorVersionDenied: false,
       extensionVersion:      EXTENSION_VERSION,
       docsUrl:               SUSEAI_PRODUCT.docsRoute,
       supportUrl:            SUSEAI_PRODUCT.supportRoute,
@@ -36,6 +37,8 @@ export default {
         // eslint-disable-next-line no-console
         console.warn('[SUSE-AI] failed to fetch operator version', e);
         this.operatorVersion = null;
+        // GET /api/v1/version needs `get settings`; say so rather than "unavailable".
+        this.operatorVersionDenied = e?.status === 403;
       } finally {
         this.operatorVersionLoaded = true;
       }
@@ -85,7 +88,7 @@ export default {
               <span
                 v-else
                 class="text-muted"
-              >{{ t('suseai.pages.about.sections.versions.unavailable') }}</span>
+              >{{ t(operatorVersionDenied ? 'suseai.pages.about.sections.versions.notPermitted' : 'suseai.pages.about.sections.versions.unavailable') }}</span>
             </td>
           </tr>
           <tr>
@@ -101,7 +104,7 @@ export default {
               <span
                 v-else
                 class="text-muted"
-              >{{ t('suseai.pages.about.sections.versions.unavailable') }}</span>
+              >{{ t(operatorVersionDenied ? 'suseai.pages.about.sections.versions.notPermitted' : 'suseai.pages.about.sections.versions.unavailable') }}</span>
             </td>
           </tr>
         </tbody>

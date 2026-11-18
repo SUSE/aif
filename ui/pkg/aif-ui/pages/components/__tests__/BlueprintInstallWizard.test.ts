@@ -8,7 +8,7 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import BlueprintInstallWizard from '../BlueprintInstallWizard.vue';
 import { getBlueprint } from '../../../utils/blueprint-api';
-import { listAIWorkloads } from '../../../utils/operator-api';
+import { listAIWorkloads, getRegistryStatus } from '../../../utils/operator-api';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
 
 vi.mock('../../../utils/blueprint-api', async (original) => ({
@@ -16,7 +16,7 @@ vi.mock('../../../utils/blueprint-api', async (original) => ({
 }));
 vi.mock('../../../utils/operator-api', () => ({
   listAIWorkloads:        vi.fn(),
-  getRegistryCredentials: vi.fn().mockResolvedValue(null),
+  getRegistryStatus:      vi.fn().mockResolvedValue(null),
   getSettings:            vi.fn().mockResolvedValue({}),
   createAIWorkload:       vi.fn(),
   updateAIWorkload:       vi.fn(),
@@ -102,5 +102,36 @@ describe('blueprint install wizard namespace', () => {
     expect(namespaceInput(wrapper)).toBe('');
     expect(fetchUserNamespaces).toHaveBeenCalledWith(expect.anything(), '');
     expect(button(wrapper, 'Next').attributes('disabled')).toBeDefined();
+  });
+});
+
+describe('blueprint install wizard credential preflight', () => {
+  const components = [
+    { chartName: 'ac-app', chartRepo: 'application-collection' },
+    { chartName: 'nim', chartRepo: 'nvidia' },
+  ];
+
+  afterEach(() => vi.mocked(getRegistryStatus).mockReset().mockResolvedValue(null as any));
+
+  async function reviewStep() {
+    vi.mocked(getBlueprint).mockResolvedValue({ spec: { displayName: 'My Blueprint', components } } as any);
+    const wrapper = await setup();
+    (wrapper.vm as any).currentStep = 3;
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('flags credentials the registry status reports as unconfigured', async () => {
+    vi.mocked(getRegistryStatus).mockResolvedValue({ applicationCollection: true, suseRegistry: false, nvidia: false });
+    const wrapper = await reviewStep();
+    expect(getRegistryStatus).toHaveBeenCalled();
+    expect(wrapper.text()).toContain("This blueprint needs credentials that aren't configured: NVIDIA.");
+    expect(button(wrapper, 'Install').attributes('disabled')).toBeDefined();
+  });
+
+  it('shows no banner when the registry status is unavailable', async () => {
+    vi.mocked(getRegistryStatus).mockRejectedValue(new Error('operator unreachable'));
+    const wrapper = await reviewStep();
+    expect(wrapper.text()).not.toContain('needs credentials');
   });
 });

@@ -53,13 +53,33 @@ var _ = Describe("UI ConfigMap sync", func() {
 		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, cm))).To(Succeed())
 	})
 
-	It("creates the ConfigMap with operator coordinates when it does not exist", func() {
+	It("creates the ConfigMap with the operator namespace when it does not exist", func() {
 		Expect(r.syncUIConfigMap(ctx)).To(Succeed())
 
 		var stored corev1.ConfigMap
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: uiConfigMapName, Namespace: namespace}, &stored)).To(Succeed())
 		Expect(stored.Data).To(HaveKey("operatorNamespace"))
-		Expect(stored.Data).To(HaveKey("operatorService"))
+		// The UI reaches the operator through Rancher's APIService aggregation
+		// (/v1/aif-operator), not a Service, so no service name is written.
+		Expect(stored.Data).NotTo(HaveKey("operatorService"))
+	})
+
+	It("leaves other keys of an existing ConfigMap alone, including a stale operatorService", func() {
+		// A ConfigMap written by an earlier operator or aif-ui chart still
+		// carries operatorService; syncing must not fail on it or drop other
+		// settings such as useStaticCatalog.
+		existing := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: uiConfigMapName, Namespace: namespace},
+			Data:       map[string]string{"operatorService": "aif-operator", "useStaticCatalog": "false"},
+		}
+		Expect(k8sClient.Create(ctx, existing)).To(Succeed())
+
+		Expect(r.syncUIConfigMap(ctx)).To(Succeed())
+
+		var stored corev1.ConfigMap
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: uiConfigMapName, Namespace: namespace}, &stored)).To(Succeed())
+		Expect(stored.Data).To(HaveKey("operatorNamespace"))
+		Expect(stored.Data).To(HaveKeyWithValue("useStaticCatalog", "false"))
 	})
 
 	It("self-heals Data without touching pre-existing labels or annotations", func() {

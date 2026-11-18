@@ -10,7 +10,9 @@ import LabeledSelect    from '@shell/components/form/LabeledSelect';
 import SecretSelector   from '@shell/components/form/SecretSelector';
 import RegistryConnectionStatus from './components/RegistryConnectionStatus.vue';
 import { getSettings, putSettings, validateCredentials } from '../utils/operator-api';
-import { loadOperatorConfig, getOperatorNamespace } from '../utils/operator-config';
+import {
+  loadOperatorConfig, getOperatorNamespace, isOperatorNotFound, operatorErrorMessage,
+} from '../utils/operator-config';
 import { listCatalogs } from '../utils/catalog-api';
 import { listBlueprints } from '../utils/blueprint-api';
 import { CATALOG_DEFAULT_NAME, CATALOG_PARTNER_NAME } from '../types/catalog-types';
@@ -79,12 +81,12 @@ export default {
       this.loaded = true;
       await this.loadTokenState();
     } catch (e) {
-      if (e?.status === 404) {
+      if (isOperatorNotFound(e)) {
         this.notFound = true;
         this.loaded   = true;
         await this.loadTokenState();
       } else {
-        this.fetchErrorMessage = e?.message || String(e);
+        this.fetchErrorMessage = operatorErrorMessage(e, this.t);
         this.loaded            = true;
       }
     }
@@ -434,7 +436,7 @@ export default {
         row.testResult = (resp.results || []).find((r) => r.target === 'gitops') || null;
         buttonDone(!!row.testResult && row.testResult.status !== 'failed' && row.testResult.status !== 'error');
       } catch (e) {
-        row.testResult = { target: 'gitops', status: 'error', message: e?.message || String(e) };
+        row.testResult = { target: 'gitops', status: 'error', message: operatorErrorMessage(e, this.t) };
         buttonDone(false);
       }
     },
@@ -502,7 +504,7 @@ export default {
 
         return true;
       } catch (e) {
-        this.errors = [e?.message || String(e)];
+        this.errors = [operatorErrorMessage(e, this.t)];
         buttonDone(false);
 
         return false;
@@ -546,7 +548,7 @@ export default {
         // drive the button's error animation for it.
         buttonDone(!!res && res.status !== 'failed' && res.status !== 'error');
       } catch (e) {
-        this.testResults[target] = { target, status: 'error', message: e?.message || String(e) };
+        this.testResults[target] = { target, status: 'error', message: operatorErrorMessage(e, this.t) };
         buttonDone(false);
       }
     },

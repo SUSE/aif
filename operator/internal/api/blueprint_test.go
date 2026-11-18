@@ -52,8 +52,7 @@ func newBlueprintHandler(t *testing.T) http.Handler {
 
 func newBlueprintHandlerWithClient(t *testing.T, c client.Client) http.Handler {
 	t.Helper()
-	mux := http.NewServeMux()
-	NewBlueprintHandler(c).Register(mux)
+	mux := newTestMux(NewBlueprintHandler(c))
 	return mux
 }
 
@@ -386,8 +385,7 @@ func TestDeleteBlueprint_Bundled_Returns403(t *testing.T) {
 		aiplatformv1alpha1.BlueprintSourceLabel: aiplatformv1alpha1.BlueprintSourceBundled,
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(bundled).Build()
-	mux := http.NewServeMux()
-	NewBlueprintHandler(c).Register(mux)
+	mux := newTestMux(NewBlueprintHandler(c))
 
 	// Delete is rejected with 403.
 	req := httptest.NewRequest("DELETE", "/api/v1/blueprints/bundled-1-0-0", nil)
@@ -417,8 +415,7 @@ func TestDeleteBlueprint_FleetOwned_Returns403(t *testing.T) {
 		"fleet.cattle.io/bundle-name": "blueprint-catalog-acme-blueprints",
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(fleetOwned).Build()
-	mux := http.NewServeMux()
-	NewBlueprintHandler(c).Register(mux)
+	mux := newTestMux(NewBlueprintHandler(c))
 
 	// Delete is rejected with 403.
 	req := httptest.NewRequest("DELETE", "/api/v1/blueprints/acme-rag-1-0-0", nil)

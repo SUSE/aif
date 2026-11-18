@@ -1,150 +1,135 @@
 # Unreleased
 
-## Registry and chart repository verification
+## Operator API through Rancher
 
-AI Factory Settings now reports three separate results when you click **Test**:
+The operator API is now served through Rancher, at
+`/v1/aif-operator/api/v1/...`. The chart registers it with a Rancher
+`management.cattle.io/v3` `APIService`, and the operator opens an outbound
+tunnel to Rancher. The operator no longer listens on port 8080, and the
+`aif-operator` Service is removed. The Kubernetes service proxy URL
+(`/api/v1/namespaces/<namespace>/services/http:aif-operator:8080/proxy/...`)
+no longer works; integrators calling it must switch to `/v1/aif-operator`.
 
-- **Registry connection:** the configured registry responds. A successful login
-  does not establish permission to read charts.
-- **Chart access:** the operator tests a sample chart using the current form's
-  endpoint, credentials and CA bundle. OCI sources are checked by reading a chart
-  manifest; HTTPS Helm sources are checked by reading the index and checking a
-  chart file's accessibility with a one-byte range request. The result names the
-  chart and version tested.
-- **Rancher repository:** the saved ClusterRepo has a downloaded index and current
-  download status. Unsaved settings and reconciliation still in progress are
-  identified separately.
+- **Rancher authenticates every request.** The operator takes the user from the
+  identity Rancher forwards and returns HTTP 401 when there is none. Each route
+  is checked with a Kubernetes SubjectAccessReview against the AI Factory
+  objects, and returns HTTP 403 when the user lacks the permission:
 
-For OCI sources, **Chart to test** can be changed to a chart present in your
-repository. The default samples are `ollama` (Application Collection), `qdrant`
-(SUSE Registry), and `aiq-aira` (a NVIDIA mirror). A missing sample is reported as
-unavailable, not as proof of invalid credentials or a missing subscription.
-Only the listed chart/version is checked; full chart downloads, other charts,
-container images and cluster installation prerequisites are not verified.
+  | Route | Required permission (`ai-factory.suse.com`) |
+  | --- | --- |
+  | `GET /api/v1/version`, `GET /api/v1/catalog` | `get` `settings` in the operator namespace |
+  | `GET /api/v1/settings`, `GET /api/v1/settings/registry-status` | `get` `settings` in the operator namespace |
+  | `PUT /api/v1/settings` | `update` `settings` in the operator namespace |
+  | `POST /api/v1/settings/validate-credentials`, `POST /api/v1/settings/validate-chart-access`, `POST /api/v1/git/publish` | `update` `settings` in the operator namespace |
+  | `GET /api/v1/blueprint-catalogs` | `list` `blueprintcatalogs` |
+  | `GET /api/v1/blueprints` | `list` `blueprints` |
+  | `GET /api/v1/blueprints/{name}` | `get` that `blueprint` |
+  | `POST /api/v1/blueprints` | `create` `blueprints` |
+  | `PUT`, `DELETE` on `/api/v1/blueprints/{name}` | `update`, `delete` that `blueprint` |
+  | `GET /api/v1/aiworkloads` | `list` `aiworkloads` in all namespaces |
+  | `POST /api/v1/namespaces/{namespace}/aiworkloads` | `create` `aiworkloads` in that namespace |
+  | `DELETE` on `/api/v1/namespaces/{namespace}/aiworkloads/{name}` | `delete` that `aiworkload` |
+  | `PATCH` on `/api/v1/namespaces/{namespace}/aiworkloads/{name}`; `POST .../aiworkloads/{name}/upgrade`, `/rollback`, `/retry` | `update` that `aiworkload` |
 
-An access denial from the public SUSE AI chart repository advises checking both
-credentials and their SUSE AI subscription entitlement. Private mirror failures
-advise checking mirror permissions and content. HTTP 401/403, missing content,
-invalid indexes, TLS failures and timeouts have distinct explanations.
+  Every modification of an existing object (saving Settings, editing a
+  Blueprint or workload, and the workload upgrade, rollback and retry actions)
+  needs `update`. Rancher global admins and owners of the cluster that runs the
+  operator hold all of these permissions.
+- **Writes need a JSON body.** `POST`, `PUT`, `PATCH` and `DELETE` requests
+  without `Content-Type: application/json` get HTTP 415. Writes made with a
+  browser session must also send the `X-Api-Csrf` header with the value of the
+  `CSRF` cookie, or they get HTTP 403. The AI Factory UI extension sends both.
+- **The operator API no longer returns registry passwords.** The
+  `GET /api/v1/settings/registry-credentials` endpoint is removed. The new
+  `GET /api/v1/settings/registry-status` returns only whether App Collection,
+  SUSE Registry and NVIDIA credentials are configured. It answers 500 when
+  Settings or a credential Secret cannot be read, rather than reporting the
+  credentials as not configured.
+- **The App wizard no longer fetches registry passwords from the operator.**
+  Installed apps reference the pull secrets the operator delivers to target
+  clusters: `suse-ai-pull-combined` for App Collection and SUSE Registry charts,
+  and `ngc-secret` for NVIDIA charts. The wizard still creates per-registry
+  `suse-ai-pull-secret-<host>` Secrets from the Rancher ClusterRepo
+  credentials, using the signed-in user's own permissions.
+- **Wildcard CORS removed.** The API no longer sends
+  `Access-Control-Allow-Origin: *`.
+- **The "operator is unreachable" banner follows the operator.** Overview,
+  Blueprints and Workloads show it when their 10-second refresh cannot reach the
+  operator, instead of silently keeping stale data, then re-check the connection
+  every 10 seconds and reload once the operator answers. Any answer from the
+  operator also clears the banner on pages opened later, so a brief outage (an
+  operator rollout or a Rancher restart) no longer needs a **Retry** click.
+- **New chart value `aggregation.enabled`** (default `true`) controls the
+  `APIService`. Setting it to `false` disables the operator API, and the AI
+  Factory UI extension does not work. Installing on a cluster without Rancher
+  Manager fails unless it is set to `false`, because the `APIService` CRD is
+  missing.
+- **Connection Secret.** Rancher writes the tunnel token into the Secret
+  `aif-operator-aggregation` (`<fullname>-aggregation`) in `cattle-system`,
+  set by the new chart value `aggregation.secretNamespace` (default
+  `cattle-system`). Keep it outside the operator namespace: the Settings
+  credential validation can use any Secret in the operator namespace. The
+  operator receives the Secret's name and namespace through the
+  `AGGREGATION_SECRET_NAME` and `AGGREGATION_SECRET_NAMESPACE` environment
+  variables. Keep the operator namespace admin-only for the other credential
+  Secrets: leave it unassigned to a Rancher project, or move it to the
+  **System** project.
 
-The Overview displays managed repository failures and links to Settings and the
-native Rancher repository page. The Applications page keeps known catalog entries
-for unavailable repositories visible, with installation disabled and a Settings
-link. Healthy private mirrors continue to show only their discovered subset in
-dynamic catalog mode. Direct wizard links also check repository readiness and
-explain missing indexes instead of reporting `configmaps "" not found`.
+### Upgrade notes
 
-### Repositories managed by AI Factory
-
-AI Factory uses the stable ClusterRepo names `application-collection`,
-`suse-ai-registry`, `nvidia`, and `nvidia-blueprints`. In connected mode, NVIDIA
-team repositories from the bundled catalog are also created, including gated
-repositories such as Run:ai. Public NVIDIA repositories are accessed anonymously;
-classified gated repositories use the selected NGC credentials. An NGC key may
-have access to some repositories and lack access to others.
-
-An unavailable optional team repository does not establish that the NGC key is
-invalid for every NVIDIA application. Review the individual source results.
-
-With private endpoints configured, the same stable repository names point to
-those mirrors. The test uses the configured path, credentials and private CA;
-it does not fall back to the public source. NVIDIA mirror mode tests only the
-mirror and preserves both NVIDIA aliases instead of testing public team sources.
-
-**Test** is read-only. **Apply** saves form changes. **Refresh** explicitly asks
-Rancher to retry a saved repository download; it cannot grant registry permissions.
-After correcting credentials or mirror content, use Refresh and then Test again.
-Deploy the matching operator and extension versions to enable direct chart checks.
-
-## SUSE partner blueprint catalog
-
-The chart now syncs the SUSE partner blueprint catalog by default. It renders a
-Fleet `GitRepo`, `fleet-local/aif-partner-blueprints`, that tracks the `partners`
-folder of `https://github.com/suse/partner-blueprints.git` on `main`. Partner
-blueprints appear on the Blueprints page as Fleet syncs them.
-
-- **Turning it off:** set `partnerBlueprints.enabled=false` (with
-  `--reuse-values`). Fleet then removes the synced partner blueprints.
-- **Air-gapped clusters:** the `GitRepo` reports clone errors until the catalog
-  is disabled or pointed at an internal mirror with `partnerBlueprints.git.*`.
-  Mirrors that need credentials or a private CA are added as an ordinary catalog
-  instead. See the air-gap guide.
-- **Existing catalogs:** if you already added a catalog on the Settings page
-  that points at the partner repository, remove it after upgrading. Otherwise
-  two `GitRepo`s sync the same blueprints and conflict.
-
-The partner catalog is a chart resource, not a Settings page entry, so upgrading
-the chart never touches catalogs added on the Settings page.
-
-### Helm-declared catalogs are read-only
-
-Catalogs declared in the chart's `blueprintCatalogs` value are now listed in the
-`ai-factory.suse.com/helm-managed` annotation on the `Settings` resource. The
-Settings page shows them with a **Managed by Helm** badge and no edit controls.
-They are changed or removed only with `helm upgrade`.
-
-- `PUT /api/v1/settings` returns HTTP 400 if a request changes a Helm-declared
-  catalog. It returns HTTP 500 if the live `Settings` resource can't be read or
-  its `helm-managed` annotation is malformed.
-- A catalog added on the Settings page with the same name as a Helm-declared one
-  but a different repository, branch or paths makes `helm upgrade` fail with a
-  server-side apply conflict. Remove or rename it before upgrading.
-- Keeping Settings-page catalogs next to Helm-declared ones needs server-side
-  apply. Releases first installed with Helm 3, including ones upgraded through
-  Rancher Apps, keep client-side apply until one `helm upgrade --server-side=true`.
-  This only matters when `blueprintCatalogs` is not empty.
-- After `helm uninstall` the annotation stays on the kept `Settings` resource.
-  Remove it with
-  `kubectl annotate settings.ai-factory.suse.com settings -n aif-operator ai-factory.suse.com/helm-managed-`
-  to edit those catalogs on the Settings page again.
-
-## Blueprint partner icons and Partner source
-
-Blueprints accept two new optional `spec` values:
-
-- **`icon`:** a partner logo, shown next to the source badge on the Blueprints
-  page. It never replaces the badge. Only `https://` URLs and base64 raster
-  `data:` URIs (png, gif, jpeg, webp) are accepted, up to 16 KB. Plain `http://`
-  and SVG are rejected. The UI also skips icons that point at IP addresses or
-  internal names (such as `*.svc`, `*.local` or `metadata.google.internal`), and
-  hides the logo if it fails to load. Air-gapped installs should use `data:` URIs.
-- **`source: Partner`:** for blueprints published through the partner catalog.
-  Like every `source` value, it is declared by the blueprint author and is not
-  verified by the operator.
-
-Editing a blueprint keeps its icon and source. Copying a blueprint creates a
-Custom blueprint without an icon.
-
-Updating a blueprint with an invalid spec now returns HTTP 422 instead of 500.
-
-**Compatibility:** both fields need the Blueprint CRD shipped with this release,
-which the chart applies on upgrade. aif-operator 2.2.0 rejects `source: Partner`,
-so catalog authors must not use it until the minimum supported operator version
-includes this change.
-
-## Community blueprint source
-
-Blueprints accept **`source: Community`** for blueprints published through the
-community catalog. It renders as a text badge on the Blueprints page and, like
-every `source` value, is declared by the blueprint author and not verified by
-the operator. `icon` works the same as for Partner blueprints.
-
-**Compatibility:** needs the Blueprint CRD shipped with this release, which the
-chart applies on upgrade. Older operators reject `source: Community`, so catalog
-authors must not use it until the minimum supported operator version includes
-this change.
-
-## Registry section help in Settings
-
-The SUSE Application Collection, SUSE Registry and NVIDIA AI Library sections
-in Settings now open with a one-line summary of what the source provides and a
-"Learn more" link to that source's section of the post-deployment guide, which
-covers credentials and air-gapped mirrors.
-
-## Random default namespace for new installs
-
-The app and Blueprint install wizards now suggest a namespace with a random
-suffix, such as `coredns-k3x9q2a`, instead of `coredns-system`. Installing the
-same app twice no longer fails because a deployment with the same instance name
-already exists in the shared default namespace. The field can still be changed,
-and existing installs keep their namespace.
+- **Don't upgrade with plain `helm upgrade --reuse-values`.** It keeps the
+  previous release's pinned `manager.image.tag`, `aiExtension.source.helm.version`
+  and `aiExtension.extension.version`, so the new chart would run the old
+  operator image. Use `--reset-then-reuse-values` (Helm 3.14 or later), or pass
+  the new versions explicitly. The chart refuses to render when one of these
+  values is a version older (by major.minor) than the chart's `appVersion`, or
+  older than `2.5.0-dev.2`, the first version that serves the operator API
+  through Rancher's APIService (so an upgrade from `2.5.0-dev.1` with
+  `--reuse-values` is refused too). The error names the value.
+  In Rancher Apps & Marketplace an upgrade sends only the values that differ
+  from the new chart's defaults; if the upgrade form shows a pinned
+  `manager.image.tag` or `aiExtension` version from the previous release, edit
+  it to the new version or remove it.
+- **Upgrade the operator and the AI Factory UI extension together,** then
+  reload the Rancher UI. An older extension can't reach the new operator and
+  shows **Cannot connect to the SUSE AI operator** until the extension is
+  upgraded. A newer extension against an older operator shows **AI Factory
+  operator is unreachable. Make sure the operator and the AI Factory UI
+  extension are the same version.** The operator upgrades the extension
+  automatically unless `aiExtension.enabled=false`; those installs must upgrade
+  the extension manually.
+- **Rancher 2.13 or later is required.** The UI extension now declares
+  `catalog.cattle.io/rancher-version: >= 2.13.0-0`. Tested on Rancher v2.13.1
+  and v2.15.2, including Rancher with 3 replicas.
+- **Removed chart value:** `api.port`, because the operator no longer has an
+  API port. A value still set from an earlier release, for example with
+  `helm upgrade --reset-then-reuse-values`, is ignored.
+- **Readiness waits for the tunnel.** An operator pod is Ready only while its
+  tunnel to Rancher is connected, so `helm upgrade --wait` fails, and the
+  rollout keeps the previous pods, when the new pods cannot reach Rancher. See
+  "HTTPS proxy" below for the most common cause.
+- **HTTPS proxy.** If the operator uses an HTTPS proxy (`HTTPS_PROXY`),
+  `NO_PROXY` must include the cluster's Service CIDR (for example
+  `10.43.0.0/16`, the RKE2 and K3s default). Otherwise the tunnel to Rancher
+  goes through the proxy. The tunnel connects to the address Rancher writes into
+  the connection Secret, which on Rancher 2.15 is the ClusterIP of the
+  `rancher-internal` Service in `cattle-system`; `NO_PROXY` never matches an IP
+  address against a domain suffix such as `.svc`, so list the CIDR or that
+  ClusterIP.
+- **Automation** calling the API must use the `/v1/aif-operator` path through
+  Rancher. Reads work with `kubectl get --raw /v1/aif-operator/api/v1/...` and a
+  kubeconfig that goes through Rancher. `kubectl create --raw` sends no
+  `Content-Type`, so its writes get HTTP 415; writes need a client that sends
+  `Content-Type: application/json`, for example `curl` with a Rancher API token.
+- **Rotate credentials after upgrading.** Earlier versions of the operator API
+  did not check the caller's permissions and included endpoints that returned
+  or used the stored credentials. As a precaution, rotate the App Collection,
+  SUSE Registry, NVIDIA and Git credentials, then enter the new registry values
+  in AI Factory **Settings** and update the Secret referenced by the Fleet Git
+  source there.
+- **`suse-ai-pull-secret-<host>` Secrets** are no longer created from operator
+  credentials. Only the App Collection and chart repository Secrets are still
+  refreshed, by the FleetBundle and GitOps install paths. After rotating
+  credentials, upgrade apps installed by earlier versions through the App wizard,
+  which switches them to `suse-ai-pull-combined`, before revoking the old
+  credentials. Don't delete these Secrets.

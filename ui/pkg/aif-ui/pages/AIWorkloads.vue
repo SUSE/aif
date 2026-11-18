@@ -6,7 +6,10 @@ import AppModal from '@shell/components/AppModal';
 import { BadgeState } from '@components/BadgeState';
 import { listAIWorkloads, upgradeAIWorkload, rollbackAIWorkload, retryAIWorkload } from '../utils/operator-api';
 import { listBlueprints, groupBlueprintsByFamily, findBlueprint } from '../utils/blueprint-api';
-import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import {
+  OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, isOperatorUnreachable, operatorErrorMessage,
+  recheckOperatorConnection,
+} from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
 import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
@@ -233,7 +236,7 @@ async function refresh() {
     clusters.value   = clResult;
     void refreshPodStatus();
   } catch (e: any) {
-    error.value = e?.message || 'Failed to load workloads';
+    error.value = operatorErrorMessage(e, t, 'Failed to load workloads');
   } finally {
     loading.value = false;
   }
@@ -249,6 +252,13 @@ async function retryConnection() {
 
 async function silentRefresh() {
   if (loading.value) return;
+  // The banner is up: re-check the connection instead of polling, and reload
+  // once the operator is back so the banner clears.
+  if (operatorError.value) {
+    if (await recheckOperatorConnection()) await refresh();
+
+    return;
+  }
   try {
     const wlResult = await listAIWorkloads();
 
@@ -257,8 +267,11 @@ async function silentRefresh() {
     if (!wlResult.items) return;
     workloads.value = wlResult.items;
     void refreshPodStatus();
-  } catch {
-    // silently ignore — user can use the Refresh button if needed
+  } catch (e) {
+    // The operator stopped answering: show the banner, which the branch above
+    // clears once it is back. Other errors stay silent; the user can use the
+    // Refresh button.
+    if (isOperatorUnreachable(e)) operatorError.value = OPERATOR_UNREACHABLE;
   }
 }
 
@@ -292,7 +305,7 @@ async function executeDelete() {
     );
     deleteModal.show = false;
   } catch (e: any) {
-    error.value = e?.message || 'Failed to delete workload';
+    error.value = operatorErrorMessage(e, t, 'Failed to delete workload');
     deleteModal.show = false;
   } finally {
     deleteModal.deleting = false;
@@ -348,7 +361,7 @@ async function executeUpgrade() {
     upgradeModal.show = false;
     await refresh();
   } catch (e: any) {
-    upgradeError.value = e?.message || String(e);
+    upgradeError.value = operatorErrorMessage(e, t);
     upgradeModal.show = false;
   } finally {
     upgradeModal.upgrading = false;
@@ -384,7 +397,7 @@ async function confirmRollback() {
     await refresh();
   } catch (e: any) {
     rollbackModal.show = false;
-    upgradeError.value = e?.message || String(e);
+    upgradeError.value = operatorErrorMessage(e, t);
   } finally {
     rollbackModal.rolling = false;
   }
@@ -397,7 +410,7 @@ async function doRetry(w: AIWorkload) {
     await refresh();
   } catch (e: any) {
     // 409 (operation in flight) surfaces here.
-    upgradeError.value = e?.message || String(e);
+    upgradeError.value = operatorErrorMessage(e, t);
   }
 }
 </script>

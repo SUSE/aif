@@ -22,5 +22,4 @@ metadata:
     "helm.sh/resource-policy": keep
 data:
   operatorNamespace: {{ .Values.operator.namespace | quote }}
-  operatorService:   {{ .Values.operator.service   | quote }}
   useStaticCatalog:    {{ .Values.appCatalog.useStaticCatalog | quote }}

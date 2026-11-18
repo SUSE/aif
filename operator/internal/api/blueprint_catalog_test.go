@@ -54,8 +54,7 @@ func TestListCatalogs(t *testing.T) {
 	}
 
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(suseDefault, partnerAcme).Build()
-	mux := http.NewServeMux()
-	NewBlueprintCatalogHandler(c).Register(mux)
+	mux := newTestMux(NewBlueprintCatalogHandler(c))
 
 	req := httptest.NewRequest("GET", "/api/v1/blueprint-catalogs", nil)
 	w := httptest.NewRecorder()
@@ -99,8 +98,7 @@ func TestListCatalogs_Empty(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(s).Build()
-	mux := http.NewServeMux()
-	NewBlueprintCatalogHandler(c).Register(mux)
+	mux := newTestMux(NewBlueprintCatalogHandler(c))
 
 	req := httptest.NewRequest("GET", "/api/v1/blueprint-catalogs", nil)
 	w := httptest.NewRecorder()

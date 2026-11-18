@@ -1,6 +1,7 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { capReleaseName, fnv1a32 } from '../utils/helm-release';
+import { mergeImagePullSecrets, OPERATOR_NVIDIA_PULL_SECRET, OPERATOR_SUSE_PULL_SECRET } from '../utils/pull-secrets';
 
 // The operator-managed AppCollection ClusterRepo name. SUSE-registry charts
 // frequently bundle subcharts whose container images come from AppCollection
@@ -10,7 +11,7 @@ import { capReleaseName, fnv1a32 } from '../utils/helm-release';
 // directly — delivering them only via the SA is not enough.
 const APP_COLLECTION_REPO_NAME = 'application-collection';
 
-// SUSE_AI_COMBINED_PULL_SECRET is the operator-managed combined
+// OPERATOR_SUSE_PULL_SECRET is the operator-managed combined
 // dockerconfigjson secret (see aif-operator combinedPullSecretName). It covers
 // EVERY configured registry (AppCollection, SUSE Registry, NVIDIA) in a single
 // secret, and the operator delivers it to every target cluster+namespace,
@@ -24,7 +25,6 @@ const APP_COLLECTION_REPO_NAME = 'application-collection';
 // clusters while local worked). The combined secret is the single robust source;
 // any per-registry names collected remain as harmless extras. Mirrors the
 // operator's suseInjector, which already does this for Blueprint installs.
-const SUSE_AI_COMBINED_PULL_SECRET = 'suse-ai-pull-combined';
 
 // withCombinedPullSecret guarantees the operator-managed combined pull secret is
 // referenced (first, de-duplicated) for suse-ai charts. No-op for other
@@ -33,7 +33,7 @@ function withCombinedPullSecret(names: string[], library?: 'suse-ai' | 'nvidia')
   if (library !== 'suse-ai') {
     return names;
   }
-  return [SUSE_AI_COMBINED_PULL_SECRET, ...names.filter(n => n !== SUSE_AI_COMBINED_PULL_SECRET)];
+  return [OPERATOR_SUSE_PULL_SECRET, ...names.filter(n => n !== OPERATOR_SUSE_PULL_SECRET)];
 }
 
 export interface FleetBundleParams {
@@ -263,9 +263,7 @@ export function buildFleetBundleYAML(params: {
     // are not part of this operator-managed pull-secret machinery: their chart
     // pull auth comes from the ClusterRepo clientSecret (helmSecretName), and no
     // pod-spec imagePullSecrets are injected on their behalf.
-    const secrets = pullSecretNames.map(name => ({ name }));
-    values.global = { ...(values.global || {}), imagePullSecrets: secrets };
-    values.imagePullSecrets = secrets;
+    mergeImagePullSecrets(values, pullSecretNames);
   }
   disableNvidiaChartSecrets(values, params.library);
   injectNvidiaPullSecretRefs(values, params.library);
@@ -313,8 +311,7 @@ export function buildFleetBundleYAML(params: {
 
 // ensureAppCollectionPullSecrets creates an AppCollection image-pull secret in
 // the target namespace on each cluster and appends its name to pullSecretNames.
-// Resolves credentials from the application-collection ClusterRepo (independent
-// of the operator credentials API, so it works even if that call is slow/fails).
+// Resolves credentials from the application-collection ClusterRepo.
 // No-op when AppCollection credentials can't be resolved. Used for suse-ai
 // charts so subchart images pulled from AppCollection authenticate.
 export async function ensureAppCollectionPullSecrets(
@@ -478,12 +475,10 @@ function addPullSecretsToValues(values: Record<string, any>, names: string[], li
   // NVIDIA is handled by injectNvidiaPullSecretRefs; custom repos are out of the
   // operator-managed pull-secret machinery (chart pull auth via helmSecretName).
   if (effective.length === 0 || library !== 'suse-ai') return values;
-  const secrets = effective.map(name => ({ name }));
-  return {
-    ...values,
-    global:           { ...(values.global || {}), imagePullSecrets: secrets },
-    imagePullSecrets: secrets,
-  };
+  // A shallow copy is enough: the merge assigns fresh lists and a fresh global.
+  const merged = { ...values };
+  mergeImagePullSecrets(merged, effective);
+  return merged;
 }
 
 // disableNvidiaChartSecrets flips the `create` flag on the conventional NVIDIA
@@ -498,7 +493,7 @@ function addPullSecretsToValues(values: Record<string, any>, names: string[], li
 export function disableNvidiaChartSecrets(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
   if (library !== 'nvidia') return;
   for (const [key, fallbackName] of [
-    ['imagePullSecret', 'ngc-secret'],
+    ['imagePullSecret', OPERATOR_NVIDIA_PULL_SECRET],
     ['ngcApiSecret',    'ngc-api'],
   ] as const) {
     const existing = values[key];
@@ -517,11 +512,6 @@ export function disableNvidiaChartSecrets(values: Record<string, any>, library?:
   }
 }
 
-// Operator-delivered image-pull secret referenced by workload pods. Must match
-// the operator's nvidiaImagePullSecretName
-// (operator/internal/controller/aiworkload/blueprint.go).
-const NVIDIA_IMAGE_PULL_SECRET_NAME = 'ngc-secret';
-
 // isPlainObject reports whether v is a non-null, non-array object — the only
 // shape into which these helpers write. Anything else (string, number, array)
 // is treated as deliberate author intent and left untouched.
@@ -531,7 +521,7 @@ function isPlainObject(v: any): v is Record<string, any> {
 
 // injectNvidiaPullSecretRefs is the TS port of the operator's
 // injectNvidiaPullSecretRefs (operator/internal/controller/aiworkload/blueprint.go).
-// It writes NVIDIA_IMAGE_PULL_SECRET_NAME into the three value paths NVIDIA
+// It writes OPERATOR_NVIDIA_PULL_SECRET into the three value paths NVIDIA
 // charts use for pod image pulls, so team-repo NIM charts (which default to a
 // hardcoded `nvcrimagepullsecret` that nothing creates) instead reference the
 // operator-delivered secret. The operator applies this on the Blueprint path;
@@ -549,7 +539,7 @@ function isPlainObject(v: any): v is Record<string, any> {
 // code).
 export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
   if (library !== 'nvidia') return;
-  const name = NVIDIA_IMAGE_PULL_SECRET_NAME;
+  const name = OPERATOR_NVIDIA_PULL_SECRET;
 
   // Top-level k8s pod-spec shape: list of {name} objects. Treat an explicit
   // null the same as absent — mirrors the Go copy's `case nil`, which fires for

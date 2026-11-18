@@ -130,8 +130,8 @@ explicit nested UI registry or pull-Secret value is present.
 | `affinity` | object | `{}` | Affinity rules |
 | `rollingUpdate.maxSurge` | string | `25%` | Rolling update max surge |
 | `rollingUpdate.maxUnavailable` | string | `25%` | Rolling update max unavailable |
-| `operator.namespace` | string | `aif-operator` | Namespace where the SUSE AI operator is installed. Written to the `aif-ui-config` ConfigMap and read by the UI extension at runtime to build the operator API URL. |
-| `operator.service` | string | `aif-operator` | Service name of the SUSE AI operator. |
+| `operator.namespace` | string | `aif-operator` | Namespace where the SUSE AI operator is installed. Written to the `aif-ui-config` ConfigMap and read by the UI extension at runtime. |
+| `operator.service` | string | (unset) | **Deprecated, ignored.** The UI reaches the operator through Rancher's APIService aggregation (`/v1/aif-operator`), so there is no operator Service. Still accepted so existing values files keep working with `helm upgrade`. |
 
 ## Testing
 

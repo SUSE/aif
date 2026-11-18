@@ -4,17 +4,24 @@ templates:
 chart:
   version: 9.9.9
   appVersion: 9.9.9
+# The chart refuses pinned versions older than its appVersion (upgrade guard,
+# see upgrade_guard_test.yaml); pin them to the suite's appVersion so the
+# release workflow's version rewrites cannot break these assertions.
+set:
+  manager.image.tag: "9.9.9"
+  aiExtension.source.helm.version: "9.9.9"
+  aiExtension.extension.version: "9.9.9"
 release:
   name: my-release
   namespace: aif-operator
 tests:
   - it: image is assembled from registry, repository, and tag
     set:
-      manager.image.tag: 1.2.3
+      manager.image.tag: 9.9.8
     asserts:
       - equal:
           path: spec.template.spec.containers[0].image
-          value: ghcr.io/suse/aif-operator:1.2.3
+          value: ghcr.io/suse/aif-operator:9.9.8
 
   - it: an empty image tag falls back to the chart appVersion
     set:
@@ -27,20 +34,20 @@ tests:
   - it: global.imageRegistry overrides the per-image registry
     set:
       global.imageRegistry: registry.suse.com
-      manager.image.tag: 1.2.3
+      manager.image.tag: 9.9.8
     asserts:
       - equal:
           path: spec.template.spec.containers[0].image
-          value: registry.suse.com/suse/aif-operator:1.2.3
+          value: registry.suse.com/suse/aif-operator:9.9.8
 
   - it: an empty registry yields a bare repository with no leading slash
     set:
       manager.image.registry: ""
-      manager.image.tag: 1.2.3
+      manager.image.tag: 9.9.8
     asserts:
       - equal:
           path: spec.template.spec.containers[0].image
-          value: suse/aif-operator:1.2.3
+          value: suse/aif-operator:9.9.8
 
   - it: metrics enabled binds the metrics port
     asserts:
@@ -59,16 +66,15 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --metrics-bind-address=:8443
 
-  - it: the api port drives both the bind address and the container port
-    set:
-      api.port: 9090
+  # The operator API is served only over Rancher's aggregation tunnel, so the
+  # container listens on no API port (only the probe and metrics servers).
+  - it: the manager has no API container port and no API bind address
     asserts:
-      - contains:
+      - notExists:
+          path: spec.template.spec.containers[0].ports
+      - notContains:
           path: spec.template.spec.containers[0].args
-          content: --api-bind-address=:9090
-      - equal:
-          path: spec.template.spec.containers[0].ports[0].containerPort
-          value: 9090
+          content: --api-bind-address=:8080
 
   - it: leader election is on by default
     asserts:
@@ -110,13 +116,13 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
-  - it: the operator is told its own service name, the extensions namespace, and the chart version
+  - it: the operator is told the extensions namespace and the chart version, and no service name
     asserts:
-      - contains:
+      - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: OPERATOR_SERVICE
-            value: aif-operator
+          any: true
       - contains:
           path: spec.template.spec.containers[0].env
           content:

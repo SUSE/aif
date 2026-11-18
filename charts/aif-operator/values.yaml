@@ -182,8 +182,20 @@ metrics:
   enable: true
   port: 8443
 
-api:
-  port: 8080
+aggregation:
+  # Registers the operator API with Rancher's APIService aggregation
+  # (management.cattle.io/v3 APIService). Rancher writes the connection Secret
+  # <fullname>-aggregation into secretNamespace, the operator opens a tunnel
+  # to Rancher with it, and the UI reaches the API at /v1/aif-operator through
+  # Rancher with the user's Rancher session. The operator requires this; disable
+  # it only on clusters without Rancher Manager.
+  enabled: true
+  # Namespace Rancher writes the connection Secret (it holds the tunnel token)
+  # into. Keep it outside the operator's release namespace: Settings writers can
+  # make the operator send any Secret in that namespace to a URL they choose
+  # (validate-credentials overrides). The operator reads it with its
+  # cluster-wide Secret access. The chart fails if it equals the release namespace.
+  secretNamespace: cattle-system
 
 # UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
 # Set aiExtension.enabled=false to skip extension installation.

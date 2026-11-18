@@ -1,9 +1,10 @@
 import type { BlueprintComponent } from '../types/blueprint-types';
+import type { RegistryStatus } from '../types/aiworkload-types';
 
 /**
  * Registry credentials the Settings page manages. These keys match both the
- * Settings spec blocks and the RegistryCredentials response from
- * getRegistryCredentials().
+ * Settings spec blocks and the RegistryStatus response from
+ * getRegistryStatus().
  */
 export type RequiredCredential = 'applicationCollection' | 'suseRegistry' | 'nvidia';
 
@@ -27,30 +28,31 @@ export function requiredCredentialForRepo(chartRepo: string): RequiredCredential
 
 /**
  * A credential counts as configured when the operator can resolve it. We read
- * this from getRegistryCredentials() (the /registry-credentials endpoint), which
- * resolves credentials the same way the operator does — via EffectiveRefs, so it
- * includes both Settings spec refs AND well-known secret names. The endpoint only
- * populates a registry's entry (with a username) when both user and token
- * resolve, mirroring the operator's requirement before it creates the ClusterRepo.
+ * this from getRegistryStatus() (the /registry-status endpoint), which resolves
+ * credentials the way the operator does (EffectiveRefs: Settings spec refs and
+ * well-known secret names) and reports true only when both user and token
+ * resolve, the operator's requirement before it creates the ClusterRepo.
  */
-function isCredentialConfigured(cred: RequiredCredential, registryCreds: any): boolean {
-  return Boolean(registryCreds?.[cred]?.username);
+function isCredentialConfigured(cred: RequiredCredential, status: RegistryStatus | null): boolean {
+  return status?.[cred] === true;
 }
 
 /**
  * Returns the distinct required credentials that the blueprint's components use
- * (by chartRepo) but that the operator cannot resolve, given the effective
- * registry credentials from getRegistryCredentials(). Components whose chartRepo
- * is not in REPO_CREDENTIAL are skipped — the operator status is the backstop.
+ * (by chartRepo) but that the operator cannot resolve, per getRegistryStatus().
+ * A null status means unknown (operator unreachable) and returns []. Components
+ * whose chartRepo is not in REPO_CREDENTIAL are skipped — the operator status is
+ * the backstop.
  */
 export function missingCredentialsForBlueprint(
   components: BlueprintComponent[],
-  registryCreds: any,
+  registryStatus: RegistryStatus | null,
 ): RequiredCredential[] {
+  if (!registryStatus) return [];
   const required = new Set<RequiredCredential>();
   for (const c of components || []) {
     const cred = requiredCredentialForRepo(c.chartRepo);
     if (cred) required.add(cred);
   }
-  return Array.from(required).filter((cred) => !isCredentialConfigured(cred, registryCreds));
+  return Array.from(required).filter((cred) => !isCredentialConfigured(cred, registryStatus));
 }

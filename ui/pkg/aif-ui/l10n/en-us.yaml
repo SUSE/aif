@@ -20,6 +20,10 @@ suseai:
     unavailableApp: Repository unavailable
     missingApp: Repository not configured
     uncheckedApp: Repository status unknown
+  operator:
+    unreachable: AI Factory operator is unreachable. Make sure the operator and the AI Factory UI extension are the same version.
+    verifyHint: Verify that the operator deployment is running, then retry.
+    retry: Retry Connection
   pages:
     about:
       title: About
@@ -30,6 +34,7 @@ suseai:
           operator: Operator
           chart: Helm Chart
           unavailable: Unavailable
+          notPermitted: Not permitted
         resources:
           title: Resources
           documentation: Documentation

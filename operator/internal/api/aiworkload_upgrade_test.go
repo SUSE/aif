@@ -22,8 +22,7 @@ func handlerWithWorkload(t *testing.T, w *aiplatformv1alpha1.AIWorkload) (http.H
 	s := kruntime.NewScheme()
 	_ = aiplatformv1alpha1.AddToScheme(s)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&aiplatformv1alpha1.AIWorkload{}).WithObjects(w).Build()
-	mux := http.NewServeMux()
-	NewAIWorkloadHandler(c).Register(mux)
+	mux := newTestMux(NewAIWorkloadHandler(c))
 	return mux, c
 }
 

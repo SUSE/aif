@@ -43,8 +43,7 @@ func newAIWorkloadHandler(t *testing.T) http.Handler {
 		WithScheme(s).
 		WithStatusSubresource(&aiplatformv1alpha1.AIWorkload{}).
 		Build()
-	mux := http.NewServeMux()
-	NewAIWorkloadHandler(c).Register(mux)
+	mux := newTestMux(NewAIWorkloadHandler(c))
 	return mux
 }
 

@@ -337,7 +337,10 @@ import {
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
 import { listCatalogs, catalogDisplayName, familiesInCatalog } from '../utils/catalog-api';
-import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import {
+  OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, isOperatorUnreachable, operatorErrorMessage,
+  recheckOperatorConnection,
+} from '../utils/operator-config';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import BlueprintDetailPanel from '../components/BlueprintDetailPanel.vue';
 import BlueprintSourceBadge from '../components/BlueprintSourceBadge.vue';
@@ -560,7 +563,7 @@ export default defineComponent({
           selectedVersions.value = { ...selectedVersions.value, ...updates };
         }
       } catch (e: any) {
-        error.value = e?.message || 'Failed to load blueprints';
+        error.value = operatorErrorMessage(e, t, 'Failed to load blueprints');
       } finally {
         loading.value = false;
       }
@@ -576,6 +579,13 @@ export default defineComponent({
 
     async function silentRefresh() {
       if (loading.value) return;
+      // The banner is up: re-check the connection instead of polling, and
+      // reload once the operator is back so the banner clears.
+      if (operatorError.value) {
+        if (await recheckOperatorConnection()) await refresh();
+
+        return;
+      }
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];
@@ -593,7 +603,11 @@ export default defineComponent({
         if (Object.keys(updates).length) {
           selectedVersions.value = { ...selectedVersions.value, ...updates };
         }
-      } catch { /* ignore during background poll */ }
+      } catch (e) {
+        // The operator stopped answering: show the banner, which the branch
+        // above clears once it is back. Other errors stay silent.
+        if (isOperatorUnreachable(e)) operatorError.value = OPERATOR_UNREACHABLE;
+      }
     }
 
     let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -671,7 +685,7 @@ export default defineComponent({
         deleteModal.show = false;
         await refresh();
       } catch (e: any) {
-        error.value = e?.message || 'Failed to delete blueprint';
+        error.value = operatorErrorMessage(e, t, 'Failed to delete blueprint');
         deleteModal.show = false;
       } finally {
         deleteModal.deleting = false;
@@ -710,7 +724,7 @@ export default defineComponent({
         deprecateModal.show = false;
         await refresh();
       } catch (e: any) {
-        error.value = e?.message || 'Failed to update blueprint';
+        error.value = operatorErrorMessage(e, t, 'Failed to update blueprint');
         deprecateModal.show = false;
       } finally {
         deprecateModal.saving = false;

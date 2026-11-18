@@ -225,12 +225,19 @@
         }
       }
     },
-    "api": {
+    "aggregation": {
       "type": "object",
       "properties": {
-        "port": {
-          "type": "integer",
-          "default": 8080
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Register the operator API with Rancher's APIService aggregation and pass the connection Secret name to the operator."
+        },
+        "secretNamespace": {
+          "type": "string",
+          "minLength": 1,
+          "default": "cattle-system",
+          "description": "Namespace Rancher writes the aggregation connection Secret into. Must differ from the release namespace, where Settings credential validation can resolve Secrets; the chart fails otherwise."
         }
       }
     },
