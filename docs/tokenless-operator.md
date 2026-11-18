@@ -208,6 +208,11 @@ indefinitely to preserve rollback convenience.
 
 ## Release validation
 
+The [PR #387 disconnected-lab report](validation/pr-387-airgap.md) records a real
+upgrade from 2.4.0, private Git deployment, token revocation, cleanup failures and
+recovery, and repeatable validation steps. Its tested configuration and remaining
+coverage are stated explicitly.
+
 Automated coverage exercises private HTTPS Git, commit pinning, credential
 rotation, archive validation, Helm permissions and cleanup retries, external
 cleanup confirmations, token-free Settings behavior, and Helm upgrade merging.
