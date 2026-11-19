@@ -128,7 +128,7 @@ func TestAdaptPullSecretShape_AfterNvidiaInjector(t *testing.T) {
 		"imagePullSecrets": []any{},
 		"operator":         map[string]any{"image": "network-operator", "repository": "nvcr.io/nvidia/cloud-native"},
 	}
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, "network-operator")
 	adaptPullSecretShapeForChart("network-operator", vals)
 
 	op := vals["operator"].(map[string]any)
