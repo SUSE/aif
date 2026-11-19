@@ -22,7 +22,7 @@
     "eslint-plugin-vue": "^10.12.1",
     "globals": "^17.14.0",
     "jsdom": "^31.0.0",
-    "typescript-eslint": "^8.72.2",
+    "typescript-eslint": "^8.73.0",
     "vitest": "^2",
     "vue-eslint-parser": "^10.4.2"
   },
