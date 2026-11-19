@@ -159,7 +159,10 @@ describe('BlueprintConfigStep deploy order', () => {
     const emitted = lastEmitted<BlueprintComponent[]>(wrapper, 'update:components');
 
     expect(emitted[0].dependsOn).toBeUndefined();
-    await wrapper.setProps({ components: emitted });
-    expect(errorBanner(wrapper)).toBeUndefined();
+    // Feed the emitted list back as the parent wizard would; remounting avoids
+    // setProps, whose typing cannot resolve a prop named `components`.
+    const parentUpdated = await mountStep(emitted);
+
+    expect(errorBanner(parentUpdated)).toBeUndefined();
   });
 });
