@@ -6,7 +6,9 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import Settings from '../Settings.vue';
 import { nextTick } from 'vue';
+import { Banner } from '@components/Banner';
 import { LabeledInput } from '@components/Form/LabeledInput';
+import { Checkbox } from '@components/Form/Checkbox';
 import { getSettings, putSettings } from '../../utils/operator-api';
 import { listCatalogs } from '../../utils/catalog-api';
 import { toOperatorError } from '../../utils/operator-config';
@@ -197,6 +199,24 @@ describe('Settings page - registry section summaries', () => {
 });
 
 describe('Settings page - Custom Repositories', () => {
+  it('lets an existing Git repo clear skipped TLS verification', async () => {
+    const wrapper = await mountSettings();
+    await wrapper.find('[data-testid="add-custom-repo"]').trigger('click');
+    const repo = (wrapper.vm as any).spec.customRepos[0];
+    const box = wrapper.get('[data-testid="section-customRepo-0"]');
+    repo.type = 'git';
+    repo.insecureSkipTLSVerify = true;
+    await nextTick();
+    expect(box.getComponent(Banner).props('label')).toContain('To download Git charts over HTTPS, clear this setting');
+    box.getComponent(Checkbox).vm.$emit('update:value', false);
+    await nextTick();
+    expect(repo.insecureSkipTLSVerify).toBe(false);
+    expect(box.findComponent(Checkbox).exists()).toBe(false);
+    repo.type = 'helm';
+    await nextTick();
+    expect(box.findComponent(Checkbox).exists()).toBe(true);
+  });
+
   it('Add Repository appends a new custom-repo accordion, auto-expanded', async () => {
     const wrapper = await mountSettings();
     await flushPromises();

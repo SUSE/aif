@@ -38,6 +38,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -47,6 +48,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
@@ -108,6 +110,10 @@ type AIWorkloadReconciler struct {
 	Uninstaller  AppUninstaller
 	Recorder     record.EventRecorder
 
+	// GitOps workloads share a publishing branch. Serialize the controller's
+	// clone/commit/push operations so concurrent reconciles build on each other.
+	gitWriteMu sync.Mutex
+
 	// fleetClusterForbiddenOnce limits the "cannot read Fleet Clusters" log to
 	// once per process; see bundleDeploymentClusterID.
 	fleetClusterForbiddenOnce sync.Once
@@ -145,6 +151,10 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=selfsubjectaccessreviews,verbs=create
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses;networkpolicies,verbs=get;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs;cronjobs,verbs=get;delete
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;delete
+// +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;delete
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates;issuers,verbs=get;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;delete
 
 func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
@@ -378,6 +388,10 @@ func (r *AIWorkloadReconciler) handleHelmRelease(ctx context.Context, w *aiplatf
 		return false, ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 	if err := r.Uninstaller.Uninstall(ctx, ns, release, w.Spec.Source.App.ChartName); err != nil {
+		if stderrors.Is(err, helm.ErrUninstallBusy) {
+			r.setUninstallCondition(ctx, w, reasonAwaitingUninstall, "Waiting for an available local Helm uninstall or for this release's current uninstall to finish.")
+			return false, ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
 		r.setUninstallCondition(ctx, w, "UninstallFailed", truncateForCondition(err.Error()))
 		return false, ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
@@ -886,7 +900,10 @@ func (r *AIWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	dependencyChanged := predicate.GenerationChangedPredicate{}
 
+	// Keep a worker available for other workloads even when all local Helm
+	// uninstall slots are waiting on hooks or foreground deletion.
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(controller.Options{MaxConcurrentReconciles: helm.MaxConcurrentUninstalls + 1}).
 		For(&aiplatformv1alpha1.AIWorkload{}).
 		Watches(bd, handler.EnqueueRequestsFromMapFunc(r.bundleDeploymentToAIWorkloads)).
 		Watches(helmOp, handler.EnqueueRequestsFromMapFunc(r.helmOpToAIWorkloads)).

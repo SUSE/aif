@@ -1106,6 +1106,9 @@ export default {
                   :placeholder="t('suseai.pages.settings.sections.customRepos.fields.gitRepo.placeholder')"
                   :mode="mode"
                 />
+                <p class="text-muted mt-5">
+                  {{ t('suseai.pages.settings.sections.customRepos.fields.gitRepo.help') }}
+                </p>
               </div>
               <div class="col span-6">
                 <LabeledInput
@@ -1209,7 +1212,10 @@ export default {
               </div>
             </div>
 
-            <div class="row mb-10">
+            <div
+              v-if="repo.type !== 'git' || repo.insecureSkipTLSVerify"
+              class="row mb-10"
+            >
               <div class="col span-12">
                 <Checkbox
                   v-model:value="repo.insecureSkipTLSVerify"
@@ -1220,7 +1226,9 @@ export default {
                   v-if="repo.insecureSkipTLSVerify"
                   color="warning"
                   class="mt-5"
-                  :label="t('suseai.pages.settings.sections.customRepos.fields.insecureSkipTLSVerify.warning')"
+                  :label="repo.type === 'git'
+                    ? t('suseai.pages.settings.sections.customRepos.fields.insecureSkipTLSVerify.gitWarning')
+                    : t('suseai.pages.settings.sections.customRepos.fields.insecureSkipTLSVerify.warning')"
                 />
               </div>
             </div>

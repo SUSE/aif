@@ -272,6 +272,7 @@ suseai:
             gitRepo:
               label: Git Repository URL
               placeholder: 'https://github.com/org/repo.git'
+              help: 'Use HTTPS with a trusted certificate or SSH with a known_hosts entry in the SSH Secret.'
             gitBranch:
               label: Git Branch
               placeholder: main
@@ -295,6 +296,7 @@ suseai:
               help: 'For repositories served with a private or self-signed certificate, reference a secret holding the PEM-encoded CA bundle. This is the secure alternative to skipping TLS verification.'
             insecureSkipTLSVerify:
               label: Skip TLS verification (development only)
+              gitWarning: 'To download Git charts over HTTPS, clear this setting and configure a CA Bundle Secret if the server uses a private CA.'
               warning: 'Disabling TLS verification exposes chart and image pulls to man-in-the-middle attacks. Never enable this in production — supply a CA Bundle Secret instead.'
           actions:
             add: Add Repository

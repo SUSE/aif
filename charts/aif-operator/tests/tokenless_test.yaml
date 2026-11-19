@@ -2,7 +2,38 @@ suite: personal Rancher tokens are retired
 templates:
   - templates/secrets.yaml
   - templates/manager/manager.yaml
+  - templates/rbac/manager-role.yaml
 tests:
+  - it: the local Helm uninstaller can read and delete namespaced App chart resources
+    template: templates/rbac/manager-role.yaml
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [policy]
+            resources: [poddisruptionbudgets]
+            verbs: [get, delete]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [autoscaling]
+            resources: [horizontalpodautoscalers]
+            verbs: [get, delete]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [cert-manager.io]
+            resources: [certificates, issuers]
+            verbs: [get, delete]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [monitoring.coreos.com]
+            resources: [servicemonitors]
+            verbs: [get, delete]
   - it: reused legacy token and CA values never render a credential Secret
     template: templates/secrets.yaml
     set:

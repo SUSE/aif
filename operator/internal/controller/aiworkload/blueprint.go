@@ -43,6 +43,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 
@@ -59,12 +60,6 @@ const (
 	repoKindOCI  repoKind = "oci"
 	repoKindGit  repoKind = "git"
 )
-
-// errClusterRepoNotReady marks a ClusterRepo lookup that failed because the
-// repo does not exist yet or has no usable URL — typically because its backing
-// registry credentials are not configured. Reconcile surfaces this as a
-// Ready=False condition and auto-requeues instead of hard-failing.
-var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
 
 type clusterRepoInfo struct {
 	Name           string   // ClusterRepo metadata.name
@@ -141,12 +136,8 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{}, nil
 			}
-			if stderrors.Is(err, errClusterRepoNotReady) {
-				// The repo the component needs is missing — usually because its
-				// registry credentials are not configured. Surface a condition +
-				// Failed phase (subject to the initial grace window) and requeue
-				// so the workload recovers once the repo appears.
-				msg := fmt.Sprintf("Repository %q is not available yet. If this persists, verify its credentials in Settings.", c.ChartRepo)
+			if stderrors.Is(err, rancher.ErrClusterRepoNotReady) {
+				msg := fmt.Sprintf("Waiting for repository %q. If this persists, check its indexing status and credentials.", c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonClusterRepoNotReady, msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -1131,6 +1122,8 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 		return fmt.Errorf("init git client: %w", err)
 	}
 	filePath := "workloads/" + bundleName + ".yaml"
+	r.gitWriteMu.Lock()
+	defer r.gitWriteMu.Unlock()
 	if _, err = gc.WriteFile(ctx, filePath, content, "chore: deploy blueprint component "+bundleName); err != nil {
 		return err
 	}
@@ -1210,7 +1203,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	cr.SetGroupVersionKind(clusterRepoGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: repoName}, cr); err != nil {
 		if errors.IsNotFound(err) {
-			return clusterRepoInfo{}, fmt.Errorf("%w: get ClusterRepo %q: %v", errClusterRepoNotReady, repoName, err)
+			return clusterRepoInfo{}, fmt.Errorf("%w: get ClusterRepo %q: %v", rancher.ErrClusterRepoNotReady, repoName, err)
 		}
 		return clusterRepoInfo{}, fmt.Errorf("get ClusterRepo %q: %w", repoName, err)
 	}
@@ -1255,7 +1248,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		return info, nil
 	}
 
-	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", errClusterRepoNotReady, repoName)
+	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", rancher.ErrClusterRepoNotReady, repoName)
 }
 
 func bpCRName(familyName, version string) string {

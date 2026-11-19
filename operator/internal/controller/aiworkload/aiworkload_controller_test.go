@@ -19,6 +19,7 @@ package aiworkload_test
 import (
 	"context"
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,6 +34,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/controller/aiworkload"
+	"github.com/SUSE/aif-operator/internal/infra/helm"
 )
 
 // fakeUninstaller models the service-identity Helm executor.
@@ -446,34 +448,36 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		})
 
-		It("surfaces UninstallFailed when the service identity lacks permissions", func() {
-			wl := helmWorkload("helm-rejected")
+		DescribeTable("retains the workload until local Helm cleanup can proceed", func(name string, uninstallErr error, reason string, delay time.Duration) {
+			wl := helmWorkload(name)
 			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
-			secret := makeHelmReleaseSecret("ns", "helm-rejected")
+			secret := makeHelmReleaseSecret("ns", name)
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), secret) })
 
-			fake := &fakeUninstaller{progressErr: fmt.Errorf("forbidden by Kubernetes RBAC")}
 			r := reconciler()
-			r.Uninstaller = fake
+			r.Uninstaller = &fakeUninstaller{progressErr: uninstallErr}
 
-			_, err := r.Reconcile(ctx, req("helm-rejected", "default"))
+			key := req(name, "default")
+			_, err := r.Reconcile(ctx, key)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Delete(ctx, wl)).To(Succeed())
 
-			res, err := r.Reconcile(ctx, req("helm-rejected", "default"))
-			Expect(err).NotTo(HaveOccurred(), "token rejection must not surface as a reconcile error")
-			Expect(res.RequeueAfter).To(BeNumerically(">", 0))
-			Expect(fake.calls).To(Equal(0), "must not attempt uninstall when the token is rejected")
+			res, err := r.Reconcile(ctx, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(delay))
 
 			got := &aiplatformv1alpha1.AIWorkload{}
-			Expect(k8sClient.Get(ctx, req("helm-rejected", "default").NamespacedName, got)).To(Succeed())
-			Expect(got.DeletionTimestamp).NotTo(BeNil(), "finalizer retained; release not orphaned")
+			Expect(k8sClient.Get(ctx, key.NamespacedName, got)).To(Succeed())
+			Expect(got.Finalizers).To(ContainElement("ai-factory.suse.com/cleanup"))
 			cond := meta.FindStatusCondition(got.Status.Conditions, "Ready")
 			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal("UninstallFailed"))
+			Expect(cond.Reason).To(Equal(reason))
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-		})
+		},
+			Entry("permission denied", "helm-rejected", fmt.Errorf("forbidden by Kubernetes RBAC"), "UninstallFailed", 15*time.Second),
+			Entry("uninstall slots occupied", "helm-queued", helm.ErrUninstallBusy, "AwaitingUninstall", 10*time.Second),
+		)
 	})
 })
 

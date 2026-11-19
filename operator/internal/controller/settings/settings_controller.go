@@ -817,25 +817,22 @@ func (r *SettingsReconciler) currentAuthSecretType(ctx context.Context, name str
 // applyRegistryAuthSecret's namespace handling: cattle-system is mandatory, the
 // Fleet workspaces are best-effort (skipped when absent).
 func (r *SettingsReconciler) applySSHAuthSecret(ctx context.Context, ns, secretName string, ref *aiplatformv1alpha1.SecretKeyRef) (string, bool, error) {
-	key, err := r.readSecretKey(ctx, ns, ref)
-	if err != nil {
-		return "", false, fmt.Errorf("read ssh key: %w", err)
-	}
-	if key == "" {
-		return "", false, nil
-	}
 	var source corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, &source); err != nil {
-		return "", false, fmt.Errorf("read SSH host trust: %w", err)
+		return "", false, fmt.Errorf("read ssh key: %w", err)
+	}
+	key := source.Data[ref.Key]
+	if len(key) == 0 {
+		return "", false, nil
 	}
 	knownHosts := source.Data["known_hosts"]
-	changed := r.sshAuthChanged(ctx, secretName, key, string(knownHosts))
+	changed := r.sshAuthChanged(ctx, secretName, key, knownHosts)
 	for _, targetNS := range authSecretNamespaces {
 		mirror := &corev1.Secret{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNS},
 			Type:       corev1.SecretTypeSSHAuth,
-			Data:       map[string][]byte{corev1.SSHAuthPrivateKey: []byte(key), "known_hosts": knownHosts},
+			Data:       map[string][]byte{corev1.SSHAuthPrivateKey: key, "known_hosts": knownHosts},
 		}
 		if err := r.Patch(ctx, mirror, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator-settings")); err != nil {
 			if targetNS != "cattle-system" && errors.IsNotFound(err) {
@@ -850,7 +847,7 @@ func (r *SettingsReconciler) applySSHAuthSecret(ctx context.Context, ns, secretN
 // sshAuthChanged reports whether the cattle-system ssh-auth mirror differs from
 // the freshly-read key. A missing mirror counts as changed; an unreadable one as
 // unchanged (mirrors registryAuthChanged).
-func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName, key, knownHosts string) bool {
+func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName string, key, knownHosts []byte) bool {
 	var existing corev1.Secret
 	err := r.Get(ctx, types.NamespacedName{Namespace: "cattle-system", Name: secretName}, &existing)
 	if errors.IsNotFound(err) {
@@ -859,7 +856,7 @@ func (r *SettingsReconciler) sshAuthChanged(ctx context.Context, secretName, key
 	if err != nil {
 		return false
 	}
-	return string(existing.Data[corev1.SSHAuthPrivateKey]) != key || string(existing.Data["known_hosts"]) != knownHosts
+	return !bytes.Equal(existing.Data[corev1.SSHAuthPrivateKey], key) || !bytes.Equal(existing.Data["known_hosts"], knownHosts)
 }
 
 // forceUpdateClusterRepo bumps spec.forceUpdate to now (RFC3339Nano) so Rancher

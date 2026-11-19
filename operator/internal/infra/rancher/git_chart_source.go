@@ -87,8 +87,10 @@ func gitDirectoryChart(tree *object.Tree, metadata []string, name, version strin
 			return nil, err
 		}
 		var chart struct{ Name, Version string }
-		if err := yaml.Unmarshal(data, &chart); err != nil {
-			return nil, fmt.Errorf("invalid Git chart metadata: %w", err)
+		if err := yaml.Unmarshal(data, &chart); err != nil || chart.Name == "" || chart.Version == "" {
+			// Unrelated fixtures can also be named Chart.yaml. Only a chart
+			// with usable metadata can match or hide its bundled dependencies.
+			continue
 		}
 		chartRoots = append(chartRoots, dir)
 		if chart.Name == name && chart.Version == version {
@@ -133,13 +135,10 @@ func packageGitChart(root *object.Tree, directory, name, version string) ([]byte
 		if entry.Mode == filemode.Dir {
 			continue
 		}
-		if entry.Mode != filemode.Regular && entry.Mode != filemode.Executable {
-			return nil, fmt.Errorf("Git chart must not contain symlinks or submodules")
-		}
 		if path.IsAbs(filename) || path.Clean(filename) != filename || strings.HasPrefix(filename, "../") || strings.Contains(filename, "\\") {
 			return nil, fmt.Errorf("Git chart contains an unsafe path")
 		}
-		data, err := gitTreeFile(tree, filename, maxGitChartUnpackedBytes-total)
+		data, err := readGitTreeEntry(walker.Tree(), &entry, filename, maxGitChartUnpackedBytes-total)
 		if err != nil {
 			return nil, err
 		}

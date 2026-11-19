@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -120,6 +122,72 @@ func TestUninstallPermissionDeniedLeavesReleaseIntact(t *testing.T) {
 	r, err = cfg.Releases.Last("demo")
 	if err != nil || r.Info.Status != release.StatusDeployed {
 		t.Fatalf("release must remain deployed: %+v, %v", r, err)
+	}
+}
+
+func TestPreflightKeepAppliesOnlyToReleaseManifest(t *testing.T) {
+	config, cfg, k := uninstallTestConfig(t, false)
+	k.DummyResources[0].Object.(*corev1.ConfigMap).Annotations = map[string]string{kube.ResourcePolicyAnno: " Keep "}
+	rel := uninstallFixture()
+	if err := preflightUninstall(t.Context(), config, cfg, rel); err != nil {
+		t.Fatalf("permission check for a resource Helm keeps: %v", err)
+	}
+	rel.Hooks = []*release.Hook{{Manifest: rel.Manifest, Events: []release.HookEvent{release.HookPostDelete}}}
+	if err := preflightUninstall(t.Context(), config, cfg, rel); err == nil || !strings.Contains(err.Error(), "needs get") {
+		t.Fatalf("expected permission check for delete hook: %v", err)
+	}
+}
+
+func TestConcurrentUninstalls(t *testing.T) {
+	entered := make(chan struct{}, MaxConcurrentUninstalls)
+	resume := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("labelSelector"), "name=slow-") {
+			entered <- struct{}{}
+			select {
+			case <-resume:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"apiVersion":"v1","kind":"SecretList","items":[]}`)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	u := NewServiceAccountUninstaller(&rest.Config{Host: server.URL})
+	done := make(chan error, MaxConcurrentUninstalls)
+	for i := range MaxConcurrentUninstalls {
+		name := fmt.Sprintf("slow-%d", i)
+		go func() { done <- u.Uninstall(ctx, "apps", name, "demo") }()
+		select {
+		case <-entered:
+		case err := <-done:
+			t.Fatalf("uninstall returned before reading the release: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		if err := u.Uninstall(ctx, "apps", name, "demo"); !errors.Is(err, ErrUninstallBusy) {
+			t.Fatalf("concurrent uninstall of %s: %v", name, err)
+		}
+		if i == 0 {
+			if err := u.Uninstall(ctx, "apps", "fast", "demo"); err != nil {
+				t.Fatalf("another release could not progress: %v", err)
+			}
+		}
+	}
+	if err := u.Uninstall(ctx, "apps", "queued", "demo"); !errors.Is(err, ErrUninstallBusy) {
+		t.Fatalf("uninstall with all slots occupied: %v", err)
+	}
+	close(resume)
+	for range MaxConcurrentUninstalls {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := u.Uninstall(ctx, "apps", "slow-0", "demo"); err != nil {
+		t.Fatalf("release remained locked: %v", err)
 	}
 }
 

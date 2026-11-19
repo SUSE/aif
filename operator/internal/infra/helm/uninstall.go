@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -26,31 +28,44 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
+// MaxConcurrentUninstalls bounds foreground Helm waits across releases.
+const MaxConcurrentUninstalls = 2
+
+// ErrUninstallBusy tells the reconciler to requeue without occupying a worker.
+var ErrUninstallBusy = errors.New("local Helm cleanup is busy")
+
 // ServiceAccountUninstaller operates against the manager's Kubernetes config.
 // It never obtains credentials from a user, Settings, or Rancher's Steve API.
 type ServiceAccountUninstaller struct {
 	config *rest.Config
-	locks  sync.Map
+	mu     sync.Mutex
+	active map[string]bool
 }
 
 func NewServiceAccountUninstaller(config *rest.Config) *ServiceAccountUninstaller {
-	return &ServiceAccountUninstaller{config: rest.CopyConfig(config)}
+	return &ServiceAccountUninstaller{config: rest.CopyConfig(config), active: make(map[string]bool)}
 }
 
 func (u *ServiceAccountUninstaller) Uninstall(ctx context.Context, namespace, name, chartName string) error {
 	if namespace == "" || name == "" || chartName == "" {
 		return fmt.Errorf("uninstall requires namespace, release and chart name")
 	}
+	key := namespace + "/" + name
+	u.mu.Lock()
+	if u.active[key] || len(u.active) >= MaxConcurrentUninstalls {
+		u.mu.Unlock()
+		return ErrUninstallBusy
+	}
+	u.active[key] = true
+	u.mu.Unlock()
+	defer func() {
+		u.mu.Lock()
+		delete(u.active, key)
+		u.mu.Unlock()
+	}()
+
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	lock, _ := u.locks.LoadOrStore(namespace+"/"+name, make(chan struct{}, 1))
-	sem := lock.(chan struct{})
-	select {
-	case sem <- struct{}{}:
-		defer func() { <-sem }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 	config := rest.CopyConfig(u.config)
 	// Helm's uninstall SDK has no RunWithContext. Bind its Kubernetes requests
 	// to this reconcile's deadline and shutdown context instead.
@@ -148,12 +163,12 @@ func validateUninstallRelease(rel *release.Release, namespace, name, chartName s
 // chart with cluster-scoped resources or hooks can require explicit additional
 // RBAC; never silently fall back to a personal token or grant cluster-admin.
 func preflightUninstall(ctx context.Context, config *rest.Config, cfg *action.Configuration, rel *release.Release) error {
-	kube, err := kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
 	}
 	seen := map[authorizationv1.ResourceAttributes]bool{}
-	check := func(manifest string, verbs []string) error {
+	check := func(manifest string, honorKeep bool, verbs ...string) error {
 		objects, err := cfg.KubeClient.Build(bytes.NewBufferString(manifest), false)
 		if err != nil {
 			return fmt.Errorf("inspect Helm uninstall resources: %w", err)
@@ -166,7 +181,7 @@ func preflightUninstall(ctx context.Context, config *rest.Config, cfg *action.Co
 			if err != nil {
 				return err
 			}
-			if len(verbs) == 2 && metadata.GetAnnotations()["helm.sh/resource-policy"] == "keep" {
+			if honorKeep && strings.EqualFold(strings.TrimSpace(metadata.GetAnnotations()[kube.ResourcePolicyAnno]), kube.KeepPolicy) {
 				return nil
 			}
 			for _, verb := range verbs {
@@ -178,24 +193,24 @@ func preflightUninstall(ctx context.Context, config *rest.Config, cfg *action.Co
 					continue
 				}
 				seen[attrs] = true
-				review, err := kube.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &attrs}}, metav1.CreateOptions{})
+				review, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &attrs}}, metav1.CreateOptions{})
 				if err != nil {
 					return fmt.Errorf("check uninstall permission: %w", err)
 				}
 				if !review.Status.Allowed {
-					return fmt.Errorf("operator ServiceAccount needs %s on %s.%s in namespace %q for this chart; grant scoped uninstall RBAC", verb, attrs.Resource, attrs.Group, attrs.Namespace)
+					return fmt.Errorf("operator ServiceAccount needs %s on %s in namespace %q for this chart; grant scoped uninstall RBAC or uninstall the release from local Rancher Apps", verb, info.Mapping.Resource.GroupResource(), attrs.Namespace)
 				}
 			}
 			return nil
 		})
 	}
-	if err := check(rel.Manifest, []string{"get", "delete"}); err != nil {
+	if err := check(rel.Manifest, true, "get", "delete"); err != nil {
 		return err
 	}
 	for _, hook := range rel.Hooks {
 		for _, event := range hook.Events {
 			if event == release.HookPreDelete || event == release.HookPostDelete {
-				if err := check(hook.Manifest, []string{"get", "list", "watch", "create", "delete"}); err != nil {
+				if err := check(hook.Manifest, false, "get", "list", "watch", "create", "delete"); err != nil {
 					return err
 				}
 				break

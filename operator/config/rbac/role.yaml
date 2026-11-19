@@ -136,6 +136,13 @@ rules:
   verbs:
   - create
 - apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - delete
+  - get
+- apiGroups:
   - batch
   resources:
   - cronjobs
@@ -163,6 +170,14 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  - issuers
+  verbs:
+  - delete
+  - get
 - apiGroups:
   - fleet.cattle.io
   resources:
@@ -202,10 +217,24 @@ rules:
   - patch
   - watch
 - apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  verbs:
+  - delete
+  - get
+- apiGroups:
   - networking.k8s.io
   resources:
   - ingresses
   - networkpolicies
+  verbs:
+  - delete
+  - get
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
   verbs:
   - delete
   - get

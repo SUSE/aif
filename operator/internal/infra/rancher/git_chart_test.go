@@ -248,6 +248,8 @@ func TestGitChartDirectoriesAndNestedIndexes(t *testing.T) {
 	for _, indexPath := range []string{"", "index.yaml", "metadata/index.yaml"} {
 		t.Run("index="+indexPath, func(t *testing.T) {
 			files := map[string][]byte{
+				"fixtures/Chart.yaml":                  []byte("name: ["),
+				"charts/Chart.yaml":                    []byte("# directory of charts\n"),
 				"charts/demo/Chart.yaml":               []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\ndependencies:\n- name: helper\n  version: 1.0.0\n  repository: https://must-not-be-contacted.invalid\n"),
 				"charts/demo/.helmignore":              []byte("ignore.txt\n"),
 				"charts/demo/ignore.txt":               []byte("do-not-package"),

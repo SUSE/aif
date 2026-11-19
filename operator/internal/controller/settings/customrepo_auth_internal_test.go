@@ -19,7 +19,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func newTestScheme(t *testing.T) *runtime.Scheme {
@@ -89,7 +91,15 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "git-ssh", Namespace: ns},
 			Data:       map[string][]byte{"ssh-privatekey": []byte(sshKey), "known_hosts": []byte("mirror.example ssh-ed25519 public-key")},
 		}
-		c := fake.NewClientBuilder().WithScheme(s).WithObjects(sourceKey).Build()
+		reads := 0
+		c := fake.NewClientBuilder().WithScheme(s).WithObjects(sourceKey).WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if key == client.ObjectKeyFromObject(sourceKey) {
+					reads++
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).Build()
 		r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
 
 		repo := aiplatformv1alpha1.CustomRepoSpec{
@@ -118,6 +128,9 @@ func TestApplyCustomRepoAuthSecret(t *testing.T) {
 		}
 		if string(mirror.Data["known_hosts"]) != "mirror.example ssh-ed25519 public-key" {
 			t.Fatal("SSH host trust was not mirrored")
+		}
+		if reads != 1 {
+			t.Fatalf("read SSH credentials %d times, want one Secret version for the key and host trust", reads)
 		}
 		if mirror.Type != corev1.SecretTypeSSHAuth {
 			t.Errorf("secret type = %q, want %q", mirror.Type, corev1.SecretTypeSSHAuth)

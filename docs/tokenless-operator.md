@@ -59,8 +59,11 @@ exact commit, it fetches `spec.gitBranch` and still requires that indexed commit
 to be present. A moving branch is never substituted under an older fingerprint.
 If necessary, wait for Rancher to refresh the repository index.
 
-Supported sources are HTTPS and SSH. Credentials embedded in HTTPS URLs, local
-filesystem Git URLs, and disabling TLS verification are rejected.
+The fetcher accepts HTTPS and SSH remotes. Before upgrading, migrate `http://`,
+`git://`, and filesystem Git sources to one of these transports.
+For HTTPS Git, clear `insecureSkipTLSVerify` and configure the mirror's CA
+if needed. Supply credentials through the ClusterRepo Secret. The operator waits
+for Rancher to publish the first indexed commit before fetching a blueprint chart.
 
 * HTTPS authentication uses the Secret's `username` and `password` keys, or a
   TLS client certificate in `tls.crt` and `tls.key`.
@@ -124,11 +127,30 @@ resource cleanup succeed. Permission failures, timeouts, and failed hooks keep
 the AIWorkload finalizer and expose a condition. Reconciliation retries cleanup
 after restarts. Do not remove the finalizer as a substitute for completing cleanup.
 
-The chart grants deletion of common release resources, not wildcard permissions.
-Charts with additional resource kinds, cluster-scoped resources, or delete hooks
-may need explicit administrator-provided RBAC. For example, a delete-hook Job can
-need this additional **Role in its target namespace**, bound to the operator's
-ServiceAccount:
+The operator can run two local Helm uninstalls concurrently. A third AIWorkload
+worker can continue processing Fleet updates and other reconciles while Helm
+waits for foreground deletion and hooks.
+
+The following examples compare default chart manifests with the shipped
+permissions for **Apps installed with direct Helm on the local cluster**.
+Blueprint installations use Fleet Bundle or GitOps on every target. Chart
+versions and values can change the permissions a direct App needs.
+
+| Chart | Resources relevant to uninstall | Default local cleanup |
+| --- | --- | --- |
+| Ollama 1.55.0 and Qdrant 1.19.0 | Standard namespaced workloads, Services and ServiceAccounts | Covered |
+| OpenSearch 3.3.2 | Also renders a PodDisruptionBudget | Covered |
+| Open WebUI 8.19.1 | Also renders cert-manager Certificates and Issuers | Covered |
+| NVIDIA GPU Operator v25.10.1 | ClusterPolicy, ClusterRoles, ClusterRoleBindings and delete hooks | Requires chart-specific permissions or administrator uninstall |
+
+The role also grants `get` and `delete` on HorizontalPodAutoscalers and
+ServiceMonitors. If preflight reports a missing permission, an administrator
+can grant the listed verbs or uninstall the release from Rancher **Apps >
+Installed Apps** on the local cluster. After the release disappears, the
+operator completes the pending AIWorkload deletion.
+
+For example, a delete-hook Job can use this additional **Role in its target
+namespace**, bound to the operator's ServiceAccount.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -167,11 +189,42 @@ Failures retain the CR. Direct `kubectl delete` retains the finalizer until
 external cleanup is acknowledged; it never deletes a same-named local release.
 Use Fleet-managed workloads for unattended downstream lifecycle management.
 
-For manual recovery, first verify that the release has been uninstalled in the
-**target cluster**. Then an administrator may set
-`ai-factory.suse.com/external-helm-cleanup` on the AIWorkload to
-`<workload-UID>/<target-cluster>/<target-namespace>/<release-name>`. Never copy this
-acknowledgement to a recreated workload or a different release target.
+### Recover a terminating downstream direct-Helm workload
+
+Run the following Bash block while the operator is running, including before
+retiring the management namespace or operator. Set the two kubeconfig contexts
+and the Rancher cluster ID for the selected downstream context. The block reads
+the release identity from the terminating AIWorkload, uninstalls it on that
+downstream cluster and checks its Helm release Secrets before acknowledging cleanup.
+
+```bash
+(
+  set -euo pipefail
+  management_context=local
+  downstream_context=my-downstream-context
+  downstream_id=c-m-example
+  workload_namespace=my-workloads
+  workload=my-workload
+
+  fields=$(kubectl --context "$management_context" -n "$workload_namespace" get aiworkload "$workload" -o json |
+    jq -er --arg cluster "$downstream_id" '
+      select(.metadata.deletionTimestamp and (.spec.deployStrategy // "Helm") == "Helm"
+             and $cluster != "local" and .spec.targetClusters == [$cluster]) |
+      [.metadata.uid, .spec.targetNamespace, .spec.source.app.release, .metadata.resourceVersion] |
+      select(all(.[]; type == "string" and length > 0)) | @tsv')
+  IFS=$'\t' read -r uid namespace release version <<< "$fields"
+  helm --kube-context "$downstream_context" -n "$namespace" uninstall "$release" --wait --ignore-not-found
+  history=$(kubectl --context "$downstream_context" -n "$namespace" get secrets -l "owner=helm,name=$release" -o name)
+  test -z "$history"
+  kubectl --context "$management_context" -n "$workload_namespace" annotate aiworkload "$workload" \
+    --resource-version="$version" --overwrite \
+    "ai-factory.suse.com/external-helm-cleanup=$uid/$downstream_id/$namespace/$release"
+)
+```
+
+The resource-version check binds the update to the workload you inspected. On
+a conflict, confirm the contexts and run the block again. The operator removes
+the finalizer after checking the acknowledgment against the current target.
 
 ## Upgrade and retirement of old tokens
 

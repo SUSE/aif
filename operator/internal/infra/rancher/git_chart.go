@@ -64,8 +64,14 @@ func (f *GitChartFetcher) FetchChart(ctx context.Context, repoName, chartName, v
 		return nil, fmt.Errorf("read ClusterRepo %q: %w", repoName, err)
 	}
 	repository, _, _ := unstructured.NestedString(cr.Object, "spec", "gitRepo")
-	if !plumbing.IsHash(revision) || chartName == "" || version == "" {
-		return nil, fmt.Errorf("ClusterRepo %q must have an indexed Git commit and an exact chart name/version", repoName)
+	if chartName == "" || version == "" {
+		return nil, fmt.Errorf("ClusterRepo %q requires an exact chart name and version", repoName)
+	}
+	if revision == "" {
+		return nil, fmt.Errorf("%w: waiting for the indexed Git commit of ClusterRepo %q", ErrClusterRepoNotReady, repoName)
+	}
+	if !plumbing.IsHash(revision) {
+		return nil, fmt.Errorf("ClusterRepo %q has an invalid indexed Git commit", repoName)
 	}
 	endpoint, err := transport.NewEndpoint(repository)
 	if err != nil || (endpoint.Protocol != "https" && endpoint.Protocol != "ssh") {
@@ -221,10 +227,14 @@ func gitTreeFile(tree *object.Tree, name string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return readGitTreeEntry(tree, entry, name, limit)
+}
+
+func readGitTreeEntry(tree *object.Tree, entry *object.TreeEntry, name string, limit int64) ([]byte, error) {
 	if entry.Mode != filemode.Regular && entry.Mode != filemode.Executable {
 		return nil, fmt.Errorf("Git chart path %q must be a regular file", name)
 	}
-	f, err := tree.File(name)
+	f, err := tree.TreeEntryFile(entry)
 	if err != nil {
 		return nil, err
 	}

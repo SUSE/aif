@@ -61,6 +61,32 @@ func sentinelResultScheme(t *testing.T) *kruntime.Scheme {
 	return scheme
 }
 
+func TestReconcileBlueprintStatus_WaitsForGitIndex(t *testing.T) {
+	scheme := sentinelResultScheme(t)
+	w := newBlueprintWorkload(time.Now())
+	repo := gitClusterRepo("charts")
+	unstructured.RemoveNestedField(repo.Object, "status", "commit")
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, gitBlueprintCR("charts"), repo).Build()
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: rancher.NewGitChartFetcher(cl)}
+
+	result, err := r.reconcileBlueprintStatus(t.Context(), w)
+	ready := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
+	if err != nil || result.RequeueAfter != 30*time.Second || ready == nil || ready.Reason != reasonClusterRepoNotReady {
+		t.Fatalf("unindexed repo: err=%v, result=%v, Ready=%v", err, result, ready)
+	}
+	if err := unstructured.SetNestedField(repo.Object, "invalid", "status", "commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Update(t.Context(), repo); err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.reconcileBlueprintStatus(t.Context(), w)
+	ready = meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
+	if err == nil || ready == nil || ready.Reason != "ComponentReconcileFailed" {
+		t.Fatalf("malformed indexed commit: err=%v, Ready=%v", err, ready)
+	}
+}
+
 // Each branch in reconcileBlueprintStatus's component-error ladder encodes a
 // deliberate requeue-vs-terminal decision, and the sentinel-wrapping tests in
 // gitchart_test.go cannot see any of it. In particular errChartTooLarge's empty
