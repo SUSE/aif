@@ -69,6 +69,39 @@ func Cycle(order []string, graph map[string][]string) []string {
 	return nil
 }
 
+// ValidateComponents rejects a Blueprint dependsOn that names the component
+// itself, an unknown component or the same dependency twice, and a dependency
+// cycle. The API runs it on save and the controller before rendering.
+func ValidateComponents(components []aiplatformv1alpha1.BlueprintComponent) error {
+	known := make(map[string]bool, len(components))
+	order := make([]string, len(components))
+	for i, c := range components {
+		known[c.ChartName] = true
+		order[i] = c.ChartName
+	}
+	graph := make(map[string][]string, len(components))
+	for _, c := range components {
+		seen := map[string]bool{}
+		for _, d := range c.DependsOn {
+			if d == c.ChartName {
+				return fmt.Errorf("component %q cannot depend on itself", c.ChartName)
+			}
+			if !known[d] {
+				return fmt.Errorf("component %q dependsOn unknown component %q", c.ChartName, d)
+			}
+			if seen[d] {
+				return fmt.Errorf("component %q lists duplicate dependency %q", c.ChartName, d)
+			}
+			seen[d] = true
+		}
+		graph[c.ChartName] = c.DependsOn
+	}
+	if cycle := Cycle(order, graph); cycle != nil {
+		return fmt.Errorf("component dependency cycle detected: %s", strings.Join(cycle, " -> "))
+	}
+	return nil
+}
+
 // OverrideDependsOn returns the install-time dependsOn override for chartName.
 // The first componentValues entry matching chartName decides (the convention
 // shared with isComponentEnabled and resolveComponentValues): ok is true only
@@ -164,7 +197,7 @@ func Apply(components []aiplatformv1alpha1.BlueprintComponent, overrides []aipla
 			reverted = true
 		}
 		if !reverted {
-			// The cycle is the Blueprint's own; validateDependsOn reports it.
+			// The cycle is the Blueprint's own; ValidateComponents reports it.
 			break
 		}
 	}

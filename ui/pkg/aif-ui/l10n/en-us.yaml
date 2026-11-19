@@ -588,6 +588,7 @@ suseai:
       autoDomainHint: 'Automatic: {label}.<node-ip>.sslip.io — set {path} to use your own domain.'
       autoIngressClassHint: 'Automatic: the target cluster''s default ingress class — set {path} to choose one.'
       lockedValues: "These values were set at install and are locked. Leave them unchanged in the values below; saving a different value is rejected."
+      advancedReadOnly: Only users who can update Blueprints can change the deploy order or Kustomize overlays. The current settings are shown.
     errors:
       allComponentsDisabled: At least one component must remain enabled.
       valuesFromNameRequired: '{component}: values source {row} needs a name.'

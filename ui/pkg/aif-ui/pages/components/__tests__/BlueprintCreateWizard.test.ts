@@ -12,7 +12,21 @@ vi.mock('../../../utils/blueprint-api', async (original) => ({
   ...await original<typeof import('../../../utils/blueprint-api')>(), createBlueprint: vi.fn(),
 }));
 vi.mock('../wizard/BlueprintBasicInfoStep.vue', () => ({ default: { name: 'BasicInfoStub', props: ['form', 'nameDisabled'], template: '<div />' } }));
-vi.mock('../wizard/BlueprintAppSelectorStep.vue', () => ({ default: { name: 'AppSelectorStub', props: ['components'], template: '<div />' } }));
+// The real application selector, so removing an application goes through its own cleanup.
+vi.mock('@shell/components/form/LabeledSelect', () => ({ default: { template: '<div />' } }));
+vi.mock('../../../services/app-collection', () => ({
+  fetchSuseAiApps:          vi.fn(async() => ({ apps: [] })),
+  fetchNvidiaApps:          vi.fn(async() => ({ apps: [] })),
+  fetchCustomRepoApps:      vi.fn(async() => ({ apps: [] })),
+  fetchManagedRepos:        vi.fn(async() => []),
+  fetchSettingsOrNull:      vi.fn(async() => null),
+  resolveInstallRepoName:   vi.fn(),
+  getLibraryForClusterRepo: vi.fn(),
+}));
+vi.mock('../../../services/rancher-apps', () => ({
+  listChartVersions:        vi.fn(async() => []),
+  inferClusterRepoForChart: vi.fn(),
+}));
 // __esModule: defineAsyncComponent unwraps `default` only from ES module namespaces.
 vi.mock('../wizard/BlueprintConfigStep.vue', () => ({
   __esModule: true,
@@ -33,7 +47,9 @@ function mountWizard(spec?: BlueprintSpec) {
       plugins: [{
         install: (app: App) => {
           // Read during setup, so set as globalProperties rather than VTU mocks.
-          Object.assign(app.config.globalProperties, { $route: { params: {} }, $router: { push: vi.fn() } });
+          Object.assign(app.config.globalProperties, {
+            $route: { params: {} }, $router: { push: vi.fn() }, $store: { dispatch: vi.fn(async() => ({})), getters: {} },
+          });
         },
       }],
     },
@@ -101,6 +117,20 @@ describe('BlueprintCreateWizard configuration validity', () => {
     await flushPromises();
     await click(wrapper, 'Next');
     expect(activeStep(wrapper)).toBe('Review');
+    expect(button(wrapper, 'Create').attributes('disabled')).toBeUndefined();
+  });
+
+  it('reaches Review after removing an application another one deploys after', async() => {
+    const wrapper = mountWizard({ displayName: 'Run:ai', version: '2.0.1', components: [component('a'), component('b', { dependsOn: ['a'] })] });
+
+    await click(wrapper, 'Next');
+    expect(activeStep(wrapper)).toBe('Select Applications');
+    await wrapper.findAll('.btn-remove')[0].trigger('click');
+    await click(wrapper, 'Next');
+    await click(wrapper, 'Next');
+
+    expect(activeStep(wrapper)).toBe('Review');
+    expect(wrapper.findComponent({ name: 'ReviewStub' }).props('form').components).toEqual([component('b')]);
     expect(button(wrapper, 'Create').attributes('disabled')).toBeUndefined();
   });
 

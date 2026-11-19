@@ -35,6 +35,16 @@ const comp = (chartName: string, extra: Partial<BlueprintComponent> = {}): Bluep
   chartRepo: 'r', chartName, chartVersion: '1.0.0', ...extra,
 });
 
+describe('BlueprintAppSelectorStep removing an application', () => {
+  it('drops the removed application from the others\' deploy order', async() => {
+    const wrapper = await mountStep([comp('a'), comp('b', { dependsOn: ['a'] }), comp('c', { dependsOn: ['a', 'b'] })]);
+
+    await wrapper.findAll('.btn-remove')[0].trigger('click');
+
+    expect(wrapper.emitted('update:components')?.[0]?.[0]).toEqual([comp('b'), comp('c', { dependsOn: ['b'] })]);
+  });
+});
+
 describe('BlueprintAppSelectorStep validation messages', () => {
   it('explains an invalid namespace and release name', async() => {
     const wrapper = await mountStep([comp('a', { targetNamespace: 'Bad_NS', releaseName: 'Bad_Name' })]);

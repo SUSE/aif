@@ -70,7 +70,7 @@
             <div class="row mb-30">
               <div class="col span-6">
                 <LabeledSelect
-                  v-if="siblingNames(comp.chartName).length"
+                  v-if="siblingNames(comp.chartName).length || comp.dependsOn?.length"
                   :value="comp.dependsOn || []"
                   :options="siblingNames(comp.chartName)"
                   :multiple="true"

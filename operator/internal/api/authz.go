@@ -17,12 +17,14 @@ limitations under the License.
 package api
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -90,7 +92,8 @@ const (
 // reserved to users who can read the operator configuration. The validation
 // and git publish routes require update on settings because they act with
 // the operator's stored credentials, which is equivalent to managing
-// Settings.
+// Settings. The capabilities route requires list on blueprints, the
+// permission the install wizard already needs.
 //
 // Every modification of an existing object requires update: saving Settings,
 // editing a Blueprint or a workload, and the workload upgrade, rollback and
@@ -118,6 +121,8 @@ func DefaultRules(operatorNamespace string) map[string]Rule {
 		"GET /api/v1/catalog":                         settings(verbGet),
 
 		"GET /api/v1/blueprint-catalogs": {Verb: verbList, Resource: resourceBlueprintCatalogs},
+
+		"GET /api/v1/capabilities": blueprint(verbList, false),
 
 		"GET /api/v1/blueprints":           blueprint(verbList, false),
 		"GET /api/v1/blueprints/{name}":    blueprint(verbGet, true),
@@ -162,6 +167,10 @@ func (a *Authorizer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.mux.ServeHTTP(w, r)
 }
 
+// errAuthorizationCheckFailed is returned when a SubjectAccessReview cannot be
+// made; the cause is logged, not sent to the client.
+var errAuthorizationCheckFailed = &APIError{Code: ErrCodeInternal, Message: "authorization check failed"}
+
 // authorize returns 401 without a caller identity, 403 when the
 // SubjectAccessReview denies the request and 500 when it cannot be made.
 func (a *Authorizer) authorize(rule Rule, next http.HandlerFunc) http.HandlerFunc {
@@ -172,41 +181,65 @@ func (a *Authorizer) authorize(rule Rule, next http.HandlerFunc) http.HandlerFun
 			return
 		}
 
-		attrs := &authorizationv1.ResourceAttributes{
-			Group:     aiplatformv1alpha1.GroupVersion.Group,
-			Version:   aiplatformv1alpha1.GroupVersion.Version,
-			Resource:  rule.Resource,
-			Verb:      rule.Verb,
-			Namespace: rule.Namespace,
-		}
+		attrs := resourceAttributes(rule.Verb, rule.Resource, rule.Namespace)
 		if rule.NamespaceFromPath {
 			attrs.Namespace = r.PathValue("namespace")
 		}
 		if rule.NameFromPath {
 			attrs.Name = r.PathValue("name")
 		}
-		// UID is deliberately not set: the caller identity carries none.
-		sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
-			User:               u.GetName(),
-			Groups:             u.GetGroups(),
-			ResourceAttributes: attrs,
-		}}
-		if extra := u.GetExtra(); len(extra) > 0 {
-			sar.Spec.Extra = make(map[string]authorizationv1.ExtraValue, len(extra))
-			for k, v := range extra {
-				sar.Spec.Extra[k] = v
-			}
-		}
-
-		if err := a.client.Create(r.Context(), sar); err != nil {
-			log.Printf("api: SubjectAccessReview failed for %s %s: %v", rule.Verb, rule.Resource, err)
-			writeError(w, http.StatusInternalServerError, &APIError{Code: ErrCodeInternal, Message: "authorization check failed"})
+		allowed, err := a.review(r.Context(), u, attrs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errAuthorizationCheckFailed)
 			return
 		}
-		if !sar.Status.Allowed {
+		if !allowed {
 			writeError(w, http.StatusForbidden, &APIError{Code: ErrCodeForbidden, Message: "forbidden"})
 			return
 		}
 		next(w, r)
 	}
+}
+
+// Can reports whether the caller in ctx may perform verb on the cluster-wide
+// resource. A context without a caller identity is denied.
+func (a *Authorizer) Can(ctx context.Context, verb, resource string) (bool, error) {
+	u, ok := UserFrom(ctx)
+	if !ok {
+		return false, nil
+	}
+	return a.review(ctx, u, resourceAttributes(verb, resource, ""))
+}
+
+func resourceAttributes(verb, resource, namespace string) *authorizationv1.ResourceAttributes {
+	return &authorizationv1.ResourceAttributes{
+		Group:     aiplatformv1alpha1.GroupVersion.Group,
+		Version:   aiplatformv1alpha1.GroupVersion.Version,
+		Resource:  resource,
+		Verb:      verb,
+		Namespace: namespace,
+	}
+}
+
+// review creates a SubjectAccessReview of attrs for u. Failures are logged
+// here; callers return a generic error so details do not reach the client.
+func (a *Authorizer) review(ctx context.Context, u user.Info, attrs *authorizationv1.ResourceAttributes) (bool, error) {
+	// UID is deliberately not set: the caller identity carries none.
+	sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+		User:               u.GetName(),
+		Groups:             u.GetGroups(),
+		ResourceAttributes: attrs,
+	}}
+	if extra := u.GetExtra(); len(extra) > 0 {
+		sar.Spec.Extra = make(map[string]authorizationv1.ExtraValue, len(extra))
+		for k, v := range extra {
+			sar.Spec.Extra[k] = v
+		}
+	}
+
+	if err := a.client.Create(ctx, sar); err != nil {
+		log.Printf("api: SubjectAccessReview failed for %s %s: %v", attrs.Verb, attrs.Resource, err)
+		return false, err
+	}
+	return sar.Status.Allowed, nil
 }

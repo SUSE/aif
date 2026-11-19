@@ -117,3 +117,8 @@ export interface RegistryStatus {
   suseRegistry:          boolean;
   nvidia:                boolean;
 }
+
+/** What the calling user may do, as evaluated by the operator. */
+export interface Capabilities {
+  advancedCustomization: boolean;
+}

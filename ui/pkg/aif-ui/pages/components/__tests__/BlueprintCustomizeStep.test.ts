@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { listGitClusterRepoNames } from '../../../services/rancher-apps';
 import { Banner } from '@components/Banner';
+import { RadioGroup } from '@components/Form/Radio';
 import BlueprintCustomizeStep from '../wizard/BlueprintCustomizeStep.vue';
 import KustomizeOverlayEditor from '../wizard/KustomizeOverlayEditor.vue';
 import ValuesFromEditor from '../wizard/ValuesFromEditor.vue';
@@ -21,7 +22,7 @@ vi.mock('@shell/components/form/LabeledSelect', () => ({
 // Tab switching is Rancher's; render both tabs so their content is inspectable.
 vi.mock('@shell/components/Tabbed', () => ({ default: { name: 'TabbedStub', template: '<div class="tabbed-stub"><slot /></div>' } }));
 vi.mock('@shell/components/Tabbed/Tab', () => ({ default: { props: ['name', 'label'], template: '<section :data-tab="name"><slot /></section>' } }));
-vi.mock('../wizard/ValuesStep.vue', () => ({ default: { template: '<div class="values-stub" />' } }));
+vi.mock('../wizard/ValuesStep.vue', () => ({ default: { name: 'ValuesStepStub', template: '<div class="values-stub" />' } }));
 vi.mock('../../../services/rancher-apps', () => ({ listGitClusterRepoNames: vi.fn(async() => []) }));
 
 const overlay = { dir: 'overlay', files: { 'overlay/kustomization.yaml': 'patches: []' } };
@@ -71,8 +72,10 @@ function lastModelValue(wrapper: Awaited<ReturnType<typeof mountStep>>): Compone
 }
 
 describe('BlueprintCustomizeStep Advanced tab', () => {
+  const editable = { advancedEditable: true };
+
   it('seeds deploy order from the blueprint and emits an override when it changes', async() => {
-    const wrapper = await mountStep([component('b', { dependsOn: ['a'] }), component('a')]);
+    const wrapper = await mountStep([component('b', { dependsOn: ['a'] }), component('a')], [], editable);
     const select = wrapper.findComponent({ name: 'LabeledSelectStub' });
 
     expect(select.props('value')).toEqual(['a']);
@@ -81,7 +84,7 @@ describe('BlueprintCustomizeStep Advanced tab', () => {
   });
 
   it('shows the blueprint overlay read-only above an editable install overlay', async() => {
-    const wrapper = await mountStep([component('b', { kustomize: overlay }), component('a')]);
+    const wrapper = await mountStep([component('b', { kustomize: overlay }), component('a')], [], editable);
     const editors = wrapper.findAllComponents(KustomizeOverlayEditor);
 
     expect(editors.map((e) => e.props('mode'))).toEqual(['view', 'edit']);
@@ -93,15 +96,16 @@ describe('BlueprintCustomizeStep Advanced tab', () => {
     const wrapper = await mountStep(
       [component('b', { dependsOn: ['a'] }), component('a')],
       [{ componentName: 'b', dependsOn: ['gone', 'a'] }],
+      editable,
     );
     const warning = wrapper.findAllComponents(Banner).find((b) => b.props('color') === 'warning');
 
-    expect(warning?.text()).toContain('gone');
+    expect(warning?.text()).toContain('will be removed when you save: gone');
     expect(JSON.stringify(lastModelValue(wrapper))).not.toContain('gone');
   });
 
   it('blocks Next when the edited order forms a cycle', async() => {
-    const wrapper = await mountStep([component('a'), component('b', { dependsOn: ['a'] })]);
+    const wrapper = await mountStep([component('a'), component('b', { dependsOn: ['a'] })], [], editable);
 
     await wrapper.findComponent({ name: 'LabeledSelectStub' }).vm.$emit('update:value', ['b']);
 
@@ -113,7 +117,7 @@ describe('BlueprintCustomizeStep Advanced tab', () => {
 
   it('allows an install overlay on a chart from a git-backed repo', async() => {
     vi.mocked(listGitClusterRepoNames).mockResolvedValueOnce(['r']);
-    const wrapper = await mountStep([component('b'), component('a')]);
+    const wrapper = await mountStep([component('b'), component('a')], [], editable);
 
     await wrapper.findAllComponents(KustomizeOverlayEditor)[0].vm.$emit('update:value', overlay);
 
@@ -132,7 +136,7 @@ describe('BlueprintCustomizeStep Advanced tab', () => {
 
   it('shows the blueprint valuesFrom read-only before the overlays', async() => {
     const valuesFrom = [{ secretKeyRef: { name: 'runai-cluster-values' } }];
-    const wrapper = await mountStep([component('runai-cluster', { valuesFrom })]);
+    const wrapper = await mountStep([component('runai-cluster', { valuesFrom })], [], { advancedEditable: true });
     const advanced = wrapper.find('[data-tab="advanced"]');
     const editor = advanced.findComponent(ValuesFromEditor);
 
@@ -146,6 +150,83 @@ describe('BlueprintCustomizeStep Advanced tab', () => {
     const wrapper = await mountStep([component('a')]);
 
     expect(wrapper.findComponent(ValuesFromEditor).exists()).toBe(false);
+  });
+});
+
+describe('BlueprintCustomizeStep Advanced tab without permission', () => {
+  const readOnlyNote = 'Only users who can update Blueprints';
+  const advanced = (wrapper: Awaited<ReturnType<typeof mountStep>>) => wrapper.find('[data-tab="advanced"]');
+  const installEditor = (wrapper: Awaited<ReturnType<typeof mountStep>>) => wrapper.findAllComponents(KustomizeOverlayEditor).find((e) => e.props('name') === 'b');
+
+  it('is read-only by default', async() => {
+    const wrapper = await mountStep([component('b', { dependsOn: ['a'] }), component('a')]);
+
+    expect(advanced(wrapper).text()).toContain(readOnlyNote);
+    expect(wrapper.findComponent({ name: 'LabeledSelectStub' }).props('mode')).toBe('view');
+    expect(installEditor(wrapper)).toBeUndefined();
+  });
+
+  it('is editable without a note when allowed', async() => {
+    const wrapper = await mountStep([component('b', { dependsOn: ['a'] }), component('a')], [], { advancedEditable: true });
+
+    expect(advanced(wrapper).text()).not.toContain(readOnlyNote);
+    expect(wrapper.findComponent({ name: 'LabeledSelectStub' }).props('mode')).toBe('edit');
+    expect(installEditor(wrapper)!.props('mode')).toBe('edit');
+  });
+
+  it('shows the current settings read-only with a note', async() => {
+    const wrapper = await mountStep(
+      [component('b', { dependsOn: ['a'] }), component('a')],
+      [{ componentName: 'b', kustomize: overlay }],
+      { advancedEditable: false },
+    );
+    const notes = wrapper.findAllComponents(Banner).filter((b) => b.text().includes(readOnlyNote));
+
+    expect(notes).toHaveLength(1);
+    expect(notes[0].props('color')).toBe('info');
+    expect(wrapper.findComponent({ name: 'LabeledSelectStub' }).props()).toMatchObject({ value: ['a'], mode: 'view' });
+    expect(installEditor(wrapper)!.props()).toMatchObject({ value: overlay, mode: 'view' });
+    expect(advanced(wrapper).findComponent(RadioGroup).exists()).toBe(false);
+    expect(wrapper.find('.accordion-header').text()).toContain('Patched');
+    expect(wrapper.find('.accordion-header').text()).toContain('Ordered');
+  });
+
+  it('shows None instead of an editor when the deployment has no overlay', async() => {
+    const wrapper = await mountStep([component('b'), component('a')], [], { advancedEditable: false });
+
+    expect(installEditor(wrapper)).toBeUndefined();
+    expect(advanced(wrapper).text()).toContain('None');
+  });
+
+  it.each([false, true])('prunes stale dependencies on save (advancedEditable %s)', async(advancedEditable) => {
+    const wrapper = await mountStep(
+      [component('b'), component('a')],
+      [{ componentName: 'b', dependsOn: ['gone', 'a'] }],
+      { mode: 'manage', status: {}, advancedEditable },
+    );
+    const warning = wrapper.findAllComponents(Banner).find((b) => b.props('color') === 'warning');
+
+    expect(warning?.text()).toContain('will be removed when you save: gone');
+    expect(lastModelValue(wrapper)).toEqual([{ componentName: 'b', dependsOn: ['a'] }]);
+
+    await wrapper.findComponent({ name: 'ValuesStepStub' }).vm.$emit('update:values', { replicas: 2 });
+
+    expect(lastModelValue(wrapper)).toEqual([{ componentName: 'b', values: { replicas: 2 }, dependsOn: ['a'] }]);
+  });
+
+  it('re-sends the existing overlay and deploy order untouched on a values edit in manage mode', async() => {
+    const existing: ComponentValueOverride[] = [{ componentName: 'b', kustomize: overlay, dependsOn: [] }];
+    const wrapper = await mountStep(
+      [component('b', { dependsOn: ['a'] }), component('a')],
+      existing,
+      { mode: 'manage', status: {}, advancedEditable: false },
+    );
+
+    await wrapper.findComponent({ name: 'ValuesStepStub' }).vm.$emit('update:values', { replicas: 2 });
+
+    expect(lastModelValue(wrapper)).toEqual([{
+      componentName: 'b', values: { replicas: 2 }, kustomize: overlay, dependsOn: [],
+    }]);
   });
 });
 

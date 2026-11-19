@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintdeps"
 	"github.com/SUSE/aif-operator/internal/blueprintpolicy"
 	"github.com/SUSE/aif-operator/internal/kustomizeoverlay"
 	"github.com/SUSE/aif-operator/internal/naming"
@@ -93,6 +94,9 @@ func validateBlueprintComponents(components []aiplatformv1alpha1.BlueprintCompon
 		return err
 	}
 	if err := blueprintpolicy.CheckValuesFromNamespaces(components, ""); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	if err := blueprintdeps.ValidateComponents(components); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	return nil

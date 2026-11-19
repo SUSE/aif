@@ -175,6 +175,19 @@ export function effectiveComponents(components: BlueprintComponent[], overrides:
   });
 }
 
+// removeComponentDependency drops chartName from every component's dependsOn,
+// for when that component is removed from the Blueprint. An emptied dependsOn
+// is dropped; the input is not mutated.
+export function removeComponentDependency(components: BlueprintComponent[], chartName: string): BlueprintComponent[] {
+  return components.map((c) => {
+    if (!c.dependsOn?.includes(chartName)) return c;
+    const { dependsOn, ...rest } = c;
+    const remaining = dependsOn.filter((d) => d !== chartName);
+
+    return remaining.length ? { ...rest, dependsOn: remaining } : rest;
+  });
+}
+
 // AdvancedEdits carries the install wizard's Advanced-tab state: the
 // Blueprint's deploy order to diff against, the edited order, and the
 // install-time overlays.

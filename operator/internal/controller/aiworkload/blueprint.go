@@ -122,7 +122,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		return ctrl.Result{}, false, nil
 	}
 
-	if err := validateDependsOn(&bp, w); err != nil {
+	if err := validateDependsOn(&bp); err != nil {
 		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "InvalidDependsOn", err.Error(), w.Generation)
 		w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 		return ctrl.Result{}, false, nil
@@ -367,34 +367,8 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 // a component disabled for this workload is NOT an error here — resolveDependsOnNames
 // drops that edge from the rendered spec.dependsOn instead (see excludedDependencyEdges
 // for the resulting non-blocking condition).
-func validateDependsOn(bp *aiplatformv1alpha1.Blueprint, w *aiplatformv1alpha1.AIWorkload) error {
-	known := make(map[string]bool, len(bp.Spec.Components))
-	order := make([]string, len(bp.Spec.Components))
-	for i, c := range bp.Spec.Components {
-		known[c.ChartName] = true
-		order[i] = c.ChartName
-	}
-	graph := make(map[string][]string, len(bp.Spec.Components))
-	for _, c := range bp.Spec.Components {
-		seen := map[string]bool{}
-		for _, d := range c.DependsOn {
-			if d == c.ChartName {
-				return fmt.Errorf("component %q cannot depend on itself", c.ChartName)
-			}
-			if !known[d] {
-				return fmt.Errorf("component %q dependsOn unknown component %q", c.ChartName, d)
-			}
-			if seen[d] {
-				return fmt.Errorf("component %q lists duplicate dependency %q", c.ChartName, d)
-			}
-			seen[d] = true
-		}
-		graph[c.ChartName] = c.DependsOn
-	}
-	if cycle := blueprintdeps.Cycle(order, graph); cycle != nil {
-		return fmt.Errorf("component dependency cycle detected: %s", strings.Join(cycle, " -> "))
-	}
-	return nil
+func validateDependsOn(bp *aiplatformv1alpha1.Blueprint) error {
+	return blueprintdeps.ValidateComponents(bp.Spec.Components)
 }
 
 // retryEpochValue reads the durable retry-epoch counter (default 0). Every desired HelmOp is

@@ -200,6 +200,14 @@ describe('KustomizeOverlayEditor', () => {
     expect(wrapper.findComponent(LabeledInput).exists()).toBe(true);
   });
 
+  it('renders a git overlay read-only in view mode, without the repo select', () => {
+    const wrapper = mountEditor({ mode: 'view', value: { dir: 'overlay', gitRef: { chartRepo: 'overlays', path: 'prod' } } });
+
+    expect(wrapper.findComponent({ name: 'LabeledSelectStub' }).exists()).toBe(false);
+    expect(wrapper.findAllComponents(LabeledInput).map((i) => [i.props('value'), i.props('mode')])).toEqual([['overlays', 'view'], ['prod', 'view']]);
+    expect(wrapper.emitted('update:value')).toBeUndefined();
+  });
+
   it('renders nothing in view mode without an overlay', () => {
     const wrapper = mountEditor({ mode: 'view' });
 

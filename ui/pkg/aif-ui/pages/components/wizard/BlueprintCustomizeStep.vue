@@ -127,6 +127,9 @@
             :label="t('suseai.wizard.labels.advancedTab', 'Advanced')"
             :weight="1"
           >
+            <Banner v-if="!advancedEditable" color="info">
+              {{ t('suseai.wizard.hints.advancedReadOnly', 'Only users who can update Blueprints can change the deploy order or Kustomize overlays. The current settings are shown.') }}
+            </Banner>
             <h3>{{ t('suseai.wizard.labels.deployOrder', 'Deploy Order') }}</h3>
             <Banner v-if="staleDeps[comp.chartName]" color="warning">
               {{ t('suseai.wizard.labels.staleDependsOn', 'These dependencies no longer exist in this Blueprint version and will be removed when you save: {names}', { names: staleDeps[comp.chartName].join(', ') }) }}
@@ -142,7 +145,7 @@
                   :close-on-select="false"
                   :label="t('suseai.wizard.labels.dependsOn', 'Deploys after')"
                   :tooltip="t('suseai.wizard.labels.dependsOnTooltip', 'This application is deployed only after the selected applications are Ready.')"
-                  :mode="'edit'"
+                  :mode="advancedEditable ? _EDIT : _VIEW"
                   @update:value="onDependsOnUpdate(comp.chartName, $event)"
                 />
                 <p v-else class="text-muted">
@@ -173,10 +176,16 @@
             <p class="text-muted mb-10">
               {{ t('suseai.wizard.labels.installOverlayHint', 'Applied after the blueprint overlay.') }}
             </p>
+            <p v-if="!advancedEditable && !editedKustomize[comp.chartName]" class="text-muted">
+              {{ t('suseai.wizard.labels.kustomizeNone', 'None') }}
+            </p>
             <KustomizeOverlayEditor
+              v-else
+              :key="`${comp.chartName}-${advancedEditable}`"
               :value="editedKustomize[comp.chartName]"
               :name="comp.chartName"
               :git-repo-options="gitRepoNames"
+              :mode="advancedEditable ? _EDIT : _VIEW"
               @update:value="onKustomizeUpdate(comp.chartName, $event)"
             />
           </Tab>
@@ -195,7 +204,7 @@ import { BadgeState } from '@components/BadgeState';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import Tabbed from '@shell/components/Tabbed';
 import Tab from '@shell/components/Tabbed/Tab';
-import { _VIEW } from '@shell/config/query-params';
+import { _EDIT, _VIEW } from '@shell/config/query-params';
 import ValuesStep from './ValuesStep.vue';
 import KustomizeOverlayEditor from './KustomizeOverlayEditor.vue';
 import ValuesFromEditor from './ValuesFromEditor.vue';
@@ -231,6 +240,9 @@ interface Props {
   // Install mode only: releases of the same charts already on the target clusters, by chartName.
   existingReleases?: Record<string, ExistingRelease[]>;
   clusterNames?:     Record<string, string>; // cluster ID → display name
+  // False (the default, fail closed) shows the Advanced tab read-only; the
+  // edited state is kept as is.
+  advancedEditable?: boolean;
 }
 interface Emits {
   (e: 'update:modelValue', v: ComponentValueOverride[]): void;
@@ -241,7 +253,7 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  mode: 'install', runningComponents: () => [], existingReleases: () => ({}), clusterNames: () => ({}),
+  mode: 'install', runningComponents: () => [], existingReleases: () => ({}), clusterNames: () => ({}), advancedEditable: false,
 });
 const emit  = defineEmits<Emits>();
 const vm    = getCurrentInstance()!.proxy as any;

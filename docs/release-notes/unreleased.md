@@ -150,6 +150,14 @@ Blueprint components accept two new optional fields:
   directory of a git-backed custom repository (`gitRef`). Overlays are applied
   with Fleet's Kustomize support; Helm hooks are not post-rendered.
 
+Creating or updating a Blueprint through the API now returns HTTP 422 when a
+component's `dependsOn` names an unknown component or itself, lists the same
+dependency twice, or forms a cycle, instead of saving it and failing every install
+later. A Blueprint that is already stored with such an error can be read and
+deleted, but saving it again needs the dependency fixed. Writes made directly with
+`kubectl` skip this check; the operator still reports `InvalidDependsOn` when the
+Blueprint is installed.
+
 The Blueprint create wizard edits both on each component's **Advanced** tab,
 with overlay examples and warnings. The install and Manage wizards can override
 a component's deploy order and add an install-time overlay. Removing a
@@ -157,8 +165,27 @@ component from the install also removes it from the deploy order, and the
 **Review** step shows the effective order.
 
 Install-time overlays are applied by Fleet with its agent's permissions on the
-target cluster, so anyone allowed to create AIWorkloads can add resources there.
-Grant AIWorkload create access accordingly.
+target cluster, so they can create any resource there, including on the Rancher
+management cluster when it is a target. Adding or changing an install-time
+overlay or deploy-order override therefore requires permission to **update
+Blueprints**, which in practice means Rancher administrators. Without it the API
+returns HTTP 403 when a workload is created or updated with such a change, and
+the install and Manage wizards show the Advanced tab read-only. Editing values or
+upgrading a workload that already has an overlay or a custom order is not
+affected, and removing them is allowed. An overlay or order that was kept
+unchanged keeps applying if the workload's target clusters, namespace or Blueprint
+version later change, and dependencies on components that a newer Blueprint version
+no longer has are removed when the workload is saved. Blueprint authors need no
+extra permission to define overlays in a Blueprint they may update.
+
+The check applies to requests that go through the AI Factory API. A user with
+direct `create` or `update` permission on AIWorkloads in the cluster can still
+write these fields with `kubectl`, so grant that permission only to trusted users.
+Likewise, publishing to the GitOps repository (`POST /api/v1/git/publish`) is
+governed by permission to update Settings, not by this check.
+The new `GET /api/v1/capabilities` endpoint reports the caller's permission.
+Against an older operator that lacks it, the wizards show the Advanced tab
+read-only.
 
 **Compatibility:** needs the Blueprint and AIWorkload CRDs shipped with this
 release. Adding or removing `dependsOn` changes a workload's render digest once.

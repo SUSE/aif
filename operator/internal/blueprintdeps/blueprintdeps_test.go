@@ -57,6 +57,36 @@ func TestCycle_ReportsClosedPath(t *testing.T) {
 	}
 }
 
+func TestValidateComponents(t *testing.T) {
+	cases := map[string]struct {
+		components []aiplatformv1alpha1.BlueprintComponent
+		want       string
+	}{
+		"empty":       {nil, ""},
+		"valid DAG":   {[]aiplatformv1alpha1.BlueprintComponent{comp("a"), comp("b", "a"), comp("c", "a", "b")}, ""},
+		"unknown":     {[]aiplatformv1alpha1.BlueprintComponent{comp("a", "ghost")}, `component "a" dependsOn unknown component "ghost"`},
+		"self":        {[]aiplatformv1alpha1.BlueprintComponent{comp("a", "a")}, `component "a" cannot depend on itself`},
+		"duplicate":   {[]aiplatformv1alpha1.BlueprintComponent{comp("a"), comp("b", "a", "a")}, `component "b" lists duplicate dependency "a"`},
+		"cycle of 2":  {[]aiplatformv1alpha1.BlueprintComponent{comp("a", "b"), comp("b", "a")}, "component dependency cycle detected: a -> b -> a"},
+		"cycle of 3":  {[]aiplatformv1alpha1.BlueprintComponent{comp("a", "b"), comp("b", "c"), comp("c", "a")}, "component dependency cycle detected: a -> b -> c -> a"},
+		"later cycle": {[]aiplatformv1alpha1.BlueprintComponent{comp("x"), comp("a", "b"), comp("b", "a", "x")}, "component dependency cycle detected: a -> b -> a"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateComponents(tc.components)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("ValidateComponents = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("ValidateComponents = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestOverrideDependsOn_FirstMatchWins(t *testing.T) {
 	overrides := []aiplatformv1alpha1.ComponentValueOverride{
 		{ComponentName: "b"},

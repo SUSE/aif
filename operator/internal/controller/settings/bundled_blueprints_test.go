@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"testing"
 
+	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintdeps"
 	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	"sigs.k8s.io/yaml"
@@ -32,18 +34,7 @@ import (
 // This catches catalog additions that would otherwise fail only after a
 // customer selects a Blueprint in a disconnected cluster.
 func TestBundledBlueprintChartReposAreSettingsManaged(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test source")
-	}
-	pattern := filepath.Join(filepath.Dir(filename), "../../../../charts/aif-operator/files/blueprints/*.yaml")
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		t.Fatalf("glob bundled Blueprints: %v", err)
-	}
-	if len(files) == 0 {
-		t.Fatalf("no bundled Blueprints matched %s", pattern)
-	}
+	files := bundledBlueprintFiles(t)
 
 	managed := map[string]bool{
 		credentials.ClusterRepoApplicationCollection: true,
@@ -96,4 +87,42 @@ func TestBundledBlueprintChartReposAreSettingsManaged(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Bundled Blueprints are applied by Helm, not the API, so nothing else checks
+// their dependsOn before an install fails with InvalidDependsOn.
+func TestBundledBlueprintDependsOnIsValid(t *testing.T) {
+	for _, path := range bundledBlueprintFiles(t) {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", filepath.Base(path), err)
+		}
+		var bp aiplatformv1alpha1.Blueprint
+		if err := yaml.Unmarshal(contents, &bp); err != nil {
+			t.Fatalf("parse %s: %v", filepath.Base(path), err)
+		}
+		if bp.Kind != "Blueprint" {
+			continue
+		}
+		if err := blueprintdeps.ValidateComponents(bp.Spec.Components); err != nil {
+			t.Errorf("%s: %v", filepath.Base(path), err)
+		}
+	}
+}
+
+func bundledBlueprintFiles(t *testing.T) []string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test source")
+	}
+	pattern := filepath.Join(filepath.Dir(filename), "../../../../charts/aif-operator/files/blueprints/*.yaml")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		t.Fatalf("glob bundled Blueprints: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("no bundled Blueprints matched %s", pattern)
+	}
+	return files
 }

@@ -11,7 +11,7 @@ import BlueprintInstallBasicInfoStep from '../wizard/BlueprintInstallBasicInfoSt
 import BlueprintCustomizeStep from '../wizard/BlueprintCustomizeStep.vue';
 import TargetStep from '../wizard/TargetStep.vue';
 import { getBlueprint } from '../../../utils/blueprint-api';
-import { listAIWorkloads, getRegistryStatus } from '../../../utils/operator-api';
+import { listAIWorkloads, getRegistryStatus, getCapabilities } from '../../../utils/operator-api';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
 import { listCatalogApps } from '../../../services/cluster-service';
 
@@ -21,6 +21,7 @@ vi.mock('../../../utils/blueprint-api', async (original) => ({
 vi.mock('../../../utils/operator-api', () => ({
   listAIWorkloads:        vi.fn(),
   getRegistryStatus:      vi.fn().mockResolvedValue(null),
+  getCapabilities:        vi.fn(),
   getSettings:            vi.fn().mockResolvedValue({}),
   createAIWorkload:       vi.fn(),
   updateAIWorkload:       vi.fn(),
@@ -65,6 +66,7 @@ beforeEach(() => {
   vi.mocked(getBlueprint).mockReset().mockResolvedValue({ spec: { displayName: 'My Blueprint', components: [] } } as any);
   vi.mocked(listAIWorkloads).mockReset().mockResolvedValue({ items: [] } as any);
   vi.mocked(listCatalogApps).mockReset().mockResolvedValue([]);
+  vi.mocked(getCapabilities).mockReset().mockResolvedValue({ advancedCustomization: true });
   vi.mocked(fetchUserNamespaces).mockReset().mockImplementation(async (_store, suggested) => (
     [suggested, 'team-a'].filter(Boolean).map((ns) => ({ label: ns, value: ns }))
   ));
@@ -245,5 +247,52 @@ describe('blueprint install wizard existing releases', () => {
     await setup('manage', { instanceName: 'my-blueprint', instanceNamespace: 'my-blueprint-system' });
 
     expect(listCatalogApps).not.toHaveBeenCalled();
+  });
+});
+
+describe('blueprint install wizard advanced customization capability', () => {
+  const workload = {
+    metadata: { name: 'my-blueprint', namespace: 'my-blueprint-system' },
+    spec:     { targetClusters: ['c-1'], componentValues: [] },
+  };
+
+  async function customizeStepIn(mode: 'install' | 'manage') {
+    vi.mocked(listAIWorkloads).mockResolvedValue({ items: [workload] } as any);
+    const wrapper = await setup(mode, { instanceName: 'my-blueprint', instanceNamespace: 'my-blueprint-system' });
+    (wrapper.vm as any).currentStep = 2;
+    await flushPromises();
+    return { wrapper, step: wrapper.findComponent(BlueprintCustomizeStep) };
+  }
+
+  describe.each(['install', 'manage'] as const)('in %s mode', (mode) => {
+    it('lets the customize step edit Advanced settings when allowed', async () => {
+      const { step } = await customizeStepIn(mode);
+      expect(step.props('advancedEditable')).toBe(true);
+    });
+
+    it.each([
+      ['not allowed', () => vi.mocked(getCapabilities).mockResolvedValue({ advancedCustomization: false })],
+      ['a malformed body', () => vi.mocked(getCapabilities).mockResolvedValue({} as any)],
+      ['forbidden', () => vi.mocked(getCapabilities).mockRejectedValue(Object.assign(new Error('Forbidden'), { status: 403 }))],
+      ['an older operator (404)', () => vi.mocked(getCapabilities).mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 }))],
+      ['the operator unreachable', () => vi.mocked(getCapabilities).mockRejectedValue(new Error('network'))],
+    ])('makes Advanced settings read-only when %s', async (_name, arrange) => {
+      arrange();
+      const { step } = await customizeStepIn(mode);
+      expect(step.props('advancedEditable')).toBe(false);
+    });
+
+    it('fetches capabilities once, not per step change', async () => {
+      const { wrapper } = await customizeStepIn(mode);
+      await button(wrapper, 'Previous').trigger('click');
+      await button(wrapper, 'Next').trigger('click');
+      expect(getCapabilities).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('keeps Advanced settings read-only while capabilities are loading', async () => {
+    vi.mocked(getCapabilities).mockReturnValue(new Promise(() => undefined));
+    const { step } = await customizeStepIn('install');
+    expect(step.props('advancedEditable')).toBe(false);
   });
 });

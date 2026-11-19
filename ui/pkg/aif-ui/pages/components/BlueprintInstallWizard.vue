@@ -10,7 +10,9 @@ import BlueprintCustomizeStep        from './wizard/BlueprintCustomizeStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus } from '../../utils/operator-api';
+import {
+  createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus, getCapabilities,
+} from '../../utils/operator-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
 import {
   missingCredentialsForBlueprint, existingReleasesByComponent, type RequiredCredential,
@@ -68,6 +70,9 @@ const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
 const registryStatus = ref<RegistryStatus | null>(null);
+// Fail closed: false until the operator confirms, including for an older
+// operator without the endpoint (it would drop install-time overlays).
+const advancedEditable = ref(false);
 // missingCreds recomputes as componentValues changes so excluding a component
 // (e.g. the only one that needs NVIDIA credentials) drops its credential
 // requirement immediately, instead of freezing the mount-time component list.
@@ -118,6 +123,11 @@ const missingCredsLabel = computed(() =>
 onMounted(async () => {
   // Not awaited: names are only needed by the review step and progress modal.
   void loadClusterDisplayNames();
+  void getCapabilities().then((caps) => {
+    advancedEditable.value = caps?.advancedCustomization === true;
+  }).catch((e) => {
+    console.warn('[SUSE-AI] Advanced customization disabled (capabilities unavailable):', e);
+  });
   try {
     const crName = blueprintCRName(props.blueprintName, props.blueprintVersion);
     blueprint.value = await getBlueprint(crName);
@@ -376,6 +386,7 @@ function onProgressCancel() { showProgressModal.value = false; }
             :status="workloadStatus"
             :existing-releases="existingReleases"
             :cluster-names="clusterNames"
+            :advanced-editable="advancedEditable"
             @update:model-value="componentValues = $event"
             @update:valid="componentValuesValid = $event"
           />

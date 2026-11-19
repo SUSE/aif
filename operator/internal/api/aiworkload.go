@@ -65,24 +65,25 @@ func validateAIWorkloadSpec(spec aiplatformv1alpha1.AIWorkloadSpec, existing *ai
 // name would otherwise silently no-op at render time (the operator's
 // resolveComponentValues skips unmatched entries defensively, since reconcile
 // loops must stay self-healing) — this catches it here instead, at submit
-// time, with a clear error.
-func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context, spec aiplatformv1alpha1.AIWorkloadSpec) error {
+// time, with a clear error. It returns the Blueprint's component names, or nil
+// when no Blueprint was loaded.
+func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context, spec aiplatformv1alpha1.AIWorkloadSpec) (map[string]bool, error) {
 	if spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint {
 		if usesBlueprintOnlyOverrides(spec.ComponentValues) {
-			return fmt.Errorf("%w: kustomize and dependsOn are only supported for Blueprint workloads", ErrInvalidInput)
+			return nil, fmt.Errorf("%w: kustomize and dependsOn are only supported for Blueprint workloads", ErrInvalidInput)
 		}
-		return nil
+		return nil, nil
 	}
 	if len(spec.ComponentValues) == 0 || spec.Source.Blueprint == nil {
-		return nil
+		return nil, nil
 	}
 	crName := naming.BlueprintCRName(spec.Source.Blueprint.Name, spec.Source.Blueprint.Version)
 	var bp aiplatformv1alpha1.Blueprint
 	if err := h.client.Get(ctx, client.ObjectKey{Name: crName}, &bp); err != nil {
 		if errors.IsNotFound(err) {
-			return fmt.Errorf("%w: blueprint %q not found", ErrInvalidInput, crName)
+			return nil, fmt.Errorf("%w: blueprint %q not found", ErrInvalidInput, crName)
 		}
-		return err
+		return nil, err
 	}
 	known := make(map[string]bool, len(bp.Spec.Components))
 	for _, c := range bp.Spec.Components {
@@ -90,7 +91,7 @@ func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context
 	}
 	for _, ov := range spec.ComponentValues {
 		if !known[ov.ComponentName] {
-			return fmt.Errorf("%w: componentValues references unknown component %q", ErrInvalidInput, ov.ComponentName)
+			return nil, fmt.Errorf("%w: componentValues references unknown component %q", ErrInvalidInput, ov.ComponentName)
 		}
 	}
 	enabledCount := 0
@@ -100,9 +101,9 @@ func (h *AIWorkloadHandler) validateBlueprintComponentValues(ctx context.Context
 		}
 	}
 	if enabledCount == 0 {
-		return fmt.Errorf("%w: at least one component must remain enabled", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: at least one component must remain enabled", ErrInvalidInput)
 	}
-	return validateInstallOverrides(bp.Spec.Components, spec.ComponentValues, known)
+	return known, validateInstallOverrides(bp.Spec.Components, spec.ComponentValues, known)
 }
 
 // validateInstallOverrides checks install-time dependsOn overrides against the
@@ -230,6 +231,8 @@ func effectiveComponentEnabled(overrides []aiplatformv1alpha1.ComponentValueOver
 // AIWorkloadHandler serves AIWorkload CRUD endpoints.
 type AIWorkloadHandler struct {
 	client client.Client
+	// authz is set by Register; it checks advanced customization.
+	authz *Authorizer
 }
 
 // NewAIWorkloadHandler constructs an AIWorkloadHandler.
@@ -239,6 +242,7 @@ func NewAIWorkloadHandler(c client.Client) *AIWorkloadHandler {
 
 // Register wires the handler's routes onto the mux.
 func (h *AIWorkloadHandler) Register(a *Authorizer) {
+	h.authz = a
 	a.HandleFunc("GET /api/v1/aiworkloads", h.listAIWorkloads)
 	a.HandleFunc("POST /api/v1/namespaces/{namespace}/aiworkloads", h.createAIWorkload)
 	a.HandleFunc("PATCH /api/v1/namespaces/{namespace}/aiworkloads/{name}", h.updateAIWorkload)
@@ -294,12 +298,16 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
-	if err := h.validateBlueprintComponentValues(r.Context(), body.Spec); err != nil {
+	known, err := h.validateBlueprintComponentValues(r.Context(), body.Spec)
+	if err != nil {
 		status := http.StatusUnprocessableEntity
 		if !stderrors.Is(err, ErrInvalidInput) {
 			status = http.StatusInternalServerError
 		}
 		writeError(w, status, err)
+		return
+	}
+	if !h.requireAdvancedCustomization(w, r, nil, body.Spec, known) {
 		return
 	}
 
@@ -324,7 +332,7 @@ func (h *AIWorkloadHandler) createAIWorkload(w http.ResponseWriter, r *http.Requ
 	wl.Namespace = namespace
 	wl.Spec = body.Spec
 
-	err := writeWithCRDGuard(wl, func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error {
+	err = writeWithCRDGuard(wl, func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error {
 		if dryRun {
 			return h.client.Create(r.Context(), obj, client.DryRunAll)
 		}
@@ -393,7 +401,8 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
-	if err := h.validateBlueprintComponentValues(r.Context(), body.Spec); err != nil {
+	known, err := h.validateBlueprintComponentValues(r.Context(), body.Spec)
+	if err != nil {
 		status := http.StatusUnprocessableEntity
 		if !stderrors.Is(err, ErrInvalidInput) {
 			status = http.StatusInternalServerError
@@ -436,6 +445,9 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	if !h.requireAdvancedCustomization(w, r, &existing.Spec, body.Spec, known) {
+		return
+	}
 
 	wl := &aiplatformv1alpha1.AIWorkload{}
 	wl.APIVersion = "ai-factory.suse.com/v1alpha1"
@@ -444,7 +456,7 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	wl.Namespace = namespace
 	wl.Spec = body.Spec
 
-	err := writeWithCRDGuard(wl, func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error {
+	err = writeWithCRDGuard(wl, func(obj *aiplatformv1alpha1.AIWorkload, dryRun bool) error {
 		opts := []client.PatchOption{client.ForceOwnership, client.FieldOwner(aiWorkloadFieldOwner)}
 		if dryRun {
 			opts = append(opts, client.DryRunAll)

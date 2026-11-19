@@ -35,8 +35,8 @@ function components(): BlueprintComponent[] {
   ];
 }
 
-async function mountStep() {
-  const wrapper = mount(BlueprintConfigStep, { props: { components: components() }, global: wizardMountGlobal() });
+async function mountStep(initial: BlueprintComponent[] = components()) {
+  const wrapper = mount(BlueprintConfigStep, { props: { components: initial }, global: wizardMountGlobal() });
 
   await flushPromises();
 
@@ -130,6 +130,36 @@ describe('BlueprintConfigStep values from Secrets and ConfigMaps', () => {
     await flushPromises();
 
     expect(wrapper.find('[data-testid="values-from-runai-cluster-name-1"]').exists()).toBe(true);
+    expect(errorBanner(wrapper)).toBeUndefined();
+  });
+});
+
+describe('BlueprintConfigStep deploy order', () => {
+  const single = (extra: Partial<BlueprintComponent> = {}): BlueprintComponent[] => [{
+    chartRepo: 'r', chartName: 'b', chartVersion: '1.0.0', ...extra,
+  }];
+  const deployOrderSelect = (wrapper: Awaited<ReturnType<typeof mountStep>>) => wrapper.findAllComponents({ name: 'LabeledSelectStub' }).find((s) => s.props('label') === 'Deploys after');
+
+  it('shows the single-application hint without a dependency', async() => {
+    const wrapper = await mountStep(single());
+
+    expect(deployOrderSelect(wrapper)).toBeUndefined();
+    expect(wrapper.text()).toContain('single application');
+  });
+
+  it('lets a single application clear a dependency on a removed one', async() => {
+    const wrapper = await mountStep(single({ dependsOn: ['a'] }));
+    const select = deployOrderSelect(wrapper)!;
+
+    expect(select.props('value')).toEqual(['a']);
+    expect(errorBanner(wrapper)?.text()).toContain('depends on unknown component "a"');
+    expect(wrapper.text()).not.toContain('single application');
+
+    await select.vm.$emit('update:value', []);
+    const emitted = lastEmitted<BlueprintComponent[]>(wrapper, 'update:components');
+
+    expect(emitted[0].dependsOn).toBeUndefined();
+    await wrapper.setProps({ components: emitted });
     expect(errorBanner(wrapper)).toBeUndefined();
   });
 });

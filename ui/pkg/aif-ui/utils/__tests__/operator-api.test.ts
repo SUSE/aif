@@ -2,7 +2,7 @@ import {
   describe, it, expect, vi, beforeEach,
 } from 'vitest';
 import {
-  getCatalog, getRegistryStatus, getSettings, getVersion, validateChartAccess, validateCredentials,
+  getCapabilities, getCatalog, getRegistryStatus, getSettings, getVersion, validateChartAccess, validateCredentials,
 } from '../operator-api';
 import { operatorFetch, toOperatorError } from '../operator-config';
 
@@ -25,6 +25,7 @@ describe('operator-api timeouts', () => {
   it.each([
     ['getRegistryStatus default', () => getRegistryStatus(), 30000],
     ['getRegistryStatus custom', () => getRegistryStatus(5000), 5000],
+    ['getCapabilities default', () => getCapabilities(), 10000],
     ['getVersion default', () => getVersion(), 5000],
     ['getVersion custom', () => getVersion(1000), 1000],
     ['getCatalog default', () => getCatalog(), 25000],
@@ -52,6 +53,25 @@ describe('operator-api timeouts', () => {
     );
 
     await expect(getVersion()).rejects.toMatchObject({ status: 0, code: 'TIMEOUT', unreachable: true });
+  });
+});
+
+describe('getCapabilities', () => {
+  beforeEach(() => {
+    vi.mocked(operatorFetch).mockReset();
+  });
+
+  it('reads the caller capabilities from the operator', async() => {
+    vi.mocked(operatorFetch).mockResolvedValue({ advancedCustomization: true });
+
+    await expect(getCapabilities()).resolves.toEqual({ advancedCustomization: true });
+    expect(vi.mocked(operatorFetch).mock.calls[0][0]).toBe('/api/v1/capabilities');
+  });
+
+  it('rejects when the operator does (e.g. an older operator without the endpoint)', async() => {
+    vi.mocked(operatorFetch).mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 }));
+
+    await expect(getCapabilities()).rejects.toMatchObject({ status: 404 });
   });
 });
 

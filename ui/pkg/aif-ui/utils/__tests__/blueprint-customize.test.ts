@@ -3,7 +3,7 @@ import {
   deepMergeValues, deepDiffValues, seedComponentValues, diffComponentValues,
   componentOverride, isComponentEnabled, seedComponentEnabled, diffComponentOverrides,
   customizedComponentNames, resolveInitialFormState, deployOrder,
-  seedComponentDependsOn, staleDependsOn, seedComponentKustomize, effectiveComponents,
+  seedComponentDependsOn, staleDependsOn, seedComponentKustomize, effectiveComponents, removeComponentDependency,
   lockedPaths, sentinelHint,
 } from '../blueprint-customize';
 import type { BlueprintComponent, ComponentKustomize } from '../../types/blueprint-types';
@@ -477,6 +477,39 @@ describe('install-time deploy order and overlay overrides', () => {
 
     expect(state.dependsOn).toEqual({ a: [], b: [], c: ['a'] });
     expect(state.kustomize).toEqual({ a: overlay });
+  });
+});
+
+describe('removeComponentDependency', () => {
+  const comp = (chartName: string, extra: Partial<BlueprintComponent> = {}): BlueprintComponent => ({
+    chartRepo: 'r', chartName, chartVersion: '1.0.0', ...extra,
+  });
+
+  it('removes the name from every dependsOn and drops an emptied field', () => {
+    const components = [
+      comp('b', { dependsOn: ['a'], values: { x: 1 } }),
+      comp('c', { dependsOn: ['a', 'b'], targetNamespace: 'ns' }),
+      comp('d'),
+    ];
+    const before = structuredClone(components);
+    const result = removeComponentDependency(components, 'a');
+
+    expect(result).toEqual([
+      comp('b', { values: { x: 1 } }),
+      comp('c', { dependsOn: ['b'], targetNamespace: 'ns' }),
+      comp('d'),
+    ]);
+    expect(result[0]).not.toHaveProperty('dependsOn');
+    expect(result[2]).toBe(components[2]);
+    expect(components).toEqual(before);
+  });
+
+  it('is a no-op for a name nobody depends on', () => {
+    const components = [comp('b', { dependsOn: ['c'] }), comp('c')];
+    const result = removeComponentDependency(components, 'a');
+
+    expect(result).toEqual(components);
+    result.forEach((c, i) => expect(c).toBe(components[i]));
   });
 });
 

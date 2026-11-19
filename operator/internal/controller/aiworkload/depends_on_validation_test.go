@@ -31,35 +31,24 @@ func comp(name string, deps ...string) aiplatformv1alpha1.BlueprintComponent {
 }
 
 func TestValidateDependsOnUnknownRef(t *testing.T) {
-	err := validateDependsOn(bp(comp("a", "ghost")), &aiplatformv1alpha1.AIWorkload{})
+	err := validateDependsOn(bp(comp("a", "ghost")))
 	if err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("expected unknown-ref error, got %v", err)
 	}
 }
 func TestValidateDependsOnSelfRef(t *testing.T) {
-	if validateDependsOn(bp(comp("a", "a")), &aiplatformv1alpha1.AIWorkload{}) == nil {
+	if validateDependsOn(bp(comp("a", "a"))) == nil {
 		t.Fatalf("expected self-ref error")
 	}
 }
 func TestValidateDependsOnCycle(t *testing.T) {
-	err := validateDependsOn(bp(comp("a", "b"), comp("b", "c"), comp("c", "a")), &aiplatformv1alpha1.AIWorkload{})
+	err := validateDependsOn(bp(comp("a", "b"), comp("b", "c"), comp("c", "a")))
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected cycle error, got %v", err)
 	}
 }
-func TestValidateDependsOnDisabledTarget(t *testing.T) {
-	w := &aiplatformv1alpha1.AIWorkload{Spec: aiplatformv1alpha1.AIWorkloadSpec{
-		ComponentValues: []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "b", Enabled: ptrBool(false)}},
-	}}
-	// A dependency on an excluded component is no longer a validation error:
-	// resolveDependsOnNames drops the edge from the rendered spec.dependsOn instead,
-	// and a non-blocking DependencyExcluded condition surfaces it.
-	if err := validateDependsOn(bp(comp("a", "b"), comp("b")), w); err != nil {
-		t.Fatalf("expected nil error for a dependency on an excluded component, got %v", err)
-	}
-}
 func TestValidateDependsOnHappy(t *testing.T) {
-	if err := validateDependsOn(bp(comp("a", "b"), comp("b")), &aiplatformv1alpha1.AIWorkload{}); err != nil {
+	if err := validateDependsOn(bp(comp("a", "b"), comp("b"))); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
