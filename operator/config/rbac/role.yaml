@@ -55,6 +55,7 @@ rules:
   resources:
   - serviceaccounts
   verbs:
+  - delete
   - get
   - list
   - patch
@@ -130,9 +131,25 @@ rules:
 - apiGroups:
   - authorization.k8s.io
   resources:
+  - selfsubjectaccessreviews
   - subjectaccessreviews
   verbs:
   - create
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - delete
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - delete
+  - get
 - apiGroups:
   - catalog.cattle.io
   resources:
@@ -153,6 +170,14 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  - issuers
+  verbs:
+  - delete
+  - get
 - apiGroups:
   - fleet.cattle.io
   resources:
@@ -191,6 +216,28 @@ rules:
   - list
   - patch
   - watch
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  verbs:
+  - delete
+  - get
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - delete
+  - get
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - delete
+  - get
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

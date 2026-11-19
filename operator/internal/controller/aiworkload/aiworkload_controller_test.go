@@ -18,6 +18,8 @@ package aiworkload_test
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,35 +34,29 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/controller/aiworkload"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
+	"github.com/SUSE/aif-operator/internal/infra/helm"
 )
 
-// fakeUninstaller records UninstallApp calls and (optionally) deletes the
-// helm-release secret to simulate Rancher completing the uninstall.
+// fakeUninstaller models the service-identity Helm executor.
 type fakeUninstaller struct {
-	calls         int
-	progressCalls int
-	inProgress    bool  // what AppUninstallInProgress returns
-	progressErr   error // if set, AppUninstallInProgress returns it
-	onCall        func(namespace, releaseName string)
+	calls       int
+	inProgress  bool
+	progressErr error
+	onCall      func(namespace, releaseName string)
 }
 
-func (f *fakeUninstaller) FetchChart(_ context.Context, _, _, _ string) ([]byte, error) {
-	return nil, nil
-}
-func (f *fakeUninstaller) UninstallApp(_ context.Context, namespace, releaseName string) error {
+func (f *fakeUninstaller) Uninstall(_ context.Context, namespace, releaseName, chartName string) error {
+	if f.progressErr != nil {
+		return f.progressErr
+	}
+	if f.inProgress {
+		return fmt.Errorf("another Helm operation is in progress")
+	}
 	f.calls++
 	if f.onCall != nil {
 		f.onCall(namespace, releaseName)
 	}
 	return nil
-}
-func (f *fakeUninstaller) AppUninstallInProgress(_ context.Context, _, _ string) (bool, error) {
-	f.progressCalls++
-	if f.progressErr != nil {
-		return false, f.progressErr
-	}
-	return f.inProgress, nil
 }
 
 func makeHelmReleaseSecret(namespace, release string) *corev1.Secret {
@@ -375,7 +371,7 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), secret) })
 
-			r := reconciler() // CatalogClient is nil → no uninstaller
+			r := reconciler() // service-identity uninstaller is unavailable
 			_, err := r.Reconcile(ctx, req("helm-present", "default"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Delete(ctx, wl)).To(Succeed())
@@ -393,7 +389,7 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		})
 
-		It("delegates to Rancher uninstall when a token is configured, then completes", func() {
+		It("uses a service-identity uninstaller without a Rancher token, then completes", func() {
 			wl := helmWorkload("helm-token")
 			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
 			secret := makeHelmReleaseSecret("ns", "helm-token")
@@ -402,10 +398,8 @@ var _ = Describe("AIWorkload Controller", func() {
 			fake := &fakeUninstaller{onCall: func(ns, rel string) {
 				_ = k8sClient.Delete(context.Background(), makeHelmReleaseSecret(ns, rel))
 			}}
-			holder := rancher.NewHolder()
-			holder.Set(fake)
 			r := reconciler()
-			r.CatalogClient = holder
+			r.Uninstaller = fake
 
 			_, err := r.Reconcile(ctx, req("helm-token", "default"))
 			Expect(err).NotTo(HaveOccurred())
@@ -424,7 +418,7 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 
-		It("does not re-request an uninstall Rancher already has in progress", func() {
+		It("retains the finalizer when another Helm operation is in progress", func() {
 			wl := helmWorkload("helm-inflight")
 			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
 			secret := makeHelmReleaseSecret("ns", "helm-inflight")
@@ -432,10 +426,8 @@ var _ = Describe("AIWorkload Controller", func() {
 			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), secret) })
 
 			fake := &fakeUninstaller{inProgress: true} // Rancher already uninstalling
-			holder := rancher.NewHolder()
-			holder.Set(fake)
 			r := reconciler()
-			r.CatalogClient = holder
+			r.Uninstaller = fake
 
 			_, err := r.Reconcile(ctx, req("helm-inflight", "default"))
 			Expect(err).NotTo(HaveOccurred())
@@ -445,7 +437,6 @@ var _ = Describe("AIWorkload Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.RequeueAfter).To(BeNumerically(">", 0))
 			Expect(fake.calls).To(Equal(0), "must not re-POST uninstall while one is in progress")
-			Expect(fake.progressCalls).To(BeNumerically(">=", 1))
 
 			got := &aiplatformv1alpha1.AIWorkload{}
 			Expect(k8sClient.Get(ctx, req("helm-inflight", "default").NamespacedName, got)).To(Succeed())
@@ -453,40 +444,40 @@ var _ = Describe("AIWorkload Controller", func() {
 
 			cond := meta.FindStatusCondition(got.Status.Conditions, "Ready")
 			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal("Uninstalling"))
+			Expect(cond.Reason).To(Equal("UninstallFailed"))
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		})
 
-		It("surfaces RancherTokenRejected when Rancher rejects the catalog token", func() {
-			wl := helmWorkload("helm-rejected")
+		DescribeTable("retains the workload until local Helm cleanup can proceed", func(name string, uninstallErr error, reason string, delay time.Duration) {
+			wl := helmWorkload(name)
 			Expect(k8sClient.Create(ctx, wl)).To(Succeed())
-			secret := makeHelmReleaseSecret("ns", "helm-rejected")
+			secret := makeHelmReleaseSecret("ns", name)
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 			DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), secret) })
 
-			fake := &fakeUninstaller{progressErr: rancher.ErrUnauthorized}
-			holder := rancher.NewHolder()
-			holder.Set(fake)
 			r := reconciler()
-			r.CatalogClient = holder
+			r.Uninstaller = &fakeUninstaller{progressErr: uninstallErr}
 
-			_, err := r.Reconcile(ctx, req("helm-rejected", "default"))
+			key := req(name, "default")
+			_, err := r.Reconcile(ctx, key)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Delete(ctx, wl)).To(Succeed())
 
-			res, err := r.Reconcile(ctx, req("helm-rejected", "default"))
-			Expect(err).NotTo(HaveOccurred(), "token rejection must not surface as a reconcile error")
-			Expect(res.RequeueAfter).To(BeNumerically(">", 0))
-			Expect(fake.calls).To(Equal(0), "must not attempt uninstall when the token is rejected")
+			res, err := r.Reconcile(ctx, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(delay))
 
 			got := &aiplatformv1alpha1.AIWorkload{}
-			Expect(k8sClient.Get(ctx, req("helm-rejected", "default").NamespacedName, got)).To(Succeed())
-			Expect(got.DeletionTimestamp).NotTo(BeNil(), "finalizer retained; release not orphaned")
+			Expect(k8sClient.Get(ctx, key.NamespacedName, got)).To(Succeed())
+			Expect(got.Finalizers).To(ContainElement("ai-factory.suse.com/cleanup"))
 			cond := meta.FindStatusCondition(got.Status.Conditions, "Ready")
 			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal("RancherTokenRejected"))
+			Expect(cond.Reason).To(Equal(reason))
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-		})
+		},
+			Entry("permission denied", "helm-rejected", fmt.Errorf("forbidden by Kubernetes RBAC"), "UninstallFailed", 15*time.Second),
+			Entry("uninstall slots occupied", "helm-queued", helm.ErrUninstallBusy, "AwaitingUninstall", 10*time.Second),
+		)
 	})
 })
 

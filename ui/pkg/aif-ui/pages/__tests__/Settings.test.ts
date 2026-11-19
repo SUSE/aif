@@ -6,7 +6,9 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import Settings from '../Settings.vue';
 import { nextTick } from 'vue';
+import { Banner } from '@components/Banner';
 import { LabeledInput } from '@components/Form/LabeledInput';
+import { Checkbox } from '@components/Form/Checkbox';
 import { getSettings, putSettings } from '../../utils/operator-api';
 import { listCatalogs } from '../../utils/catalog-api';
 import { toOperatorError } from '../../utils/operator-config';
@@ -40,17 +42,6 @@ vi.mock('../../utils/operator-config', async(importOriginal) => {
 vi.mock('../../services/registry-endpoints', () => ({
   resolveRegistryEndpoints: vi.fn().mockReturnValue({}),
   registryEndpointOverrides: vi.fn().mockReturnValue({}),
-}));
-
-vi.mock('../../services/rancher-token', () => ({
-  mintOperatorToken: vi.fn(),
-  ensureTokenSecret: vi.fn(),
-  deleteToken: vi.fn(),
-  requestErrorMessage: vi.fn((e) => String(e)),
-  TOKEN_EXPIRES_ANNOTATION: 'suseai.io/token-expires-at',
-  TOKEN_NAME_ANNOTATION: 'suseai.io/token-name',
-  DEFAULT_TOKEN_SECRET_NAME: 'aif-rancher-token',
-  DEFAULT_TOKEN_SECRET_KEY: 'token',
 }));
 
 vi.mock('../../utils/custom-repos', () => ({
@@ -125,6 +116,15 @@ async function mountSettings(options: { route?: { query?: Record<string, string>
 }
 
 describe('Settings page - loading errors', () => {
+  it('preserves legacy configuration without reading or creating a personal token', async () => {
+    const legacy = { tokenSecretRef: { name: 'retired-token', key: 'token' }, url: 'https://old-rancher.invalid' };
+    vi.mocked(getSettings).mockResolvedValueOnce({ spec: { rancherCatalog: legacy } });
+    const wrapper = await mountSettings();
+    const vm = wrapper.vm as any;
+    expect(wrapper.find('#rancherCatalog').exists()).toBe(false);
+    expect(vm.$store.dispatch).not.toHaveBeenCalled();
+    expect(vm.spec.rancherCatalog.tokenSecretRef).toEqual(legacy.tokenSecretRef);
+  });
   const shellError = (status: number, body: Record<string, unknown> | string) => toOperatorError(
     Object.defineProperty(typeof body === 'string' ? { data: body } : { ...body }, '_status', { value: status }),
   );
@@ -199,6 +199,24 @@ describe('Settings page - registry section summaries', () => {
 });
 
 describe('Settings page - Custom Repositories', () => {
+  it('lets an existing Git repo clear skipped TLS verification', async () => {
+    const wrapper = await mountSettings();
+    await wrapper.find('[data-testid="add-custom-repo"]').trigger('click');
+    const repo = (wrapper.vm as any).spec.customRepos[0];
+    const box = wrapper.get('[data-testid="section-customRepo-0"]');
+    repo.type = 'git';
+    repo.insecureSkipTLSVerify = true;
+    await nextTick();
+    expect(box.getComponent(Banner).props('label')).toContain('To download Git charts over HTTPS, clear this setting');
+    box.getComponent(Checkbox).vm.$emit('update:value', false);
+    await nextTick();
+    expect(repo.insecureSkipTLSVerify).toBe(false);
+    expect(box.findComponent(Checkbox).exists()).toBe(false);
+    repo.type = 'helm';
+    await nextTick();
+    expect(box.findComponent(Checkbox).exists()).toBe(true);
+  });
+
   it('Add Repository appends a new custom-repo accordion, auto-expanded', async () => {
     const wrapper = await mountSettings();
     await flushPromises();
@@ -456,13 +474,10 @@ describe('Settings page - incomplete secret references', () => {
     });
 
     expect(saved).toBe(false);
-    expect(vm.errors).toHaveLength(3);
+    expect(vm.errors).toHaveLength(2);
     expect(vm.errors.join('\n')).toContain('"appco-ca"');
     expect(vm.errors.join('\n')).toContain('"git-creds"');
-    expect(vm.errors.join('\n')).toContain('"rancher-token"');
-    // The Rancher catalog secret fields sit under its collapsed Advanced panel.
-    expect(vm.expanded.rancherCatalog).toBe(true);
-    expect(vm.showAdvanced.rancherCatalog).toBe(true);
+    expect(vm.errors.join('\n')).not.toContain('"rancher-token"');
   });
 
   it('blocks Apply for a custom repository Secret without a key instead of dropping it', async () => {

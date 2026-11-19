@@ -61,11 +61,37 @@ func sentinelResultScheme(t *testing.T) *kruntime.Scheme {
 	return scheme
 }
 
+func TestReconcileBlueprintStatus_WaitsForGitIndex(t *testing.T) {
+	scheme := sentinelResultScheme(t)
+	w := newBlueprintWorkload(time.Now())
+	repo := gitClusterRepo("charts")
+	unstructured.RemoveNestedField(repo.Object, "status", "commit")
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, gitBlueprintCR("charts"), repo).Build()
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: rancher.NewGitChartFetcher(cl)}
+
+	result, err := r.reconcileBlueprintStatus(t.Context(), w)
+	ready := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
+	if err != nil || result.RequeueAfter != 30*time.Second || ready == nil || ready.Reason != reasonClusterRepoNotReady {
+		t.Fatalf("unindexed repo: err=%v, result=%v, Ready=%v", err, result, ready)
+	}
+	if err := unstructured.SetNestedField(repo.Object, "invalid", "status", "commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.Update(t.Context(), repo); err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.reconcileBlueprintStatus(t.Context(), w)
+	ready = meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
+	if err == nil || ready == nil || ready.Reason != "ComponentReconcileFailed" {
+		t.Fatalf("malformed indexed commit: err=%v, Ready=%v", err, ready)
+	}
+}
+
 // Each branch in reconcileBlueprintStatus's component-error ladder encodes a
 // deliberate requeue-vs-terminal decision, and the sentinel-wrapping tests in
 // gitchart_test.go cannot see any of it. In particular errChartTooLarge's empty
 // Result is the whole point of that branch: returning the error instead spins
-// the workqueue forever, re-downloading a multi-megabyte archive from Rancher on
+// the workqueue forever, re-downloading a multi-megabyte archive from Git on
 // every backoff tick while the workload advertises its last good message. That
 // was a real defect once. So assert the full outcome — reason, phase, requeue
 // delay and whether the error escapes — for every branch at once.
@@ -73,9 +99,7 @@ func TestReconcileBlueprintStatus_ComponentErrorOutcomes(t *testing.T) {
 	oversized := make([]byte, maxChartArchiveBytes+1)
 
 	cases := []struct {
-		name string
-		// catalog is installed in a holder unless nil, which leaves
-		// CatalogClient unset and triggers errCatalogClientNotConfigured.
+		name        string
 		catalog     rancher.ChartFetcher
 		wantReason  string
 		wantRequeue time.Duration
@@ -84,24 +108,8 @@ func TestReconcileBlueprintStatus_ComponentErrorOutcomes(t *testing.T) {
 		requeueWhy  string
 	}{
 		{
-			name:        "no catalog client requeues so a token set later is picked up",
-			catalog:     nil,
-			wantReason:  "CatalogClientNotConfigured",
-			wantRequeue: time.Minute,
-			wantPhase:   aiplatformv1alpha1.AIWorkloadPhaseFailed,
-			requeueWhy:  "the catalog config is editable at runtime, so this must retry",
-		},
-		{
-			name:        "a rejected token requeues so re-authorizing recovers",
-			catalog:     fakeCatalog{err: rancher.ErrUnauthorized},
-			wantReason:  "RancherTokenRejected",
-			wantRequeue: time.Minute,
-			wantPhase:   aiplatformv1alpha1.AIWorkloadPhaseFailed,
-			requeueWhy:  "every token eventually expires and re-authorizing must recover",
-		},
-		{
 			name:        "an oversized chart is terminal",
-			catalog:     fakeCatalog{tgz: oversized},
+			catalog:     fakeChartFetcher{tgz: oversized},
 			wantReason:  "ChartTooLarge",
 			wantRequeue: 0,
 			wantPhase:   aiplatformv1alpha1.AIWorkloadPhaseFailed,
@@ -109,7 +117,7 @@ func TestReconcileBlueprintStatus_ComponentErrorOutcomes(t *testing.T) {
 		},
 		{
 			name:        "an unrecognized failure escapes to the workqueue",
-			catalog:     fakeCatalog{err: stderrors.New("x509: certificate signed by unknown authority")},
+			catalog:     fakeChartFetcher{err: stderrors.New("x509: certificate signed by unknown authority")},
 			wantReason:  "ComponentReconcileFailed",
 			wantRequeue: 0,
 			wantErr:     true,
@@ -127,11 +135,7 @@ func TestReconcileBlueprintStatus_ComponentErrorOutcomes(t *testing.T) {
 			cl := fake.NewClientBuilder().WithScheme(scheme).
 				WithObjects(w, bp, gitClusterRepo("rancher-charts")).Build()
 			r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, OperatorNamespace: "aif-operator"}
-			if tc.catalog != nil {
-				holder := rancher.NewHolder()
-				holder.Set(tc.catalog)
-				r.CatalogClient = holder
-			}
+			r.ChartFetcher = tc.catalog
 
 			result, err := r.reconcileBlueprintStatus(context.Background(), w)
 

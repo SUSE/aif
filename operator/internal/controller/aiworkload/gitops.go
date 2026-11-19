@@ -189,6 +189,8 @@ func (r *AIWorkloadReconciler) deleteGitFileByName(ctx context.Context, w *aipla
 	}
 
 	filePath := "workloads/" + bundleName + ".yaml"
+	r.gitWriteMu.Lock()
+	defer r.gitWriteMu.Unlock()
 	_, err = gc.DeleteFile(ctx, filePath, "chore: remove workload "+bundleName)
 	return err
 }
