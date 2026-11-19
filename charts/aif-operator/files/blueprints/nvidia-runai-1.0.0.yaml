@@ -1,0 +1,1511 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  labels:
+    ai-factory.suse.com/blueprint-name: nvidia-runai
+    ai-factory.suse.com/blueprint-version: 1.0.0
+  name: nvidia-runai-1-0-0
+spec:
+  displayName: NVIDIA RunAI
+  version: 1.0.0
+  source: Nvidia
+  # The control plane migrates its database on upgrade; old code can't run on it.
+  rollback: Disabled
+  description: |
+    NVIDIA Run:ai 2.26, NVIDIA's commercial Run:ai with NVIDIA support (NVIDIA AI
+    Enterprise) and its proprietary scheduler: the Run:ai control plane and the Run:ai
+    cluster on one target cluster, with every prerequisite. No install-time input is
+    required, but these must be configured in AI Factory Settings first: NVIDIA NGC
+    credentials whose API key is entitled to Run:ai (its charts and images are gated),
+    and Application Collection credentials for the prerequisites. When the install
+    finishes, log in to the Run:ai UI and the cluster shows Connected.
+
+    What gets installed, in this order (gpu-operator installs alongside the others;
+    nothing waits for it):
+    - local-path-provisioner (namespace local-path-storage): the default StorageClass.
+      Untick if your cluster already has a default StorageClass. Installing a second
+      default will conflict.
+    - cert-manager (namespace cert-manager). Untick if your cluster already has
+      cert-manager. Installing a second copy will conflict.
+    - prometheus-operator (namespace monitoring): Prometheus Operator and its CRDs,
+      Grafana off. Untick if your cluster already has Rancher Monitoring or another
+      Prometheus Operator. Installing a second copy will conflict.
+    - gpu-operator (namespace gpu-operator): NVIDIA GPU Operator, set up for RKE2's
+      containerd. Untick if your cluster already has the GPU Operator. Installing a
+      second copy will conflict.
+    - prometheus-statsd-exporter (release runai-setup, namespace runai-backend):
+      REQUIRED, do not untick. It creates the Run:ai CA and certificate issuer, the
+      runai namespace and the Run:ai Cluster CRD (clusters.run.ai, needed before
+      runai-cluster installs), and runs the preflight checks (CPU, memory, node storage, default
+      StorageClass, cert-manager and Prometheus Operator CRDs, IngressClass, GPUs). The
+      chart is only a carrier; no StatsD exporter runs. Results are in the
+      runai-backend/runai-preflight-result ConfigMap. Without this component the
+      control plane waits forever for its CA.
+    - control-plane (namespace runai-backend): the Run:ai control plane, plus the
+      registrar, which creates the cluster record in Run:ai and keeps the cluster's
+      connection token fresh.
+    - runai-cluster (namespace runai): the Run:ai cluster. It reads its connection
+      values from the runai-backend/runai-cluster-values Secret, which the registrar
+      writes.
+
+    Minimum hardware (control plane and cluster on the same cluster): 20 CPU cores,
+    32 GB memory and 160 GB disk on the system nodes, plus at least one NVIDIA GPU node.
+    RKE2 is supported. Install on one target cluster only.
+
+    Domain: by default the Run:ai UI is at https://runai.<node-ip>.sslip.io, where
+    <node-ip> is a node IP of the target cluster. sslip.io is a public DNS service, so
+    browsers and nodes must be able to resolve it. To use your own domain, set
+    global.domain on the control-plane component in the Values tab when installing,
+    and point that name and *.<domain> at the cluster's ingress controller. The
+    ingress class is detected from the cluster's default IngressClass; set
+    global.ingress.ingressClass on control-plane and
+    clusterConfig.global.ingress.ingressClass on runai-cluster to choose another. The
+    domain and ingress class can't be changed after install.
+
+    Certificates: Run:ai uses its own self-signed CA (Issuer runai-ca-issuer in
+    runai-backend), so browsers show a certificate warning until you trust that CA.
+    To use an enterprise cert-manager ClusterIssuer instead, set these on
+    control-plane in the Values tab when installing:
+    - global.ingress.extraAnnotations: cert-manager.io/issuer: <your ClusterIssuer>
+      and cert-manager.io/issuer-kind: ClusterIssuer.
+    - For a private CA, point global.customCA.volumes at a Secret in runai-backend that
+      holds your CA bundle (item ca.crt mapped to path runai-ca.pem). For a publicly
+      trusted CA, set global.customCA.enabled: false on control-plane and runai-cluster.
+
+    Admin login: the username is admin@runai.local and the password is generated.
+    Read it with:
+    kubectl -n runai-backend get secret runai-backend-gen-tenants-manager -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+    Change the password in the Run:ai UI after your first login. Until you do, anyone
+    who can read Secrets in runai-backend can read it. tenantsManager.config.adminUsername
+    and adminPassword on control-plane can be set in the Values tab, but they apply
+    only at the first install; changing them later doesn't change the Run:ai login.
+
+    Images: every image can be overridden, for example to use a private registry.
+    - Chart images, through Helm values in the Values tab: on control-plane,
+      global.image.registry (Run:ai images), global.postgresImage and global.waitImage;
+      on runai-cluster, global.image.registry and thirdPartyImages.*; on the
+      prerequisites, each chart's own image values.
+    - Registrar and preflight images (registry.suse.com/bci/python:3.12), through an
+      install-time Kustomize overlay on the control-plane or prometheus-statsd-exporter
+      component (Advanced tab) with an images: entry, for example:
+      images: [{name: registry.suse.com/bci/python, newName: <registry>/bci/python, newTag: "3.12"}]
+    - Run:ai images from a private registry also need that registry's pull secret, in
+      both runai-backend and runai. On control-plane, set global.imagePullSecrets and
+      keycloakx.imagePullSecrets to it instead of ngc-secret (the control plane hands the
+      first global.imagePullSecrets entry to the cluster as its registry credential). On
+      runai-cluster, set global.additionalImagePullSecrets to it.
+
+    GPU Operator: following SUSE's RKE2 docs, it installs SUSE's precompiled driver
+    images (registry.suse.com/third-party/nvidia) by default, and skips nodes that
+    already have a driver installed. Published driver branches: SLES 15 SP7 550 to 615,
+    SLES 16.0 595, 610 and 615, SLES 16.1 615 only. Set driver.version on gpu-operator
+    to a branch your OS and GPUs support (the default is "595"; use "615" on SLES 16.1).
+    On non-SUSE nodes, remove the driver values so NVIDIA's defaults apply, or set
+    driver.enabled: false if the drivers are preinstalled.
+
+    Rollback is disabled for this Blueprint: the Run:ai control plane migrates its
+    database on upgrade, and older versions can't run on a migrated database.
+
+    Uninstall keeps data: removing the workload uninstalls the Helm releases and leaves
+    the databases, the CA, the cluster record, the runai and runai-backend
+    namespaces and the clusters.run.ai CRD, so a reinstall resumes where it left off.
+    For a clean start, after uninstalling run:
+    kubectl delete namespace runai runai-backend
+    kubectl delete crd clusters.run.ai
+    This permanently deletes the volumes, data and Secrets in those namespaces,
+    and any remaining Run:ai Cluster objects.
+  components:
+  - chartName: local-path-provisioner
+    chartRepo: application-collection
+    chartVersion: 0.0.37
+    targetNamespace: local-path-storage
+    values:
+      storageClass:
+        defaultClass: true
+  - chartName: cert-manager
+    chartRepo: application-collection
+    chartVersion: 1.21.3
+    targetNamespace: cert-manager
+    values:
+      crds:
+        enabled: true
+  - chartName: prometheus-operator
+    chartRepo: application-collection
+    chartVersion: 92.14.0
+    targetNamespace: monitoring
+    values:
+      grafana:
+        enabled: false
+  - chartName: gpu-operator
+    chartRepo: nvidia
+    chartVersion: v26.7.2
+    targetNamespace: gpu-operator
+    values:
+      # Per SUSE's RKE2 GPU Operator docs: RKE2 containerd socket, and SUSE's precompiled
+      # driver images (registry.suse.com/third-party/nvidia/driver:<branch>-<kernel>-<flavor>-<os>).
+      # Nodes with a pre-installed driver are detected and skipped. Pick the branch your GPUs
+      # and OS need (SLES 16.1 only has 615).
+      toolkit:
+        env:
+          - name: CONTAINERD_SOCKET
+            value: /run/k3s/containerd/containerd.sock
+      driver:
+        repository: registry.suse.com/third-party/nvidia
+        usePrecompiled: true
+        version: "595"
+  # Setup and preflight. The chart is only a carrier for the overlay, which
+  # holds the CA chain, the runai Namespace and the preflight Deployment.
+  - chartName: prometheus-statsd-exporter
+    chartRepo: application-collection
+    chartVersion: 1.0.0
+    targetNamespace: runai-backend
+    releaseName: runai-setup
+    dependsOn:
+    - local-path-provisioner
+    - cert-manager
+    - prometheus-operator
+    values:
+      # Carrier chart only: the overlay supplies the setup and preflight resources.
+      replicaCount: 0
+      serviceAccount:
+        create: false
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 50m
+          memory: 32Mi
+    kustomize:
+      dir: overlay
+      files:
+        overlay/ca.yaml: |
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+          metadata:
+            name: runai-selfsigned
+            namespace: runai-backend
+          spec:
+            selfSigned: {}
+          ---
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: runai-ca
+            namespace: runai-backend
+          spec:
+            isCA: true
+            commonName: Run:ai CA
+            duration: 87600h
+            secretName: runai-ca-keypair
+            privateKey:
+              algorithm: ECDSA
+            issuerRef:
+              name: runai-selfsigned
+              kind: Issuer
+              group: cert-manager.io
+          ---
+          apiVersion: cert-manager.io/v1
+          kind: Issuer
+          metadata:
+            name: runai-ca-issuer
+            namespace: runai-backend
+          spec:
+            ca:
+              secretName: runai-ca-keypair
+        overlay/crd-run.ai-clusters.yaml: |
+          ---
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            annotations:
+              controller-gen.kubebuilder.io/version: v0.17.0
+            name: clusters.run.ai
+          spec:
+            group: run.ai
+            names:
+              kind: Cluster
+              listKind: ClusterList
+              plural: clusters
+              singular: cluster
+            scope: Cluster
+            versions:
+            - name: v1
+              schema:
+                openAPIV3Schema:
+                  description: Cluster is the Schema for the clusters API
+                  properties:
+                    apiVersion:
+                      description: |-
+                        APIVersion defines the versioned schema of this representation of an object.
+                        Servers should convert recognized schemas to the latest internal value, and
+                        may reject unrecognized values.
+                        More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+                      type: string
+                    kind:
+                      description: |-
+                        Kind is a string value representing the REST resource this object represents.
+                        Servers may infer this from the endpoint the client submits requests to.
+                        Cannot be updated.
+                        In CamelCase.
+                        More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                      type: string
+                    metadata:
+                      type: object
+                    spec:
+                      description: ClusterSpec defines the desired state of Cluster
+                      type: object
+                    status:
+                      description: ClusterStatus defines the observed state of Cluster
+                      properties:
+                        conditions:
+                          description: Conditions Defines the observed state of the CRD in the
+                            cluster
+                          items:
+                            description: Condition contains details for one aspect of the current
+                              state of this API Resource.
+                            properties:
+                              lastTransitionTime:
+                                description: |-
+                                  lastTransitionTime is the last time the condition transitioned from one status to another.
+                                  This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                                format: date-time
+                                type: string
+                              message:
+                                description: |-
+                                  message is a human readable message indicating details about the transition.
+                                  This may be an empty string.
+                                maxLength: 32768
+                                type: string
+                              observedGeneration:
+                                description: |-
+                                  observedGeneration represents the .metadata.generation that the condition was set based upon.
+                                  For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                                  with respect to the current state of the instance.
+                                format: int64
+                                minimum: 0
+                                type: integer
+                              reason:
+                                description: |-
+                                  reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                                  Producers of specific condition types may define expected values and meanings for this field,
+                                  and whether the values are considered a guaranteed API.
+                                  The value should be a CamelCase string.
+                                  This field may not be empty.
+                                maxLength: 1024
+                                minLength: 1
+                                pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                                type: string
+                              status:
+                                description: status of the condition, one of True, False, Unknown.
+                                enum:
+                                - "True"
+                                - "False"
+                                - Unknown
+                                type: string
+                              type:
+                                description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                                maxLength: 316
+                                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                                type: string
+                            required:
+                            - lastTransitionTime
+                            - message
+                            - reason
+                            - status
+                            - type
+                            type: object
+                          type: array
+                        observedGeneration:
+                          description: |-
+                            ObservedGeneration specifies the latest generation of CRD
+                            the operator was aware of
+                          format: int64
+                          type: integer
+                      type: object
+                  type: object
+              served: true
+              storage: true
+              subresources:
+                status: {}
+        overlay/kustomization.yaml: |
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+            - ca.yaml
+            - crd-run.ai-clusters.yaml
+            - namespace-runai.yaml
+            - preflight.yaml
+          configMapGenerator:
+            - name: runai-preflight-script
+              namespace: runai-backend
+              files:
+                - preflight.py
+          patches:
+            # Fleet v0.14 dry-runs the runai-cluster chart before installing its crds/, so the CRD
+            # is created here first. crd-run.ai-clusters.yaml is the chart's file verbatim; keep
+            # stops a setup uninstall from deleting the CRD and with it the Run:ai Cluster object.
+            - target:
+                kind: CustomResourceDefinition
+                name: clusters.run.ai
+              patch: |-
+                apiVersion: apiextensions.k8s.io/v1
+                kind: CustomResourceDefinition
+                metadata:
+                  name: clusters.run.ai
+                  annotations:
+                    helm.sh/resource-policy: keep
+            # The carrier chart's own workload must not run; names follow releaseName runai-setup.
+            - target:
+                kind: Deployment
+                name: runai-setup-prometheus-statsd-exporter
+              patch: |-
+                $patch: delete
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: runai-setup-prometheus-statsd-exporter
+            - target:
+                kind: Service
+                name: runai-setup-prometheus-statsd-exporter
+              patch: |-
+                $patch: delete
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: runai-setup-prometheus-statsd-exporter
+        overlay/namespace-runai.yaml: |
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: runai
+            labels:
+              pod-security.kubernetes.io/enforce: privileged
+              pod-security.kubernetes.io/audit: privileged
+              pod-security.kubernetes.io/warn: privileged
+            annotations:
+              helm.sh/resource-policy: keep
+        overlay/preflight.py: |
+          #!/usr/bin/env python3
+          """Run:ai preflight: checks cluster prerequisites and records the findings in
+          runai-backend/runai-preflight-result.
+
+          Usage: preflight.py           check at once, then every PREFLIGHT_INTERVAL seconds
+                                        (PREFLIGHT_RETRY seconds after a failed or errored check)
+                 preflight.py --ready   readiness probe: exit 0 only if the last check passed
+          """
+          import json
+          import os
+          import re
+          import ssl
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+          from typing import NamedTuple
+
+          NAMESPACE = "runai-backend"
+          RESULT_CONFIGMAP = "runai-preflight-result"
+          CA_CERTIFICATE = "runai-ca"
+          CA_SECRET = "runai-ca-keypair"
+          MIN_CORES = 20
+          MIN_GB = 32
+          MIN_STORAGE_GB = 160
+          CRDS = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/"
+          DEFAULT_CLASS_ANNOTATIONS = ("storageclass.kubernetes.io/is-default-class",
+                                       "storageclass.beta.kubernetes.io/is-default-class")
+          SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+          SUFFIXES = {"n": 1e-9, "u": 1e-6, "m": 1e-3, "": 1, "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "P": 1e15, "E": 1e18,
+                      "Ki": 2 ** 10, "Mi": 2 ** 20, "Gi": 2 ** 30, "Ti": 2 ** 40, "Pi": 2 ** 50, "Ei": 2 ** 60}
+
+
+          def log(message):
+              print(message, flush=True)
+
+
+          class Finding(NamedTuple):
+              level: str
+              message: str
+
+
+          class KubeError(Exception):
+              def __init__(self, status, message):
+                  super().__init__("Kubernetes API %s: %s" % (status, message))
+                  self.status = status
+
+
+          class Config:
+              def __init__(self, env):
+                  self.interval = int(env.get("PREFLIGHT_INTERVAL", "300"))
+                  self.retry = int(env.get("PREFLIGHT_RETRY", "60"))
+                  self.state_file = env.get("PREFLIGHT_STATE_FILE", "/tmp/preflight-passed")
+
+              @classmethod
+              def from_env(cls, env=None):
+                  return cls(os.environ if env is None else env)
+
+
+          class Kube:
+              def __init__(self, base_url, ca_file, token_file):
+                  self.base_url = base_url
+                  self.token_file = token_file
+                  self.context = ssl.create_default_context(cafile=ca_file)
+
+              @classmethod
+              def in_cluster(cls):
+                  host = os.environ["KUBERNETES_SERVICE_HOST"]
+                  if ":" in host:
+                      host = "[%s]" % host
+                  port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+                  return cls("https://%s:%s" % (host, port), SA_DIR + "/ca.crt", SA_DIR + "/token")
+
+              def _request(self, method, path, obj=None):
+                  with open(self.token_file) as f:
+                      token = f.read().strip()
+                  data = None if obj is None else json.dumps(obj).encode()
+                  req = urllib.request.Request(self.base_url + path, data=data, method=method, headers={
+                      "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json"})
+                  try:
+                      with urllib.request.urlopen(req, context=self.context, timeout=30) as resp:
+                          return json.loads(resp.read().decode() or "{}")
+                  except urllib.error.HTTPError as e:
+                      if method == "GET" and e.code == 404:
+                          return None
+                      raise KubeError(e.code, "%s %s: %s" % (method, path, e.read().decode(errors="replace")[:300]))
+                  except (urllib.error.URLError, OSError) as e:
+                      raise KubeError("unreachable", "%s %s: %s" % (method, path, e))
+
+              def get(self, path):
+                  return self._request("GET", path)
+
+              def create(self, path, obj):
+                  return self._request("POST", path, obj)
+
+              def replace(self, path, obj):
+                  return self._request("PUT", path, obj)
+
+              def apply(self, collection, obj):
+                  path = collection + "/" + obj["metadata"]["name"]
+                  current = self.get(path)
+                  if current is None:
+                      return self.create(collection, obj)
+                  version = current.get("metadata", {}).get("resourceVersion")
+                  if version:
+                      obj["metadata"]["resourceVersion"] = version
+                  return self.replace(path, obj)
+
+
+          def quantity(value):
+              match = re.fullmatch(r"([0-9.]+(?:[eE][-+]?[0-9]+)?)([a-zA-Z]*)", str(value).strip())
+              if not match or match.group(2) not in SUFFIXES:
+                  raise ValueError("unsupported quantity %r" % value)
+              return float(match.group(1)) * SUFFIXES[match.group(2)]
+
+
+          def items(kube, path):
+              return (kube.get(path) or {}).get("items") or []
+
+
+          def ready_condition(obj):
+              conditions = ((obj or {}).get("status") or {}).get("conditions") or []
+              return any(c.get("type") == "Ready" and c.get("status") == "True" for c in conditions)
+
+
+          def number(value):
+              return "%g" % round(value, 1)
+
+
+          def check(kube):
+              findings = []
+              nodes = [n.get("status", {}).get("allocatable", {}) for n in items(kube, "/api/v1/nodes")]
+              cores = sum(quantity(a.get("cpu", "0")) for a in nodes)
+              gb = sum(quantity(a.get("memory", "0")) for a in nodes) / 1e9
+              if cores < MIN_CORES or gb < MIN_GB:
+                  findings.append(Finding("fail", "Run:ai needs at least %d CPU cores and %d GB memory across nodes; "
+                                                  "found %s cores, %s GB." % (MIN_CORES, MIN_GB, number(cores), number(gb))))
+              storage_gb = sum(quantity(a.get("ephemeral-storage", "0")) for a in nodes) / 1e9
+              if storage_gb < MIN_STORAGE_GB:
+                  findings.append(Finding("fail", "Run:ai needs at least %d GB of node storage across nodes; found %s GB."
+                                          % (MIN_STORAGE_GB, number(storage_gb))))
+              classes = items(kube, "/apis/storage.k8s.io/v1/storageclasses")
+              if not any((c.get("metadata", {}).get("annotations") or {}).get(a) == "true"
+                         for c in classes for a in DEFAULT_CLASS_ANNOTATIONS):
+                  findings.append(Finding("fail", "No default StorageClass. Re-enable the local-path component "
+                                                  "or mark a StorageClass as default."))
+              if kube.get(CRDS + "certificates.cert-manager.io") is None:
+                  findings.append(Finding("fail", "cert-manager CRDs not found. Re-enable the cert-manager component "
+                                                  "or install cert-manager."))
+              if kube.get(CRDS + "servicemonitors.monitoring.coreos.com") is None:
+                  findings.append(Finding("fail", "Prometheus Operator CRDs not found. Re-enable the Prometheus component "
+                                                  "or install Rancher Monitoring."))
+              if not items(kube, "/apis/networking.k8s.io/v1/ingressclasses"):
+                  findings.append(Finding("fail", "No IngressClass found. Run:ai needs an ingress controller."))
+              # The Certificate, not its Secret, so the CA's private key is never readable here.
+              ca = kube.get("/apis/cert-manager.io/v1/namespaces/%s/certificates/%s" % (NAMESPACE, CA_CERTIFICATE))
+              if not ready_condition(ca):
+                  findings.append(Finding("fail", "Run:ai CA (Certificate %s, Secret %s) not ready yet; cert-manager may "
+                                                  "still be issuing it." % (CA_CERTIFICATE, CA_SECRET)))
+              if not any(quantity(a.get("nvidia.com/gpu", "0")) > 0 for a in nodes):
+                  findings.append(Finding("warn", "No GPU nodes detected yet. If the GPU Operator is still starting, "
+                                                  "this clears on its own."))
+              return findings
+
+
+          def timestamp(now):
+              return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+
+
+          def clear_ready(cfg):
+              try:
+                  os.remove(cfg.state_file)
+              except FileNotFoundError:
+                  pass
+
+
+          def run_once(kube, cfg, now):
+              try:
+                  findings = check(kube)
+                  collection = "/api/v1/namespaces/%s/configmaps" % NAMESPACE
+                  kube.apply(collection, {"apiVersion": "v1", "kind": "ConfigMap",
+                                          "metadata": {"name": RESULT_CONFIGMAP, "namespace": NAMESPACE},
+                                          "data": {"findings": json.dumps([f._asdict() for f in findings]),
+                                                   "checkedAt": timestamp(now)}})
+              except Exception:
+                  clear_ready(cfg)
+                  raise
+              passed = not any(f.level == "fail" for f in findings)
+              if passed:
+                  with open(cfg.state_file, "w") as f:
+                      f.write(timestamp(now) + "\n")
+              else:
+                  clear_ready(cfg)
+              return passed
+
+
+          def ready(cfg):
+              return os.path.exists(cfg.state_file)
+
+
+          def main(argv):
+              cfg = Config.from_env()
+              if "--ready" in argv:
+                  return 0 if ready(cfg) else 1
+              kube = Kube.in_cluster()
+              while True:
+                  try:
+                      passed = run_once(kube, cfg, time.time())
+                      delay = cfg.interval if passed else cfg.retry
+                      log("preflight %s; next check in %ds" % ("passed" if passed else "failed", delay))
+                  except Exception as e:
+                      delay = cfg.retry
+                      log("preflight check error: %s; next check in %ds" % (e, delay))
+                  time.sleep(delay)
+
+
+          if __name__ == "__main__":
+              sys.exit(main(sys.argv[1:]))
+        overlay/preflight.yaml: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: runai-preflight
+            namespace: runai-backend
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            name: runai-preflight
+          rules:
+            - apiGroups: [""]
+              resources: [nodes]
+              verbs: [list]
+            - apiGroups: [storage.k8s.io]
+              resources: [storageclasses]
+              verbs: [list]
+            - apiGroups: [networking.k8s.io]
+              resources: [ingressclasses]
+              verbs: [list]
+            - apiGroups: [apiextensions.k8s.io]
+              resources: [customresourcedefinitions]
+              verbs: [get]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: runai-preflight
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: runai-preflight
+          subjects:
+            - kind: ServiceAccount
+              name: runai-preflight
+              namespace: runai-backend
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: runai-preflight
+            namespace: runai-backend
+          rules:
+            - apiGroups: [""]
+              resources: [configmaps]
+              verbs: [create]
+            - apiGroups: [""]
+              resources: [configmaps]
+              resourceNames: [runai-preflight-result]
+              verbs: [get, update]
+            - apiGroups: [cert-manager.io]
+              resources: [certificates]
+              resourceNames: [runai-ca]
+              verbs: [get]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: runai-preflight
+            namespace: runai-backend
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: runai-preflight
+          subjects:
+            - kind: ServiceAccount
+              name: runai-preflight
+              namespace: runai-backend
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: runai-preflight
+            namespace: runai-backend
+            labels:
+              app.kubernetes.io/name: runai-preflight
+          spec:
+            replicas: 1
+            strategy:
+              type: Recreate
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: runai-preflight
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: runai-preflight
+              spec:
+                serviceAccountName: runai-preflight
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  runAsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: preflight
+                    image: registry.suse.com/bci/python:3.12
+                    command: [python3, /scripts/preflight.py]
+                    readinessProbe:
+                      exec:
+                        command: [python3, /scripts/preflight.py, --ready]
+                      periodSeconds: 30
+                      timeoutSeconds: 10
+                    resources:
+                      requests:
+                        cpu: 20m
+                        memory: 64Mi
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    volumeMounts:
+                      - name: script
+                        mountPath: /scripts
+                        readOnly: true
+                      - name: tmp
+                        mountPath: /tmp
+                volumes:
+                  - name: script
+                    configMap:
+                      name: runai-preflight-script
+                  - name: tmp
+                    emptyDir: {}
+  - chartName: control-plane
+    chartRepo: nvidia-runai
+    chartVersion: 2.26.50
+    targetNamespace: runai-backend
+    dependsOn:
+    - prometheus-statsd-exporter
+    # 2.26 names its postgresql, nats and thanos subcharts after the release but
+    # connects to runai-backend-*; NVIDIA installs it as release runai-backend.
+    releaseName: runai-backend
+    # Delivers ngc-secret, the nvcr.io pull secret, to the release namespace.
+    vendor: nvidia
+    values:
+      global:
+        domain: aif:auto-domain:runai
+        ingress:
+          ingressClass: aif:auto-ingress-class
+          extraAnnotations:
+            cert-manager.io/issuer: runai-ca-issuer
+            cert-manager.io/issuer-kind: Issuer
+        customCA:
+          enabled: true
+          # The CA key pair comes from the setup component (runai-setup). Not optional:
+          # pods wait for the CA instead of starting without it.
+          volumes:
+            - name: runai-ca-cert
+              secret:
+                secretName: runai-ca-keypair
+                optional: false
+                items:
+                  - key: ca.crt
+                    path: runai-ca.pem
+        # Replaces the chart's runai-reg-creds. The control plane also hands the first
+        # entry to the Run:ai cluster as its registry credential.
+        imagePullSecrets:
+          - name: ngc-secret
+      tenantsManager:
+        config:
+          adminUsername: admin@runai.local
+          adminPassword: ""
+      keycloakx:
+        imagePullSecrets:
+          - name: ngc-secret
+    kustomize:
+      dir: overlay
+      files:
+        overlay/kustomization.yaml: |
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+            - registrar.yaml
+          configMapGenerator:
+            - name: runai-registrar-script
+              namespace: runai-backend
+              files:
+                - registrar.py
+        overlay/registrar.py: |
+          #!/usr/bin/env python3
+          """Run:ai registrar: registers the Run:ai cluster with the control plane and keeps
+          runai-backend/runai-cluster-values (cluster uid, connection credential) fresh.
+
+          Usage: registrar.py           run at once, then every RUNAI_INTERVAL seconds
+                 registrar.py --ready   readiness probe: exit 0 while the last success is recent
+          """
+          import base64
+          import json
+          import os
+          import re
+          import ssl
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from typing import NamedTuple
+
+          # Fixed: registrar.yaml's Roles grant access to these namespaces and object names only.
+          CP_NAMESPACE = "runai-backend"
+          CLUSTER_NAMESPACE = "runai"
+          CREDENTIALS_SECRET = "runai-registrar-credentials"
+          CREDENTIAL_NAME = "aif-runai-registrar"
+          CUSTOM_ROLE = "aif-runai-registrar"
+          DEFAULT_PERMISSION_SETS = "Cluster edit"
+          FALLBACK_ROLE = "System administrator"
+          MAIN_INGRESS = "runai-backend-ingress"
+          ADMIN_CONFIGMAP = "runai-backend-tenants-manager"
+          ADMIN_SECRET = "runai-backend-gen-tenants-manager"
+          CA_SOURCE = "runai-backend-tls"
+          SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+
+          def log(message):
+              print(message, flush=True)
+
+
+          class RegistrarError(Exception):
+              pass
+
+
+          class KubeError(Exception):
+              def __init__(self, status, message):
+                  super().__init__("Kubernetes API %s: %s" % (status, message))
+                  self.status = status
+
+
+          class RunAIError(Exception):
+              def __init__(self, message, status=None):
+                  super().__init__(message)
+                  self.status = status
+
+
+          class RunAIUnreachable(Exception):
+              pass
+
+
+          class Config:
+              def __init__(self, env):
+                  self.cluster_name = env.get("RUNAI_CLUSTER_NAME", "runai-cluster")
+                  self.chart_version = env.get("RUNAI_CHART_VERSION", "")
+                  self.cp_url = env.get("RUNAI_CP_URL", "").rstrip("/") or None
+                  self.cluster_url = env.get("RUNAI_CLUSTER_URL", "").rstrip("/") or None
+                  self.interval = int(env.get("RUNAI_INTERVAL", "1800"))
+                  self.retry = int(env.get("RUNAI_RETRY", "60"))
+                  self.stale_after = int(env.get("RUNAI_STALE_AFTER", "5400"))
+                  self.state_file = env.get("RUNAI_STATE_FILE", "/tmp/registrar-last-success")
+                  sets = env.get("RUNAI_REGISTRAR_PERMISSION_SETS", "").strip() or DEFAULT_PERMISSION_SETS
+                  self.permission_sets = [name.strip() for name in sets.split(",") if name.strip()]
+
+              @classmethod
+              def from_env(cls, env=None):
+                  return cls(os.environ if env is None else env)
+
+
+          class Kube:
+              def __init__(self, base_url, ca_file, token_file):
+                  self.base_url = base_url
+                  self.token_file = token_file
+                  self.context = ssl.create_default_context(cafile=ca_file)
+
+              @classmethod
+              def in_cluster(cls):
+                  host = os.environ["KUBERNETES_SERVICE_HOST"]
+                  if ":" in host:
+                      host = "[%s]" % host
+                  port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+                  return cls("https://%s:%s" % (host, port), SA_DIR + "/ca.crt", SA_DIR + "/token")
+
+              def _request(self, method, path, obj=None):
+                  with open(self.token_file) as f:
+                      token = f.read().strip()
+                  data = None if obj is None else json.dumps(obj).encode()
+                  req = urllib.request.Request(self.base_url + path, data=data, method=method, headers={
+                      "Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json"})
+                  try:
+                      with urllib.request.urlopen(req, context=self.context, timeout=30) as resp:
+                          return json.loads(resp.read().decode() or "{}")
+                  except urllib.error.HTTPError as e:
+                      if method == "GET" and e.code == 404:
+                          return None
+                      raise KubeError(e.code, "%s %s: %s" % (method, path, e.read().decode(errors="replace")[:300]))
+                  except (urllib.error.URLError, OSError) as e:
+                      raise KubeError("unreachable", "%s %s: %s" % (method, path, e))
+
+              def get(self, path):
+                  return self._request("GET", path)
+
+              def create(self, path, obj):
+                  return self._request("POST", path, obj)
+
+              def replace(self, path, obj):
+                  return self._request("PUT", path, obj)
+
+              def apply(self, collection, obj):
+                  path = collection + "/" + obj["metadata"]["name"]
+                  current = self.get(path)
+                  if current is None:
+                      return self.create(collection, obj)
+                  version = current.get("metadata", {}).get("resourceVersion")
+                  if version:
+                      obj["metadata"]["resourceVersion"] = version
+                  return self.replace(path, obj)
+
+              def apply_secret(self, ns, name, data, labels=None, secret_type="Opaque"):
+                  metadata = {"name": name, "namespace": ns}
+                  if labels:
+                      metadata["labels"] = dict(labels)
+                  obj = {"apiVersion": "v1", "kind": "Secret", "metadata": metadata, "type": secret_type,
+                         "data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}
+                  return self.apply("/api/v1/namespaces/%s/secrets" % ns, obj)
+
+
+          class RunAI:
+              def __init__(self):
+                  self.base_url = None
+                  self.context = None
+
+              def configure(self, base_url, ca_pem):
+                  self.base_url = base_url
+                  self.context = ssl.create_default_context()
+                  if ca_pem:
+                      self.context.load_verify_locations(cadata=ca_pem)
+
+              def _request(self, method, path, body=None, token=None, form=None):
+                  headers = {"Accept": "application/json"}
+                  data = None
+                  if form is not None:
+                      data = urllib.parse.urlencode(form).encode()
+                      headers["Content-Type"] = "application/x-www-form-urlencoded"
+                  elif body is not None:
+                      data = json.dumps(body).encode()
+                      headers["Content-Type"] = "application/json"
+                  if token:
+                      headers["Authorization"] = "Bearer " + token
+                  req = urllib.request.Request(self.base_url + path, data=data, method=method, headers=headers)
+                  try:
+                      with urllib.request.urlopen(req, context=self.context, timeout=30) as resp:
+                          text = resp.read().decode()
+                  except urllib.error.HTTPError as e:
+                      detail = e.read().decode(errors="replace")[:300]
+                      raise RunAIError("%s %s returned HTTP %s: %s" % (method, path.split("?")[0], e.code, detail), status=e.code)
+                  except (urllib.error.URLError, OSError) as e:
+                      raise RunAIUnreachable(str(getattr(e, "reason", e)))
+                  return json.loads(text) if text.strip() else {}
+
+              def check_health(self):
+                  self._request("GET", "/_version")
+
+              def _token(self, form):
+                  resp = self._request("POST", "/api/v2/token", form=form)
+                  if not resp.get("access_token"):
+                      raise RunAIError("token response has no access_token")
+                  return resp["access_token"]
+
+              def token_password(self, user, password):
+                  return self._token({"grant_type": "password", "username": user, "password": password})
+
+              def token_client(self, client_id, client_secret):
+                  return self._token({"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret})
+
+              def find_cluster(self, token, name):
+                  for cluster in self._request("GET", "/api/v1/clusters", token=token) or []:
+                      if cluster.get("name") == name:
+                          return cluster["uuid"]
+                  return None
+
+              def create_cluster(self, token, name, domain_url):
+                  return self._request("POST", "/api/v1/clusters", {"name": name, "domain": domain_url}, token=token)["uuid"]
+
+              def install_info(self, token, uid, version):
+                  query = urllib.parse.urlencode({"version": version})
+                  return self._request("GET", "/api/v1/clusters/%s/cluster-install-info?%s" % (uid, query), token=token)
+
+              def _service_account(self, token, name):
+                  for sa in self._request("GET", "/api/v1/service-accounts", token=token) or []:
+                      if sa.get("name") == name:
+                          return sa
+                  raise RunAIError("service account %s not found" % name)
+
+              def _find_role(self, token, name):
+                  query = urllib.parse.quote("name==" + name, safe="")
+                  roles = self._request("GET", "/api/v2/authorization/roles?filterBy=" + query, token=token).get("roles") or []
+                  for role in roles:
+                      if role.get("name") == name:
+                          return role["id"]
+                  return None
+
+              def _permission_set_id(self, token, name, cache):
+                  if not cache:
+                      sets = self._request("GET", "/api/v1/authorization/permission-sets", token=token).get("permissionSets")
+                      cache.update({s.get("name"): s["id"] for s in sets or []})
+                  if name not in cache:
+                      raise RegistrarError("permission set %r not found in Run:ai; fix RUNAI_REGISTRAR_PERMISSION_SETS on the "
+                                           "runai-registrar Deployment" % name)
+                  return cache[name]
+
+              def _ensure_role(self, token, role, permission_set, cache):
+                  """The role's id; an existing role is reused as is, never changed (Run:ai refuses to change a role in use)."""
+                  role_id = self._find_role(token, role)
+                  if role_id is not None:
+                      return role_id
+                  set_id = self._permission_set_id(token, permission_set, cache)
+                  return self._request("POST", "/api/v2/authorization/roles", {
+                      "name": role, "description": "SUSE AI Factory registrar: create clusters and read install info",
+                      "permissionSets": [{"id": set_id}]}, token=token)["id"]
+
+              def _grant(self, token, name, role_id):
+                  tenant = self._service_account(token, name).get("tenantId")
+                  if not tenant:
+                      raise RunAIError("service account %s has no tenantId" % name)
+                  try:
+                      self._request("POST", "/api/v1/authorization/access-rules", {
+                          "subjectId": name, "subjectType": "service-account", "roleId": role_id,
+                          "scopeType": "tenant", "scopeId": str(tenant)}, token=token)
+                  except RunAIError as e:
+                      if e.status != 409:
+                          raise
+
+              def grant_fallback_role(self, token, name):
+                  role_id = self._find_role(token, FALLBACK_ROLE)
+                  if role_id is None:
+                      raise RunAIError("role %r not found" % FALLBACK_ROLE)
+                  log("WARNING: granting the broad role %r to service account %s" % (FALLBACK_ROLE, name))
+                  self._grant(token, name, role_id)
+
+              def create_credential(self, token, name, permission_sets):
+                  """Returns ((client id, client secret), names of the roles granted)."""
+                  try:
+                      sa = self._request("POST", "/api/v1/service-accounts", {"name": name}, token=token)
+                      client_id, client_secret = sa["clientId"], sa["clientSecret"]
+                      log("created Run:ai service account %s" % name)
+                  except RunAIError as e:
+                      if e.status != 409:
+                          raise
+                      existing = self._service_account(token, name)
+                      regen = self._request("POST", "/api/v1/service-accounts/%s/secret" % existing["id"], token=token)
+                      client_id, client_secret = existing["clientId"], regen["clientSecret"]
+                      log("Run:ai service account %s already exists; regenerated its secret" % name)
+                  granted, cache = [], {}
+                  try:
+                      for permission_set in permission_sets:
+                          role = role_name(permission_set)
+                          self._grant(token, name, self._ensure_role(token, role, permission_set, cache))
+                          granted.append(role)
+                          log("granted custom role %r (permission set %r) to %s" % (role, permission_set, name))
+                  except RunAIError as e:
+                      if not missing_permission(e, statuses=(403, 404)):
+                          raise
+                      log("the admin may not create or grant custom roles (%s); falling back to role %r"
+                          % (e, FALLBACK_ROLE))
+                      self.grant_fallback_role(token, name)
+                      granted.append(FALLBACK_ROLE)
+                  return (client_id, client_secret), granted
+
+
+          def role_name(permission_set):
+              """The default permission set keeps the original role; every other set gets its own role."""
+              if permission_set == DEFAULT_PERMISSION_SETS:
+                  return CUSTOM_ROLE
+              return CUSTOM_ROLE + "-" + re.sub(r"[^a-z0-9]+", "-", permission_set.lower()).strip("-")
+
+
+          class IngressFacts(NamedTuple):
+              host: str
+              ingress_class: str
+              issuer: str
+              issuer_kind: str
+
+
+          def secret_path(ns, name=""):
+              return "/api/v1/namespaces/%s/secrets/%s" % (ns, name)
+
+
+          def decode(obj, key):
+              value = ((obj or {}).get("data") or {}).get(key)
+              return base64.b64decode(value).decode() if value else None
+
+
+          def read_ingress_facts(kube):
+              ref = "%s/%s" % (CP_NAMESPACE, MAIN_INGRESS)
+              ing = kube.get("/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s" % (CP_NAMESPACE, MAIN_INGRESS))
+              if ing is None:
+                  raise RegistrarError("Ingress %s not found yet; the control plane is still installing" % ref)
+              spec = ing.get("spec") or {}
+              ann = ing.get("metadata", {}).get("annotations") or {}
+              hosts = [r["host"] for r in spec.get("rules") or [] if r.get("host")]
+              if not hosts:
+                  raise RegistrarError("Ingress %s has no host" % ref)
+              cls = spec.get("ingressClassName") or ann.get("kubernetes.io/ingress.class")
+              if not cls:
+                  raise RegistrarError("Ingress %s has no ingress class" % ref)
+              if ann.get("cert-manager.io/issuer"):
+                  issuer, kind = ann["cert-manager.io/issuer"], ann.get("cert-manager.io/issuer-kind", "Issuer")
+              elif ann.get("cert-manager.io/cluster-issuer"):
+                  issuer, kind = ann["cert-manager.io/cluster-issuer"], "ClusterIssuer"
+              else:
+                  raise RegistrarError("Ingress %s has no cert-manager issuer annotation" % ref)
+              return IngressFacts(hosts[0], cls, issuer, kind)
+
+
+          def read_ca(kube):
+              """The CA from the issued control-plane certificate, so the CA's private key is never read."""
+              return decode(kube.get(secret_path(CP_NAMESPACE, CA_SOURCE)), "ca.crt")
+
+
+          def authenticate(kube, runai, cfg, progress):
+              """Returns (client token, admin token or None, new credential or None)."""
+              ref = "%s/%s" % (CP_NAMESPACE, CREDENTIALS_SECRET)
+              creds = kube.get(secret_path(CP_NAMESPACE, CREDENTIALS_SECRET))
+              if creds is not None:
+                  client_id, client_secret = decode(creds, "clientId"), decode(creds, "clientSecret")
+                  if not (client_id and client_secret):
+                      raise RegistrarError("Secret %s must have keys clientId and clientSecret" % ref)
+                  try:
+                      return runai.token_client(client_id, client_secret), None, None
+                  except RunAIError as e:
+                      if e.status in (400, 401):
+                          raise RegistrarError("the credential in Secret %s was rejected (%s). Put a valid Run:ai service "
+                                               "account clientId/clientSecret in it, or delete it so the registrar recreates "
+                                               "it with the admin password" % (ref, e))
+                      status = "HTTP %s" % e.status if e.status is not None else "an unusable token response"
+                      raise RegistrarError("control plane returned %s; will retry (%s)" % (status, e))
+              cm = kube.get("/api/v1/namespaces/%s/configmaps/%s" % (CP_NAMESPACE, ADMIN_CONFIGMAP)) or {}
+              user = (cm.get("data") or {}).get("ADMIN_USERNAME")
+              password = decode(kube.get(secret_path(CP_NAMESPACE, ADMIN_SECRET)), "ADMIN_PASSWORD")
+              if not (user and password):
+                  raise RegistrarError("no Secret %s, and the admin login (ConfigMap %s/%s ADMIN_USERNAME, Secret %s/%s "
+                                       "ADMIN_PASSWORD) is not available yet"
+                                       % (ref, CP_NAMESPACE, ADMIN_CONFIGMAP, CP_NAMESPACE, ADMIN_SECRET))
+              try:
+                  admin_token = runai.token_password(user, password)
+              except RunAIError as e:
+                  if e.status in (400, 401):
+                      raise RegistrarError("admin login as %s failed (%s) and Secret %s does not exist. The admin password "
+                                           "was probably changed in the Run:ai UI. Create Secret %s with keys clientId and "
+                                           "clientSecret of a Run:ai service account that can create clusters"
+                                           % (user, e, ref, ref))
+                  raise
+              log("no Secret %s; logged in as admin %s to create service account %s" % (ref, user, CREDENTIAL_NAME))
+              credential, progress["roles"] = runai.create_credential(admin_token, CREDENTIAL_NAME, cfg.permission_sets)
+              kube.apply_secret(CP_NAMESPACE, CREDENTIALS_SECRET, {"clientId": credential[0], "clientSecret": credential[1]})
+              log("stored the service account credential in Secret %s" % ref)
+              return runai.token_client(*credential), admin_token, credential
+
+
+          def missing_permission(error, statuses=(403,)):
+              """True only for a permission problem, never a transient error, so a fallback grant is never a retry.
+              Run:ai 2.26 answers 500 "failed getting installer app" instead of 403 when a permission is missing."""
+              return error.status in statuses or (error.status == 500 and "installer app" in str(error))
+
+
+          def fetch_install_info(runai, cfg, token, admin_token, credential, uid, progress):
+              try:
+                  return runai.install_info(token, uid, cfg.chart_version)
+              except RunAIError as e:
+                  if not missing_permission(e):
+                      raise
+                  sets = ", ".join(repr(s) for s in cfg.permission_sets)
+                  if admin_token is None:
+                      raise RegistrarError("the service account in Secret %s/%s may not read the cluster install info (%s). "
+                                           "Grant it the permission sets %s or the %r role in Run:ai, or delete the Secret so "
+                                           "the registrar recreates it" % (CP_NAMESPACE, CREDENTIALS_SECRET, e, sets,
+                                                                           FALLBACK_ROLE))
+                  log("the service account cannot read the cluster install info (%s), probably a missing permission "
+                      "(configured permission sets: %s); falling back to role %r" % (e, sets, FALLBACK_ROLE))
+                  runai.grant_fallback_role(admin_token, CREDENTIAL_NAME)
+                  progress["roles"] = [r for r in progress["roles"] or [] if r != FALLBACK_ROLE] + [FALLBACK_ROLE]
+                  return runai.install_info(runai.token_client(*credential), uid, cfg.chart_version)
+
+
+          def cluster_credential(info):
+              """The runai-cluster value that authenticates it to the control plane. Control plane 3.x
+              returns a bootstrapToken; 2.x documents only clientSecret (for the chart's default clientID)."""
+              for key in ("bootstrapToken", "clientSecret"):
+                  if info.get(key):
+                      return key, info[key]
+              return None
+
+
+          def values_yaml(cp_url, credential, uid, cluster_url):
+              q = json.dumps
+              return ("controlPlane:\n  url: %s\n  %s: %s\ncluster:\n  uid: %s\n  url: %s\n"
+                      % (q(cp_url), credential[0], q(credential[1]), q(uid), q(cluster_url)))
+
+
+          def ensure_wildcard(kube, facts):
+              star = "*." + facts.host
+              kube.apply("/apis/cert-manager.io/v1/namespaces/%s/certificates" % CP_NAMESPACE, {
+                  "apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+                  "metadata": {"name": "runai-wildcard", "namespace": CP_NAMESPACE},
+                  "spec": {"secretName": "runai-wildcard-tls", "dnsNames": [star],
+                           "issuerRef": {"name": facts.issuer, "kind": facts.issuer_kind, "group": "cert-manager.io"}},
+              })
+              kube.apply("/apis/networking.k8s.io/v1/namespaces/%s/ingresses" % CLUSTER_NAMESPACE, {
+                  "apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
+                  "metadata": {"name": "runai-cluster-domain-star-ingress", "namespace": CLUSTER_NAMESPACE},
+                  "spec": {"ingressClassName": facts.ingress_class, "rules": [{"host": star}],
+                           "tls": [{"hosts": [star], "secretName": "runai-cluster-domain-star-tls-secret"}]},
+              })
+              issued = kube.get(secret_path(CP_NAMESPACE, "runai-wildcard-tls"))
+              crt, key = decode(issued, "tls.crt"), decode(issued, "tls.key")
+              if not (crt and key):
+                  raise RegistrarError("waiting for cert-manager to issue Certificate %s/runai-wildcard" % CP_NAMESPACE)
+              kube.apply_secret(CLUSTER_NAMESPACE, "runai-cluster-domain-star-tls-secret",
+                                {"tls.crt": crt, "tls.key": key}, secret_type="kubernetes.io/tls")
+
+
+          def timestamp(now):
+              return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+
+
+          def write_install_info(kube, cfg, now, progress, error):
+              """grantedRoles: the Run:ai roles the registrar last granted its own service account."""
+              collection = "/api/v1/namespaces/%s/configmaps" % CP_NAMESPACE
+              current = (kube.get(collection + "/runai-install-info") or {}).get("data") or {}
+              roles = progress["roles"]
+              data = {
+                  "domain": progress["domain"] or current.get("domain", ""),
+                  "clusterName": cfg.cluster_name,
+                  "clusterUid": progress["uid"] or current.get("clusterUid", ""),
+                  "grantedRoles": ", ".join(roles) if roles else current.get("grantedRoles", ""),
+                  "lastAttempt": timestamp(now),
+                  "lastSuccess": current.get("lastSuccess", "") if error else timestamp(now),
+                  "lastError": error or "",
+              }
+              kube.apply(collection, {"apiVersion": "v1", "kind": "ConfigMap",
+                                      "metadata": {"name": "runai-install-info", "namespace": CP_NAMESPACE},
+                                      "data": data})
+
+
+          def run_once(kube, runai, cfg, now):
+              progress = {"domain": None, "uid": None, "roles": None}
+              try:
+                  register(kube, runai, cfg, progress)
+              except Exception as e:
+                  message = str(e) if isinstance(e, RegistrarError) else "%s: %s" % (type(e).__name__, e)
+                  try:
+                      write_install_info(kube, cfg, now, progress, message)
+                  except Exception as write_error:
+                      log("could not record the error in runai-install-info: %s" % write_error)
+                  raise RegistrarError(message)
+              write_install_info(kube, cfg, now, progress, None)
+              with open(cfg.state_file, "w") as f:
+                  f.write(timestamp(now) + "\n")
+              os.utime(cfg.state_file, (now, now))
+
+
+          def register(kube, runai, cfg, progress):
+              if not cfg.chart_version:
+                  raise RegistrarError("RUNAI_CHART_VERSION is not set")
+              facts = read_ingress_facts(kube)
+              progress["domain"] = facts.host
+              cluster_url = cfg.cluster_url or "https://" + facts.host
+              cp_url = cfg.cp_url or "https://" + facts.host
+
+              ca_pem = read_ca(kube)
+              runai.configure(cp_url, ca_pem)
+              try:
+                  runai.check_health()
+              except RunAIUnreachable as e:
+                  raise RegistrarError("control plane at %s not reachable yet: %s" % (cp_url, e))
+              except RunAIError as e:
+                  raise RegistrarError("control plane at %s not ready yet: %s" % (cp_url, e))
+
+              token, admin_token, credential = authenticate(kube, runai, cfg, progress)
+
+              uid = runai.find_cluster(token, cfg.cluster_name)
+              if uid:
+                  log("cluster %s exists in Run:ai (uid %s)" % (cfg.cluster_name, uid))
+              else:
+                  uid = runai.create_cluster(token, cfg.cluster_name, cluster_url)
+                  log("created cluster %s in Run:ai (uid %s)" % (cfg.cluster_name, uid))
+              progress["uid"] = uid
+
+              info = fetch_install_info(runai, cfg, token, admin_token, credential, uid, progress)
+              cluster_cred = cluster_credential(info)
+              if cluster_cred is None:
+                  raise RegistrarError("cluster install info for %s has no bootstrapToken or clientSecret" % uid)
+
+              kube.apply_secret(CP_NAMESPACE, "runai-cluster-values",
+                                {"values.yaml": values_yaml(cp_url, cluster_cred, uid, cluster_url)})
+              log("wrote Secret %s/runai-cluster-values" % CP_NAMESPACE)
+
+              if ca_pem:
+                  kube.apply_secret(CLUSTER_NAMESPACE, "runai-ca-cert", {"runai-ca.pem": ca_pem},
+                                    labels={"run.ai/cluster-wide": "true", "run.ai/name": "runai-ca-cert"})
+                  log("copied the CA from Secret %s/%s to %s/runai-ca-cert" % (CP_NAMESPACE, CA_SOURCE, CLUSTER_NAMESPACE))
+              else:
+                  log("no ca.crt in Secret %s/%s; skipped %s/runai-ca-cert" % (CP_NAMESPACE, CA_SOURCE, CLUSTER_NAMESPACE))
+
+              ensure_wildcard(kube, facts)
+
+
+          def ready(cfg, now):
+              try:
+                  return now - os.path.getmtime(cfg.state_file) < cfg.stale_after
+              except OSError:
+                  return False
+
+
+          def main(argv):
+              cfg = Config.from_env()
+              if "--ready" in argv:
+                  return 0 if ready(cfg, time.time()) else 1
+              kube, runai = Kube.in_cluster(), RunAI()
+              while True:
+                  try:
+                      run_once(kube, runai, cfg, time.time())
+                      log("registration succeeded; next run in %ds" % cfg.interval)
+                      delay = cfg.interval
+                  except Exception as e:
+                      log("registration failed: %s; retrying in %ds" % (e, cfg.retry))
+                      delay = cfg.retry
+                  time.sleep(delay)
+
+
+          if __name__ == "__main__":
+              sys.exit(main(sys.argv[1:]))
+        overlay/registrar.yaml: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: runai-registrar
+            namespace: runai-backend
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: runai-registrar
+            namespace: runai-backend
+          # Only the objects registrar.py reads or writes (tests/test_registrar.py checks this).
+          # create can't be limited by resourceNames, so it has its own rules.
+          rules:
+            - apiGroups: [""]
+              resources: [secrets, configmaps]
+              verbs: [create]
+            - apiGroups: [""]
+              resources: [secrets]
+              resourceNames: [runai-backend-gen-tenants-manager, runai-backend-tls, runai-wildcard-tls]
+              verbs: [get]
+            - apiGroups: [""]
+              resources: [secrets]
+              resourceNames: [runai-registrar-credentials, runai-cluster-values]
+              verbs: [get, update]
+            - apiGroups: [""]
+              resources: [configmaps]
+              resourceNames: [runai-backend-tenants-manager]
+              verbs: [get]
+            - apiGroups: [""]
+              resources: [configmaps]
+              resourceNames: [runai-install-info]
+              verbs: [get, update]
+            - apiGroups: [cert-manager.io]
+              resources: [certificates]
+              verbs: [create]
+            - apiGroups: [cert-manager.io]
+              resources: [certificates]
+              resourceNames: [runai-wildcard]
+              verbs: [get, update]
+            - apiGroups: [networking.k8s.io]
+              resources: [ingresses]
+              resourceNames: [runai-backend-ingress]
+              verbs: [get]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: runai-registrar
+            namespace: runai-backend
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: runai-registrar
+          subjects:
+            - kind: ServiceAccount
+              name: runai-registrar
+              namespace: runai-backend
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: runai-registrar
+            namespace: runai
+          rules:
+            - apiGroups: [""]
+              resources: [secrets]
+              verbs: [create]
+            - apiGroups: [""]
+              resources: [secrets]
+              resourceNames: [runai-ca-cert, runai-cluster-domain-star-tls-secret]
+              verbs: [get, update]
+            - apiGroups: [networking.k8s.io]
+              resources: [ingresses]
+              verbs: [create]
+            - apiGroups: [networking.k8s.io]
+              resources: [ingresses]
+              resourceNames: [runai-cluster-domain-star-ingress]
+              verbs: [get, update]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: runai-registrar
+            namespace: runai
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: runai-registrar
+          subjects:
+            - kind: ServiceAccount
+              name: runai-registrar
+              namespace: runai-backend
+          ---
+          # One replica and Recreate: two registrars must never run at once.
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: runai-registrar
+            namespace: runai-backend
+            labels:
+              app.kubernetes.io/name: runai-registrar
+          spec:
+            replicas: 1
+            strategy:
+              type: Recreate
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: runai-registrar
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: runai-registrar
+              spec:
+                serviceAccountName: runai-registrar
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  runAsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: registrar
+                    image: registry.suse.com/bci/python:3.12
+                    command: [python3, /scripts/registrar.py]
+                    env:
+                      - name: RUNAI_CHART_VERSION
+                        value: "2.26.50"
+                      - name: RUNAI_REGISTRAR_PERMISSION_SETS
+                        value: "Cluster edit,Service accounts edit"
+                    readinessProbe:
+                      exec:
+                        command: [python3, /scripts/registrar.py, --ready]
+                      periodSeconds: 30
+                      timeoutSeconds: 10
+                    resources:
+                      requests:
+                        cpu: 20m
+                        memory: 64Mi
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: [ALL]
+                    volumeMounts:
+                      - name: script
+                        mountPath: /scripts
+                        readOnly: true
+                      - name: tmp
+                        mountPath: /tmp
+                volumes:
+                  - name: script
+                    configMap:
+                      name: runai-registrar-script
+                  - name: tmp
+                    emptyDir: {}
+  - chartName: runai-cluster
+    chartRepo: nvidia-runai
+    chartVersion: 2.26.50
+    targetNamespace: runai
+    dependsOn:
+    - control-plane
+    valuesFrom:
+    - secretKeyRef:
+        name: runai-cluster-values
+        namespace: runai-backend
+        key: values.yaml
+    # Delivers ngc-secret, the nvcr.io pull secret, to the release namespace.
+    vendor: nvidia
+    values:
+      global:
+        customCA:
+          enabled: true
+        # Lets the install hooks pull before the cluster's runai-reg-creds exists.
+        additionalImagePullSecrets:
+          - ngc-secret
+      clusterConfig:
+        global:
+          ingress:
+            ingressClass: aif:auto-ingress-class
+      openShift:
+        mode: Disabled

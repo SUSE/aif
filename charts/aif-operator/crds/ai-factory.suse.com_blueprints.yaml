@@ -155,6 +155,48 @@ spec:
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
+                    valuesFrom:
+                      description: |-
+                        ValuesFrom reads extra Helm values at deploy time from ConfigMap or
+                        Secret keys, passed through to Fleet's spec.helm.valuesFrom.
+                      items:
+                        description: ComponentValuesFrom is one deploy-time values
+                          source.
+                        properties:
+                          configMapKeyRef:
+                            description: ValuesFromKeyRef points at one key of a ConfigMap
+                              or Secret.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                              namespace:
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          secretKeyRef:
+                            description: ValuesFromKeyRef points at one key of a ConfigMap
+                              or Secret.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                              namespace:
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        type: object
+                        x-kubernetes-validations:
+                        - message: set exactly one of configMapKeyRef or secretKeyRef
+                          rule: has(self.configMapKeyRef) != has(self.secretKeyRef)
+                      maxItems: 8
+                      type: array
                     vendor:
                       default: suse
                       description: |-
@@ -194,6 +236,14 @@ spec:
                   (png, gif, jpeg, webp). Use a data: URI for air-gapped installs.
                 maxLength: 16384
                 pattern: ^(data:image\/(png|gif|jpeg|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s"'<>]+)$
+                type: string
+              rollback:
+                description: |-
+                  Rollback set to Disabled blocks rolling back from or to this version, for example
+                  when its upgrade migrates data that older versions can't read. Empty means Allowed.
+                enum:
+                - Allowed
+                - Disabled
                 type: string
               source:
                 description: |-

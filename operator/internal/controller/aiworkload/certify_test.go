@@ -3,6 +3,7 @@ package aiworkload
 import (
 	"context"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -170,5 +171,52 @@ func TestCertifyDeployedSource(t *testing.T) {
 	}
 	if !w.Status.DeployedSource.CertifiedAt.Equal(&firstCertifiedAt) {
 		t.Errorf("expected CertifiedAt to be unchanged (idempotent), was %v, now %v", firstCertifiedAt, w.Status.DeployedSource.CertifiedAt)
+	}
+}
+
+func TestCertifyDeployedSource_RefreshesCertifiedAtForActiveVersionOp(t *testing.T) {
+	ctx := context.Background()
+	keys := []HelmOpKey{{Namespace: "fleet-local", Name: blueprintBundleName("w", "open-webui"), ExpectedClusters: 1}}
+	digests := map[string]string{"fleet-local/" + keys[0].Name: "sha256:d"}
+	certifiedAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+	cases := []struct {
+		name        string
+		opType      string
+		requestedAt time.Time
+		wantRefresh bool
+	}{
+		{"no operation keeps CertifiedAt", "", time.Time{}, false},
+		{"rollback requested after certification refreshes", aiplatformv1alpha1.OperationTypeRollback, time.Now().Add(-time.Minute), true},
+		{"upgrade requested after certification refreshes", aiplatformv1alpha1.OperationTypeUpgrade, time.Now().Add(-time.Minute), true},
+		{"rollback requested before certification keeps CertifiedAt", aiplatformv1alpha1.OperationTypeRollback, certifiedAt.Add(-time.Minute), false},
+		{"retry keeps CertifiedAt", aiplatformv1alpha1.OperationTypeRetry, time.Now().Add(-time.Minute), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := wlWithBlueprint("1.0.0")
+			if tc.opType != "" {
+				inFlightVersionOp(w, tc.opType, "1.0.0", "", tc.requestedAt)
+			}
+			b := bundle(renderDigestLabelValue("sha256:d"), 1, 1, 0, 1, 1)
+			b.SetName(keys[0].Name)
+			b.SetNamespace("fleet-local")
+			cl := fakeClient(w, b)
+			r := &AIWorkloadReconciler{Client: cl, Scheme: cl.Scheme()}
+			if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+				t.Fatal(err)
+			}
+			w.Status.DeployedSource.CertifiedAt = certifiedAt
+
+			if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+				t.Fatal(err)
+			}
+			refreshed := !w.Status.DeployedSource.CertifiedAt.Equal(&certifiedAt)
+			if refreshed != tc.wantRefresh {
+				t.Fatalf("CertifiedAt refreshed=%v, want %v", refreshed, tc.wantRefresh)
+			}
+			if refreshed && w.Status.DeployedSource.CertifiedAt.Time.Before(tc.requestedAt) {
+				t.Fatalf("refreshed CertifiedAt %v must not predate the request %v", w.Status.DeployedSource.CertifiedAt, tc.requestedAt)
+			}
+		})
 	}
 }

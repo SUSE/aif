@@ -93,6 +93,14 @@ export interface AIWorkloadStatus {
   componentStatuses?:  AIWorkloadComponentStatus[];
   activeOperation?:    AIWorkloadOperation;
   customized?:         boolean;
+  resolvedValues?:     ResolvedValue[];
+}
+
+export interface ResolvedValue {
+  componentName: string;
+  path:          string;
+  value:         string;
+  source:        'auto' | 'user';
 }
 
 export interface AIWorkload {

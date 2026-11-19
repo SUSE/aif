@@ -157,3 +157,28 @@ func TestEffectiveGraph_StrictReplace(t *testing.T) {
 		t.Fatalf("EffectiveGraph = %v, want %v", got, want)
 	}
 }
+
+func names(components []aiplatformv1alpha1.BlueprintComponent) []string {
+	out := make([]string, len(components))
+	for i, c := range components {
+		out[i] = c.ChartName
+	}
+	return out
+}
+
+func TestTopoOrder(t *testing.T) {
+	got := names(TopoOrder([]aiplatformv1alpha1.BlueprintComponent{comp("cluster", "cp"), comp("cp", "pre"), comp("pre")}))
+	if want := []string{"pre", "cp", "cluster"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("TopoOrder = %v, want %v", got, want)
+	}
+
+	got = names(TopoOrder([]aiplatformv1alpha1.BlueprintComponent{comp("c"), comp("a"), comp("b")}))
+	if want := []string{"c", "a", "b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("independent components must keep input order, got %v want %v", got, want)
+	}
+
+	got = names(TopoOrder([]aiplatformv1alpha1.BlueprintComponent{comp("x"), comp("b", "a", "gone"), comp("y"), comp("a")}))
+	if want := []string{"x", "y", "a", "b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("TopoOrder with absent dep = %v, want %v", got, want)
+	}
+}

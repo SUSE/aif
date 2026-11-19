@@ -33,20 +33,20 @@ import (
 func TestEmbeddedChartFingerprint_GitNoOverlayUnchanged(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "git-repo", ChartName: "demo", ChartVersion: "1.2.3", ReleaseName: "rel"}
 	local := []any{map[string]any{"clusterName": "local"}}
-	if got := embeddedChartFingerprint(c, "ns", "commit-abc", map[string]any{"a": 1}, []string{"wl-dep"}, "", 0, local, []any{}); got != "52bb8d972e0a921059a2f85b30ec05ab8bf2f109620aaff60c72a6ca19c314f9" {
+	if got := embeddedChartFingerprint(c, "ns", "commit-abc", map[string]any{"a": 1}, []any{"wl-dep"}, nil, "", 0, local, []any{}); got != "52bb8d972e0a921059a2f85b30ec05ab8bf2f109620aaff60c72a6ca19c314f9" {
 		t.Fatalf("fingerprint changed: %s", got)
 	}
-	if got := embeddedChartFingerprint(c, "ns", "commit-abc", nil, nil, "", 0, local, nil); got != "041d71a593b2fd69128e0beb736e1f780ad47210c4e002bd4f0b5d90931814f6" {
+	if got := embeddedChartFingerprint(c, "ns", "commit-abc", nil, nil, nil, "", 0, local, nil); got != "041d71a593b2fd69128e0beb736e1f780ad47210c4e002bd4f0b5d90931814f6" {
 		t.Fatalf("fingerprint changed: %s", got)
 	}
 }
 
 func TestEmbeddedChartFingerprint_ChangesWithOverlayAndEpoch(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "r", ChartName: "demo", ChartVersion: "1.0.0"}
-	base := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, "", 0)
-	withOverlay := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, "digest-1", 0)
-	otherOverlay := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, "digest-2", 0)
-	withEpoch := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, "digest-1", 3)
+	base := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, nil, "", 0)
+	withOverlay := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, nil, "digest-1", 0)
+	otherOverlay := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, nil, "digest-2", 0)
+	withEpoch := embeddedChartFingerprint(c, "ns", "https://c.example.com", nil, nil, nil, "digest-1", 3)
 	if base == withOverlay || withOverlay == otherOverlay || withOverlay == withEpoch {
 		t.Fatalf("fingerprint must change with overlay digest and epoch: %s %s %s %s", base, withOverlay, otherOverlay, withEpoch)
 	}

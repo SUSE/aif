@@ -44,8 +44,8 @@ func TestFleetSettingsJSONTagsStable(t *testing.T) {
 
 func TestBlueprintCatalogMarshals(t *testing.T) {
 	c := BlueprintCatalogSource{
-		Name:      "partner-acme",
-		Paths:     []string{"catalog/blueprints"},
+		Name:          "partner-acme",
+		Paths:         []string{"catalog/blueprints"},
 		GitRepoSource: GitRepoSource{RepoURL: "https://git.example/acme", Branch: "main"},
 	}
 	b, err := json.Marshal(c)

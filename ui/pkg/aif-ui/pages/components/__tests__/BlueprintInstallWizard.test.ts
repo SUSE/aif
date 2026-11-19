@@ -7,9 +7,13 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import BlueprintInstallWizard from '../BlueprintInstallWizard.vue';
+import BlueprintInstallBasicInfoStep from '../wizard/BlueprintInstallBasicInfoStep.vue';
+import BlueprintCustomizeStep from '../wizard/BlueprintCustomizeStep.vue';
+import TargetStep from '../wizard/TargetStep.vue';
 import { getBlueprint } from '../../../utils/blueprint-api';
 import { listAIWorkloads, getRegistryStatus } from '../../../utils/operator-api';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
+import { listCatalogApps } from '../../../services/cluster-service';
 
 vi.mock('../../../utils/blueprint-api', async (original) => ({
   ...await original<typeof import('../../../utils/blueprint-api')>(), getBlueprint: vi.fn(),
@@ -27,6 +31,8 @@ vi.mock('../../../services/rancher-apps', async (original) => ({
   getAllClusters:      vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock('../../../services/cluster-service', () => ({ listCatalogApps: vi.fn().mockResolvedValue([]) }));
+
 const translations = yaml.load(readFileSync(path.resolve(__dirname, '../../../l10n/en-us.yaml'), 'utf8'));
 const t = (key: string) => key.split('.').reduce<any>((value, part) => value?.[part], translations);
 const RANDOM_NAMESPACE = /^my-blueprint-[a-z0-9]{7}$/;
@@ -41,7 +47,10 @@ async function setup(mode: 'install' | 'manage' = 'install', query: Record<strin
     global: {
       // Cast like the route/router: the shell augments these with t, $t and $fetchState, which the wizards don't use.
       config: { globalProperties: { $store: store, $route: route, $router: router } as unknown as ComponentCustomProperties },
-      stubs:  { TargetStep: true, RouterLink: true, Loading: true, Banner: { template: '<div><slot /></div>' } },
+      directives: { 'clean-html': {} },
+      stubs:      {
+        TargetStep: true, BlueprintCustomizeStep: true, RouterLink: true, Loading: true, Banner: { template: '<div><slot /></div>' }, t: true,
+      },
     },
   });
   mounted.push(wrapper);
@@ -55,6 +64,7 @@ const button = (wrapper: ReturnType<typeof mount>, label: string) => wrapper.fin
 beforeEach(() => {
   vi.mocked(getBlueprint).mockReset().mockResolvedValue({ spec: { displayName: 'My Blueprint', components: [] } } as any);
   vi.mocked(listAIWorkloads).mockReset().mockResolvedValue({ items: [] } as any);
+  vi.mocked(listCatalogApps).mockReset().mockResolvedValue([]);
   vi.mocked(fetchUserNamespaces).mockReset().mockImplementation(async (_store, suggested) => (
     [suggested, 'team-a'].filter(Boolean).map((ns) => ({ label: ns, value: ns }))
   ));
@@ -133,5 +143,107 @@ describe('blueprint install wizard credential preflight', () => {
     vi.mocked(getRegistryStatus).mockRejectedValue(new Error('operator unreachable'));
     const wrapper = await reviewStep();
     expect(wrapper.text()).not.toContain('needs credentials');
+  });
+});
+
+describe('blueprint install wizard rollback', () => {
+  it.each(['install', 'manage'] as const)('passes the Blueprint rollback policy to the steps in %s mode', async (mode) => {
+    vi.mocked(getBlueprint).mockResolvedValue({ spec: { displayName: 'My Blueprint', rollback: 'Disabled', components: [] } } as any);
+    vi.mocked(listAIWorkloads).mockResolvedValue({ items: [{
+      metadata: { name: 'my-blueprint', namespace: 'my-blueprint-system' },
+      spec:     { targetClusters: ['c-1'], componentValues: [] },
+    }] } as any);
+    const wrapper = await setup(mode, { instanceName: 'my-blueprint', instanceNamespace: 'my-blueprint-system' });
+
+    expect(wrapper.findComponent(BlueprintInstallBasicInfoStep).props('rollback')).toBe('Disabled');
+  });
+});
+
+describe('blueprint install wizard existing releases', () => {
+  const certManager = (version: string) => ({
+    metadata: { name: 'cert-manager', namespace: 'cert-manager' },
+    spec:     { chart: { metadata: { name: 'cert-manager', version } } },
+  });
+  const components = [{ chartRepo: 'application-collection', chartName: 'cert-manager', chartVersion: '1.0.0' }];
+
+  async function toCustomize(wrapper: ReturnType<typeof mount>, clusterIds: string[]) {
+    await button(wrapper, 'Next').trigger('click');
+    wrapper.findComponent(TargetStep).vm.$emit('update:clusters', clusterIds);
+    await flushPromises();
+    await button(wrapper, 'Next').trigger('click');
+    return wrapper.findComponent(BlueprintCustomizeStep);
+  }
+
+  const certManagerRelease = { clusterId: 'c-1', release: 'cert-manager', chart: 'cert-manager', version: 'v1.15.0', namespace: 'cert-manager' };
+
+  async function selectClusters(wrapper: ReturnType<typeof mount>, clusterIds: string[]) {
+    wrapper.findComponent(TargetStep).vm.$emit('update:clusters', clusterIds);
+    await flushPromises();
+  }
+
+  async function releasesOnCustomize(wrapper: ReturnType<typeof mount>) {
+    await button(wrapper, 'Next').trigger('click');
+    const releases = wrapper.findComponent(BlueprintCustomizeStep).props('existingReleases');
+    await button(wrapper, 'Previous').trigger('click');
+    return releases;
+  }
+
+  beforeEach(() => {
+    vi.mocked(getBlueprint).mockResolvedValue({ spec: { displayName: 'My Blueprint', components } } as any);
+  });
+
+  it('lists the target clusters\' releases and passes matches to the customize step', async () => {
+    vi.mocked(listCatalogApps).mockImplementation(async (_store, id) => (id === 'c-1' ? [certManager('v1.15.0')] : []) as any);
+    const step = await toCustomize(await setup(), ['c-1', 'c-2']);
+
+    expect(listCatalogApps).toHaveBeenCalledTimes(2);
+    expect(step.props('existingReleases')).toEqual({ 'cert-manager': [certManagerRelease] });
+  });
+
+  it('drops a deselected cluster at once and does not refetch it when reselected', async () => {
+    vi.mocked(listCatalogApps).mockResolvedValue([certManager('v1.15.0')] as any);
+    const wrapper = await setup();
+    await button(wrapper, 'Next').trigger('click');
+
+    await selectClusters(wrapper, ['c-1']);
+    expect(await releasesOnCustomize(wrapper)).toEqual({ 'cert-manager': [certManagerRelease] });
+    await selectClusters(wrapper, []);
+    expect(await releasesOnCustomize(wrapper)).toEqual({});
+    await selectClusters(wrapper, ['c-1']);
+    expect(await releasesOnCustomize(wrapper)).toEqual({ 'cert-manager': [certManagerRelease] });
+    expect(listCatalogApps).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a superseded in-flight response', async () => {
+    let resolveStale = (): void => undefined;
+    vi.mocked(listCatalogApps)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveStale = () => resolve([certManager('v1.15.0')] as any); }))
+      .mockResolvedValue([]);
+    const wrapper = await setup();
+    await button(wrapper, 'Next').trigger('click');
+    await selectClusters(wrapper, ['c-1']);
+    await selectClusters(wrapper, ['c-1', 'c-2']);
+    resolveStale();
+    await flushPromises();
+
+    expect(await releasesOnCustomize(wrapper)).toEqual({});
+  });
+
+  it('shows no releases when listing a cluster fails', async () => {
+    vi.mocked(listCatalogApps).mockRejectedValue(new Error('forbidden'));
+    const step = await toCustomize(await setup(), ['c-1']);
+
+    expect(step.props('existingReleases')).toEqual({});
+  });
+
+  it('does not look for existing releases in manage mode', async () => {
+    vi.mocked(getBlueprint).mockResolvedValue({ spec: { displayName: 'My Blueprint', components } } as any);
+    vi.mocked(listAIWorkloads).mockResolvedValue({ items: [{
+      metadata: { name: 'my-blueprint', namespace: 'my-blueprint-system' },
+      spec:     { targetClusters: ['c-1'], componentValues: [] },
+    }] } as any);
+    await setup('manage', { instanceName: 'my-blueprint', instanceNamespace: 'my-blueprint-system' });
+
+    expect(listCatalogApps).not.toHaveBeenCalled();
   });
 });

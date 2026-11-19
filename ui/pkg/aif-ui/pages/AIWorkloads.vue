@@ -11,7 +11,9 @@ import {
   recheckOperatorConnection,
 } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
-import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
+import {
+  phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage, hasRollbackTarget, canRollback
+} from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import AIWorkloadDetailPanel from '../components/AIWorkloadDetailPanel.vue';
 import type { AIWorkload } from '../types/aiworkload-types';
@@ -368,9 +370,13 @@ async function executeUpgrade() {
   }
 }
 
-function canRollback(w: AIWorkload): boolean {
-  const ds = w.status?.deployedSource;
-  return !!ds && !!w.spec.source.blueprint && ds.version !== w.spec.source.blueprint.version;
+function rollbackAllowed(w: AIWorkload): boolean {
+  const name = w.spec.source.blueprint?.name || '';
+
+  return canRollback(w, [
+    findBlueprint(blueprints.value, name, w.spec.source.blueprint?.version || ''),
+    findBlueprint(blueprints.value, name, w.status?.deployedSource?.version || ''),
+  ]);
 }
 
 function canRetry(w: AIWorkload): boolean {
@@ -622,8 +628,10 @@ async function doRetry(w: AIWorkload) {
 
                     <!-- Blueprint workload: Roll Back -->
                     <button
-                      v-if="w.spec.source.sourceType === 'Blueprint' && canRollback(w)"
+                      v-if="w.spec.source.sourceType === 'Blueprint' && hasRollbackTarget(w)"
                       class="btn btn-sm role-secondary"
+                      :disabled="!rollbackAllowed(w)"
+                      :title="rollbackAllowed(w) ? undefined : t('suseai.workloads.rollbackDisabled', 'Rollback is disabled for this Blueprint: its upgrades migrate data that older versions can\'t read.')"
                       @click="openRollbackModal(w)"
                       type="button"
                     >

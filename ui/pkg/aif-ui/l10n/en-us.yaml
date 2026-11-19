@@ -474,6 +474,11 @@ suseai:
       blueprintNamePlaceholder: e.g. My AI Stack
       description: Description
       descriptionPlaceholder: Optional description
+      allowRollback: Allow rollback
+      allowRollbackHelp: Turn off when upgrades migrate data that older versions can't read (for example database schema changes). Workloads of this Blueprint then can't be rolled back.
+      rollback: Rollback
+      rollbackAllowed: Allowed
+      rollbackDisabled: Disabled
       deploymentType: Deployment Type
       searchApps: Search applications...
       componentNamespace: Target namespace (optional)
@@ -560,14 +565,41 @@ suseai:
       deploysAfter: deploys after
       patched: Patched
       ordered: Ordered
+      valuesFrom: Values from Secrets and ConfigMaps
+      valuesFromHelp: Read on the target cluster at deploy time and merged over this application's values (they win on conflicts). Leave Namespace empty to use the release namespace; Key defaults to values.yaml.
+      valuesFromHelpView: Set by the Blueprint. Read on the target cluster at deploy time and merged over this application's values (they win on conflicts).
+      valuesFromKind: Kind
+      valuesFromSecret: Secret
+      valuesFromConfigMap: ConfigMap
+      valuesFromName: Name
+      valuesFromNamespace: Namespace
+      valuesFromNamespacePlaceholder: Release namespace
+      valuesFromKey: Key
+      valuesFromKeyPlaceholder: values.yaml
+      valuesFromAdd: Add source
+      valuesFromReview: Values from {kind} {ref}
+      valuesFromReviewKey: Values from {kind} {ref} (key {key})
     hints:
       customized: This component differs from the blueprint for this deployment.
       patched: This component has a kustomize patch applied.
       ordered: This component has a deploy-order dependency.
+      valuesFromNote: Some values are read at deploy time from {kind} {namespace}/{name}.
+      valuesFromNoteReleaseNs: Some values are read at deploy time from {kind} {name} (release namespace).
+      autoDomainHint: 'Automatic: {label}.<node-ip>.sslip.io — set {path} to use your own domain.'
+      autoIngressClassHint: 'Automatic: the target cluster''s default ingress class — set {path} to choose one.'
+      lockedValues: "These values were set at install and are locked. Leave them unchanged in the values below; saving a different value is rejected."
     errors:
       allComponentsDisabled: At least one component must remain enabled.
+      valuesFromNameRequired: '{component}: values source {row} needs a name.'
+      valuesFromNameInvalid: '{component}: the name of values source {row} must be a valid Kubernetes object name (lowercase letters, digits, "-" and ".", max 253 characters).'
+      valuesFromNamespaceInvalid: '{component}: the namespace of values source {row} must be a valid namespace name (lowercase letters, digits and "-", max 63 characters).'
+      valuesFromNamespaceNotAllowed: '{component}: values source {row} reads from namespace {namespace}, which no application of this Blueprint deploys to. Use {allowed}, or leave Namespace empty for the release namespace.'
+      valuesFromNamespaceNotAllowedNone: '{component}: values source {row} reads from namespace {namespace}, which no application of this Blueprint deploys to. Leave Namespace empty to use the release namespace.'
+      valuesFromKeyInvalid: '{component}: the key of values source {row} may contain only letters, digits, "-", "_" and "." (max 253 characters) and must not start with "..".'
     warnings:
       excludingRunningComponent: This component is currently deployed — excluding it will remove its resources on the next sync.
+      alreadyInstalled: Already installed on {clusters}. Consider excluding this component.
+      alreadyInstalledRelease: '{cluster}: {release} ({chart}) in namespace {namespace}'
   repositories:
     title: Repositories
     add: Add Repository
@@ -620,6 +652,7 @@ suseai:
       confirmDelete: Are you sure you want to delete this item?
   workloads:
     customizedTooltip: Workload configuration deviates from the default blueprint definition
+    rollbackDisabled: "Rollback is disabled for this Blueprint: its upgrades migrate data that older versions can't read."
     openInRancher: Open in Rancher
     viewApp: Open app in Rancher
     viewNamespace: View namespace in Rancher

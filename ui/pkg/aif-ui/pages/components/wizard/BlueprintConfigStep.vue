@@ -87,6 +87,12 @@
               </div>
             </div>
 
+            <ValuesFromEditor
+              :value="valuesFromMap[comp.chartName]"
+              :name="comp.chartName"
+              @update:value="onValuesFromUpdate(comp.chartName, $event)"
+            />
+
             <h3>{{ t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay') }}</h3>
             <KustomizeOverlayEditor
               :value="kustomizeMap[comp.chartName]"
@@ -102,7 +108,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, getCurrentInstance } from 'vue';
+import { ref, computed, getCurrentInstance } from 'vue';
 import { useT } from '../../../composables/useT';
 import yaml from 'js-yaml';
 import { Banner } from '@components/Banner';
@@ -112,14 +118,15 @@ import Tabbed from '@shell/components/Tabbed';
 import Tab from '@shell/components/Tabbed/Tab';
 import ValuesStep from './ValuesStep.vue';
 import KustomizeOverlayEditor from './KustomizeOverlayEditor.vue';
+import ValuesFromEditor from './ValuesFromEditor.vue';
 import { fetchChartDefaultValues, listGitClusterRepoNames } from '../../../services/rancher-apps';
 import { validateDependsOn } from '../../../validators/blueprint';
-import type { BlueprintComponent, ComponentKustomize } from '../../../types/blueprint-types';
+import { validateComponentsValuesFrom, valuesFromErrorMessage } from '../../../utils/values-from';
+import type { BlueprintComponent, ComponentKustomize, ComponentValuesFrom } from '../../../types/blueprint-types';
 
 interface Props { components: BlueprintComponent[] }
 interface Emits {
   (e: 'update:components', v: BlueprintComponent[]): void;
-  (e: 'update:valid', v: boolean): void;
 }
 
 const props = defineProps<Props>();
@@ -128,12 +135,21 @@ const emit  = defineEmits<Emits>();
 // Custom git ClusterRepo names: the sources a Git overlay can be fetched from (null while loading).
 const gitClusterRepoOptions = ref<string[] | null>(null);
 
-const stepError = computed(() => validateDependsOn(props.components));
+const t = useT();
 
-// Surfaces validity to the wizard the same way BlueprintCustomizeStep does
-// (watch + immediate emit), so Next/Create is gated on a valid dependsOn graph
-// instead of only showing the Banner.
-watch(stepError, (err) => emit('update:valid', err === null), { immediate: true });
+// The valuesFrom each component emits: its own until ValuesFromEditor edits it.
+const valuesFromMap = ref<Record<string, ComponentValuesFrom[] | undefined>>(
+  Object.fromEntries(props.components.map(c => [c.chartName, c.valuesFrom]))
+);
+
+function valuesFromError(): string | null {
+  const err = validateComponentsValuesFrom(props.components.map(c => ({ chartName: c.chartName, targetNamespace: c.targetNamespace, valuesFrom: valuesFromMap.value[c.chartName] })));
+
+  return err ? valuesFromErrorMessage(t, err) : null;
+}
+
+// Display only: BlueprintCreateWizard derives the same validity from components to gate Review.
+const stepError = computed(() => validateDependsOn(props.components) ?? valuesFromError());
 
 function siblingNames(self: string) {
   return props.components.map(c => c.chartName).filter(n => n !== self);
@@ -144,8 +160,6 @@ function onDependsOnUpdate(chartName: string, deps: string[]) {
 
 const vm    = getCurrentInstance()!.proxy as any;
 const store = vm.$store;
-
-const t = useT();
 
 const expandedPanels    = ref(new Set<number>([0]));
 const loadingMap        = ref<Record<string, boolean>>({});
@@ -171,6 +185,11 @@ async function loadGitClusterRepos() {
   }
 }
 loadGitClusterRepos();
+
+function onValuesFromUpdate(chartName: string, valuesFrom: ComponentValuesFrom[] | undefined) {
+  valuesFromMap.value = { ...valuesFromMap.value, [chartName]: valuesFrom };
+  emitComponents();
+}
 
 function onKustomizeUpdate(chartName: string, kustomize: ComponentKustomize | undefined) {
   kustomizeMap.value = { ...kustomizeMap.value, [chartName]: kustomize };
@@ -274,7 +293,8 @@ function emitComponents() {
     values: Object.keys(compValues.value[c.chartName] || {}).length > 0
       ? compValues.value[c.chartName]
       : undefined,
-    kustomize: kustomizeMap.value[c.chartName],
+    kustomize:  kustomizeMap.value[c.chartName],
+    valuesFrom: valuesFromMap.value[c.chartName],
   })));
 }
 </script>

@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // reconcileDepsOverride reconciles a two-component Blueprint (a, b on an HTTP
@@ -38,12 +39,13 @@ import (
 func reconcileDepsOverride(t *testing.T, bDeps []string, overrides []aiplatformv1alpha1.ComponentValueOverride) (*aiplatformv1alpha1.AIWorkload, *AIWorkloadReconciler) {
 	t.Helper()
 	scheme := clusterRepoErrorScheme(t)
+	addBundleScheme(scheme)
 
 	w := newBlueprintWorkload(time.Now())
 	w.Spec.Source.Blueprint = &aiplatformv1alpha1.BlueprintSource{Name: "deps", Version: "1.0.0"}
 	w.Spec.ComponentValues = overrides
 
-	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: bpCRName("deps", "1.0.0")}}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("deps", "1.0.0")}}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: "application-collection", ChartName: "a", ChartVersion: "1.0.0", Vendor: "suse"},
 		{ChartRepo: "application-collection", ChartName: "b", ChartVersion: "1.0.0", Vendor: "suse", DependsOn: bDeps},
@@ -55,9 +57,15 @@ func reconcileDepsOverride(t *testing.T, bDeps []string, overrides []aiplatformv
 	_ = unstructured.SetNestedField(repo.Object, "https://charts.example.com", "spec", "url")
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
-	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
-		t.Fatalf("reconcileBlueprintStatus: %v", err)
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator",
+		FleetCapabilities: staticFleetCapabilities{acceptedStates: true}}
+	// A dependent renders only once its dependency is certified, so stand in
+	// for Fleet between passes until every component has rendered.
+	for range bp.Spec.Components {
+		if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+			t.Fatalf("reconcileBlueprintStatus: %v", err)
+		}
+		certifyRenderedBundles(t, r)
 	}
 	return w, r
 }
@@ -82,7 +90,7 @@ func depsOverride(name string, deps ...string) aiplatformv1alpha1.ComponentValue
 func TestReconcile_OverrideDependsOnRendersOnHelmOp(t *testing.T) {
 	w, r := reconcileDepsOverride(t, nil, []aiplatformv1alpha1.ComponentValueOverride{depsOverride("b", "a")})
 	got := helmOpDependsOn(t, r, w, "b")
-	want := []any{map[string]any{"name": blueprintBundleName(w.Name, "a")}}
+	want := acceptedDependsOn(blueprintBundleName(w.Name, "a"))
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("b spec.dependsOn = %v, want %v", got, want)
 	}

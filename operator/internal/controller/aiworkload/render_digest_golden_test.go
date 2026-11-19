@@ -28,6 +28,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // TestRenderDigest_BlueprintOverlayOnlyIsUnchanged pins the render-digest for a
@@ -58,7 +59,7 @@ func TestRenderDigest_BlueprintOverlayOnlyIsUnchanged(t *testing.T) {
 	}
 
 	bp := &aiplatformv1alpha1.Blueprint{
-		ObjectMeta: metav1.ObjectMeta{Name: bpCRName("test-bp", "1.0.0")},
+		ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("test-bp", "1.0.0")},
 	}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{
@@ -87,7 +88,7 @@ func TestRenderDigest_BlueprintOverlayOnlyIsUnchanged(t *testing.T) {
 		ChartPuller: func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) { return tgz, nil },
 	}
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("reconcileBlueprintStatus failed: %v", err)
 	}
 
@@ -134,7 +135,7 @@ func TestRenderDigest_NoOverlayIsUnchanged(t *testing.T) {
 	}
 
 	bp := &aiplatformv1alpha1.Blueprint{
-		ObjectMeta: metav1.ObjectMeta{Name: bpCRName("test-bp-plain", "1.0.0")},
+		ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("test-bp-plain", "1.0.0")},
 	}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{
@@ -154,7 +155,7 @@ func TestRenderDigest_NoOverlayIsUnchanged(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("reconcileBlueprintStatus failed: %v", err)
 	}
 

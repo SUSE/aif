@@ -1,6 +1,6 @@
 import { isEqual, isPlainObject } from 'lodash';
 import type { BlueprintComponent, ComponentKustomize } from '../types/blueprint-types';
-import type { ComponentValueOverride } from '../types/aiworkload-types';
+import type { ComponentValueOverride, AIWorkloadStatus, ResolvedValue } from '../types/aiworkload-types';
 
 // deepMergeValues recursively merges override onto base: override wins on
 // scalars, nested plain objects merge key-by-key, arrays/other types replace
@@ -327,4 +327,28 @@ export function resolveInitialFormState(
     dependsOn: seedComponentDependsOn(components, overrides),
     kustomize: seedComponentKustomize(components, overrides),
   };
+}
+
+export function lockedPaths(status?: AIWorkloadStatus): Record<string, { path: string; value: string }[]> {
+  if (!status?.resolvedValues) {
+    return {};
+  }
+  const locked: Record<string, { path: string; value: string }[]> = {};
+  for (const rv of status.resolvedValues) {
+    if (!locked[rv.componentName]) {
+      locked[rv.componentName] = [];
+    }
+    locked[rv.componentName].push({ path: rv.path, value: rv.value });
+  }
+  return locked;
+}
+
+export function sentinelHint(value: unknown): string | undefined {
+  if (value === 'aif:auto-ingress-class') {
+    return 'suseai.wizard.hints.autoIngressClassHint';
+  }
+  if (typeof value === 'string' && value.startsWith('aif:auto-domain:')) {
+    return 'suseai.wizard.hints.autoDomainHint';
+  }
+  return undefined;
 }

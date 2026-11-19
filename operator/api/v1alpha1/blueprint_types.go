@@ -65,6 +65,15 @@ const (
 	BlueprintOriginCustom    BlueprintOrigin = "Custom"
 )
 
+// RollbackPolicy controls whether workloads of a Blueprint version may be rolled back.
+// +kubebuilder:validation:Enum=Allowed;Disabled
+type RollbackPolicy string
+
+const (
+	RollbackAllowed  RollbackPolicy = "Allowed"
+	RollbackDisabled RollbackPolicy = "Disabled"
+)
+
 // BlueprintComponent defines one Helm chart in a Blueprint.
 // +kubebuilder:validation:XValidation:rule="!has(self.dependsOn) || !(self.chartName in self.dependsOn)",message="a component cannot depend on itself"
 type BlueprintComponent struct {
@@ -120,6 +129,31 @@ type BlueprintComponent struct {
 	// +kubebuilder:validation:items:MinLength=1
 	// +kubebuilder:validation:items:MaxLength=253
 	DependsOn []string `json:"dependsOn,omitempty"`
+
+	// ValuesFrom reads extra Helm values at deploy time from ConfigMap or
+	// Secret keys, passed through to Fleet's spec.helm.valuesFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	ValuesFrom []ComponentValuesFrom `json:"valuesFrom,omitempty"`
+}
+
+// ValuesFromKeyRef points at one key of a ConfigMap or Secret.
+type ValuesFromKeyRef struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// ComponentValuesFrom is one deploy-time values source.
+// +kubebuilder:validation:XValidation:rule="has(self.configMapKeyRef) != has(self.secretKeyRef)",message="set exactly one of configMapKeyRef or secretKeyRef"
+type ComponentValuesFrom struct {
+	// +optional
+	ConfigMapKeyRef *ValuesFromKeyRef `json:"configMapKeyRef,omitempty"`
+	// +optional
+	SecretKeyRef *ValuesFromKeyRef `json:"secretKeyRef,omitempty"`
 }
 
 // ComponentKustomize configures a Kustomize post-render overlay for a component.
@@ -182,6 +216,10 @@ type BlueprintSpec struct {
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
+	// Rollback set to Disabled blocks rolling back from or to this version, for example
+	// when its upgrade migrates data that older versions can't read. Empty means Allowed.
+	// +optional
+	Rollback RollbackPolicy `json:"rollback,omitempty"`
 	// Components are the Helm charts included in this blueprint. chartName is unique per blueprint.
 	// +kubebuilder:validation:MinItems=1
 	// +listType=map

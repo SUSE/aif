@@ -170,3 +170,44 @@ func Apply(components []aiplatformv1alpha1.BlueprintComponent, overrides []aipla
 	}
 	return out, notes
 }
+
+// TopoOrder returns components so every component follows its dependencies,
+// each step taking the earliest remaining component (in input order) whose
+// dependencies are placed. Dependencies absent from components are ignored.
+// The input must be acyclic; any leftovers are appended in input order.
+func TopoOrder(components []aiplatformv1alpha1.BlueprintComponent) []aiplatformv1alpha1.BlueprintComponent {
+	present := make(map[string]bool, len(components))
+	for _, c := range components {
+		present[c.ChartName] = true
+	}
+	placed := make(map[string]bool, len(components))
+	out := make([]aiplatformv1alpha1.BlueprintComponent, 0, len(components))
+	ready := func(c aiplatformv1alpha1.BlueprintComponent) bool {
+		for _, d := range c.DependsOn {
+			if present[d] && !placed[d] {
+				return false
+			}
+		}
+		return true
+	}
+	for len(out) < len(components) {
+		progressed := false
+		for _, c := range components {
+			if !placed[c.ChartName] && ready(c) {
+				placed[c.ChartName] = true
+				out = append(out, c)
+				progressed = true
+				break
+			}
+		}
+		if !progressed {
+			for _, c := range components {
+				if !placed[c.ChartName] {
+					placed[c.ChartName] = true
+					out = append(out, c)
+				}
+			}
+		}
+	}
+	return out
+}

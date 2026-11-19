@@ -32,7 +32,7 @@ func TestOperationOutcome(t *testing.T) {
 	// Timeout.
 	timedOut := inProgress
 	timedOut.RequestedAt = metav1.NewTime(time.Now().Add(-2 * defaultOperationDeadline))
-	if got := operationOutcome(base, timedOut, false, false, false, defaultOperationDeadline); got.State != aiplatformv1alpha1.OperationStateFailed || got.Reason != "TimedOut" {
+	if got := operationOutcome(base, timedOut, false, false, false, defaultOperationDeadline); got.State != aiplatformv1alpha1.OperationStateFailed || got.Reason != reasonOperationTimedOut {
 		t.Fatalf("expired should be Failed/TimedOut, got %s/%s", got.State, got.Reason)
 	}
 	// Still in progress.

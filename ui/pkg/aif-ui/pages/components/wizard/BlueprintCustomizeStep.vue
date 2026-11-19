@@ -10,6 +10,14 @@
     <Banner v-if="advancedError" color="error" class="mb-20">
       {{ advancedError }}
     </Banner>
+    <Banner v-if="mode === 'manage' && Object.keys(locked).length > 0" color="info" class="mb-20">
+      {{ t('suseai.wizard.hints.lockedValues', 'These values were set at install and are locked. Leave them unchanged in the values below; saving a different value is rejected.') }}
+      <ul class="mt-10">
+        <li v-for="(pins, compName) in locked" :key="compName">
+          <strong>{{ compName }}</strong>: {{ pins.map((p) => `${p.path} = ${p.value}`).join(', ') }}
+        </li>
+      </ul>
+    </Banner>
 
     <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel" :class="{ 'is-disabled': !editedEnabled[comp.chartName] }">
       <div class="accordion-header" @click="togglePanel(idx)">
@@ -43,6 +51,21 @@
         <i :class="['icon', expandedPanels.has(idx) ? 'icon-chevron-up' : 'icon-chevron-down']" />
       </div>
 
+      <Banner
+        v-if="mode === 'install' && editedEnabled[comp.chartName] && existingReleases[comp.chartName]?.length"
+        color="warning"
+        class="existing-release-banner"
+      >
+        <div>
+          {{ t('suseai.wizard.warnings.alreadyInstalled', 'Already installed on {clusters}. Consider excluding this component.', { clusters: existingClusterLabels(comp.chartName) }) }}
+          <ul class="mt-5 mb-0">
+            <li v-for="(rel, i) in existingReleases[comp.chartName]" :key="i">
+              {{ releaseLine(rel) }}
+            </li>
+          </ul>
+        </div>
+      </Banner>
+
       <div v-if="expandedPanels.has(idx)" class="accordion-body">
         <Banner v-if="!editedEnabled[comp.chartName] && runningNames.has(comp.chartName)" color="warning" class="mb-20">
           {{ t('suseai.wizard.warnings.excludingRunningComponent', 'This component is currently deployed — excluding it will remove its resources on the next sync.') }}
@@ -61,6 +84,25 @@
             :label="t('suseai.wizard.labels.valuesTab', 'Values')"
             :weight="2"
           >
+            <p
+              v-for="(src, i) in describeValuesFrom(comp.valuesFrom)"
+              :key="i"
+              class="text-muted mb-10"
+            >
+              <template v-if="src.namespace">
+                {{ t('suseai.wizard.hints.valuesFromNote', 'Some values are read at deploy time from {kind} {namespace}/{name}.', src) }}
+              </template>
+              <template v-else>
+                {{ t('suseai.wizard.hints.valuesFromNoteReleaseNs', 'Some values are read at deploy time from {kind} {name} (release namespace).', src) }}
+              </template>
+            </p>
+            <p
+              v-for="(hint, i) in mode === 'install' ? findSentinels(blueprintDefaults[comp.chartName] || {}) : []"
+              :key="i"
+              class="text-muted mb-10"
+            >
+              {{ t(hint.key, SENTINEL_HINT_FALLBACKS[hint.key], { label: hint.label, path: hint.path }) }}
+            </p>
             <ValuesStep
               :values="editedValues[comp.chartName] || {}"
               :chart-repo="comp.chartRepo"
@@ -109,6 +151,13 @@
               </div>
             </div>
 
+            <ValuesFromEditor
+              v-if="comp.valuesFrom?.length"
+              :value="comp.valuesFrom"
+              :name="comp.chartName"
+              :mode="_VIEW"
+            />
+
             <h3>{{ t('suseai.wizard.labels.kustomizeOverlay', 'Kustomize overlay') }}</h3>
             <template v-if="comp.kustomize">
               <h4>{{ t('suseai.wizard.labels.blueprintOverlay', 'Blueprint overlay (read-only)') }}</h4>
@@ -146,16 +195,20 @@ import { BadgeState } from '@components/BadgeState';
 import LabeledSelect from '@shell/components/form/LabeledSelect';
 import Tabbed from '@shell/components/Tabbed';
 import Tab from '@shell/components/Tabbed/Tab';
+import { _VIEW } from '@shell/config/query-params';
 import ValuesStep from './ValuesStep.vue';
 import KustomizeOverlayEditor from './KustomizeOverlayEditor.vue';
+import ValuesFromEditor from './ValuesFromEditor.vue';
 import { listGitClusterRepoNames } from '../../../services/rancher-apps';
 import { validateDependsOn } from '../../../validators/blueprint';
 import {
   seedComponentValues, seedComponentEnabled, seedComponentDependsOn, staleDependsOn, diffComponentOverrides,
-  customizedComponentNames, resolveInitialFormState,
+  customizedComponentNames, resolveInitialFormState, lockedPaths, sentinelHint,
 } from '../../../utils/blueprint-customize';
+import { describeValuesFrom } from '../../../utils/values-from';
+import type { ExistingRelease } from '../../../utils/blueprint-preflight';
 import type { BlueprintComponent, ComponentKustomize } from '../../../types/blueprint-types';
-import type { ComponentValueOverride } from '../../../types/aiworkload-types';
+import type { ComponentValueOverride, AIWorkloadStatus } from '../../../types/aiworkload-types';
 
 interface Props {
   components:      BlueprintComponent[];
@@ -173,6 +226,11 @@ interface Props {
   // so the Questions/YAML editor gets correct edit-vs-create semantics
   // instead of always behaving as if this were a fresh install.
   mode?: 'install' | 'manage';
+  // AIWorkload status for manage mode (contains resolvedValues for locked paths).
+  status?: AIWorkloadStatus;
+  // Install mode only: releases of the same charts already on the target clusters, by chartName.
+  existingReleases?: Record<string, ExistingRelease[]>;
+  clusterNames?:     Record<string, string>; // cluster ID → display name
 }
 interface Emits {
   (e: 'update:modelValue', v: ComponentValueOverride[]): void;
@@ -182,7 +240,9 @@ interface Emits {
   (e: 'update:valid', v: boolean): void;
 }
 
-const props = withDefaults(defineProps<Props>(), { mode: 'install', runningComponents: () => [] });
+const props = withDefaults(defineProps<Props>(), {
+  mode: 'install', runningComponents: () => [], existingReleases: () => ({}), clusterNames: () => ({}),
+});
 const emit  = defineEmits<Emits>();
 const vm    = getCurrentInstance()!.proxy as any;
 const store = vm.$store;
@@ -190,6 +250,12 @@ const store = vm.$store;
 const t = useT();
 
 const runningNames = computed(() => new Set(props.runningComponents));
+
+const clusterLabel = (clusterId: string) => props.clusterNames[clusterId] || clusterId;
+const existingClusterLabels = (chartName: string) => Array.from(new Set(props.existingReleases[chartName].map((r) => clusterLabel(r.clusterId)))).join(', ');
+const releaseLine = (rel: ExistingRelease) => t('suseai.wizard.warnings.alreadyInstalledRelease', '{cluster}: {release} ({chart}) in namespace {namespace}', {
+  cluster: clusterLabel(rel.clusterId), release: rel.release, chart: [rel.chart, rel.version].filter(Boolean).join(' '), namespace: rel.namespace,
+});
 
 const expandedPanels      = ref(new Set<number>([0]));
 const loadingMap          = ref<Record<string, boolean>>({});
@@ -247,11 +313,34 @@ const allDisabled = computed(() => props.components.length > 0 && props.componen
 // Advanced-tab error: an invalid edited deploy order (the API rejects it too).
 const advancedError = computed(() => validateDependsOn(props.components.map((c) => ({ chartName: c.chartName, dependsOn: editedDependsOn.value[c.chartName] }))));
 
+const locked = computed(() => props.mode === 'manage' && props.status ? lockedPaths(props.status) : {});
+
 watch([allDisabled, advancedError], ([disabled, err]) => emit('update:valid', !disabled && err === null), { immediate: true });
 
 if (props.components.length > 0) {
   const first = props.components[0];
   loadChartInfo(first.chartName, first.chartRepo, first.chartVersion);
+}
+
+const SENTINEL_HINT_FALLBACKS: Record<string, string> = {
+  'suseai.wizard.hints.autoDomainHint':       'Automatic: {label}.<node-ip>.sslip.io — set {path} to use your own domain.',
+  'suseai.wizard.hints.autoIngressClassHint': "Automatic: the target cluster's default ingress class — set {path} to choose one.",
+};
+
+function findSentinels(vals: unknown): Array<{ key: string; label: string; path: string }> {
+  const hints: Array<{ key: string; label: string; path: string }> = [];
+  function walk(v: unknown, path: string) {
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      Object.entries(v).forEach(([k, val]) => walk(val, path ? `${path}.${k}` : k));
+      return;
+    }
+    const key = sentinelHint(v);
+    if (key && !hints.some((h) => h.key === key && h.path === path)) {
+      hints.push({ key, label: String(v).replace(/^aif:auto-domain:/, ''), path });
+    }
+  }
+  walk(vals, '');
+  return hints;
 }
 
 function togglePanel(idx: number) {
@@ -342,4 +431,5 @@ if (Object.keys(staleDeps).length) {
 .accordion-body { padding: 16px; }
 .mb-10 { margin-bottom: 10px; }
 .mb-30 { margin-bottom: 30px; }
+.existing-release-banner { margin: 12px 16px; }
 </style>

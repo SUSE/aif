@@ -78,7 +78,8 @@ func (r *AIWorkloadReconciler) getBundle(ctx context.Context, namespace, name st
 
 // certifyDeployedSource sets w.Status.DeployedSource to the current spec version when EVERY
 // desired HelmOp Bundle is certified against its expected per-HelmOp digest. Idempotent: an
-// unchanged {version, aggregateDigest} leaves CertifiedAt untouched. Empty keys never certify.
+// unchanged {version, aggregateDigest} leaves CertifiedAt untouched, unless an in-flight
+// Upgrade/Rollback awaits certification since its request. Empty keys never certify.
 func (r *AIWorkloadReconciler) certifyDeployedSource(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
@@ -107,7 +108,8 @@ func (r *AIWorkloadReconciler) certifyDeployedSource(
 	}
 	if w.Status.DeployedSource != nil &&
 		w.Status.DeployedSource.Version == version &&
-		w.Status.DeployedSource.RenderDigest == agg {
+		w.Status.DeployedSource.RenderDigest == agg &&
+		!versionOpAwaitingCertification(w) {
 		return nil // unchanged — no churn
 	}
 	w.Status.DeployedSource = &aiplatformv1alpha1.DeployedSourceSnapshot{
@@ -187,4 +189,22 @@ func upsertRenderBaseline(baselines []aiplatformv1alpha1.RenderBaseline, entry a
 		}
 	}
 	return append(baselines, entry)
+}
+
+// certifiedSince reports whether ds was certified at or after t.
+func certifiedSince(ds *aiplatformv1alpha1.DeployedSourceSnapshot, t metav1.Time) bool {
+	return ds != nil && !ds.CertifiedAt.Before(&t)
+}
+
+// versionOpAwaitingCertification reports whether an in-flight Upgrade/Rollback has not been
+// certified since it was requested.
+func versionOpAwaitingCertification(w *aiplatformv1alpha1.AIWorkload) bool {
+	op, ok := readJournal(w)
+	if !ok || op.State != aiplatformv1alpha1.OperationStateInProgress {
+		return false
+	}
+	if op.Type != aiplatformv1alpha1.OperationTypeUpgrade && op.Type != aiplatformv1alpha1.OperationTypeRollback {
+		return false
+	}
+	return !certifiedSince(w.Status.DeployedSource, op.RequestedAt)
 }

@@ -1,6 +1,6 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ t('suseai.wizard.sections.reviewInstall', {}, true) }}</h2>
+    <h2 class="step-title">{{ t('suseai.wizard.sections.reviewInstall', 'Review & Install') }}</h2>
 
     <div class="review-section">
       <div class="review-row"><span class="label">{{ t('suseai.wizard.form.workloadName', 'Instance Name') }}</span><span>{{ workloadName }}</span></div>
@@ -10,6 +10,10 @@
       <div class="review-row">
         <span class="label">{{ t('suseai.wizard.labels.clusters', 'Clusters') }}</span>
         <span>{{ clusters.map(clusterLabel).join(', ') || '—' }}</span>
+      </div>
+      <div class="review-row">
+        <span class="label">{{ t('suseai.wizard.form.rollback', 'Rollback') }}</span>
+        <RollbackPolicyLabel :rollback="rollback" />
       </div>
     </div>
 
@@ -29,6 +33,7 @@
             → {{ comp.targetNamespace || namespace }}
             <template v-if="comp.targetNamespace">({{ t('suseai.wizard.labels.fixedNamespace', 'fixed') }})</template>
           </span>
+          <ValuesFromSummary :values-from="comp.valuesFrom" class="comp-values-from-list" />
         </template>
       </div>
     </div>
@@ -52,12 +57,14 @@
 
 <script lang="ts" setup>
 import { computed } from 'vue';
-import type { BlueprintComponent } from '../../../types/blueprint-types';
+import type { BlueprintComponent, BlueprintSpec } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 import { useT } from '../../../composables/useT';
 import {
   customizedOverrides, effectiveDeployOrder, type OverrideChange,
 } from '../../../utils/blueprint-customize';
+import ValuesFromSummary from './ValuesFromSummary.vue';
+import RollbackPolicyLabel from './RollbackPolicyLabel.vue';
 
 interface Props {
   workloadName:      string;
@@ -70,6 +77,7 @@ interface Props {
   clusterNames?:     Record<string, string>; // cluster ID → display name
   components:        BlueprintComponent[];
   componentValues?:  ComponentValueOverride[];
+  rollback?:         BlueprintSpec['rollback'];
 }
 const props = defineProps<Props>();
 
@@ -107,9 +115,10 @@ const waves = computed(() => effectiveDeployOrder(props.components, props.compon
   .label { font-weight: 500; min-width: 120px; color: var(--muted); }
 }
 .component-row {
-  display: flex; gap: 16px; padding: 6px 0; border-bottom: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; gap: 16px; padding: 6px 0; border-bottom: 1px solid var(--border);
   &:last-child { border-bottom: none; }
   .comp-target { margin-left: auto; }
+  .comp-values-from-list { flex-basis: 100%; }
   &.is-excluded { opacity: 0.6; }
 }
 .badge-excluded {

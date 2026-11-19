@@ -12,12 +12,16 @@ import InstallProgressModal, { type ClusterInstallProgress } from './wizard/Inst
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus } from '../../utils/operator-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
-import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
+import {
+  missingCredentialsForBlueprint, existingReleasesByComponent, type RequiredCredential,
+} from '../../utils/blueprint-preflight';
+import { listCatalogApps } from '../../services/cluster-service';
 import { crNameForCluster, defaultInstallNamespace } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import type { Blueprint } from '../../types/blueprint-types';
-import type { AIWorkloadDeployStrategy, ComponentValueOverride, RegistryStatus } from '../../types/aiworkload-types';
+import type { AppCRD } from '../../types/rancher-types';
+import type { AIWorkloadDeployStrategy, ComponentValueOverride, RegistryStatus, AIWorkloadStatus } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
 
 interface Props {
@@ -50,6 +54,7 @@ const initialComponentValues = ref<ComponentValueOverride[]>([]);
 const componentValues = ref<ComponentValueOverride[]>([]);
 const componentValuesValid = ref(true);
 const runningComponentNames = ref<string[]>([]);
+const workloadStatus = ref<AIWorkloadStatus | undefined>(undefined);
 const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
 const { clusterNames, clusterDisplayName, loadClusterDisplayNames } = useClusterDisplayNames(store);
 
@@ -73,6 +78,26 @@ const missingCreds = computed(() => {
   });
   return missingCredentialsForBlueprint(enabledComponents, registryStatus.value);
 });
+
+// Install mode only: in manage mode the workload's own releases would match.
+// Fetched once per newly selected cluster; a superseded fetch is dropped.
+const appsByCluster = ref<Record<string, AppCRD[]>>({});
+let appsFetchSeq = 0;
+watch(clusters, async (ids) => {
+  if (props.mode !== 'install') return;
+  const missing = ids.filter((id) => !(id in appsByCluster.value));
+  if (!missing.length) return;
+  const seq = ++appsFetchSeq;
+  const lists = await Promise.all(missing.map((id) => listCatalogApps(store, id).catch((): AppCRD[] => [])));
+  if (seq === appsFetchSeq) {
+    appsByCluster.value = { ...appsByCluster.value, ...Object.fromEntries(missing.map((id, i) => [id, lists[i]])) };
+  }
+});
+const existingReleases = computed(() => existingReleasesByComponent(
+  blueprint.value?.spec.components || [],
+  Object.fromEntries(clusters.value.map((id) => [id, appsByCluster.value[id] || []])),
+));
+
 const CRED_LABELS: Record<RequiredCredential, string> = {
   applicationCollection: 'Application Collection',
   suseRegistry:          'SUSE Registry',
@@ -142,6 +167,7 @@ async function loadExistingWorkload() {
   namespace.value       = workload.metadata.namespace;
   clusters.value        = workload.spec.targetClusters || [];
   deployType.value      = (workload.spec.deployStrategy as AIWorkloadDeployStrategy) || 'FleetBundle';
+  workloadStatus.value  = workload.status;
   const existing = workload.spec.componentValues || [];
   initialComponentValues.value = JSON.parse(JSON.stringify(existing));
   componentValues.value = JSON.parse(JSON.stringify(existing));
@@ -326,6 +352,7 @@ function onProgressCancel() { showProgressModal.value = false; }
             :namespace="namespace"
             :components="blueprint?.spec.components || []"
             :disabled="props.mode === 'manage'"
+            :rollback="blueprint?.spec.rollback"
             @update:workload-name="workloadName = $event"
             @update:namespace="namespace = $event"
           />
@@ -346,6 +373,9 @@ function onProgressCancel() { showProgressModal.value = false; }
             :model-value="componentValues"
             :running-components="runningComponentNames"
             :mode="props.mode"
+            :status="workloadStatus"
+            :existing-releases="existingReleases"
+            :cluster-names="clusterNames"
             @update:model-value="componentValues = $event"
             @update:valid="componentValuesValid = $event"
           />
@@ -371,6 +401,7 @@ function onProgressCancel() { showProgressModal.value = false; }
               :cluster-names="clusterNames"
               :components="blueprint?.spec.components || []"
               :component-values="componentValues"
+              :rollback="blueprint?.spec.rollback"
             />
           </div>
         </div>

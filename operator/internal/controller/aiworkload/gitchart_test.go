@@ -240,11 +240,11 @@ func TestFetchGitChart_PreservesErrUnauthorized(t *testing.T) {
 func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "rancher-charts", ChartName: "x", ChartVersion: "1.0.0"}
 	targets := []any{map[string]any{"clusterName": "local"}}
-	base := embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets)
+	base := embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, nil, "", 0, targets)
 	if base == "" {
 		t.Fatal("fingerprint should not be empty for hashable inputs")
 	}
-	if got := embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets); got != base {
+	if got := embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, nil, "", 0, targets); got != base {
 		t.Fatal("fingerprint is not stable across identical inputs")
 	}
 
@@ -253,21 +253,21 @@ func TestGitChartFingerprint_ChangesWithInputs(t *testing.T) {
 	renamed := c
 	renamed.ReleaseName = "custom-release"
 	for name, got := range map[string]string{
-		"version":   embeddedChartFingerprint(bumped, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets),
-		"namespace": embeddedChartFingerprint(c, "other-ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets),
-		"values":    embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 2}, nil, "", 0, targets),
-		"targets":   embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, []any{map[string]any{"clusterName": "downstream"}}),
+		"version":   embeddedChartFingerprint(bumped, "ns", "commit-aaa", map[string]any{"a": 1}, nil, nil, "", 0, targets),
+		"namespace": embeddedChartFingerprint(c, "other-ns", "commit-aaa", map[string]any{"a": 1}, nil, nil, "", 0, targets),
+		"values":    embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 2}, nil, nil, "", 0, targets),
+		"targets":   embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, nil, nil, "", 0, []any{map[string]any{"clusterName": "downstream"}}),
 		// The release name is baked into the Bundle's Helm options, so changing
 		// only it must invalidate the fingerprint or the override never ships.
-		"release name": embeddedChartFingerprint(renamed, "ns", "commit-aaa", map[string]any{"a": 1}, nil, "", 0, targets),
+		"release name": embeddedChartFingerprint(renamed, "ns", "commit-aaa", map[string]any{"a": 1}, nil, nil, "", 0, targets),
 		// The reason this input exists: a git-backed repo tracks a branch, so a
 		// developer can re-push a corrected chart at the SAME version. Only the
 		// repo's indexed commit distinguishes the two, and without it the Bundle
 		// is judged up to date and the chart is never re-fetched.
-		"repo commit": embeddedChartFingerprint(c, "ns", "commit-bbb", map[string]any{"a": 1}, nil, "", 0, targets),
+		"repo commit": embeddedChartFingerprint(c, "ns", "commit-bbb", map[string]any{"a": 1}, nil, nil, "", 0, targets),
 		// dependsOn is now hashed too — a differing depends-on set must invalidate
 		// the fingerprint so a Bundle picks up a spec.dependsOn change.
-		"depends on": embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, []string{"other-bundle"}, "", 0, targets),
+		"depends on": embeddedChartFingerprint(c, "ns", "commit-aaa", map[string]any{"a": 1}, []any{map[string]any{"name": "other-bundle"}}, nil, "", 0, targets),
 	} {
 		if got == base {
 			t.Errorf("fingerprint unchanged when %s changed", name)

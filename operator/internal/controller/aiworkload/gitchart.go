@@ -141,6 +141,9 @@ func buildEmbeddedChartBundle(bundleName, namespace, fingerprint string, tgz []b
 	if len(vals) > 0 {
 		helm["values"] = vals
 	}
+	if vf := valuesFromSpec(c); vf != nil {
+		helm["valuesFrom"] = vf
+	}
 
 	b := &unstructured.Unstructured{}
 	b.SetGroupVersionKind(bundleGVK)
@@ -483,17 +486,18 @@ func (r *AIWorkloadReconciler) planEmbedded(ctx context.Context, w *aiplatformv1
 		sourceRevision = repoInfo.URL
 	}
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	dependsOn := resolveDependsOn(w, c.DependsOn, r.fleetDependsOnMode(ctx))
 	return &embeddedPlan{
 		ns:              ns,
 		vals:            vals,
-		depObjs:         resolveDependsOn(w, c.DependsOn),
+		depObjs:         dependsOn,
 		overlay:         overlay,
 		overlayDeferred: overlay == nil && ovDigest != "",
 		epoch:           epoch,
 		// overlayOnly: the chart is embedded only because of its overlay
 		// (http/oci), which changes the advice in a size error.
 		overlayOnly: repoInfo.Kind != repoKindGit,
-		fingerprint: embeddedChartFingerprint(c, ns, sourceRevision, vals, resolveDependsOnNames(w, c.DependsOn), ovDigest, epoch, localTargets, downstreamTargets),
+		fingerprint: embeddedChartFingerprint(c, ns, sourceRevision, vals, dependsOn, valuesFromSpec(c), ovDigest, epoch, localTargets, downstreamTargets),
 		workspaces:  targetedWorkspaces(w),
 	}, nil
 }
@@ -591,8 +595,8 @@ func (r *AIWorkloadReconciler) embeddedBundleMatches(ctx context.Context, ns, bu
 //
 // A change in any of these means the Bundle must be rebuilt — and the chart
 // re-fetched, since the archive is the one input we cannot diff without it.
-func embeddedChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, sourceRevision string, vals map[string]any, dependsOn []string,
-	overlayDigest string, epoch int64, targetSets ...[]any) string {
+func embeddedChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, sourceRevision string, vals map[string]any, dependsOn []any,
+	valuesFrom []any, overlayDigest string, epoch int64, targetSets ...[]any) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", c.ChartRepo, c.ChartName, c.ChartVersion, c.ReleaseName, ns, sourceRevision)
 	// json.Marshal sorts map keys, so equivalent values hash equally.
@@ -602,7 +606,7 @@ func embeddedChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, sourc
 		return ""
 	}
 	h.Write(valsJSON)
-	// Only hash dependsOn when non-empty, so a component with no deps fingerprints
+	// Only hash the rendered dependsOn when non-empty, so a component without one fingerprints
 	// identically to before this field existed (frictionless upgrade).
 	if len(dependsOn) > 0 {
 		depJSON, err := json.Marshal(dependsOn)
@@ -610,6 +614,13 @@ func embeddedChartFingerprint(c aiplatformv1alpha1.BlueprintComponent, ns, sourc
 			return ""
 		}
 		h.Write(depJSON)
+	}
+	if len(valuesFrom) > 0 {
+		vfJSON, err := json.Marshal(valuesFrom)
+		if err != nil {
+			return ""
+		}
+		_, _ = fmt.Fprintf(h, "valuesFrom\x00%s\x00", vfJSON)
 	}
 	// Overlay and retry epoch are only hashed when set, so an existing git-backed
 	// component (no overlay, epoch 0) keeps its fingerprint across the upgrade.

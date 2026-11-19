@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // TestExcludedDependencyEdges_ReportsDroppedEdges is a plain unit test of the
@@ -57,7 +58,7 @@ func TestReconcileBlueprintStatus_ExcludedDependencyDroppedFromRender(t *testing
 	w.Spec.Source.Blueprint = &aiplatformv1alpha1.BlueprintSource{Name: "deps", Version: "1.0.0"}
 	w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "b", Enabled: ptrBool(false)}}
 
-	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: bpCRName("deps", "1.0.0")}}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("deps", "1.0.0")}}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: "application-collection", ChartName: "a", ChartVersion: "1.0.0", Vendor: "suse", DependsOn: []string{"b"}},
 		{ChartRepo: "application-collection", ChartName: "b", ChartVersion: "1.0.0", Vendor: "suse"},
@@ -69,9 +70,10 @@ func TestReconcileBlueprintStatus_ExcludedDependencyDroppedFromRender(t *testing
 	_ = unstructured.SetNestedField(repo.Object, "https://charts.example.com", "spec", "url")
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
-	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator",
+		FleetCapabilities: staticFleetCapabilities{acceptedStates: true}}
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 

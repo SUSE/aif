@@ -8,18 +8,13 @@ import BlueprintAppSelectorStep from './wizard/BlueprintAppSelectorStep.vue';
 // Steps 3 & 4 are loaded asynchronously so that Steps 1-2 render even before Task 4 files exist.
 const BlueprintConfigStep       = defineAsyncComponent(() => import('./wizard/BlueprintConfigStep.vue'));
 const BlueprintReviewCreateStep = defineAsyncComponent(() => import('./wizard/BlueprintReviewCreateStep.vue'));
-import type { BlueprintSpec } from '../../types/blueprint-types';
+import type { BlueprintBasicInfo, BlueprintSpec } from '../../types/blueprint-types';
 import { SEMVER_PATTERN, DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../types/blueprint-types';
 import { createBlueprint, buildBlueprintSpec } from '../../utils/blueprint-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
 import { validateDependsOn } from '../../validators/blueprint';
+import { validateComponentsValuesFrom, valuesFromErrorMessage } from '../../utils/values-from';
 import { PRODUCT } from '../../config/suseai';
-
-interface BasicInfo {
-  displayName: string;
-  version:     string;
-  description: string;
-}
 
 interface Props {
   editName?:    string;
@@ -41,20 +36,16 @@ const error      = ref<string | null>(null);
 const submitting = ref(false);
 const currentStep = ref(0);
 
-const basicInfo = ref<BasicInfo>({
-  displayName: props.prefill?.displayName || '',
-  version:     props.prefill?.version || '',
-  description: props.prefill?.description || '',
+const basicInfo = ref<BlueprintBasicInfo>({
+  displayName:   props.prefill?.displayName || '',
+  version:       props.prefill?.version || '',
+  description:   props.prefill?.description || '',
+  allowRollback: props.prefill?.rollback !== 'Disabled',
 });
 
 const components = ref(
   props.prefill?.components?.map(c => ({ ...c })) || []
 );
-
-// Fed by BlueprintConfigStep's `update:valid`, mirroring how
-// BlueprintInstallWizard.vue consumes BlueprintCustomizeStep's `update:valid`
-// (componentValuesValid). Starts true since dependsOn starts empty/valid.
-const dependsOnValid = ref(true);
 
 const namespacesValid = computed(() => components.value.every((c) => {
   const ns = c.targetNamespace?.trim();
@@ -84,8 +75,16 @@ const releaseNamesUnique = computed(() => {
 });
 
 const componentsValid = computed(() =>
-  components.value.length > 0 && namespacesValid.value && releaseNamesValid.value && releaseNamesUnique.value && dependsOnValid.value
+  components.value.length > 0 && namespacesValid.value && releaseNamesValid.value && releaseNamesUnique.value
 );
+
+// Deploy order and valuesFrom are edited on Configuration, so they gate only Review;
+// derived from components so the result survives the step unmounting.
+const configError = computed(() => {
+  const valuesFromErr = validateComponentsValuesFrom(components.value);
+
+  return validateDependsOn(components.value) ?? (valuesFromErr ? valuesFromErrorMessage(t, valuesFromErr) : null);
+});
 
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),      ready: true },
@@ -94,7 +93,7 @@ const wizardSteps = computed(() => [
     ready: basicInfo.value.displayName.trim() !== '' && SEMVER_PATTERN.test(basicInfo.value.version),
   },
   { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: componentsValid.value },
-  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: componentsValid.value },
+  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: componentsValid.value && configError.value === null },
 ]);
 
 function nextStep() {
@@ -131,9 +130,8 @@ async function onCreate() {
     submitting.value = false;
     return;
   }
-  const dependsOnError = validateDependsOn(components.value);
-  if (dependsOnError) {
-    error.value = dependsOnError;
+  if (configError.value) {
+    error.value = configError.value;
     submitting.value = false;
     return;
   }
@@ -197,7 +195,6 @@ const reviewForm = computed<BlueprintSpec>(() => buildBlueprintSpec(basicInfo.va
           v-else-if="currentStep === 2"
           :components="components"
           @update:components="components = $event"
-          @update:valid="dependsOnValid = $event"
         />
         <BlueprintReviewCreateStep
           v-else-if="currentStep === 3"

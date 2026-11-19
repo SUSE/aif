@@ -512,6 +512,47 @@ spec:
                   - retryEpoch
                   type: object
                 type: array
+              resolvedValues:
+                description: |-
+                  ResolvedValues pins every automatic Blueprint value (domain, ingress
+                  class) to the concrete value chosen at install, so later reconciles and
+                  upgrades render the same value even if the cluster changes.
+                items:
+                  description: ResolvedValue is the concrete value pinned for one
+                    automatic value.
+                  properties:
+                    clusterId:
+                      description: |-
+                        ClusterID is the cluster an auto value was resolved against, so a
+                        retargeted workload re-resolves it. Empty on user values and on pins
+                        recorded before this field existed.
+                      type: string
+                    componentName:
+                      type: string
+                    path:
+                      description: Path is the dot-joined Helm values path, e.g. "global.domain".
+                      type: string
+                    source:
+                      description: Source is "auto" (resolved from the cluster) or
+                        "user" (install override).
+                      enum:
+                      - auto
+                      - user
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - componentName
+                  - path
+                  - source
+                  - value
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - componentName
+                - path
+                x-kubernetes-list-type: map
             type: object
         type: object
     served: true

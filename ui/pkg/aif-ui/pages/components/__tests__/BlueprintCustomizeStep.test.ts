@@ -5,6 +5,7 @@ import { listGitClusterRepoNames } from '../../../services/rancher-apps';
 import { Banner } from '@components/Banner';
 import BlueprintCustomizeStep from '../wizard/BlueprintCustomizeStep.vue';
 import KustomizeOverlayEditor from '../wizard/KustomizeOverlayEditor.vue';
+import ValuesFromEditor from '../wizard/ValuesFromEditor.vue';
 import type { BlueprintComponent } from '../../../types/blueprint-types';
 import type { ComponentValueOverride } from '../../../types/aiworkload-types';
 
@@ -31,20 +32,29 @@ function component(chartName: string, extra: Partial<BlueprintComponent> = {}): 
   };
 }
 
-async function mountStep(components: BlueprintComponent[], existingValues: ComponentValueOverride[] = []) {
+async function mountStep(components: BlueprintComponent[], existingValues: ComponentValueOverride[] = [], props: Record<string, any> = {}) {
   const store = { dispatch: vi.fn(async() => ({})), getters: {} };
   const wrapper = mount(BlueprintCustomizeStep, {
-    props:  { components, existingValues },
+    props:  { components, existingValues, ...props },
     global: {
       mocks:      { $store: store },
       // Rancher's global t(); a globalProperty, so the component's own t still wins.
       plugins:    [{
         install: (app) => {
           // The shell also types an options-object overload, which these components never use.
-          app.config.globalProperties.t = ((key: string) => key) as unknown as typeof app.config.globalProperties.t;
+          app.config.globalProperties.t = ((key: string, params?: any) => {
+            if (params) {
+              let result = key;
+              Object.entries(params).forEach(([k, v]) => {
+                result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+              });
+              return result;
+            }
+            return key;
+          }) as unknown as typeof app.config.globalProperties.t;
         },
       }],
-      directives: { 'clean-html': {}, 'clean-tooltip': {} },
+      directives: { 'clean-html': {}, 'clean-tooltip': {}, 'stripped-aria-label': {} },
       stubs:      { t: true },
     },
   });
@@ -118,5 +128,153 @@ describe('BlueprintCustomizeStep Advanced tab', () => {
 
     expect(wrapper.text()).toContain('Excluded');
     expect(wrapper.findComponent({ name: 'TabbedStub' }).exists()).toBe(false);
+  });
+
+  it('shows the blueprint valuesFrom read-only before the overlays', async() => {
+    const valuesFrom = [{ secretKeyRef: { name: 'runai-cluster-values' } }];
+    const wrapper = await mountStep([component('runai-cluster', { valuesFrom })]);
+    const advanced = wrapper.find('[data-tab="advanced"]');
+    const editor = advanced.findComponent(ValuesFromEditor);
+
+    expect(editor.props()).toMatchObject({ value: valuesFrom, name: 'runai-cluster', mode: 'view' });
+    const overlayEl = advanced.findComponent(KustomizeOverlayEditor).element;
+
+    expect(editor.element.compareDocumentPosition(overlayEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows no valuesFrom section for a component without one', async() => {
+    const wrapper = await mountStep([component('a')]);
+
+    expect(wrapper.findComponent(ValuesFromEditor).exists()).toBe(false);
+  });
+});
+
+describe('BlueprintCustomizeStep Values tab', () => {
+  it('notes each valuesFrom source, with or without a namespace', async() => {
+    const wrapper = await mountStep([component('runai-cluster', {
+      valuesFrom: [
+        { secretKeyRef: { name: 'runai-cluster-values', namespace: 'runai-backend', key: 'values.yaml' } },
+        { configMapKeyRef: { name: 'runai-config' } },
+      ],
+    })]);
+    const notes = wrapper.find('[data-tab="values"]').findAll('p.text-muted').map((p) => p.text());
+
+    expect(notes).toEqual([
+      'Some values are read at deploy time from Secret runai-backend/runai-cluster-values.',
+      'Some values are read at deploy time from ConfigMap runai-config (release namespace).',
+    ]);
+  });
+
+  it('shows no valuesFrom note for a component without one', async() => {
+    const wrapper = await mountStep([component('a')]);
+
+    expect(wrapper.text()).not.toContain('read at deploy time');
+  });
+});
+
+describe('BlueprintCustomizeStep manage mode', () => {
+  it('shows locked values banner with pins in manage mode', async() => {
+    const wrapper = await mountStep(
+      [component('runai', { values: { global: { domain: 'aif:auto-domain:runai' } } })],
+      [],
+      {
+        mode: 'manage',
+        status: {
+          resolvedValues: [
+            { componentName: 'runai', path: 'global.domain', value: 'runai.10.0.0.12.sslip.io', source: 'auto' },
+            { componentName: 'runai', path: 'global.ingressClass', value: 'nginx', source: 'auto' },
+          ],
+        },
+      },
+    );
+
+    const banner = wrapper.findAllComponents(Banner).find((b) => b.props('color') === 'info');
+    expect(banner?.exists()).toBe(true);
+    expect(banner?.text()).toContain('These values were set at install and are locked');
+    expect(banner?.text()).toContain('runai');
+    expect(banner?.text()).toContain('global.domain = runai.10.0.0.12.sslip.io');
+    expect(banner?.text()).toContain('global.ingressClass = nginx');
+    expect(wrapper.find('[data-tab="values"] .values-stub').exists()).toBe(true);
+  });
+
+  it('shows no locked values banner when no pins', async() => {
+    const wrapper = await mountStep(
+      [component('runai')],
+      [],
+      { mode: 'manage', status: {} },
+    );
+
+    expect(wrapper.text()).not.toContain('These values were set at install and are locked');
+  });
+
+  it('shows no locked values banner in install mode', async() => {
+    const wrapper = await mountStep(
+      [component('runai')],
+      [],
+      {
+        mode: 'install',
+        status: {
+          resolvedValues: [
+            { componentName: 'runai', path: 'global.domain', value: 'runai.10.0.0.12.sslip.io', source: 'auto' },
+          ],
+        },
+      },
+    );
+
+    expect(wrapper.text()).not.toContain('These values were set at install and are locked');
+  });
+
+  it('shows automatic value hints in install mode', async() => {
+    const wrapper = await mountStep(
+      [component('runai', { values: { global: { domain: 'aif:auto-domain:runai', ingressClass: 'aif:auto-ingress-class' } } })],
+      [],
+      { mode: 'install' },
+    );
+
+    const text = wrapper.find('[data-tab="values"]').text();
+    expect(text).toContain('Automatic: runai.<node-ip>.sslip.io');
+    expect(text).toContain('set global.domain to use your own domain');
+    expect(text).toContain('set global.ingressClass to choose one');
+  });
+});
+
+describe('BlueprintCustomizeStep existing releases', () => {
+  const existingReleases = {
+    'cert-manager': [
+      {
+        clusterId: 'c-1', release: 'cert-manager', chart: 'cert-manager', version: 'v1.15.0', namespace: 'cert-manager',
+      },
+      {
+        clusterId: 'c-2', release: 'certs', chart: 'cert-manager', version: '', namespace: 'security',
+      },
+    ],
+  };
+  const props = { existingReleases, clusterNames: { 'c-1': 'prod' } };
+  const warning = (wrapper: Awaited<ReturnType<typeof mountStep>>) => wrapper.findAllComponents(Banner).find((b) => b.text().includes('Already installed'));
+
+  it('warns on a matching component in install mode, listing each cluster', async() => {
+    const wrapper = await mountStep([component('cert-manager'), component('gpu-operator')], [], props);
+    const banners = wrapper.findAllComponents(Banner).filter((b) => b.text().includes('Already installed'));
+
+    expect(banners).toHaveLength(1);
+    expect(banners[0].props('color')).toBe('warning');
+    expect(banners[0].text()).toContain('Already installed on prod, c-2. Consider excluding this component.');
+    expect(banners[0].findAll('li').map((li) => li.text())).toEqual([
+      'prod: cert-manager (cert-manager v1.15.0) in namespace cert-manager',
+      'c-2: certs (cert-manager) in namespace security',
+    ]);
+    expect(lastModelValue(wrapper)).toEqual([]);
+  });
+
+  it('hides the warning once the component is excluded', async() => {
+    const wrapper = await mountStep([component('cert-manager'), component('gpu-operator')], [{ componentName: 'cert-manager', enabled: false }], props);
+
+    expect(warning(wrapper)).toBeUndefined();
+  });
+
+  it('shows no warning in manage mode', async() => {
+    const wrapper = await mountStep([component('cert-manager')], [], { ...props, mode: 'manage', status: {} });
+
+    expect(warning(wrapper)).toBeUndefined();
   });
 });

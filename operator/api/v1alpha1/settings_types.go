@@ -80,7 +80,7 @@ type BlueprintCatalogSource struct {
 	// Paths are the repo folders scanned for Blueprint YAMLs. Defaults to
 	// ["blueprints"] when empty.
 	// +optional
-	Paths []string `json:"paths,omitempty"`
+	Paths         []string `json:"paths,omitempty"`
 	GitRepoSource `json:",inline"`
 }
 

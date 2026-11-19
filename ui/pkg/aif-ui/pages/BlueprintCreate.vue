@@ -39,10 +39,12 @@ onMounted(async () => {
       const bp     = await getBlueprint(crName);
       // A copy is a new Custom blueprint: source and icon are deliberately not
       // carried over, so a copy can't inherit another publisher's branding.
+      // rollback is kept: it describes the components' data migrations.
       prefill.value = {
         displayName: `Copy of ${ bp.spec.displayName }`,
         version:     '1.0.0',
         description: bp.spec.description,
+        rollback:    bp.spec.rollback,
         components:  bp.spec.components.map(c => ({
           ...c,
           values: c.values ? JSON.parse(JSON.stringify(c.values)) : undefined,

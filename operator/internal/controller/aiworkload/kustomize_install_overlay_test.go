@@ -33,6 +33,7 @@ import (
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 func inlineOverlay(dir, body string) *aiplatformv1alpha1.ComponentKustomize {
@@ -62,7 +63,7 @@ func reconcileOverlay(t *testing.T, bpOverlay, install *aiplatformv1alpha1.Compo
 	if install != nil {
 		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "comp", Kustomize: install}}
 	}
-	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: bpCRName("ov", "1.0.0")}}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("ov", "1.0.0")}}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: "application-collection", ChartName: "comp", ChartVersion: "1.0.0", Vendor: "suse", Kustomize: bpOverlay},
 	}
@@ -77,7 +78,7 @@ func reconcileOverlay(t *testing.T, bpOverlay, install *aiplatformv1alpha1.Compo
 		Client: c, Scheme: scheme, OperatorNamespace: "aif-operator",
 		ChartPuller: func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) { return tgz, nil },
 	}
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("reconcileBlueprintStatus: %v", err)
 	}
 	return w, c

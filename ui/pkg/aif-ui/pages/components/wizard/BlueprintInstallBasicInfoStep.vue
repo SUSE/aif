@@ -27,7 +27,7 @@
         :disabled="disabled"
         @update:value="onNamespaceChange"
       />
-      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', {}, true) }}</small>
+      <small class="text-muted">{{ t('suseai.wizard.form.installNamespaceHelp', "Default namespace for components that don't pin their own. Individual components may deploy to fixed namespaces — see the Review step for the full list.") }}</small>
       <Banner
         v-if="fixedNamespaceCount > 0"
         color="info"
@@ -35,16 +35,25 @@
         :label="fixedNamespaceWarning"
       />
     </div>
+
+    <Checkbox
+      :value="rollback !== 'Disabled'"
+      :label="t('suseai.wizard.form.allowRollback', 'Allow rollback')"
+      :description="rollback === 'Disabled' ? t('suseai.workloads.rollbackDisabled', 'Rollback is disabled for this Blueprint: its upgrades migrate data that older versions can\'t read.') : undefined"
+      :mode="_VIEW"
+    />
   </div>
 </template>
 
 <script lang="ts" setup>
 import { ref, computed, onMounted, getCurrentInstance } from 'vue';
 import { Banner } from '@components/Banner';
+import { Checkbox } from '@components/Form/Checkbox';
+import { _VIEW } from '@shell/config/query-params';
 import { useT } from '../../../composables/useT';
 import NamespaceAutocomplete from './NamespaceAutocomplete.vue';
 import { fetchUserNamespaces } from '../../../services/rancher-apps';
-import type { BlueprintComponent } from '../../../types/blueprint-types';
+import type { BlueprintComponent, BlueprintSpec } from '../../../types/blueprint-types';
 
 interface Props {
   displayName:    string;
@@ -54,6 +63,7 @@ interface Props {
   namespace:      string;
   components:     BlueprintComponent[];
   disabled?:      boolean;
+  rollback?:      BlueprintSpec['rollback'];
 }
 interface Emits {
   (e: 'update:workloadName', v: string): void;

@@ -30,13 +30,14 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // gitBlueprintCR is newBlueprintCR's git-backed twin: no vendor, so the
 // component reaches the catalog fetch without a secret injection detour.
 func gitBlueprintCR(repo string) *aiplatformv1alpha1.Blueprint {
 	bp := &aiplatformv1alpha1.Blueprint{
-		ObjectMeta: metav1.ObjectMeta{Name: bpCRName("mini", "1.0.0")},
+		ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("mini", "1.0.0")},
 	}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: repo, ChartName: "app", ChartVersion: "1.0.0"},
@@ -133,7 +134,7 @@ func TestReconcileBlueprintStatus_ComponentErrorOutcomes(t *testing.T) {
 				r.CatalogClient = holder
 			}
 
-			result, err := r.reconcileBlueprintStatus(context.Background(), w)
+			result, _, err := r.reconcileBlueprintStatus(context.Background(), w)
 
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)

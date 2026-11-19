@@ -307,6 +307,31 @@ type AIWorkloadStatus struct {
 	// (Helm value overrides or excluded components) deviates from the Blueprint defaults.
 	// +optional
 	Customized bool `json:"customized,omitempty"`
+	// ResolvedValues pins every automatic Blueprint value (domain, ingress
+	// class) to the concrete value chosen at install, so later reconciles and
+	// upgrades render the same value even if the cluster changes.
+	// +optional
+	// +listType=map
+	// +listMapKey=componentName
+	// +listMapKey=path
+	// +kubebuilder:validation:MaxItems=256
+	ResolvedValues []ResolvedValue `json:"resolvedValues,omitempty"`
+}
+
+// ResolvedValue is the concrete value pinned for one automatic value.
+type ResolvedValue struct {
+	ComponentName string `json:"componentName"`
+	// Path is the dot-joined Helm values path, e.g. "global.domain".
+	Path  string `json:"path"`
+	Value string `json:"value"`
+	// Source is "auto" (resolved from the cluster) or "user" (install override).
+	// +kubebuilder:validation:Enum=auto;user
+	Source string `json:"source"`
+	// ClusterID is the cluster an auto value was resolved against, so a
+	// retargeted workload re-resolves it. Empty on user values and on pins
+	// recorded before this field existed.
+	// +optional
+	ClusterID string `json:"clusterId,omitempty"`
 }
 
 // +kubebuilder:object:root=true

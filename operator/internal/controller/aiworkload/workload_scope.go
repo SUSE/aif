@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // workloadScope is what an AIWorkload is entitled to, derived from its spec
@@ -59,7 +60,7 @@ func (r *AIWorkloadReconciler) resolveWorkloadScope(ctx context.Context, w *aipl
 	case w.Spec.Source.Blueprint != nil:
 		src := w.Spec.Source.Blueprint
 		var bp aiplatformv1alpha1.Blueprint
-		if err := r.Get(ctx, types.NamespacedName{Name: bpCRName(src.Name, src.Version)}, &bp); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: naming.BlueprintCRName(src.Name, src.Version)}, &bp); err != nil {
 			if errors.IsNotFound(err) {
 				return workloadScope{repos: map[string]bool{}, releases: map[string]map[string]bool{}}, nil
 			}

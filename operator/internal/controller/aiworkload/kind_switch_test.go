@@ -33,6 +33,7 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 const (
@@ -325,7 +326,7 @@ func TestReconcile_SwitchRequeuesAndReportsMessage(t *testing.T) {
 	w := switchWorkload()
 	w.Spec.Source.Blueprint = &aiplatformv1alpha1.BlueprintSource{Name: "ov", Version: "1.0.0"}
 	w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "comp", Kustomize: inlineOverlay("inst", emptyPatches)}}
-	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: bpCRName("ov", "1.0.0")}}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("ov", "1.0.0")}}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{{ChartRepo: "application-collection", ChartName: "comp", ChartVersion: "1.0.0", Vendor: "suse"}}
 	repo := repoObj("application-collection", map[string]any{"url": "https://charts.example.com"})
 	name := blueprintBundleName(w.Name, "comp")
@@ -336,7 +337,7 @@ func TestReconcile_SwitchRequeuesAndReportsMessage(t *testing.T) {
 		ChartPuller: func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) { return tgz, nil },
 	}
 
-	res, err := r.reconcileBlueprintStatus(context.Background(), w)
+	res, _, err := r.reconcileBlueprintStatus(context.Background(), w)
 	if err != nil {
 		t.Fatalf("reconcileBlueprintStatus: %v", err)
 	}
@@ -360,7 +361,7 @@ func switchReconcileEnv(t *testing.T, puller chartArchivePuller) (*aiplatformv1a
 	w := switchWorkload()
 	w.Spec.Source.Blueprint = &aiplatformv1alpha1.BlueprintSource{Name: "ov", Version: "1.0.0"}
 	w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "comp", Kustomize: inlineOverlay("inst", emptyPatches)}}
-	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: bpCRName("ov", "1.0.0")}}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("ov", "1.0.0")}}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: "application-collection", ChartName: "comp", ChartVersion: "1.0.0", Vendor: "suse"},
 		{ChartRepo: "application-collection", ChartName: "other", ChartVersion: "1.0.0", Vendor: "suse"},
@@ -374,7 +375,7 @@ func TestReconcile_SwitchNotStartedWhenNewBundleCannotBeBuilt(t *testing.T) {
 	w, r, c := switchReconcileEnv(t, func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) {
 		return nil, fmt.Errorf("registry unreachable")
 	})
-	_, _ = r.reconcileBlueprintStatus(context.Background(), w)
+	_, _, _ = r.reconcileBlueprintStatus(context.Background(), w)
 
 	h, ok := objExists(t, c, true, blueprintBundleName(w.Name, "comp"))
 	if !ok {
@@ -392,7 +393,7 @@ func TestReconcile_SwitchNotStartedWhenNewBundleCannotBeBuilt(t *testing.T) {
 func TestReconcile_SwitchDoesNotBlockOtherComponents(t *testing.T) {
 	tgz := compChartTgz(t)
 	w, r, c := switchReconcileEnv(t, func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) { return tgz, nil })
-	res, err := r.reconcileBlueprintStatus(context.Background(), w)
+	res, _, err := r.reconcileBlueprintStatus(context.Background(), w)
 	if err != nil {
 		t.Fatalf("reconcileBlueprintStatus: %v", err)
 	}

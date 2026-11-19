@@ -1,5 +1,5 @@
 import type {
-  Blueprint, BlueprintComponent, BlueprintList, BlueprintOrigin, BlueprintSpec,
+  Blueprint, BlueprintBasicInfo, BlueprintComponent, BlueprintList, BlueprintOrigin, BlueprintSpec,
 } from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
 import { operatorFetch } from './operator-config';
@@ -22,9 +22,10 @@ export function createBlueprint(spec: BlueprintSpec, blueprintName?: string): Pr
 // buildBlueprintSpec assembles the spec the wizard submits and reviews. Fields
 // the wizard has no step for (source, icon) come from the prefill so an Edit
 // keeps them; a new blueprint or a Copy (which prefills neither) gets Custom
-// with no icon.
+// with no icon. rollback is written only as 'Disabled' so allowed specs stay
+// identical to those of older operators/CRDs.
 export function buildBlueprintSpec(
-  basicInfo: { displayName: string; version: string; description: string },
+  basicInfo: BlueprintBasicInfo,
   components: BlueprintComponent[],
   prefill?: BlueprintSpec,
 ): BlueprintSpec {
@@ -34,6 +35,7 @@ export function buildBlueprintSpec(
     description: basicInfo.description || undefined,
     icon:        prefill?.icon,
     source:      prefill?.source ?? 'Custom',
+    rollback:    basicInfo.allowRollback ? undefined : 'Disabled',
     components,
   };
 }

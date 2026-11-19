@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/SUSE/aif-operator/internal/catalog"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	"sigs.k8s.io/yaml"
 )
@@ -49,6 +50,17 @@ func TestBundledBlueprintChartReposAreSettingsManaged(t *testing.T) {
 		credentials.ClusterRepoSUSERegistry:          true,
 		credentials.ClusterRepoNvidia:                true,
 		credentials.ClusterRepoNvidiaBlueprint:       true,
+	}
+	// NGC team repos, public and gated, are provisioned under the same name in
+	// connected and mirrored modes (catalogNvidiaTeamRepoNames). Gated ones need
+	// NVIDIA credentials, like the nvidia org repo.
+	teams := catalog.ClassifyNGCTeamRepos()
+	for _, u := range append(teams.Public, teams.Gated...) {
+		name, err := catalog.NGCClusterRepoName(u)
+		if err != nil {
+			t.Fatalf("team repo name for %s: %v", u, err)
+		}
+		managed[name] = true
 	}
 	type blueprint struct {
 		Kind string `json:"kind"`

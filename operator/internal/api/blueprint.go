@@ -18,14 +18,18 @@ package api
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintpolicy"
 	"github.com/SUSE/aif-operator/internal/kustomizeoverlay"
+	"github.com/SUSE/aif-operator/internal/naming"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -41,6 +45,91 @@ func validateComponentOverlays(components []aiplatformv1alpha1.BlueprintComponen
 		}
 	}
 	return nil
+}
+
+// validateComponentValuesFrom checks every valuesFrom reference with the API
+// server's own name rules, so a typo is rejected on save rather than surfacing
+// as a failed Fleet deploy.
+func validateComponentValuesFrom(components []aiplatformv1alpha1.BlueprintComponent) error {
+	for _, c := range components {
+		for i, vf := range c.ValuesFrom {
+			if err := validateValuesFromRef(vf); err != nil {
+				return fmt.Errorf("%w: components[%s].valuesFrom[%d]: %s", ErrInvalidInput, c.ChartName, i, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateValuesFromRef(vf aiplatformv1alpha1.ComponentValuesFrom) error {
+	if (vf.ConfigMapKeyRef == nil) == (vf.SecretKeyRef == nil) {
+		return fmt.Errorf("set exactly one of configMapKeyRef or secretKeyRef")
+	}
+	ref := vf.SecretKeyRef
+	if ref == nil {
+		ref = vf.ConfigMapKeyRef
+	}
+	if errs := validation.IsDNS1123Subdomain(ref.Name); len(errs) > 0 {
+		return fmt.Errorf("name %q: %s", ref.Name, strings.Join(errs, "; "))
+	}
+	if ref.Namespace != "" {
+		if errs := validation.IsDNS1123Label(ref.Namespace); len(errs) > 0 {
+			return fmt.Errorf("namespace %q: %s", ref.Namespace, strings.Join(errs, "; "))
+		}
+	}
+	if ref.Key != "" {
+		if errs := validation.IsConfigMapKey(ref.Key); len(errs) > 0 {
+			return fmt.Errorf("key %q: %s", ref.Key, strings.Join(errs, "; "))
+		}
+	}
+	return nil
+}
+
+func validateBlueprintComponents(components []aiplatformv1alpha1.BlueprintComponent) error {
+	if err := validateComponentOverlays(components); err != nil {
+		return err
+	}
+	if err := validateComponentValuesFrom(components); err != nil {
+		return err
+	}
+	if err := blueprintpolicy.CheckValuesFromNamespaces(components, ""); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return nil
+}
+
+// guardedComponentFields are the Blueprint component fields an outdated CRD
+// would silently prune.
+var guardedComponentFields = []guardedField[aiplatformv1alpha1.BlueprintComponent]{
+	{"valuesFrom", func(c aiplatformv1alpha1.BlueprintComponent) bool { return len(c.ValuesFrom) > 0 }},
+	{"dependsOn", func(c aiplatformv1alpha1.BlueprintComponent) bool { return len(c.DependsOn) > 0 }},
+	{"kustomize", func(c aiplatformv1alpha1.BlueprintComponent) bool { return c.Kustomize != nil }},
+}
+
+func componentKey(c aiplatformv1alpha1.BlueprintComponent) string { return c.ChartName }
+
+// usesNewBlueprintFields reports whether spec sets a field an outdated
+// Blueprint CRD would silently prune.
+func usesNewBlueprintFields(spec aiplatformv1alpha1.BlueprintSpec) bool {
+	return spec.Rollback != "" || anyGuardedFieldSet(spec.Components, guardedComponentFields)
+}
+
+// droppedBlueprintFields lists the fields sent set that came back unset.
+func droppedBlueprintFields(sent, stored aiplatformv1alpha1.BlueprintSpec) []string {
+	var dropped []string
+	if sent.Rollback != "" && stored.Rollback == "" {
+		dropped = append(dropped, "rollback")
+	}
+	return append(dropped, droppedListFields("components", sent.Components, stored.Components, componentKey, guardedComponentFields)...)
+}
+
+// writeBlueprintWithCRDGuard guards a Blueprint write against an outdated CRD
+// pruning the fields above (see writeGuardedByCRD).
+func writeBlueprintWithCRDGuard(bp *aiplatformv1alpha1.Blueprint, write func(obj *aiplatformv1alpha1.Blueprint, dryRun bool) error) error {
+	sent := bp.Spec
+	return writeGuardedByCRD(bp, "Blueprint", "ai-factory.suse.com_blueprints.yaml", usesNewBlueprintFields(sent), func(probe *aiplatformv1alpha1.Blueprint) []string {
+		return droppedBlueprintFields(sent, probe.Spec)
+	}, write)
 }
 
 // BlueprintHandler serves Blueprint CRUD endpoints.
@@ -107,7 +196,7 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: version is required", ErrInvalidInput))
 		return
 	}
-	if err := validateComponentOverlays(body.Spec.Components); err != nil {
+	if err := validateBlueprintComponents(body.Spec.Components); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
@@ -127,7 +216,7 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: displayName must contain at least one alphanumeric character", ErrInvalidInput))
 		return
 	}
-	crName := blueprintCRName(family, body.Spec.Version)
+	crName := naming.BlueprintCRName(family, body.Spec.Version)
 
 	bp := &aiplatformv1alpha1.Blueprint{}
 	bp.APIVersion = "ai-factory.suse.com/v1alpha1"
@@ -139,7 +228,17 @@ func (h *BlueprintHandler) createBlueprint(w http.ResponseWriter, r *http.Reques
 	}
 	bp.Spec = body.Spec
 
-	if err := h.client.Create(r.Context(), bp); err != nil {
+	err := writeBlueprintWithCRDGuard(bp, func(obj *aiplatformv1alpha1.Blueprint, dryRun bool) error {
+		if dryRun {
+			return h.client.Create(r.Context(), obj, client.DryRunAll)
+		}
+		return h.client.Create(r.Context(), obj)
+	})
+	if err != nil {
+		if stderrors.Is(err, ErrInvalidInput) {
+			writeError(w, http.StatusUnprocessableEntity, err)
+			return
+		}
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, fmt.Errorf(
 				"%w: blueprint with normalized name %q and version %q already exists — choose a different name or version",
@@ -205,20 +304,6 @@ func (h *BlueprintHandler) deleteBlueprint(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// blueprintCRName derives the CR name from a family name (a display name or an
-// already-slugged blueprint-name label; slugify is idempotent) and semver version.
-// Build-metadata suffix (+...) is stripped since '+' is illegal in Kubernetes names.
-// e.g. "My AI Stack", "1.0.0" → "my-ai-stack-1-0-0"
-// e.g. "My AI Stack", "1.0.0+build.1" → "my-ai-stack-1-0-0"
-func blueprintCRName(family, version string) string {
-	// Strip build metadata (everything from '+' onward) before hyphenating.
-	v := version
-	if i := strings.IndexByte(v, '+'); i >= 0 {
-		v = v[:i]
-	}
-	return slugifyBlueprintName(family) + "-" + strings.ReplaceAll(v, ".", "-")
-}
-
 // slugifyBlueprintName converts a display name to a DNS-safe slug.
 // Must stay in sync with the frontend slugifyBlueprintName in
 // ui/pkg/aif-ui/utils/blueprint-api.ts — blueprint tile grouping and CR-name
@@ -249,7 +334,7 @@ func (h *BlueprintHandler) updateBlueprint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 		return
 	}
-	if err := validateComponentOverlays(body.Spec.Components); err != nil {
+	if err := validateBlueprintComponents(body.Spec.Components); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err)
 		return
 	}
@@ -265,7 +350,17 @@ func (h *BlueprintHandler) updateBlueprint(w http.ResponseWriter, r *http.Reques
 	}
 
 	bp.Spec = body.Spec
-	if err := h.client.Update(r.Context(), &bp); err != nil {
+	err := writeBlueprintWithCRDGuard(&bp, func(obj *aiplatformv1alpha1.Blueprint, dryRun bool) error {
+		if dryRun {
+			return h.client.Update(r.Context(), obj, client.DryRunAll)
+		}
+		return h.client.Update(r.Context(), obj)
+	})
+	if err != nil {
+		if stderrors.Is(err, ErrInvalidInput) {
+			writeError(w, http.StatusUnprocessableEntity, err)
+			return
+		}
 		if errors.IsInvalid(err) {
 			writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("%w: %v", ErrInvalidInput, err))
 			return

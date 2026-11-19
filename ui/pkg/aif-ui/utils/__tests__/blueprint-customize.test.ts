@@ -4,8 +4,10 @@ import {
   componentOverride, isComponentEnabled, seedComponentEnabled, diffComponentOverrides,
   customizedComponentNames, resolveInitialFormState, deployOrder,
   seedComponentDependsOn, staleDependsOn, seedComponentKustomize, effectiveComponents,
+  lockedPaths, sentinelHint,
 } from '../blueprint-customize';
 import type { BlueprintComponent, ComponentKustomize } from '../../types/blueprint-types';
+import type { AIWorkloadStatus } from '../../types/aiworkload-types';
 
 describe('deepMergeValues', () => {
   it('overrides scalar keys', () => {
@@ -475,5 +477,48 @@ describe('install-time deploy order and overlay overrides', () => {
 
     expect(state.dependsOn).toEqual({ a: [], b: [], c: ['a'] });
     expect(state.kustomize).toEqual({ a: overlay });
+  });
+});
+
+describe('lockedPaths', () => {
+  it('groups pins by component', () => {
+    const status: AIWorkloadStatus = {
+      resolvedValues: [
+        { componentName: 'runai', path: 'global.domain', value: 'runai.10.0.0.12.sslip.io', source: 'auto' },
+        { componentName: 'runai', path: 'global.ingressClass', value: 'nginx', source: 'auto' },
+        { componentName: 'ollama', path: 'domain', value: 'ollama.10.0.0.12.sslip.io', source: 'user' },
+      ],
+    };
+    expect(lockedPaths(status)).toEqual({
+      runai: [
+        { path: 'global.domain', value: 'runai.10.0.0.12.sslip.io' },
+        { path: 'global.ingressClass', value: 'nginx' },
+      ],
+      ollama: [
+        { path: 'domain', value: 'ollama.10.0.0.12.sslip.io' },
+      ],
+    });
+  });
+
+  it('returns empty object when no resolved values', () => {
+    expect(lockedPaths({})).toEqual({});
+    expect(lockedPaths(undefined)).toEqual({});
+  });
+});
+
+describe('sentinelHint', () => {
+  it('returns the auto-domain hint key', () => {
+    expect(sentinelHint('aif:auto-domain:runai')).toBe('suseai.wizard.hints.autoDomainHint');
+  });
+
+  it('returns the auto-ingress-class hint key', () => {
+    expect(sentinelHint('aif:auto-ingress-class')).toBe('suseai.wizard.hints.autoIngressClassHint');
+  });
+
+  it('returns undefined for non-sentinel values', () => {
+    expect(sentinelHint('x')).toBeUndefined();
+    expect(sentinelHint('custom.example.com')).toBeUndefined();
+    expect(sentinelHint(123)).toBeUndefined();
+    expect(sentinelHint(null)).toBeUndefined();
   });
 });

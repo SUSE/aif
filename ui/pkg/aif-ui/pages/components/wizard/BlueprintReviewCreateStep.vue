@@ -1,6 +1,6 @@
 <template>
   <div class="step-content">
-    <h2 class="step-title">{{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', {}, true) : t('suseai.wizard.sections.reviewCreate', {}, true) }}</h2>
+    <h2 class="step-title">{{ isEdit ? t('suseai.wizard.sections.reviewSaveVersion', 'Review & Save as New Version') : t('suseai.wizard.sections.reviewCreate', 'Review & Create') }}</h2>
 
     <div class="review-section">
       <div class="review-row">
@@ -14,6 +14,10 @@
       <div v-if="form.description" class="review-row">
         <span class="review-label">{{ t('suseai.wizard.form.description', 'Description') }}</span>
         <span class="review-value">{{ form.description }}</span>
+      </div>
+      <div class="review-row">
+        <span class="review-label">{{ t('suseai.wizard.form.rollback', 'Rollback') }}</span>
+        <RollbackPolicyLabel :rollback="form.rollback" class="review-value" />
       </div>
     </div>
 
@@ -32,6 +36,7 @@
         <span v-if="comp.dependsOn?.length" class="comp-depends text-muted">
           {{ comp.chartName }} &rarr; {{ t('suseai.wizard.labels.deploysAfter', 'deploys after') }} {{ comp.dependsOn.join(', ') }}
         </span>
+        <ValuesFromSummary :values-from="comp.valuesFrom" class="comp-values-from-list" />
         <BadgeState
           v-if="comp.kustomize"
           color="bg-info"
@@ -46,6 +51,8 @@
 import { BadgeState } from '@components/BadgeState';
 import type { BlueprintSpec } from '../../../types/blueprint-types';
 import { useT } from '../../../composables/useT';
+import ValuesFromSummary from './ValuesFromSummary.vue';
+import RollbackPolicyLabel from './RollbackPolicyLabel.vue';
 
 interface Props { form: BlueprintSpec; isEdit?: boolean }
 defineProps<Props>();
@@ -75,6 +82,7 @@ const t = useT();
   .comp-ns      { font-size: 12px; }
   .comp-release { font-size: 12px; }
   .comp-depends { font-size: 12px; flex-basis: 100%; }
+  .comp-values-from-list { flex-basis: 100%; }
 }
 .text-muted { color: var(--muted); font-size: 13px; }
 </style>

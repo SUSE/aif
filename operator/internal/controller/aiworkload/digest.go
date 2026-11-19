@@ -71,8 +71,9 @@ type ComponentRenderInputs struct {
 	RepoURL      string         `json:"repoURL"`
 	Targets      []string       `json:"targets"`
 	Values       map[string]any `json:"values"`
-	// DependsOn is the sorted set of resolved bundle names this component waits on.
-	DependsOn []string `json:"dependsOn,omitempty"`
+	// DependsOn is the rendered Fleet spec.dependsOn (see resolveDependsOn).
+	DependsOn  []any `json:"dependsOn,omitempty"`
+	ValuesFrom []any `json:"valuesFrom,omitempty"`
 }
 
 // perHelmOpRenderDigest hashes the canonical form of one component's desired HelmOp render.
