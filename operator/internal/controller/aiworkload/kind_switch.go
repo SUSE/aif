@@ -24,12 +24,16 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 )
@@ -366,6 +370,9 @@ func (r *AIWorkloadReconciler) ensureComponentKind(ctx context.Context, w *aipla
 			return err
 		}
 	}
+	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
+		return err
+	}
 	if gitOps {
 		if err := r.actuateSwitchGitOps(ctx, w, bundleName, *next); err != nil {
 			return err
@@ -397,16 +404,37 @@ func (r *AIWorkloadReconciler) actuateSwitchGitOps(ctx context.Context, w *aipla
 			}
 			return nil
 		}
-		if err := r.deleteGitFileByName(ctx, w, bundleName); err != nil {
-			return fmt.Errorf("remove %s: %w", gitOpsFilePath(bundleName), err)
-		}
-		// Forget the published hash so the new kind is always written, even if
-		// its content happened to match an earlier publication.
-		if _, ok := w.Annotations[gitFileHashAnnotation(bundleName)]; ok {
-			delete(w.Annotations, gitFileHashAnnotation(bundleName))
-			return r.Update(ctx, w)
+		return r.removeGitFile(ctx, w, bundleName)
+	}
+	return nil
+}
+
+// removeGitFile removes a component's published file and forgets its
+// publication hash first, so a later render of that name always writes the file
+// again even if its content matches an earlier publication.
+func (r *AIWorkloadReconciler) removeGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName string) error {
+	if _, ok := w.Annotations[gitFileHashAnnotation(bundleName)]; ok {
+		delete(w.Annotations, gitFileHashAnnotation(bundleName))
+		if err := r.updateKeepingStatus(ctx, w); err != nil {
+			return err
 		}
 	}
+	if err := r.deleteGitFileByName(ctx, w, bundleName); err != nil {
+		return fmt.Errorf("remove %s: %w", gitOpsFilePath(bundleName), err)
+	}
+	return nil
+}
+
+// updateKeepingStatus writes w's metadata and spec mid-reconcile without
+// losing the status computed earlier in the pass: the Update response carries
+// the stored status, which would otherwise replace it in memory before the
+// pass's status write.
+func (r *AIWorkloadReconciler) updateKeepingStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
+	status := w.Status.DeepCopy()
+	if err := r.Update(ctx, w); err != nil {
+		return err
+	}
+	w.Status = *status
 	return nil
 }
 
@@ -434,6 +462,11 @@ func (r *AIWorkloadReconciler) republishKeepResources(ctx context.Context, w *ai
 		return fmt.Errorf("%s not found in the GitOps repository, cannot update keepResources", gitOpsFilePath(bundleName))
 	}
 	docs := strings.Split(content, "\n---\n")
+	if !keep && gen > 0 && releasePublished(docs, gen) {
+		// Already republished for this release: writing a new released-at
+		// every pass would push a commit each requeue while the GitRepo lags.
+		return nil
+	}
 	objects := make([]map[string]any, 0, len(docs))
 	for _, doc := range docs {
 		obj := map[string]any{}
@@ -467,6 +500,24 @@ func (r *AIWorkloadReconciler) republishKeepResources(ctx context.Context, w *ai
 	return r.publishBlueprintGitFile(ctx, w, bundleName, updated)
 }
 
+// releasePublished reports whether every published object already has
+// keepResources cleared and carries the release of generation gen.
+func releasePublished(docs []string, gen int64) bool {
+	for _, doc := range docs {
+		u := unstructured.Unstructured{}
+		if err := json.Unmarshal([]byte(doc), &u.Object); err != nil {
+			return false
+		}
+		if keep, _, _ := unstructured.NestedBool(u.Object, "spec", "keepResources"); keep {
+			return false
+		}
+		if u.GetAnnotations()[keepReleaseGenAnnotation] != strconv.FormatInt(gen, 10) || u.GetAnnotations()[keepReleasedAnnotation] == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // keepReleasedAnnotation and keepReleaseGenAnnotation mark a HelmOp or Bundle whose
 // keepResources deletion cleared: when, and the forceSyncGeneration set alongside,
 // which its BundleDeployments must reach before the release is known to be applied
@@ -476,7 +527,20 @@ const (
 	keepReleasedAnnotation   = "ai-factory.suse.com/keep-resources-released-at"
 	keepReleaseGenAnnotation = "ai-factory.suse.com/keep-resources-release-generation"
 	keepReleaseTimeout       = 5 * time.Minute
+	// keepReleaseDeleteDeadline, measured from the deletion timestamp, is the
+	// escape hatch for errors clearing keepResources: until it passes deletion
+	// keeps the finalizer and retries; after it, deletion proceeds with a
+	// Warning event, so a workload whose cluster or Fleet is gone stays deletable.
+	keepReleaseDeleteDeadline = 10 * time.Minute
 )
+
+// clock is the reconciler's time source (injectable for tests).
+func (r *AIWorkloadReconciler) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
 
 // releaseKeepResources clears keepResources on the workload's Fleet objects and
 // reports whether deletion must wait for Fleet to apply that. Without it, deleting
@@ -484,12 +548,13 @@ const (
 // Clearing keepResources alone restores the pre-switch deploymentID, which may equal
 // the last applied one while the agent is still applying keep, so forceSyncGeneration
 // is bumped too: only a deploymentID carrying the new generation proves the release.
-func (r *AIWorkloadReconciler) releaseKeepResources(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (bool, error) {
-	wait := false
+// unsettled names, as "<bundle> on <clusters>", the bundles given up on after
+// keepReleaseTimeout whose BundleDeployments still had not applied the release.
+func (r *AIWorkloadReconciler) releaseKeepResources(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (wait bool, unsettled []string, err error) {
 	for _, name := range w.Spec.FleetBundleNames {
 		objs, err := r.ownedFleetObjects(ctx, w, name)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		var gen, target int64
 		var since time.Time
@@ -508,23 +573,30 @@ func (r *AIWorkloadReconciler) releaseKeepResources(ctx context.Context, w *aipl
 				since = t
 			}
 		}
-		if !since.IsZero() && time.Since(since) > keepReleaseTimeout {
+		if !since.IsZero() && r.clock().Sub(since) > keepReleaseTimeout {
+			clusters, err := r.pendingReleaseClusters(ctx, name, target)
+			if err != nil {
+				return false, nil, err
+			}
+			if len(clusters) > 0 {
+				unsettled = append(unsettled, name+" on "+strings.Join(clusters, ", "))
+			}
 			continue
 		}
 		if kept {
 			if since.IsZero() {
-				since = time.Now().UTC()
+				since = r.clock().UTC()
 			}
 			gen = max(gen+1, target)
 			at := since.Format(time.RFC3339)
 			if w.Spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps {
 				if err := r.republishKeepResources(ctx, w, name, false, gen, at); err != nil {
-					return false, err
+					return false, nil, err
 				}
 			} else {
 				for _, obj := range objs {
 					if err := r.releaseKeep(ctx, obj, name, gen, at); err != nil {
-						return false, err
+						return false, nil, err
 					}
 				}
 			}
@@ -534,22 +606,81 @@ func (r *AIWorkloadReconciler) releaseKeepResources(ctx context.Context, w *aipl
 		if target == 0 {
 			continue
 		}
-		pending, err := r.releasePending(ctx, name, target)
+		clusters, err := r.pendingReleaseClusters(ctx, name, target)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
-		wait = wait || pending
+		wait = wait || len(clusters) > 0
 	}
-	return wait, nil
+	return wait, unsettled, nil
 }
 
-// releasePending reports whether any BundleDeployment of name has yet to apply a
+// releaseBeforeDelete runs releaseKeepResources for handleDeletion. stop means
+// return (res, err) and keep the finalizer: Fleet is still applying the release,
+// or clearing keepResources failed and keepReleaseDeleteDeadline has not passed
+// (the error is returned so the workqueue retries with backoff). Otherwise
+// deletion proceeds, with a Warning event naming whatever may be left running.
+func (r *AIWorkloadReconciler) releaseBeforeDelete(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (res ctrl.Result, stop bool, err error) {
+	wait, unsettled, err := r.releaseKeepResources(ctx, w)
+	beforeDeadline := w.DeletionTimestamp == nil || r.clock().Sub(w.DeletionTimestamp.Time) < keepReleaseDeleteDeadline
+	if err != nil {
+		if beforeDeadline {
+			log.FromContext(ctx).Error(err, "clearing keepResources failed, keeping finalizer and retrying")
+			// A fixed message, so the recorder folds the retries into one event.
+			r.event(w, corev1.EventTypeWarning, reasonKeepResourcesReleaseRetrying,
+				"Deletion waits to clear keepResources on Fleet objects %s and retries for up to %s.",
+				strings.Join(w.Spec.FleetBundleNames, ", "), keepReleaseDeleteDeadline)
+			return ctrl.Result{}, true, err
+		}
+		r.warnKeepNotReleased(ctx, w, fmt.Sprintf("could not clear keepResources on Fleet objects %s%s within %s of deletion (%v)",
+			strings.Join(w.Spec.FleetBundleNames, ", "), forClusters(w), keepReleaseDeleteDeadline, err))
+		return ctrl.Result{}, false, nil
+	}
+	if wait {
+		if beforeDeadline {
+			return ctrl.Result{RequeueAfter: switchRequeue}, true, nil
+		}
+		r.warnKeepNotReleased(ctx, w, fmt.Sprintf("Fleet did not apply the keepResources release on Fleet objects %s%s within %s of deletion",
+			strings.Join(w.Spec.FleetBundleNames, ", "), forClusters(w), keepReleaseDeleteDeadline))
+		return ctrl.Result{}, false, nil
+	}
+	if len(unsettled) > 0 {
+		r.warnKeepNotReleased(ctx, w, fmt.Sprintf("keepResources was cleared but not applied within %s by %s",
+			keepReleaseTimeout, strings.Join(unsettled, "; ")))
+	}
+	return ctrl.Result{}, false, nil
+}
+
+// warnKeepNotReleased reports, as a Warning event and a log line, a deletion
+// that proceeds although a Helm release may stay deployed.
+func (r *AIWorkloadReconciler) warnKeepNotReleased(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, detail string) {
+	msg := "Deleting the workload although " + detail + "; the release may be left running; remove it with helm or kubectl on those clusters."
+	log.FromContext(ctx).Info(msg)
+	r.event(w, corev1.EventTypeWarning, reasonKeepResourcesNotReleased, "%s", msg)
+}
+
+const (
+	reasonKeepResourcesNotReleased     = "KeepResourcesNotReleased"
+	reasonKeepResourcesReleaseRetrying = "KeepResourcesReleaseRetrying"
+)
+
+// forClusters is " for clusters <targets>", or "" when the workload names none.
+func forClusters(w *aiplatformv1alpha1.AIWorkload) string {
+	if len(w.Spec.TargetClusters) == 0 {
+		return ""
+	}
+	return " for clusters " + strings.Join(w.Spec.TargetClusters, ", ")
+}
+
+// pendingReleaseClusters names the clusters (Fleet cluster label, else the
+// BundleDeployment namespace) whose BundleDeployment of name has yet to apply a
 // deployment without keepResources at forceSyncGeneration target or later.
-func (r *AIWorkloadReconciler) releasePending(ctx context.Context, name string, target int64) (bool, error) {
+func (r *AIWorkloadReconciler) pendingReleaseClusters(ctx context.Context, name string, target int64) ([]string, error) {
+	var out []string
 	for _, ns := range fleetNamespaces {
 		bds, err := r.listBundleDeployments(ctx, ns, name)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		for i := range bds {
 			keep, _, _ := unstructured.NestedBool(bds[i].Object, "spec", "options", "keepResources")
@@ -557,11 +688,15 @@ func (r *AIWorkloadReconciler) releasePending(ctx context.Context, name string, 
 			want, _, _ := unstructured.NestedString(bds[i].Object, "spec", "deploymentID")
 			applied, _, _ := unstructured.NestedString(bds[i].Object, "status", "appliedDeploymentID")
 			if keep || fsg < target || applied != want {
-				return true, nil
+				cluster := bds[i].GetLabels()["fleet.cattle.io/cluster"]
+				if cluster == "" {
+					cluster = bds[i].GetNamespace()
+				}
+				out = append(out, cluster)
 			}
 		}
 	}
-	return false, nil
+	return out, nil
 }
 
 // releaseKeep removes keepResources from obj, sets its forceSyncGeneration to gen
@@ -581,6 +716,10 @@ func (r *AIWorkloadReconciler) ownedFleetObjects(ctx context.Context, w *aiplatf
 	for _, ns := range fleetNamespaces {
 		for _, gvk := range []schema.GroupVersionKind{helmOpGVK, bundleGVK} {
 			obj, err := r.getFleetObject(ctx, gvk, ns, name)
+			if meta.IsNoMatchError(err) {
+				// Fleet's CRDs are gone, so there is nothing left to release.
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}

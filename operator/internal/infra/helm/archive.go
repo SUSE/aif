@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"helm.sh/helm/v3/pkg/repo"
@@ -43,7 +44,9 @@ type ChartArchiveRequest struct {
 	TLS       *tls.Config
 	// PlainHTTP talks to an OCI registry without TLS (ClusterRepo insecurePlainHttp).
 	PlainHTTP bool
-	// MaxBytes caps the archive download.
+	// MaxBytes caps the archive download: the HTTP archive body, or each OCI
+	// registry response (manifest, config, chart layer) while it streams, so
+	// an oversized layer is refused before Helm buffers it whole.
 	MaxBytes int64
 	// MaxIndexBytes caps index.yaml, which for large public repos is far bigger
 	// than any one chart. 0 means MaxBytes.
@@ -135,6 +138,15 @@ func pullHTTPArchive(ctx context.Context, req ChartArchiveRequest, httpClient *h
 	return archive, nil
 }
 
+// HTTPStatusError is a non-200 response to an index or archive download.
+type HTTPStatusError struct {
+	URL    string
+	Code   int
+	Status string
+}
+
+func (e *HTTPStatusError) Error() string { return fmt.Sprintf("GET %s: %s", e.URL, e.Status) }
+
 // httpGetLimited GETs target and returns at most limit bytes of a 200 body; a
 // longer body is an error, wrapping tooLarge when given.
 func httpGetLimited(ctx context.Context, c *http.Client, target string, auth *RegistryAuth, limit int64, tooLarge error) ([]byte, error) {
@@ -151,7 +163,7 @@ func httpGetLimited(ctx context.Context, c *http.Client, target string, auth *Re
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", target, resp.Status)
+		return nil, &HTTPStatusError{URL: target, Code: resp.StatusCode, Status: resp.Status}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
@@ -167,17 +179,70 @@ func httpGetLimited(ctx context.Context, c *http.Client, target string, auth *Re
 }
 
 func pullOCIArchive(req ChartArchiveRequest, httpClient *http.Client) ([]byte, error) {
-	client, err := newRegistryClient(req.Auth, req.TLS, req.PlainHTTP, false, httpClient)
+	capped := &cappedTransport{base: httpClient.Transport, limit: req.MaxBytes}
+	limited := *httpClient
+	limited.Transport = capped
+	client, err := newRegistryClient(req.Auth, req.TLS, req.PlainHTTP, false, &limited)
 	if err != nil {
 		return nil, err
 	}
 	result, err := client.Pull(req.RepoURL + ":" + req.Version)
+	if capped.exceeded.Load() {
+		return nil, fmt.Errorf("%w: pull %s:%s: a registry response exceeds %d bytes", ErrArchiveTooLarge, req.RepoURL, req.Version, req.MaxBytes)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("pull %s:%s: %w", req.RepoURL, req.Version, err)
 	}
-	// Helm's registry client reads the layer whole; enforce the cap on the result.
 	if int64(len(result.Chart.Data)) > req.MaxBytes {
 		return nil, fmt.Errorf("%w: pull %s:%s: chart archive exceeds %d bytes", ErrArchiveTooLarge, req.RepoURL, req.Version, req.MaxBytes)
 	}
 	return result.Chart.Data, nil
+}
+
+// cappedTransport fails every response whose body is over limit bytes,
+// refusing a declared Content-Length up front and cutting the stream
+// otherwise. Helm's registry client reads each blob whole, so this is what
+// bounds the memory an OCI pull can use.
+type cappedTransport struct {
+	base     http.RoundTripper
+	limit    int64
+	exceeded atomic.Bool
+}
+
+func (t *cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ContentLength > t.limit {
+		_ = resp.Body.Close()
+		t.exceeded.Store(true)
+		return nil, fmt.Errorf("%w: %s declares %d bytes", ErrArchiveTooLarge, req.URL.Redacted(), resp.ContentLength)
+	}
+	resp.Body = &cappedBody{ReadCloser: resp.Body, remaining: t.limit, t: t}
+	return resp, nil
+}
+
+type cappedBody struct {
+	io.ReadCloser
+	remaining int64
+	t         *cappedTransport
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		var probe [1]byte
+		n, err := b.ReadCloser.Read(probe[:])
+		if n > 0 {
+			b.t.exceeded.Store(true)
+			return 0, ErrArchiveTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.remaining -= int64(n)
+	return n, err
 }

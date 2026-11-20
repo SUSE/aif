@@ -36,6 +36,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credentials"
@@ -54,6 +55,46 @@ type Client struct {
 	caBundle []byte
 	// insecureSkipTLS disables HTTPS certificate verification.
 	insecureSkipTLS bool
+	// Test hooks: timeout overrides every operation's limit when set;
+	// onDeadline and onClone observe the limit applied and each clone's depth.
+	timeout    time.Duration
+	onDeadline func(op string, d time.Duration)
+	onClone    func(depth int)
+}
+
+// Per-operation limits, so a stalled git server cannot hold the reconcile
+// worker indefinitely. Writes clone and push a GitOps repo that can hold
+// several MiB of embedded charts, so they get more room than reads.
+const (
+	readTimeout  = 2 * time.Minute
+	writeTimeout = 5 * time.Minute
+)
+
+// readDirDepths are the clone depths ReadDir tries in turn; 0 is the full history.
+var readDirDepths = []int{1, 50, 0}
+
+// ErrCommitNotFound means the requested commit is not on the cloned branch,
+// typically because the ClusterRepo index is behind the branch (or ahead of a
+// force-push). It clears once the repo is re-indexed, so callers retry.
+var ErrCommitNotFound = errors.New("commit not found on branch")
+
+func (c *Client) withTimeout(ctx context.Context, op string, d time.Duration) (context.Context, context.CancelFunc) {
+	if c.timeout > 0 {
+		d = c.timeout
+	}
+	if c.onDeadline != nil {
+		c.onDeadline(op, d)
+	}
+	return context.WithTimeout(ctx, d)
+}
+
+// timedOut logs and annotates err when op ran out of time.
+func (c *Client) timedOut(ctx context.Context, op string, err error) error {
+	if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return err
+	}
+	log.FromContext(ctx).Info("git operation timed out", "operation", op, "branch", c.branch, "cause", err.Error())
+	return fmt.Errorf("git %s timed out: %w", op, err)
 }
 
 // NewFromSettings constructs a Client from the Fleet section of a Settings CR.
@@ -140,7 +181,10 @@ func (c *Client) CheckAuth(ctx context.Context) error {
 }
 
 // WriteFile clones the repo, writes content at path, commits with commitMsg, and pushes.
-func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string) (string, error) {
+func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string) (hash string, err error) {
+	ctx, cancel := c.withTimeout(ctx, "write", writeTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "write "+path, err) }()
 	repo, wt, err := c.clone(ctx)
 	if err != nil {
 		return "", err
@@ -188,7 +232,10 @@ func fileContentMatches(fs billy.Filesystem, path, expected string) (bool, error
 
 // DeleteFile clones the repo, removes path if it exists, commits, and pushes.
 // Returns ("", nil) if the file does not exist.
-func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (string, error) {
+func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (hash string, err error) {
+	ctx, cancel := c.withTimeout(ctx, "delete", writeTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "delete "+path, err) }()
 	repo, wt, err := c.clone(ctx)
 	if err != nil {
 		return "", err
@@ -206,6 +253,9 @@ func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (string
 // ok is false (with no error) when the file does not exist; a file larger than
 // maxBytes is an error.
 func (c *Client) ReadFile(ctx context.Context, filePath string, maxBytes int64) (content string, ok bool, err error) {
+	ctx, cancel := c.withTimeout(ctx, "read", readTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "read "+filePath, err) }()
 	_, wt, err := c.clone(ctx)
 	if err != nil {
 		return "", false, err
@@ -228,32 +278,23 @@ func (c *Client) ReadFile(ctx context.Context, filePath string, maxBytes int64) 
 	return string(b), true, nil
 }
 
-// ReadDir returns the regular files under dirPath at the branch head, keyed by
-// their path relative to dirPath. It reads the commit tree without checking out
-// a worktree, and checks blob sizes against the 1 MiB cap before reading them.
-func (c *Client) ReadDir(ctx context.Context, dirPath string) (map[string]string, error) {
-	repo, err := gogit.CloneContext(ctx, memory.NewStorage(), nil, &gogit.CloneOptions{
-		URL:             c.repoURL,
-		ReferenceName:   plumbing.NewBranchReferenceName(c.branch),
-		SingleBranch:    true,
-		Depth:           1,
-		NoCheckout:      true,
-		Auth:            c.auth,
-		CABundle:        c.caBundle,
-		InsecureSkipTLS: c.insecureSkipTLS,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("clone: %w", err)
+// ReadDir returns the regular files under dirPath at commit (a full hash on
+// the branch), keyed by their path relative to dirPath. It reads the commit
+// tree without a worktree, cloning only the tip first (the usual case: the
+// indexed commit is the tip) and deepening only when the commit is older; blob
+// sizes are checked against the 1 MiB cap before reading them.
+func (c *Client) ReadDir(ctx context.Context, dirPath, commit string) (files map[string]string, err error) {
+	if !plumbing.IsHash(commit) {
+		return nil, fmt.Errorf("invalid commit %q: want a full commit hash", commit)
 	}
-	head, err := repo.Head()
+	ctx, cancel := c.withTimeout(ctx, "read", readTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "read "+dirPath, err) }()
+	co, err := c.commitAt(ctx, plumbing.NewHash(commit))
 	if err != nil {
-		return nil, fmt.Errorf("resolve head: %w", err)
+		return nil, err
 	}
-	commit, err := repo.CommitObject(head.Hash())
-	if err != nil {
-		return nil, fmt.Errorf("read commit: %w", err)
-	}
-	root, err := commit.Tree()
+	root, err := co.Tree()
 	if err != nil {
 		return nil, fmt.Errorf("read tree: %w", err)
 	}
@@ -290,6 +331,37 @@ func (c *Client) ReadDir(ctx context.Context, dirPath string) (map[string]string
 		return nil, err
 	}
 	return out, nil
+}
+
+// commitAt clones the branch at increasing depths until it holds hash. It never
+// substitutes another commit: one the branch does not have is ErrCommitNotFound.
+func (c *Client) commitAt(ctx context.Context, hash plumbing.Hash) (*object.Commit, error) {
+	for _, depth := range readDirDepths {
+		if c.onClone != nil {
+			c.onClone(depth)
+		}
+		repo, err := gogit.CloneContext(ctx, memory.NewStorage(), nil, &gogit.CloneOptions{
+			URL:             c.repoURL,
+			ReferenceName:   plumbing.NewBranchReferenceName(c.branch),
+			SingleBranch:    true,
+			Depth:           depth,
+			NoCheckout:      true,
+			Auth:            c.auth,
+			CABundle:        c.caBundle,
+			InsecureSkipTLS: c.insecureSkipTLS,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("clone: %w", err)
+		}
+		co, err := repo.CommitObject(hash)
+		if err == nil {
+			return co, nil
+		}
+		if !errors.Is(err, plumbing.ErrObjectNotFound) {
+			return nil, fmt.Errorf("read commit %s: %w", hash, err)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s on %q (the repo index is behind the branch)", ErrCommitNotFound, hash, c.branch)
 }
 
 func (c *Client) clone(ctx context.Context) (*gogit.Repository, *gogit.Worktree, error) {

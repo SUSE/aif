@@ -40,6 +40,29 @@ describe('missingCredentialsForBlueprint', () => {
     expect(missingCredentialsForBlueprint([component('runai-backend', 'nvidia-runai')], status)).toEqual(['nvidia']);
     expect(missingCredentialsForBlueprint([component('runai-backend', 'nvidia-runai')], { ...status, nvidia: true })).toEqual([]);
   });
+
+  it('treats an anonymous NVIDIA mirror as usable without credentials', () => {
+    const anonymousMirror: RegistryStatus = {
+      ...status,
+      usable: { applicationCollection: true, suseRegistry: false, nvidia: true },
+    };
+    const components = [component('a', 'nvidia'), component('b', 'nvidia-blueprints'), component('c', 'nvidia-runai')];
+
+    expect(missingCredentialsForBlueprint(components, anonymousMirror)).toEqual([]);
+  });
+
+  it('prefers usable over the credential fields when the operator sends it', () => {
+    const credsButUnusable: RegistryStatus = {
+      applicationCollection: true, suseRegistry: false, nvidia: false,
+      usable: { applicationCollection: false, suseRegistry: false, nvidia: false },
+    };
+
+    expect(missingCredentialsForBlueprint([component('a', 'application-collection')], credsButUnusable)).toEqual(['applicationCollection']);
+  });
+
+  it('falls back to the credential fields for an operator without usable', () => {
+    expect(missingCredentialsForBlueprint([component('a', 'application-collection'), component('b', 'nvidia-runai')], status)).toEqual(['nvidia']);
+  });
 });
 
 describe('existingReleasesByComponent', () => {

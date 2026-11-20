@@ -87,14 +87,14 @@ func (h *AIWorkloadHandler) upgradeAIWorkload(w http.ResponseWriter, r *http.Req
 	if wl == nil {
 		return
 	}
-	if src := wl.Spec.Source.Blueprint; src != nil && wl.Status.DeployedSource != nil {
-		blocked, err := blueprintpolicy.RollbackBlocked(r.Context(), h.client, src.Name, wl.Status.DeployedSource.Version, body.TargetVersion)
+	if src := wl.Spec.Source.Blueprint; src != nil {
+		blocked, floor, err := blueprintpolicy.MoveBlocked(r.Context(), h.client, src.Name, body.TargetVersion, wl.Status.MinimumSafeVersion, deployedVersion(wl))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		if blocked {
-			writeError(w, http.StatusBadRequest, rollbackBlockedError(body.TargetVersion, wl.Status.DeployedSource.Version))
+			writeError(w, http.StatusBadRequest, rollbackBlockedError(body.TargetVersion, floor))
 			return
 		}
 	}
@@ -130,11 +130,9 @@ func (h *AIWorkloadHandler) rollbackAIWorkload(w http.ResponseWriter, r *http.Re
 	disabled := false
 	var err error
 	if src := wl.Spec.Source.Blueprint; src != nil {
-		deployed := ""
-		if wl.Status.DeployedSource != nil {
-			deployed = wl.Status.DeployedSource.Version
-		}
+		deployed := deployedVersion(wl)
 		disabled, err = blueprintpolicy.RollbackDisabled(r.Context(), h.client, src.Name, src.Version, deployed)
+		disabled = disabled || blueprintpolicy.IsRollback(blueprintpolicy.FloorFor(wl.Status.MinimumSafeVersion, src.Name), deployed)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)

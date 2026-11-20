@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runai-registrar
+  namespace: runai-backend
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: runai-registrar
+  namespace: runai-backend
+# Only the objects registrar.py reads or writes; RBACTest in tests/test_registrar.py
+# checks every request it makes against these rules.
+# create can't be limited by resourceNames, so it has its own rules.
+rules:
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [runai-backend-gen-tenants-manager, runai-backend-tls, runai-wildcard-tls]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [runai-registrar-credentials, runai-cluster-values]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [runai-backend-tenants-manager]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [runai-install-info]
+    verbs: [get, update]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [create]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    resourceNames: [runai-wildcard]
+    verbs: [get, update]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    resourceNames: [runai-backend-ingress]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: runai-registrar
+  namespace: runai-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: runai-registrar
+subjects:
+  - kind: ServiceAccount
+    name: runai-registrar
+    namespace: runai-backend
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: runai-registrar
+  namespace: runai
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [runai-ca-cert, runai-cluster-domain-star-tls-secret]
+    verbs: [get, update]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [create]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    resourceNames: [runai-cluster-domain-star-ingress]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: runai-registrar
+  namespace: runai
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: runai-registrar
+subjects:
+  - kind: ServiceAccount
+    name: runai-registrar
+    namespace: runai-backend
+---
+# One replica and Recreate: two registrars must never run at once.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runai-registrar
+  namespace: runai-backend
+  labels:
+    app.kubernetes.io/name: runai-registrar
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runai-registrar
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: runai-registrar
+    spec:
+      serviceAccountName: runai-registrar
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: registrar
+          image: registry.suse.com/bci/python:3.12
+          command: [python3, /scripts/registrar.py]
+          env:
+            - name: RUNAI_CHART_VERSION
+              value: "{{runaiVersion}}"
+            {{registrarEnv}}
+          readinessProbe:
+            exec:
+              command: [python3, /scripts/registrar.py, --ready]
+            periodSeconds: 30
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: runai-registrar-script
+        - name: tmp
+          emptyDir: {}

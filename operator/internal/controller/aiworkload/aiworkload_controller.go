@@ -76,12 +76,14 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 	})
 }
 
-// refusalReasons are the Ready reasons refuseRender sets: the spec is rejected,
-// so an in-flight operation can't succeed (see operationOutcome).
+// refusalReasons are the Ready reasons refuseRender sets: the spec is rejected
+// (or, for CRDOutdated, can't be rendered until an admin upgrades the CRD), so
+// an in-flight operation can't succeed (see operationOutcome).
 var refusalReasons = map[string]bool{
 	reasonRollbackDisabled:   true,
 	reasonLockedValueChanged: true,
 	reasonInvalidValuesFrom:  true,
+	reasonCRDOutdated:        true,
 }
 
 // refuseRender records that this pass will not render the spec: Ready=False
@@ -162,6 +164,9 @@ type AIWorkloadReconciler struct {
 	// fleetClusterForbiddenOnce limits the "cannot read Fleet Clusters" log to
 	// once per process; see bundleDeploymentClusterID.
 	fleetClusterForbiddenOnce sync.Once
+
+	// now overrides the clock in tests; nil means time.Now.
+	now func() time.Time
 }
 
 // event records a Kubernetes event, tolerating a nil Recorder (unit tests / early boot).
@@ -576,7 +581,7 @@ func (r *AIWorkloadReconciler) deleteHelmOpIn(ctx context.Context, ns, name stri
 	ho.SetGroupVersionKind(helmOpGVK)
 	ho.SetName(name)
 	ho.SetNamespace(ns)
-	if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) {
+	if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 		return fmt.Errorf("delete HelmOp %s/%s: %w", ns, name, err)
 	}
 	return nil
@@ -604,7 +609,7 @@ func (r *AIWorkloadReconciler) deleteBundleIn(ctx context.Context, ns, name stri
 	b.SetGroupVersionKind(bundleGVK)
 	b.SetName(name)
 	b.SetNamespace(ns)
-	if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) {
+	if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 		return fmt.Errorf("delete Bundle %s/%s: %w", ns, name, err)
 	}
 	return nil
@@ -677,10 +682,8 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 			}
 		}
 	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-		if wait, err := r.releaseKeepResources(ctx, w); err != nil {
-			l.Error(err, "clearing keepResources failed — proceeding with deletion")
-		} else if wait {
-			return ctrl.Result{RequeueAfter: switchRequeue}, nil
+		if res, stop, err := r.releaseBeforeDelete(ctx, w); stop {
+			return res, err
 		}
 		for _, name := range w.Spec.FleetBundleNames {
 			// Delete the HelmOp first so Fleet does not re-create the Bundle,
@@ -707,10 +710,8 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 		// controller then removes the generated HelmOp and Bundle. Do NOT delete
 		// the Bundle directly here (as the FleetBundle case does): the git state
 		// still references it, so Fleet would race to re-create it.
-		if wait, err := r.releaseKeepResources(ctx, w); err != nil {
-			l.Error(err, "clearing keepResources failed — proceeding with deletion")
-		} else if wait {
-			return ctrl.Result{RequeueAfter: switchRequeue}, nil
+		if res, stop, err := r.releaseBeforeDelete(ctx, w); stop {
+			return res, err
 		}
 		for _, name := range w.Spec.FleetBundleNames {
 			if err := r.deleteGitFileByName(ctx, w, name); err != nil {

@@ -22,11 +22,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -57,7 +59,10 @@ func newGitOpsSwitchEnv(t *testing.T, objs ...client.Object) *gitOpsSwitchEnv {
 	w := newGitOpsTestWorkload()
 	w.UID = switchUID
 	source := repoObj("private-charts", map[string]any{"url": "oci://registry.example/charts"})
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append([]client.Object{settings, source, w}, objs...)...).Build()
+	// Status as a subresource, as on a real API server: an Update returns the
+	// stored status, not the caller's.
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&aiplatformv1alpha1.AIWorkload{}).
+		WithObjects(append([]client.Object{settings, source, w}, objs...)...).Build()
 	tgz := compChartTgz(t)
 	r := &AIWorkloadReconciler{
 		Client: c, Scheme: scheme, OperatorNamespace: "aif-operator",
@@ -215,7 +220,7 @@ func TestGitOpsRelease_RepublishesWithoutKeep(t *testing.T) {
 
 	e.w.Spec.DeployStrategy = aiplatformv1alpha1.AIWorkloadDeployGitOps
 	e.w.Spec.FleetBundleNames = []string{gitOpsSwitchBundle}
-	wait, err := e.r.releaseKeepResources(context.Background(), e.w)
+	wait, _, err := e.r.releaseKeepResources(context.Background(), e.w)
 	if err != nil || !wait {
 		t.Fatalf("wait=%v err=%v, want wait after republishing", wait, err)
 	}
@@ -230,5 +235,70 @@ func TestGitOpsRelease_RepublishesWithoutKeep(t *testing.T) {
 		if u.GetAnnotations()[keepReleaseGenAnnotation] == "" || u.GetAnnotations()[keepReleasedAnnotation] == "" {
 			t.Fatalf("release not recorded in the published file: %v", u.GetAnnotations())
 		}
+	}
+}
+
+func gitOpsHead(t *testing.T, remote string) string {
+	t.Helper()
+	repo, err := gogit.PlainOpen(strings.TrimPrefix(remote, "file://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName("main"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref.Hash().String()
+}
+
+// The GitRepo never syncs the release: passes within the deadline push no
+// further commits, and past it deletion proceeds with a Warning.
+func TestGitOpsDeletion_StalledGitRepoIsBounded(t *testing.T) {
+	e := newGitOpsSwitchEnv(t, seedHelmOp(gitOpsSwitchBundle, switchUID, true))
+	e.w.Spec.DeployStrategy = aiplatformv1alpha1.AIWorkloadDeployGitOps
+	e.w.Spec.FleetBundleNames = []string{gitOpsSwitchBundle}
+	if err := e.render(t, gitOpsSwitchBundle); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if err := e.r.republishKeepResources(context.Background(), e.w, gitOpsSwitchBundle, true, 0, ""); err != nil {
+		t.Fatalf("publish keep: %v", err)
+	}
+	rec := record.NewFakeRecorder(16)
+	e.r.Recorder = rec
+	ctx := context.Background()
+	e.w.Finalizers = []string{aiWorkloadFinalizer}
+	if err := e.c.Update(ctx, e.w); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Delete(ctx, e.w); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.Get(ctx, client.ObjectKeyFromObject(e.w), e.w); err != nil {
+		t.Fatal(err)
+	}
+	deleted := e.w.DeletionTimestamp.Time
+
+	pass := func(at time.Duration) bool {
+		t.Helper()
+		e.r.now = func() time.Time { return deleted.Add(at) }
+		_, stop, err := e.r.releaseBeforeDelete(context.Background(), e.w)
+		if err != nil {
+			t.Fatalf("pass at %v: %v", at, err)
+		}
+		return stop
+	}
+	if !pass(time.Minute) {
+		t.Fatalf("want a wait while the GitRepo applies the release")
+	}
+	head := gitOpsHead(t, e.remote)
+	if !pass(2*time.Minute) || gitOpsHead(t, e.remote) != head {
+		t.Fatalf("a repeated pass must wait without pushing another commit")
+	}
+	if pass(2 * time.Hour) {
+		t.Fatalf("past keepReleaseDeleteDeadline deletion must proceed")
+	}
+	ev := drainEvents(rec)
+	if len(ev) != 1 || !strings.Contains(ev[0], "Warning "+reasonKeepResourcesNotReleased) || !strings.Contains(ev[0], gitOpsSwitchBundle) {
+		t.Fatalf("events = %v, want one KeepResourcesNotReleased warning", ev)
 	}
 }

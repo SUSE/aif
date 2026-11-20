@@ -1,0 +1,207 @@
+apiVersion: ai-factory.suse.com/v1alpha1
+kind: Blueprint
+metadata:
+  labels:
+    ai-factory.suse.com/blueprint-name: {{name}}
+    ai-factory.suse.com/blueprint-version: {{version}}
+  name: {{crName}}
+spec:
+  displayName: {{displayName}}
+  version: {{version}}
+  source: Nvidia
+  # The control plane migrates its database on upgrade; old code can't run on it.
+  rollback: Disabled
+  description: |
+    {{summary}}
+
+    What gets installed, in this order (gpu-operator installs alongside the others;
+    nothing waits for it):
+    - local-path-provisioner (namespace local-path-storage): the default StorageClass.
+      Untick if your cluster already has a default StorageClass. Installing a second
+      default will conflict.
+    - cert-manager (namespace cert-manager). Untick if your cluster already has
+      cert-manager. Installing a second copy will conflict.
+    - prometheus-operator (namespace monitoring): Prometheus Operator and its CRDs,
+      Grafana off. Untick if your cluster already has Rancher Monitoring or another
+      Prometheus Operator. Installing a second copy will conflict.
+    - gpu-operator (namespace gpu-operator): NVIDIA GPU Operator, set up for RKE2's
+      containerd. Untick if your cluster already has the GPU Operator. Installing a
+      second copy will conflict.
+    - prometheus-statsd-exporter (release runai-setup, namespace runai-backend):
+      REQUIRED, do not untick. It creates the Run:ai CA and certificate issuer, the
+      runai namespace and the Run:ai Cluster CRD (clusters.run.ai, needed before
+      runai-cluster installs), and runs the preflight checks (CPU, memory, node storage, default
+      StorageClass, cert-manager and Prometheus Operator CRDs, IngressClass, GPUs). The
+      chart is only a carrier; no StatsD exporter runs. Results are in the
+      runai-backend/runai-preflight-result ConfigMap. Without this component the
+      control plane waits forever for its CA.
+    - control-plane (namespace runai-backend): the Run:ai control plane, plus the
+      registrar, which creates the cluster record in Run:ai and keeps the cluster's
+      connection token fresh.
+    - runai-cluster (namespace runai): the Run:ai cluster. It reads its connection
+      values from the runai-backend/runai-cluster-values Secret, which the registrar
+      writes.
+
+    Minimum hardware (control plane and cluster on the same cluster), summed over the
+    Ready, schedulable nodes: 20 CPU cores and 32 GB memory allocatable, 160 GB node disk
+    (ephemeral-storage capacity; 95% passes, for filesystem overhead), and at least one
+    NVIDIA GPU node. RKE2 is supported. Install on one target cluster only.
+
+    If preflight fails, the install waits at prometheus-statsd-exporter. The findings are
+    in the readiness event of pod runai-preflight (kubectl -n runai-backend describe pod
+    -l app.kubernetes.io/name=runai-preflight) and in:
+    kubectl -n runai-backend get cm runai-preflight-result -o jsonpath='{.data.findings}'
+    The thresholds are env vars of Deployment runai-preflight: PREFLIGHT_MIN_CORES (20),
+    PREFLIGHT_MIN_MEMORY_GB (32) and PREFLIGHT_MIN_STORAGE_GB (160). Administrators can
+    lower one at install time: in the install wizard, Configuration, component
+    prometheus-statsd-exporter, Advanced, Kustomize overlay, use this kustomization.yaml
+    (here 16 cores):
+      patches:
+        - target: {kind: Deployment, name: runai-preflight}
+          patch: |
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata: {name: runai-preflight, namespace: runai-backend}
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: preflight
+                      env:
+                        - {name: PREFLIGHT_MIN_CORES, value: "16"}
+    NVIDIA does not support Run:ai below its documented minimum hardware.
+
+    Domain: by default the Run:ai UI is at https://runai.<node-ip>.sslip.io, where
+    <node-ip> is a node IP of the target cluster. sslip.io is a public DNS service, so
+    browsers and nodes must be able to resolve it. To use your own domain, set
+    global.domain on the control-plane component in the Values tab when installing,
+    and point that name and *.<domain> at the cluster's ingress controller. The
+    ingress class is detected from the cluster's default IngressClass; set
+    global.ingress.ingressClass on control-plane and
+    clusterConfig.global.ingress.ingressClass on runai-cluster to choose another. The
+    domain and ingress class can't be changed after install.
+
+    Certificates: Run:ai uses its own self-signed CA (Issuer runai-ca-issuer in
+    runai-backend), so browsers show a certificate warning until you trust that CA.
+    To use an enterprise cert-manager ClusterIssuer instead, set these on
+    control-plane in the Values tab when installing:
+    - global.ingress.extraAnnotations: cert-manager.io/issuer: <your ClusterIssuer>
+      and cert-manager.io/issuer-kind: ClusterIssuer.
+    - For a private CA, point global.customCA.volumes at a Secret in runai-backend that
+      holds your CA bundle (item ca.crt mapped to path runai-ca.pem). For a publicly
+      trusted CA, set global.customCA.enabled: false on control-plane and runai-cluster.
+    The registrar sends the Run:ai admin password and its client secret only to an
+    address in the status of Ingress runai-backend/runai-backend-ingress (TLS name and
+    Host: the domain), and trusts only the ca.crt of Secret runai-backend/runai-backend-tls
+    when the issuer provides one, else the system trust store. Until the ingress
+    controller publishes an address there, registration waits. With a shared ingress
+    controller, anyone who can create an Ingress for the Run:ai host can receive these
+    credentials: install only where trusted users can create Ingresses, or restrict
+    Ingress hosts per namespace. That is a property of the ingress controller, which
+    this Blueprint can't change.
+    The registrar also requests a wildcard certificate (*.<domain>, Certificate
+    runai-backend/runai-wildcard) for workload URLs. That needs a DNS-01 or CA-based
+    issuer; ACME HTTP-01 can't issue wildcards. Registration doesn't wait for it: its
+    state is in the wildcardCertificate key of ConfigMap runai-backend/runai-install-info.
+
+    Registrar credential: the registrar uses the Run:ai service account in Secret
+    runai-backend/runai-registrar-credentials (keys clientId and clientSecret). Create
+    that Secret before installing to give it a service account you provisioned, with
+    roles holding the permission sets in RUNAI_REGISTRAR_PERMISSION_SETS on Deployment
+    runai-registrar; then the registrar never uses the admin login. Without it, the
+    registrar logs in once as the admin, creates service account aif-runai-registrar with
+    one custom role per permission set and stores its credential in that Secret. It
+    never grants a built-in role: if a grant or the cluster install info is refused,
+    registration fails naming the permission set and the Run:ai API call (see the
+    lastError and grantedRoles keys of ConfigMap runai-backend/runai-install-info).
+    Run:ai 2.26 limitation: the cluster install info needs "Service accounts edit" as
+    well as "Cluster edit", and that set also lets the stored credential manage other
+    service accounts. To avoid that, create the Secret with a service account whose
+    roles and scope you have bounded yourself.
+
+    Admin login: the username is admin@runai.local and the password is generated.
+    Read it with:
+    kubectl -n runai-backend get secret runai-backend-gen-tenants-manager -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+    Change the password in the Run:ai UI after your first login. Until you do, anyone
+    who can read Secrets in runai-backend can read it. tenantsManager.config.adminUsername
+    and adminPassword on control-plane can be set in the Values tab, but they apply
+    only at the first install; changing them later doesn't change the Run:ai login.
+
+    Images: every image can be overridden, for example to use a private registry.
+    - Chart images, through Helm values in the Values tab: on control-plane,
+      global.image.registry (Run:ai images), global.postgresImage and global.waitImage;
+      on runai-cluster, global.image.registry and thirdPartyImages.*; on the
+      prerequisites, each chart's own image values.
+    - Registrar and preflight images (registry.suse.com/bci/python:3.12), through an
+      install-time Kustomize overlay on the control-plane or prometheus-statsd-exporter
+      component (Advanced tab) with an images: entry, for example:
+      images: [{name: registry.suse.com/bci/python, newName: <registry>/bci/python, newTag: "3.12"}]
+    {{imagesNote}}
+
+    GPU Operator: v26.3.3, inside NVIDIA's supported range for Run:ai 2.26 (GPU Operator
+    25.10 to 26.3); v26.7 waits until Run:ai supports it. Following SUSE's RKE2 docs for
+    v26.3.x, it installs SUSE's precompiled driver images
+    (registry.suse.com/third-party/nvidia) by default, and skips nodes that already have
+    a driver installed. Published driver branches: SLES 15 SP7 550 to 615, SLES 16.0 595,
+    610 and 615, SLES 16.1 615 only. Set driver.version on gpu-operator to a branch your
+    OS and GPUs support (the default is "595"; use "615" on SLES 16.1). On non-SUSE
+    nodes, remove the driver values so NVIDIA's defaults apply, or set driver.enabled:
+    false if the drivers are preinstalled.
+
+    Rollback is disabled for this Blueprint: the Run:ai control plane migrates its
+    database on upgrade, and older versions can't run on a migrated database.
+
+    Uninstall keeps data: removing the workload uninstalls the Helm releases and leaves
+    the databases, the CA, the cluster record, the runai and runai-backend
+    namespaces and the clusters.run.ai CRD, so a reinstall resumes where it left off.
+    For a clean start, after uninstalling run:
+    kubectl delete namespace runai runai-backend
+    kubectl delete crd clusters.run.ai
+    This permanently deletes the volumes, data and Secrets in those namespaces,
+    and any remaining Run:ai Cluster objects.
+  components:
+  - chartName: local-path-provisioner
+    chartRepo: application-collection
+    chartVersion: 0.0.37
+    targetNamespace: local-path-storage
+  - chartName: cert-manager
+    chartRepo: application-collection
+    chartVersion: 1.21.3
+    targetNamespace: cert-manager
+  - chartName: prometheus-operator
+    chartRepo: application-collection
+    chartVersion: 92.14.0
+    targetNamespace: monitoring
+  - chartName: gpu-operator
+    chartRepo: nvidia
+    # NVIDIA's Run:ai 2.26 support covers GPU Operator 25.10 to 26.3.
+    chartVersion: v26.3.3
+    targetNamespace: gpu-operator
+  # Setup and preflight. The chart is only a carrier for the overlay, which
+  # holds the CA chain, the runai Namespace and the preflight Deployment.
+  - chartName: prometheus-statsd-exporter
+    chartRepo: application-collection
+    chartVersion: 1.0.0
+    targetNamespace: runai-backend
+    releaseName: runai-setup
+    dependsOn:
+    - local-path-provisioner
+    - cert-manager
+    - prometheus-operator
+  - chartName: control-plane
+    chartRepo: {{runaiRepo}}
+    chartVersion: {{runaiVersion}}
+    targetNamespace: runai-backend
+    dependsOn:
+    - prometheus-statsd-exporter
+  - chartName: runai-cluster
+    chartRepo: {{runaiRepo}}
+    chartVersion: {{runaiVersion}}
+    targetNamespace: runai
+    dependsOn:
+    - control-plane
+    valuesFrom:
+    - secretKeyRef:
+        name: runai-cluster-values
+        namespace: runai-backend
+        key: values.yaml

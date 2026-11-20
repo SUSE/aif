@@ -173,16 +173,22 @@ func (h *AIWorkloadHandler) validateUpdatePolicy(ctx context.Context, existing *
 	if spec.Source.SourceType != aiplatformv1alpha1.AIWorkloadSourceBlueprint || src == nil {
 		return nil
 	}
-	if ds := existing.Status.DeployedSource; ds != nil {
-		blocked, err := blueprintpolicy.RollbackBlocked(ctx, h.client, src.Name, ds.Version, src.Version)
-		if err != nil {
-			return err
-		}
-		if blocked {
-			return rollbackBlockedError(src.Version, ds.Version)
-		}
+	blocked, floor, err := blueprintpolicy.MoveBlocked(ctx, h.client, src.Name, src.Version, existing.Status.MinimumSafeVersion, deployedVersion(existing))
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return rollbackBlockedError(src.Version, floor)
 	}
 	return nil
+}
+
+// deployedVersion is the workload's certified Blueprint version, "" when none.
+func deployedVersion(wl *aiplatformv1alpha1.AIWorkload) string {
+	if wl.Status.DeployedSource == nil {
+		return ""
+	}
+	return wl.Status.DeployedSource.Version
 }
 
 // autoPinTargetsError rejects retargeting onto several clusters while an auto
@@ -204,8 +210,8 @@ func autoPinTargetsError(bp aiplatformv1alpha1.Blueprint, existing *aiplatformv1
 	return nil
 }
 
-func rollbackBlockedError(target, deployed string) error {
-	return fmt.Errorf("%w: %s is older than the deployed version %s and rollback is disabled for this Blueprint", ErrInvalidInput, target, deployed)
+func rollbackBlockedError(target, floor string) error {
+	return fmt.Errorf("%w: %s is older than version %s, which this deployment has deployed or started deploying, and rollback is disabled for this Blueprint; use %s or newer", ErrInvalidInput, target, floor, floor)
 }
 
 func sameStringSet(a, b []string) bool {
@@ -233,11 +239,28 @@ type AIWorkloadHandler struct {
 	client client.Client
 	// authz is set by Register; it checks advanced customization.
 	authz *Authorizer
+	// apiReader, when set, reads the stored workload an update is checked
+	// against uncached, so a stale cache cannot pass the advanced check.
+	apiReader client.Reader
 }
 
 // NewAIWorkloadHandler constructs an AIWorkloadHandler.
 func NewAIWorkloadHandler(c client.Client) *AIWorkloadHandler {
 	return &AIWorkloadHandler{client: c}
+}
+
+// WithAPIReader sets the uncached reader (mgr.GetAPIReader()) for the stored
+// workload an update is checked against. Without one the client is used.
+func (h *AIWorkloadHandler) WithAPIReader(r client.Reader) *AIWorkloadHandler {
+	h.apiReader = r
+	return h
+}
+
+func (h *AIWorkloadHandler) storedReader() client.Reader {
+	if h.apiReader != nil {
+		return h.apiReader
+	}
+	return h.client
 }
 
 // Register wires the handler's routes onto the mux.
@@ -388,7 +411,7 @@ func (h *AIWorkloadHandler) updateAIWorkload(w http.ResponseWriter, r *http.Requ
 	}
 
 	existing := &aiplatformv1alpha1.AIWorkload{}
-	if err := h.client.Get(r.Context(), types.NamespacedName{Namespace: namespace, Name: name}, existing); err != nil {
+	if err := h.storedReader().Get(r.Context(), types.NamespacedName{Namespace: namespace, Name: name}, existing); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, fmt.Errorf("deployment %q not found in namespace %q", name, namespace))
 			return

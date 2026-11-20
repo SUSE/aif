@@ -143,6 +143,7 @@ spec:
                   x-kubernetes-validations:
                   - message: a component cannot depend on itself
                     rule: '!has(self.dependsOn) || !(self.componentName in self.dependsOn)'
+                maxItems: 64
                 type: array
               deployStrategy:
                 default: Helm
@@ -432,6 +433,13 @@ spec:
                 - renderDigest
                 - version
                 type: object
+              minimumSafeVersion:
+                description: |-
+                  MinimumSafeVersion records, as "<blueprint name>@<version>", the highest
+                  rollback-disabled Blueprint version the controller has started
+                  rendering. Moving to an older version of that Blueprint is refused; unset
+                  means the deployed version is the floor.
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation observed by the
                   controller.

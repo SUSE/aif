@@ -307,7 +307,7 @@ func TestCleanup_RemovesEmbeddedBundleOfDisabledComponent(t *testing.T) {
 	w.Spec.ComponentValues = append(w.Spec.ComponentValues, aiplatformv1alpha1.ComponentValueOverride{ComponentName: "comp", Enabled: ptrBool(false)})
 	w.Spec.ComponentValues[0].Enabled = ptrBool(false)
 	r := &AIWorkloadReconciler{Client: c, Scheme: c.Scheme(), OperatorNamespace: "aif-operator"}
-	if err := r.cleanupStaleHelmOps(context.Background(), w, nil); err != nil {
+	if err := r.cleanupStaleHelmOps(context.Background(), w, nil, nil); err != nil {
 		t.Fatalf("cleanupStaleHelmOps: %v", err)
 	}
 	if _, ok := fleetObject(t, c, "Bundle", name); ok {

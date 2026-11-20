@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -94,6 +95,9 @@ func addOverlayLayer(out map[string]string, name, dir string, files map[string]s
 	if err := kustomizeoverlay.ValidateFiles(dir, files); err != nil {
 		return err
 	}
+	if _, err := overlayRoot(dir, files); err != nil {
+		return err
+	}
 	prefix := dir + "/"
 	for k, content := range files {
 		rel := strings.TrimPrefix(path.Clean(k), prefix)
@@ -107,6 +111,48 @@ func addOverlayLayer(out map[string]string, name, dir string, files map[string]s
 		out[layeredOverlayDir+"/"+name+"/"+rel] = content
 	}
 	return nil
+}
+
+// fleetKustomizationFile is the only root file Fleet's post-render reads
+// (internal/helmdeployer/kustomize, v0.14 to v0.16); under any other name the
+// overlay is silently skipped.
+const fleetKustomizationFile = "kustomization.yaml"
+
+// overlayRoot returns the key of the root kustomization file under dir ("" if
+// none), rejecting more than one, which kustomize refuses to build.
+func overlayRoot(dir string, files map[string]string) (string, error) {
+	var roots []string
+	for _, name := range kustomizeoverlay.FileNames {
+		if _, ok := files[dir+"/"+name]; ok {
+			roots = append(roots, dir+"/"+name)
+		}
+	}
+	if len(roots) > 1 {
+		return "", fmt.Errorf("overlay dir %q has more than one kustomization file (%s); keep only %s",
+			dir, strings.Join(roots, ", "), fleetKustomizationFile)
+	}
+	if len(roots) == 0 {
+		return "", nil
+	}
+	return roots[0], nil
+}
+
+// normalizeOverlayRoot renames a single overlay's root file to
+// kustomization.yaml, the only name Fleet reads. Files already using it are
+// returned unchanged, so their render digest does not change.
+func normalizeOverlayRoot(dir string, files map[string]string) (map[string]string, error) {
+	root, err := overlayRoot(dir, files)
+	if err != nil {
+		return nil, err
+	}
+	want := dir + "/" + fleetKustomizationFile
+	if root == "" || root == want {
+		return files, nil
+	}
+	out := maps.Clone(files)
+	delete(out, root)
+	out[want] = files[root]
+	return out, nil
 }
 
 // resolvedOverlay is one overlay's fetched content: its dir, its files keyed
@@ -153,32 +199,39 @@ func overlayDigest(o *overlayRender) (string, error) {
 	return sha256Hex(b), nil
 }
 
+// overlayCommits are the gitRef overlay commits a fingerprint was taken at
+// ("" for a layer that is inline or absent); the deferred read uses them.
+type overlayCommits struct {
+	blueprint, install string
+}
+
 // overlayFingerprint returns the fingerprint input for a component's overlays
 // and, when no layer comes from git, the rendered overlay. A gitRef layer is
-// identified by its repo commit so its content is only fetched on a rebuild.
-func (r *AIWorkloadReconciler) overlayFingerprint(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (string, *overlayRender, error) {
+// identified by its repo commit so its content is only fetched on a rebuild,
+// at the returned commits.
+func (r *AIWorkloadReconciler) overlayFingerprint(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (string, *overlayRender, overlayCommits, error) {
 	bpK, instK := c.Kustomize, installOverlay(w, c.ChartName)
 	if !isGitOverlay(bpK) && !isGitOverlay(instK) {
-		o, err := r.resolveEffectiveOverlay(ctx, w, c)
+		o, err := r.resolveEffectiveOverlay(ctx, w, c, overlayCommits{})
 		if err != nil {
-			return "", nil, err
+			return "", nil, overlayCommits{}, err
 		}
 		d, err := overlayDigest(o)
-		return d, o, err
+		return d, o, overlayCommits{}, err
 	}
 	bpCommit, err := r.overlayCommit(ctx, bpK)
 	if err != nil {
-		return "", nil, err
+		return "", nil, overlayCommits{}, err
 	}
 	instCommit, err := r.overlayCommit(ctx, instK)
 	if err != nil {
-		return "", nil, fmt.Errorf("install overlay: %w", err)
+		return "", nil, overlayCommits{}, fmt.Errorf("install overlay: %w", err)
 	}
 	b, err := json.Marshal(map[string]any{"blueprint": bpK, "blueprintCommit": bpCommit, "install": instK, "installCommit": instCommit})
 	if err != nil {
-		return "", nil, fmt.Errorf("hash kustomize overlay: %w", err)
+		return "", nil, overlayCommits{}, fmt.Errorf("hash kustomize overlay: %w", err)
 	}
-	return sha256Hex(b), nil, nil
+	return sha256Hex(b), nil, overlayCommits{blueprint: bpCommit, install: instCommit}, nil
 }
 
 func isGitOverlay(k *aiplatformv1alpha1.ComponentKustomize) bool {
@@ -193,23 +246,30 @@ func (r *AIWorkloadReconciler) overlayCommit(ctx context.Context, k *aiplatformv
 	if err != nil {
 		return "", err
 	}
+	return indexedCommit(k.GitRef.ChartRepo, info)
+}
+
+// indexedCommit is the overlay repo commit Rancher last indexed, which both
+// the fingerprint and the overlay read use.
+func indexedCommit(repoName string, info clusterRepoInfo) (string, error) {
 	if info.Commit == "" {
-		return "", fmt.Errorf("kustomize gitRef repo %q has not been indexed yet", k.GitRef.ChartRepo)
+		return "", fmt.Errorf("kustomize gitRef repo %q has not been indexed yet", repoName)
 	}
 	return info.Commit, nil
 }
 
 // resolveEffectiveOverlay fetches a component's Blueprint overlay and its
 // install-time overlay (if any) and builds the overlay its embedded Bundle carries.
-// Returns nil when the component has neither.
-func (r *AIWorkloadReconciler) resolveEffectiveOverlay(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (*overlayRender, error) {
-	bp, err := r.resolveOverlay(ctx, c)
+// Returns nil when the component has neither. gitRef layers are read at pins
+// when set (the fingerprinted commits), else at the repo's indexed commit.
+func (r *AIWorkloadReconciler) resolveEffectiveOverlay(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, pins overlayCommits) (*overlayRender, error) {
+	bp, err := r.resolveOverlay(ctx, c, pins.blueprint)
 	if err != nil {
 		return nil, err
 	}
 	ic := c
 	ic.Kustomize = installOverlay(w, c.ChartName)
-	inst, err := r.resolveOverlay(ctx, ic)
+	inst, err := r.resolveOverlay(ctx, ic, pins.install)
 	if err != nil {
 		return nil, fmt.Errorf("install overlay: %w", err)
 	}
@@ -218,11 +278,11 @@ func (r *AIWorkloadReconciler) resolveEffectiveOverlay(ctx context.Context, w *a
 
 // resolveOverlay fetches c.Kustomize through resolveKustomizeOverlay, so inline
 // and gitRef overlays get the same validation wherever they come from.
-func (r *AIWorkloadReconciler) resolveOverlay(ctx context.Context, c aiplatformv1alpha1.BlueprintComponent) (*resolvedOverlay, error) {
+func (r *AIWorkloadReconciler) resolveOverlay(ctx context.Context, c aiplatformv1alpha1.BlueprintComponent, pin string) (*resolvedOverlay, error) {
 	if c.Kustomize == nil {
 		return nil, nil
 	}
-	files, commit, err := r.resolveKustomizeOverlay(ctx, c)
+	files, commit, err := r.resolveKustomizeOverlay(ctx, c, pin)
 	if err != nil {
 		return nil, err
 	}
@@ -248,8 +308,12 @@ func buildOverlayRender(bp, inst *resolvedOverlay) (*overlayRender, error) {
 		if only == nil {
 			only = inst
 		}
-		dir, files = only.Dir, only.Files
-		digest = map[string]any{"dir": only.Dir, "files": only.Files, "commit": only.Commit}
+		normalized, err := normalizeOverlayRoot(only.Dir, only.Files)
+		if err != nil {
+			return nil, err
+		}
+		dir, files = only.Dir, normalized
+		digest = map[string]any{"dir": only.Dir, "files": normalized, "commit": only.Commit}
 	default:
 		composed, err := composeLayeredOverlay(bp.Dir, bp.Files, inst.Dir, inst.Files)
 		if err != nil {

@@ -99,6 +99,7 @@ describe('Settings registry diagnostics', () => {
     expect(wrapper.text()).toContain('Registry responded');
     expect(wrapper.text()).toContain('Chart access failed (HTTP 401)');
     expect(wrapper.text()).toContain('SUSE AI subscription entitlement');
+    expect(wrapper.text()).not.toContain('NGC API key');
     expect(wrapper.text()).not.toContain('Sample chart access verified');
     expect(validateChartAccess).toHaveBeenCalledWith({ target: 'suseRegistry', configuration, chartName: 'qdrant' });
   });
@@ -313,6 +314,57 @@ describe('Settings registry diagnostics - nvidia target', () => {
     expect(wrapper.text()).not.toContain('do not apply to git repositories');
     expect(wrapper.text()).toContain('https://helm.ngc.nvidia.com/nim/nvidia');
     expect(wrapper.text()).toContain('Chart access failed (HTTP 403)');
+  });
+
+  const denied = (repositoryUrl: string) => ({ results: [{ repositoryUrl, chartName: 'nim-llm', status: 'failed', reason: 'accessDenied', httpStatus: 403, latencyMs: 5 }] });
+  const NGC_ENTITLEMENT = 'NGC API key authenticated but is not allowed to read these charts';
+  const GENERIC_DENIAL = 'permission to read this chart repository';
+
+  it('explains an NGC entitlement gap when an authenticated key is denied NGC charts', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'nvidia', status: 'ok', host: 'nvcr.io', latencyMs: 1, message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue(denied('https://helm.ngc.nvidia.com/nim/nvidia') as any);
+    const wrapper = mountRCS({ target: 'nvidia', configuration: nvidiaConfiguration });
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain(NGC_ENTITLEMENT);
+    expect(wrapper.text()).toContain('NIM, cuOpt or NVIDIA Run:ai');
+    expect(wrapper.text()).not.toContain(GENERIC_DENIAL);
+  });
+
+  it('keeps the generic denial for an NVIDIA mirror', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'nvidia', status: 'ok', host: 'mirror.internal', latencyMs: 1, message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue(denied('oci://mirror.internal/nvidia') as any);
+    const mirrored = { ...nvidiaConfiguration, url: 'oci://mirror.internal/nvidia' };
+    const wrapper = mountRCS({ target: 'nvidia', configuration: mirrored });
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain(GENERIC_DENIAL);
+    expect(wrapper.text()).not.toContain(NGC_ENTITLEMENT);
+  });
+
+  it('keeps the generic denial when the key did not authenticate', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'nvidia', status: 'failed', host: 'nvcr.io', latencyMs: 1, message: 'unauthorized' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue(denied('https://helm.ngc.nvidia.com/nim/nvidia') as any);
+    const wrapper = mountRCS({ target: 'nvidia', configuration: nvidiaConfiguration });
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain(GENERIC_DENIAL);
+    expect(wrapper.text()).not.toContain(NGC_ENTITLEMENT);
+  });
+
+  it('keeps the generic denial for an authenticated custom repository', async () => {
+    vi.mocked(validateCredentials).mockResolvedValue({ results: [{ target: 'customRepo', status: 'ok', host: 'charts.example.com', latencyMs: 1, message: '' }] });
+    vi.mocked(validateChartAccess).mockResolvedValue(denied('https://charts.example.com') as any);
+    const wrapper = mountRCS({ target: 'customRepo', configuration: { type: 'helm', url: 'https://charts.example.com' }, testChart: 'demo' });
+    await runTest(wrapper);
+    expect(wrapper.text()).toContain(GENERIC_DENIAL);
+    expect(wrapper.text()).not.toContain(NGC_ENTITLEMENT);
+  });
+
+  it('keeps the generic denial without credentials to test', async () => {
+    vi.mocked(validateChartAccess).mockResolvedValue(denied('https://helm.ngc.nvidia.com/nim/nvidia') as any);
+    const wrapper = mountRCS({ target: 'nvidia', configuration: { ...nvidiaConfiguration, userSecretRef: null, tokenSecretRef: null } });
+    await runTest(wrapper);
+    expect(validateCredentials).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(GENERIC_DENIAL);
+    expect(wrapper.text()).not.toContain(NGC_ENTITLEMENT);
   });
 });
 

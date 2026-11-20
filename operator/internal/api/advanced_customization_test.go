@@ -335,3 +335,118 @@ func TestAdvancedChanges(t *testing.T) {
 		})
 	}
 }
+
+func TestAdvancedChanges_ScopeExpansion(t *testing.T) {
+	overlay := aiplatformv1alpha1.ComponentValueOverride{ComponentName: "a", Kustomize: &aiplatformv1alpha1.ComponentKustomize{Dir: "o"}}
+	deps := []string{"b"}
+	depsOnly := aiplatformv1alpha1.ComponentValueOverride{ComponentName: "a", DependsOn: &deps}
+	spec := func(ns, version string, clusters []string, ovs ...aiplatformv1alpha1.ComponentValueOverride) *aiplatformv1alpha1.AIWorkloadSpec {
+		return &aiplatformv1alpha1.AIWorkloadSpec{
+			TargetNamespace: ns, TargetClusters: clusters, ComponentValues: ovs,
+			Source: aiplatformv1alpha1.AIWorkloadSource{Blueprint: &aiplatformv1alpha1.BlueprintSource{Name: "rag", Version: version}},
+		}
+	}
+	two := []string{"c1", "c2"}
+	other := func(s *aiplatformv1alpha1.AIWorkloadSpec) *aiplatformv1alpha1.AIWorkloadSpec {
+		s.Source.Blueprint.Name = "other"
+		return s
+	}
+	app := func(s *aiplatformv1alpha1.AIWorkloadSpec) *aiplatformv1alpha1.AIWorkloadSpec {
+		s.Source = aiplatformv1alpha1.AIWorkloadSource{SourceType: aiplatformv1alpha1.AIWorkloadSourceApp, App: &aiplatformv1alpha1.AppSource{ChartName: "rag"}}
+		return s
+	}
+	cases := map[string]struct {
+		existing, next *aiplatformv1alpha1.AIWorkloadSpec
+		want           bool
+	}{
+		"overlay kept, Blueprint switched":    {spec("ai", "1.0.0", two, overlay), other(spec("ai", "1.0.0", two, overlay)), true},
+		"overlay kept, source type switched":  {spec("ai", "1.0.0", two, overlay), app(spec("ai", "1.0.0", two, overlay)), true},
+		"no overlay, Blueprint switched":      {spec("ai", "1.0.0", two, depsOnly), other(spec("ai", "1.0.0", two, depsOnly)), false},
+		"overlay removed, Blueprint switched": {spec("ai", "1.0.0", two, overlay), other(spec("ai", "1.0.0", two)), false},
+		"create with overlay":                 {nil, spec("ai", "1.0.0", two, overlay), true},
+		"create without overlay":              {nil, spec("ai", "1.0.0", two), false},
+		"overlay kept, targets unchanged":     {spec("ai", "1.0.0", two, overlay), spec("ai", "1.0.0", two, overlay), false},
+		"overlay kept, targets reordered":     {spec("ai", "1.0.0", two, overlay), spec("ai", "1.0.0", []string{"c2", "c1"}, overlay), false},
+		"overlay kept, cluster added":         {spec("ai", "1.0.0", two, overlay), spec("ai", "1.0.0", []string{"c1", "c2", "local"}, overlay), true},
+		"overlay kept, cluster swapped":       {spec("ai", "1.0.0", two, overlay), spec("ai", "1.0.0", []string{"c1", "local"}, overlay), true},
+		"overlay kept, cluster removed":       {spec("ai", "1.0.0", two, overlay), spec("ai", "1.0.0", []string{"c1"}, overlay), false},
+		"overlay kept, namespace changed":     {spec("ai", "1.0.0", two, overlay), spec("ai2", "1.0.0", two, overlay), true},
+		"overlay kept, version changed":       {spec("ai", "1.0.0", two, overlay), spec("ai", "1.1.0", two, overlay), false},
+		"overlay removed, cluster added":      {spec("ai", "1.0.0", two, overlay), spec("ai", "1.0.0", []string{"c1", "c2", "local"}), false},
+		"no overlay, cluster added":           {spec("ai", "1.0.0", two), spec("ai", "1.0.0", []string{"c1", "c2", "local"}), false},
+		"no overlay, namespace changed":       {spec("ai", "1.0.0", two), spec("ai2", "1.0.0", two), false},
+		"dependsOn only, cluster added":       {spec("ai", "1.0.0", two, depsOnly), spec("ai", "1.0.0", []string{"c1", "c2", "local"}, depsOnly), false},
+		"overlay kept, namespace and target":  {spec("ai", "1.0.0", two, overlay), spec("ai2", "1.0.0", []string{"c1"}, overlay), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := advancedChanges(tc.existing, *tc.next, nil); got != tc.want {
+				t.Fatalf("advancedChanges = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpdateAIWorkload_DeniedUserScopeWithKeptOverlay(t *testing.T) {
+	bp := testBlueprint("rag-1-0-0", "rag", "1.0.0", "milvus", "open-webui")
+	kept := map[string]any{"componentName": "open-webui", "dependsOn": []string{"milvus"}, "kustomize": inlineKustomize()}
+	cases := map[string]struct {
+		namespace string
+		clusters  []string
+		want      int
+	}{
+		"local added":       {"ai", []string{"c-down", "local"}, http.StatusForbidden},
+		"namespace changed": {"ai-2", []string{"c-down", "c-other"}, http.StatusForbidden},
+		"targets unchanged": {"ai", []string{"c-other", "c-down"}, http.StatusOK},
+		"target removed":    {"ai", []string{"c-down"}, http.StatusOK},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			stored := storedBlueprintWorkload(storedOverride())
+			stored.Spec.TargetClusters = []string{"c-down", "c-other"}
+			asked := 0
+			h, c := advancedMux(t, advancedDecision(t, false, nil, &asked), bp, stored)
+			spec := blueprintSpec([]map[string]any{kept})
+			spec["targetClusters"] = tc.clusters
+			spec["targetNamespace"] = tc.namespace
+			rec := serve(h, patchReq(spec))
+			if tc.want == http.StatusForbidden {
+				assertAdvancedForbidden(t, rec)
+				if got := storedWorkload(t, c).Spec.TargetClusters; !reflect.DeepEqual(got, stored.Spec.TargetClusters) {
+					t.Fatalf("stored targets changed to %v", got)
+				}
+				return
+			}
+			if rec.Code != tc.want || asked != 0 {
+				t.Fatalf("want %d without an advanced SAR, got %d (asked %d): %s", tc.want, rec.Code, asked, rec.Body.String())
+			}
+		})
+	}
+}
+
+// The advanced check reads the stored workload through the uncached reader: a
+// stale cache still holding an overlay the stored spec no longer has must not
+// let a denied user put it back.
+func TestUpdateAIWorkload_AdvancedCheckReadsUncached(t *testing.T) {
+	bp := testBlueprint("rag-1-0-0", "rag", "1.0.0", "milvus", "open-webui")
+	for _, uncached := range []bool{true, false} {
+		_, cached := newAIWorkloadHandlerWithClient(t, bp, storedBlueprintWorkload(storedOverride()))
+		_, fresh := newAIWorkloadHandlerWithClient(t, bp, storedBlueprintWorkload())
+		h := NewAIWorkloadHandler(cached)
+		if uncached {
+			h.WithAPIReader(fresh)
+		}
+		asked := 0
+		a := NewAuthorizer(sarClient(nil, advancedDecision(t, false, nil, &asked)), DefaultRules(testNS))
+		h.Register(a)
+		mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.ServeHTTP(w, withUser(r, testUser)) })
+		rec := serve(mux, patchReq(blueprintSpec(overrideComponentValues())))
+		if uncached {
+			assertAdvancedForbidden(t, rec)
+			continue
+		}
+		if rec.Code != http.StatusOK || asked != 0 {
+			t.Fatalf("against the cache alone the overlay looks kept: want 200, got %d (asked %d)", rec.Code, asked)
+		}
+	}
+}

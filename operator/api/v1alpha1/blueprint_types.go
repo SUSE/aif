@@ -94,6 +94,14 @@ type BlueprintComponent struct {
 	// +kubebuilder:default=suse
 	// +optional
 	Vendor ComponentVendor `json:"vendor,omitempty"`
+	// AdditionalPullSecretVendors lists extra vendors whose pull secrets are
+	// delivered to this component's namespace without touching its Helm values,
+	// for charts that create pods from another vendor's images (the chart's
+	// values must reference the secrets). Optional; absent behaves as before.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=2
+	AdditionalPullSecretVendors []ComponentVendor `json:"additionalPullSecretVendors,omitempty"`
 	// Values are the Helm values for this component.
 	// +optional
 	Values *apixv1.JSON `json:"values,omitempty"`

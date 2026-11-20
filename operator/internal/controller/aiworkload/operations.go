@@ -52,6 +52,7 @@ const (
 	defaultOperationDeadline = 30 * time.Minute
 	reasonOperationTimedOut  = "TimedOut"
 	reasonRollbackDisabled   = "RollbackDisabled"
+	reasonCRDOutdated        = "CRDOutdated"
 )
 
 // handleTriggers processes at most one request annotation, metadata-atomically. Returns
@@ -76,10 +77,10 @@ func (r *AIWorkloadReconciler) handleTriggers(ctx context.Context, w *aiplatform
 		if target == cur {
 			return r.startRetry(ctx, w, nonce)
 		}
-		if blocked, err := r.rollbackBlocked(ctx, w, target); err != nil {
+		if blocked, floor, err := r.rollbackBlocked(ctx, w, target); err != nil {
 			return false, err
 		} else if blocked {
-			r.event(w, corev1.EventTypeWarning, reasonRollbackDisabled, "upgrade to older version %s is a rollback, which is disabled for this Blueprint", target)
+			r.event(w, corev1.EventTypeWarning, reasonRollbackDisabled, "upgrade to older version %s is a rollback, which is disabled for this Blueprint; use %s or newer", target, floor)
 			return r.finishTrigger(ctx, w, upgradeRequestAnnotation, id, nil, 0)
 		}
 		return r.startVersionOp(ctx, w, aiplatformv1alpha1.OperationTypeUpgrade, nonce, target, "", upgradeRequestAnnotation)
@@ -100,6 +101,9 @@ func (r *AIWorkloadReconciler) handleTriggers(ctx context.Context, w *aiplatform
 			if err != nil {
 				return false, err
 			}
+			if !disabled {
+				disabled = blueprintpolicy.IsRollback(blueprintpolicy.FloorFor(w.Status.MinimumSafeVersion, src.Name), w.Status.DeployedSource.Version)
+			}
 			if disabled {
 				r.event(w, corev1.EventTypeWarning, reasonRollbackDisabled, "rollback is disabled for this Blueprint")
 				return r.finishTrigger(ctx, w, rollbackRequestAnnotation, id, nil, 0)
@@ -119,14 +123,27 @@ func (r *AIWorkloadReconciler) handleTriggers(ctx context.Context, w *aiplatform
 	return false, nil
 }
 
-// rollbackBlocked reports whether moving the workload's Blueprint from its
-// deployed version to target is a rollback its policy disables.
-func (r *AIWorkloadReconciler) rollbackBlocked(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, target string) (bool, error) {
-	src := w.Spec.Source.Blueprint
-	if src == nil || w.Status.DeployedSource == nil {
-		return false, nil
+// readyReason is the reason of the workload's Ready condition, "" when unset.
+func readyReason(w *aiplatformv1alpha1.AIWorkload) string {
+	if c := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady); c != nil {
+		return c.Reason
 	}
-	return blueprintpolicy.RollbackBlocked(ctx, r.Client, src.Name, w.Status.DeployedSource.Version, target)
+	return ""
+}
+
+// rollbackBlocked reports whether moving the workload's Blueprint to target is
+// a rollback its policy disables (see blueprintpolicy.MoveBlocked), and the
+// version to use instead.
+func (r *AIWorkloadReconciler) rollbackBlocked(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, target string) (bool, string, error) {
+	src := w.Spec.Source.Blueprint
+	if src == nil {
+		return false, "", nil
+	}
+	deployed := ""
+	if w.Status.DeployedSource != nil {
+		deployed = w.Status.DeployedSource.Version
+	}
+	return blueprintpolicy.MoveBlocked(ctx, r.Client, src.Name, target, w.Status.MinimumSafeVersion, deployed)
 }
 
 // startVersionOp sets the blueprint version + writes the journal atomically (Upgrade/Rollback).

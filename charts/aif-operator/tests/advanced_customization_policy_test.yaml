@@ -1,0 +1,139 @@
+suite: advanced-customization ValidatingAdmissionPolicy
+templates:
+  - templates/advanced-customization-policy.yaml
+  - templates/NOTES.txt
+chart:
+  version: 9.9.9
+  appVersion: 9.9.9
+release:
+  name: my-release
+  namespace: aif-operator
+tests:
+  - it: renders the policy and a Deny binding when the API is served
+    template: templates/advanced-customization-policy.yaml
+    capabilities: &vap
+      apiVersions:
+        - admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy
+    asserts:
+      - hasDocuments:
+          count: 2
+      - containsDocument:
+          kind: ValidatingAdmissionPolicy
+          apiVersion: admissionregistration.k8s.io/v1
+          name: aif-operator-advanced-customization
+        documentIndex: 0
+      - notExists:
+          path: metadata.namespace
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: my-release
+      - containsDocument:
+          kind: ValidatingAdmissionPolicyBinding
+          apiVersion: admissionregistration.k8s.io/v1
+          name: aif-operator-advanced-customization
+        documentIndex: 1
+      - equal:
+          path: spec
+          value:
+            policyName: aif-operator-advanced-customization
+            validationActions: [Deny]
+        documentIndex: 1
+
+  - it: matches AIWorkload create and update only and fails closed
+    template: templates/advanced-customization-policy.yaml
+    capabilities: *vap
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.failurePolicy
+          value: Fail
+      - equal:
+          path: spec.matchConstraints.resourceRules
+          value:
+            - apiGroups: ["ai-factory.suse.com"]
+              apiVersions: ["v1alpha1"]
+              operations: ["CREATE", "UPDATE"]
+              resources: ["aiworkloads"]
+
+  - it: exempts the operator ServiceAccount of this release
+    template: templates/advanced-customization-policy.yaml
+    capabilities: *vap
+    documentIndex: 0
+    release:
+      namespace: other-ns
+    set:
+      fullnameOverride: custom
+    asserts:
+      - equal:
+          path: spec.matchConditions
+          value:
+            - name: not-operator
+              expression: "request.userInfo.username != 'system:serviceaccount:other-ns:custom'"
+      - equal:
+          path: metadata.name
+          value: custom-advanced-customization
+
+  - it: requires update on blueprints for advanced changes
+    template: templates/advanced-customization-policy.yaml
+    capabilities: *vap
+    documentIndex: 0
+    asserts:
+      - matchRegex:
+          path: spec.validations[0].expression
+          pattern: "^!\\(variables.overlayChanged \\|\\| variables.orderChanged \\|\\| variables.scopeExpanded\\) \\|\\| authorizer.group\\('ai-factory.suse.com'\\).resource\\('blueprints'\\).check\\('update'\\).allowed\\(\\)$"
+      - equal:
+          path: spec.validations[0].reason
+          value: Forbidden
+      - matchRegex:
+          path: spec.variables[2].expression
+          pattern: "optional.of\\(c.kustomize\\)"
+      - matchRegex:
+          path: spec.variables[3].expression
+          pattern: "sets.equivalent\\("
+      - matchRegex:
+          path: spec.variables[4].expression
+          pattern: "targetClusters"
+      - matchRegex:
+          path: spec.variables[4].expression
+          pattern: "object.\\?spec.\\?source.\\?blueprint.\\?name.orValue\\(''\\) != oldObject.\\?spec.\\?source.\\?blueprint.\\?name.orValue\\(''\\)"
+      - matchRegex:
+          path: spec.variables[4].expression
+          pattern: "object.\\?spec.\\?source.\\?sourceType.orValue\\(''\\) != oldObject.\\?spec.\\?source.\\?sourceType.orValue\\(''\\)"
+
+  - it: is not rendered when disabled
+    template: templates/advanced-customization-policy.yaml
+    capabilities: *vap
+    set:
+      advancedCustomizationPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: is not rendered when the cluster lacks ValidatingAdmissionPolicy v1
+    template: templates/advanced-customization-policy.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: NOTES warn when enabled but the API is missing
+    template: templates/NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: the advanced-customization ValidatingAdmissionPolicy was not rendered"
+      - matchRegexRaw:
+          pattern: "--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy"
+
+  - it: NOTES do not warn when the policy is rendered
+    template: templates/NOTES.txt
+    capabilities: *vap
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "advanced-customization"
+
+  - it: NOTES do not warn when the policy is disabled
+    template: templates/NOTES.txt
+    set:
+      advancedCustomizationPolicy.enabled: false
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "advanced-customization"

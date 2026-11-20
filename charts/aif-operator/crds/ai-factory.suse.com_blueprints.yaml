@@ -57,6 +57,25 @@ spec:
                 items:
                   description: BlueprintComponent defines one Helm chart in a Blueprint.
                   properties:
+                    additionalPullSecretVendors:
+                      description: |-
+                        AdditionalPullSecretVendors lists extra vendors whose pull secrets are
+                        delivered to this component's namespace without touching its Helm values,
+                        for charts that create pods from another vendor's images (the chart's
+                        values must reference the secrets). Optional; absent behaves as before.
+                      items:
+                        description: |-
+                          ComponentVendor selects the secret-injection profile for a Blueprint
+                          component. "suse" preserves the historical combined-secret + global.imagePullSecrets
+                          behavior. "nvidia" creates ngc-secret + ngc-api in the target namespace
+                          and writes both common pull-secret value paths.
+                        enum:
+                        - suse
+                        - nvidia
+                        type: string
+                      maxItems: 2
+                      type: array
+                      x-kubernetes-list-type: set
                     chartName:
                       description: ChartName is the Helm chart name.
                       minLength: 1

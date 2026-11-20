@@ -94,6 +94,7 @@ suseai:
           reasons:
             accessDenied: Access was denied. Check the selected credentials and their permission to read this chart repository.
             suseAccessDenied: Access was denied. Check the selected credentials and their SUSE AI subscription entitlement. A registry login can succeed without permission to read these charts.
+            nvidiaAccessDenied: "Access was denied. The NGC API key authenticated but is not allowed to read these charts. Check that its organization has the entitlement for this repository (for example NIM, cuOpt or NVIDIA Run:ai); a key can read the index and public charts without it."
             notFound: The sample chart or version was not found or is not visible to these credentials. Check the chart name and mirror contents; this result does not establish a missing entitlement.
             invalidIndex: The server did not return a valid Helm chart index. Check the repository URL and access permissions in Settings; this response alone does not identify a credential problem.
             invalidChart: The server did not return a valid Helm chart manifest. Check that this repository contains the selected chart.
@@ -349,6 +350,8 @@ suseai:
         valuesMerged: "Each component shows the values it deploys with: the Blueprint defaults, with this workload's overrides merged on top."
         valuesOverridesOnly: "The Blueprint is not available, so only this workload's overrides are shown. They are merged onto the Blueprint defaults at deploy time."
         versionDrift: Version {deployed} is deployed. This configuration describes the requested version {requested}.
+        minimumSafeVersion: Minimum safe version
+        minimumSafeVersionHelp: A version whose Blueprint disables rollback has started deploying, so this workload can't be moved to an older version.
         plaintextNotice: Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.
         components: Components
         component: Component
@@ -654,6 +657,7 @@ suseai:
   workloads:
     customizedTooltip: Workload configuration deviates from the default blueprint definition
     rollbackDisabled: "Rollback is disabled for this Blueprint: its upgrades migrate data that older versions can't read."
+    rollbackBelowMinimumSafe: "Rollback is disabled: a version whose Blueprint disables rollback has started deploying. Use {version} or newer."
     openInRancher: Open in Rancher
     viewApp: Open app in Rancher
     viewNamespace: View namespace in Rancher

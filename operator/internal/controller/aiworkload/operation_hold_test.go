@@ -63,9 +63,7 @@ func putErrAppliedBundleDeployment(t *testing.T, r *AIWorkloadReconciler, bundle
 	_ = unstructured.SetNestedField(bd.Object, "d1", "spec", "deploymentID")
 	_ = unstructured.SetNestedField(bd.Object, "d1", "status", "appliedDeploymentID")
 	_ = unstructured.SetNestedField(bd.Object, "ErrApplied", "status", "display", "state")
-	if err := r.Create(context.Background(), bd); err != nil {
-		t.Fatalf("create BundleDeployment: %v", err)
-	}
+	putBundleDeployment(t, r, bd)
 }
 
 func activeOperation(t *testing.T, w *aiplatformv1alpha1.AIWorkload) *aiplatformv1alpha1.AIWorkloadOperation {

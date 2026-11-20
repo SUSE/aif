@@ -19,6 +19,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 
@@ -32,7 +33,7 @@ const (
 	advancedCustomizationVerb     = verbUpdate
 	advancedCustomizationResource = resourceBlueprints
 
-	advancedCustomizationForbidden = "Changing deploy order or adding a Kustomize overlay requires permission to update Blueprints"
+	advancedCustomizationForbidden = "Changing deploy order, adding a Kustomize overlay, or extending one to new target clusters, a new namespace or another Blueprint requires permission to update Blueprints"
 )
 
 // CanCustomizeAdvanced reports whether the caller in ctx may add or change
@@ -46,8 +47,14 @@ func (a *Authorizer) CanCustomizeAdvanced(ctx context.Context) (bool, error) {
 // keeping it unchanged, is not a change; nor is a stored dependsOn with
 // self-references and names absent from the Blueprint (known, nil when
 // unknown) pruned. Like the controller, only the first stored entry per
-// componentName counts.
+// componentName counts. Keeping an overlay while adding a target cluster,
+// changing targetNamespace or switching to another Blueprint (or source type)
+// is a change too: the overlay then reaches a scope it was not authorized
+// for. Blueprint version changes are exempt.
 func advancedChanges(existing *aiplatformv1alpha1.AIWorkloadSpec, next aiplatformv1alpha1.AIWorkloadSpec, known map[string]bool) bool {
+	if existing != nil && hasKustomize(next) && scopeExpanded(*existing, next) {
+		return true
+	}
 	stored := map[string]aiplatformv1alpha1.ComponentValueOverride{}
 	if existing != nil {
 		for _, ov := range existing.ComponentValues {
@@ -66,6 +73,35 @@ func advancedChanges(existing *aiplatformv1alpha1.AIWorkloadSpec, next aiplatfor
 		}
 	}
 	return false
+}
+
+func hasKustomize(spec aiplatformv1alpha1.AIWorkloadSpec) bool {
+	for _, ov := range spec.ComponentValues {
+		if ov.Kustomize != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func scopeExpanded(existing, next aiplatformv1alpha1.AIWorkloadSpec) bool {
+	if next.TargetNamespace != existing.TargetNamespace || next.Source.SourceType != existing.Source.SourceType ||
+		blueprintName(next.Source) != blueprintName(existing.Source) {
+		return true
+	}
+	for _, c := range next.TargetClusters {
+		if !slices.Contains(existing.TargetClusters, c) {
+			return true
+		}
+	}
+	return false
+}
+
+func blueprintName(src aiplatformv1alpha1.AIWorkloadSource) string {
+	if src.Blueprint == nil {
+		return ""
+	}
+	return src.Blueprint.Name
 }
 
 func dependsOnKept(component string, stored *[]string, next []string, known map[string]bool) bool {

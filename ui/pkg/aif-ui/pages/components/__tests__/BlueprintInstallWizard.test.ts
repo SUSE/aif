@@ -128,6 +128,8 @@ describe('blueprint install wizard credential preflight', () => {
   async function reviewStep() {
     vi.mocked(getBlueprint).mockResolvedValue({ spec: { displayName: 'My Blueprint', components } } as any);
     const wrapper = await setup();
+    // A selected cluster isolates the credential gate on Install.
+    (wrapper.vm as any).clusters = ['c-1'];
     (wrapper.vm as any).currentStep = 3;
     await flushPromises();
     return wrapper;
@@ -139,6 +141,16 @@ describe('blueprint install wizard credential preflight', () => {
     expect(getRegistryStatus).toHaveBeenCalled();
     expect(wrapper.text()).toContain("This blueprint needs credentials that aren't configured: NVIDIA.");
     expect(button(wrapper, 'Install').attributes('disabled')).toBeDefined();
+  });
+
+  it('enables Install for an anonymous NVIDIA mirror without credentials', async () => {
+    vi.mocked(getRegistryStatus).mockResolvedValue({
+      applicationCollection: true, suseRegistry: false, nvidia: false,
+      usable:                { applicationCollection: true, suseRegistry: false, nvidia: true },
+    });
+    const wrapper = await reviewStep();
+    expect(wrapper.text()).not.toContain('needs credentials');
+    expect(button(wrapper, 'Install').attributes('disabled')).toBeUndefined();
   });
 
   it('shows no banner when the registry status is unavailable', async () => {

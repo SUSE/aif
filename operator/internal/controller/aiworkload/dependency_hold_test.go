@@ -2,6 +2,7 @@ package aiworkload
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,11 +14,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/naming"
 )
 
@@ -93,10 +96,12 @@ func (f *holdFixture) helmOp(component string) *unstructured.Unstructured {
 }
 
 func addBundleScheme(scheme *kruntime.Scheme) {
-	scheme.AddKnownTypeWithName(bundleGVK, &unstructured.Unstructured{})
-	bl := bundleGVK
-	bl.Kind += "List"
-	scheme.AddKnownTypeWithName(bl, &unstructured.UnstructuredList{})
+	for _, gvk := range []schema.GroupVersionKind{bundleGVK, bundleDeploymentGVK} {
+		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+		l := gvk
+		l.Kind += "List"
+		scheme.AddKnownTypeWithName(l, &unstructured.UnstructuredList{})
+	}
 }
 
 func (f *holdFixture) setBundle(component string, ready int64) {
@@ -141,8 +146,23 @@ func putBundle(t *testing.T, r *AIWorkloadReconciler, ho *unstructured.Unstructu
 }
 
 // putBundleStatus creates or replaces a Bundle desired on one cluster with the
-// given digest label and ready/modified counts.
+// given digest label and ready/modified counts, and its BundleDeployment
+// applied at that digest in the matching state.
 func putBundleStatus(t *testing.T, r *AIWorkloadReconciler, key types.NamespacedName, digest string, ready, modified int64) {
+	t.Helper()
+	state := "NotReady"
+	switch {
+	case ready > 0:
+		state = "Ready"
+	case modified > 0:
+		state = "Modified"
+	}
+	putBundleDeployment(t, r, settledBD(key.Namespace, key.Name, "local", "s-"+digest, "s-"+digest, state))
+	putBundleOnly(t, r, key, digest, ready, modified)
+}
+
+// putBundleOnly is putBundleStatus without touching the BundleDeployment.
+func putBundleOnly(t *testing.T, r *AIWorkloadReconciler, key types.NamespacedName, digest string, ready, modified int64) {
 	t.Helper()
 	ctx := context.Background()
 	existing := &unstructured.Unstructured{}
@@ -164,6 +184,22 @@ func putBundleStatus(t *testing.T, r *AIWorkloadReconciler, key types.Namespaced
 	_ = unstructured.SetNestedField(b.Object, int64(1), "status", "summary", "desiredReady")
 	if err := r.Create(ctx, b); err != nil {
 		t.Fatalf("create bundle: %v", err)
+	}
+}
+
+// putBundleDeployment creates or replaces bd.
+func putBundleDeployment(t *testing.T, r *AIWorkloadReconciler, bd *unstructured.Unstructured) {
+	t.Helper()
+	ctx := context.Background()
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(bundleDeploymentGVK)
+	if err := r.Get(ctx, client.ObjectKeyFromObject(bd), existing); err == nil {
+		if err := r.Delete(ctx, existing); err != nil {
+			t.Fatalf("delete bundle deployment: %v", err)
+		}
+	}
+	if err := r.Create(ctx, bd); err != nil {
+		t.Fatalf("create bundle deployment: %v", err)
 	}
 }
 
@@ -309,5 +345,164 @@ func TestDependencyHold_GitOpsHeld(t *testing.T) {
 	f.reconcile()
 	if !gitOpsFileExists(t, f.remote, f.gitFile("cluster")) {
 		t.Fatal("cluster git file must be written once control-plane is settled")
+	}
+}
+
+// Fleet's first Bundle status write after a spec change carries the new
+// observedGeneration and digest with a summary of the old BundleDeployments.
+func TestDependencyHold_StaleBundleSummaryHeld(t *testing.T) {
+	f := newHoldFixture(t, []string{"control-plane"}, nil)
+	f.reconcile()
+	f.setBundle("control-plane", 1)
+	f.reconcile()
+	f.setBundle("cluster", 1)
+	f.reconcile()
+	before := f.helmOp("cluster")
+
+	f.w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{
+		{ComponentName: "control-plane", Values: &apixv1.JSON{Raw: []byte(`{"v":2}`)}},
+		{ComponentName: "cluster", Values: &apixv1.JSON{Raw: []byte(`{"v":2}`)}},
+	}
+	f.reconcile()
+	cp := f.helmOp("control-plane")
+	key := types.NamespacedName{Namespace: cp.GetNamespace(), Name: cp.GetName()}
+	putBundleOnly(t, f.r, key, helmOpDigest(cp), 1, 0)
+	putBundleDeployment(t, f.r, settledBD(key.Namespace, key.Name, "local", "s-new", "s-old", "Ready"))
+	f.reconcile()
+	if helmOpDigest(f.helmOp("cluster")) != helmOpDigest(before) {
+		t.Fatal("cluster released while control-plane's BundleDeployment still applied the previous deployment")
+	}
+	if cond := f.ready(); cond == nil || cond.Reason != "WaitingForDependencies" {
+		t.Fatalf("expected WaitingForDependencies, got %+v", cond)
+	}
+
+	putBundleDeployment(t, f.r, settledBD(key.Namespace, key.Name, "local", "s-new", "s-new", "Ready"))
+	f.reconcile()
+	if helmOpDigest(f.helmOp("cluster")) == helmOpDigest(before) {
+		t.Fatal("cluster must be released once control-plane's BundleDeployment applied the new deployment")
+	}
+}
+
+func TestDependencyHold_MissingBundleDeploymentHeld(t *testing.T) {
+	f := newHoldFixture(t, []string{"control-plane"}, nil)
+	f.reconcile()
+	cp := f.helmOp("control-plane")
+	putBundleOnly(t, f.r, types.NamespacedName{Namespace: cp.GetNamespace(), Name: cp.GetName()}, helmOpDigest(cp), 1, 0)
+	f.reconcile()
+	if f.helmOp("cluster") != nil {
+		t.Fatal("cluster must not render before control-plane has a BundleDeployment")
+	}
+}
+
+// chainFixture is a -> b -> comp on an HTTP repo, targeting the local cluster.
+func chainFixture(t *testing.T, compOverlay bool, puller chartArchivePuller) *holdFixture {
+	t.Helper()
+	scheme := clusterRepoErrorScheme(t)
+	addBundleScheme(scheme)
+	w := newBlueprintWorkload(time.Now().Add(-time.Hour))
+	w.UID = "uid-chain"
+	w.Spec.Source.Blueprint = &aiplatformv1alpha1.BlueprintSource{Name: "chain", Version: "1.0.0"}
+	if compOverlay {
+		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "comp", Kustomize: inlineOverlay("inst", emptyPatches)}}
+	}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("chain", "1.0.0")}}
+	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
+		{ChartRepo: "application-collection", ChartName: "a", ChartVersion: "1.0.0", Vendor: "suse", DependsOn: []string{"b"}},
+		{ChartRepo: "application-collection", ChartName: "b", ChartVersion: "1.0.0", Vendor: "suse", DependsOn: []string{"comp"}},
+		{ChartRepo: "application-collection", ChartName: "comp", ChartVersion: "1.0.0", Vendor: "suse"},
+	}
+	repo := repoObj("application-collection", map[string]any{"url": "https://charts.example.com"})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
+	return &holdFixture{t: t, r: &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator", ChartPuller: puller}, w: w}
+}
+
+func (f *holdFixture) cell(component string) *aiplatformv1alpha1.AIWorkloadComponentStatus {
+	for i := range f.w.Status.ComponentStatuses {
+		if f.w.Status.ComponentStatuses[i].ComponentName == component {
+			return &f.w.Status.ComponentStatuses[i]
+		}
+	}
+	return nil
+}
+
+func (f *holdFixture) expectHeld(want string) {
+	f.t.Helper()
+	cond := f.ready()
+	if cond == nil || cond.Reason != "WaitingForDependencies" || cond.Message != want {
+		f.t.Fatalf("Ready = %+v\nwant WaitingForDependencies %q", cond, want)
+	}
+}
+
+func TestDependencyHold_AcceptedFalseDependencyNamed(t *testing.T) {
+	f := chainFixture(t, false, nil)
+	f.reconcile()
+	ho := f.helmOp("comp")
+	_ = unstructured.SetNestedSlice(ho.Object, []any{map[string]any{
+		"type": "Accepted", "status": "False", "reason": "Error",
+		"message": `chart "comp" version "9.9.9" not found`, "lastUpdateTime": "2026-01-01T00:00:00Z",
+	}}, "status", "conditions")
+	if err := f.r.Update(context.Background(), ho); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	if c := f.cell("comp"); c == nil || c.Phase != aiplatformv1alpha1.AIWorkloadClusterPhaseFailed || c.Message != `Error: chart "comp" version "9.9.9" not found` {
+		t.Fatalf("comp cell = %+v, want Failed with the Accepted message", c)
+	}
+	f.expectHeld(`b: waiting for comp, which failed on local: Error: chart "comp" version "9.9.9" not found; a: waiting for b to roll out`)
+}
+
+func TestDependencyHold_ErrAppliedDependencyNamed(t *testing.T) {
+	f := chainFixture(t, false, nil)
+	f.reconcile()
+	ho := f.helmOp("comp")
+	d := helmOpDigest(ho)
+	bd := settledBD("fleet-local", ho.GetName(), "local", "s-"+d, "s-"+d, "ErrApplied")
+	l := bd.GetLabels()
+	l["fleet.cattle.io/cluster"] = "local"
+	bd.SetLabels(l)
+	_ = unstructured.SetNestedField(bd.Object, "helm install failed: image pull secret missing", "status", "display", "message")
+	putBundleDeployment(t, f.r, bd)
+	putBundleOnly(t, f.r, types.NamespacedName{Namespace: "fleet-local", Name: ho.GetName()}, d, 0, 0)
+	f.reconcile()
+	f.expectHeld("b: waiting for comp, which failed on local: helm install failed: image pull secret missing; a: waiting for b to roll out")
+}
+
+func TestDependencyHold_PendingDependencyKeepsWording(t *testing.T) {
+	f := chainFixture(t, false, nil)
+	f.reconcile()
+	f.setBundle("comp", 0)
+	f.reconcile()
+	f.expectHeld("b: waiting for comp to roll out; a: waiting for b to roll out")
+}
+
+func TestDependencyHold_FetchErrorUnchanged(t *testing.T) {
+	f := chainFixture(t, true, func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) {
+		return nil, fmt.Errorf("registry unreachable")
+	})
+	_, _, _ = f.r.reconcileBlueprintStatus(context.Background(), f.w)
+	cond := f.ready()
+	if cond == nil || cond.Reason != "ComponentReconcileFailed" || !strings.Contains(cond.Message, `Component "comp" from repo "application-collection" could not be reconciled`) || !strings.Contains(cond.Message, "registry unreachable") {
+		t.Fatalf("Ready = %+v, want the unchanged ComponentReconcileFailed", cond)
+	}
+}
+
+func TestHeldConditionMessage_MixedAndTruncated(t *testing.T) {
+	cells := []aiplatformv1alpha1.AIWorkloadComponentStatus{
+		{ComponentName: "x", ClusterID: "c-1", Phase: aiplatformv1alpha1.AIWorkloadClusterPhaseFailed},
+		{ComponentName: "y", ClusterID: "local", Phase: aiplatformv1alpha1.AIWorkloadClusterPhasePending},
+	}
+	got := heldConditionMessage([]heldComponent{{name: "b", pending: []string{"x", "y"}}}, cells)
+	if want := "b: waiting for x, which failed on c-1; also waiting for y to roll out"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	more := []aiplatformv1alpha1.AIWorkloadComponentStatus{cells[0], cells[1],
+		{ComponentName: "x", ClusterID: "c-2", Phase: aiplatformv1alpha1.AIWorkloadClusterPhaseFailed},
+		{ComponentName: "x", ClusterID: "c-3", Phase: aiplatformv1alpha1.AIWorkloadClusterPhaseFailed}}
+	if got, want := heldConditionMessage([]heldComponent{{name: "b", pending: []string{"x"}}}, more), "b: waiting for x, which failed on c-1 (and 2 more)"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	cells[0].Message = strings.Repeat("e", 2000)
+	if n := len(truncateForCondition(heldConditionMessage([]heldComponent{{name: "b", pending: []string{"x"}}}, cells))); n > 1024+len("… (truncated)") {
+		t.Fatalf("condition message length %d exceeds the cap", n)
 	}
 }

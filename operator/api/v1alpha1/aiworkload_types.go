@@ -169,6 +169,7 @@ type AIWorkloadSpec struct {
 	DeployStrategy AIWorkloadDeployStrategy `json:"deployStrategy,omitempty"`
 	// ComponentValues holds per-component Helm value overrides.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
 	ComponentValues []ComponentValueOverride `json:"componentValues,omitempty"`
 	// FleetBundleNames are the Fleet Bundle CR names for this workload.
 	// App-sourced workloads have exactly one entry; Blueprint-sourced workloads
@@ -294,6 +295,12 @@ type AIWorkloadStatus struct {
 	// DeployedSource is the last certified (proven deployed+healthy) blueprint version.
 	// +optional
 	DeployedSource *DeployedSourceSnapshot `json:"deployedSource,omitempty"`
+	// MinimumSafeVersion records, as "<blueprint name>@<version>", the highest
+	// rollback-disabled Blueprint version the controller has started
+	// rendering. Moving to an older version of that Blueprint is refused; unset
+	// means the deployed version is the floor.
+	// +optional
+	MinimumSafeVersion string `json:"minimumSafeVersion,omitempty"`
 	// ComponentStatuses is the per-(component, cluster) matrix, sorted by (componentName, clusterId).
 	// +optional
 	ComponentStatuses []AIWorkloadComponentStatus `json:"componentStatuses,omitempty"`

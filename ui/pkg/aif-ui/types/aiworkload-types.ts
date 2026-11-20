@@ -94,6 +94,8 @@ export interface AIWorkloadStatus {
   activeOperation?:    AIWorkloadOperation;
   customized?:         boolean;
   resolvedValues?:     ResolvedValue[];
+  /** "<blueprint name>@<version>": the highest rollback-disabled version the operator started rendering; moves below it are refused. */
+  minimumSafeVersion?: string;
 }
 
 export interface ResolvedValue {
@@ -111,11 +113,20 @@ export interface AIWorkload {
   status?:    AIWorkloadStatus;
 }
 
-/** Whether the operator can resolve each registry's credentials. */
-export interface RegistryStatus {
+export interface RegistryFlags {
   applicationCollection: boolean;
   suseRegistry:          boolean;
   nvidia:                boolean;
+}
+
+/**
+ * Top-level fields: whether the operator can resolve each registry's
+ * credentials. `usable`: whether the operator can serve the registry's charts
+ * (credentials resolve or an anonymous mirror is set); absent from older
+ * operators.
+ */
+export interface RegistryStatus extends RegistryFlags {
+  usable?: RegistryFlags;
 }
 
 /** What the calling user may do, as evaluated by the operator. */

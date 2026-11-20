@@ -25,6 +25,7 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	gogitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/require"
 
@@ -108,7 +109,7 @@ func TestReadDir_ReturnsFilesUnderPath(t *testing.T) {
 	})
 
 	c := igit.NewForRepo(remote, "main", nil, nil, false)
-	got, err := c.ReadDir(context.Background(), "overlay")
+	got, err := c.ReadDir(context.Background(), "overlay", headCommit(t, remote))
 	require.NoError(t, err)
 
 	require.Equal(t, map[string]string{
@@ -125,7 +126,7 @@ func TestReadDir_RootAndLeadingSlash(t *testing.T) {
 	c := igit.NewForRepo(remote, "main", nil, nil, false)
 
 	for _, p := range []string{".", "/", ""} {
-		got, err := c.ReadDir(context.Background(), p)
+		got, err := c.ReadDir(context.Background(), p, headCommit(t, remote))
 		require.NoError(t, err, "path %q", p)
 		require.Equal(t, map[string]string{
 			"kustomization.yaml":      "patches: []\n",
@@ -133,7 +134,7 @@ func TestReadDir_RootAndLeadingSlash(t *testing.T) {
 		}, got, "path %q", p)
 	}
 
-	got, err := c.ReadDir(context.Background(), "/overlay/")
+	got, err := c.ReadDir(context.Background(), "/overlay/", headCommit(t, remote))
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"deployment.yaml": "kind: Deployment\n"}, got)
 }
@@ -145,7 +146,7 @@ func TestReadDir_RejectsOversizeTree(t *testing.T) {
 	})
 
 	c := igit.NewForRepo(remote, "main", nil, nil, false)
-	_, err := c.ReadDir(context.Background(), "overlay")
+	_, err := c.ReadDir(context.Background(), "overlay", headCommit(t, remote))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds")
 }
@@ -162,7 +163,7 @@ func TestNewForRepo_DefaultsBranch(t *testing.T) {
 	})
 
 	c := igit.NewForRepo(remote, "", nil, nil, false)
-	got, err := c.ReadDir(context.Background(), "overlay")
+	got, err := c.ReadDir(context.Background(), "overlay", headCommit(t, remote))
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{
 		"kustomization.yaml": "resources:\n- deployment.yaml\n",
@@ -182,5 +183,65 @@ func TestReadFile_ReturnsContentAndExistence(t *testing.T) {
 	}
 	if _, _, err := c.ReadFile(context.Background(), "workloads/a.yaml", 4); err == nil {
 		t.Fatalf("want an error for a file over maxBytes")
+	}
+}
+
+// headCommit is the hash the remote's main branch points at.
+func headCommit(t *testing.T, remote string) string {
+	t.Helper()
+	repo, err := gogit.PlainOpen(remote)
+	require.NoError(t, err)
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName("main"), true)
+	require.NoError(t, err)
+	return ref.Hash().String()
+}
+
+// pushCommit commits files on top of the remote's main branch.
+func pushCommit(t *testing.T, remote string, files map[string]string) {
+	t.Helper()
+	local, err := gogit.PlainClone(t.TempDir(), false, &gogit.CloneOptions{URL: remote, ReferenceName: plumbing.NewBranchReferenceName("main")})
+	require.NoError(t, err)
+	wt, err := local.Worktree()
+	require.NoError(t, err)
+	for p, content := range files {
+		require.NoError(t, wt.Filesystem.MkdirAll(filepath.Dir(p), 0o755))
+		f, err := wt.Filesystem.Create(p)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		_, err = wt.Add(p)
+		require.NoError(t, err)
+	}
+	_, err = wt.Commit("next", &gogit.CommitOptions{Author: &object.Signature{Name: "test", Email: "t@t.com", When: time.Now()}})
+	require.NoError(t, err)
+	require.NoError(t, local.Push(&gogit.PushOptions{}))
+}
+
+func TestReadDir_ReadsTheRequestedCommitNotTheTip(t *testing.T) {
+	remote := newReadDirTestRemote(t, map[string]string{"overlay/kustomization.yaml": "v1\n"})
+	indexed := headCommit(t, remote)
+	pushCommit(t, remote, map[string]string{"overlay/kustomization.yaml": "v2\n"})
+
+	c := igit.NewForRepo(remote, "main", nil, nil, false)
+	got, err := c.ReadDir(context.Background(), "overlay", indexed)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"kustomization.yaml": "v1\n"}, got)
+
+	got, err = c.ReadDir(context.Background(), "overlay", headCommit(t, remote))
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"kustomization.yaml": "v2\n"}, got)
+}
+
+func TestReadDir_UnknownCommitIsRetryableError(t *testing.T) {
+	remote := newReadDirTestRemote(t, map[string]string{"overlay/kustomization.yaml": "v1\n"})
+	c := igit.NewForRepo(remote, "main", nil, nil, false)
+	_, err := c.ReadDir(context.Background(), "overlay", strings.Repeat("ab", 20))
+	require.ErrorIs(t, err, igit.ErrCommitNotFound)
+	require.Contains(t, err.Error(), "index is behind the branch")
+
+	for _, bad := range []string{"", "abc123"} {
+		_, err := c.ReadDir(context.Background(), "overlay", bad)
+		require.ErrorContains(t, err, "full commit hash", "commit %q", bad)
 	}
 }

@@ -11,12 +11,14 @@
       {{ advancedError }}
     </Banner>
     <Banner v-if="mode === 'manage' && Object.keys(locked).length > 0" color="info" class="mb-20">
-      {{ t('suseai.wizard.hints.lockedValues', 'These values were set at install and are locked. Leave them unchanged in the values below; saving a different value is rejected.') }}
-      <ul class="mt-10">
-        <li v-for="(pins, compName) in locked" :key="compName">
-          <strong>{{ compName }}</strong>: {{ pins.map((p) => `${p.path} = ${p.value}`).join(', ') }}
-        </li>
-      </ul>
+      <div>
+        {{ t('suseai.wizard.hints.lockedValues', 'These values were set at install and are locked. Leave them unchanged in the values below; saving a different value is rejected.') }}
+        <ul class="mt-10">
+          <li v-for="(pins, compName) in locked" :key="compName">
+            <strong>{{ compName }}</strong>: {{ pins.map((p) => `${p.path} = ${p.value}`).join(', ') }}
+          </li>
+        </ul>
+      </div>
     </Banner>
 
     <div v-for="(comp, idx) in components" :key="comp.chartName" class="accordion-panel" :class="{ 'is-disabled': !editedEnabled[comp.chartName] }">

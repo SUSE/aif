@@ -158,3 +158,85 @@ func TestUpgrade_OlderTargetHonoursRollbackPolicy(t *testing.T) {
 		t.Fatalf("newer target: want 202, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// v1 certified while a rollback-disabled v2 started rendering (the controller
+// recorded the floor) but is not yet certified: returning to v1 is refused on
+// every API path, also after v2's Blueprint is deleted and for a bare floor
+// written by an earlier build.
+func TestAPI_ReturnToCertifiedV1BlockedWhileV2InFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		minimumSafe string
+		bps         []*aiplatformv1alpha1.Blueprint
+	}{
+		{"v2 Blueprint disabled", "rag@2.0.0", []*aiplatformv1alpha1.Blueprint{rollbackBP("2.0.0", aiplatformv1alpha1.RollbackDisabled), rollbackBP("1.0.0", "")}},
+		{"v2 Blueprint deleted", "rag@2.0.0", []*aiplatformv1alpha1.Blueprint{rollbackBP("1.0.0", "")}},
+		{"bare legacy floor", "2.0.0", []*aiplatformv1alpha1.Blueprint{rollbackBP("1.0.0", "")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wl := func(name string) *aiplatformv1alpha1.AIWorkload {
+				w := rollbackableWL(name)
+				w.Status.MinimumSafeVersion = tc.minimumSafe
+				return w
+			}
+			h, _ := handlerWithWorkloadAndBlueprints(t, wl("v2-up"), tc.bps...)
+			if rec := postUpgrade(h, "v2-up", "1.0.0"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "use 2.0.0 or newer") {
+				t.Fatalf("upgrade to v1: want 400 pointing at 2.0.0, got %d: %s", rec.Code, rec.Body.String())
+			}
+			h, c := handlerWithWorkloadAndBlueprints(t, wl("v2-rb"), tc.bps...)
+			if rec := postRollback(h, "v2-rb"); rec.Code != http.StatusBadRequest {
+				t.Fatalf("rollback: want 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			assertNoRollbackAnnotation(t, c, "v2-rb")
+
+			existing := wl("v2-put")
+			spec := *existing.Spec.DeepCopy()
+			spec.Source.Blueprint.Version = "1.0.0"
+			if rec := putWorkload(t, existing, spec, tc.bps...); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "use 2.0.0 or newer") {
+				t.Fatalf("PUT v1: want 400 pointing at 2.0.0, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// A spec version that never rendered (a typo with no Blueprint, an allowed
+// version refused before any write, or a disabled one not yet rendered) does
+// not block returning to the deployed version.
+func TestAPI_UnrenderedSpecDoesNotBlockReturnToDeployed(t *testing.T) {
+	for _, tc := range []struct {
+		name, spec string
+		bps        []*aiplatformv1alpha1.Blueprint
+	}{
+		{"typo without a Blueprint", "9.9.9", []*aiplatformv1alpha1.Blueprint{rollbackBP("1.0.0", "")}},
+		{"allowed version that failed before rendering", "1.1.0", []*aiplatformv1alpha1.Blueprint{rollbackBP("1.1.0", ""), rollbackBP("1.0.0", aiplatformv1alpha1.RollbackDisabled)}},
+		{"disabled version not yet rendered", "2.0.0", []*aiplatformv1alpha1.Blueprint{rollbackBP("2.0.0", aiplatformv1alpha1.RollbackDisabled), rollbackBP("1.0.0", "")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wl := func(name string) *aiplatformv1alpha1.AIWorkload {
+				w := blueprintWL(name)
+				w.Spec.Source.Blueprint.Version = tc.spec
+				w.Status.DeployedSource = &aiplatformv1alpha1.DeployedSourceSnapshot{Version: "1.0.0"}
+				return w
+			}
+			existing := wl("put-back")
+			spec := *existing.Spec.DeepCopy()
+			spec.Source.Blueprint.Version = "1.0.0"
+			if rec := putWorkload(t, existing, spec, tc.bps...); strings.Contains(rec.Body.String(), "rollback is disabled") {
+				t.Fatalf("PUT back to 1.0.0 refused: %d: %s", rec.Code, rec.Body.String())
+			}
+			h, _ := handlerWithWorkloadAndBlueprints(t, wl("up-back"), tc.bps...)
+			if rec := postUpgrade(h, "up-back", "1.0.0"); rec.Code != http.StatusAccepted {
+				t.Fatalf("upgrade back to 1.0.0: want 202, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAPI_MinimumSafeVersionAllowsNewerTarget(t *testing.T) {
+	w := rollbackableWL("floor-up")
+	w.Status.MinimumSafeVersion = "rag@2.0.0"
+	h, _ := handlerWithWorkloadAndBlueprints(t, w, rollbackBP("3.0.0", ""))
+	if rec := postUpgrade(h, "floor-up", "3.0.0"); rec.Code != http.StatusAccepted {
+		t.Fatalf("upgrade above the floor: want 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

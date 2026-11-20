@@ -383,7 +383,7 @@ func main() {
 	// handler served, so each request is checked with a SubjectAccessReview.
 	authz := api.NewAuthorizer(mgr.GetClient(), api.DefaultRules(operatorNamespace))
 	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(authz)
-	api.NewAIWorkloadHandler(mgr.GetClient()).Register(authz)
+	api.NewAIWorkloadHandler(mgr.GetClient()).WithAPIReader(mgr.GetAPIReader()).Register(authz)
 	api.NewBlueprintHandler(mgr.GetClient()).Register(authz)
 	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(authz)
 	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(authz)

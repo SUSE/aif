@@ -103,8 +103,9 @@ func ValidateFiles(dir string, files map[string]string) error {
 }
 
 // HasKustomization reports whether files contains a kustomize root file
-// directly under dir. Fleet's post-render runs `kustomize build <dir>`, which
-// fails without one, so it is caught up front with a clear message instead.
+// directly under dir. Fleet's post-render only reads <dir>/kustomization.yaml
+// and silently skips the overlay without it, so a missing root is caught up
+// front; the controller renames the other spellings to kustomization.yaml.
 func HasKustomization(files map[string]string, dir string) bool {
 	for _, name := range FileNames {
 		if _, ok := files[dir+"/"+name]; ok {

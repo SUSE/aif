@@ -1,0 +1,23 @@
+global:
+  domain: aif:auto-domain:runai
+  ingress:
+    ingressClass: aif:auto-ingress-class
+    extraAnnotations:
+      cert-manager.io/issuer: runai-ca-issuer
+      cert-manager.io/issuer-kind: Issuer
+  customCA:
+    enabled: true
+    # The CA key pair comes from the setup component (runai-setup). Not optional:
+    # pods wait for the CA instead of starting without it.
+    volumes:
+      - name: runai-ca-cert
+        secret:
+          secretName: runai-ca-keypair
+          optional: false
+          items:
+            - key: ca.crt
+              path: runai-ca.pem
+tenantsManager:
+  config:
+    adminUsername: admin@runai.local
+    adminPassword: ""

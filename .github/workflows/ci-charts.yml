@@ -44,7 +44,7 @@ jobs:
           # A chart with no suites exits 0, so a deleted tests/ directory would
           # pass silently. Require the expected suite count so removals fail CI.
           # When adding new suites, update EXPECTED_SUITES below.
-          EXPECTED_SUITES=14
+          EXPECTED_SUITES=15
           suites=$(sed -nE 's/^Test Suites:.*[, ]([0-9]+) total$/\1/p' unittest.out)
           if [ -z "$suites" ] || [ "$suites" -lt "$EXPECTED_SUITES" ]; then
             echo "::error::expected ${EXPECTED_SUITES} helm-unittest suites, got ${suites:-0} — suite files may be missing"
@@ -74,3 +74,58 @@ jobs:
             exit 1
           fi
 
+  # Run:ai Blueprint sources: the generated Blueprint must match the sources,
+  # and a Blueprint already on the base branch must not change.
+  blueprint-src:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: charts/aif-operator/blueprint-src/nvidia-runai
+    steps:
+      # The base branch fetch below is anonymous, which works for this public repo.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The registrar and preflight images run registry.suse.com/bci/python:3.12.
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Check the generated Blueprint is up to date
+        run: python3 build.py --check
+
+      # Both suites read YAML with mikefarah yq v4, preinstalled on ubuntu-latest;
+      # without it the registrar RBAC tests skip and test_build fails.
+      - name: Run build tests (needs yq v4)
+        run: python3 -m unittest -q test_build
+
+      - name: Run registrar and preflight tests (needs yq v4)
+        run: python3 -m unittest discover -s tests -q
+
+      # Published name-version Blueprints are immutable (see build.py): changing
+      # shared sources must come with a version bump, which writes a new file.
+      - name: Keep published Run:ai Blueprints unchanged
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          status=0
+          published=$(git ls-tree -r --name-only "origin/${BASE_REF}" -- charts/aif-operator/files/blueprints/ \
+                        | grep -E '/nvidia-runai[^/]*-[^/]*\.yaml$' || true)
+          for f in ${published}; do
+            if [ ! -e "$f" ]; then
+              echo "::error::${f} is published on ${BASE_REF} and must not be deleted or renamed"
+              status=1
+            elif ! git diff --quiet "origin/${BASE_REF}" -- "$f"; then
+              echo "::error file=${f}::${f} is published on ${BASE_REF} and must not change; bump version in variants/nvaie.yaml instead"
+              git diff --stat "origin/${BASE_REF}" -- "$f"
+              status=1
+            fi
+          done
+          exit "${status}"

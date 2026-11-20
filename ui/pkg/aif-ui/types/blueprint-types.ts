@@ -25,6 +25,7 @@ export interface BlueprintComponent {
   chartName:        string;
   chartVersion:     string;
   vendor?:          BlueprintComponentVendor;
+  additionalPullSecretVendors?: BlueprintComponentVendor[];
   values?:          Record<string, any>;
   targetNamespace?: string;
   releaseName?:     string;

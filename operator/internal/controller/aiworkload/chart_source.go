@@ -22,8 +22,10 @@ import (
 	"crypto/x509"
 	stderrors "errors"
 	"fmt"
+	"net/http"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/catalog"
 	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
 )
 
@@ -68,16 +70,18 @@ func (r *AIWorkloadReconciler) fetchChartArchive(ctx context.Context, c aiplatfo
 	if repoInfo.Kind == repoKindOCI {
 		req.RepoURL = ociChartRef(repoInfo.URL, c.ChartName)
 	}
+	var secretCA []byte
 	if repoInfo.ClientSecret != "" {
-		user, pass, err := r.readBasicAuthSecret(ctx, repoInfo.ClientSecretNS, repoInfo.ClientSecret)
+		user, pass, ca, err := r.readRepoAuthSecret(ctx, repoInfo.ClientSecretNS, repoInfo.ClientSecret)
 		if err != nil {
 			return nil, fmt.Errorf("read clientSecret %q for repo %q: %w", repoInfo.ClientSecret, c.ChartRepo, err)
 		}
 		if pass != "" {
 			req.Auth = &infrahelm.RegistryAuth{Username: user, Password: pass}
 		}
+		secretCA = ca
 	}
-	tlsCfg, err := clusterRepoTLSConfig(repoInfo)
+	tlsCfg, err := clusterRepoTLSConfig(repoInfo, secretCA)
 	if err != nil {
 		return nil, fmt.Errorf("repo %q: %w", c.ChartRepo, err)
 	}
@@ -93,27 +97,55 @@ func (r *AIWorkloadReconciler) fetchChartArchive(ctx context.Context, c aiplatfo
 		if stderrors.Is(err, infrahelm.ErrIndexTooLarge) {
 			return nil, chartTooLarge(c, true, fmt.Sprintf("repository %q has an index.yaml over the %d MiB limit", c.ChartRepo, maxChartIndexBytes>>20), "")
 		}
-		return nil, fmt.Errorf("fetch chart %s@%s from repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
+		err = fmt.Errorf("fetch chart %s@%s from repo %q: %w", c.ChartName, c.ChartVersion, c.ChartRepo, err)
+		if hint := chartAuthHint(err, c.ChartRepo, repoInfo); hint != "" {
+			return nil, fmt.Errorf("%s: %w", hint, err)
+		}
+		return nil, err
 	}
 	return tgz, nil
 }
 
+// chartAuthHint explains a 401/403 chart download in terms of the
+// repository's credentials, or returns "" for any other failure.
+func chartAuthHint(err error, repo string, repoInfo clusterRepoInfo) string {
+	var se *infrahelm.HTTPStatusError
+	if !stderrors.As(err, &se) || (se.Code != http.StatusUnauthorized && se.Code != http.StatusForbidden) {
+		return ""
+	}
+	if repoInfo.ClientSecret == "" {
+		return fmt.Sprintf("repository %q requires credentials but none are configured for it in Settings", repo)
+	}
+	if se.Code == http.StatusUnauthorized {
+		return fmt.Sprintf("the credentials configured for repository %q were rejected (HTTP 401): check them in Settings", repo)
+	}
+	hint := fmt.Sprintf("the credentials configured for repository %q authenticate but are not allowed to download this chart (HTTP 403): the account behind them probably lacks the required entitlement", repo)
+	if catalog.IsNGCURL(repoInfo.URL) {
+		hint += "; for NVIDIA gated repositories (NIM, cuOpt, NVIDIA Run:ai) use an NGC API key from an organization with that entitlement"
+	}
+	return hint
+}
+
 // clusterRepoTLSConfig maps a ClusterRepo's TLS settings onto a client config:
-// caBundle is trusted in addition to the system roots, insecureSkipTLSVerify
-// disables verification (and so wins over caBundle, as in Rancher). nil means
-// "system defaults".
-func clusterRepoTLSConfig(repoInfo clusterRepoInfo) (*tls.Config, error) {
-	if len(repoInfo.CABundle) == 0 && !repoInfo.InsecureSkipTLSVerify {
+// caBundle and the clientSecret's cacerts (where the managed registry repos
+// keep their CA, which Fleet honours too) are trusted in addition to the
+// system roots, insecureSkipTLSVerify disables verification (and so wins over
+// both, as in Rancher). nil means "system defaults".
+func clusterRepoTLSConfig(repoInfo clusterRepoInfo, secretCA []byte) (*tls.Config, error) {
+	if len(repoInfo.CABundle) == 0 && len(secretCA) == 0 && !repoInfo.InsecureSkipTLSVerify {
 		return nil, nil
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if len(repoInfo.CABundle) > 0 {
+	if len(repoInfo.CABundle) > 0 || len(secretCA) > 0 {
 		pool, err := x509.SystemCertPool()
 		if err != nil || pool == nil {
 			pool = x509.NewCertPool()
 		}
-		if !pool.AppendCertsFromPEM(repoInfo.CABundle) {
+		if len(repoInfo.CABundle) > 0 && !pool.AppendCertsFromPEM(repoInfo.CABundle) {
 			return nil, fmt.Errorf("spec.caBundle contains no PEM certificates")
+		}
+		if len(secretCA) > 0 && !pool.AppendCertsFromPEM(secretCA) {
+			return nil, fmt.Errorf("clientSecret key cacerts contains no PEM certificates")
 		}
 		cfg.RootCAs = pool
 	}

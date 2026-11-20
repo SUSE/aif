@@ -1,0 +1,9 @@
+global:
+  customCA:
+    enabled: true
+clusterConfig:
+  global:
+    ingress:
+      ingressClass: aif:auto-ingress-class
+openShift:
+  mode: Disabled

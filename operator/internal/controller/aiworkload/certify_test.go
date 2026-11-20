@@ -30,6 +30,55 @@ func bundle(digest string, generation, observed, unavailable, ready, desired int
 	return b
 }
 
+// settledBD is a BundleDeployment of bundle ns/name on one cluster whose
+// spec targets deploymentID and whose agent last applied applied in state.
+func settledBD(ns, name, cluster, deploymentID, applied, state string) *unstructured.Unstructured {
+	bd := &unstructured.Unstructured{Object: map[string]any{}}
+	bd.SetGroupVersionKind(bundleDeploymentGVK)
+	bd.SetNamespace("cluster-" + ns + "-" + cluster)
+	bd.SetName(name)
+	bd.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/bundle-namespace": ns})
+	_ = unstructured.SetNestedField(bd.Object, deploymentID, "spec", "deploymentID")
+	_ = unstructured.SetNestedField(bd.Object, deploymentID, "spec", "stagedDeploymentID")
+	_ = unstructured.SetNestedField(bd.Object, applied, "status", "appliedDeploymentID")
+	_ = unstructured.SetNestedField(bd.Object, state, "status", "display", "state")
+	return bd
+}
+
+func TestBundleDeploymentsApplied(t *testing.T) {
+	ready := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "Ready")
+	modified := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "Modified")
+	lagging := *settledBD("fleet-local", "b", "a", "s-new", "s-old", "Ready")
+	unpromoted := *settledBD("fleet-local", "b", "a", "s-old", "s-old", "Ready")
+	_ = unstructured.SetNestedField(unpromoted.Object, "s-new", "spec", "stagedDeploymentID")
+	notReady := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "NotReady")
+	deleting := *settledBD("fleet-local", "b", "c", "s-old", "s-old", "WaitApplied")
+	now := metav1.Now()
+	deleting.SetDeletionTimestamp(&now)
+	for _, tc := range []struct {
+		name          string
+		bds           []unstructured.Unstructured
+		clusters      int
+		allowModified bool
+		want          bool
+	}{
+		{"ready", []unstructured.Unstructured{ready}, 1, false, true},
+		{"applied previous deployment", []unstructured.Unstructured{lagging}, 1, true, false},
+		{"staged not promoted", []unstructured.Unstructured{unpromoted}, 1, true, false},
+		{"missing BundleDeployment", nil, 1, true, false},
+		{"fewer than clusters", []unstructured.Unstructured{ready}, 2, true, false},
+		{"modified certifies nothing", []unstructured.Unstructured{modified}, 1, false, false},
+		{"modified settles a dependency", []unstructured.Unstructured{modified}, 1, true, true},
+		{"not ready", []unstructured.Unstructured{notReady}, 1, true, false},
+		{"deleting BundleDeployment ignored", []unstructured.Unstructured{ready, deleting}, 1, false, true},
+		{"zero clusters", nil, 0, false, true},
+	} {
+		if got := bundleDeploymentsApplied(tc.bds, tc.clusters, tc.allowModified); got != tc.want {
+			t.Errorf("%s: bundleDeploymentsApplied = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestBundleRenderCurrent(t *testing.T) {
 	if !bundleRenderCurrent(bundle("d", 3, 3, 0, 1, 1), "d") {
 		t.Fatal("should be render-current: digest matches, observed==generation")
@@ -153,6 +202,24 @@ func TestCertifyDeployedSource(t *testing.T) {
 		t.Fatalf("failed to update bundle to ready: %v", err)
 	}
 
+	// Bundle summary alone: Fleet's first status write after a spec change
+	// reports old deployments, so certification waits for the BundleDeployment.
+	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+		t.Fatalf("certifyDeployedSource failed with ready bundle: %v", err)
+	}
+	if w.Status.DeployedSource != nil {
+		t.Fatalf("expected DeployedSource nil without an applied BundleDeployment, got %+v", w.Status.DeployedSource)
+	}
+	if err := cl.Create(ctx, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-0", "Ready")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+		t.Fatal(err)
+	}
+	if w.Status.DeployedSource != nil {
+		t.Fatalf("expected DeployedSource nil while the BundleDeployment applied the previous deployment, got %+v", w.Status.DeployedSource)
+	}
+	putBundleDeployment(t, r, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-1", "Ready"))
 	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
 		t.Fatalf("certifyDeployedSource failed with ready bundle: %v", err)
 	}
@@ -200,7 +267,7 @@ func TestCertifyDeployedSource_RefreshesCertifiedAtForActiveVersionOp(t *testing
 			b := bundle(renderDigestLabelValue("sha256:d"), 1, 1, 0, 1, 1)
 			b.SetName(keys[0].Name)
 			b.SetNamespace("fleet-local")
-			cl := fakeClient(w, b)
+			cl := fakeClient(w, b, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-1", "Ready"))
 			r := &AIWorkloadReconciler{Client: cl, Scheme: cl.Scheme()}
 			if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
 				t.Fatal(err)

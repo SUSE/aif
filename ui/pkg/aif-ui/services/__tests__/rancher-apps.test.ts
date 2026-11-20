@@ -557,9 +557,12 @@ describe('listGitClusterRepoNames', () => {
       { metadata: { name: 'custom-http', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { url: 'https://charts.example.com' } },
       { metadata: { name: 'ssh-scp', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'git@git.example.com:org/o.git' } },
       { metadata: { name: 'ssh-url', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'ssh://git@git.example.com/org/o.git' } },
+      { metadata: { name: 'plain-http', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'http://git.example.com/o' } },
+      { metadata: { name: 'plain-http-upper', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'HTTP://git.example.com/o' } },
+      { metadata: { name: 'https-upper', labels: { 'ai-factory.suse.com/custom-repo': 'true' } }, spec: { gitRepo: 'HTTPS://git.example.com/o' } },
     ];
     const store = { dispatch: vi.fn().mockResolvedValue({ data: { items } }) } as unknown as Dispatchable;
 
-    expect(await listGitClusterRepoNames(store)).toEqual(['overlays']);
+    expect(await listGitClusterRepoNames(store)).toEqual(['overlays', 'https-upper']);
   });
 });

@@ -30,14 +30,13 @@ export function requiredCredentialForRepo(chartRepo: string): RequiredCredential
 }
 
 /**
- * A credential counts as configured when the operator can resolve it. We read
- * this from getRegistryStatus() (the /registry-status endpoint), which resolves
- * credentials the way the operator does (EffectiveRefs: Settings spec refs and
- * well-known secret names) and reports true only when both user and token
- * resolve, the operator's requirement before it creates the ClusterRepo.
+ * A registry is satisfied when the operator can create its ClusterRepos, per
+ * getRegistryStatus(): `usable` covers resolved credentials and an anonymous
+ * NVIDIA mirror. An older operator omits `usable`; its top-level fields (both
+ * user and token resolve) are used instead.
  */
 function isCredentialConfigured(cred: RequiredCredential, status: RegistryStatus | null): boolean {
-  return status?.[cred] === true;
+  return (status?.usable ?? status)?.[cred] === true;
 }
 
 /**

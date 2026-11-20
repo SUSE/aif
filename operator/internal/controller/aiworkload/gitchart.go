@@ -274,6 +274,10 @@ func chartTgzToBundleResources(tgz []byte) (resources []any, chartDir string, er
 			return nil, "", fmt.Errorf("tar: %w", err)
 		}
 		if h.Typeflag != tar.TypeReg {
+			// Charged a header block each, so a flood of empty entries is bounded too.
+			if raw += 512; raw > maxChartUnpackedBytes {
+				return nil, "", fmt.Errorf("%w: chart unpacks past %d MiB", errChartTooLarge, maxChartUnpackedBytes>>20)
+			}
 			continue
 		}
 		name := path.Clean(h.Name)
@@ -393,7 +397,7 @@ func (r *AIWorkloadReconciler) ensureEmbeddedChartBundle(
 	// as its BundleDeployment status churns.
 	upToDate := true
 	for _, ws := range plan.workspaces {
-		if !r.embeddedBundleMatches(ctx, ws.ns, bundleName, plan.fingerprint) {
+		if !r.embeddedBundleMatches(ctx, w, ws.ns, bundleName, plan.fingerprint) {
 			upToDate = false
 			break
 		}
@@ -427,6 +431,9 @@ func (r *AIWorkloadReconciler) ensureEmbeddedChartBundle(
 		}
 		return plan.fingerprint, nil
 	}
+	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
+		return "", err
+	}
 	for _, b := range bundles {
 		if err := r.Patch(ctx, b, client.Apply, client.ForceOwnership, client.FieldOwner("aif-operator")); err != nil {
 			return "", fmt.Errorf("patch Bundle %s/%s: %w", b.GetNamespace(), bundleName, err)
@@ -443,6 +450,7 @@ type embeddedPlan struct {
 	depObjs         []any
 	overlay         *overlayRender
 	overlayDeferred bool
+	overlayCommits  overlayCommits
 	epoch           int64
 	overlayOnly     bool
 	fingerprint     string
@@ -467,14 +475,12 @@ func (r *AIWorkloadReconciler) planEmbedded(ctx context.Context, w *aiplatformv1
 		return nil, fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
-	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
-	if err != nil {
+	if err := r.injectComponentPullSecrets(ctx, w, c, repoInfo, ns, vals); err != nil {
 		return nil, fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	adaptPullSecretShapeForChart(c.ChartName, vals)
-	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 
-	ovDigest, overlay, err := r.overlayFingerprint(ctx, w, c)
+	ovDigest, overlay, ovCommits, err := r.overlayFingerprint(ctx, w, c)
 	if err != nil {
 		return nil, fmt.Errorf("resolve kustomize overlay for %s: %w", c.ChartName, err)
 	}
@@ -493,6 +499,7 @@ func (r *AIWorkloadReconciler) planEmbedded(ctx context.Context, w *aiplatformv1
 		depObjs:         dependsOn,
 		overlay:         overlay,
 		overlayDeferred: overlay == nil && ovDigest != "",
+		overlayCommits:  ovCommits,
 		epoch:           epoch,
 		// overlayOnly: the chart is embedded only because of its overlay
 		// (http/oci), which changes the advice in a size error.
@@ -517,12 +524,13 @@ func (p *embeddedPlan) bundles(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1a
 	return out, nil
 }
 
-// loadOverlay fetches the gitRef overlay planEmbedded deferred.
+// loadOverlay fetches the gitRef overlay planEmbedded deferred, at the commits
+// its fingerprint records.
 func (r *AIWorkloadReconciler) loadOverlay(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, p *embeddedPlan) error {
 	if !p.overlayDeferred {
 		return nil
 	}
-	o, err := r.resolveEffectiveOverlay(ctx, w, c)
+	o, err := r.resolveEffectiveOverlay(ctx, w, c, p.overlayCommits)
 	if err != nil {
 		return fmt.Errorf("resolve kustomize overlay for %s: %w", c.ChartName, err)
 	}
@@ -568,14 +576,15 @@ func fetchGitChart(ctx context.Context, fetcher rancher.ChartFetcher, c aiplatfo
 }
 
 // embeddedBundleMatches reports whether the Bundle in ns already carries this
-// fingerprint. Any read error (including NotFound) means "rebuild it".
-func (r *AIWorkloadReconciler) embeddedBundleMatches(ctx context.Context, ns, bundleName, fingerprint string) bool {
+// fingerprint and the owner label (which Bundles written by an earlier release
+// lack). Any read error (including NotFound) means "rebuild it".
+func (r *AIWorkloadReconciler) embeddedBundleMatches(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, ns, bundleName, fingerprint string) bool {
 	b := &unstructured.Unstructured{}
 	b.SetGroupVersionKind(bundleGVK)
 	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: bundleName}, b); err != nil {
 		return false
 	}
-	return b.GetAnnotations()[chartFingerprintAnnotation] == fingerprint
+	return b.GetAnnotations()[chartFingerprintAnnotation] == fingerprint && b.GetLabels()[workloadUIDLabel] == string(w.UID)
 }
 
 // embeddedChartFingerprint identifies everything that feeds the generated Bundle,

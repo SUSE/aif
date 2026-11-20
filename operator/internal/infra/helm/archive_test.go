@@ -26,9 +26,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -227,6 +229,99 @@ func TestPullChartArchive_OCIOverCapErrors(t *testing.T) {
 	}
 }
 
+// streamingLayerRegistry serves a manifest whose chart layer claims size
+// bytes and streams it with or without a Content-Length, counting what it wrote.
+func streamingLayerRegistry(t *testing.T, size int64, declareLength bool, written *atomic.Int64) *httptest.Server {
+	t.Helper()
+	config := []byte(`{"name":"demo","version":"1.0.0","apiVersion":"v2"}`)
+	cs := sha256.Sum256(config)
+	configDigest := "sha256:" + hex.EncodeToString(cs[:])
+	layerDigest := "sha256:" + strings.Repeat("ab", 32)
+	manifest, _ := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config":        map[string]any{"mediaType": "application/vnd.cncf.helm.config.v1+json", "digest": configDigest, "size": len(config)},
+		"layers":        []any{map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "digest": layerDigest, "size": size}},
+	})
+	ms := sha256.Sum256(manifest)
+	manifestDigest := "sha256:" + hex.EncodeToString(ms[:])
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prefix := "/v2/charts/demo/"
+		switch r.URL.Path {
+		case "/v2/":
+		case prefix + "manifests/1.0.0", prefix + "manifests/" + manifestDigest:
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", manifestDigest)
+			w.Header().Set("Content-Length", fmt.Sprint(len(manifest)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(manifest)
+			}
+		case prefix + "blobs/" + configDigest:
+			_, _ = w.Write(config)
+		case prefix + "blobs/" + layerDigest:
+			if declareLength {
+				w.Header().Set("Content-Length", fmt.Sprint(size))
+			}
+			chunk := make([]byte, 32<<10)
+			for n := int64(0); n < size; n += int64(len(chunk)) {
+				k, err := w.Write(chunk)
+				written.Add(int64(k))
+				if err != nil {
+					return
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestPullChartArchive_OCILayerCappedWhileStreaming(t *testing.T) {
+	const size, limit = 64 << 20, 64 << 10
+	for _, declare := range []bool{true, false} {
+		var written atomic.Int64
+		srv := streamingLayerRegistry(t, size, declare, &written)
+		ref := "oci://" + strings.TrimPrefix(srv.URL, "http://") + "/charts/demo"
+		_, err := PullChartArchive(context.Background(), ChartArchiveRequest{RepoURL: ref, Version: "1.0.0", PlainHTTP: true, MaxBytes: limit})
+		if !errors.Is(err, ErrArchiveTooLarge) {
+			t.Fatalf("declareLength=%v: want ErrArchiveTooLarge, got %v", declare, err)
+		}
+		srv.CloseClientConnections()
+		if w := written.Load(); w >= size/2 {
+			t.Fatalf("declareLength=%v: server wrote %d of %d layer bytes; the cap must stop the download early", declare, w, size)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type readTracker struct{ read, closed bool }
+
+func (b *readTracker) Read([]byte) (int, error) { b.read = true; return 0, io.EOF }
+func (b *readTracker) Close() error             { b.closed = true; return nil }
+
+func TestCappedTransport_RefusesDeclaredOversizeUnread(t *testing.T) {
+	body := &readTracker{}
+	tr := &cappedTransport{limit: 10, base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, ContentLength: 11, Body: body}, nil
+	})}
+	req := httptest.NewRequest(http.MethodGet, "https://registry.example.com/v2/x/blobs/sha256:a", nil)
+	resp, err := tr.RoundTrip(req)
+	if !errors.Is(err, ErrArchiveTooLarge) || resp != nil {
+		t.Fatalf("RoundTrip = %v, %v; want ErrArchiveTooLarge", resp, err)
+	}
+	if body.read || !body.closed || !tr.exceeded.Load() {
+		t.Fatalf("read=%v closed=%v exceeded=%v; want the body closed unread and exceeded set", body.read, body.closed, tr.exceeded.Load())
+	}
+}
+
 func TestPullChartArchive_LargeIndexWithinIndexCap(t *testing.T) {
 	srv := helmRepoServer(t, relativeArchive, "", "")
 	// The index is larger than the archive cap but within the separate index cap.
@@ -283,5 +378,35 @@ func TestPullChartArchive_TimesOut(t *testing.T) {
 	})
 	if err == nil || time.Since(start) > 3*time.Second {
 		t.Fatalf("want a timeout error quickly, got %v after %v", err, time.Since(start))
+	}
+}
+
+func TestPullChartArchive_NonOKIsHTTPStatusError(t *testing.T) {
+	for _, tc := range []struct {
+		name, failPath string
+		code           int
+	}{
+		{"archive 403", "/charts/demo-1.0.0.tgz", http.StatusForbidden},
+		{"index 401", "/index.yaml", http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == tc.failPath {
+					w.WriteHeader(tc.code)
+					return
+				}
+				_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n  - name: demo\n    version: 1.0.0\n    urls: [charts/demo-1.0.0.tgz]\n"))
+			}))
+			defer srv.Close()
+			_, err := PullChartArchive(context.Background(), ChartArchiveRequest{RepoURL: srv.URL, ChartName: "demo", Version: "1.0.0", MaxBytes: 1 << 20})
+			var se *HTTPStatusError
+			if !errors.As(err, &se) || se.Code != tc.code {
+				t.Fatalf("want HTTPStatusError %d, got %v", tc.code, err)
+			}
+			want := fmt.Sprintf("GET %s%s: %d %s", srv.URL, tc.failPath, tc.code, http.StatusText(tc.code))
+			if !strings.HasSuffix(err.Error(), want) {
+				t.Fatalf("message %q, want suffix %q", err.Error(), want)
+			}
+		})
 	}
 }

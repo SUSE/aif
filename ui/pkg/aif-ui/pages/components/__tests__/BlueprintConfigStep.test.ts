@@ -98,6 +98,19 @@ describe('BlueprintConfigStep values from Secrets and ConfigMaps', () => {
     expect(emitted.map((c) => c.valuesFrom)).toEqual([[secretSource], [configMapSource]]);
   });
 
+  it('keeps additionalPullSecretVendors when another field is edited', async() => {
+    const initial = components();
+
+    initial[0].additionalPullSecretVendors = ['suse'];
+    const wrapper = await mountStep(initial);
+
+    await wrapper.findComponent({ name: 'ValuesStepStub' }).vm.$emit('update:values', { a: 2 });
+
+    const emitted = lastEmitted<BlueprintComponent[]>(wrapper, 'update:components');
+
+    expect(emitted.map((c) => c.additionalPullSecretVendors)).toEqual([['suse'], undefined]);
+  });
+
   it('shows an error for an invalid source', async() => {
     const wrapper = await mountStep();
 

@@ -80,3 +80,58 @@ func TestRollbackBlocked(t *testing.T) {
 		}
 	}
 }
+
+func TestHighest(t *testing.T) {
+	if got := Highest("", "1.10.0", "not-semver", "1.9.0"); got != "1.10.0" {
+		t.Errorf("Highest = %q, want 1.10.0", got)
+	}
+	if got := Highest("", "x"); got != "" {
+		t.Errorf("Highest of no semver = %q, want empty", got)
+	}
+}
+
+func TestFloorFor(t *testing.T) {
+	for _, tc := range []struct{ stored, family, want string }{
+		{"", "rag", ""},
+		{"rag@2.0.0", "rag", "2.0.0"},
+		{"other@2.0.0", "rag", ""},
+		{"2.0.0", "rag", "2.0.0"}, // bare version from an earlier build
+	} {
+		if got := FloorFor(tc.stored, tc.family); got != tc.want {
+			t.Errorf("FloorFor(%q, %q) = %q, want %q", tc.stored, tc.family, got, tc.want)
+		}
+	}
+	if got := FloorFor(MinimumSafeVersion("rag", "1.2.3+build.1"), "rag"); got != "1.2.3+build.1" {
+		t.Errorf("round trip = %q", got)
+	}
+}
+
+func TestMoveBlocked(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = aiplatformv1alpha1.AddToScheme(s)
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		policyBP("2.0.0", aiplatformv1alpha1.RollbackDisabled),
+		policyBP("1.0.0", ""),
+	).Build()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, to, minimumSafe, deployed string
+		want                            bool
+		floor                           string
+	}{
+		// v1 certified, rollback-disabled v2 started rendering, back to v1.
+		{"below minimumSafe", "1.0.0", "rag@2.0.0", "1.0.0", true, "2.0.0"},
+		{"below minimumSafe without a Blueprint", "8.0.0", "rag@9.0.0", "8.0.0", true, "9.0.0"},
+		{"bare legacy floor", "1.0.0", "2.0.0", "1.0.0", true, "2.0.0"},
+		{"floor of another family ignored", "1.0.0", "other@2.0.0", "1.0.0", false, ""},
+		{"at minimumSafe", "2.0.0", "rag@2.0.0", "1.0.0", false, ""},
+		{"unset minimumSafe uses deployed", "1.0.0", "", "2.0.0", true, "2.0.0"},
+		{"newer target", "3.0.0", "rag@2.0.0", "2.0.0", false, ""},
+		{"no history", "1.0.0", "", "", false, ""},
+	} {
+		got, floor, err := MoveBlocked(ctx, c, "rag", tc.to, tc.minimumSafe, tc.deployed)
+		if err != nil || got != tc.want || (got && floor != tc.floor) {
+			t.Errorf("%s: MoveBlocked = %v, %q, %v; want %v, %q", tc.name, got, floor, err, tc.want, tc.floor)
+		}
+	}
+}

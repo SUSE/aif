@@ -370,6 +370,19 @@ For example:
 >
 > The connection Secret holds Rancher's tunnel token. Keep it outside the release namespace: Settings credential validation can use any Secret in the release namespace. The operator reads it with its cluster-wide Secret access and gets its name and namespace from the `AGGREGATION_SECRET_NAME` and `AGGREGATION_SECRET_NAMESPACE` environment variables. Keep the release namespace admin-only for the other credential Secrets: leave it unassigned to a Rancher project, or move it to the **System** project. If the operator uses an HTTPS proxy (`HTTPS_PROXY`), add the cluster's Service CIDR (for example `10.43.0.0/16`, the RKE2 and K3s default) to `NO_PROXY`, or the tunnel goes through the proxy. The tunnel connects to the address Rancher writes into the connection Secret, which on Rancher 2.15 is the ClusterIP of the `rancher-internal` Service in `cattle-system` (`kubectl -n cattle-system get service rancher-internal`). `NO_PROXY` never matches an IP address against a domain suffix such as `.svc`, so list the CIDR or that ClusterIP.
 
+### Advanced customization policy
+
+| Name                                  | Description                                                                                   | Default |
+| ------------------------------------- | --------------------------------------------------------------------------------------------- | ------- |
+| `advancedCustomizationPolicy.enabled` | Enforce the advanced-customization permission on AIWorkload writes that bypass the operator API | `true`  |
+
+> The operator API lets only users who may update Blueprints (`update` on `blueprints.ai-factory.suse.com`) add or change a component's Kustomize overlay or `dependsOn`, or extend a workload that carries an overlay to a new target cluster, a new namespace, or another Blueprint or source type (a Blueprint version change does not count). The chart ships a cluster-scoped `ValidatingAdmissionPolicy` and binding, both named `<fullname>-advanced-customization`, that apply the same rule to AIWorkloads created or updated directly (kubectl, GitOps). Writes by the operator's own ServiceAccount are exempt, because the API has authorized them already. The policy fails closed (`failurePolicy: Fail`). It is rendered only when the cluster serves `admissionregistration.k8s.io/v1` `ValidatingAdmissionPolicy` (Kubernetes 1.30 or later), so the installer needs permission to create `validatingadmissionpolicies` and `validatingadmissionpolicybindings`.
+>
+> - **Offline renders.** Helm renders the policy only when the target reports the API, so `helm template` and Argo CD (or any render without cluster discovery) silently leave it out. Pass `--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy` to such renders. `helm install` and `helm upgrade` print a warning in the release notes when the policy is enabled but not rendered.
+> - **GitOps writers.** A Fleet or other GitOps agent that creates or updates AIWorkloads carrying Kustomize overlays or `dependsOn` overrides now needs `update` on `blueprints.ai-factory.suse.com` for those changes.
+> - **Pruned dependsOn names.** The policy is stricter than the API: removing `dependsOn` names that the Blueprint no longer has needs the permission, because the policy cannot read the Blueprint.
+> - **Name collisions.** The policy and binding are cluster-scoped. Two releases with the same fullname in different namespaces render the same `<fullname>-advanced-customization` names and conflict; give them different `fullnameOverride` values.
+
 ### AI Extension bundling
 
 When `aiExtension.enabled=true`, the chart creates an `InstallAIExtension` CR that the operator reconciles to install the UI extension automatically.

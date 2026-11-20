@@ -86,7 +86,24 @@ func validateValuesFromRef(vf aiplatformv1alpha1.ComponentValuesFrom) error {
 	return nil
 }
 
+// validateComponentPullSecretVendors rejects an unknown additional pull-secret
+// vendor on save, as the CRD enum does, so a typo can't fall through to the
+// default (SUSE) injector.
+func validateComponentPullSecretVendors(components []aiplatformv1alpha1.BlueprintComponent) error {
+	for _, c := range components {
+		for _, v := range c.AdditionalPullSecretVendors {
+			if v != aiplatformv1alpha1.ComponentVendorSUSE && v != aiplatformv1alpha1.ComponentVendorNvidia {
+				return fmt.Errorf("%w: components[%s].additionalPullSecretVendors: unknown vendor %q (want suse or nvidia)", ErrInvalidInput, c.ChartName, v)
+			}
+		}
+	}
+	return nil
+}
+
 func validateBlueprintComponents(components []aiplatformv1alpha1.BlueprintComponent) error {
+	if err := validateComponentPullSecretVendors(components); err != nil {
+		return err
+	}
 	if err := validateComponentOverlays(components); err != nil {
 		return err
 	}
@@ -108,6 +125,7 @@ var guardedComponentFields = []guardedField[aiplatformv1alpha1.BlueprintComponen
 	{"valuesFrom", func(c aiplatformv1alpha1.BlueprintComponent) bool { return len(c.ValuesFrom) > 0 }},
 	{"dependsOn", func(c aiplatformv1alpha1.BlueprintComponent) bool { return len(c.DependsOn) > 0 }},
 	{"kustomize", func(c aiplatformv1alpha1.BlueprintComponent) bool { return c.Kustomize != nil }},
+	{"additionalPullSecretVendors", func(c aiplatformv1alpha1.BlueprintComponent) bool { return len(c.AdditionalPullSecretVendors) > 0 }},
 }
 
 func componentKey(c aiplatformv1alpha1.BlueprintComponent) string { return c.ChartName }

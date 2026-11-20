@@ -197,6 +197,16 @@ aggregation:
   # cluster-wide Secret access. The chart fails if it equals the release namespace.
   secretNamespace: cattle-system
 
+advancedCustomizationPolicy:
+  # Ships a ValidatingAdmissionPolicy that applies the AI Factory API's rule to
+  # AIWorkload writes made directly against Kubernetes (kubectl, GitOps): adding
+  # or changing a component's Kustomize overlay or dependsOn, or extending a
+  # workload with an overlay to new target clusters or a new namespace,
+  # requires update on blueprints.ai-factory.suse.com. Rendered only on
+  # clusters that serve admissionregistration.k8s.io/v1 ValidatingAdmissionPolicy
+  # (Kubernetes 1.30+). Disable it only if another control enforces the rule.
+  enabled: true
+
 # UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
 # Set aiExtension.enabled=false to skip extension installation.
 aiExtension:

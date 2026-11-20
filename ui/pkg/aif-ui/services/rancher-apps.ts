@@ -786,11 +786,12 @@ export async function listClusterRepos($store: Dispatchable): Promise<ClusterRes
 }
 
 // listGitClusterRepoNames returns the Git-type custom repos from AI Factory
-// Settings with an HTTP(S) URL: the only sources the operator accepts for a
-// Kustomize overlay (it clones with basic auth; SSH repos are left out).
+// Settings with an HTTPS URL: the only sources the operator accepts for a
+// Kustomize overlay. The Fleet agent applies overlay content with its own
+// privileges, so plain HTTP (tamperable in transit) and SSH repos are left out.
 export async function listGitClusterRepoNames($store: Dispatchable): Promise<string[]> {
   return (await listClusterRepos($store))
-    .filter((r) => /^https?:\/\//i.test(r?.spec?.gitRepo || '') && r?.metadata?.labels?.[CUSTOM_REPO_LABEL] === 'true')
+    .filter((r) => /^https:\/\//i.test(r?.spec?.gitRepo || '') && r?.metadata?.labels?.[CUSTOM_REPO_LABEL] === 'true')
     .map((r) => r?.metadata?.name)
     .filter((n): n is string => !!n);
 }

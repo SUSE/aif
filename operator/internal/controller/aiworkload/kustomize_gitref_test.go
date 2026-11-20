@@ -24,7 +24,7 @@ func TestResolveKustomizeOverlay_InlineFilesReturnedVerbatim(t *testing.T) {
 		Files: map[string]string{"overlay/kustomization.yaml": "a: 1"},
 	}
 
-	files, commit, err := r.resolveKustomizeOverlay(context.Background(), c)
+	files, commit, err := r.resolveKustomizeOverlay(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("resolveKustomizeOverlay: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestResolveKustomizeOverlay_InlineRejectsMissingKustomization(t *testing.T)
 		Files: map[string]string{"overlay/patch.yaml": "a: 1"}, // no kustomization.yaml
 	}
 
-	if _, _, err := r.resolveKustomizeOverlay(context.Background(), c); err == nil ||
+	if _, _, err := r.resolveKustomizeOverlay(context.Background(), c, ""); err == nil ||
 		!strings.Contains(err.Error(), "no kustomization.yaml") {
 		t.Fatalf("want a clear missing-kustomization.yaml error, got %v", err)
 	}
@@ -69,7 +69,7 @@ func TestResolveKustomizeOverlay_InlineRejectsFileOutsideDir(t *testing.T) {
 		},
 	}
 
-	if _, _, err := r.resolveKustomizeOverlay(context.Background(), c); err == nil ||
+	if _, _, err := r.resolveKustomizeOverlay(context.Background(), c, ""); err == nil ||
 		!strings.Contains(err.Error(), "outside overlay dir") {
 		t.Fatalf("want a file-outside-dir error, got %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResolveKustomizeOverlay_GitRefRequiresGitBackedRepo(t *testing.T) {
 		},
 	}
 
-	_, _, err := r.resolveKustomizeOverlay(context.Background(), c)
+	_, _, err := r.resolveKustomizeOverlay(context.Background(), c, "")
 	if err == nil {
 		t.Fatal("expected an error for a non-git-backed ClusterRepo")
 	}
@@ -129,7 +129,7 @@ func TestResolveKustomizeOverlay_NilKustomizeReturnsNil(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme}
 
-	files, commit, err := r.resolveKustomizeOverlay(context.Background(), gitComponent())
+	files, commit, err := r.resolveKustomizeOverlay(context.Background(), gitComponent(), "")
 	if err != nil || files != nil || commit != "" {
 		t.Fatalf("files=%v commit=%q err=%v, want all zero values for nil Kustomize", files, commit, err)
 	}
@@ -160,22 +160,22 @@ func TestResolveKustomizeOverlay_GitRefRequiresCustomRepo(t *testing.T) {
 	scheme := gitRepoTestScheme()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(overlayGitRepo(false, "abc")).Build()
 	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme}
-	_, _, err := r.resolveKustomizeOverlay(context.Background(), gitOverlayComponent())
+	_, _, err := r.resolveKustomizeOverlay(context.Background(), gitOverlayComponent(), "")
 	if err == nil || !strings.Contains(err.Error(), "not a custom repository") {
 		t.Fatalf("want a not-a-custom-repository error, got %v", err)
 	}
 }
 
-func TestResolveKustomizeOverlay_GitRefRejectsSSHRepo(t *testing.T) {
+func TestResolveKustomizeOverlay_GitRefRejectsNonHTTPSRepo(t *testing.T) {
 	scheme := gitRepoTestScheme()
-	for _, url := range []string{"git@git.example.com:org/overlays.git", "ssh://git@git.example.com/org/overlays.git"} {
+	for _, url := range []string{"git@git.example.com:org/overlays.git", "ssh://git@git.example.com/org/overlays.git", "http://git.example.com/org/overlays.git", "HTTP://git.example.com/o.git"} {
 		repo := overlayGitRepo(true, "abc")
 		_ = unstructured.SetNestedField(repo.Object, url, "spec", "gitRepo")
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
 		r := &AIWorkloadReconciler{Client: cl, Scheme: scheme}
-		_, _, err := r.resolveKustomizeOverlay(context.Background(), gitOverlayComponent())
-		if err == nil || !strings.Contains(err.Error(), "SSH is not supported") {
-			t.Fatalf("%s: want an SSH-not-supported error, got %v", url, err)
+		_, _, err := r.resolveKustomizeOverlay(context.Background(), gitOverlayComponent(), "")
+		if err == nil || !strings.Contains(err.Error(), "overlays need an https:// git URL") {
+			t.Fatalf("%s: want an https-only error, got %v", url, err)
 		}
 	}
 }
@@ -188,7 +188,7 @@ func TestOverlayFingerprint_GitRefUsesCommitWithoutCloning(t *testing.T) {
 		t.Helper()
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(overlayGitRepo(true, commit)).Build()
 		r := &AIWorkloadReconciler{Client: cl, Scheme: scheme}
-		d, o, err := r.overlayFingerprint(context.Background(), w, c)
+		d, o, _, err := r.overlayFingerprint(context.Background(), w, c)
 		if err != nil {
 			t.Fatalf("overlayFingerprint: %v", err)
 		}
@@ -206,8 +206,50 @@ func TestOverlayFingerprint_GitRefNeedsIndexedRepo(t *testing.T) {
 	scheme := gitRepoTestScheme()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(overlayGitRepo(true, "")).Build()
 	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme}
-	if _, _, err := r.overlayFingerprint(context.Background(), newBlueprintWorkload(time.Now()), gitOverlayComponent()); err == nil ||
+	if _, _, _, err := r.overlayFingerprint(context.Background(), newBlueprintWorkload(time.Now()), gitOverlayComponent()); err == nil ||
 		!strings.Contains(err.Error(), "not been indexed") {
 		t.Fatalf("want a not-indexed error, got %v", err)
+	}
+}
+
+// A plain-http overlay repo is refused on both paths an overlay is resolved
+// through (fingerprint and content), for a Blueprint and an install-time gitRef;
+// an https one is accepted.
+func TestGitRefOverlay_HTTPSOnlyForBlueprintAndInstallOverlays(t *testing.T) {
+	scheme := gitRepoTestScheme()
+	gitRef := gitOverlayComponent().Kustomize
+	for _, tc := range []struct {
+		name string
+		set  func(w *aiplatformv1alpha1.AIWorkload, c *aiplatformv1alpha1.BlueprintComponent)
+	}{
+		{"blueprint", func(_ *aiplatformv1alpha1.AIWorkload, c *aiplatformv1alpha1.BlueprintComponent) { c.Kustomize = gitRef }},
+		{"install", func(w *aiplatformv1alpha1.AIWorkload, c *aiplatformv1alpha1.BlueprintComponent) {
+			w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: c.ChartName, Kustomize: gitRef}}
+		}},
+	} {
+		for _, url := range []string{"http://git.example.com/overlays.git", "https://127.0.0.1:1/overlays.git"} {
+			repo := overlayGitRepo(true, "abc")
+			_ = unstructured.SetNestedField(repo.Object, url, "spec", "gitRepo")
+			r := &AIWorkloadReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build(), Scheme: scheme}
+			w := newBlueprintWorkload(time.Now())
+			c := gitComponent()
+			tc.set(w, &c)
+			_, _, _, ferr := r.overlayFingerprint(context.Background(), w, c)
+			_, rerr := r.resolveEffectiveOverlay(context.Background(), w, c, overlayCommits{})
+			if strings.HasPrefix(url, "http://") {
+				for path, err := range map[string]error{"fingerprint": ferr, "read": rerr} {
+					if err == nil || !strings.Contains(err.Error(), "overlays need an https:// git URL") {
+						t.Fatalf("%s %s: want an https-only error, got %v", tc.name, path, err)
+					}
+				}
+				continue
+			}
+			if ferr != nil {
+				t.Fatalf("%s: https repo refused: %v", tc.name, ferr)
+			}
+			if rerr == nil || strings.Contains(rerr.Error(), "overlays need an https:// git URL") {
+				t.Fatalf("%s: https repo must pass the URL check and fail only on the unreachable clone, got %v", tc.name, rerr)
+			}
+		}
 	}
 }

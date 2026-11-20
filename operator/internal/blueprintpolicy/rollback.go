@@ -21,6 +21,7 @@ package blueprintpolicy
 
 import (
 	"context"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -77,4 +78,57 @@ func RollbackBlocked(ctx context.Context, c client.Reader, family, deployed, to 
 		return false, nil
 	}
 	return RollbackDisabled(ctx, c, family, deployed, to)
+}
+
+// Highest returns the highest semantic version among versions, ignoring empty
+// and non-semver ones; "" when none parses.
+func Highest(versions ...string) string {
+	var best *semver.Version
+	out := ""
+	for _, v := range versions {
+		sv, err := semver.NewVersion(v)
+		if err != nil {
+			continue
+		}
+		if best == nil || sv.GreaterThan(best) {
+			best, out = sv, v
+		}
+	}
+	return out
+}
+
+// MinimumSafeVersion is the AIWorkload status.minimumSafeVersion value
+// recording that version of family started rendering.
+func MinimumSafeVersion(family, version string) string {
+	return family + "@" + version
+}
+
+// FloorFor returns the version recorded in a status.minimumSafeVersion value
+// for family: "" when it was recorded for another family. A bare version (no
+// "family@") applies to any family.
+func FloorFor(stored, family string) string {
+	i := strings.LastIndex(stored, "@")
+	if i < 0 {
+		return stored
+	}
+	if stored[:i] != family {
+		return ""
+	}
+	return stored[i+1:]
+}
+
+// MoveBlocked reports whether moving a workload of family to version to is
+// refused, and the version to point the user at instead. Only versions that
+// were deployed or started rendering count: a move below the recorded
+// minimumSafeVersion (see FloorFor) is always refused, otherwise it is
+// RollbackBlocked from the deployed version. The spec version is not used, as
+// it may never have rendered (a typo, or a render refused before any write).
+func MoveBlocked(ctx context.Context, c client.Reader, family, to, minimumSafe, deployed string) (bool, string, error) {
+	floor := FloorFor(minimumSafe, family)
+	use := Highest(floor, deployed)
+	if IsRollback(floor, to) {
+		return true, use, nil
+	}
+	blocked, err := RollbackBlocked(ctx, c, family, deployed, to)
+	return blocked, use, err
 }
