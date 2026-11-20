@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // clusterRepoErrorScheme registers every type the blueprint reconcile touches.
@@ -80,7 +81,7 @@ func newBlueprintWorkload(created time.Time) *aiplatformv1alpha1.AIWorkload {
 
 func newBlueprintCR(repo string) *aiplatformv1alpha1.Blueprint {
 	bp := &aiplatformv1alpha1.Blueprint{
-		ObjectMeta: metav1.ObjectMeta{Name: bpCRName("mini", "1.0.0")},
+		ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("mini", "1.0.0")},
 	}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: repo, ChartName: "app", ChartVersion: "1.0.0", Vendor: "suse"},
@@ -96,7 +97,7 @@ func TestReconcileBlueprintStatus_MissingClusterRepo_SetsConditionAndRequeues(t 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
 
-	result, err := r.reconcileBlueprintStatus(context.Background(), w)
+	result, _, err := r.reconcileBlueprintStatus(context.Background(), w)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -129,7 +130,7 @@ func TestReconcileBlueprintStatus_MissingClusterRepo_FailsAfterGrace(t *testing.
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 	if w.Status.Phase != aiplatformv1alpha1.AIWorkloadPhaseFailed {
@@ -148,7 +149,7 @@ func TestReconcileBlueprintStatus_ClusterRepoMovesWithoutBlueprintEdit(t *testin
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("resolve public source: %v", err)
 	}
 	helmOpKey := types.NamespacedName{Namespace: "fleet-local", Name: blueprintBundleName(w.Name, "app")}
@@ -169,7 +170,7 @@ func TestReconcileBlueprintStatus_ClusterRepoMovesWithoutBlueprintEdit(t *testin
 	if err := c.Update(context.Background(), repo); err != nil {
 		t.Fatalf("move ClusterRepo to private endpoint: %v", err)
 	}
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("resolve private source: %v", err)
 	}
 
@@ -204,7 +205,7 @@ func TestReconcileBlueprintStatus_RepoPresent_SetsReadyTrue(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, bp, repo).Build()
 	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 	cond := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
@@ -285,7 +286,7 @@ func TestReconcileBlueprintStatus_ForbiddenClusterRepo_PropagatesError(t *testin
 	bp := newBlueprintCR("application-collection")
 	r := forbiddenClusterRepoReconciler(t, scheme, w, bp)
 
-	result, err := r.reconcileBlueprintStatus(context.Background(), w)
+	result, _, err := r.reconcileBlueprintStatus(context.Background(), w)
 	if err == nil {
 		t.Fatalf("expected a propagated error, got nil")
 	}
@@ -319,7 +320,7 @@ func TestReconcileBlueprintStatus_GenericError_ClearsStaleReadyTrue(t *testing.T
 	w.Status.Phase = aiplatformv1alpha1.AIWorkloadPhaseRunning
 	r := forbiddenClusterRepoReconciler(t, scheme, w, bp)
 
-	if _, err := r.reconcileBlueprintStatus(context.Background(), w); err == nil {
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err == nil {
 		t.Fatal("expected the generic error to be propagated")
 	}
 

@@ -24,15 +24,18 @@ import (
 	"fmt"
 	"hash/fnv"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -40,14 +43,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintdeps"
+	"github.com/SUSE/aif-operator/internal/blueprintpolicy"
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	igit "github.com/SUSE/aif-operator/internal/git"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
+	"github.com/SUSE/aif-operator/internal/kustomizeoverlay"
 	"github.com/SUSE/aif-operator/internal/naming"
 	"github.com/SUSE/aif-operator/internal/registryurl"
-
-	"dario.cat/mergo"
 )
 
 var clusterRepoGVK = schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"}
@@ -85,26 +89,80 @@ type clusterRepoInfo struct {
 	ClientSecret   string   // name of the basic-auth secret; empty if unauthenticated
 	ClientSecretNS string   // namespace of the basic-auth secret (typically cattle-system)
 	Custom         bool     // repo carries the custom-repo marker label (admin-defined ClusterRepo)
+	// TLS settings for talking to the repo directly: downloading an http/oci
+	// chart to embed (see fetchChartArchive) or cloning a git overlay.
+	CABundle              []byte // decoded PEM from spec.caBundle; nil when unset
+	InsecureSkipTLSVerify bool   // spec.insecureSkipTLSVerify
+	InsecurePlainHTTP     bool   // spec.insecurePlainHttp (oci only)
 }
 
-// reconcileBlueprintStatus handles blueprint-sourced AIWorkloads.
-func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (ctrl.Result, error) {
+// reconcileBlueprintStatus handles blueprint-sourced AIWorkloads. The bool reports whether
+// this pass rebuilt Status.ComponentStatuses for the current render.
+func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (ctrl.Result, bool, error) {
 	src := w.Spec.Source.Blueprint
 	if src == nil {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, false, nil
 	}
 
 	// Step 1: verify Blueprint CR exists.
-	crName := bpCRName(src.Name, src.Version)
+	crName := naming.BlueprintCRName(src.Name, src.Version)
 	var bp aiplatformv1alpha1.Blueprint
 	if err := r.Get(ctx, types.NamespacedName{Name: crName}, &bp); err != nil {
 		if errors.IsNotFound(err) {
 			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "BlueprintNotFound",
 				fmt.Sprintf("Blueprint %q was not found.", crName), w.Generation)
 			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-			return ctrl.Result{}, nil
+			return ctrl.Result{}, false, nil
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, false, err
+	}
+
+	if reason, msg, err := r.blueprintPolicyViolation(ctx, w, &bp); err != nil {
+		return ctrl.Result{}, false, err
+	} else if reason != "" {
+		r.refuseRender(w, reason, msg)
+		return ctrl.Result{}, false, nil
+	}
+
+	if err := validateDependsOn(&bp); err != nil {
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "InvalidDependsOn", err.Error(), w.Generation)
+		w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
+		return ctrl.Result{}, false, nil
+	}
+	// Apply install-time dependsOn overrides to this reconcile's in-memory copy of
+	// the Blueprint (never written back), so every render path below sees the
+	// effective order unchanged. Overrides made stale by a Blueprint upgrade are
+	// adjusted, not fatal; the notes surface in the DependencyExcluded condition.
+	var dependsOnNotes []string
+	bp.Spec.Components, dependsOnNotes = blueprintdeps.Apply(bp.Spec.Components, w.Spec.ComponentValues)
+
+	// Pin automatic values (domain, ingress class) and persist the pins before
+	// anything renders, so every later render and upgrade reuses them.
+	if changed, err := r.pinAutoValues(ctx, w, bp.Spec.Components); err != nil {
+		var ave *autoValueError
+		if !stderrors.As(err, &ave) {
+			return ctrl.Result{}, false, err
+		}
+		if ave.Pending {
+			markAutoValuePending(w, ave.Message, ave.ClusterID)
+			return ctrl.Result{RequeueAfter: 15 * time.Second}, false, nil
+		}
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, ave.Reason, ave.Message, w.Generation)
+		w.Status.Phase = refusedPhase(w)
+		return ctrl.Result{RequeueAfter: time.Minute}, false, nil
+	} else if changed {
+		if err := r.Status().Update(ctx, w); err != nil {
+			return ctrl.Result{}, false, err
+		}
+		return ctrl.Result{Requeue: true}, false, nil
+	}
+	// Values pinned at install are locked; the API rejects changing them, and
+	// this catches edits that bypass it (kubectl, GitOps).
+	if msg, err := lockedValueChanges(w, bp.Spec.Components); err != nil {
+		return ctrl.Result{}, false, err
+	} else if msg != "" {
+		r.refuseRender(w, reasonLockedValueChanged, msg)
+		return ctrl.Result{}, false, nil
 	}
 
 	// Step 2: populate FleetBundleNames from components on first reconcile.
@@ -116,9 +174,16 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		}
 		w.Spec.FleetBundleNames = names
 		if err := r.Update(ctx, w); err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, false, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{Requeue: true}, false, nil
+	}
+	// Label objects an earlier release left unlabelled before a kind switch
+	// checks ownership (GitOps republishes them labelled instead); cleanup
+	// reuses the result.
+	legacyBundles, err := r.backfillOwnerLabels(ctx, w)
+	if err != nil {
+		return ctrl.Result{}, false, err
 	}
 
 	// Step 3: ensure HelmOps or git files exist for each component bundle.
@@ -129,9 +194,21 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	enabledComponents := filterEnabledComponents(w, bp.Spec.Components)
 
 	expectedDigests := map[string]string{}
-	for _, c := range enabledComponents {
+	// Components still changing render kind (see observeKindSwitch); the rest of
+	// the workload keeps reconciling meanwhile.
+	var switching []string
+	// Components waiting for their dependencies to be certified (see pendingDependencies).
+	var held []heldComponent
+	for _, c := range blueprintdeps.TopoOrder(enabledComponents) {
+		pending, err := r.pendingDependencies(ctx, w, c, expectedDigests)
+		if err != nil {
+			return ctrl.Result{}, false, err
+		}
+		if len(pending) > 0 {
+			held = append(held, heldComponent{name: c.ChartName, pending: pending})
+			continue
+		}
 		var digest string
-		var err error
 		switch w.Spec.DeployStrategy {
 		case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
 			digest, err = r.ensureBlueprintHelmOp(ctx, w, c, blueprintBundleName(w.Name, c.ChartName))
@@ -139,6 +216,20 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			digest, err = r.ensureBlueprintGitFile(ctx, w, c, blueprintBundleName(w.Name, c.ChartName))
 		}
 		if err != nil {
+			var switchErr *componentSwitchingError
+			if stderrors.As(err, &switchErr) {
+				// Adding or removing a Kustomize overlay moves a component between
+				// a HelmOp and an embedded-chart Bundle, which hands the release
+				// over without uninstalling it (see observeKindSwitch). Each step
+				// waits on Fleet, which may take long (an offline cluster), so
+				// record it and carry on with the other components.
+				switching = append(switching, switchErr.Error())
+				continue
+			}
+			if stderrors.Is(err, errMinimumSafeVersionPruned) {
+				r.refuseRender(w, reasonCRDOutdated, minimumSafeVersionPrunedMessage)
+				return ctrl.Result{RequeueAfter: time.Minute}, false, nil
+			}
 			if stderrors.Is(err, errCatalogClientNotConfigured) {
 				// A git-backed component needs a Rancher API token the operator
 				// wasn't given. The catalog config is editable at runtime via
@@ -149,7 +240,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher API Access in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: time.Minute}, nil
+				return ctrl.Result{RequeueAfter: time.Minute}, false, nil
 			}
 			if stderrors.Is(err, rancher.ErrUnauthorized) {
 				// The token exists but Rancher rejected it — typically because it
@@ -162,7 +253,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				msg := fmt.Sprintf("Rancher rejected the API token while fetching component %q from git-backed repo %q. The token may have expired — re-authorize under Settings → Rancher API Access in the AI Factory UI.", c.ChartName, c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonRancherTokenRejected, msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: time.Minute}, nil
+				return ctrl.Result{RequeueAfter: time.Minute}, false, nil
 			}
 			if stderrors.Is(err, errChartTooLarge) {
 				// Terminal: the chart is too big for a Fleet Bundle and no amount
@@ -170,10 +261,10 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				// the workqueue forever, re-downloading the archive from Rancher on
 				// every backoff tick, while the workload kept advertising the stale
 				// "Component bundles reconciled" message from its last good pass.
-				msg := fmt.Sprintf("Component %q cannot be deployed from git-backed repo %q: %v", c.ChartName, c.ChartRepo, err)
+				msg := fmt.Sprintf("Component %q cannot be deployed from repo %q: %v", c.ChartName, c.ChartRepo, err)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "ChartTooLarge", msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{}, nil
+				return ctrl.Result{}, false, nil
 			}
 			if stderrors.Is(err, errClusterRepoNotReady) {
 				// The repo the component needs is missing — usually because its
@@ -183,7 +274,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				msg := fmt.Sprintf("Repository %q is not available yet. If this persists, verify its credentials in Settings.", c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonClusterRepoNotReady, msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, false, nil
 			}
 			// Anything else: the cause is unknown and may be transient, so return
 			// the error and let the workqueue back off. Set a condition first —
@@ -192,7 +283,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			msg := fmt.Sprintf("Component %q from repo %q could not be reconciled: %v", c.ChartName, c.ChartRepo, truncateForCondition(err.Error()))
 			setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "ComponentReconcileFailed", msg, w.Generation)
 			w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-			return ctrl.Result{}, err
+			return ctrl.Result{}, false, err
 		}
 		for _, k := range desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, []aiplatformv1alpha1.BlueprintComponent{c}, w.Spec.DeployStrategy) {
 			expectedDigests[k.Namespace+"/"+k.Name] = digest
@@ -204,7 +295,7 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 			if w.Spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps {
 				ho, err := r.getHelmOpIn(ctx, k.Namespace, k.Name)
 				if err != nil {
-					return ctrl.Result{}, err
+					return ctrl.Result{}, false, err
 				}
 				if ho != nil {
 					w.Status.RenderBaselines = upsertRenderBaseline(w.Status.RenderBaselines, aiplatformv1alpha1.RenderBaseline{
@@ -227,15 +318,15 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 	// handles a component removed by a blueprint version change — no separate deletion
 	// path needed.
 	keys := desiredHelmOpKeys(w.Name, w.Spec.TargetClusters, enabledComponents, w.Spec.DeployStrategy)
-	if err := r.cleanupStaleHelmOps(ctx, w, keys); err != nil {
-		return ctrl.Result{}, err
+	if err := r.cleanupStaleHelmOps(ctx, w, keys, legacyBundles); err != nil {
+		return ctrl.Result{}, false, err
 	}
 	// Prune baselines to match current desired HelmOp UIDs.
 	desiredUIDs := r.collectDesiredHelmOpUIDs(ctx, keys)
 	w.Status.RenderBaselines = pruneRenderBaselines(w.Status.RenderBaselines, desiredUIDs)
 	cells, err := r.buildComponentMatrix(ctx, w, keys, expectedDigests)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, false, err
 	}
 	if !equalComponentStatuses(w.Status.ComponentStatuses, cells) {
 		w.Status.ComponentStatuses = cells
@@ -246,20 +337,51 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 		w.Status.ClusterStatuses = clusterStatuses
 	}
 	w.Status.Phase = guardPhaseTransition(phaseFromCells(cells), w.Status.Phase, w.CreationTimestamp.Time)
-	if err := r.certifyDeployedSource(ctx, w, keys, expectedDigests); err != nil {
-		return ctrl.Result{}, err
+	if len(held) == 0 {
+		if err := r.certifyDeployedSource(ctx, w, keys, expectedDigests); err != nil {
+			return ctrl.Result{}, false, err
+		}
 	}
 	// Reconcile completed without error: clear any prior Ready=False (e.g. a
 	// transient ClusterRepoNotReady) so the condition recovers alongside the
 	// phase. Phase reflects rollout state; Ready reflects reconcile success.
 	customized, err := isWorkloadCustomized(w, &bp)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, false, err
 	}
 	w.Status.Customized = customized
 
+	if msg := dependencyConditionMessage(excludedDependencyEdges(w, enabledComponents), dependsOnNotes); msg != "" {
+		setCondition(&w.Status.Conditions, conditionTypeDependencyExcluded, metav1.ConditionTrue, "DependencyExcluded", msg, w.Generation)
+	} else {
+		setCondition(&w.Status.Conditions, conditionTypeDependencyExcluded, metav1.ConditionFalse, "NoExcludedDependencies",
+			"No dependencies were excluded.", w.Generation)
+	}
+
+	if len(switching) > 0 {
+		// Nothing has failed, so the phase is left alone; look again, less
+		// often as the switch ages (Fleet watches still wake it on progress).
+		msg := strings.Join(switching, " ")
+		if len(held) > 0 {
+			msg += " " + heldConditionMessage(held, cells)
+		}
+		return ctrl.Result{RequeueAfter: r.markSwitching(w, msg)}, true, nil
+	}
+	if len(held) > 0 {
+		setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "WaitingForDependencies", truncateForCondition(heldConditionMessage(held, cells)), w.Generation)
+		return ctrl.Result{RequeueAfter: dependencyHoldRequeue}, true, nil
+	}
 	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionTrue, reasonReconciled, "Component bundles reconciled", w.Generation)
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, true, nil
+}
+
+// validateDependsOn rejects unknown/self/duplicate references and dependency
+// cycles. It runs before rendering in reconcileBlueprintStatus. A dependency on
+// a component disabled for this workload is NOT an error here — resolveDependsOnNames
+// drops that edge from the rendered spec.dependsOn instead (see excludedDependencyEdges
+// for the resulting non-blocking condition).
+func validateDependsOn(bp *aiplatformv1alpha1.Blueprint) error {
+	return blueprintdeps.ValidateComponents(bp.Spec.Components)
 }
 
 // retryEpochValue reads the durable retry-epoch counter (default 0). Every desired HelmOp is
@@ -276,10 +398,21 @@ func (r *AIWorkloadReconciler) retryEpochValue(w *aiplatformv1alpha1.AIWorkload)
 }
 
 // isWorkloadCustomized evaluates whether an AIWorkload has configuration drift
-// relative to its Blueprint defaults (either via component exclusions or Helm value overrides).
+// relative to its Blueprint defaults: component exclusions, Helm value overrides,
+// install-time deploy-order overrides, or install-time Kustomize overlays. bp may
+// already carry dependsOn overrides (blueprintdeps.Apply); Apply never touches
+// values, so the values comparison below is still against the Blueprint's own.
 func isWorkloadCustomized(w *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alpha1.Blueprint) (bool, error) {
 	if bp == nil {
 		return false, nil
+	}
+	for _, c := range bp.Spec.Components {
+		if _, ok := blueprintdeps.OverrideDependsOn(w.Spec.ComponentValues, c.ChartName); ok {
+			return true, nil
+		}
+		if installOverlay(w, c.ChartName) != nil {
+			return true, nil
+		}
 	}
 	// Check for component exclusions
 	for _, c := range bp.Spec.Components {
@@ -297,7 +430,7 @@ func isWorkloadCustomized(w *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alph
 				return false, fmt.Errorf("unmarshal blueprint base values for %s: %w", c.ChartName, err)
 			}
 		}
-		resolved, err := resolveComponentValues(w, c)
+		resolved, err := mergedComponentValues(w, c)
 		if err != nil {
 			return false, fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 		}
@@ -306,6 +439,77 @@ func isWorkloadCustomized(w *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alph
 		}
 	}
 	return false, nil
+}
+
+// blueprintPolicyViolation enforces the Blueprint policies the API also checks
+// up front, since kubectl and GitOps edits bypass the API. It returns the Ready
+// reason and message of the first violation, or "" when there is none.
+func (r *AIWorkloadReconciler) blueprintPolicyViolation(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alpha1.Blueprint) (string, string, error) {
+	src := w.Spec.Source.Blueprint
+	if blocked, floor, err := r.rollbackBlocked(ctx, w, src.Version); err != nil || blocked {
+		if err != nil {
+			return "", "", err
+		}
+		return reasonRollbackDisabled, fmt.Sprintf(
+			"Blueprint version %s is older than version %s, which this deployment has deployed or started deploying, and rollback is disabled for this Blueprint; upgrade back to %s by setting spec.source.blueprint.version to %s (or newer).",
+			src.Version, floor, floor, floor), nil
+	}
+	if err := blueprintpolicy.CheckValuesFromNamespaces(bp.Spec.Components, w.Spec.TargetNamespace); err != nil {
+		return reasonInvalidValuesFrom, err.Error(), nil
+	}
+	return "", "", nil
+}
+
+// errMinimumSafeVersionPruned marks a render refused because an outdated
+// AIWorkload CRD drops status.minimumSafeVersion.
+var errMinimumSafeVersionPruned = stderrors.New("the AIWorkload CRD is outdated and drops status.minimumSafeVersion")
+
+const minimumSafeVersionPrunedMessage = "The AIWorkload CRD is outdated and drops status.minimumSafeVersion, which guards this Blueprint's disabled rollback; upgrade the operator chart's CRDs."
+
+// raiseMinimumSafeVersion persists Status.MinimumSafeVersion for the spec
+// version of a rollback-disabled Blueprint. Every write that renders the spec
+// version (HelmOp, embedded Bundle, GitOps publish, kind switch) calls it
+// first, after all pre-render refusals, so a version refused before anything
+// renders never raises the floor, and a crash after the write can't lose it.
+// It never lowers the floor of the same family. While the field is known to be
+// pruned (Ready already CRDOutdated) it probes with a dry run instead of a write.
+func (r *AIWorkloadReconciler) raiseMinimumSafeVersion(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) error {
+	src := w.Spec.Source.Blueprint
+	if src == nil {
+		return nil
+	}
+	floor := blueprintpolicy.FloorFor(w.Status.MinimumSafeVersion, src.Name)
+	if floor == src.Version || blueprintpolicy.Highest(floor, src.Version) != src.Version {
+		return nil
+	}
+	var bp aiplatformv1alpha1.Blueprint
+	if err := r.Get(ctx, types.NamespacedName{Name: naming.BlueprintCRName(src.Name, src.Version)}, &bp); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if bp.Spec.Rollback != aiplatformv1alpha1.RollbackDisabled {
+		return nil
+	}
+	want := blueprintpolicy.MinimumSafeVersion(src.Name, src.Version)
+	if readyReason(w) == reasonCRDOutdated {
+		probe := w.DeepCopy()
+		probe.Status.MinimumSafeVersion = want
+		if err := r.Status().Update(ctx, probe, client.DryRunAll); err != nil {
+			return err
+		}
+		if probe.Status.MinimumSafeVersion != want {
+			return errMinimumSafeVersionPruned
+		}
+	}
+	prev := w.Status.MinimumSafeVersion
+	w.Status.MinimumSafeVersion = want
+	if err := r.Status().Update(ctx, w); err != nil {
+		w.Status.MinimumSafeVersion = prev
+		return err
+	}
+	if w.Status.MinimumSafeVersion != want {
+		return errMinimumSafeVersionPruned
+	}
+	return nil
 }
 
 // filterEnabledComponents returns the subset of a Blueprint's components that are enabled for
@@ -334,33 +538,27 @@ func isComponentEnabled(w *aiplatformv1alpha1.AIWorkload, chartName string) bool
 	return true
 }
 
-// resolveComponentValues merges an AIWorkload-level override (matched by
-// ComponentName == ChartName) onto a blueprint component's own baked-in
-// values. Overrides deep-merge onto the base (mergo.WithOverride: override
-// wins on scalars, nested maps merge key-by-key, slices replace wholesale) —
-// the same semantics Helm itself uses for layered -f values.yaml overrides.
-// Components with no matching override render exactly as they did before
-// this existed (base values only), which keeps every pre-existing Blueprint
-// install byte-identical.
-func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (map[string]any, error) {
-	vals := map[string]any{}
-	if c.Values != nil {
-		if err := json.Unmarshal(c.Values.Raw, &vals); err != nil {
-			return nil, fmt.Errorf("unmarshal blueprint values for %s: %w", c.ChartName, err)
+// installOverlay returns the install-time Kustomize overlay for a Blueprint
+// component, per the same first-matching-override convention as isComponentEnabled.
+func installOverlay(w *aiplatformv1alpha1.AIWorkload, chartName string) *aiplatformv1alpha1.ComponentKustomize {
+	for _, ov := range w.Spec.ComponentValues {
+		if ov.ComponentName == chartName {
+			return ov.Kustomize
 		}
 	}
-	for _, ov := range w.Spec.ComponentValues {
-		if ov.ComponentName != c.ChartName || ov.Values == nil {
-			continue
-		}
-		override := map[string]any{}
-		if err := json.Unmarshal(ov.Values.Raw, &override); err != nil {
-			return nil, fmt.Errorf("unmarshal component override for %s: %w", c.ChartName, err)
-		}
-		if err := mergo.Merge(&vals, override, mergo.WithOverride); err != nil {
-			return nil, fmt.Errorf("merge component override for %s: %w", c.ChartName, err)
-		}
-		break
+	return nil
+}
+
+// resolveComponentValues returns the values a component renders with: the
+// Blueprint values with the install override merged on (mergedComponentValues),
+// then every automatic-value sentinel replaced by its pin in status.
+func resolveComponentValues(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (map[string]any, error) {
+	vals, err := mergedComponentValues(w, c)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyResolvedValues(vals, c.ChartName, w.Status.ResolvedValues); err != nil {
+		return nil, err
 	}
 	return vals, nil
 }
@@ -385,6 +583,75 @@ func ociChartRef(repoURL, chartName string) string {
 	return trimmed + "/" + chartName
 }
 
+// resolveDependsOn renders a component's Fleet spec.dependsOn (also hashed into its
+// digest/fingerprint); nil for no deps or fleetDependsOnNone.
+func resolveDependsOn(w *aiplatformv1alpha1.AIWorkload, deps []string, mode fleetDependsOnMode) []any {
+	names := resolveDependsOnNames(w, deps)
+	if names == nil || mode == fleetDependsOnNone {
+		return nil
+	}
+	out := make([]any, 0, len(names))
+	for _, n := range names {
+		out = append(out, map[string]any{
+			"name":           n,
+			"acceptedStates": append([]any(nil), fleetDependsOnAcceptedStates...),
+		})
+	}
+	return out
+}
+
+// resolveDependsOnNames returns the sorted bundle names for a component's ENABLED
+// dependencies. Dependencies excluded for this workload (ComponentValues.Enabled=false)
+// are dropped: their bundles are never rendered, so a spec.dependsOn on them would make
+// Fleet wait forever. Dropped edges are surfaced via the DependencyExcluded condition.
+func resolveDependsOnNames(w *aiplatformv1alpha1.AIWorkload, deps []string) []string {
+	if len(deps) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(deps))
+	for _, d := range deps {
+		if !isComponentEnabled(w, d) {
+			continue
+		}
+		names = append(names, blueprintBundleName(w.Name, d))
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	return names
+}
+
+// dependencyConditionMessage builds the DependencyExcluded condition message from
+// edges dropped because their dependency is excluded and from notes describing
+// install-time order overrides that were adjusted (stale names dropped, cycles
+// reverted to blueprint order). Empty when nothing was dropped or adjusted.
+func dependencyConditionMessage(excludedEdges, overrideNotes []string) string {
+	var parts []string
+	if len(excludedEdges) > 0 {
+		parts = append(parts, "Deployed without excluded dependencies: "+strings.Join(excludedEdges, ", "))
+	}
+	if len(overrideNotes) > 0 {
+		parts = append(parts, "Deployed with dependency fallbacks: "+strings.Join(overrideNotes, ", "))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// excludedDependencyEdges returns "<component> -> <excludedDep>" for each enabled
+// component whose dependency was dropped because it is excluded from this workload.
+func excludedDependencyEdges(w *aiplatformv1alpha1.AIWorkload, components []aiplatformv1alpha1.BlueprintComponent) []string {
+	var edges []string
+	for _, c := range components { // pass enabledComponents
+		for _, d := range c.DependsOn {
+			if !isComponentEnabled(w, d) {
+				edges = append(edges, c.ChartName+" -> "+d)
+			}
+		}
+	}
+	sort.Strings(edges)
+	return edges
+}
+
 // setHelmChartSource points a HelmOp helm spec at its chart. An HTTP repo takes
 // the repo URL plus a chart name; an OCI repo takes the full chart reference
 // in repo alone (see ociChartRef).
@@ -395,6 +662,106 @@ func setHelmChartSource(helmSpec map[string]any, repoURL, chartName string, isOC
 	}
 	helmSpec["repo"] = repoURL
 	helmSpec["chart"] = chartName
+}
+
+// resolveKustomizeOverlay returns the overlay files for a component's Kustomize
+// config, plus the resolved commit for a git-ref source ("" for inline Files —
+// there's nothing to move underneath an embedded overlay). Inline Files are
+// returned verbatim; a GitRef is resolved against its git-backed ClusterRepo,
+// cloned, and read at pin (the commit the fingerprint recorded) or, when pin
+// is empty, at the repo's indexed commit.
+func (r *AIWorkloadReconciler) resolveKustomizeOverlay(ctx context.Context, c aiplatformv1alpha1.BlueprintComponent, pin string) (files map[string]string, commit string, err error) {
+	k := c.Kustomize
+	if k == nil {
+		return nil, "", nil
+	}
+	if err := kustomizeoverlay.Validate(k); err != nil {
+		return nil, "", fmt.Errorf("kustomize overlay for %s: %w", c.ChartName, err)
+	}
+	if len(k.Files) > 0 {
+		return k.Files, "", nil
+	}
+	info, err := r.overlayRepo(ctx, k.GitRef.ChartRepo)
+	if err != nil {
+		return nil, "", err
+	}
+	indexed := pin
+	if indexed == "" {
+		if indexed, err = indexedCommit(k.GitRef.ChartRepo, info); err != nil {
+			return nil, "", err
+		}
+	}
+	var auth *gogithttp.BasicAuth
+	// The clientSecret's cacerts is trusted as well as spec.caBundle, as for chart pulls.
+	ca := info.CABundle
+	if info.ClientSecret != "" {
+		sec := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: info.ClientSecretNS, Name: info.ClientSecret}, sec); err != nil {
+			return nil, "", fmt.Errorf("read clientSecret %q for overlay repo %q: %w", info.ClientSecret, k.GitRef.ChartRepo, err)
+		}
+		if p := string(sec.Data["password"]); p != "" {
+			auth = &gogithttp.BasicAuth{Username: string(sec.Data["username"]), Password: p}
+		}
+		if extra := sec.Data["cacerts"]; len(extra) > 0 {
+			ca = append(append(append([]byte{}, ca...), '\n'), extra...)
+		}
+	}
+	gc := igit.NewForRepo(info.GitRepo, info.GitBranch, auth, ca, info.InsecureSkipTLSVerify)
+	raw, err := gc.ReadDir(ctx, k.GitRef.Path, indexed)
+	if err != nil {
+		return nil, "", fmt.Errorf("read overlay %q from %q: %w", k.GitRef.Path, k.GitRef.ChartRepo, err)
+	}
+	// ReadDir returns keys relative to k.GitRef.Path (the prefix stripped), but
+	// spec.kustomize.dir is rendered as c.Kustomize.Dir — Fleet looks for the
+	// overlay under "<Dir>/...". Re-key so the embedded files live under Dir,
+	// matching inline overlays (Task 7 already writes "<dir>/kustomization.yaml").
+	files = rekeyUnderDir(raw, k.Dir)
+	if err := kustomizeoverlay.ValidateFiles(k.Dir, files); err != nil {
+		return nil, "", fmt.Errorf("kustomize overlay for %s in repo %q: %w", c.ChartName, k.GitRef.ChartRepo, err)
+	}
+	return files, indexed, nil
+}
+
+// overlayRepo resolves the ClusterRepo a gitRef overlay is read from. Only
+// custom git repos registered in AI Factory settings are allowed: the overlay
+// is cloned in memory, and Rancher's own chart repos are far too large for that.
+func (r *AIWorkloadReconciler) overlayRepo(ctx context.Context, name string) (clusterRepoInfo, error) {
+	info, err := r.resolveClusterRepo(ctx, name)
+	if err != nil {
+		return clusterRepoInfo{}, fmt.Errorf("resolve overlay repo %q: %w", name, err)
+	}
+	if info.Kind != repoKindGit {
+		return clusterRepoInfo{}, fmt.Errorf("kustomize gitRef repo %q is not git-backed", name)
+	}
+	if !info.Custom {
+		return clusterRepoInfo{}, fmt.Errorf("kustomize gitRef repo %q is not a custom repository from AI Factory settings", name)
+	}
+	// The Fleet agent applies the overlay with its own privileges, so plain HTTP
+	// is refused; SSH is not supported. TLS verification follows the ClusterRepo
+	// (an admin may opt out with insecureSkipTLSVerify).
+	if !isHTTPSGitURL(info.GitRepo) {
+		return clusterRepoInfo{}, fmt.Errorf("kustomize gitRef repo %q uses %q; overlays need an https:// git URL (plain http:// and SSH are not supported)", name, info.GitRepo)
+	}
+	return info, nil
+}
+
+func isHTTPSGitURL(u string) bool {
+	return strings.HasPrefix(strings.ToLower(u), "https://")
+}
+
+// rekeyUnderDir prefixes every file key with dir + "/", so a files map whose
+// keys are relative to some external root (e.g. git.ReadDir's output, which
+// strips the cloned path prefix) lines up with spec.kustomize.dir, which Fleet
+// resolves against the bundle root.
+func rekeyUnderDir(in map[string]string, dir string) map[string]string {
+	if dir == "" {
+		return in
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[dir+"/"+k] = v
+	}
+	return out
 }
 
 // ensureBlueprintHelmOp creates (or patches) the HelmOp for one blueprint component.
@@ -412,8 +779,15 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// Git-backed ClusterRepos have no HTTP/OCI URL a HelmOp could pull from; the
 	// operator fetches the chart from Rancher and deploys it as an embedded Fleet
 	// Bundle instead.
-	if repoInfo.Kind == repoKindGit {
-		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, false)
+	want := kindHelmOp
+	if usesEmbeddedChart(w, c, repoInfo) {
+		want = kindEmbeddedBundle
+	}
+	if err := r.ensureComponentKind(ctx, w, c, bundleName, want, false, r.embeddedValidator(ctx, w, c, bundleName, repoInfo, want)); err != nil {
+		return "", err
+	}
+	if want == kindEmbeddedBundle {
+		return r.ensureEmbeddedChartBundle(ctx, w, c, bundleName, repoInfo, false)
 	}
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
@@ -457,17 +831,20 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 	// blueprint component override the workload-level TargetNamespace. The
 	// injector and the HelmOp's defaultNamespace below both consume this.
 	ns := componentNamespace(w, c)
-	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
-	if err != nil {
+	if err := r.injectComponentPullSecrets(ctx, w, c, repoInfo, ns, vals); err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	adaptPullSecretShapeForChart(c.ChartName, vals)
-	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}
+	valuesFrom := valuesFromSpec(c)
+	if valuesFrom != nil {
+		helmSpec["valuesFrom"] = valuesFrom
+	}
 
 	epoch := r.retryEpochValue(w)
+	dependsOn := resolveDependsOn(w, c.DependsOn, r.fleetDependsOnMode(ctx))
 
 	digest := perHelmOpRenderDigest(ComponentRenderInputs{
 		ChartRepo:    c.ChartRepo,
@@ -475,12 +852,18 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		ChartVersion: c.ChartVersion,
 		Namespace:    ns,
 		Vendor:       string(c.Vendor),
+		ExtraVendors: extraVendorStrings(c.AdditionalPullSecretVendors),
 		RepoURL:      repoInfo.URL,
 		Targets:      w.Spec.TargetClusters,
 		Values:       vals,
+		DependsOn:    dependsOn,
+		ValuesFrom:   valuesFrom,
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
+	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
+		return "", err
+	}
 
 	for _, pair := range []struct {
 		ns      string
@@ -520,6 +903,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		// schema declares spec.forceSyncGeneration and rejects spec.helm.forceSyncGeneration.
 		_ = unstructured.SetNestedField(ho.Object, epoch, "spec", "forceSyncGeneration")
 		_ = unstructured.SetNestedSlice(ho.Object, pair.targets, "spec", "targets")
+		if dependsOn != nil {
+			_ = unstructured.SetNestedSlice(ho.Object, dependsOn, "spec", "dependsOn")
+		}
 		if repoInfo.ClientSecret != "" {
 			_ = unstructured.SetNestedField(ho.Object, repoInfo.ClientSecret, "spec", "helmSecretName")
 		}
@@ -758,6 +1144,47 @@ func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.Compone
 	return r.injectorFor(vendor)
 }
 
+// injectComponentPullSecrets runs the component's primary injector against vals
+// and each additional pull-secret vendor's injector against a throwaway map, so
+// the extras deliver Secrets without touching the chart's values. It records the
+// secret names on w.Status.PullSecretDeliveries for ns (the merge deduplicates). On a custom
+// repo every vendor resolves to the repo's own injector, so no vendor's
+// credentials leak into it.
+func (r *AIWorkloadReconciler) injectComponentPullSecrets(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, repoInfo clusterRepoInfo, ns string, vals map[string]any) error {
+	writeLocal := targetsLocalCluster(w)
+	names, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, writeLocal)
+	if err != nil {
+		return err
+	}
+	for _, v := range c.AdditionalPullSecretVendors {
+		extra, err := r.injectorForRepo(v, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, map[string]any{}, writeLocal)
+		if err != nil {
+			return err
+		}
+		names = append(names, extra...)
+	}
+	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, names)
+	return nil
+}
+
+// readBasicAuthSecret reads the username/password keys from a basic-auth Secret
+// (the shape Rancher ClusterRepo clientSecrets use). Returns ("", "", err) only
+// when the Secret itself cannot be read; a missing key just comes back empty.
+func (r *AIWorkloadReconciler) readBasicAuthSecret(ctx context.Context, ns, name string) (user, pass string, err error) {
+	user, pass, _, err = r.readRepoAuthSecret(ctx, ns, name)
+	return user, pass, err
+}
+
+// readRepoAuthSecret is readBasicAuthSecret plus the cacerts key, where the
+// managed registry repos keep their CA.
+func (r *AIWorkloadReconciler) readRepoAuthSecret(ctx context.Context, ns, name string) (user, pass string, caCerts []byte, err error) {
+	src := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, src); err != nil {
+		return "", "", nil, err
+	}
+	return string(src.Data["username"]), string(src.Data["password"]), src.Data["cacerts"], nil
+}
+
 // ensureCombinedPullSecret creates (or updates) a single kubernetes.io/dockerconfigjson secret
 // in targetNamespace whose "auths" map covers ALL configured registries: the component's own
 // chartRepo, ApplicationCollection, and SUSERegistry from Settings. This ensures subchart
@@ -774,11 +1201,8 @@ func (r *AIWorkloadReconciler) ensureCombinedPullSecret(ctx context.Context, cc 
 	// under a bogus "" host in the dockerconfigjson.
 	if repoInfo.ClientSecret != "" && repoInfo.Kind != repoKindGit {
 		if host := registryurl.Host(repoInfo.URL); host != "" {
-			src := &corev1.Secret{}
-			if err := r.Get(ctx, types.NamespacedName{Namespace: repoInfo.ClientSecretNS, Name: repoInfo.ClientSecret}, src); err == nil {
-				if u, p := string(src.Data["username"]), string(src.Data["password"]); u != "" && p != "" {
-					auths[host] = dockerAuthEntry(u, p)
-				}
+			if u, p, err := r.readBasicAuthSecret(ctx, repoInfo.ClientSecretNS, repoInfo.ClientSecret); err == nil && u != "" && p != "" {
+				auths[host] = dockerAuthEntry(u, p)
 			}
 		}
 	}
@@ -1008,8 +1432,15 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 
 	// Git-backed ClusterRepos: publish an embedded-chart Fleet Bundle git file
 	// rather than a HelmOp (which cannot pull from git).
-	if repoInfo.Kind == repoKindGit {
-		return r.ensureBlueprintGitChartBundle(ctx, w, c, bundleName, repoInfo, true)
+	want := kindHelmOp
+	if usesEmbeddedChart(w, c, repoInfo) {
+		want = kindEmbeddedBundle
+	}
+	if err := r.ensureComponentKind(ctx, w, c, bundleName, want, true, r.embeddedValidator(ctx, w, c, bundleName, repoInfo, want)); err != nil {
+		return "", err
+	}
+	if want == kindEmbeddedBundle {
+		return r.ensureEmbeddedChartBundle(ctx, w, c, bundleName, repoInfo, true)
 	}
 
 	isOCI := strings.HasPrefix(repoInfo.URL, "oci://")
@@ -1046,17 +1477,20 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		return "", fmt.Errorf("resolve component values for %s: %w", c.ChartName, err)
 	}
 	ns := componentNamespace(w, c)
-	created, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, targetsLocalCluster(w))
-	if err != nil {
+	if err := r.injectComponentPullSecrets(ctx, w, c, repoInfo, ns, vals); err != nil {
 		return "", fmt.Errorf("inject secrets for %s: %w", c.ChartName, err)
 	}
 	adaptPullSecretShapeForChart(c.ChartName, vals)
-	w.Status.PullSecretDeliveries = mergePullSecretDelivery(w.Status.PullSecretDeliveries, ns, created)
 	if len(vals) > 0 {
 		helmSpec["values"] = vals
 	}
+	valuesFrom := valuesFromSpec(c)
+	if valuesFrom != nil {
+		helmSpec["valuesFrom"] = valuesFrom
+	}
 
 	epoch := r.retryEpochValue(w)
+	dependsOn := resolveDependsOn(w, c.DependsOn, r.fleetDependsOnMode(ctx))
 
 	digest := perHelmOpRenderDigest(ComponentRenderInputs{
 		ChartRepo:    c.ChartRepo,
@@ -1064,9 +1498,12 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		ChartVersion: c.ChartVersion,
 		Namespace:    ns,
 		Vendor:       string(c.Vendor),
+		ExtraVendors: extraVendorStrings(c.AdditionalPullSecretVendors),
 		RepoURL:      repoInfo.URL,
 		Targets:      w.Spec.TargetClusters,
 		Values:       vals,
+		DependsOn:    dependsOn,
+		ValuesFrom:   valuesFrom,
 	})
 
 	localTargets, downstreamTargets := splitWorkloadTargets(w)
@@ -1106,6 +1543,9 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		}
 		if repoInfo.ClientSecret != "" {
 			helmOpSpec["helmSecretName"] = repoInfo.ClientSecret
+		}
+		if dependsOn != nil {
+			helmOpSpec["dependsOn"] = dependsOn
 		}
 		objects = append(objects, map[string]any{
 			"apiVersion": "fleet.cattle.io/v1alpha1",
@@ -1147,12 +1587,9 @@ func marshalGitResources(objects []map[string]any) (string, error) {
 }
 
 func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, bundleName, content string) error {
-	var s aiplatformv1alpha1.Settings
-	if err := r.Get(ctx, types.NamespacedName{
-		Namespace: r.OperatorNamespace,
-		Name:      operatorSettingsName,
-	}, &s); err != nil {
-		return fmt.Errorf("read settings: %w", err)
+	s, err := r.gitOpsSettings(ctx)
+	if err != nil {
+		return err
 	}
 	branch := s.Spec.Fleet.Branch
 	if branch == "" {
@@ -1162,16 +1599,18 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 	if w.Annotations[gitFileHashAnnotation(bundleName)] == publicationHash {
 		return nil
 	}
-	gc, err := igit.NewFromSettings(ctx, &s, r.OperatorNamespace, &controllerSecretReader{r.Client})
-	if err != nil {
-		return fmt.Errorf("init git client: %w", err)
+	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
+		return err
 	}
-	filePath := "workloads/" + bundleName + ".yaml"
-	if _, err = gc.WriteFile(ctx, filePath, content, "chore: deploy blueprint component "+bundleName); err != nil {
+	gc, err := r.gitOpsClient(ctx, s)
+	if err != nil {
+		return err
+	}
+	if _, err = gc.WriteFile(ctx, gitOpsFilePath(bundleName), content, "chore: deploy blueprint component "+bundleName); err != nil {
 		return err
 	}
 	metav1.SetMetaDataAnnotation(&w.ObjectMeta, gitFileHashAnnotation(bundleName), publicationHash)
-	return r.Update(ctx, w)
+	return r.updateKeepingStatus(ctx, w)
 }
 
 // aggregateClusterStatuses derives ClusterStatuses from the component matrix by aggregating
@@ -1262,6 +1701,15 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	// It gets its own pull secret built from the repo's credentials instead
 	// (customRepoInjector). The marker label is the single source of truth.
 	info.Custom = cr.GetLabels()[credentials.CustomRepoLabel] == credentials.LabelValueTrue
+	// spec.caBundle is format: byte, i.e. base64 in the API object.
+	if ca, _, _ := unstructured.NestedString(cr.Object, "spec", "caBundle"); ca != "" {
+		pem, err := base64.StdEncoding.DecodeString(ca)
+		if err != nil {
+			return clusterRepoInfo{}, fmt.Errorf("ClusterRepo %q spec.caBundle is not valid base64: %w", repoName, err)
+		}
+		info.CABundle = pem
+	}
+	info.InsecureSkipTLSVerify, _, _ = unstructured.NestedBool(cr.Object, "spec", "insecureSkipTLSVerify")
 
 	url, _, _ := unstructured.NestedString(cr.Object, "spec", "url")
 	if url == "" {
@@ -1273,6 +1721,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		if strings.HasPrefix(url, "oci://") {
 			info.Kind = repoKindOCI
 		}
+		info.InsecurePlainHTTP, _, _ = unstructured.NestedBool(cr.Object, "spec", "insecurePlainHttp")
 		return info, nil
 	}
 
@@ -1292,14 +1741,6 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	}
 
 	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", errClusterRepoNotReady, repoName)
-}
-
-func bpCRName(familyName, version string) string {
-	v := version
-	if i := strings.IndexByte(v, '+'); i >= 0 {
-		v = v[:i]
-	}
-	return naming.Slugify(familyName) + "-" + strings.ReplaceAll(v, ".", "-")
 }
 
 // injectNvidiaPullSecretRefs writes the ngc-secret reference into both common
@@ -1586,6 +2027,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 		for _, expectedID := range expectedClusters {
 			if !seenClusters[expectedID] {
 				cellPhase := aiplatformv1alpha1.AIWorkloadClusterPhasePending
+				cellMsg := ""
 				if b == nil {
 					// No Bundle exists: check if HelmOp has terminal Accepted=False.
 					ho, err := r.getHelmOpIn(ctx, k.Namespace, k.Name)
@@ -1604,6 +2046,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 						digest := expectedDigests[k.Namespace+"/"+k.Name]
 						if acceptedFalseTerminal(ho, baseline, digest, epoch, ho.GetGeneration()) {
 							cellPhase = aiplatformv1alpha1.AIWorkloadClusterPhaseFailed
+							cellMsg = acceptedConditionMessage(ho)
 						}
 					}
 				}
@@ -1612,6 +2055,7 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 					ReleaseName:   k.ReleaseName,
 					ClusterID:     expectedID,
 					Phase:         cellPhase,
+					Message:       truncateMessage(cellMsg),
 				})
 			}
 		}
@@ -1658,35 +2102,25 @@ func equalComponentStatuses(a, b []aiplatformv1alpha1.AIWorkloadComponentStatus)
 
 // cleanupStaleHelmOps removes HelmOps/Bundles (or git files) no longer desired, discovered by
 // the workload-uid owner label so a mid-cleanup crash self-heals. (namespace,name) identities
-// throughout. Backfills the label onto still-known FleetBundleNames HelmOps before diffing.
-func (r *AIWorkloadReconciler) cleanupStaleHelmOps(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, desired []HelmOpKey) error {
+// throughout. legacy are the unlabelled GitOps Bundles backfillOwnerLabels returned.
+func (r *AIWorkloadReconciler) cleanupStaleHelmOps(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, desired []HelmOpKey, legacy map[string][]unstructured.Unstructured) error {
 	desiredSet := map[string]bool{}
+	// One published file holds a name's objects for every workspace, so it is
+	// removed only when the name is desired in none (the render already
+	// rewrote it without the stale workspace's object).
+	desiredNames := map[string]bool{}
 	for _, k := range desired {
 		desiredSet[k.Namespace+"/"+k.Name] = true
+		desiredNames[k.Name] = true
 	}
 
-	// Backfill the owner label onto pre-existing HelmOps named in FleetBundleNames.
-	for _, name := range w.Spec.FleetBundleNames {
-		for _, ns := range fleetNamespaces {
-			ho, err := r.getHelmOpIn(ctx, ns, name)
-			if err != nil {
-				return err
-			}
-			if ho == nil {
-				continue
-			}
-			if ho.GetLabels()[workloadUIDLabel] == "" {
-				lbls := ho.GetLabels()
-				if lbls == nil {
-					lbls = map[string]string{}
-				}
-				lbls[workloadUIDLabel] = string(w.UID)
-				ho.SetLabels(lbls)
-				if err := r.Update(ctx, ho); err != nil {
-					return err
-				}
-			}
+	removed := map[string]bool{}
+	removeFile := func(name string) error {
+		if desiredNames[name] || removed[name] {
+			return nil
 		}
+		removed[name] = true
+		return r.removeGitFile(ctx, w, name)
 	}
 
 	// Discover actual HelmOps by owner label across both fleet namespaces.
@@ -1703,7 +2137,7 @@ func (r *AIWorkloadReconciler) cleanupStaleHelmOps(ctx context.Context, w *aipla
 			}
 			switch w.Spec.DeployStrategy {
 			case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-				if err := r.deleteGitFileByName(ctx, w, name); err != nil {
+				if err := removeFile(name); err != nil {
 					return err
 				}
 			default:
@@ -1717,8 +2151,86 @@ func (r *AIWorkloadReconciler) cleanupStaleHelmOps(ctx context.Context, w *aipla
 				}
 			}
 		}
+
+		// Components rendered as embedded-chart Bundles (git-backed charts, and
+		// any component with a Kustomize overlay) have no HelmOp to discover, so
+		// find their Bundles by the same owner label. Fleet's HelmOp-generated
+		// Bundles carry it too (copied from spec.labels); isOperatorBundle skips them.
+		bundles := &unstructured.UnstructuredList{}
+		bundles.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: "BundleList"})
+		if err := r.List(ctx, bundles, client.InNamespace(ns), client.MatchingLabels{workloadUIDLabel: string(w.UID)}); err != nil {
+			return err
+		}
+		candidates := append(legacy[ns], bundles.Items...)
+		for i := range candidates {
+			b := &candidates[i]
+			if !isOperatorBundle(b) || desiredSet[ns+"/"+b.GetName()] {
+				continue
+			}
+			if w.Spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps {
+				if err := removeFile(b.GetName()); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := r.deleteBundleIn(ctx, ns, b.GetName()); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// backfillOwnerLabels adds the owner label to HelmOps and embedded-chart Bundles
+// named in FleetBundleNames that an earlier release wrote without it. In GitOps
+// mode such a Bundle is left alone (the GitRepo would revert a patch; the next
+// render republishes it labelled) and returned per namespace, so cleanup can
+// still remove its file. Candidates are found by listing objects without the
+// owner label (Bundles: those carrying the render-digest label every embedded
+// Bundle has), so a fully labelled workload costs four Lists and no Gets.
+func (r *AIWorkloadReconciler) backfillOwnerLabels(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (map[string][]unstructured.Unstructured, error) {
+	if len(w.Spec.FleetBundleNames) == 0 {
+		return nil, nil
+	}
+	gitOps := w.Spec.DeployStrategy == aiplatformv1alpha1.AIWorkloadDeployGitOps
+	selectors := map[string]string{
+		"HelmOpList": "!" + workloadUIDLabel,
+		"BundleList": renderDigestLabel + ",!" + workloadUIDLabel,
+	}
+	legacy := map[string][]unstructured.Unstructured{}
+	for _, ns := range fleetNamespaces {
+		for _, kind := range []string{"HelmOpList", "BundleList"} {
+			sel, err := labels.Parse(selectors[kind])
+			if err != nil {
+				return nil, err
+			}
+			list := &unstructured.UnstructuredList{}
+			list.SetGroupVersionKind(schema.GroupVersionKind{Group: "fleet.cattle.io", Version: "v1alpha1", Kind: kind})
+			if err := r.List(ctx, list, client.InNamespace(ns), client.MatchingLabelsSelector{Selector: sel}); err != nil {
+				return nil, err
+			}
+			for i := range list.Items {
+				obj := &list.Items[i]
+				if !slices.Contains(w.Spec.FleetBundleNames, obj.GetName()) {
+					continue
+				}
+				if kind == "BundleList" {
+					if !isOperatorBundle(obj) {
+						continue
+					}
+					if gitOps {
+						legacy[ns] = append(legacy[ns], *obj)
+						continue
+					}
+				}
+				labelOwner(obj, w)
+				if err := r.Update(ctx, obj); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return legacy, nil
 }
 
 // getHelmOpIn fetches a HelmOp in a specific namespace, returning (nil,nil) when absent.

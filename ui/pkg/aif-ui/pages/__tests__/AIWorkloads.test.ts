@@ -6,6 +6,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { ComponentCustomProperties } from 'vue';
 import AIWorkloads from '../AIWorkloads.vue';
 import { listAIWorkloads } from '../../utils/operator-api';
+import { findBlueprint, groupBlueprintsByFamily, listBlueprints } from '../../utils/blueprint-api';
 import {
   OPERATOR_UNREACHABLE, checkOperatorConnection, getConnectionError, recheckOperatorConnection,
 } from '../../utils/operator-config';
@@ -16,7 +17,8 @@ vi.mock('../../utils/operator-api', () => ({
   rollbackAIWorkload: vi.fn(),
   retryAIWorkload:    vi.fn(),
 }));
-vi.mock('../../utils/blueprint-api', () => ({
+vi.mock('../../utils/blueprint-api', async(importOriginal) => ({
+  semverCompare:           (await importOriginal<typeof import('../../utils/blueprint-api')>()).semverCompare,
   listBlueprints:          vi.fn().mockResolvedValue({ items: [] }),
   groupBlueprintsByFamily: vi.fn(() => new Map()),
   findBlueprint:           vi.fn(),
@@ -35,7 +37,7 @@ const POLL_MS = 10_000;
 const unreachable = Object.assign(new Error('Handler disconnected'), { status: 503, code: OPERATOR_UNREACHABLE, unreachable: true });
 const forbidden   = Object.assign(new Error('forbidden'), { status: 403, code: 'FORBIDDEN', unreachable: false });
 
-async function mountWorkloads() {
+async function mountWorkloads(stubs: Record<string, unknown> = {}) {
   const store = { getters: { 'i18n/t': (key: string) => key }, dispatch: vi.fn() };
   const wrapper = mount(AIWorkloads, {
     global: {
@@ -46,7 +48,7 @@ async function mountWorkloads() {
         } as unknown as ComponentCustomProperties,
       },
       stubs: {
-        Banner: true, LabeledSelect: true, AppModal: true, BadgeState: true,
+        Banner: true, LabeledSelect: true, AppModal: true, BadgeState: true, ...stubs,
       },
     },
   });
@@ -137,5 +139,57 @@ describe('AI workloads operator banner', () => {
 
     expect(recheckOperatorConnection).not.toHaveBeenCalled();
     expect(listAIWorkloads).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AI workloads minimum safe version', () => {
+  const bp = (version: string, rollback?: 'Disabled') => ({ metadata: { name: `rag-${ version }` }, spec: { version, rollback } });
+  const blueprints = [bp('3.0.0'), bp('2.0.0', 'Disabled'), bp('1.0.0')];
+  const workload = (version: string, deployed: string, minimumSafeVersion?: string) => ({
+    metadata: { name: 'rag', namespace: 'ns' },
+    spec:     { displayName: 'RAG', targetNamespace: 't', source: { sourceType: 'Blueprint', blueprint: { name: 'rag', version } } },
+    status:   { phase: 'Running', deployedSource: { version: deployed, renderDigest: 'd', certifiedAt: '' }, minimumSafeVersion },
+  });
+
+  beforeEach(() => {
+    vi.mocked(getConnectionError).mockReturnValue(null);
+    vi.mocked(listBlueprints).mockResolvedValue({ items: blueprints } as any);
+    vi.mocked(groupBlueprintsByFamily).mockReturnValue(new Map([['rag', blueprints]]) as any);
+    vi.mocked(findBlueprint).mockImplementation(((_items: unknown, _name: string, version: string) => blueprints.find((b) => b.spec.version === version) || null) as any);
+  });
+
+  const rollbackButton = (wrapper: ReturnType<typeof mount>) => wrapper.findAll('button').find((b) => b.text().includes('Roll Back'))!;
+
+  it('disables Roll Back with the floor when the deployed version is below minimumSafeVersion', async() => {
+    vi.mocked(listAIWorkloads).mockResolvedValue({ items: [workload('3.0.0', '1.0.0', 'rag@3.0.0')] } as any);
+    const wrapper = await mountWorkloads();
+
+    expect(rollbackButton(wrapper).attributes('disabled')).toBeDefined();
+    expect(rollbackButton(wrapper).attributes('title')).toBe('suseai.workloads.rollbackBelowMinimumSafe');
+  });
+
+  it('keeps Roll Back enabled at or above minimumSafeVersion', async() => {
+    vi.mocked(listAIWorkloads).mockResolvedValue({ items: [workload('3.0.0', '1.0.0', 'rag@1.0.0')] } as any);
+    const wrapper = await mountWorkloads();
+
+    expect(rollbackButton(wrapper).attributes('disabled')).toBeUndefined();
+  });
+
+  it('disables upgrade targets the operator would refuse', async() => {
+    const w = workload('3.0.0', '3.0.0', 'rag@2.0.0');
+    vi.mocked(listAIWorkloads).mockResolvedValue({ items: [w] } as any);
+    const wrapper = await mountWorkloads({ AppModal: { template: '<div><slot /></div>' } });
+    const vm = wrapper.vm as any;
+
+    vm.openUpgradeModal(w);
+    expect(vm.upgradeVersionSelectOptions.map((o: any) => [o.value, o.disabled])).toEqual([
+      // 2.0.0 disables rollback; 1.0.0 is below the floor.
+      ['3.0.0', false], ['2.0.0', true], ['1.0.0', true],
+    ]);
+    const upgradeButton = () => wrapper.findAll('button').find((b) => b.text() === 'Upgrade' && b.classes('role-primary'))!;
+    vm.upgradeModal.selectedVersion = '1.0.0';
+    await flushPromises();
+    expect(vm.upgradeTargetBlocked).toBe(true);
+    expect(upgradeButton().attributes('disabled')).toBeDefined();
   });
 });

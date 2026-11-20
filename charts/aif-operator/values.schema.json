@@ -241,6 +241,16 @@
         }
       }
     },
+    "advancedCustomizationPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ship a ValidatingAdmissionPolicy requiring update on Blueprints to add or change AIWorkload Kustomize overlays or dependsOn overrides, or to extend a workload with an overlay to new targets, for writes that bypass the AI Factory API. Rendered only when the cluster serves admissionregistration.k8s.io/v1 ValidatingAdmissionPolicy."
+        }
+      }
+    },
     "aiExtension": {
       "type": "object",
       "properties": {

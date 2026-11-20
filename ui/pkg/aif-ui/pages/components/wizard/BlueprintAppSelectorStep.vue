@@ -57,7 +57,7 @@
               :placeholder="t('suseai.wizard.form.componentNamespacePlaceholder', 'defaults to install namespace')"
               :status="nsInvalid(comp) ? 'error' : undefined"
               :sub-label="nsInvalid(comp)
-                ? t('suseai.wizard.form.componentNamespaceInvalid', {}, true)
+                ? t('suseai.wizard.form.componentNamespaceInvalid', 'Must be a valid namespace: lowercase letters, digits and \'-\', starting and ending with a letter or digit (max 63 chars).')
                 : undefined"
               @update:value="onNamespaceChange(idx, $event)"
             />
@@ -69,9 +69,9 @@
               :placeholder="t('suseai.wizard.form.componentReleaseNamePlaceholder', 'defaults to chart name')"
               :status="(releaseNameInvalid(comp) || releaseNameDuplicate(comp, idx)) ? 'error' : undefined"
               :sub-label="releaseNameInvalid(comp)
-                ? t('suseai.wizard.form.componentReleaseNameInvalid', {}, true)
+                ? t('suseai.wizard.form.componentReleaseNameInvalid', 'Must be a valid release name: lowercase letters, digits and \'-\', starting and ending with a letter or digit (max 53 chars).')
                 : releaseNameDuplicate(comp, idx)
-                  ? t('suseai.wizard.form.componentReleaseNameDuplicate', {}, true)
+                  ? t('suseai.wizard.form.componentReleaseNameDuplicate', 'Another component in the same namespace already uses this release name.')
                   : undefined"
               @update:value="onReleaseNameChange(idx, $event)"
             />
@@ -94,6 +94,7 @@ import { fetchSuseAiApps, fetchNvidiaApps, fetchCustomRepoApps, fetchManagedRepo
 import { listChartVersions, inferClusterRepoForChart } from '../../../services/rancher-apps';
 import { resolveCatalogLogo, onCatalogLogoError } from '../../../utils/catalog-logo';
 import type { CatalogLogo } from '../../../utils/catalog-logo';
+import { removeComponentDependency } from '../../../utils/blueprint-customize';
 
 const genericIcon = require('../../../assets/generic-app.svg');
 
@@ -204,7 +205,10 @@ async function addApp(app: AppCollectionItem) {
 }
 
 function removeApp(idx: number) {
-  emit('update:components', props.components.filter((_, i) => i !== idx));
+  const removed = props.components[idx];
+  const remaining = props.components.filter((_, i) => i !== idx);
+
+  emit('update:components', removed ? removeComponentDependency(remaining, removed.chartName) : remaining);
 }
 
 function onVersionChange(idx: number, newVersion: string) {

@@ -1,5 +1,5 @@
 import type {
-  Blueprint, BlueprintComponent, BlueprintList, BlueprintOrigin, BlueprintSpec,
+  Blueprint, BlueprintBasicInfo, BlueprintComponent, BlueprintList, BlueprintOrigin, BlueprintSpec,
 } from '../types/blueprint-types';
 import { BLUEPRINT_NAME_LABEL } from '../types/blueprint-types';
 import { operatorFetch } from './operator-config';
@@ -22,9 +22,10 @@ export function createBlueprint(spec: BlueprintSpec, blueprintName?: string): Pr
 // buildBlueprintSpec assembles the spec the wizard submits and reviews. Fields
 // the wizard has no step for (source, icon) come from the prefill so an Edit
 // keeps them; a new blueprint or a Copy (which prefills neither) gets Custom
-// with no icon.
+// with no icon. rollback is written only as 'Disabled' so allowed specs stay
+// identical to those of older operators/CRDs.
 export function buildBlueprintSpec(
-  basicInfo: { displayName: string; version: string; description: string },
+  basicInfo: BlueprintBasicInfo,
   components: BlueprintComponent[],
   prefill?: BlueprintSpec,
 ): BlueprintSpec {
@@ -34,6 +35,7 @@ export function buildBlueprintSpec(
     description: basicInfo.description || undefined,
     icon:        prefill?.icon,
     source:      prefill?.source ?? 'Custom',
+    rollback:    basicInfo.allowRollback ? undefined : 'Disabled',
     components,
   };
 }
@@ -119,21 +121,35 @@ export function latestVersion(versions: Blueprint[]): Blueprint {
 }
 
 // semverCompare returns negative if a < b, 0 if equal, positive if a > b.
-// Per semver §11.3, a pre-release version has lower precedence than the release it precedes.
-function semverCompare(a: string, b: string): number {
-  const dashA = a.indexOf('-');
-  const dashB = b.indexOf('-');
-  const aCoreStr = dashA === -1 ? a : a.slice(0, dashA);
-  const bCoreStr = dashB === -1 ? b : b.slice(0, dashB);
-  const aPreStr  = dashA === -1 ? '' : a.slice(dashA + 1);
-  const bPreStr  = dashB === -1 ? '' : b.slice(dashB + 1);
-  const pa = aCoreStr.split('.').map(Number);
-  const pb = bCoreStr.split('.').map(Number);
+// Build metadata is ignored and pre-releases order per semver §11.3-11.4.
+export function semverCompare(a: string, b: string): number {
+  const parse = (v: string) => {
+    const main = v.split('+')[0];
+    const dash = main.indexOf('-');
+
+    return {
+      core: (dash === -1 ? main : main.slice(0, dash)).split('.').map(Number),
+      pre:  dash === -1 ? [] : main.slice(dash + 1).split('.'),
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
   for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
+    const diff = (pa.core[i] || 0) - (pb.core[i] || 0);
     if (diff !== 0) return diff;
   }
-  if (aPreStr && !bPreStr) return -1;
-  if (!aPreStr && bPreStr) return 1;
+  if (pa.pre.length && !pb.pre.length) return -1;
+  if (!pa.pre.length && pb.pre.length) return 1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    if (i >= pa.pre.length) return -1;
+    if (i >= pb.pre.length) return 1;
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    const xNum = /^\d+$/.test(x);
+    const yNum = /^\d+$/.test(y);
+    if (xNum && yNum && Number(x) !== Number(y)) return Number(x) - Number(y);
+    if (xNum !== yNum) return xNum ? -1 : 1;
+    if (!xNum && x !== y) return x < y ? -1 : 1;
+  }
   return 0;
 }

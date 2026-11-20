@@ -3,6 +3,7 @@ package aiworkload
 import (
 	"context"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -27,6 +28,55 @@ func bundle(digest string, generation, observed, unavailable, ready, desired int
 	_ = unstructured.SetNestedField(b.Object, ready, "status", "summary", "ready")
 	_ = unstructured.SetNestedField(b.Object, desired, "status", "summary", "desiredReady")
 	return b
+}
+
+// settledBD is a BundleDeployment of bundle ns/name on one cluster whose
+// spec targets deploymentID and whose agent last applied applied in state.
+func settledBD(ns, name, cluster, deploymentID, applied, state string) *unstructured.Unstructured {
+	bd := &unstructured.Unstructured{Object: map[string]any{}}
+	bd.SetGroupVersionKind(bundleDeploymentGVK)
+	bd.SetNamespace("cluster-" + ns + "-" + cluster)
+	bd.SetName(name)
+	bd.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/bundle-namespace": ns})
+	_ = unstructured.SetNestedField(bd.Object, deploymentID, "spec", "deploymentID")
+	_ = unstructured.SetNestedField(bd.Object, deploymentID, "spec", "stagedDeploymentID")
+	_ = unstructured.SetNestedField(bd.Object, applied, "status", "appliedDeploymentID")
+	_ = unstructured.SetNestedField(bd.Object, state, "status", "display", "state")
+	return bd
+}
+
+func TestBundleDeploymentsApplied(t *testing.T) {
+	ready := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "Ready")
+	modified := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "Modified")
+	lagging := *settledBD("fleet-local", "b", "a", "s-new", "s-old", "Ready")
+	unpromoted := *settledBD("fleet-local", "b", "a", "s-old", "s-old", "Ready")
+	_ = unstructured.SetNestedField(unpromoted.Object, "s-new", "spec", "stagedDeploymentID")
+	notReady := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "NotReady")
+	deleting := *settledBD("fleet-local", "b", "c", "s-old", "s-old", "WaitApplied")
+	now := metav1.Now()
+	deleting.SetDeletionTimestamp(&now)
+	for _, tc := range []struct {
+		name          string
+		bds           []unstructured.Unstructured
+		clusters      int
+		allowModified bool
+		want          bool
+	}{
+		{"ready", []unstructured.Unstructured{ready}, 1, false, true},
+		{"applied previous deployment", []unstructured.Unstructured{lagging}, 1, true, false},
+		{"staged not promoted", []unstructured.Unstructured{unpromoted}, 1, true, false},
+		{"missing BundleDeployment", nil, 1, true, false},
+		{"fewer than clusters", []unstructured.Unstructured{ready}, 2, true, false},
+		{"modified certifies nothing", []unstructured.Unstructured{modified}, 1, false, false},
+		{"modified settles a dependency", []unstructured.Unstructured{modified}, 1, true, true},
+		{"not ready", []unstructured.Unstructured{notReady}, 1, true, false},
+		{"deleting BundleDeployment ignored", []unstructured.Unstructured{ready, deleting}, 1, false, true},
+		{"zero clusters", nil, 0, false, true},
+	} {
+		if got := bundleDeploymentsApplied(tc.bds, tc.clusters, tc.allowModified); got != tc.want {
+			t.Errorf("%s: bundleDeploymentsApplied = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }
 
 func TestBundleRenderCurrent(t *testing.T) {
@@ -152,6 +202,24 @@ func TestCertifyDeployedSource(t *testing.T) {
 		t.Fatalf("failed to update bundle to ready: %v", err)
 	}
 
+	// Bundle summary alone: Fleet's first status write after a spec change
+	// reports old deployments, so certification waits for the BundleDeployment.
+	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+		t.Fatalf("certifyDeployedSource failed with ready bundle: %v", err)
+	}
+	if w.Status.DeployedSource != nil {
+		t.Fatalf("expected DeployedSource nil without an applied BundleDeployment, got %+v", w.Status.DeployedSource)
+	}
+	if err := cl.Create(ctx, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-0", "Ready")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+		t.Fatal(err)
+	}
+	if w.Status.DeployedSource != nil {
+		t.Fatalf("expected DeployedSource nil while the BundleDeployment applied the previous deployment, got %+v", w.Status.DeployedSource)
+	}
+	putBundleDeployment(t, r, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-1", "Ready"))
 	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
 		t.Fatalf("certifyDeployedSource failed with ready bundle: %v", err)
 	}
@@ -170,5 +238,52 @@ func TestCertifyDeployedSource(t *testing.T) {
 	}
 	if !w.Status.DeployedSource.CertifiedAt.Equal(&firstCertifiedAt) {
 		t.Errorf("expected CertifiedAt to be unchanged (idempotent), was %v, now %v", firstCertifiedAt, w.Status.DeployedSource.CertifiedAt)
+	}
+}
+
+func TestCertifyDeployedSource_RefreshesCertifiedAtForActiveVersionOp(t *testing.T) {
+	ctx := context.Background()
+	keys := []HelmOpKey{{Namespace: "fleet-local", Name: blueprintBundleName("w", "open-webui"), ExpectedClusters: 1}}
+	digests := map[string]string{"fleet-local/" + keys[0].Name: "sha256:d"}
+	certifiedAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+	cases := []struct {
+		name        string
+		opType      string
+		requestedAt time.Time
+		wantRefresh bool
+	}{
+		{"no operation keeps CertifiedAt", "", time.Time{}, false},
+		{"rollback requested after certification refreshes", aiplatformv1alpha1.OperationTypeRollback, time.Now().Add(-time.Minute), true},
+		{"upgrade requested after certification refreshes", aiplatformv1alpha1.OperationTypeUpgrade, time.Now().Add(-time.Minute), true},
+		{"rollback requested before certification keeps CertifiedAt", aiplatformv1alpha1.OperationTypeRollback, certifiedAt.Add(-time.Minute), false},
+		{"retry keeps CertifiedAt", aiplatformv1alpha1.OperationTypeRetry, time.Now().Add(-time.Minute), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := wlWithBlueprint("1.0.0")
+			if tc.opType != "" {
+				inFlightVersionOp(w, tc.opType, "1.0.0", "", tc.requestedAt)
+			}
+			b := bundle(renderDigestLabelValue("sha256:d"), 1, 1, 0, 1, 1)
+			b.SetName(keys[0].Name)
+			b.SetNamespace("fleet-local")
+			cl := fakeClient(w, b, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-1", "Ready"))
+			r := &AIWorkloadReconciler{Client: cl, Scheme: cl.Scheme()}
+			if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+				t.Fatal(err)
+			}
+			w.Status.DeployedSource.CertifiedAt = certifiedAt
+
+			if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
+				t.Fatal(err)
+			}
+			refreshed := !w.Status.DeployedSource.CertifiedAt.Equal(&certifiedAt)
+			if refreshed != tc.wantRefresh {
+				t.Fatalf("CertifiedAt refreshed=%v, want %v", refreshed, tc.wantRefresh)
+			}
+			if refreshed && w.Status.DeployedSource.CertifiedAt.Time.Before(tc.requestedAt) {
+				t.Fatalf("refreshed CertifiedAt %v must not predate the request %v", w.Status.DeployedSource.CertifiedAt, tc.requestedAt)
+			}
+		})
 	}
 }

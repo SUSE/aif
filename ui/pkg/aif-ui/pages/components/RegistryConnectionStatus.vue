@@ -6,6 +6,7 @@ import {
   checkRegistryConnection, refreshChartRepository, registryConfigurationFingerprint,
 } from '../../services/registry-connection';
 import { requestErrorMessage } from '../../services/rancher-token';
+import { getLibraryFromRepoUrl } from '../../services/app-collection';
 
 export default {
   name: 'RegistryConnectionStatus',
@@ -109,8 +110,14 @@ export default {
 
   methods: {
     chartAdvice(check) {
-      const reason = check.reason === 'accessDenied' && check.repositoryUrl === 'oci://registry.suse.com/ai/charts'
-        ? 'suseAccessDenied' : check.reason;
+      let reason = check.reason;
+      if (reason === 'accessDenied' && check.repositoryUrl === 'oci://registry.suse.com/ai/charts') {
+        reason = 'suseAccessDenied';
+      } else if (reason === 'accessDenied' && this.result?.authentication.status === 'ok' &&
+          getLibraryFromRepoUrl(check.repositoryUrl) === 'nvidia') {
+        // NGC itself (not a mirror) denied a key that authenticated: an entitlement gap.
+        reason = 'nvidiaAccessDenied';
+      }
       return this.t(`suseai.pages.settings.registryConnection.chartAccess.reasons.${reason}`);
     },
     stateColor(state) {

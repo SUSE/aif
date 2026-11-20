@@ -383,11 +383,12 @@ func main() {
 	// handler served, so each request is checked with a SubjectAccessReview.
 	authz := api.NewAuthorizer(mgr.GetClient(), api.DefaultRules(operatorNamespace))
 	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(authz)
-	api.NewAIWorkloadHandler(mgr.GetClient()).Register(authz)
+	api.NewAIWorkloadHandler(mgr.GetClient()).WithAPIReader(mgr.GetAPIReader()).Register(authz)
 	api.NewBlueprintHandler(mgr.GetClient()).Register(authz)
 	api.NewVersionHandler(version, commit, os.Getenv("CHART_VERSION")).Register(authz)
 	api.NewCatalogHandler(mgr.GetClient(), operatorNamespace).Register(authz)
 	api.NewBlueprintCatalogHandler(mgr.GetClient()).Register(authz)
+	api.NewCapabilitiesHandler().Register(authz)
 	// The connection Secret is read from the environment, not a flag, so an
 	// older operator image (helm upgrade --reuse-values) does not exit on an
 	// unknown flag. It lives outside the operator namespace (cattle-system by

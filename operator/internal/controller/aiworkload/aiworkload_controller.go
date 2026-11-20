@@ -53,9 +53,10 @@ import (
 const aiWorkloadFinalizer = "ai-factory.suse.com/cleanup"
 
 const (
-	conditionTypeReady        = "Ready"
-	reasonClusterRepoNotReady = "ClusterRepoNotReady"
-	reasonReconciled          = "Reconciled"
+	conditionTypeReady              = "Ready"
+	conditionTypeDependencyExcluded = "DependencyExcluded"
+	reasonClusterRepoNotReady       = "ClusterRepoNotReady"
+	reasonReconciled                = "Reconciled"
 	// Deletion-path (uninstall safety-net) reasons, surfaced on the terminating CR.
 	reasonAwaitingUninstall    = "AwaitingUninstall"
 	reasonUninstalling         = "Uninstalling"
@@ -73,6 +74,41 @@ func setCondition(conditions *[]metav1.Condition, condType string, status metav1
 		Message:            message,
 		ObservedGeneration: generation,
 	})
+}
+
+// refusalReasons are the Ready reasons refuseRender sets: the spec is rejected
+// (or, for CRDOutdated, can't be rendered until an admin upgrades the CRD), so
+// an in-flight operation can't succeed (see operationOutcome).
+var refusalReasons = map[string]bool{
+	reasonRollbackDisabled:   true,
+	reasonLockedValueChanged: true,
+	reasonInvalidValuesFrom:  true,
+	reasonCRDOutdated:        true,
+}
+
+// refuseRender records that this pass will not render the spec: Ready=False
+// with reason and a Warning event when the reason or message is new (so a
+// steady refusal doesn't emit an event per reconcile). A Running or Degraded
+// workload becomes Degraded, since its previous release keeps running;
+// otherwise the phase is Failed (see refusedPhase).
+func (r *AIWorkloadReconciler) refuseRender(w *aiplatformv1alpha1.AIWorkload, reason, message string) {
+	message = truncateForCondition(message)
+	if c := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady); c == nil || c.Reason != reason || c.Message != message {
+		r.event(w, corev1.EventTypeWarning, reason, "%s", message)
+	}
+	setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reason, message, w.Generation)
+	w.Status.Phase = refusedPhase(w)
+}
+
+// refusedPhase is the phase of a workload whose spec can't be rendered: Degraded
+// while its previous release keeps running, otherwise Failed (subject to the
+// initial grace window).
+func refusedPhase(w *aiplatformv1alpha1.AIWorkload) aiplatformv1alpha1.AIWorkloadPhase {
+	switch w.Status.Phase {
+	case aiplatformv1alpha1.AIWorkloadPhaseRunning, aiplatformv1alpha1.AIWorkloadPhaseDegraded:
+		return aiplatformv1alpha1.AIWorkloadPhaseDegraded
+	}
+	return guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 }
 
 // truncateForCondition bounds a message so it cannot overflow the CRD's
@@ -112,10 +148,25 @@ type AIWorkloadReconciler struct {
 	// are unaffected.
 	CatalogClient *rancher.Holder
 	Recorder      record.EventRecorder
+	// ChartPuller downloads chart archives from http/oci repos for components
+	// rendered as embedded-chart Bundles. nil means the Helm SDK default (see chartPuller).
+	ChartPuller chartArchivePuller
+	// ClusterFacts resolves automatic Blueprint values (ingress IP, default
+	// IngressClass). nil means rancherClusterFacts over the uncached reader.
+	ClusterFacts ClusterFacts
+	// FleetCapabilities reports optional Fleet features. nil means detection
+	// from the Fleet CRDs over the uncached reader, cached per reconciler.
+	FleetCapabilities FleetCapabilities
+
+	defaultFleetCapsOnce sync.Once
+	defaultFleetCaps     FleetCapabilities
 
 	// fleetClusterForbiddenOnce limits the "cannot read Fleet Clusters" log to
 	// once per process; see bundleDeploymentClusterID.
 	fleetClusterForbiddenOnce sync.Once
+
+	// now overrides the clock in tests; nil means time.Now.
+	now func() time.Time
 }
 
 // event records a Kubernetes event, tolerating a nil Recorder (unit tests / early boot).
@@ -147,6 +198,12 @@ func (r *AIWorkloadReconciler) event(w *aiplatformv1alpha1.AIWorkload, eventtype
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=create;get;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list
+// +kubebuilder:rbac:groups=management.cattle.io,resources=nodes,verbs=list
+// +kubebuilder:rbac:groups=management.cattle.io,resources=clusters,verbs=get
+// +kubebuilder:rbac:groups=provisioning.cattle.io,resources=clusters,verbs=list
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get
 
 func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
@@ -171,7 +228,7 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	result, reconcileErr := r.reconcileStatus(ctx, &w)
+	result, matrixCurrent, reconcileErr := r.reconcileStatus(ctx, &w)
 
 	// Advance ObservedGeneration only when reconciliation reached a terminal
 	// (non-requeue, non-error) state for this generation.
@@ -197,21 +254,28 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, reconcileErr
 	}
 	if result.Requeue || result.RequeueAfter > 0 {
-		return result, nil
+		// Operations judge the component matrix, so only when this pass rebuilt it;
+		// as on the clean pass, they run before pull-secret delivery.
+		if matrixCurrent {
+			res, err := r.reconcileOperation(ctx, &w)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			result = soonerRequeue(result, res)
+		}
+		res, err := r.reconcilePullSecretDeliveries(ctx, &w)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return soonerRequeue(result, res), nil
 	}
 
 	if res, err := r.reconcileOperation(ctx, &w); err != nil || res.RequeueAfter > 0 {
 		return res, err
 	}
 
-	if len(w.Status.PullSecretDeliveries) > 0 {
-		settled, err := r.reconcileDeliveredPullSecrets(ctx, &w)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !settled {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
+	if res, err := r.reconcilePullSecretDeliveries(ctx, &w); err != nil || res.RequeueAfter > 0 {
+		return res, err
 	}
 
 	l.Info("reconciled AIWorkload", "phase", w.Status.Phase)
@@ -226,30 +290,60 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
-// reconcileStatus dispatches to the strategy-specific status reconciler.
-func (r *AIWorkloadReconciler) reconcileStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (ctrl.Result, error) {
+// reconcilePullSecretDeliveries ships the workload's recorded pull secrets,
+// requeueing while they have not settled.
+func (r *AIWorkloadReconciler) reconcilePullSecretDeliveries(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (ctrl.Result, error) {
+	if len(w.Status.PullSecretDeliveries) == 0 {
+		return ctrl.Result{}, nil
+	}
+	settled, err := r.reconcileDeliveredPullSecrets(ctx, w)
+	if err != nil || settled {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// soonerRequeue returns whichever result requeues first; a zero Result never
+// requeues, and Requeue without RequeueAfter means requeue immediately.
+func soonerRequeue(a, b ctrl.Result) ctrl.Result {
+	switch {
+	case b.IsZero():
+		return a
+	case a.IsZero():
+		return b
+	case a.RequeueAfter == 0:
+		return a
+	case b.RequeueAfter == 0 || b.RequeueAfter < a.RequeueAfter:
+		return b
+	}
+	return a
+}
+
+// reconcileStatus dispatches to the strategy-specific status reconciler. The bool reports
+// whether this pass rebuilt the blueprint component matrix (always false for other sources).
+func (r *AIWorkloadReconciler) reconcileStatus(ctx context.Context, w *aiplatformv1alpha1.AIWorkload) (ctrl.Result, bool, error) {
 	if w.Spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceBlueprint {
 		return r.reconcileBlueprintStatus(ctx, w)
 	}
 	// For App-sourced workloads, run the secret injector before the
 	// strategy-specific status path. The injector only populates
-	// Status.PullSecretDeliveries (per-namespace bucket); the
-	// post-reconcile block (line ~92) drives the actual local-write +
+	// Status.PullSecretDeliveries (per-namespace bucket);
+	// reconcilePullSecretDeliveries drives the actual local-write +
 	// downstream Fleet Bundle + SA-merge Job.
 	if w.Spec.Source.SourceType == aiplatformv1alpha1.AIWorkloadSourceApp {
 		if err := r.reconcileAppPullSecrets(ctx, w); err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, false, err
 		}
 	}
 	switch w.Spec.DeployStrategy {
 	case aiplatformv1alpha1.AIWorkloadDeployHelm:
-		return ctrl.Result{}, r.reconcileHelmStatus(ctx, w)
+		return ctrl.Result{}, false, r.reconcileHelmStatus(ctx, w)
 	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
-		return ctrl.Result{}, r.reconcileFleetStatus(ctx, w)
+		return ctrl.Result{}, false, r.reconcileFleetStatus(ctx, w)
 	case aiplatformv1alpha1.AIWorkloadDeployGitOps:
-		return ctrl.Result{}, r.reconcileGitOpsStatus(ctx, w)
+		return ctrl.Result{}, false, r.reconcileGitOpsStatus(ctx, w)
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, false, nil
 }
 
 // ── Helm path ────────────────────────────────────────────────────────────────
@@ -487,7 +581,7 @@ func (r *AIWorkloadReconciler) deleteHelmOpIn(ctx context.Context, ns, name stri
 	ho.SetGroupVersionKind(helmOpGVK)
 	ho.SetName(name)
 	ho.SetNamespace(ns)
-	if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) {
+	if err := r.Delete(ctx, ho); err != nil && !errors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 		return fmt.Errorf("delete HelmOp %s/%s: %w", ns, name, err)
 	}
 	return nil
@@ -515,7 +609,7 @@ func (r *AIWorkloadReconciler) deleteBundleIn(ctx context.Context, ns, name stri
 	b.SetGroupVersionKind(bundleGVK)
 	b.SetName(name)
 	b.SetNamespace(ns)
-	if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) {
+	if err := r.Delete(ctx, b); err != nil && !errors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 		return fmt.Errorf("delete Bundle %s/%s: %w", ns, name, err)
 	}
 	return nil
@@ -588,6 +682,9 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 			}
 		}
 	case aiplatformv1alpha1.AIWorkloadDeployFleetBundle:
+		if res, stop, err := r.releaseBeforeDelete(ctx, w); stop {
+			return res, err
+		}
 		for _, name := range w.Spec.FleetBundleNames {
 			// Delete the HelmOp first so Fleet does not re-create the Bundle,
 			// then delete the Bundle directly (Fleet links them by label only —
@@ -613,6 +710,9 @@ func (r *AIWorkloadReconciler) handleDeletion(ctx context.Context, w *aiplatform
 		// controller then removes the generated HelmOp and Bundle. Do NOT delete
 		// the Bundle directly here (as the FleetBundle case does): the git state
 		// still references it, so Fleet would race to re-create it.
+		if res, stop, err := r.releaseBeforeDelete(ctx, w); stop {
+			return res, err
+		}
 		for _, name := range w.Spec.FleetBundleNames {
 			if err := r.deleteGitFileByName(ctx, w, name); err != nil {
 				l.Error(err, "git file deletion failed — proceeding with finalizer removal", "name", name)

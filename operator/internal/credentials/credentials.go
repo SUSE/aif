@@ -126,6 +126,33 @@ func WellKnownSecretNames(r Registry) []string {
 	}
 }
 
+// MirrorURL returns the Settings.spec.registryEndpoints override for r, or "".
+func MirrorURL(spec *aiplatformv1alpha1.SettingsSpec, r Registry) string {
+	e := spec.RegistryEndpoints
+	if e == nil {
+		return ""
+	}
+	switch r {
+	case RegistryApplicationCollection:
+		return e.ApplicationCollection
+	case RegistrySUSERegistry:
+		return e.SUSERegistry
+	case RegistryNvidia:
+		return e.Nvidia
+	default:
+		return ""
+	}
+}
+
+// AnonymousMirror reports whether the operator serves r from its mirror
+// without credentials: a mirror endpoint is set and no effective ref pair
+// exists. Only NVIDIA supports this; the other registries prune their
+// ClusterRepo without credentials, mirror or not. userRef and tokenRef must be
+// the EffectiveRefs result.
+func AnonymousMirror(spec *aiplatformv1alpha1.SettingsSpec, r Registry, userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef) bool {
+	return r == RegistryNvidia && MirrorURL(spec, r) != "" && (userRef == nil || tokenRef == nil)
+}
+
 // IsWellKnownSecret reports whether name is one of the operator-managed registry secrets.
 func IsWellKnownSecret(name string) bool {
 	for _, r := range []Registry{

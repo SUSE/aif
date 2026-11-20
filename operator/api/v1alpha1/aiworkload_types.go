@@ -112,7 +112,9 @@ type AIWorkloadSource struct {
 }
 
 // ComponentValueOverride holds per-component customizations: Helm value
-// overrides and/or an enable/disable toggle.
+// overrides, an enable/disable toggle, a deploy-order override, and/or an
+// install-time Kustomize overlay.
+// +kubebuilder:validation:XValidation:rule="!has(self.dependsOn) || !(self.componentName in self.dependsOn)",message="a component cannot depend on itself"
 type ComponentValueOverride struct {
 	// ComponentName matches source.app.chartName (App) or a Blueprint component name.
 	// +kubebuilder:validation:MinLength=1
@@ -127,6 +129,21 @@ type ComponentValueOverride struct {
 	// component list to select from.
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// Kustomize is an install-time overlay layered on top of the Blueprint
+	// component's own overlay (applied after it). Optional. Blueprint sources only.
+	// +optional
+	Kustomize *ComponentKustomize `json:"kustomize,omitempty"`
+
+	// DependsOn, when set, replaces the Blueprint component's dependsOn for this
+	// workload. nil = use the Blueprint's; an empty list = no dependencies.
+	// Blueprint sources only.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	DependsOn *[]string `json:"dependsOn,omitempty"`
 }
 
 // AIWorkloadSpec defines the desired state of AIWorkload.
@@ -152,6 +169,7 @@ type AIWorkloadSpec struct {
 	DeployStrategy AIWorkloadDeployStrategy `json:"deployStrategy,omitempty"`
 	// ComponentValues holds per-component Helm value overrides.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
 	ComponentValues []ComponentValueOverride `json:"componentValues,omitempty"`
 	// FleetBundleNames are the Fleet Bundle CR names for this workload.
 	// App-sourced workloads have exactly one entry; Blueprint-sourced workloads
@@ -277,6 +295,12 @@ type AIWorkloadStatus struct {
 	// DeployedSource is the last certified (proven deployed+healthy) blueprint version.
 	// +optional
 	DeployedSource *DeployedSourceSnapshot `json:"deployedSource,omitempty"`
+	// MinimumSafeVersion records, as "<blueprint name>@<version>", the highest
+	// rollback-disabled Blueprint version the controller has started
+	// rendering. Moving to an older version of that Blueprint is refused; unset
+	// means the deployed version is the floor.
+	// +optional
+	MinimumSafeVersion string `json:"minimumSafeVersion,omitempty"`
 	// ComponentStatuses is the per-(component, cluster) matrix, sorted by (componentName, clusterId).
 	// +optional
 	ComponentStatuses []AIWorkloadComponentStatus `json:"componentStatuses,omitempty"`
@@ -290,6 +314,31 @@ type AIWorkloadStatus struct {
 	// (Helm value overrides or excluded components) deviates from the Blueprint defaults.
 	// +optional
 	Customized bool `json:"customized,omitempty"`
+	// ResolvedValues pins every automatic Blueprint value (domain, ingress
+	// class) to the concrete value chosen at install, so later reconciles and
+	// upgrades render the same value even if the cluster changes.
+	// +optional
+	// +listType=map
+	// +listMapKey=componentName
+	// +listMapKey=path
+	// +kubebuilder:validation:MaxItems=256
+	ResolvedValues []ResolvedValue `json:"resolvedValues,omitempty"`
+}
+
+// ResolvedValue is the concrete value pinned for one automatic value.
+type ResolvedValue struct {
+	ComponentName string `json:"componentName"`
+	// Path is the dot-joined Helm values path, e.g. "global.domain".
+	Path  string `json:"path"`
+	Value string `json:"value"`
+	// Source is "auto" (resolved from the cluster) or "user" (install override).
+	// +kubebuilder:validation:Enum=auto;user
+	Source string `json:"source"`
+	// ClusterID is the cluster an auto value was resolved against, so a
+	// retargeted workload re-resolves it. Empty on user values and on pins
+	// recorded before this field existed.
+	// +optional
+	ClusterID string `json:"clusterId,omitempty"`
 }
 
 // +kubebuilder:object:root=true

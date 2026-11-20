@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, getCurrentInstance } from 'vue';
 import { useT } from '../../composables/useT';
+import { provideKustomizeDrafts } from '../../composables/useKustomizeDrafts';
 import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
 import BlueprintInstallBasicInfoStep from './wizard/BlueprintInstallBasicInfoStep.vue';
@@ -9,14 +10,20 @@ import BlueprintCustomizeStep        from './wizard/BlueprintCustomizeStep.vue';
 import BlueprintInstallReviewStep    from './wizard/BlueprintInstallReviewStep.vue';
 import InstallProgressModal, { type ClusterInstallProgress } from './wizard/InstallProgressModal.vue';
 import { getBlueprint, blueprintCRName, slugifyBlueprintName } from '../../utils/blueprint-api';
-import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus } from '../../utils/operator-api';
+import {
+  createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus, getCapabilities,
+} from '../../utils/operator-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
-import { missingCredentialsForBlueprint, type RequiredCredential } from '../../utils/blueprint-preflight';
+import {
+  missingCredentialsForBlueprint, existingReleasesByComponent, type RequiredCredential,
+} from '../../utils/blueprint-preflight';
+import { listCatalogApps } from '../../services/cluster-service';
 import { crNameForCluster, defaultInstallNamespace } from '../../utils/workload-name';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import type { Blueprint } from '../../types/blueprint-types';
-import type { AIWorkloadDeployStrategy, ComponentValueOverride, RegistryStatus } from '../../types/aiworkload-types';
+import type { AppCRD } from '../../types/rancher-types';
+import type { AIWorkloadDeployStrategy, ComponentValueOverride, RegistryStatus, AIWorkloadStatus } from '../../types/aiworkload-types';
 import { PRODUCT } from '../../config/suseai';
 
 interface Props {
@@ -31,6 +38,8 @@ const router  = vm.$router;
 const route   = vm.$route;
 
 const t = useT();
+// Steps unmount on navigation; overlay drafts outlive them here.
+provideKustomizeDrafts();
 const cluster = (route?.params?.cluster as string) || '_';
 
 const loading     = ref(true);
@@ -47,6 +56,7 @@ const initialComponentValues = ref<ComponentValueOverride[]>([]);
 const componentValues = ref<ComponentValueOverride[]>([]);
 const componentValuesValid = ref(true);
 const runningComponentNames = ref<string[]>([]);
+const workloadStatus = ref<AIWorkloadStatus | undefined>(undefined);
 const { fleetGitConfigured, fetchFleetGitConfigured } = useFleetGitConfigured();
 const { clusterNames, clusterDisplayName, loadClusterDisplayNames } = useClusterDisplayNames(store);
 
@@ -60,6 +70,9 @@ const showProgressModal = ref(false);
 const installProgress   = ref<ClusterInstallProgress[]>([]);
 
 const registryStatus = ref<RegistryStatus | null>(null);
+// Fail closed: false until the operator confirms, including for an older
+// operator without the endpoint (it would drop install-time overlays).
+const advancedEditable = ref(false);
 // missingCreds recomputes as componentValues changes so excluding a component
 // (e.g. the only one that needs NVIDIA credentials) drops its credential
 // requirement immediately, instead of freezing the mount-time component list.
@@ -70,6 +83,26 @@ const missingCreds = computed(() => {
   });
   return missingCredentialsForBlueprint(enabledComponents, registryStatus.value);
 });
+
+// Install mode only: in manage mode the workload's own releases would match.
+// Fetched once per newly selected cluster; a superseded fetch is dropped.
+const appsByCluster = ref<Record<string, AppCRD[]>>({});
+let appsFetchSeq = 0;
+watch(clusters, async (ids) => {
+  if (props.mode !== 'install') return;
+  const missing = ids.filter((id) => !(id in appsByCluster.value));
+  if (!missing.length) return;
+  const seq = ++appsFetchSeq;
+  const lists = await Promise.all(missing.map((id) => listCatalogApps(store, id).catch((): AppCRD[] => [])));
+  if (seq === appsFetchSeq) {
+    appsByCluster.value = { ...appsByCluster.value, ...Object.fromEntries(missing.map((id, i) => [id, lists[i]])) };
+  }
+});
+const existingReleases = computed(() => existingReleasesByComponent(
+  blueprint.value?.spec.components || [],
+  Object.fromEntries(clusters.value.map((id) => [id, appsByCluster.value[id] || []])),
+));
+
 const CRED_LABELS: Record<RequiredCredential, string> = {
   applicationCollection: 'Application Collection',
   suseRegistry:          'SUSE Registry',
@@ -90,6 +123,11 @@ const missingCredsLabel = computed(() =>
 onMounted(async () => {
   // Not awaited: names are only needed by the review step and progress modal.
   void loadClusterDisplayNames();
+  void getCapabilities().then((caps) => {
+    advancedEditable.value = caps?.advancedCustomization === true;
+  }).catch((e) => {
+    console.warn('[SUSE-AI] Advanced customization disabled (capabilities unavailable):', e);
+  });
   try {
     const crName = blueprintCRName(props.blueprintName, props.blueprintVersion);
     blueprint.value = await getBlueprint(crName);
@@ -139,6 +177,7 @@ async function loadExistingWorkload() {
   namespace.value       = workload.metadata.namespace;
   clusters.value        = workload.spec.targetClusters || [];
   deployType.value      = (workload.spec.deployStrategy as AIWorkloadDeployStrategy) || 'FleetBundle';
+  workloadStatus.value  = workload.status;
   const existing = workload.spec.componentValues || [];
   initialComponentValues.value = JSON.parse(JSON.stringify(existing));
   componentValues.value = JSON.parse(JSON.stringify(existing));
@@ -323,6 +362,7 @@ function onProgressCancel() { showProgressModal.value = false; }
             :namespace="namespace"
             :components="blueprint?.spec.components || []"
             :disabled="props.mode === 'manage'"
+            :rollback="blueprint?.spec.rollback"
             @update:workload-name="workloadName = $event"
             @update:namespace="namespace = $event"
           />
@@ -343,6 +383,10 @@ function onProgressCancel() { showProgressModal.value = false; }
             :model-value="componentValues"
             :running-components="runningComponentNames"
             :mode="props.mode"
+            :status="workloadStatus"
+            :existing-releases="existingReleases"
+            :cluster-names="clusterNames"
+            :advanced-editable="advancedEditable"
             @update:model-value="componentValues = $event"
             @update:valid="componentValuesValid = $event"
           />
@@ -368,6 +412,7 @@ function onProgressCancel() { showProgressModal.value = false; }
               :cluster-names="clusterNames"
               :components="blueprint?.spec.components || []"
               :component-values="componentValues"
+              :rollback="blueprint?.spec.rollback"
             />
           </div>
         </div>

@@ -57,6 +57,25 @@ spec:
                 items:
                   description: BlueprintComponent defines one Helm chart in a Blueprint.
                   properties:
+                    additionalPullSecretVendors:
+                      description: |-
+                        AdditionalPullSecretVendors lists extra vendors whose pull secrets are
+                        delivered to this component's namespace without touching its Helm values,
+                        for charts that create pods from another vendor's images (the chart's
+                        values must reference the secrets). Optional; absent behaves as before.
+                      items:
+                        description: |-
+                          ComponentVendor selects the secret-injection profile for a Blueprint
+                          component. "suse" preserves the historical combined-secret + global.imagePullSecrets
+                          behavior. "nvidia" creates ngc-secret + ngc-api in the target namespace
+                          and writes both common pull-secret value paths.
+                        enum:
+                        - suse
+                        - nvidia
+                        type: string
+                      maxItems: 2
+                      type: array
+                      x-kubernetes-list-type: set
                     chartName:
                       description: ChartName is the Helm chart name.
                       minLength: 1
@@ -73,6 +92,65 @@ spec:
                       description: ChartVersion is the semver chart version.
                       minLength: 1
                       type: string
+                    dependsOn:
+                      description: |-
+                        DependsOn lists sibling component chartNames (this blueprint's listMapKey)
+                        that must be Ready before this component deploys. Maps to Fleet's
+                        HelmOp/Bundle spec.dependsOn.
+                      items:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      maxItems: 32
+                      type: array
+                      x-kubernetes-list-type: set
+                    kustomize:
+                      description: |-
+                        Kustomize post-renders the component's rendered Helm output. Optional.
+                        Absent means the component deploys exactly as before this field existed.
+                      properties:
+                        dir:
+                          description: |-
+                            Dir is the directory holding kustomization.yaml, relative to the embedded
+                            overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
+                            HelmOp/Bundle spec.kustomize.dir. Must be a clean relative path: no empty,
+                            "." or ".." segments and no leading or trailing slash.
+                          minLength: 1
+                          pattern: ^([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+)(/([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+))*$
+                          type: string
+                        files:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Files is the inline overlay: path -> file content. Embedded verbatim into
+                            the rendered bundle's spec.resources.
+                          type: object
+                        gitRef:
+                          description: |-
+                            GitRef fetches the overlay from a git-backed Rancher ClusterRepo, then
+                            embeds it the same way as Files.
+                          properties:
+                            chartRepo:
+                              description: |-
+                                ChartRepo is a git-backed Rancher ClusterRepo name (resolved via
+                                resolveClusterRepo, reusing its git credentials).
+                              minLength: 1
+                              type: string
+                            path:
+                              description: Path is the directory within the repo to
+                                embed.
+                              minLength: 1
+                              type: string
+                          required:
+                          - chartRepo
+                          - path
+                          type: object
+                      required:
+                      - dir
+                      type: object
+                      x-kubernetes-validations:
+                      - message: set exactly one of files or gitRef
+                        rule: has(self.files) != has(self.gitRef)
                     releaseName:
                       description: |-
                         ReleaseName optionally pins this component's Helm release name.
@@ -96,6 +174,48 @@ spec:
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
+                    valuesFrom:
+                      description: |-
+                        ValuesFrom reads extra Helm values at deploy time from ConfigMap or
+                        Secret keys, passed through to Fleet's spec.helm.valuesFrom.
+                      items:
+                        description: ComponentValuesFrom is one deploy-time values
+                          source.
+                        properties:
+                          configMapKeyRef:
+                            description: ValuesFromKeyRef points at one key of a ConfigMap
+                              or Secret.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                              namespace:
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          secretKeyRef:
+                            description: ValuesFromKeyRef points at one key of a ConfigMap
+                              or Secret.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                minLength: 1
+                                type: string
+                              namespace:
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        type: object
+                        x-kubernetes-validations:
+                        - message: set exactly one of configMapKeyRef or secretKeyRef
+                          rule: has(self.configMapKeyRef) != has(self.secretKeyRef)
+                      maxItems: 8
+                      type: array
                     vendor:
                       default: suse
                       description: |-
@@ -110,6 +230,9 @@ spec:
                   - chartRepo
                   - chartVersion
                   type: object
+                  x-kubernetes-validations:
+                  - message: a component cannot depend on itself
+                    rule: '!has(self.dependsOn) || !(self.chartName in self.dependsOn)'
                 minItems: 1
                 type: array
                 x-kubernetes-list-map-keys:
@@ -132,6 +255,14 @@ spec:
                   (png, gif, jpeg, webp). Use a data: URI for air-gapped installs.
                 maxLength: 16384
                 pattern: ^(data:image\/(png|gif|jpeg|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s"'<>]+)$
+                type: string
+              rollback:
+                description: |-
+                  Rollback set to Disabled blocks rolling back from or to this version, for example
+                  when its upgrade migrates data that older versions can't read. Empty means Allowed.
+                enum:
+                - Allowed
+                - Disabled
                 type: string
               source:
                 description: |-

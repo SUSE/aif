@@ -65,7 +65,17 @@ const (
 	BlueprintOriginCustom    BlueprintOrigin = "Custom"
 )
 
+// RollbackPolicy controls whether workloads of a Blueprint version may be rolled back.
+// +kubebuilder:validation:Enum=Allowed;Disabled
+type RollbackPolicy string
+
+const (
+	RollbackAllowed  RollbackPolicy = "Allowed"
+	RollbackDisabled RollbackPolicy = "Disabled"
+)
+
 // BlueprintComponent defines one Helm chart in a Blueprint.
+// +kubebuilder:validation:XValidation:rule="!has(self.dependsOn) || !(self.chartName in self.dependsOn)",message="a component cannot depend on itself"
 type BlueprintComponent struct {
 	// ChartRepo is the Rancher ClusterRepo name. HTTP, OCI, and git-backed
 	// ClusterRepos are supported. For git-backed repos (spec.gitRepo) the operator
@@ -84,6 +94,14 @@ type BlueprintComponent struct {
 	// +kubebuilder:default=suse
 	// +optional
 	Vendor ComponentVendor `json:"vendor,omitempty"`
+	// AdditionalPullSecretVendors lists extra vendors whose pull secrets are
+	// delivered to this component's namespace without touching its Helm values,
+	// for charts that create pods from another vendor's images (the chart's
+	// values must reference the secrets). Optional; absent behaves as before.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=2
+	AdditionalPullSecretVendors []ComponentVendor `json:"additionalPullSecretVendors,omitempty"`
 	// Values are the Helm values for this component.
 	// +optional
 	Values *apixv1.JSON `json:"values,omitempty"`
@@ -105,6 +123,77 @@ type BlueprintComponent struct {
 	// +kubebuilder:validation:MaxLength=53
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	ReleaseName string `json:"releaseName,omitempty"`
+	// Kustomize post-renders the component's rendered Helm output. Optional.
+	// Absent means the component deploys exactly as before this field existed.
+	// +optional
+	Kustomize *ComponentKustomize `json:"kustomize,omitempty"`
+
+	// DependsOn lists sibling component chartNames (this blueprint's listMapKey)
+	// that must be Ready before this component deploys. Maps to Fleet's
+	// HelmOp/Bundle spec.dependsOn.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	DependsOn []string `json:"dependsOn,omitempty"`
+
+	// ValuesFrom reads extra Helm values at deploy time from ConfigMap or
+	// Secret keys, passed through to Fleet's spec.helm.valuesFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	ValuesFrom []ComponentValuesFrom `json:"valuesFrom,omitempty"`
+}
+
+// ValuesFromKeyRef points at one key of a ConfigMap or Secret.
+type ValuesFromKeyRef struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// ComponentValuesFrom is one deploy-time values source.
+// +kubebuilder:validation:XValidation:rule="has(self.configMapKeyRef) != has(self.secretKeyRef)",message="set exactly one of configMapKeyRef or secretKeyRef"
+type ComponentValuesFrom struct {
+	// +optional
+	ConfigMapKeyRef *ValuesFromKeyRef `json:"configMapKeyRef,omitempty"`
+	// +optional
+	SecretKeyRef *ValuesFromKeyRef `json:"secretKeyRef,omitempty"`
+}
+
+// ComponentKustomize configures a Kustomize post-render overlay for a component.
+// Exactly one content source (Files or GitRef) must be set.
+// +kubebuilder:validation:XValidation:rule="has(self.files) != has(self.gitRef)",message="set exactly one of files or gitRef"
+type ComponentKustomize struct {
+	// Dir is the directory holding kustomization.yaml, relative to the embedded
+	// overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
+	// HelmOp/Bundle spec.kustomize.dir. Must be a clean relative path: no empty,
+	// "." or ".." segments and no leading or trailing slash.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+)(/([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+))*$`
+	Dir string `json:"dir"`
+	// Files is the inline overlay: path -> file content. Embedded verbatim into
+	// the rendered bundle's spec.resources.
+	// +optional
+	Files map[string]string `json:"files,omitempty"`
+	// GitRef fetches the overlay from a git-backed Rancher ClusterRepo, then
+	// embeds it the same way as Files.
+	// +optional
+	GitRef *ComponentKustomizeGitRef `json:"gitRef,omitempty"`
+}
+
+// ComponentKustomizeGitRef references a directory inside a git-backed ClusterRepo.
+type ComponentKustomizeGitRef struct {
+	// ChartRepo is a git-backed Rancher ClusterRepo name (resolved via
+	// resolveClusterRepo, reusing its git credentials).
+	// +kubebuilder:validation:MinLength=1
+	ChartRepo string `json:"chartRepo"`
+	// Path is the directory within the repo to embed.
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
 }
 
 // BlueprintSpec defines the desired state of a Blueprint version.
@@ -135,6 +224,10 @@ type BlueprintSpec struct {
 	// Deprecated marks this blueprint version as deprecated.
 	// +optional
 	Deprecated bool `json:"deprecated,omitempty"`
+	// Rollback set to Disabled blocks rolling back from or to this version, for example
+	// when its upgrade migrates data that older versions can't read. Empty means Allowed.
+	// +optional
+	Rollback RollbackPolicy `json:"rollback,omitempty"`
 	// Components are the Helm charts included in this blueprint. chartName is unique per blueprint.
 	// +kubebuilder:validation:MinItems=1
 	// +listType=map

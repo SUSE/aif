@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintpolicy"
 )
 
 // Request annotation names — MUST match the controller package literals (Plan 2/4).
@@ -47,18 +48,8 @@ func operationInProgress(w *aiplatformv1alpha1.AIWorkload) bool {
 // setRequestAnnotation fetches the workload and merge-patches a single request annotation.
 // Returns the fetched workload (post-set) or writes the HTTP error itself and returns nil.
 func (h *AIWorkloadHandler) setRequestAnnotation(w http.ResponseWriter, r *http.Request, annotation, value string) *aiplatformv1alpha1.AIWorkload {
-	namespace, name := r.PathValue("namespace"), r.PathValue("name")
-	if namespace == "" || name == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: namespace and name are required", ErrInvalidInput))
-		return nil
-	}
-	wl := &aiplatformv1alpha1.AIWorkload{}
-	if err := h.client.Get(r.Context(), types.NamespacedName{Namespace: namespace, Name: name}, wl); err != nil {
-		if errors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, fmt.Errorf("deployment %q not found in namespace %q", name, namespace))
-			return nil
-		}
-		writeError(w, http.StatusInternalServerError, err)
+	wl := h.getActionWorkload(w, r)
+	if wl == nil {
 		return nil
 	}
 	// Recovery operations (upgrade/rollback/retry) are Blueprint-only: startVersionOp cannot change
@@ -92,30 +83,73 @@ func (h *AIWorkloadHandler) upgradeAIWorkload(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: targetVersion is required", ErrInvalidInput))
 		return
 	}
+	wl := h.getActionWorkload(w, r)
+	if wl == nil {
+		return
+	}
+	if src := wl.Spec.Source.Blueprint; src != nil {
+		blocked, floor, err := blueprintpolicy.MoveBlocked(r.Context(), h.client, src.Name, body.TargetVersion, wl.Status.MinimumSafeVersion, deployedVersion(wl))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if blocked {
+			writeError(w, http.StatusBadRequest, rollbackBlockedError(body.TargetVersion, floor))
+			return
+		}
+	}
 	if wl := h.setRequestAnnotation(w, r, upgradeRequestAnnotation, newNonce()+"|"+body.TargetVersion); wl != nil {
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "targetVersion": body.TargetVersion})
 	}
 }
 
+// getActionWorkload fetches the path's workload, or writes the HTTP error itself and returns nil.
+func (h *AIWorkloadHandler) getActionWorkload(w http.ResponseWriter, r *http.Request) *aiplatformv1alpha1.AIWorkload {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	if namespace == "" || name == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: namespace and name are required", ErrInvalidInput))
+		return nil
+	}
+	wl := &aiplatformv1alpha1.AIWorkload{}
+	if err := h.client.Get(r.Context(), types.NamespacedName{Namespace: namespace, Name: name}, wl); err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, fmt.Errorf("deployment %q not found in namespace %q", name, namespace))
+			return nil
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return nil
+	}
+	return wl
+}
+
 func (h *AIWorkloadHandler) rollbackAIWorkload(w http.ResponseWriter, r *http.Request) {
+	wl := h.getActionWorkload(w, r)
+	if wl == nil {
+		return
+	}
+	disabled := false
+	var err error
+	if src := wl.Spec.Source.Blueprint; src != nil {
+		deployed := deployedVersion(wl)
+		disabled, err = blueprintpolicy.RollbackDisabled(r.Context(), h.client, src.Name, src.Version, deployed)
+		disabled = disabled || blueprintpolicy.IsRollback(blueprintpolicy.FloorFor(wl.Status.MinimumSafeVersion, src.Name), deployed)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if disabled {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: rollback is disabled for this Blueprint", ErrInvalidInput))
+		return
+	}
 	if wl := h.setRequestAnnotation(w, r, rollbackRequestAnnotation, newNonce()); wl != nil {
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 	}
 }
 
 func (h *AIWorkloadHandler) retryAIWorkload(w http.ResponseWriter, r *http.Request) {
-	namespace, name := r.PathValue("namespace"), r.PathValue("name")
-	if namespace == "" || name == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("%w: namespace and name are required", ErrInvalidInput))
-		return
-	}
-	wl := &aiplatformv1alpha1.AIWorkload{}
-	if err := h.client.Get(r.Context(), types.NamespacedName{Namespace: namespace, Name: name}, wl); err != nil {
-		if errors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, fmt.Errorf("deployment %q not found in namespace %q", name, namespace))
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err)
+	wl := h.getActionWorkload(w, r)
+	if wl == nil {
 		return
 	}
 	if operationInProgress(wl) {

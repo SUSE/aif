@@ -545,6 +545,20 @@ describe('fetchNvidiaApps', () => {
     ]);
   });
 
+  it('follows the operator usable.nvidia decision when the operator sends it', async () => {
+    const mirror = { spec: { registryEndpoints: { nvidia: 'oci://mirror.local/nvidia' } } };
+    const flags = { applicationCollection: false, suseRegistry: false, nvidia: false };
+
+    (getRegistryStatus as any).mockResolvedValueOnce({ ...flags, usable: { ...flags, nvidia: true } });
+    expect((await fetchNvidiaApps(makeStore([]), mirror)).failedRepos).toEqual([
+      { url: 'oci://mirror.local/nvidia', reason: 'not-ready', message: 'repository not created yet' },
+    ]);
+
+    // Mirror set but its credential refs are unreadable: the operator won't create the repo.
+    (getRegistryStatus as any).mockResolvedValueOnce({ ...flags, usable: flags });
+    expect((await fetchNvidiaApps(makeStore([]), mirror)).failedRepos).toEqual([]);
+  });
+
   it('stays silent when nvidia is not configured and no endpoint is set', async () => {
     (getRegistryStatus as any).mockResolvedValueOnce({ applicationCollection: true, suseRegistry: true, nvidia: false });
     const { apps, failedRepos } = await fetchNvidiaApps(makeStore([]), { spec: {} });

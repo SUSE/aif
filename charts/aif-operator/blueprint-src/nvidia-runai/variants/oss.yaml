@@ -1,0 +1,48 @@
+# Community (open-source) Run:ai, Apache 2.0, from the public runai-oss NGC repo; its charts
+# and nvcr.io/nvidia/runai-oss images are anonymous. Not bundled in the chart: build.py
+# writes it to dist/ for SUSE/community-blueprints (community/suse-ai-factory/), where
+# the ClusterRepo for runaiRepo is shipped too.
+bundled: false
+displayName: NVIDIA RunAI OSS
+version: 1.0.0
+source: Custom
+category: infrastructure
+maintainer: https://github.com/SUSE/aif
+runaiRepo: nvidia-runai-oss
+runaiRepoUrl: https://helm.ngc.nvidia.com/nvidia/runai-oss
+runaiVersion: 3.0.20
+summary: |
+  Open-source NVIDIA Run:ai {{runaiVersion}} (Apache 2.0), community Blueprint without NVIDIA
+  support: the Run:ai control plane and the Run:ai cluster on one target cluster, with
+  every prerequisite. No install-time input is required, but Application Collection
+  credentials for the prerequisites must be configured in AI Factory Settings first. Its
+  charts come from the nvidia-runai-oss ClusterRepo (https://helm.ngc.nvidia.com/nvidia/runai-oss,
+  public), which the community Blueprint catalog provides; install this Blueprint only
+  where that ClusterRepo exists. GitOps install mode is not supported for it: the
+  control plane chart embedded in a Fleet bundle exceeds the 1 MiB limit of a Helm release
+  Secret. When the install finishes, log in to the Run:ai UI and the cluster shows
+  Connected.
+imagesNote: |
+  - Run:ai images are public (nvcr.io/nvidia/runai-oss). To use a private registry, set
+    its pull secret on control-plane as global.imagePullSecrets and keycloakx.imagePullSecrets
+    (the control plane hands the first global.imagePullSecrets entry to the cluster as its
+    registry credential) and on runai-cluster as global.additionalImagePullSecrets, which
+    replaces the default list (suse-ai-pull-combined, the Application Collection
+    credential for the Prometheus config reloader image), so keep suse-ai-pull-combined
+    unless that image is mirrored too.
+registrarEnv: ""
+registrarLimitation: ""
+gpuOperatorComment: |
+  # SUSE's RKE2 docs cover GPU Operator v26.3.x.
+gpuOperatorLead: |
+  GPU Operator: v26.3.3. Following SUSE's RKE2 docs for
+runai-cluster.fields: |
+  # The Prometheus Operator injects its Application Collection config-reloader image
+  # into the runai Prometheus pod; this delivers suse-ai-pull-combined to the runai
+  # namespace.
+  additionalPullSecretVendors:
+    - suse
+runai-cluster.values: |
+  global:
+    additionalImagePullSecrets:
+      - suse-ai-pull-combined

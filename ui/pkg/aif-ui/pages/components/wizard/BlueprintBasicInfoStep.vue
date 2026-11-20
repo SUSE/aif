@@ -29,6 +29,14 @@
       :label="t('suseai.wizard.form.description', 'Description')"
       :placeholder="t('suseai.wizard.form.descriptionPlaceholder', 'Optional description')"
       type="multiline"
+      class="mb-20"
+      @update:value="emitForm"
+    />
+
+    <Checkbox
+      v-model:value="localForm.allowRollback"
+      :label="t('suseai.wizard.form.allowRollback', 'Allow rollback')"
+      :description="t('suseai.wizard.form.allowRollbackHelp', 'Turn off when upgrades migrate data that older versions can\'t read (for example database schema changes). Workloads of this Blueprint then can\'t be rolled back.')"
       @update:value="emitForm"
     />
   </div>
@@ -37,24 +45,20 @@
 <script lang="ts" setup>
 import { ref, watch } from 'vue';
 import { LabeledInput } from '@components/Form/LabeledInput';
+import { Checkbox } from '@components/Form/Checkbox';
 import { useT } from '../../../composables/useT';
 import { SEMVER_PATTERN } from '../../../types/blueprint-types';
+import type { BlueprintBasicInfo } from '../../../types/blueprint-types';
 
-interface BasicInfo {
-  displayName: string;
-  version:     string;
-  description: string;
-}
-
-interface Props { form: BasicInfo; nameDisabled?: boolean }
-interface Emits { (e: 'update:form', form: BasicInfo): void }
+interface Props { form: BlueprintBasicInfo; nameDisabled?: boolean }
+interface Emits { (e: 'update:form', form: BlueprintBasicInfo): void }
 
 const props = defineProps<Props>();
 const emit  = defineEmits<Emits>();
 
 const t = useT();
 
-const localForm    = ref<BasicInfo>({ ...props.form });
+const localForm    = ref<BlueprintBasicInfo>({ ...props.form });
 const versionError = ref('');
 
 watch(() => props.form, (v) => { localForm.value = { ...v }; }, { deep: true });

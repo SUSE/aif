@@ -11,7 +11,10 @@ import {
   recheckOperatorConnection,
 } from '../utils/operator-config';
 import { uninstallWorkload } from '../services/workload-uninstall';
-import { phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage } from '../utils/workload-status';
+import {
+  phaseBadgeColor, phaseBadgeIcon, workloadStatusMessage, hasRollbackTarget, canRollback, moveBlocked,
+  rollbackBelowMinimumSafe, rollbackFloor,
+} from '../utils/workload-status';
 import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import AIWorkloadDetailPanel from '../components/AIWorkloadDetailPanel.vue';
 import type { AIWorkload } from '../types/aiworkload-types';
@@ -157,12 +160,18 @@ const upgradeVersionOptions = computed(() => {
   return versions.map(bp => bp.spec.version);
 });
 
-const upgradeVersionSelectOptions = computed(() =>
-  upgradeVersionOptions.value.map(v => ({
-    label: `v${ v }${ v === upgradeModal.workload?.spec.source.blueprint?.version ? ' (current)' : '' }`,
-    value: v,
-  })),
-);
+const upgradeVersionSelectOptions = computed(() => {
+  const w = upgradeModal.workload;
+  const name = w?.spec.source.blueprint?.name || '';
+
+  return upgradeVersionOptions.value.map(v => ({
+    label:    `v${ v }${ v === w?.spec.source.blueprint?.version ? ' (current)' : '' }`,
+    value:    v,
+    disabled: !!w && moveBlocked(w, v, (version) => findBlueprint(blueprints.value, name, version)),
+  }));
+});
+
+const upgradeTargetBlocked = computed(() => upgradeVersionSelectOptions.value.some(o => o.value === upgradeModal.selectedVersion && o.disabled));
 
 // ── Filtering ──────────────────────────────────────────────────────────────────
 const PHASE_ORDER: Record<string, number> = { Running: 0, Degraded: 1, Failed: 2, Pending: 3 };
@@ -368,9 +377,22 @@ async function executeUpgrade() {
   }
 }
 
-function canRollback(w: AIWorkload): boolean {
-  const ds = w.status?.deployedSource;
-  return !!ds && !!w.spec.source.blueprint && ds.version !== w.spec.source.blueprint.version;
+function rollbackAllowed(w: AIWorkload): boolean {
+  const name = w.spec.source.blueprint?.name || '';
+
+  return canRollback(w, [
+    findBlueprint(blueprints.value, name, w.spec.source.blueprint?.version || ''),
+    findBlueprint(blueprints.value, name, w.status?.deployedSource?.version || ''),
+  ]);
+}
+
+function rollbackDisabledReason(w: AIWorkload): string | undefined {
+  if (rollbackAllowed(w)) return undefined;
+  if (rollbackBelowMinimumSafe(w)) {
+    return t('suseai.workloads.rollbackBelowMinimumSafe', 'Rollback is disabled: a version whose Blueprint disables rollback has started deploying. Use {version} or newer.', { version: rollbackFloor(w) });
+  }
+
+  return t('suseai.workloads.rollbackDisabled', 'Rollback is disabled for this Blueprint: its upgrades migrate data that older versions can\'t read.');
 }
 
 function canRetry(w: AIWorkload): boolean {
@@ -622,8 +644,10 @@ async function doRetry(w: AIWorkload) {
 
                     <!-- Blueprint workload: Roll Back -->
                     <button
-                      v-if="w.spec.source.sourceType === 'Blueprint' && canRollback(w)"
+                      v-if="w.spec.source.sourceType === 'Blueprint' && hasRollbackTarget(w)"
                       class="btn btn-sm role-secondary"
+                      :disabled="!rollbackAllowed(w)"
+                      :title="rollbackDisabledReason(w)"
                       @click="openRollbackModal(w)"
                       type="button"
                     >
@@ -721,7 +745,7 @@ async function doRetry(w: AIWorkload) {
           <button
             class="btn role-primary"
             @click="executeUpgrade"
-            :disabled="upgradeModal.upgrading || (upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version && upgradeModal.workload?.status?.phase === 'Running')"
+            :disabled="upgradeModal.upgrading || upgradeTargetBlocked || (upgradeModal.selectedVersion === upgradeModal.workload?.spec.source.blueprint?.version && upgradeModal.workload?.status?.phase === 'Running')"
             type="button"
           >
             <i v-if="upgradeModal.upgrading" class="icon icon-spinner icon-spin" />

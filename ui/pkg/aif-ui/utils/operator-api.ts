@@ -1,5 +1,5 @@
 import { operatorFetch } from './operator-config';
-import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, RegistryStatus } from '../types/aiworkload-types';
+import type { AIWorkload, AIWorkloadSpec, AIWorkloadStatus, Capabilities, RegistryStatus } from '../types/aiworkload-types';
 
 export function getSettings(timeoutMs?: number): Promise<any> {
   return operatorFetch('/api/v1/settings', { timeout: timeoutMs });
@@ -14,6 +14,10 @@ export function putSettings(spec: any): Promise<any> {
 
 export function getRegistryStatus(timeoutMs = 30000): Promise<RegistryStatus> {
   return operatorFetch('/api/v1/settings/registry-status', { timeout: timeoutMs });
+}
+
+export function getCapabilities(timeoutMs = 10000): Promise<Capabilities> {
+  return operatorFetch('/api/v1/capabilities', { timeout: timeoutMs });
 }
 
 export function createAIWorkload(

@@ -1,23 +1,20 @@
 <script lang="ts" setup>
 import { ref, computed, getCurrentInstance, defineAsyncComponent } from 'vue';
 import { useT } from '../../composables/useT';
+import { provideKustomizeDrafts } from '../../composables/useKustomizeDrafts';
 import { Banner } from '@components/Banner';
 import BlueprintBasicInfoStep   from './wizard/BlueprintBasicInfoStep.vue';
 import BlueprintAppSelectorStep from './wizard/BlueprintAppSelectorStep.vue';
 // Steps 3 & 4 are loaded asynchronously so that Steps 1-2 render even before Task 4 files exist.
 const BlueprintConfigStep       = defineAsyncComponent(() => import('./wizard/BlueprintConfigStep.vue'));
 const BlueprintReviewCreateStep = defineAsyncComponent(() => import('./wizard/BlueprintReviewCreateStep.vue'));
-import type { BlueprintSpec } from '../../types/blueprint-types';
+import type { BlueprintBasicInfo, BlueprintSpec } from '../../types/blueprint-types';
 import { SEMVER_PATTERN, DNS_LABEL_PATTERN, HELM_RELEASE_NAME_MAX } from '../../types/blueprint-types';
 import { createBlueprint, buildBlueprintSpec } from '../../utils/blueprint-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
+import { validateDependsOn } from '../../validators/blueprint';
+import { validateComponentsValuesFrom, valuesFromErrorMessage } from '../../utils/values-from';
 import { PRODUCT } from '../../config/suseai';
-
-interface BasicInfo {
-  displayName: string;
-  version:     string;
-  description: string;
-}
 
 interface Props {
   editName?:    string;
@@ -31,16 +28,19 @@ const router = vm.$router;
 const route  = vm.$route;
 
 const t = useT();
+// Steps unmount on navigation; overlay drafts outlive them here.
+provideKustomizeDrafts();
 const cluster = (route?.params?.cluster as string) || '_';
 
 const error      = ref<string | null>(null);
 const submitting = ref(false);
 const currentStep = ref(0);
 
-const basicInfo = ref<BasicInfo>({
-  displayName: props.prefill?.displayName || '',
-  version:     props.prefill?.version || '',
-  description: props.prefill?.description || '',
+const basicInfo = ref<BlueprintBasicInfo>({
+  displayName:   props.prefill?.displayName || '',
+  version:       props.prefill?.version || '',
+  description:   props.prefill?.description || '',
+  allowRollback: props.prefill?.rollback !== 'Disabled',
 });
 
 const components = ref(
@@ -78,6 +78,14 @@ const componentsValid = computed(() =>
   components.value.length > 0 && namespacesValid.value && releaseNamesValid.value && releaseNamesUnique.value
 );
 
+// Deploy order and valuesFrom are edited on Configuration, so they gate only Review;
+// derived from components so the result survives the step unmounting.
+const configError = computed(() => {
+  const valuesFromErr = validateComponentsValuesFrom(components.value);
+
+  return validateDependsOn(components.value) ?? (valuesFromErr ? valuesFromErrorMessage(t, valuesFromErr) : null);
+});
+
 const wizardSteps = computed(() => [
   { label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),      ready: true },
   {
@@ -85,7 +93,7 @@ const wizardSteps = computed(() => [
     ready: basicInfo.value.displayName.trim() !== '' && SEMVER_PATTERN.test(basicInfo.value.version),
   },
   { label: t('suseai.wizard.steps.configuration', 'Configuration'),   ready: componentsValid.value },
-  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: componentsValid.value },
+  { label: t('suseai.wizard.steps.review', 'Review'),                 ready: componentsValid.value && configError.value === null },
 ]);
 
 function nextStep() {
@@ -119,6 +127,11 @@ async function onCreate() {
   }
   if (!releaseNamesUnique.value) {
     error.value = t('suseai.wizard.form.componentReleaseNamesDuplicate', 'Two or more components resolve to the same release name in the same namespace.');
+    submitting.value = false;
+    return;
+  }
+  if (configError.value) {
+    error.value = configError.value;
     submitting.value = false;
     return;
   }

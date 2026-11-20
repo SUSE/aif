@@ -288,14 +288,18 @@ export async function fetchNvidiaApps($store: any, settings?: any | null, manage
     // registryEndpoints.nvidia is set (the operator creates that mirror WITHOUT
     // credentials, so a creds-only gate would leave the pending mirror wrongly
     // silent). Otherwise stay silent so an unconfigured registry shows nothing.
+    // The operator reports that decision as usable.nvidia; older operators omit
+    // it, so fall back to credentials-or-endpoint.
     const s = settings !== undefined ? settings : await fetchSettingsOrNull();
+    let usable: boolean | undefined;
     let credsConfigured = false;
     try {
       const status = await getRegistryStatus();
+      usable = status?.usable?.nvidia;
       credsConfigured = status?.nvidia === true;
     } catch { /* operator unreachable — fail silent, no false banner */ }
     const endpointConfigured = Boolean(s?.spec?.registryEndpoints?.nvidia);
-    if (credsConfigured || endpointConfigured) {
+    if (usable ?? (credsConfigured || endpointConfigured)) {
       const url = s?.spec?.registryEndpoints?.nvidia || NVIDIA_REPO_URL;
       failedRepos.push({ url, reason: 'not-ready', message: 'repository not created yet' });
     }

@@ -28,6 +28,8 @@ chart/*/*.tgz
 
 # Dev-only validation scripts (not needed at runtime; files/ must NOT be ignored)
 tests/
+# Run:ai Blueprint generator sources; only its output in files/blueprints/ ships.
+blueprint-src/
 
 # For IBS scmsync bridge only
 _service

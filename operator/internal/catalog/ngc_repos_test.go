@@ -190,3 +190,34 @@ func TestClassifyNGCPath(t *testing.T) {
 		t.Errorf("String() = %q, want excluded", NGCPathExcluded.String())
 	}
 }
+
+func TestAlwaysProvisionedPublicTeamReposArePublicNGC(t *testing.T) {
+	for _, u := range alwaysProvisionedPublicTeamRepos {
+		if !IsNGCURL(u) {
+			t.Errorf("%q is not an NGC URL", u)
+			continue
+		}
+		parsed, _ := url.Parse(u)
+		if got := ClassifyNGCPath(parsed.Path); got != NGCPathPublic {
+			t.Errorf("%q classifies as %v; always-provisioned repos must be in publicNGCPaths", u, got)
+		}
+	}
+}
+
+func TestWithAlwaysProvisioned_DedupesAndSorts(t *testing.T) {
+	in := NGCTeamRepos{
+		Public: []string{"https://helm.ngc.nvidia.com/nim"},
+		Gated:  []string{"https://helm.ngc.nvidia.com/nvidia/runai"},
+	}
+	got := withAlwaysProvisioned(in, []string{"https://helm.ngc.nvidia.com/nvidia/aaa"})
+	want := []string{
+		"https://helm.ngc.nvidia.com/nim",
+		"https://helm.ngc.nvidia.com/nvidia/aaa",
+	}
+	if strings.Join(got.Public, ",") != strings.Join(want, ",") {
+		t.Errorf("Public = %v, want %v", got.Public, want)
+	}
+	if len(got.Gated) != 1 || got.Gated[0] != "https://helm.ngc.nvidia.com/nvidia/runai" {
+		t.Errorf("Gated changed: %v", got.Gated)
+	}
+}

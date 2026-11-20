@@ -1,0 +1,74 @@
+{{- /*
+Applies the AI Factory API's advanced-customization rule
+(operator/internal/api/advanced_customization.go) to AIWorkload writes that
+bypass the API (kubectl, GitOps): adding or changing componentValues[].kustomize
+or .dependsOn, or extending a workload that carries an overlay to a new target
+cluster or namespace or another Blueprint or source type, requires update on
+blueprints. A Blueprint version change is not an extension. The operator's own
+ServiceAccount is exempt because the API authorized its writes already.
+
+Stricter than the API in one case: the API accepts a stored dependsOn with
+names the Blueprint no longer has pruned away; the policy cannot see the
+Blueprint, so that edit needs the permission here.
+
+failurePolicy Fail: every field read is guarded, so well-formed objects cannot
+error, and Ignore would let an oversized object that exhausts the CEL cost
+budget skip the check.
+*/}}
+{{- if and (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") (dig "enabled" true (.Values.advancedCustomizationPolicy | default dict)) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}-advanced-customization
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["ai-factory.suse.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["aiworkloads"]
+  matchConditions:
+    - name: not-operator
+      expression: "request.userInfo.username != 'system:serviceaccount:{{ .Release.Namespace }}:{{ include "aif-operator.fullname" . }}'"
+  variables:
+    - name: newValues
+      expression: "object.?spec.?componentValues.orValue([])"
+    - name: oldValues
+      expression: "request.operation == 'UPDATE' ? oldObject.?spec.?componentValues.orValue([]) : []"
+    # Only the first stored entry per componentName counts, as in the controller.
+    - name: overlayChanged
+      expression: >-
+        variables.newValues.exists(c, has(c.kustomize) &&
+        variables.oldValues.filter(o, o.componentName == c.componentName)[?0].?kustomize != optional.of(c.kustomize))
+    - name: orderChanged
+      expression: >-
+        variables.newValues.exists(c, has(c.dependsOn) &&
+        !(variables.oldValues.filter(o, o.componentName == c.componentName)[?0].?dependsOn.hasValue() &&
+        sets.equivalent(variables.oldValues.filter(o, o.componentName == c.componentName)[0].dependsOn, c.dependsOn)))
+    - name: scopeExpanded
+      expression: >-
+        request.operation == 'UPDATE' && variables.newValues.exists(c, has(c.kustomize)) &&
+        (object.?spec.?targetNamespace.orValue('') != oldObject.?spec.?targetNamespace.orValue('') ||
+        object.?spec.?source.?sourceType.orValue('') != oldObject.?spec.?source.?sourceType.orValue('') ||
+        object.?spec.?source.?blueprint.?name.orValue('') != oldObject.?spec.?source.?blueprint.?name.orValue('') ||
+        object.?spec.?targetClusters.orValue([]).exists(t, !(t in oldObject.?spec.?targetClusters.orValue([]))))
+  validations:
+    - expression: >-
+        !(variables.overlayChanged || variables.orderChanged || variables.scopeExpanded) ||
+        authorizer.group('ai-factory.suse.com').resource('blueprints').check('update').allowed()
+      message: Changing deploy order, adding a Kustomize overlay, or extending one to new target clusters, a new namespace or another Blueprint requires permission to update Blueprints
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  labels:
+    {{- include "aif-operator.labels" . | nindent 4 }}
+  name: {{ include "aif-operator.fullname" . }}-advanced-customization
+spec:
+  policyName: {{ include "aif-operator.fullname" . }}-advanced-customization
+  validationActions: [Deny]
+{{- end }}

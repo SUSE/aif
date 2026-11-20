@@ -66,3 +66,10 @@ func TruncateDNS1123Label(s string, max int) string {
 	}
 	return head + "-" + suffix
 }
+
+// BlueprintCRName is the Blueprint object name for a family and version: the
+// slugged family plus the version with build metadata dropped and dots hyphenated.
+func BlueprintCRName(family, version string) string {
+	v, _, _ := strings.Cut(version, "+")
+	return Slugify(family) + "-" + strings.ReplaceAll(v, ".", "-")
+}

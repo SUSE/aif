@@ -12,3 +12,4 @@ spec:
     - name: suse-inference-endpoint
     - name: nvidia-rag-minimal
     - name: nvidia-aiq-with-rag
+    - name: nvidia-runai

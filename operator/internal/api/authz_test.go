@@ -101,6 +101,7 @@ func TestAuthz_DefaultRules(t *testing.T) {
 		"POST /api/v1/git/publish":                                        {Verb: verbUpdate, Resource: resourceSettings, Namespace: opNS},
 		"GET /api/v1/catalog":                                             {Verb: verbGet, Resource: resourceSettings, Namespace: opNS},
 		"GET /api/v1/blueprint-catalogs":                                  {Verb: verbList, Resource: resourceBlueprintCatalogs},
+		"GET /api/v1/capabilities":                                        {Verb: verbList, Resource: resourceBlueprints},
 		"GET /api/v1/blueprints":                                          {Verb: verbList, Resource: resourceBlueprints},
 		"GET /api/v1/blueprints/{name}":                                   {Verb: verbGet, Resource: resourceBlueprints, Name: "obj-1"},
 		"POST /api/v1/blueprints":                                         {Verb: verbCreate, Resource: resourceBlueprints},
@@ -222,6 +223,7 @@ func TestAuthz_AllRoutesCovered(t *testing.T) {
 		NewVersionHandler("v", "c", "cv"),
 		NewCatalogHandler(c, testNS),
 		NewBlueprintCatalogHandler(c),
+		NewCapabilitiesHandler(),
 	}
 	for _, h := range handlers {
 		h.Register(a) // panics on any route without a rule
