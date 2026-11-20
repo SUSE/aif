@@ -4,11 +4,13 @@ metadata:
   labels:
     ai-factory.suse.com/blueprint-name: {{name}}
     ai-factory.suse.com/blueprint-version: {{version}}
+    {{categoryLabel}}
+  {{annotations}}
   name: {{crName}}
 spec:
   displayName: {{displayName}}
   version: {{version}}
-  source: Nvidia
+  source: {{source}}
   # The control plane migrates its database on upgrade; old code can't run on it.
   rollback: Disabled
   description: |
@@ -114,10 +116,7 @@ spec:
     never grants a built-in role: if a grant or the cluster install info is refused,
     registration fails naming the permission set and the Run:ai API call (see the
     lastError and grantedRoles keys of ConfigMap runai-backend/runai-install-info).
-    Run:ai 2.26 limitation: the cluster install info needs "Service accounts edit" as
-    well as "Cluster edit", and that set also lets the stored credential manage other
-    service accounts. To avoid that, create the Secret with a service account whose
-    roles and scope you have bounded yourself.
+    {{registrarLimitation}}
 
     Admin login: the username is admin@runai.local and the password is generated.
     Read it with:
@@ -138,8 +137,7 @@ spec:
       images: [{name: registry.suse.com/bci/python, newName: <registry>/bci/python, newTag: "3.12"}]
     {{imagesNote}}
 
-    GPU Operator: v26.3.3, inside NVIDIA's supported range for Run:ai 2.26 (GPU Operator
-    25.10 to 26.3); v26.7 waits until Run:ai supports it. Following SUSE's RKE2 docs for
+    {{gpuOperatorLead}}
     v26.3.x, it installs SUSE's precompiled driver images
     (registry.suse.com/third-party/nvidia) by default, and skips nodes that already have
     a driver installed. Published driver branches: SLES 15 SP7 550 to 615, SLES 16.0 595,
@@ -174,7 +172,7 @@ spec:
     targetNamespace: monitoring
   - chartName: gpu-operator
     chartRepo: nvidia
-    # NVIDIA's Run:ai 2.26 support covers GPU Operator 25.10 to 26.3.
+    {{gpuOperatorComment}}
     chartVersion: v26.3.3
     targetNamespace: gpu-operator
   # Setup and preflight. The chart is only a carrier for the overlay, which

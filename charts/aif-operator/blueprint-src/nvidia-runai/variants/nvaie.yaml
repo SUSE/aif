@@ -2,6 +2,7 @@
 # and nvcr.io/nvidia/runai images need an NGC key entitled to Run:ai.
 displayName: NVIDIA RunAI
 version: 1.0.0
+source: Nvidia
 runaiRepo: nvidia-runai
 # Not 2.26.58: its charts reference nats, postgresql, thanos and ubi :2.26.58 images
 # that NGC doesn't have (newest 2.26.50).
@@ -23,6 +24,16 @@ imagesNote: |
     list (ngc-secret and suse-ai-pull-combined, the Application Collection credential for
     the Prometheus config reloader image), so keep suse-ai-pull-combined unless that image
     is mirrored too.
+registrarLimitation: |
+  Run:ai 2.26 limitation: the cluster install info needs "Service accounts edit" as
+  well as "Cluster edit", and that set also lets the stored credential manage other
+  service accounts. To avoid that, create the Secret with a service account whose
+  roles and scope you have bounded yourself.
+gpuOperatorComment: |
+  # NVIDIA's Run:ai 2.26 support covers GPU Operator 25.10 to 26.3.
+gpuOperatorLead: |
+  GPU Operator: v26.3.3, inside NVIDIA's supported range for Run:ai 2.26 (GPU Operator
+  25.10 to 26.3); v26.7 waits until Run:ai supports it. Following SUSE's RKE2 docs for
 # 2.26 needs "Service accounts edit" too for the cluster install info (3.0: "Cluster edit" alone).
 registrarEnv: |
   - name: RUNAI_REGISTRAR_PERMISSION_SETS

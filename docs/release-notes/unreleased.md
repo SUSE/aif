@@ -460,3 +460,12 @@ Run:ai UI.
 - The Blueprint's generator sources live in `charts/aif-operator/blueprint-src`
   and are not packaged with the chart; CI regenerates the Blueprint and fails if
   the committed file differs.
+- **Community variant (not bundled).** The same sources build an open-source
+  Run:ai 3.0.20 variant, `nvidia-runai-oss`, that is published in the
+  SUSE/community-blueprints repository (`community/suse-ai-factory/`) instead of
+  the chart. That repository also provides the `nvidia-runai-oss` ClusterRepo,
+  which Fleet applies; the operator no longer creates it. A variant with
+  `bundled: false` is written to `dist/` for copying and `build.py --check` only
+  verifies that it builds. Its Run:ai charts and images are public, so no NVIDIA
+  NGC key is needed; Application Collection credentials are still required. GitOps install mode is not supported for it, for the
+  same Helm release size reason as above.

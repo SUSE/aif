@@ -13,6 +13,9 @@ import build  # noqa: E402
 
 BLUEPRINTS = os.path.join(HERE, "..", "..", "files", "blueprints")
 OUTPUT = os.path.join(BLUEPRINTS, "nvidia-runai-1.0.0.yaml")
+DIST = os.path.join(HERE, "dist")
+OSS_FILE = "nvidia-runai-oss-1.0.0.yaml"
+OSS_REPO_URL = "https://helm.ngc.nvidia.com/nvidia/runai-oss"
 CARRIER = "prometheus-statsd-exporter"
 PREREQS = ["local-path-provisioner", "cert-manager", "prometheus-operator", "gpu-operator"]
 RUNAI = ["control-plane", "runai-cluster"]
@@ -47,7 +50,7 @@ def run_build(script, *args):
 
 def copy_tree(tmp):
     src = os.path.join(tmp, "blueprint-src", "nvidia-runai")
-    shutil.copytree(HERE, src, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(HERE, src, ignore=shutil.ignore_patterns("__pycache__", "dist"))
     os.makedirs(os.path.join(tmp, "files", "blueprints"))
     return src
 
@@ -110,6 +113,32 @@ class BuildTest(unittest.TestCase):
             res = run_build(os.path.join(src, "build.py"), "--check")
             self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
             self.assertIn("nvidia-runai-1.0.0.yaml is stale", res.stderr)
+            self.assertNotIn("oss", res.stderr)
+            self.assertFalse(os.path.exists(os.path.join(src, "dist")))
+
+    def test_check_builds_non_bundled_variants(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = copy_tree(tmp)
+            shutil.copy(OUTPUT, os.path.join(tmp, "files", "blueprints"))
+            ok = run_build(os.path.join(src, "build.py"), "--check")
+            self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+            with open(os.path.join(src, "variants", "oss.yaml"), "a") as f:
+                f.write("typoVar: 1\n")
+            res = run_build(os.path.join(src, "build.py"), "--check")
+            self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+            self.assertIn("typoVar", res.stderr)
+
+    def test_check_ignores_dist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = copy_tree(tmp)
+            shutil.copy(OUTPUT, os.path.join(tmp, "files", "blueprints"))
+            os.makedirs(os.path.join(src, "dist", "blueprints"))
+            with open(os.path.join(src, "dist", "blueprints", OSS_FILE), "w") as f:
+                f.write("stale\n")
+            res = run_build(os.path.join(src, "build.py"), "--check")
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            with open(os.path.join(src, "dist", "blueprints", OSS_FILE)) as f:
+                self.assertEqual(f.read(), "stale\n")
 
     def test_overlay_files_round_trip(self):
         samples = {
@@ -124,7 +153,8 @@ class BuildTest(unittest.TestCase):
             src = copy_tree(tmp)
             overlay = os.path.join(src, "overlays", "control-plane")
             shutil.rmtree(overlay)
-            drop_variable(os.path.join(src, "variants", "nvaie.yaml"), "registrarEnv")
+            for variant in ("nvaie", "oss"):
+                drop_variable(os.path.join(src, "variants", variant + ".yaml"), "registrarEnv")
             for rel, text in samples.items():
                 os.makedirs(os.path.dirname(os.path.join(overlay, rel)), exist_ok=True)
                 with open(os.path.join(overlay, rel), "w") as f:
@@ -154,7 +184,9 @@ class OutputTest(unittest.TestCase):
 
     def test_only_output(self):
         outputs = sorted(os.path.basename(v.output) for v in build.variants())
-        self.assertEqual(outputs, ["nvidia-runai-1.0.0.yaml"])
+        self.assertEqual(outputs, ["nvidia-runai-1.0.0.yaml", OSS_FILE])
+        self.assertEqual(sorted(os.path.basename(v.output) for v in build.variants() if v.bundled),
+                         ["nvidia-runai-1.0.0.yaml"])
 
     def test_runai_cluster_values(self):
         rc = component(load_output(), "runai-cluster")
@@ -233,6 +265,159 @@ class OutputTest(unittest.TestCase):
             self.assertIn(phrase, text)
         for phrase in ("Open-source", "System administrator"):
             self.assertNotIn(phrase, text)
+
+
+def build_in_tmp():
+    """Runs build.py in a copy of the sources; the caller cleans up the returned TemporaryDirectory."""
+    tmp = tempfile.TemporaryDirectory()
+    src = copy_tree(tmp.name)
+    res = run_build(os.path.join(src, "build.py"))
+    assert res.returncode == 0, res.stdout + res.stderr
+    return tmp, src
+
+
+class NonBundledTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp, cls.src = build_in_tmp()
+        with open(os.path.join(cls.src, "dist", "blueprints", OSS_FILE)) as f:
+            cls.text = f.read()
+        cls.doc = yq_docs(cls.text)[0]
+        with open(os.path.join(cls.src, "dist", "clusterrepos", "nvidia-runai-oss.yaml")) as f:
+            cls.repo = yq_docs(f.read())[0]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_exact_output_files(self):
+        found = sorted(os.path.relpath(os.path.join(d, n), self.src)
+                       for d, _, names in os.walk(os.path.join(self.src, "dist")) for n in names)
+        self.assertEqual(found, ["dist/blueprints/" + OSS_FILE, "dist/clusterrepos/nvidia-runai-oss.yaml"])
+
+    def test_nothing_bundled_for_it(self):
+        self.assertEqual(os.listdir(os.path.join(self.tmp.name, "files", "blueprints")), ["nvidia-runai-1.0.0.yaml"])
+
+    def test_dist_is_not_committed(self):
+        res = subprocess.run(["git", "check-ignore", "-q", os.path.join(DIST, "blueprints", OSS_FILE)],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(res.returncode, 0, "dist/ must be git-ignored")
+
+    def test_community_header(self):
+        self.assertEqual(self.doc["metadata"]["name"], "nvidia-runai-oss-1-0-0")
+        self.assertEqual(self.doc["metadata"]["labels"], {
+            "ai-factory.suse.com/blueprint-name": "nvidia-runai-oss",
+            "ai-factory.suse.com/blueprint-version": "1.0.0",
+            "ai-factory.suse.com/category": "infrastructure"})
+        self.assertEqual(self.doc["metadata"]["annotations"], {"ai-factory.suse.com/maintainer": "https://github.com/SUSE/aif"})
+        self.assertEqual(self.doc["spec"]["source"], "Custom")
+        self.assertEqual(self.doc["spec"]["version"], "1.0.0")
+        self.assertTrue(self.text.startswith(build.HEADER))
+
+    def test_bundled_header_has_no_community_fields(self):
+        doc = load_output()
+        self.assertNotIn("annotations", doc["metadata"])
+        self.assertNotIn("ai-factory.suse.com/category", doc["metadata"]["labels"])
+
+    def test_clusterrepo_is_name_and_url_only(self):
+        self.assertEqual(self.repo, {"apiVersion": "catalog.cattle.io/v1", "kind": "ClusterRepo",
+                                     "metadata": {"name": "nvidia-runai-oss"}, "spec": {"url": OSS_REPO_URL}})
+
+    def test_clusterrepo_name_is_the_blueprints_chart_repo(self):
+        repos = {c["chartRepo"] for c in self.doc["spec"]["components"] if c["chartName"] in RUNAI}
+        self.assertEqual(repos, {self.repo["metadata"]["name"]})
+
+    def test_runai_oss_charts(self):
+        for name in RUNAI:
+            c = component(self.doc, name)
+            self.assertEqual((c["chartRepo"], c["chartVersion"]), ("nvidia-runai-oss", "3.0.20"))
+            self.assertNotIn("vendor", c)
+        self.assertEqual(registrar_versions(self.doc), ["3.0.20"])
+        self.assertEqual(registrar_env(self.doc, "RUNAI_REGISTRAR_PERMISSION_SETS"), [])
+
+    def test_appco_pull_secret_for_runai_namespace(self):
+        rc = component(self.doc, "runai-cluster")
+        self.assertEqual(rc["additionalPullSecretVendors"], ["suse"])
+        self.assertEqual(rc["values"]["global"]["additionalImagePullSecrets"], ["suse-ai-pull-combined"])
+        self.assertNotIn("additionalPullSecretVendors", component(self.doc, "control-plane"))
+        self.assertNotIn("ngc-secret", self.text)
+
+    def test_no_run_ai_2_26_specifics(self):
+        description = self.doc["spec"]["description"]
+        for phrase in ("2.26", "Service accounts edit", "NVAIE", "AI Enterprise"):
+            self.assertNotIn(phrase, description)
+        self.assertNotIn("Service accounts edit", self.text)
+        self.assertNotIn("NVIDIA's Run:ai 2.26 support", self.text)
+
+    def test_description(self):
+        text = self.doc["spec"]["description"]
+        for phrase in ("Open-source", "3.0.20", "nvidia-runai-oss ClusterRepo", "community Blueprint catalog",
+                       "GitOps install mode is not supported", "1 MiB", "Application Collection",
+                       "If preflight fails", "PREFLIGHT_MIN_CORES (20)", "runai-registrar-credentials",
+                       "v26.3.3", "REQUIRED, do not untick"):
+            self.assertIn(phrase, text)
+        self.assertNotIn("NGC", text)
+
+    def test_shares_base_with_bundled(self):
+        bundled = load_output()
+        for name in PREREQS + [CARRIER]:
+            self.assertEqual(component(self.doc, name), component(bundled, name), name)
+
+
+class NonBundledSettingsTest(unittest.TestCase):
+    def build_with(self, edit):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = copy_tree(tmp)
+            path = os.path.join(src, "variants", "oss.yaml")
+            with open(path) as f:
+                text = f.read()
+            with open(path, "w") as f:
+                f.write(edit(text))
+            return run_build(os.path.join(src, "build.py"))
+
+    def rejected(self, edit, message):
+        res = self.build_with(edit)
+        self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+        self.assertIn(message, res.stderr)
+
+    def test_requires_community_settings(self):
+        for key in ("category", "maintainer", "runaiRepoUrl"):
+            self.rejected(lambda t, k=key: "\n".join(l for l in t.split("\n") if not l.startswith(k + ":")),
+                          "bundled: false requires " + key)
+
+    def test_bundled_rejects_community_settings(self):
+        self.rejected(lambda t: t.replace("bundled: false\n", ""), "only apply to a variant with bundled: false")
+
+    def test_bundled_value(self):
+        self.rejected(lambda t: t.replace("bundled: false", "bundled: no"), "bundled must be true or false")
+
+    def test_repo_url_must_be_https(self):
+        self.rejected(lambda t: t.replace("https://helm.ngc", "http://helm.ngc"), "runaiRepoUrl must be an https://")
+
+    def test_unsafe_maintainer(self):
+        self.rejected(lambda t: t.replace("maintainer: https://github.com/SUSE/aif", "maintainer: a b: c"),
+                      "maintainer must match")
+
+    def test_derived_keys_rejected(self):
+        self.rejected(lambda t: t + "annotations: x\n", "annotations is derived")
+
+    def test_source_required(self):
+        self.rejected(lambda t: t.replace("source: Custom\n", ""), "source is required")
+
+    def test_conflicting_cluster_repo(self):
+        def clone(t):
+            return t.replace("displayName: NVIDIA RunAI OSS", "displayName: NVIDIA RunAI OSS2").replace(
+                "https://helm.ngc.nvidia.com/nvidia/runai-oss", "https://example.com/runai-oss")
+        with tempfile.TemporaryDirectory() as tmp:
+            src = copy_tree(tmp)
+            base = os.path.join(src, "variants")
+            with open(os.path.join(base, "oss.yaml")) as f:
+                text = f.read()
+            with open(os.path.join(base, "oss2.yaml"), "w") as f:
+                f.write(clone(text))
+            res = run_build(os.path.join(src, "build.py"))
+            self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+            self.assertIn("ClusterRepo nvidia-runai-oss.yaml differs", res.stderr)
 
 
 class PreflightOverrideSnippetTest(unittest.TestCase):
