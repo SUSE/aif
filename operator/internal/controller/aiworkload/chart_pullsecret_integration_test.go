@@ -15,7 +15,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 // Exercise the actual Blueprint output paths with override-only values. Helm
@@ -32,10 +31,9 @@ func TestBlueprintNvidiaChartValues(t *testing.T) {
 				repoSpec := map[string]any{"url": "https://charts.example.test"}
 				if delivery == "git-chart" {
 					repoSpec = map[string]any{"gitRepo": "https://git.example.test/charts", "gitBranch": "main"}
-					r.CatalogClient = rancher.NewHolder()
-					r.CatalogClient.Set(fakeCatalog{tgz: makeChartTgz(t, map[string]string{
+					r.ChartFetcher = fakeChartFetcher{tgz: makeChartTgz(t, map[string]string{
 						chartName + "/Chart.yaml": "apiVersion: v2\nname: " + chartName + "\nversion: 1.0.0\n",
-					})})
+					})}
 				}
 				if err := cl.Create(ctx, repoObj("nvidia", repoSpec)); err != nil {
 					t.Fatal(err)
