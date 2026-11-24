@@ -2,7 +2,9 @@ package settings
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"testing"
 
@@ -152,6 +154,65 @@ func TestReconcileCustomRepos_SetsCABundleOnSpec(t *testing.T) {
 	}
 	if string(decoded) != caPEM {
 		t.Error("decoded spec.caBundle does not match the configured CA PEM")
+	}
+}
+
+func TestReconcileCustomRepos_GitCAUsesRancherDERFormat(t *testing.T) {
+	const ns = "aif-operator"
+	caPEM := testCAPEM(t)
+	for _, multiple := range []bool{false, true} {
+		t.Run(fmt.Sprintf("multiple=%v", multiple), func(t *testing.T) {
+			bundle := caPEM
+			if multiple {
+				bundle += testCAPEM(t)
+			}
+			s := newTestScheme(t)
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "git-ca", Namespace: ns},
+				Data:       map[string][]byte{"ca.crt": []byte(bundle)},
+			}
+			c := fake.NewClientBuilder().WithScheme(s).WithObjects(secret).Build()
+			r := &SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+			settings := &aiplatformv1alpha1.Settings{
+				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+				Spec: aiplatformv1alpha1.SettingsSpec{CustomRepos: []aiplatformv1alpha1.CustomRepoSpec{{
+					Name: "private-git", Type: "git", GitRepo: "https://git.example.com/charts.git", GitBranch: "main",
+					CABundleSecretRef: &aiplatformv1alpha1.SecretKeyRef{Name: "git-ca", Key: "ca.crt"},
+				}}},
+			}
+			err := r.reconcileCustomRepos(context.Background(), settings)
+			repo := &unstructured.Unstructured{}
+			repo.SetGroupVersionKind(schema.GroupVersionKind{Group: "catalog.cattle.io", Version: "v1", Kind: "ClusterRepo"})
+			if multiple {
+				if err == nil {
+					t.Fatal("must reject multiple certificates rather than silently trust only the first")
+				}
+				if err := c.Get(context.Background(), types.NamespacedName{Name: "private-git"}, repo); !apierrors.IsNotFound(err) {
+					t.Fatalf("must not publish an unusable Git catalog CA: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Get(context.Background(), types.NamespacedName{Name: "private-git"}, repo); err != nil {
+				t.Fatal(err)
+			}
+			encoded, _, _ := unstructured.NestedString(repo.Object, "spec", "caBundle")
+			der, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// This is the certificate format Rancher wraps in a PEM block for git.
+			cert, err := x509.ParseCertificate(der)
+			if err != nil {
+				t.Fatalf("Rancher needs a DER certificate, not PEM: %v", err)
+			}
+			block, _ := pem.Decode([]byte(caPEM))
+			if string(cert.Raw) != string(block.Bytes) {
+				t.Fatal("configured CA changed during conversion")
+			}
+		})
 	}
 }
 

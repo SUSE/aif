@@ -339,9 +339,9 @@
       "slug_name": "auto-discovery-service",
       "description": "Auto-Discovery Service Helm Chart: automatically discovers microservices within a Kubernetes cluster and provides a unified API for querying them.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:48.106Z",
+      "last_updated_at": "2026-11-16T18:48:42.691Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "1.1.1",
+      "latest_version": "1.2.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -392,9 +392,9 @@
       "slug_name": "control-plane",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. This is the control plane chart, which must be deployed first.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-11-05T22:24:13.926Z",
+      "last_updated_at": "2026-09-23T19:48:25.601Z",
       "overview": "NVIDIA Run:ai\nNVIDIA Run:ai accelerates AI and machine learning operations by addressing key infrastructure challenges through dynamic resource allocation, comprehensive AI life-cycle support, and strategic resource management.\nBy pooling resources across environments and utilizing advanced orchestration, NVIDIA Run:ai significantly enhances GPU efficiency and workload capacity. With support for public clouds, private clouds, hybrid environments, or on-premises data centers, NVIDIA Run:ai provides unparalleled flexibility and adaptability.\n\nGetting Started\nStart with the NVIDIA Run:ai overview to understand the platform architecture, system components, and deployment models.\nThen proceed to the Installation section for your selected deployment model, which provides step-by-step instructions for connected and air-gapped environments.\n\nDocumentation\nFind all the product guides, quickstarts, tutorials, configuration references, and API documentation in the NVIDIA Run:ai Documentation Portal.\n\nEnterprise Support\nGet access to knowledge-base articles and support cases or submit a ticket.\n\nTo view license for this container control-plane, see [https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement)",
-      "latest_version": "2.26.58",
+      "latest_version": "2.26.50",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
@@ -539,9 +539,9 @@
       "slug_name": "doca-hbn",
       "description": "Host based networking (HBN) is a DOCA Service that runs on NVIDIA's DPU. It orchestrates network connectivity of dynamically created VMs/Containers on cloud servers. HBN service is a BGP router that supports EVPN extension to enable multi-tenant cloud.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-08-31T14:26:58.722Z",
+      "last_updated_at": "2026-11-19T15:12:41.291Z",
       "overview": "## Introduction\n\nThe host-based networking (HBN) solution packages a set of network functions inside a container which, itself, is packaged as a service pod to be run on the DPU.\n\nAt the core of HBN is the Linux networking DPU acceleration driver. Netlink to DOCA daemon, or nl2docad, implements the DPU acceleration driver. nl2docad seamlessly accelerates Linux networking using DPU hardware programming APIs.\n\n![Service Architecture](https://k3-prod-nvidia-docs.s3.us-west-2.amazonaws.com/brightspot/confluence/0000018d-9058-d4d2-abcd-b95f4bcc0000/doca/sdk/images/download/attachments/2571330828/hbn-architecture-version-1-modificationdate-1707421018730-api-v2.png)\n\nThe driver mirrors the Linux kernel routing and bridging tables into the DPU hardware by discovering the configured Linux networking objects using the Linux Netlink API. Dynamic network flows, as learned by the Linux kernel networking stack, are also programmed by the driver into DPU hardware by listening to Linux kernel networking events.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). \nBy pulling and using this product, you accept the terms and conditions of this license.\n\n## Get Help\n\n[NVIDIA AI Enterprise Support Services](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/)\n\n## Technical Support\nUse the [NVIDIA Developers forum](https://forums.developer.nvidia.com/c/infrastructure/doca) for questions regarding this software.\n\n## Enterprise Support\nGet access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/support/enterprise/).",
-      "latest_version": "3.5.0",
+      "latest_version": "3.6.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -575,9 +575,9 @@
       "slug_name": "dpf-operator",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of DPF.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-10-12T12:11:43.048Z",
+      "last_updated_at": "2026-11-19T08:49:52.388Z",
       "overview": "## NVIDIA DOCA Platform Framework\nThe NVIDIA® [DOCA™ Platform Framework](https://github.com/nvidia/doca-platform) enables the building of cloud platforms on top of NVIDIA BlueField® data processing units (DPUs), leveraging industry-standard APIs. With DPF operators can provisioning and manage DPUs and the services running on them.\n\nThis helm chart enables the deployment of DPF.\n\n## Usage\nFor information on platform support and getting started, visit the official [repository](https://github.com/NVIDIA/doca-platform/).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n## NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.8.0",
+      "latest_version": "v30.0.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -593,9 +593,9 @@
       "slug_name": "dpf-storage",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart enables the deployment of the DPF Storage Subsystem.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-10-12T12:11:48.511Z",
+      "last_updated_at": "2026-11-19T08:49:57.615Z",
       "overview": "## NVIDIA DOCA Platform Framework\nThe NVIDIA® [DOCA™ Platform Framework](https://github.com/nvidia/doca-platform) enables the building of cloud platforms on top of NVIDIA BlueField® data processing units (DPUs), leveraging industry-standard APIs. With DPF operators can provisioning and manage DPUs and the services running on them.\n\nThis helm chart enables the deployment of the DPF Storage Subsystem.\n\n## Usage\nFor information on platform support and getting started, visit the official [repository](https://github.com/NVIDIA/doca-platform/).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n## NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.8.0",
+      "latest_version": "v30.0.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -611,9 +611,9 @@
       "slug_name": "dpf-vpc-ovn",
       "description": "OVN VPC System Helm chart",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-10-12T12:11:44.951Z",
+      "last_updated_at": "2026-11-19T08:49:54.168Z",
       "overview": "# DOCA VPC OVN Service Helm Chart\n\nThis is the helm chart for DOCA VPC OVN service\n\n## Overview\n\nThe DOCA VPC OVN Service provides accelerated Virtual Private Cloud (VPC) networking functionality for the DPU Platform Framework (DPF). Built on top of Open Virtual Network (OVN), this service enables network isolation, virtualization, and advanced SDN capabilities directly on NVIDIA DPUs.\n\n## Key Features\n\n* **Multi-tenant Network Isolation**: Create isolated VPCs for different tenants with guaranteed network separation.\n* **Virtual Network Management**: Support the creation of virtual networks with DHCP and custom IP addressing.\n* **External Connectivity**: Configurable external routing with NAT/masquerading capabilities.\n* **Hardware Acceleration**: Leverages DPU hardware acceleration for high-performance networking.\n* **Flexible Topology**: Support for complex network topologies with inter-network routing controls.\n* **Kubernetes Integration**: Native Kubernetes resources for declarative VPC management.\n\n## Documentation\nFor information on how to use the DOCA VPC OVN Service, visit the official [repository of DPF](https://github.com/NVIDIA/doca-platform/).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n## NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.8.0",
+      "latest_version": "v30.0.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -629,9 +629,9 @@
       "slug_name": "dpf-weave",
       "description": "Helm chart for deploying the DOCA Weave Service, which provides secure multi-tenant east-west network isolation for AI factories using ASTRA, BlueField-4 DPUs, and ConnectX-9 NICs.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-10-12T17:22:15.271Z",
+      "last_updated_at": "2026-11-19T08:49:59.020Z",
       "overview": "# DOCA Weave Service Helm Chart\n\nThis is the helm chart for DOCA Weave Service.\n\n## Overview\n\nThe DOCA Weave Service provides hardware-accelerated east-west network isolation for multi-tenant AI factories on the Vera-Rubin platform. Leveraging ASTRA, BlueField-4 DPUs securely control ConnectX-9 east-west NIC traffic independently of the host.\n\nUsing OVS to manage ConnectX-9 E-Switches, DOCA Weave transparently applies hardware-accelerated VXLAN encapsulation and decapsulation while enforcing tenant isolation in the DPU dataplane.\n\n## Key Features\n\n* **East-West Network Isolation**: Provides network isolation for east-west traffic on BlueField-4 DPUs used with ConnectX-9 east-west NICs.\n* **Per-DPU gRPC Control Plane**: Hosts a gRPC control plane on each BlueField-4 DPU above hardware flow programming, exposing the `NetworkIsolation` interface in this release.\n* **DHCP Services**: Supplies DHCP services on each ConnectX-9 NIC to provide network connectivity for tenant workers.\n* **Zero-Trust DPU Enforcement**: Uses ASTRA to establish a system boundary in which the host cannot directly communicate with the DPU, while the DPU securely controls the ConnectX-9 east-west data path.\n* **Multi-tenant Overlay Networking**: Creates isolated tenant overlay networks, allowing multiple tenants to securely share AI factory infrastructure.\n* **Host-Independent Isolation**: Enforces isolation autonomously on the DPU and independently of host or tenant control.\n* **Hardware-Accelerated VXLAN Data Path**: Uses OVS on BlueField-4 to manage ConnectX-9 E-Switches and inject hardware-accelerated VXLAN encapsulation and decapsulation flows into the NIC data path.\n* **Transparent Tenant Connectivity**: Transparently tunnels host traffic while retaining tenant separation in the DPU dataplane, without requiring tenant applications or workloads to manage the isolation mechanism.\n* **Near Line-Rate Performance**: Keeps forwarding in hardware to deliver near line-rate VXLAN encapsulation with minimal added latency and throughput impact.\n\n\n## Documentation\nFor information on how to use the DOCA Weave Service, visit the official [repository of DPF](https://github.com/NVIDIA/doca-platform/).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n## NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.8.0",
+      "latest_version": "v30.0.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -646,9 +646,9 @@
       "name": "NVIDIA Datacenter Power Service",
       "slug_name": "dps",
       "description": "NVIDIA Datacenter Power Service (DPS).",
-      "last_updated_at": "2026-10-13T15:51:39.168Z",
+      "last_updated_at": "2026-11-23T15:31:34.350Z",
       "overview": "NVIDIA Dynamic Power Software (DPS) provides dynamic power management in data centers to support energy efficiency and regulatory compliance. DPS works with job schedulers and power systems to help maintain productivity within defined power limits, assist with grid stability, and react to changes in power conditions.\n\nUsage: See https://docs.nvidia.com/datacenter/dps\n\nLicense: See https://docs.nvidia.com/datacenter/dps/versions/latest/license/",
-      "latest_version": "0.10.0",
+      "latest_version": "0.10.1",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
@@ -656,9 +656,9 @@
       "name": "DPS BMC Simulator",
       "slug_name": "dps-bmc-simulator",
       "description": "BMC simulator for the NVIDIA Datacenter Power Service.",
-      "last_updated_at": "2026-10-13T15:51:40.367Z",
+      "last_updated_at": "2026-11-23T15:31:35.375Z",
       "overview": "NVIDIA Dynamic Power Software (DPS) provides dynamic power management in data centers to support energy efficiency and regulatory compliance. DPS works with job schedulers and power systems to help maintain productivity within defined power limits, assist with grid stability, and react to changes in power conditions.\n\nUsage: See https://docs.nvidia.com/datacenter/dps\n\nLicense: See https://docs.nvidia.com/datacenter/dps/versions/latest/license/",
-      "latest_version": "0.10.0",
+      "latest_version": "0.10.1",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia"
     },
@@ -667,9 +667,9 @@
       "slug_name": "dpu-networking",
       "description": "DOCA Platform Framework enables the management of NVIDIA DPUs and the services that run on them at scale.\n\nThis helm chart is deployed by the DPF Operator and is responsible for setting up networking related components required on the DPU.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-10-12T12:11:41.073Z",
+      "last_updated_at": "2026-11-19T08:49:50.931Z",
       "overview": "## NVIDIA DOCA Platform Framework\nThe NVIDIA® [DOCA™ Platform Framework](https://github.com/nvidia/doca-platform) enables the building of cloud platforms on top of NVIDIA BlueField® data processing units (DPUs), leveraging industry-standard APIs. With DPF operators can provisioning and manage DPUs and the services running on them.\n\nThis helm chart is deployed by the DPF Operator and is responsible for setting up networking related components required on the DPU.\n\n## Usage\nFor information on platform support and getting started, visit the official [repository](https://github.com/NVIDIA/doca-platform/).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n## NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.8.0",
+      "latest_version": "v30.0.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -727,9 +727,27 @@
       "slug_name": "envoy-auth-extension",
       "description": "Auth extension used with Envoy and the Omniverse Storage APIs.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:11.285Z",
+      "last_updated_at": "2026-11-16T18:48:35.905Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "2.4.0",
+      "latest_version": "2.4.1",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
+      "name": "event-aggregation-conformance-tests",
+      "slug_name": "event-aggregation-conformance-tests",
+      "description": "Helm deployment of event aggregation conformance tests",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-11-16T18:48:48.734Z",
+      "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
+      "latest_version": "1.7.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -745,9 +763,27 @@
       "slug_name": "event-aggregation-service",
       "description": "Omniverse Storage APIs Notification Aggregation service.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:07.831Z",
+      "last_updated_at": "2026-11-16T18:48:32.364Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "1.6.0",
+      "latest_version": "1.7.0",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
+      "name": "event-consumer-conformance-tests",
+      "slug_name": "event-consumer-conformance-tests",
+      "description": "Helm deployment of event consumer conformance tests",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-11-16T18:48:47.257Z",
+      "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
+      "latest_version": "1.12.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -763,9 +799,9 @@
       "slug_name": "event-consumer-service",
       "description": "Omniverse Storage API Notification Consumer Chart.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:08.897Z",
+      "last_updated_at": "2026-11-16T18:48:33.723Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "1.11.0",
+      "latest_version": "1.12.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -795,9 +831,9 @@
       "slug_name": "gpu-operator",
       "description": "Deploy and Manage NVIDIA GPU resources in Kubernetes.",
       "logo_url": "https://assets.nvidiagrid.net/ngc/logos/GPUoperator.png",
-      "last_updated_at": "2026-10-13T03:06:06.223Z",
+      "last_updated_at": "2026-11-17T19:55:13.310Z",
       "overview": "[![GitHub license](https://img.shields.io/github/license/NVIDIA/gpu-operator?style=flat-square)](https://raw.githubusercontent.com/NVIDIA/gpu-operator/master/LICENSE)\n\n## NVIDIA GPU Operator\n\nThe NVIDIA GPU Operator uses the operator framework within Kubernetes to automate the management of all NVIDIA software components needed to provision GPUs. These components include the NVIDIA drivers (to enable CUDA), Kubernetes device plugin for GPUs, the NVIDIA Container Toolkit, automatic node labeling using GFD, DCGM based monitoring and others.\nA Helm chart is provided for easily deploying the GPU operator in a cluster to provision the NVIDIA software on GPU-enabled nodes.\n\nThe NVIDIA GPU Operator has been validated to work with and without FIPS enabled Linux and K8s distributions. See the NVIDIA GPU Operator documentation for the list of validated Linux distributions and Kubernetes distributions. [documentation](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html). \n\n\n## Install\n\nStep 1: Add the NVIDIA Helm repository\n\n```\nhelm repo add nvidia https://helm.ngc.nvidia.com/nvidia \\\n    \u0026\u0026 helm repo update\n```\n\nStep 2: Deploy GPU Operator\n```\nhelm install --wait gpu-operator \\\n    -n gpu-operator --create-namespace \\\n    nvidia/gpu-operator\n```\n\nAfter installation, the GPU Operator and its operands should be up and running.\n\n\u003e **Important:** The classic Helm repository distribution method is deprecated. For GPU Operator v26.7.0 and later, use the Helm chart distributed as an **OCI artifact** from NGC. No Helm repository setup is required.\n\n### Install from the OCI artifact\n\n```bash\nhelm install --wait gpu-operator \\\n  --namespace gpu-operator \\\n  --create-namespace \\\n  oci://nvcr.io/nvidia/cloud-native-charts/gpu-operator \\\n  --version=v26.7.0\n```\n\nFor more information, refer to the [GPU Operator OCI helm chart](https://catalog.ngc.nvidia.com/orgs/nvidia/cloud-native-charts/containers/gpu-operator/-).\n\n### Government Ready: STIG/FIPS Hardening\nThis ensures the highest level of security and compliance for regulated environments, the NVIDIA GPU Operator is:\n\n- hardened\n-  supports FIPS 140-2 / 3 validated crypto / uses libraries that support FIPS crypto\n\nLearn more about NVIDIA's hardened image in the AI Software for [Regulated Environments White Paper](https://docs.nvidia.com/ai-enterprise/planning-resource/ai-software-regulated-environments-white-paper/latest/index.html).\n\n### Security Vulnerabilities in Open Source Packages\nPlease review the Security Scanning tab to view the latest security scan results.\nFor certain open-source vulnerabilities listed in the scan results, NVIDIA provides a response in the form of a Vulnerability Exploitability eXchange (VEX) document. The VEX information can be reviewed and downloaded from the Security Scanning tab.\n\n### Get Help\nEnterprise Support\nGet access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n### NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n### License\nNVIDIA GPU Operator is licensed under the [NVIDIA AI Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.7.2",
+      "latest_version": "v26.7.3",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "source": "ngc"
@@ -945,13 +981,31 @@
       "source": "ngc"
     },
     {
+      "name": "live-edit-conformance-tests",
+      "slug_name": "live-edit-conformance-tests",
+      "description": "Helm deployment of live edit conformance tests",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-11-16T18:48:50.843Z",
+      "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
+      "latest_version": "0.2.0",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
       "name": "live-edit-service",
       "slug_name": "live-edit-service",
       "description": "Live Edit allows multiple users to collaborate on Omniverse scene layers in a shared live session.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:49.752Z",
+      "last_updated_at": "2026-11-16T18:48:44.580Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "0.1.1",
+      "latest_version": "0.2.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -967,9 +1021,9 @@
       "slug_name": "microsoft-graph-userinfo-service",
       "description": "Omniverse Storage API Sample User Info Chart",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:46.637Z",
+      "last_updated_at": "2026-11-16T18:48:41.509Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "0.0.8",
+      "latest_version": "0.0.9",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1111,9 +1165,9 @@
       "slug_name": "network-operator",
       "description": "NVIDIA Network Operator Helm Chart provides an easy way to install, configure and manage the lifecycle of NVIDIA Mellanox network operator.",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-Network-Operator.png",
-      "last_updated_at": "2026-10-22T08:50:32.532Z",
+      "last_updated_at": "2026-11-20T06:17:31.631Z",
       "overview": "## NVIDIA Network Operator Helm Chart\n\nNVIDIA Network Operator Helm Chart provides an easy way to install, configure and manage the lifecycle of NVIDIA Mellanox network operator.\n\n### NVIDIA Network Operator\nNVIDIA Network Operator manages Networking related components in order to enable Fast networking, RDMA and GPUDirect for workloads in a Kubernetes cluster. Network Operator works in conjunction with [GPU Operator](https://catalog.ngc.nvidia.com/orgs/nvidia/helm-charts/gpu-operator) to enable GPU-Direct RDMA on compatible systems.\n\n### Documentation\nFor more information please visit the official [documentation](https://docs.nvidia.com/networking/software/cloud-orchestration/index.html).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/)\n\n### Quick start\nFetch the helm chart using the following commands:\n\n```\n# Add NVIDIA Helm repository\n$ helm repo add nvidia https://helm.ngc.nvidia.com/nvidia \\\n   \u0026\u0026 helm repo update  # Install Operator\n\n# Install NVIDIA Network Operato Helm chart\n$ helm install --wait --generate-name \\\n     -n nvidia-network-operator --create-namespace \\\n     nvidia/network-operator\n\n# View deployed resources\n$ kubectl -n nvidia-network-operator get pods\n```\n\nBefore installing, update the values.yaml file with your preferred configuration. For information on available customizations please read the official [documentation](https://docs.nvidia.com/networking/software/cloud-orchestration/index.html).\n\n# License Agreement\nThe product is licensed under Apache 2.0 and contributions are accepted with a DCO. See the contributing document for more information on how to contribute and the release artifacts.",
-      "latest_version": "26.7.1",
+      "latest_version": "26.10.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia",
       "labels": [
@@ -1129,8 +1183,8 @@
       "slug_name": "nim-llm",
       "description": "Helm Chart for NVIDIA NIM for LLMs",
       "logo_url": "https://assets.ngc.nvidia.com/products/api-catalog/images/llama2-70b.jpg",
-      "last_updated_at": "2026-11-03T12:26:34.720Z",
-      "latest_version": "2.1.6",
+      "last_updated_at": "2026-11-18T06:14:55.435Z",
+      "latest_version": "2.1.7",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nim",
       "labels": [
@@ -1842,9 +1896,9 @@
       "slug_name": "ovn-chart",
       "description": "This Helm Chart deploys the OVN for DPF VPC",
       "logo_url": "https://raw.githubusercontent.com/kbojo/images/master/Nvidia-Centric-DOCA.png",
-      "last_updated_at": "2026-10-12T12:11:46.864Z",
+      "last_updated_at": "2026-11-19T08:49:55.781Z",
       "overview": "# OVN for DPF VPC\n\nThis is the Helm Chart of OVN for DPF VPC\n\nOVN (Open Virtual Network) is a series of daemons that translates virtual network configuration into OpenFlow, and installs them into Open vSwitch. It is licensed under the open source Apache 2 license.\n\nOVN provides a higher-layer abstraction than Open vSwitch, working with logical routers and logical switches, rather than flows. OVN is intended to be used by cloud management software (CMS). For details about the architecture of OVN, see the ovn-architecture manpage. Some high-level features offered by OVN include:\n\n* Distributed virtual routers\n* Distributed logical switches\n* Access Control Lists\n* DHCP\n* DNS server\n\nLike Open vSwitch, OVN is written in platform-independent C. OVN runs entirely in userspace and therefore requires no kernel modules to be installed.\n\nFor more information, check the upstream repository [ovn](https://github.com/ovn-org/ovn).\n\n## Get Help\nEnterprise Support Get access to knowledge base articles and support cases or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).\n\n## NVIDIA AI Enterprise Documentation\nVisit the [NVIDIA AI Enterprise Documentation Hub](https://docs.nvidia.com/ai-enterprise/) for release documentation, deployment guides and more.\n\n## License \u0026 EULA\nThis DOCA Microservice is licensed under the [NVIDIA Networking Product Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-networking-products/). By pulling and using this product, you accept the terms and conditions of this license.",
-      "latest_version": "v26.8.0",
+      "latest_version": "v30.0.0",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/doca",
       "labels": [
@@ -1860,9 +1914,9 @@
       "slug_name": "permission-service",
       "description": "Omniverse Storage APIs Permissions Service Chart.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:12.625Z",
+      "last_updated_at": "2026-11-16T18:48:38.638Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "0.0.53",
+      "latest_version": "0.0.54",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1878,9 +1932,9 @@
       "slug_name": "permission-ui",
       "description": "Omniverse Storage APIs - Permissions UI for service level permission control.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-08-04T21:16:09.436Z",
+      "last_updated_at": "2026-11-16T18:48:37.523Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "0.0.22",
+      "latest_version": "0.0.23",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -1959,9 +2013,9 @@
       "slug_name": "runai-cluster",
       "description": "NVIDIA Run:ai accelerates AI operations with dynamic orchestration across the AI lifecycle. NOTE: the Run:ai Control Plane must be provisioned first before installing the Cluster.",
       "documentation_url": "https://docs.nvidia.com/run-ai/index.html",
-      "last_updated_at": "2026-11-05T22:00:11.060Z",
+      "last_updated_at": "2026-09-23T19:44:40.316Z",
       "overview": "NVIDIA Run:ai\nNVIDIA Run:ai accelerates AI and machine learning operations by addressing key infrastructure challenges through dynamic resource allocation, comprehensive AI life-cycle support, and strategic resource management.\nBy pooling resources across environments and utilizing advanced orchestration, NVIDIA Run:ai significantly enhances GPU efficiency and workload capacity. With support for public clouds, private clouds, hybrid environments, or on-premises data centers, NVIDIA Run:ai provides unparalleled flexibility and adaptability.\n\nGetting Started\nStart with the NVIDIA Run:ai overview to understand the platform architecture, system components, and deployment models.\nThen proceed to the Installation section for your selected deployment model, which provides step-by-step instructions for connected and air-gapped environments.\n\nDocumentation\nFind all the product guides, quickstarts, tutorials, configuration references, and API documentation in the NVIDIA Run:ai Documentation Portal.\n\nEnterprise Support\nGet access to knowledge-base articles and support cases or submit a ticket.\n\nTo view license for this container runai-cluster, see [https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement)",
-      "latest_version": "2.26.58",
+      "latest_version": "2.26.50",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/runai",
       "labels": [
@@ -1995,9 +2049,9 @@
       "slug_name": "storage-navigator",
       "description": "Omniverse Storage APIs - Storage Navigator file browser UI.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:14.024Z",
+      "last_updated_at": "2026-11-16T18:48:40.280Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "1.0.4",
+      "latest_version": "1.0.5",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -2013,9 +2067,9 @@
       "slug_name": "storage-service",
       "description": "Omniverse Storage APIs Storage Service Chart.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:10.182Z",
+      "last_updated_at": "2026-11-16T18:48:34.985Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "1.2.3",
+      "latest_version": "1.2.4",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -2077,13 +2131,31 @@
       "source": "ngc"
     },
     {
+      "name": "thumbnail-conformance-test",
+      "slug_name": "thumbnail-conformance-test",
+      "description": "Helm deployment of thumbnail conformance tests",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-11-16T18:48:52.348Z",
+      "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
+      "latest_version": "0.1.1",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
       "name": "thumbnail-service",
       "slug_name": "thumbnail-service",
       "description": "Thumbnails enables generation, storage, and retrieval of thumbnail images for storage resources, providing visual previews of files and assets.",
       "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
-      "last_updated_at": "2026-10-07T00:49:51.220Z",
+      "last_updated_at": "2026-11-16T18:48:45.467Z",
       "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
-      "latest_version": "0.1.0",
+      "latest_version": "0.1.1",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
@@ -2132,6 +2204,24 @@
       "latest_version": "1.0.1",
       "packaging_format": "HELM_CHART",
       "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse-usdcode",
+      "labels": [
+        {
+          "code": "supported",
+          "name": "Supported"
+        }
+      ],
+      "source": "ngc"
+    },
+    {
+      "name": "userinfo-conformance-test",
+      "slug_name": "userinfo-conformance-test",
+      "description": "Helm deployment of user-info conformance tests",
+      "logo_url": "https://nvdam.widen.net/content/3ubgr74urw/jpeg/omniverse_ngc_logo.jpg",
+      "last_updated_at": "2026-11-16T18:48:49.919Z",
+      "overview": "## Get Help\n\n### Enterprise Support\n\nAccess to Omniverse Knowledge Base articles and submit support cases:\n- [File a Support Ticket](https://www.nvidia.com/en-us/support/enterprise/)\n\n### Omniverse Documentation\n\nExplore detailed guides for deploying and managing NVIDIA Omniverse applications.\n- [Documentation Hub](https://docs.nvidia.com/omniverse/index.html)\n\n### Community Support\n\nJoin the developer and user community to share knowledge, ask questions, and connect with experts:\n- [NVIDIA Omniverse Dev Community](https://developer.nvidia.com/omniverse/community)\n- [NVIDIA Omniverse Discord Server](https://discord.com/invite/XWQNJDNuaC)\n- [NVIDIA Omniverse Forums](https://forums.developer.nvidia.com/c/omniverse/300/)\n\n## Governing Terms\n\nNVIDIA Omniverse is governed by the [NVIDIA Agreements | Enterprise Software | NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/) \nand [NVIDIA Agreements | Enterprise Software | Product Specific Terms for AI Products](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).\n\nBy downloading or using NVIDIA Omniverse, you agree to the governing terms.",
+      "latest_version": "0.0.9",
+      "packaging_format": "HELM_CHART",
+      "repository_url": "https://helm.ngc.nvidia.com/nvidia/omniverse",
       "labels": [
         {
           "code": "supported",

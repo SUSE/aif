@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { rancherHttpStatus, type RancherHttpErrorShape } from '../utils/rancher-request';
 
 // Utility function to deep merge objects (for combining chart defaults with user values)
 function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
@@ -461,6 +462,21 @@ export async function deleteApp($store: Dispatchable, clusterId: string, namespa
 }
 
 /* ============================ discovery (manage) ============================ */
+
+export async function waitForAppUninstall($store: Dispatchable, clusterId: string, namespace: string, releaseName: string, timeoutMs = 120000): Promise<void> {
+  const url = `/k8s/clusters/${ encodeURIComponent(clusterId) }/v1/catalog.cattle.io.apps/${ encodeURIComponent(namespace) }/${ encodeURIComponent(releaseName) }`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await $store.dispatch('rancher/request', { url, method: 'GET', timeout: Math.min(10000, Math.max(1, deadline - Date.now())) });
+    } catch (e: unknown) {
+      if (rancherHttpStatus(e) === 404) return;
+      throw e;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error('Helm cleanup is still in progress. The workload has been retained; retry after the Rancher operation completes.');
+}
 
 export async function listCatalogApps($store: Dispatchable, clusterId: string): Promise<AppCRD[]> {
   const url = `/k8s/clusters/${encodeURIComponent(clusterId)}/apis/catalog.cattle.io/v1/apps?limit=1000`;
@@ -1098,43 +1114,6 @@ export async function listServiceAccounts(
     .filter((name): name is string => typeof name === 'string' && name.length > 0);
 
   return [...new Set(['default', ...names])];
-}
-
-interface RancherHttpErrorShape {
-  _status?: unknown;
-  code?: unknown;
-  data?: unknown;
-  message?: unknown;
-  status?: unknown;
-  statusCode?: unknown;
-  response?: { data?: unknown; status?: unknown };
-}
-
-// rancher/request rejects with the parsed response body and attaches the HTTP
-// status as a non-enumerable `_status`. Kubernetes and Norman use other fields.
-// Ignore non-HTTP numeric codes such as DOMException.code and transport status 0.
-// TODO: replace this local parser when Rancher HTTP status extraction is consolidated.
-function rancherHttpStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-
-  const candidate = error as RancherHttpErrorShape;
-  const rawStatuses = [
-    candidate._status,
-    candidate.code,
-    candidate.status,
-    candidate.statusCode,
-    candidate.response?.status,
-  ];
-
-  for (const rawStatus of rawStatuses) {
-    const trimmed = typeof rawStatus === 'string' ? rawStatus.trim() : '';
-    const status = /^\d{3}$/.test(trimmed) ? Number(trimmed) : rawStatus;
-    if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) {
-      return status;
-    }
-  }
-
-  return undefined;
 }
 
 function rancherDataMessage(data: unknown): string | undefined {

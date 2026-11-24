@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 // reconcileAppPullSecrets runs the vendor-specific secret injector for an
@@ -84,7 +85,7 @@ func (r *AIWorkloadReconciler) reconcileAppPullSecrets(
 	// problems.
 	repoInfo, err := r.resolveClusterRepo(ctx, src.ChartRepo)
 	if err != nil {
-		if stderrors.Is(err, errClusterRepoNotReady) || meta.IsNoMatchError(err) {
+		if stderrors.Is(err, rancher.ErrClusterRepoNotReady) || meta.IsNoMatchError(err) {
 			log.FromContext(ctx).Info("App pull-secret injection skipped: ClusterRepo not available",
 				"chartRepo", src.ChartRepo, "reason", err.Error())
 			return nil
@@ -95,7 +96,7 @@ func (r *AIWorkloadReconciler) reconcileAppPullSecrets(
 
 	// vals is intentionally discarded — see function comment.
 	vals := map[string]any{}
-	created, err := r.injectorForRepo(src.Vendor, repoInfo).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals, targetsLocalCluster(w))
+	created, err := r.injectorForRepo(src.Vendor, repoInfo, src.ChartName).Apply(ctx, r.localCC(), w.Spec.TargetNamespace, repoInfo, vals, targetsLocalCluster(w))
 	if err != nil {
 		return fmt.Errorf("inject pull secrets for App workload %s/%s (vendor=%q): %w",
 			w.Namespace, w.Name, src.Vendor, err)

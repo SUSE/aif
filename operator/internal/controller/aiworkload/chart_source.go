@@ -47,16 +47,16 @@ func (r *AIWorkloadReconciler) chartPuller() chartArchivePuller {
 }
 
 // fetchChartArchive returns the chart .tgz for a component that is rendered as
-// an embedded-chart Bundle. Git-backed repos go through the Rancher catalog (the
-// only way to reach them, needing the Rancher API token); http/oci repos are
-// downloaded directly with the ClusterRepo's own credentials and TLS settings,
-// the same ones the HelmOp path hands to Fleet.
+// an embedded-chart Bundle. Git-backed repos are read through the ChartFetcher
+// with the ClusterRepo's own credentials; http/oci repos are downloaded directly
+// with the ClusterRepo's own credentials and TLS settings, the same ones the
+// HelmOp path hands to Fleet.
 func (r *AIWorkloadReconciler) fetchChartArchive(ctx context.Context, c aiplatformv1alpha1.BlueprintComponent, repoInfo clusterRepoInfo) ([]byte, error) {
 	if repoInfo.Kind == repoKindGit {
-		if r.CatalogClient == nil || r.CatalogClient.Get() == nil {
-			return nil, fmt.Errorf("%w: git-backed ClusterRepo %q needs a Rancher API token", errCatalogClientNotConfigured, c.ChartRepo)
+		if r.ChartFetcher == nil {
+			return nil, errGitChartFetcherUnavailable
 		}
-		return fetchGitChart(ctx, r.CatalogClient.Get(), c)
+		return fetchGitChart(ctx, r.ChartFetcher, c, repoInfo.Commit)
 	}
 
 	req := infrahelm.ChartArchiveRequest{

@@ -184,6 +184,18 @@ helm upgrade aif-operator \
   oci://ghcr.io/suse/chart/aif-operator
 ```
 
+## Personal Rancher API token retirement
+
+The operator no longer needs a personal Rancher API token for Git chart downloads
+or local Helm cleanup. The UI's **Authorize / Rancher API Access** section is
+removed, and `rancherCatalog` values are deprecated and ignored. Upgrade the UI
+and operator together, configure repository credentials/trust, and revoke old
+personal tokens after verification. Removing a Secret does not revoke its token.
+
+See [operation without personal tokens](../../docs/tokenless-operator.md) for the
+architecture, air-gap requirements, uninstall RBAC, downstream behavior, and
+upgrade/rollback procedure.
+
 ## Air-gapped image configuration
 
 The operator and UI charts accept the same image-only values file. Copy
@@ -289,6 +301,7 @@ For example:
 | `manager.replicaCount`     | Number of operator replicas       | `1`                  |
 | `manager.args`             | Additional command-line arguments | `["--leader-elect"]` |
 | `manager.env`              | Extra environment variables       | `[]`                 |
+| `manager.temporaryStorageSizeLimit` | Writable temporary storage for Git chart fetches | `1Gi` |
 | `manager.imagePullSecrets` | Image pull secrets                | `[]`                 |
 | `manager.podAnnotations`   | Pod annotations                   | `{}`                 |
 

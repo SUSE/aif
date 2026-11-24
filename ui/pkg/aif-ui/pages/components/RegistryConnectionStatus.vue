@@ -5,7 +5,7 @@ import { LabeledInput } from '@components/Form/LabeledInput';
 import {
   checkRegistryConnection, refreshChartRepository, registryConfigurationFingerprint,
 } from '../../services/registry-connection';
-import { requestErrorMessage } from '../../services/rancher-token';
+import { requestErrorMessage } from '../../utils/rancher-request';
 import { getLibraryFromRepoUrl } from '../../services/app-collection';
 
 export default {

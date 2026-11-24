@@ -35,6 +35,7 @@ import (
 	"github.com/SUSE/aif-operator/internal/naming"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -545,7 +546,38 @@ func (h *AIWorkloadHandler) deleteAIWorkload(w http.ResponseWriter, r *http.Requ
 	wl.Name = name
 	wl.Namespace = namespace
 
-	if err := h.client.Delete(r.Context(), wl); err != nil {
+	// A direct downstream Helm release is removed using the caller's existing
+	// Rancher session. Only that caller can confirm external cleanup; the local
+	// operator has no downstream kubeconfig and must not pretend it verified it.
+	if confirmation := r.Header.Get("X-AIF-Completed-Helm-Uninstall"); confirmation != "" {
+		if err := h.client.Get(r.Context(), client.ObjectKeyFromObject(wl), wl); err != nil {
+			status := http.StatusInternalServerError
+			if errors.IsNotFound(err) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		if expected := wl.ExternalHelmCleanupID(); expected == "" || confirmation != expected {
+			writeError(w, http.StatusConflict, fmt.Errorf("workload release target changed; refresh and verify cleanup before retrying"))
+			return
+		}
+		base := wl.DeepCopy()
+		if wl.Annotations == nil {
+			wl.Annotations = map[string]string{}
+		}
+		wl.Annotations[aiplatformv1alpha1.ExternalHelmCleanupAnnotation] = confirmation
+		if err := h.client.Patch(r.Context(), wl, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+	}
+
+	options := &client.DeleteOptions{}
+	if wl.UID != "" {
+		options.Preconditions = &metav1.Preconditions{UID: &wl.UID}
+	}
+	if err := h.client.Delete(r.Context(), wl, options); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, fmt.Errorf("deployment %q not found in namespace %q", name, namespace))
 			return

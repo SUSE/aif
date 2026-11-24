@@ -108,7 +108,7 @@ export interface ResolvedValue {
 export interface AIWorkload {
   apiVersion: string;
   kind:       string;
-  metadata:   { name: string; namespace: string };
+  metadata:   { name: string; namespace: string; uid?: string };
   spec:       AIWorkloadSpec;
   status?:    AIWorkloadStatus;
 }

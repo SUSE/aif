@@ -23,6 +23,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"hash/fnv"
+	"path"
 	"reflect"
 	"slices"
 	"sort"
@@ -64,20 +65,6 @@ const (
 	repoKindOCI  repoKind = "oci"
 	repoKindGit  repoKind = "git"
 )
-
-// errClusterRepoNotReady marks a ClusterRepo lookup that failed because the
-// repo does not exist yet or has no usable URL — typically because its backing
-// registry credentials are not configured. Reconcile surfaces this as a
-// Ready=False condition and auto-requeues instead of hard-failing.
-var errClusterRepoNotReady = stderrors.New("cluster repo not ready")
-
-// errCatalogClientNotConfigured marks a git-backed ClusterRepo component that
-// cannot be deployed because no Rancher catalog client is configured (the
-// operator has no Rancher API token). The catalog config is editable at runtime
-// via Settings, so reconcile surfaces this as a Ready=False condition and
-// requeues: it clears as soon as the token is supplied (the AIWorkload
-// controller also watches Settings, so recovery is usually immediate).
-var errCatalogClientNotConfigured = stderrors.New("rancher catalog client not configured")
 
 type clusterRepoInfo struct {
 	Name           string   // ClusterRepo metadata.name
@@ -230,31 +217,6 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				r.refuseRender(w, reasonCRDOutdated, minimumSafeVersionPrunedMessage)
 				return ctrl.Result{RequeueAfter: time.Minute}, false, nil
 			}
-			if stderrors.Is(err, errCatalogClientNotConfigured) {
-				// A git-backed component needs a Rancher API token the operator
-				// wasn't given. The catalog config is editable at runtime via
-				// Settings, so surface a clear condition + Failed phase and requeue:
-				// the AIWorkload controller watches Settings and re-enqueues on the
-				// change, and this RequeueAfter is a race-safe net in case the
-				// holder is rebuilt after our watch fires.
-				msg := fmt.Sprintf("Component %q uses git-backed repo %q, which requires a Rancher API token. Set one under Settings → Rancher API Access in the AI Factory UI (Settings.spec.rancherCatalog.tokenSecretRef).", c.ChartName, c.ChartRepo)
-				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, "CatalogClientNotConfigured", msg, w.Generation)
-				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: time.Minute}, false, nil
-			}
-			if stderrors.Is(err, rancher.ErrUnauthorized) {
-				// The token exists but Rancher rejected it — typically because it
-				// expired. Rancher clamps a token's TTL to auth-token-max-ttl-minutes
-				// (90 days by default), so every configured token eventually lands
-				// here. Give it its own reason rather than folding it into the
-				// generic fetch error, so the UI can point at the fix. Requeue
-				// rather than fail terminally: re-authorizing in Settings resolves
-				// it, and the AIWorkload controller watches Settings.
-				msg := fmt.Sprintf("Rancher rejected the API token while fetching component %q from git-backed repo %q. The token may have expired — re-authorize under Settings → Rancher API Access in the AI Factory UI.", c.ChartName, c.ChartRepo)
-				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonRancherTokenRejected, msg, w.Generation)
-				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
-				return ctrl.Result{RequeueAfter: time.Minute}, false, nil
-			}
 			if stderrors.Is(err, errChartTooLarge) {
 				// Terminal: the chart is too big for a Fleet Bundle and no amount
 				// of retrying changes that. Returning the error instead would spin
@@ -266,12 +228,8 @@ func (r *AIWorkloadReconciler) reconcileBlueprintStatus(ctx context.Context, w *
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{}, false, nil
 			}
-			if stderrors.Is(err, errClusterRepoNotReady) {
-				// The repo the component needs is missing — usually because its
-				// registry credentials are not configured. Surface a condition +
-				// Failed phase (subject to the initial grace window) and requeue
-				// so the workload recovers once the repo appears.
-				msg := fmt.Sprintf("Repository %q is not available yet. If this persists, verify its credentials in Settings.", c.ChartRepo)
+			if stderrors.Is(err, rancher.ErrClusterRepoNotReady) {
+				msg := fmt.Sprintf("Waiting for repository %q. If this persists, check its indexing status and credentials.", c.ChartRepo)
 				setCondition(&w.Status.Conditions, conditionTypeReady, metav1.ConditionFalse, reasonClusterRepoNotReady, msg, w.Generation)
 				w.Status.Phase = guardPhaseTransition(aiplatformv1alpha1.AIWorkloadPhaseFailed, w.Status.Phase, w.CreationTimestamp.Time)
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, false, nil
@@ -1012,7 +970,13 @@ func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNames
 // either the standard k8s pod-spec list-of-objects shape (imagePullSecrets) or
 // the k8s-nim-operator flat-string shape (image.pullSecrets); writing both
 // covers the surveyed NIM chart families.
-type nvidiaInjector struct{ r *AIWorkloadReconciler }
+//
+// chartName is the component's chart. It gates the one value shape that is
+// specific to a single chart (see injectNvidiaPullSecretRefs).
+type nvidiaInjector struct {
+	r         *AIWorkloadReconciler
+	chartName string
+}
 
 func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNamespace string, repoInfo clusterRepoInfo, vals map[string]any, writeLocal bool) ([]string, error) {
 	l := log.FromContext(ctx)
@@ -1068,7 +1032,7 @@ func (n *nvidiaInjector) Apply(ctx context.Context, cc cluster.Client, targetNam
 		}
 	}
 
-	injectNvidiaPullSecretRefs(vals)
+	injectNvidiaPullSecretRefs(vals, n.chartName)
 	// NVIDIA blueprint charts (aiq-aira, nvidia-blueprint-rag, ...) commonly
 	// template their own ngc-secret / ngc-api from `imagePullSecret.password` /
 	// `ngcApiSecret.password`. Those values default to "" — and with the
@@ -1121,11 +1085,12 @@ func (r *AIWorkloadReconciler) localCC() cluster.Client {
 
 // injectorFor returns the secretInjector for a component vendor. Unknown or
 // empty vendors fall back to the SUSE profile defensively; the CRD default
-// fills the field in practice.
-func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVendor) secretInjector {
+// fills the field in practice. chartName is the component's chart; the NVIDIA
+// injector uses it to gate chart-specific value shapes.
+func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVendor, chartName string) secretInjector {
 	switch vendor {
 	case aiplatformv1alpha1.ComponentVendorNvidia:
-		return &nvidiaInjector{r: r}
+		return &nvidiaInjector{r: r, chartName: chartName}
 	default:
 		return &suseInjector{r: r}
 	}
@@ -1137,11 +1102,11 @@ func (r *AIWorkloadReconciler) injectorFor(vendor aiplatformv1alpha1.ComponentVe
 // non-NVIDIA app as vendor "suse", so without this gate a custom-repo app would
 // fall through to the suseInjector and be pulled with SUSE registry
 // credentials. Non-custom repos keep the vendor-based selection.
-func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo) secretInjector {
+func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.ComponentVendor, repoInfo clusterRepoInfo, chartName string) secretInjector {
 	if repoInfo.Custom {
 		return &customRepoInjector{r: r}
 	}
-	return r.injectorFor(vendor)
+	return r.injectorFor(vendor, chartName)
 }
 
 // injectComponentPullSecrets runs the component's primary injector against vals
@@ -1152,12 +1117,12 @@ func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.Compone
 // credentials leak into it.
 func (r *AIWorkloadReconciler) injectComponentPullSecrets(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, repoInfo clusterRepoInfo, ns string, vals map[string]any) error {
 	writeLocal := targetsLocalCluster(w)
-	names, err := r.injectorForRepo(c.Vendor, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, vals, writeLocal)
+	names, err := r.injectorForRepo(c.Vendor, repoInfo, c.ChartName).Apply(ctx, r.localCC(), ns, repoInfo, vals, writeLocal)
 	if err != nil {
 		return err
 	}
 	for _, v := range c.AdditionalPullSecretVendors {
-		extra, err := r.injectorForRepo(v, repoInfo).Apply(ctx, r.localCC(), ns, repoInfo, map[string]any{}, writeLocal)
+		extra, err := r.injectorForRepo(v, repoInfo, c.ChartName).Apply(ctx, r.localCC(), ns, repoInfo, map[string]any{}, writeLocal)
 		if err != nil {
 			return err
 		}
@@ -1606,6 +1571,8 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 	if err != nil {
 		return err
 	}
+	r.gitWriteMu.Lock()
+	defer r.gitWriteMu.Unlock()
 	if _, err = gc.WriteFile(ctx, gitOpsFilePath(bundleName), content, "chore: deploy blueprint component "+bundleName); err != nil {
 		return err
 	}
@@ -1685,7 +1652,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	cr.SetGroupVersionKind(clusterRepoGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: repoName}, cr); err != nil {
 		if errors.IsNotFound(err) {
-			return clusterRepoInfo{}, fmt.Errorf("%w: get ClusterRepo %q: %v", errClusterRepoNotReady, repoName, err)
+			return clusterRepoInfo{}, fmt.Errorf("%w: get ClusterRepo %q: %v", rancher.ErrClusterRepoNotReady, repoName, err)
 		}
 		return clusterRepoInfo{}, fmt.Errorf("get ClusterRepo %q: %w", repoName, err)
 	}
@@ -1726,8 +1693,8 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 	}
 
 	// Git-backed ClusterRepos (spec.gitRepo + spec.gitBranch) have no url/ociRepo.
-	// Rancher clones and indexes them; the operator resolves the chart via the
-	// Rancher catalog API and republishes it as a self-contained Fleet Bundle.
+	// Rancher indexes them; the operator reads the indexed Git commit directly
+	// and republishes the chart as a self-contained Fleet Bundle.
 	gitRepo, _, _ := unstructured.NestedString(cr.Object, "spec", "gitRepo")
 	if gitRepo != "" {
 		info.Kind = repoKindGit
@@ -1740,7 +1707,7 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 		return info, nil
 	}
 
-	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", errClusterRepoNotReady, repoName)
+	return clusterRepoInfo{}, fmt.Errorf("%w: ClusterRepo %q has no url, ociRepo, or gitRepo in spec", rancher.ErrClusterRepoNotReady, repoName)
 }
 
 // injectNvidiaPullSecretRefs writes the ngc-secret reference into both common
@@ -1749,7 +1716,9 @@ func (r *AIWorkloadReconciler) resolveClusterRepo(ctx context.Context, repoName 
 //   - path present and ngc-secret already listed → leave unchanged
 //   - path present with other entries → prepend ngc-secret
 //   - path present with an unexpected shape → leave untouched (author intent)
-func injectNvidiaPullSecretRefs(vals map[string]any) {
+//
+// chartName gates the k8s-nim-operator shape; see the operator.image block.
+func injectNvidiaPullSecretRefs(vals map[string]any, chartName string) {
 	// Top-level k8s pod-spec shape: list of objects with {"name": ...}.
 	// Covers Helm charts that respect the standard pod-spec convention at
 	// the chart root.
@@ -1771,8 +1740,14 @@ func injectNvidiaPullSecretRefs(vals map[string]any) {
 
 	// k8s-nim-operator chart shape: operator.image.pullSecrets is a flat
 	// string list nested two levels deep (operator -> image -> pullSecrets).
-	// Same conservative shape policy as image.pullSecrets above.
-	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets")
+	// Other NVIDIA charts use operator.image as a scalar image name (the GPU
+	// Operator and Network Operator default it to "gpu-operator" /
+	// "network-operator" and build "<repository>/<image>:<version>"). Creating
+	// operator.image as a map there shadows that default, and the chart renders
+	// "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>". So the missing
+	// maps are created only for the k8s-nim-operator chart; any chart whose
+	// values already carry operator.image as a map still gets the entry.
+	injectNestedFlatPullSecretList(vals, "operator", "image", "pullSecrets", path.Base(chartName) == nimOperatorChartName)
 
 	// Scalar name shape: some NVIDIA charts read a single string that names the
 	// pull secret to wire into pod specs, rather than a list.
@@ -1788,6 +1763,10 @@ func injectNvidiaPullSecretRefs(vals map[string]any) {
 // Unlike the object-shaped keys, this key is only ever a scalar string across the
 // surveyed charts, so setting it blindly is safe.
 const nvidiaNgcImagePullSecretNameKey = "ngcImagePullSecretName"
+
+// nimOperatorChartName is the k8s-nim-operator chart, the one NVIDIA chart that
+// reads its operator pull secrets from operator.image.pullSecrets.
+const nimOperatorChartName = "k8s-nim-operator"
 
 // injectNgcImagePullSecretName sets the scalar pull-secret name at both the top
 // level and under global, since charts read one or the other (see
@@ -1842,13 +1821,17 @@ func injectFlatPullSecretList(vals map[string]any, topKey, listKey string) {
 	}
 }
 
-// injectNestedFlatPullSecretList walks vals[topKey][midKey][listKey],
-// creating intermediate maps as needed. If any intermediate value exists but
-// isn't a map, the function returns without changes (preserves author intent).
-func injectNestedFlatPullSecretList(vals map[string]any, topKey, midKey, listKey string) {
+// injectNestedFlatPullSecretList walks vals[topKey][midKey][listKey]. When
+// createMissing is true, absent intermediate maps are created; otherwise an
+// absent intermediate leaves vals unchanged. If any intermediate value exists
+// but isn't a map, the function returns without changes (preserves author
+// intent).
+func injectNestedFlatPullSecretList(vals map[string]any, topKey, midKey, listKey string, createMissing bool) {
 	topRaw, present := vals[topKey]
 	if !present {
-		vals[topKey] = map[string]any{midKey: map[string]any{listKey: []any{nvidiaImagePullSecretName}}}
+		if createMissing {
+			vals[topKey] = map[string]any{midKey: map[string]any{listKey: []any{nvidiaImagePullSecretName}}}
+		}
 		return
 	}
 	top, ok := topRaw.(map[string]any)
@@ -1857,7 +1840,9 @@ func injectNestedFlatPullSecretList(vals map[string]any, topKey, midKey, listKey
 	}
 	midRaw, midPresent := top[midKey]
 	if !midPresent {
-		top[midKey] = map[string]any{listKey: []any{nvidiaImagePullSecretName}}
+		if createMissing {
+			top[midKey] = map[string]any{listKey: []any{nvidiaImagePullSecretName}}
+		}
 		return
 	}
 	mid, ok := midRaw.(map[string]any)

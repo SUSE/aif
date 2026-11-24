@@ -157,41 +157,6 @@ func TestReconcile_HeldComponentsWithoutDeliveriesUnchanged(t *testing.T) {
 	}
 }
 
-// A status requeue longer than the unsettled-delivery one (no catalog client
-// for a git-backed component: 1 minute) yields to the delivery's 30 s.
-func TestReconcile_UnsettledDeliveryBeatsLongerStatusRequeue(t *testing.T) {
-	scheme := sentinelResultScheme(t)
-	w := newBlueprintWorkload(time.Now())
-	w.Finalizers = []string{aiWorkloadFinalizer}
-	w.Status.PullSecretDeliveries = []aiplatformv1alpha1.PullSecretDelivery{
-		{Namespace: "install-ns", Names: []string{combinedPullSecretName}},
-	}
-	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "install-ns"}}
-	objs := append([]client.Object{w, gitBlueprintCR("rancher-charts"), gitClusterRepo("rancher-charts"), sa}, appCollectionCredObjects()...)
-	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(objs...).
-		WithStatusSubresource(&aiplatformv1alpha1.AIWorkload{}).
-		Build()
-	r := &AIWorkloadReconciler{Client: c, Scheme: scheme, OperatorNamespace: "aif-operator"}
-
-	key := types.NamespacedName{Name: "wl", Namespace: "aif-operator"}
-	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-
-	var got aiplatformv1alpha1.AIWorkload
-	if err := c.Get(context.Background(), key, &got); err != nil {
-		t.Fatalf("get workload: %v", err)
-	}
-	if cond := meta.FindStatusCondition(got.Status.Conditions, conditionTypeReady); cond == nil || cond.Reason != "CatalogClientNotConfigured" {
-		t.Fatalf("expected Ready reason CatalogClientNotConfigured (1 minute requeue), got %+v", cond)
-	}
-	if res != (ctrl.Result{RequeueAfter: 30 * time.Second}) {
-		t.Fatalf("expected the unsettled-delivery requeue 30s over the 1 minute status one, got %+v", res)
-	}
-}
-
 func TestSoonerRequeue(t *testing.T) {
 	cases := []struct {
 		name string

@@ -85,10 +85,8 @@ func TestCredentialSecretToAIWorkloads_IgnoresUnrelatedSecrets(t *testing.T) {
 	}
 }
 
-// A Settings change re-enqueues blueprint-sourced AIWorkloads so a git-backed
-// workload that failed with CatalogClientNotConfigured recovers as soon as the
-// Rancher catalog token is supplied at runtime. helm/app workloads can't consume
-// git-backed ClusterRepos and are skipped.
+// Settings changes re-enqueue blueprint workloads that publish through Fleet Git.
+// Direct Helm workloads do not consume that publication configuration.
 func TestSettingsToAIWorkloads_EnqueuesOnlyBlueprintWorkloads(t *testing.T) {
 	s := rotationScheme(t)
 	bp := &aiplatformv1alpha1.AIWorkload{

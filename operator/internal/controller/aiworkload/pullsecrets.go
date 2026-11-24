@@ -35,6 +35,7 @@ import (
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/cluster"
 	"github.com/SUSE/aif-operator/internal/credentials"
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
 // reconcileDeliveredPullSecrets ships the workload's recorded pull secrets
@@ -868,7 +869,7 @@ func (r *AIWorkloadReconciler) pullSecretFactory(ctx context.Context, scope work
 				}
 				repoInfo, err := r.resolveClusterRepo(ctx, repoName)
 				if err != nil {
-					if stderrors.Is(err, errClusterRepoNotReady) {
+					if stderrors.Is(err, rancher.ErrClusterRepoNotReady) {
 						return nil, nil
 					}
 					return nil, err

@@ -32,7 +32,6 @@ import (
 	"github.com/SUSE/aif-operator/internal/credcheck"
 	"github.com/SUSE/aif-operator/internal/credentials"
 	git "github.com/SUSE/aif-operator/internal/git"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/registryurl"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	corev1 "k8s.io/api/core/v1"
@@ -357,7 +356,6 @@ var (
 	probeRegistryWithInsecureFn = credcheck.ProbeRegistryWithCAAndInsecure
 	probeHelmIndexFn            = credcheck.ProbeHelmIndex
 	gitCheckAuthFn              = (*git.Client).CheckAuth
-	rancherCatalogCheckAuth     = (*rancher.CatalogClient).CheckAuth
 )
 
 const (
@@ -367,7 +365,7 @@ const (
 	statusSkipped = "skipped"
 )
 
-var allValidateTargets = []string{"applicationCollection", "suseRegistry", "nvidia", "gitops", "rancherCatalog"}
+var allValidateTargets = []string{"applicationCollection", "suseRegistry", "nvidia", "gitops"}
 
 type validateOverride struct {
 	UserSecretRef  *aiplatformv1alpha1.SecretKeyRef `json:"userSecretRef,omitempty"`
@@ -577,95 +575,10 @@ func (h *SettingsHandler) validateGit(ctx context.Context, s *aiplatformv1alpha1
 	return res
 }
 
-// validateRancherCatalog probes the Rancher Steve catalog API with the
-// configured (or form-supplied) token, so the UI can confirm a Rancher API
-// token works before saving it — git-backed ClusterRepos are unusable without
-// one. Token override is all-or-nothing (like git): if the form supplies a
-// complete token ref, the whole override (token/CA/url/insecure) is used;
-// otherwise the saved rancherCatalog spec is probed.
-func (h *SettingsHandler) validateRancherCatalog(ctx context.Context, s *aiplatformv1alpha1.Settings, ov validateOverride) validateResult {
-	res := validateResult{Target: "rancherCatalog"}
-	rc := s.Spec.RancherCatalog
-
-	tokenRef, caRef := ov.TokenSecretRef, ov.CABundleSecretRef
-	url, insecure := ov.URL, ov.InsecureSkipVerify
-	if !secretRefComplete(tokenRef) {
-		tokenRef = rc.TokenSecretRef
-		caRef = rc.CABundleSecretRef
-		url = rc.URL
-		insecure = rc.InsecureSkipVerify
-	}
-
-	// An incomplete/absent token ref is "not configured", not an auth failure —
-	// nothing is sent to Rancher.
-	if !secretRefComplete(tokenRef) {
-		res.Status = statusSkipped
-		res.Message = "not configured"
-		return res
-	}
-
-	token, err := h.readSecretKey(ctx, tokenRef)
-	if err != nil {
-		res.Status = statusError
-		res.Message = "could not read credential: " + err.Error()
-		return res
-	}
-	if token == "" {
-		res.Status = statusSkipped
-		res.Message = "not configured"
-		return res
-	}
-
-	var caPEM []byte
-	// Gate on presence, not completeness, to match resolveCABundle. A ref with an
-	// empty key is unreadable at runtime and must not be reported as ok here just
-	// because discovery happens to succeed.
-	if caRef != nil {
-		ca, err := h.readSecretKey(ctx, caRef)
-		if err != nil {
-			res.Status = statusError
-			res.Message = "could not read CA bundle: " + err.Error()
-			return res
-		}
-		caPEM = []byte(ca)
-	} else if ca, err := rancher.DiscoverInternalCA(ctx, h.client); err == nil {
-		// Mirror the runtime path in resolveCABundle: with no CA configured, the
-		// operator trusts the CA that signs Rancher's in-cluster serving
-		// certificate. Testing against system roots instead would report a bogus
-		// x509 failure for a configuration that works. A discovery failure stays
-		// silent and falls through to system roots — an off-cluster Rancher
-		// reached over a publicly trusted certificate is legitimate, and
-		// ErrCANotFound is its normal signal.
-		caPEM = ca
-	}
-
-	if url == "" {
-		url = rancher.DefaultBaseURL
-	}
-	res.Host = registryurl.Host(url)
-
-	client, err := rancher.NewCatalogClient(url, token, caPEM, insecure)
-	if err != nil {
-		res.Status = statusError
-		res.Message = err.Error()
-		return res
-	}
-
-	start := time.Now()
-	err = rancherCatalogCheckAuth(client, ctx)
-	res.LatencyMs = time.Since(start).Milliseconds()
-	switch {
-	case err == nil:
-		res.Status = statusOK
-		res.Message = "authenticated"
-	case errors.Is(err, rancher.ErrUnauthorized):
-		res.Status = statusFailed
-		res.Message = err.Error()
-	default:
-		res.Status = statusError
-		res.Message = err.Error()
-	}
-	return res
+// validateRancherCatalog is a compatibility response for cached older UIs.
+// Deprecated credential references are never resolved or sent to a remote host.
+func (h *SettingsHandler) validateRancherCatalog(_ context.Context, _ *aiplatformv1alpha1.Settings, _ validateOverride) validateResult {
+	return validateResult{Target: "rancherCatalog", Status: statusSkipped, Message: "Personal Rancher API tokens are no longer used. Git charts use ClusterRepo credentials and local Helm cleanup uses the operator ServiceAccount."}
 }
 
 // validateCustomRepo probes an ad-hoc custom repo from the form-supplied override.
@@ -893,8 +806,6 @@ func incompleteSecretRefs(spec *aiplatformv1alpha1.SettingsSpec) []string {
 		{"spec.nvidia.userSecretRef", spec.Nvidia.UserSecretRef},
 		{"spec.nvidia.tokenSecretRef", spec.Nvidia.TokenSecretRef},
 		{"spec.nvidia.caBundleSecretRef", spec.Nvidia.CABundleSecretRef},
-		{"spec.rancherCatalog.tokenSecretRef", spec.RancherCatalog.TokenSecretRef},
-		{"spec.rancherCatalog.caBundleSecretRef", spec.RancherCatalog.CABundleSecretRef},
 	}
 	for i, c := range spec.BlueprintCatalogs {
 		p := fmt.Sprintf("spec.blueprintCatalogs[%d]", i)

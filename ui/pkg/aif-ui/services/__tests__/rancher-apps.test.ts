@@ -4,6 +4,7 @@ import {
   ensureServiceAccountPullSecret,
   listGitClusterRepoNames,
   listServiceAccounts,
+  waitForAppUninstall,
 } from '../rancher-apps';
 import { log as logger } from '../../utils/logger';
 import type { Dispatchable } from '../../types/rancher-types';
@@ -11,6 +12,32 @@ import type { Dispatchable } from '../../types/rancher-types';
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('waitForAppUninstall', () => {
+  it('waits for the release to disappear using the current session', async () => {
+    vi.useFakeTimers();
+    const store = { dispatch: vi.fn().mockResolvedValueOnce({ id: 'apps/demo' }).mockRejectedValueOnce({ _status: 404 }) };
+    const result = waitForAppUninstall(store, 'c-downstream', 'apps', 'demo');
+    await vi.advanceTimersByTimeAsync(1000);
+    await result;
+    expect(store.dispatch).toHaveBeenCalledTimes(2);
+    expect(store.dispatch.mock.calls[0][1]).toMatchObject({ method: 'GET', url: '/k8s/clusters/c-downstream/v1/catalog.cattle.io.apps/apps/demo' });
+  });
+
+  it('surfaces permission failures instead of reporting the release gone', async () => {
+    const store = { dispatch: vi.fn().mockRejectedValue({ _status: 403 }) };
+    await expect(waitForAppUninstall(store, 'c-downstream', 'apps', 'demo')).rejects.toMatchObject({ _status: 403 });
+  });
+
+  it('times out when an accepted uninstall never completes', async () => {
+    vi.useFakeTimers();
+    const store = { dispatch: vi.fn().mockResolvedValue({ id: 'apps/demo' }) };
+    const result = waitForAppUninstall(store, 'c-downstream', 'apps', 'demo', 2000);
+    const assertion = expect(result).rejects.toThrow('workload has been retained');
+    await vi.advanceTimersByTimeAsync(2000);
+    await assertion;
+  });
 });
 
 interface RequestConfig {

@@ -32,7 +32,6 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	"github.com/SUSE/aif-operator/internal/naming"
 )
 
@@ -176,10 +175,9 @@ func TestRender_GitRepoComponentAcceptsOverlay(t *testing.T) {
 	scheme := gitRepoTestScheme()
 	repo := repoObj("rancher-charts", map[string]any{"gitRepo": "https://git.rancher.io/charts", "gitBranch": "release-v2.14"})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	holder := rancher.NewHolder()
 	c := gitComponent()
-	holder.Set(fakeCatalog{tgz: makeChartTgz(t, map[string]string{c.ChartName + "/Chart.yaml": "apiVersion: v2\nname: x\nversion: 1\n"})})
-	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: holder}
+	fetcher := fakeChartFetcher{tgz: makeChartTgz(t, map[string]string{c.ChartName + "/Chart.yaml": "apiVersion: v2\nname: x\nversion: 1\n"})}
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: fetcher}
 
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"

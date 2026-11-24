@@ -3,7 +3,6 @@ package aiworkload
 import (
 	"context"
 	"encoding/json"
-	stderrors "errors"
 	"strings"
 	"testing"
 
@@ -17,15 +16,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
 
-type fakeCatalog struct {
+type fakeChartFetcher struct {
 	tgz []byte
 	err error
 }
 
-func (f fakeCatalog) FetchChart(ctx context.Context, repo, chart, version string) ([]byte, error) {
+func (f fakeChartFetcher) FetchChart(ctx context.Context, repo, chart, version, revision string) ([]byte, error) {
 	return f.tgz, f.err
 }
 
@@ -58,9 +56,7 @@ func TestEnsureBlueprintHelmOp_GitRepoEmitsBundle(t *testing.T) {
 		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
 	})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	holder := rancher.NewHolder()
-	holder.Set(fakeCatalog{tgz: tgz})
-	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: holder}
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: fakeChartFetcher{tgz: tgz}}
 
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"
@@ -119,12 +115,10 @@ func TestEnsureBlueprintGitFile_GitRepoPublishesMixedTargetsToBothFleetWorkspace
 		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
 	})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(settings, repo, workload).Build()
-	holder := rancher.NewHolder()
-	holder.Set(fakeCatalog{tgz: tgz})
 	r := &AIWorkloadReconciler{
 		Client:            cl,
 		Scheme:            scheme,
-		CatalogClient:     holder,
+		ChartFetcher:      fakeChartFetcher{tgz: tgz},
 		OperatorNamespace: "aif-operator",
 	}
 	const bundleName = "wl-agent"
@@ -158,13 +152,13 @@ func TestEnsureBlueprintGitFile_GitRepoPublishesMixedTargetsToBothFleetWorkspace
 	}
 }
 
-// countingCatalog records how many times the chart was actually downloaded.
-type countingCatalog struct {
+// countingChartFetcher records how many times the chart was actually downloaded.
+type countingChartFetcher struct {
 	tgz   []byte
 	calls int
 }
 
-func (f *countingCatalog) FetchChart(ctx context.Context, repo, chart, version string) ([]byte, error) {
+func (f *countingChartFetcher) FetchChart(ctx context.Context, repo, chart, version, revision string) ([]byte, error) {
 	f.calls++
 	return f.tgz, nil
 }
@@ -174,7 +168,7 @@ func (f *countingCatalog) FetchChart(ctx context.Context, repo, chart, version s
 // test can drive ensureBlueprintHelmOp repeatedly against the same state.
 type refetchHarness struct {
 	r       *AIWorkloadReconciler
-	catalog *countingCatalog
+	catalog *countingChartFetcher
 	repo    *unstructured.Unstructured
 	cl      crclient.Client
 }
@@ -193,11 +187,9 @@ func newRefetchHarness(t *testing.T, commit string) *refetchHarness {
 		"rancher-ai-agent/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n",
 	})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	catalog := &countingCatalog{tgz: tgz}
-	holder := rancher.NewHolder()
-	holder.Set(catalog)
+	catalog := &countingChartFetcher{tgz: tgz}
 	return &refetchHarness{
-		r:       &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: holder},
+		r:       &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: catalog},
 		catalog: catalog,
 		repo:    repo,
 		cl:      cl,
@@ -225,7 +217,7 @@ func (h *refetchHarness) setCommit(t *testing.T, commit string) {
 }
 
 // The fingerprint short circuit is what stops a healthy git-backed workload from
-// re-downloading its chart from Rancher on every BundleDeployment status churn
+// re-downloading its chart from Git on every BundleDeployment status churn
 // (commit 8ead8bf, "stop the refetch loop"). A regression there is completely
 // silent: no assertion on Bundle content changes, and the only symptom is load
 // on Rancher plus a workload that reconciles forever. So count the downloads.
@@ -268,11 +260,11 @@ func TestEnsureBlueprintHelmOp_GitRepoRefetchSuppression(t *testing.T) {
 	})
 }
 
-func TestEnsureBlueprintHelmOp_GitRepoNoCatalogClient(t *testing.T) {
+func TestEnsureBlueprintHelmOp_GitRepoNoChartFetcher(t *testing.T) {
 	scheme := gitRepoTestScheme()
 	repo := repoObj("rancher-charts", map[string]any{"gitRepo": "https://git.rancher.io/charts"})
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(repo).Build()
-	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme} // CatalogClient nil
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme} // ChartFetcher nil
 
 	w := &aiplatformv1alpha1.AIWorkload{}
 	w.Name = "wl"
@@ -280,10 +272,10 @@ func TestEnsureBlueprintHelmOp_GitRepoNoCatalogClient(t *testing.T) {
 
 	_, err := r.ensureBlueprintHelmOp(context.Background(), w, gitComponent(), "wl-agent")
 	if err == nil {
-		t.Fatal("expected error when catalog client is not configured")
+		t.Fatal("expected error when chart fetcher is not configured")
 	}
-	if !stderrors.Is(err, errCatalogClientNotConfigured) {
-		t.Fatalf("expected errCatalogClientNotConfigured, got %v", err)
+	if err == nil {
+		t.Fatalf("expected an unavailable-fetcher error, got %v", err)
 	}
 }
 

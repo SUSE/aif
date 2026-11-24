@@ -40,7 +40,7 @@ import (
 
 type fakeCatalogFetcher struct{ calls int }
 
-func (f *fakeCatalogFetcher) FetchChart(_ context.Context, _, _, _ string) ([]byte, error) {
+func (f *fakeCatalogFetcher) FetchChart(_ context.Context, _, _, _, _ string) ([]byte, error) {
 	f.calls++
 	return []byte("from-catalog"), nil
 }
@@ -53,11 +53,7 @@ func chartSourceReconciler(t *testing.T, puller chartArchivePuller, fetcher ranc
 		Data:       map[string][]byte{"username": []byte("u"), "password": []byte("p")},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
-	holder := rancher.NewHolder()
-	if fetcher != nil {
-		holder.Set(fetcher)
-	}
-	return &AIWorkloadReconciler{Client: cl, Scheme: scheme, CatalogClient: holder, ChartPuller: puller}
+	return &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: fetcher, ChartPuller: puller}
 }
 
 var demoComponent = aiplatformv1alpha1.BlueprintComponent{ChartRepo: "repo", ChartName: "demo", ChartVersion: "1.0.0"}
@@ -75,11 +71,11 @@ func TestFetchChartArchive_GitUsesCatalog(t *testing.T) {
 	}
 }
 
-func TestFetchChartArchive_GitWithoutCatalogClient(t *testing.T) {
+func TestFetchChartArchive_GitWithoutChartFetcher(t *testing.T) {
 	r := chartSourceReconciler(t, nil, nil)
 	_, err := r.fetchChartArchive(context.Background(), demoComponent, clusterRepoInfo{Name: "repo", Kind: repoKindGit})
-	if !errors.Is(err, errCatalogClientNotConfigured) {
-		t.Fatalf("want errCatalogClientNotConfigured, got %v", err)
+	if !errors.Is(err, errGitChartFetcherUnavailable) {
+		t.Fatalf("want errGitChartFetcherUnavailable, got %v", err)
 	}
 }
 

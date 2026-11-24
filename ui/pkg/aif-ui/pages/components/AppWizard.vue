@@ -32,7 +32,7 @@ import { installRecordingWorkloadsFirst } from '../../services/helm-install-orde
 import { isChartArchiveOversized } from '../../services/chart-values';
 import { createAIWorkload, updateAIWorkload, listAIWorkloads, getRegistryStatus } from '../../utils/operator-api';
 import { operatorErrorMessage } from '../../utils/operator-config';
-import { mergeImagePullSecrets, operatorPullSecretNames } from '../../utils/pull-secrets';
+import { adaptPullSecretShapeForChart, mergeImagePullSecrets, operatorPullSecretNames } from '../../utils/pull-secrets';
 import { useFleetGitConfigured } from '../../composables/useFleetGitConfigured';
 import { useClusterDisplayNames } from '../../composables/useClusterDisplayNames';
 import { createFleetBundle, buildBundleName, buildBundleNameForCluster, ensureAppCollectionPullSecrets, injectNvidiaPullSecretRefs, disableNvidiaChartSecrets } from '../../services/fleet-bundle';
@@ -1329,8 +1329,9 @@ async function installToCluster(
   // operator's Blueprint path (blueprint.go injectNvidiaPullSecretRefs).
   if (library === 'nvidia') {
     disableNvidiaChartSecrets(v, 'nvidia');
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', form.value.chartName);
   }
+  adaptPullSecretShapeForChart(form.value.chartName, v);
 
   if (pullSecrets.length > 0) {
     const saCandidates = new Set<string>(['default']);
@@ -1580,6 +1581,12 @@ async function upgradeToCluster(
   const v = JSON.parse(JSON.stringify(form.value.values || {}));
 
   applySuseImagePullSecrets(v, library, pullSecrets);
+
+  if (library === 'nvidia') {
+    disableNvidiaChartSecrets(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', form.value.chartName);
+  }
+  adaptPullSecretShapeForChart(form.value.chartName, v);
 
   // Never log the values: they can hold secrets typed into the chart's form.
   console.log('[SUSE-AI] calling upgrade ', {

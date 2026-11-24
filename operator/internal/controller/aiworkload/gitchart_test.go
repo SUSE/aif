@@ -7,15 +7,22 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/SUSE/aif-operator/internal/infra/rancher"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
-	"github.com/SUSE/aif-operator/internal/infra/rancher"
 )
+
+func TestFetchGitChart_SizeLimitIsTerminal(t *testing.T) {
+	_, err := fetchGitChart(context.Background(), fakeChartFetcher{err: rancher.ErrChartTooLarge}, aiplatformv1alpha1.BlueprintComponent{}, "commit")
+	if !errors.Is(err, errChartTooLarge) {
+		t.Fatalf("size limit must stop repeated Git downloads: %v", err)
+	}
+}
 
 // makeChartTgz builds a minimal Helm chart .tgz from the given files (paths
 // relative to the archive root, e.g. "mychart/Chart.yaml").
@@ -218,18 +225,18 @@ func TestChartTgzToBundleResources_ChargesEncodedSize(t *testing.T) {
 	}
 }
 
-func TestFetchGitChart_PreservesErrUnauthorized(t *testing.T) {
+func TestFetchGitChart_PreservesError(t *testing.T) {
 	c := aiplatformv1alpha1.BlueprintComponent{
 		ChartRepo: "rancher-charts", ChartName: "rancher-backup-crd", ChartVersion: "1.0.0",
 	}
-	inner := fmt.Errorf("%w (401 Unauthorized)", rancher.ErrUnauthorized)
+	inner := errors.New("repository unavailable")
 
-	_, err := fetchGitChart(context.Background(), fakeCatalog{err: inner}, c)
+	_, err := fetchGitChart(context.Background(), fakeChartFetcher{err: inner}, c, "abc123")
 	if err == nil {
 		t.Fatal("fetchGitChart returned nil error")
 	}
-	if !errors.Is(err, rancher.ErrUnauthorized) {
-		t.Fatalf("errors.Is(err, rancher.ErrUnauthorized) = false; err = %v", err)
+	if !errors.Is(err, inner) {
+		t.Fatalf("errors.Is(err, inner) = false; err = %v", err)
 	}
 	// The wrap must still name the component, so the condition message is useful.
 	if !strings.Contains(err.Error(), "rancher-backup-crd") {

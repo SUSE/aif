@@ -51,10 +51,13 @@ export function listAIWorkloads(): Promise<{ items: AIWorkload[] }> {
   return operatorFetch('/api/v1/aiworkloads');
 }
 
-export function deleteAIWorkload(namespace: string, name: string): Promise<void> {
+export function deleteAIWorkload(namespace: string, name: string, completedHelmUninstall?: string): Promise<void> {
   return operatorFetch(
     `/api/v1/namespaces/${ encodeURIComponent(namespace) }/aiworkloads/${ encodeURIComponent(name) }`,
-    { method: 'DELETE' },
+    {
+      method: 'DELETE',
+      ...(completedHelmUninstall ? { headers: { 'X-AIF-Completed-Helm-Uninstall': completedHelmUninstall } } : {}),
+    },
   );
 }
 

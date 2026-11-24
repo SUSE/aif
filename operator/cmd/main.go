@@ -50,6 +50,7 @@ import (
 	aiworkloadctrl "github.com/SUSE/aif-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/aif-operator/internal/controller/installaiextension"
 	settingsctrl "github.com/SUSE/aif-operator/internal/controller/settings"
+	"github.com/SUSE/aif-operator/internal/infra/helm"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
 	// +kubebuilder:scaffold:imports
 )
@@ -341,16 +342,11 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
 	}
-	// Shared holder: the Settings controller builds the Rancher catalog client
-	// from Settings.Spec.RancherCatalog and swaps it in here; the AIWorkload
-	// reconciler reads it to fetch charts from git-backed ClusterRepos.
-	catalogHolder := rancher.NewHolder()
 
 	if err := (&settingsctrl.SettingsReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
-		CatalogHolder:     catalogHolder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Settings")
 		os.Exit(1)
@@ -360,7 +356,8 @@ func main() {
 		// APIReader is wired by SetupWithManager (mgr.GetAPIReader()); see there.
 		Scheme:            mgr.GetScheme(),
 		OperatorNamespace: operatorNamespace,
-		CatalogClient:     catalogHolder,
+		ChartFetcher:      rancher.NewGitChartFetcher(mgr.GetAPIReader()),
+		Uninstaller:       helm.NewServiceAccountUninstaller(mgr.GetConfig()),
 		Recorder:          mgr.GetEventRecorderFor("aiworkload-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")

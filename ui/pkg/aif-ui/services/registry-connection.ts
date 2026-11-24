@@ -9,7 +9,7 @@ import {
 import {
   resolveRegistryEndpoints, NVIDIA_REPO_URL, NVIDIA_BLUEPRINT_REPO_URL,
 } from './registry-endpoints';
-import { requestErrorMessage } from './rancher-token';
+import { requestErrorMessage } from '../utils/rancher-request';
 import { isOperatorNotFound } from '../utils/operator-config';
 
 export type RegistryTarget = 'applicationCollection' | 'suseRegistry' | 'nvidia' | 'customRepo';

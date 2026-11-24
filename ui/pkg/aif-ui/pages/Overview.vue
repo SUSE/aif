@@ -21,7 +21,7 @@ import { getClusters } from '../services/cluster-service';
 import type { ClusterInfo } from '../types/rancher-types';
 import { fetchManagedRepos } from '../services/app-collection';
 import type { ManagedRepo } from '../services/app-collection';
-import { requestErrorMessage } from '../services/rancher-token';
+import { requestErrorMessage } from '../utils/rancher-request';
 import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
 
 const vm      = getCurrentInstance()!.proxy as any;

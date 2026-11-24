@@ -183,6 +183,8 @@ func (r *AIWorkloadReconciler) deleteGitFileByName(ctx context.Context, w *aipla
 	if err != nil {
 		return err
 	}
+	r.gitWriteMu.Lock()
+	defer r.gitWriteMu.Unlock()
 	_, err = gc.DeleteFile(ctx, gitOpsFilePath(bundleName), "chore: remove workload "+bundleName)
 	return err
 }

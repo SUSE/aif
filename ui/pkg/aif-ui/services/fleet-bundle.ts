@@ -1,7 +1,7 @@
 import { ensureRegistrySecretSimple } from './rancher-apps';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { capReleaseName, fnv1a32 } from '../utils/helm-release';
-import { mergeImagePullSecrets, OPERATOR_NVIDIA_PULL_SECRET, OPERATOR_SUSE_PULL_SECRET } from '../utils/pull-secrets';
+import { adaptPullSecretShapeForChart, mergeImagePullSecrets, OPERATOR_NVIDIA_PULL_SECRET, OPERATOR_SUSE_PULL_SECRET } from '../utils/pull-secrets';
 
 // The operator-managed AppCollection ClusterRepo name. SUSE-registry charts
 // frequently bundle subcharts whose container images come from AppCollection
@@ -266,7 +266,8 @@ export function buildFleetBundleYAML(params: {
     mergeImagePullSecrets(values, pullSecretNames);
   }
   disableNvidiaChartSecrets(values, params.library);
-  injectNvidiaPullSecretRefs(values, params.library);
+  injectNvidiaPullSecretRefs(values, params.library, params.chartName);
+  adaptPullSecretShapeForChart(params.chartName, values);
 
   const isOCI = params.chartRepoUrl.startsWith('oci://');
   const spec: Record<string, any> = {
@@ -408,7 +409,7 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
     // overall name over 63 (release would be ~52 chars + 14 = 66, rejected).
     // bundleName stays Fleet-unique; releaseName drives chart .Release.Name.
     releaseName: capReleaseName(params.release),
-    values:      addPullSecretsToValues(params.values, pullSecretNames, params.library),
+    values:      addPullSecretsToValues(JSON.parse(JSON.stringify(params.values)), pullSecretNames, params.library),
     // Disable Fleet's ${ } value templating: we resolve all values ourselves,
     // and upstream charts legitimately use ${ } (e.g. OTel ${env:MY_POD_IP}),
     // which Fleet would otherwise mis-parse as a template function.
@@ -442,13 +443,13 @@ export async function createFleetBundle(store: any, params: FleetBundleParams): 
   // Done late so it covers every code path that might have repopulated the
   // values map. Mutates helmSpec.values in place.
   if (params.library === 'nvidia' && helmSpec.values && typeof helmSpec.values === 'object') {
-    helmSpec.values = JSON.parse(JSON.stringify(helmSpec.values));
     disableNvidiaChartSecrets(helmSpec.values, 'nvidia');
     // Reference the operator-delivered ngc-secret in the pull-secret value shapes
     // NVIDIA charts read, so team-repo NIM pods stop pulling with the hardcoded
     // nvcrimagepullsecret (which nothing creates) and use ngc-secret instead.
-    injectNvidiaPullSecretRefs(helmSpec.values, 'nvidia');
+    injectNvidiaPullSecretRefs(helmSpec.values, 'nvidia', params.chartName);
   }
+  adaptPullSecretShapeForChart(params.chartName, helmSpec.values);
 
   if (localClusters.length > 0) {
     await upsertFleetHelmOp(store, 'fleet-local', params.bundleName, {
@@ -512,6 +513,10 @@ export function disableNvidiaChartSecrets(values: Record<string, any>, library?:
   }
 }
 
+// k8s-nim-operator is the one NVIDIA chart that reads its operator pull secrets
+// from operator.image.pullSecrets. KEEP IN SYNC with nimOperatorChartName (Go).
+const NIM_OPERATOR_CHART_NAME = 'k8s-nim-operator';
+
 // isPlainObject reports whether v is a non-null, non-array object — the only
 // shape into which these helpers write. Anything else (string, number, array)
 // is treated as deliberate author intent and left untouched.
@@ -537,7 +542,8 @@ function isPlainObject(v: any): v is Record<string, any> {
 // it to NVIDIA charts only. Sets the scalar global.ngcImagePullSecretName but
 // never forces the global.imagePullSecrets list shape (owned by the non-nvidia
 // code).
-export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?: 'suse-ai' | 'nvidia'): void {
+// chartName is required: override-only values cannot identify the NIM shape.
+export function injectNvidiaPullSecretRefs(values: Record<string, any>, library: 'suse-ai' | 'nvidia' | undefined, chartName: string): void {
   if (library !== 'nvidia') return;
   const name = OPERATOR_NVIDIA_PULL_SECRET;
 
@@ -556,7 +562,12 @@ export function injectNvidiaPullSecretRefs(values: Record<string, any>, library?
   // NIM workload shape: image.pullSecrets is a flat string list.
   injectFlatPullSecretList(values, 'image', name);
   // k8s-nim-operator shape: operator.image.pullSecrets, flat string list.
-  injectNestedFlatPullSecretList(values, 'operator', 'image', name);
+  // Other NVIDIA charts (GPU Operator, Network Operator) read operator.image as
+  // a scalar image name, so a created map would shadow it and render
+  // "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>". Missing maps are
+  // created only for k8s-nim-operator; an existing operator.image map is always
+  // honoured. Mirrors the Go copy.
+  injectNestedFlatPullSecretList(values, 'operator', 'image', name, chartName.split('/').pop() === NIM_OPERATOR_CHART_NAME);
   // Scalar name shape: a single string naming the pull secret, read by some
   // charts at the top level and by others under global.
   injectNgcImagePullSecretName(values, name);
@@ -603,16 +614,20 @@ function injectFlatPullSecretList(values: Record<string, any>, topKey: string, n
 // injectNestedFlatPullSecretList walks values[topKey][midKey].pullSecrets,
 // creating intermediate plain-object maps as needed. If any intermediate value
 // exists but isn't a plain object, leaves it untouched (author intent).
-function injectNestedFlatPullSecretList(values: Record<string, any>, topKey: string, midKey: string, name: string): void {
+function injectNestedFlatPullSecretList(values: Record<string, any>, topKey: string, midKey: string, name: string, createMissing: boolean): void {
   const topRaw = values[topKey];
   if (topRaw === undefined) {
-    values[topKey] = { [midKey]: { pullSecrets: [name] } };
+    if (createMissing) {
+      values[topKey] = { [midKey]: { pullSecrets: [name] } };
+    }
     return;
   }
   if (!isPlainObject(topRaw)) return;
   const midRaw = topRaw[midKey];
   if (midRaw === undefined) {
-    topRaw[midKey] = { pullSecrets: [name] };
+    if (createMissing) {
+      topRaw[midKey] = { pullSecrets: [name] };
+    }
     return;
   }
   if (!isPlainObject(midRaw)) return;
