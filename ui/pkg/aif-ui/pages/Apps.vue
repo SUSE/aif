@@ -344,7 +344,7 @@ import AppLabels from '../formatters/AppLabels.vue';
 import AppDetailPanel from '../components/AppDetailPanel.vue';
 import RepositoryHealthBanner from './components/RepositoryHealthBanner.vue';
 import { appRepository, includeUnavailableApps } from '../services/repository-health';
-import { requestErrorMessage } from '../services/rancher-token';
+import { requestErrorMessage } from '../utils/rancher-request';
 import nvidiaLogo from '../assets/nvidia-logo.svg';
 import nvidiaLogoDark from '../assets/nvidia-logo-light.svg';
 import genericLogo from '../assets/generic-app.svg';

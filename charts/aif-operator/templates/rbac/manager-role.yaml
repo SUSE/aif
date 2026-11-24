@@ -44,6 +44,7 @@ rules:
     resources:
       - serviceaccounts
     verbs:
+      - delete
       - get
       - list
       - patch
@@ -61,6 +62,26 @@ rules:
       - patch
       - update
       - watch
+  # Normal Helm release cleanup; hooks or additional chart resource kinds
+  # require explicit scoped grants. Never grant wildcard uninstall permissions.
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, delete]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, delete]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers]
+    verbs: [get, delete]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors]
+    verbs: [get, delete]
   - apiGroups:
       - apps
     resources:
@@ -264,6 +285,7 @@ rules:
       - authorization.k8s.io
     resources:
       - subjectaccessreviews
+      - selfsubjectaccessreviews
     verbs:
       - create
 

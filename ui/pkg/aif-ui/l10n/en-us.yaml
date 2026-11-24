@@ -247,33 +247,6 @@ suseai:
             helmManaged:
               badge: Managed by Helm
               help: "Declared in Helm values (blueprintCatalogs). To change or remove it, run helm upgrade with an updated blueprintCatalogs list, e.g. --reuse-values --set-json 'blueprintCatalogs=[]' to remove all Helm-declared catalogs while keeping your other values."
-        rancherCatalog:
-          title: Rancher API Access
-          description: 'Credentials the operator uses to call the Rancher API. Currently this is needed only to fetch charts from git-backed ClusterRepos, which expose no HTTP or OCI URL. Those charts do not show up under Apps — the token only lets a Blueprint deploy them. Create a token in Rancher under Account & API Keys, store it in a Secret in the operator namespace, then reference that Secret below.'
-          authorize: Authorize
-          reauthorize: Re-authorize
-          authorizing: Authorizing…
-          notAuthorized: Not authorized. The operator cannot install charts from git-backed repositories until you authorize it.
-          authorized: 'Authorized. Token expires {expires}.'
-          authorizedNoExpiry: Authorized. No expiry recorded for this token.
-          authorizeFailed: 'Could not create a Rancher API token: {error}'
-          authorizeHelp: 'Creates a Rancher API token as your user, stores it in a Secret in the operator namespace, and saves this page.'
-          tokenExpiring: 'The Rancher API token expires {expires}. Re-authorize to avoid interrupting installs from git-backed repositories.'
-          tokenExpired: 'The Rancher API token expired {expires}. Charts from git-backed repositories cannot be installed until you re-authorize.'
-          advanced: Advanced
-          tokenSecretRef:
-            label: API Token Secret
-            secretNameLabel: Secret Name
-            keyNameLabel: Secret Key
-          url:
-            label: Rancher API URL
-            placeholder: 'https://rancher.cattle-system.svc'
-          caBundleSecretRef:
-            label: CA Bundle Secret (optional — discovered automatically when empty)
-            secretNameLabel: Secret Name
-            keyNameLabel: Secret Key
-          insecureSkipVerify:
-            label: Skip TLS verification (development only)
         customRepos:
           newRepo: New repository
           badge: Custom
@@ -299,6 +272,7 @@ suseai:
             gitRepo:
               label: Git Repository URL
               placeholder: 'https://github.com/org/repo.git'
+              help: 'Use HTTPS with a trusted certificate or SSH with a known_hosts entry in the SSH Secret.'
             gitBranch:
               label: Git Branch
               placeholder: main
@@ -312,6 +286,7 @@ suseai:
               keyNameLabel: Secret Key
             sshKeySecretRef:
               label: SSH Private Key Secret (optional)
+              help: Include a known_hosts key with trusted SSH host keys in the selected Secret.
               secretNameLabel: Secret Name
               keyNameLabel: Secret Key
             caBundleSecretRef:
@@ -321,6 +296,7 @@ suseai:
               help: 'For repositories served with a private or self-signed certificate, reference a secret holding the PEM-encoded CA bundle. This is the secure alternative to skipping TLS verification.'
             insecureSkipTLSVerify:
               label: Skip TLS verification (development only)
+              gitWarning: 'To download Git charts over HTTPS, clear this setting and configure a CA Bundle Secret if the server uses a private CA.'
               warning: 'Disabling TLS verification exposes chart and image pulls to man-in-the-middle attacks. Never enable this in production — supply a CA Bundle Secret instead.'
           actions:
             add: Add Repository

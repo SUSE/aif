@@ -253,6 +253,7 @@ spec:
                     sshKeySecretRef:
                       description: |-
                         SSHKeySecretRef references a Secret holding an SSH private key for git repos.
+                        The same Secret must include known_hosts for operator Git chart downloads.
                         Mutually exclusive with basic auth.
                       properties:
                         key:
@@ -435,15 +436,13 @@ spec:
                 type: object
               rancherCatalog:
                 description: |-
-                  RancherCatalog configures access to Rancher's catalog API, used to fetch
-                  charts from git-backed ClusterRepos.
+                  RancherCatalog is deprecated and ignored. Retained for upgrade compatibility.
+                  Git charts use ClusterRepo credentials; uninstall uses the operator identity.
                 nullable: true
                 properties:
                   caBundleSecretRef:
-                    description: |-
-                      CABundleSecretRef references a Secret holding the PEM CA certificate(s)
-                      that signed Rancher's serving certificate. When unset, system roots are
-                      used (unless InsecureSkipVerify is set).
+                    description: 'Deprecated: ignored. Configure trust on the Git
+                      ClusterRepo instead.'
                     properties:
                       key:
                         description: Key is the key within the Secret.
@@ -458,16 +457,12 @@ spec:
                     - name
                     type: object
                   insecureSkipVerify:
-                    description: |-
-                      InsecureSkipVerify skips TLS verification of the Rancher API. Development
-                      only — do not use in production/air-gapped installs.
+                    description: 'Deprecated: ignored. Git chart downloads always
+                      verify TLS.'
                     type: boolean
                   tokenSecretRef:
-                    description: |-
-                      TokenSecretRef references a Secret (in the operator namespace) holding a
-                      Rancher API token. Required for git-backed ClusterRepos — Rancher's Steve
-                      API rejects the operator ServiceAccount token. When unset, git-backed
-                      ClusterRepos are not installable.
+                    description: 'Deprecated: ignored. Revoke the old Rancher token
+                      before removing this Secret.'
                     properties:
                       key:
                         description: Key is the key within the Secret.
@@ -482,9 +477,8 @@ spec:
                     - name
                     type: object
                   url:
-                    description: |-
-                      URL is the in-cluster Rancher API endpoint. Defaults to
-                      https://rancher.cattle-system.svc when empty.
+                    description: 'Deprecated: ignored; the operator no longer calls
+                      Rancher''s catalog API.'
                     type: string
                 type: object
               registryEndpoints:

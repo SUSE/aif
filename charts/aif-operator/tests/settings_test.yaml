@@ -1,4 +1,4 @@
-suite: settings CR — the spec block is opt-in
+suite: settings CR — safe retirement of Rancher credentials
 templates:
   - templates/settings.yaml
 chart:
@@ -9,16 +9,17 @@ release:
   namespace: aif-operator
 tests:
   # The partner catalog is a chart-rendered GitRepo, never a Settings entry, so
-  # default values leave the spec out entirely.
-  - it: default values produce a bare Settings resource with no spec
+  # default values leave an empty map for safe Helm three-way upgrades.
+  - it: default values preserve an empty spec map
     asserts:
       - containsDocument:
           kind: Settings
           apiVersion: ai-factory.suse.com/v1alpha1
           name: settings
           namespace: aif-operator
-      - notExists:
+      - equal:
           path: spec
+          value: {}
 
   # The operator, not Helm, owns this resource after install. Losing the
   # resource-policy annotation would make `helm uninstall` delete user settings.
@@ -36,64 +37,17 @@ tests:
           path: spec.appCatalog.remoteUrl
           value: https://example.com/catalog.json
 
-  - it: an inline rancher token is referenced through a chart-managed secret
+  - it: legacy Rancher credentials from reused Helm values are ignored
     set:
-      rancherCatalog.token: token-abcde:secret
-    asserts:
-      - equal:
-          path: spec.rancherCatalog.tokenSecretRef.name
-          value: aif-operator-rancher-catalog
-      - equal:
-          path: spec.rancherCatalog.tokenSecretRef.key
-          value: token
-      - equal:
-          path: spec.rancherCatalog.url
-          value: https://rancher.cattle-system.svc
-
-  - it: an existing token secret takes precedence over the chart-managed one
-    set:
+      rancherCatalog.url: https://old-rancher.invalid
       rancherCatalog.token: token-abcde:secret
       rancherCatalog.tokenSecret.name: my-existing-secret
-      rancherCatalog.tokenSecret.key: api-token
-    asserts:
-      - equal:
-          path: spec.rancherCatalog.tokenSecretRef.name
-          value: my-existing-secret
-      - equal:
-          path: spec.rancherCatalog.tokenSecretRef.key
-          value: api-token
-
-  - it: a ca bundle is referenced only alongside a token
-    set:
-      rancherCatalog.token: token-abcde:secret
-      rancherCatalog.caBundle: |
-        -----BEGIN CERTIFICATE-----
-    asserts:
-      - equal:
-          path: spec.rancherCatalog.caBundleSecretRef.name
-          value: aif-operator-rancher-catalog
-      - equal:
-          path: spec.rancherCatalog.caBundleSecretRef.key
-          value: ca.crt
-
-  # Documented behaviour: a caBundle with no token has nothing to authenticate,
-  # so rancherCatalog is intentionally left out of the spec.
-  - it: a ca bundle on its own does not open the spec block
-    set:
-      rancherCatalog.caBundle: |
-        -----BEGIN CERTIFICATE-----
-    asserts:
-      - notExists:
-          path: spec
-
-  - it: insecureSkipVerify is emitted only when a token is present
-    set:
-      rancherCatalog.token: token-abcde:secret
+      rancherCatalog.caBundle: old-ca
       rancherCatalog.insecureSkipVerify: true
     asserts:
       - equal:
-          path: spec.rancherCatalog.insecureSkipVerify
-          value: true
+          path: spec
+          value: {}
 
   - it: a complete credential pair produces secret references
     set:
@@ -114,8 +68,9 @@ tests:
     set:
       credentials.nvidia.username: user
     asserts:
-      - notExists:
+      - equal:
           path: spec
+          value: {}
 
   - it: each registry credential maps to its own secret
     set:
