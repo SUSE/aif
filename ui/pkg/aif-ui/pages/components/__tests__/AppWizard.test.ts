@@ -234,6 +234,37 @@ describe('app wizard image pull secrets', () => {
     expect(publishToFleetGit).toHaveBeenCalledWith(expect.objectContaining({ pullSecretNames: [COMBINED] }));
   });
 
+  it.each(['install', 'manage'] as const)('injects NIM Operator pull secrets on a direct Helm %s with minimal values', async (mode) => {
+    vi.mocked(listClusterRepos).mockResolvedValue([
+      { metadata: { name: 'nvidia' }, spec: { url: 'https://helm.ngc.nvidia.com/nvidia' } },
+    ] as any);
+    const vm = await wizardWith('Helm', mode);
+    vm.form.chartRepo = 'nvidia';
+    vm.form.chartName = 'k8s-nim-operator';
+    await vm.submit();
+    await flushPromises();
+
+    expect(createOrUpgradeApp).toHaveBeenCalledTimes(1);
+    const values = vi.mocked(createOrUpgradeApp).mock.calls[0][5] as Record<string, any>;
+    expect(values.operator?.image?.pullSecrets).toEqual(['ngc-secret']);
+    expect(values.imagePullSecret).toEqual({ create: false, name: 'ngc-secret' });
+  });
+
+  it.each(['install', 'manage'] as const)('keeps Network Operator image defaults and uses string secret names on a direct Helm %s', async (mode) => {
+    vi.mocked(listClusterRepos).mockResolvedValue([
+      { metadata: { name: 'nvidia' }, spec: { url: 'https://helm.ngc.nvidia.com/nvidia' } },
+    ] as any);
+    const vm = await wizardWith('Helm', mode, { operator: { repository: 'registry.internal.example/nvidia' } });
+    vm.form.chartRepo = 'nvidia';
+    vm.form.chartName = 'network-operator';
+    await vm.submit();
+    await flushPromises();
+
+    expect(createOrUpgradeApp).toHaveBeenCalledTimes(1);
+    const values = vi.mocked(createOrUpgradeApp).mock.calls[0][5] as Record<string, any>;
+    expect(values.operator).toEqual({ repository: 'registry.internal.example/nvidia', imagePullSecrets: ['ngc-secret'] });
+  });
+
   it('replaces a legacy per-registry secret with the operator secret on a FleetBundle upgrade', async () => {
     const legacy = [{ name: LEGACY }];
     const vm = await wizardWith('FleetBundle', 'manage', { imagePullSecrets: legacy, global: { imagePullSecrets: legacy } });

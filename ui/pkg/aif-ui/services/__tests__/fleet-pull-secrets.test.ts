@@ -36,6 +36,32 @@ function fakeStore() {
 describe('Fleet pull secret values', () => {
   beforeEach(() => vi.mocked(ensureRegistrySecretSimple).mockClear());
 
+  it.each(['network-operator', 'gpu-operator', 'k8s-nim-operator'])('uses %s value shapes in both Fleet and GitOps output', async (chartName) => {
+    const { store, helmOps } = fakeStore();
+    const params = {
+      bundleName: 'operator-test', release: 'operator-test', chartRepo: 'nvidia', chartName,
+      chartVersion: '1.0.0', chartRepoUrl: 'https://helm.ngc.nvidia.com/nvidia',
+      values: {}, targetClusterIds: ['local'], targetNamespace: 'ns', library: 'nvidia' as const,
+    };
+    await createFleetBundle(store, params);
+    const gitOps = JSON.parse(buildFleetBundleYAML({ ...params, helmSecretName: null, pullSecretNames: [] }));
+
+    expect(helmOps).toHaveLength(1);
+    for (const output of [helmOps[0], gitOps]) {
+      const values = output.spec.helm.values;
+      expect(values.imagePullSecrets).toEqual([{ name: 'ngc-secret' }]);
+      if (chartName === 'k8s-nim-operator') {
+        expect(values.operator?.image?.pullSecrets).toEqual(['ngc-secret']);
+      } else {
+        expect(values.operator?.image).toBeUndefined();
+      }
+      if (chartName === 'network-operator') {
+        expect(values.operator?.imagePullSecrets).toEqual(['ngc-secret']);
+      }
+    }
+    expect(params.values).toEqual({});
+  });
+
   it('createFleetBundle keeps user and browser-created pull secrets and drops stale legacy ones', async () => {
     const { store, helmOps } = fakeStore();
     await createFleetBundle(store, {

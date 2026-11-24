@@ -14,13 +14,13 @@ const NGC = 'ngc-secret';
 describe('injectNvidiaPullSecretRefs', () => {
   it('is a no-op for non-nvidia libraries', () => {
     const v: Record<string, any> = {};
-    injectNvidiaPullSecretRefs(v, 'suse-ai');
+    injectNvidiaPullSecretRefs(v, 'suse-ai', '');
     expect(v).toEqual({});
   });
 
   it('writes every pull-secret shape into empty values', () => {
     const v: Record<string, any> = {};
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
 
     // Standard k8s pod-spec shape at the chart root: list of {name} objects.
     expect(v.imagePullSecrets).toEqual([{ name: NGC }]);
@@ -42,7 +42,7 @@ describe('injectNvidiaPullSecretRefs', () => {
       imagePullSecrets: [{ name: 'nvcrimagepullsecret' }],
       image:            { pullSecrets: ['author-string'] },
     };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.imagePullSecrets).toEqual([{ name: NGC }, { name: 'nvcrimagepullsecret' }]);
     expect(v.image.pullSecrets).toEqual([NGC, 'author-string']);
@@ -50,8 +50,8 @@ describe('injectNvidiaPullSecretRefs', () => {
 
   it('is idempotent — re-applying does not duplicate ngc-secret', () => {
     const v: Record<string, any> = {};
-    injectNvidiaPullSecretRefs(v, 'nvidia');
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
 
     expect(v.imagePullSecrets).toEqual([{ name: NGC }]);
     expect(v.image.pullSecrets).toEqual([NGC]);
@@ -60,7 +60,7 @@ describe('injectNvidiaPullSecretRefs', () => {
 
   it('leaves unexpected shapes untouched (honors author intent)', () => {
     const v: Record<string, any> = { imagePullSecrets: 42, image: 'not-a-map' };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.imagePullSecrets).toBe(42);
     expect(v.image).toBe('not-a-map');
@@ -68,15 +68,44 @@ describe('injectNvidiaPullSecretRefs', () => {
 
   it('creates the nested operator.image.pullSecrets when operator exists without image', () => {
     const v: Record<string, any> = { operator: { replicas: 2 } };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'k8s-nim-operator');
 
     expect(v.operator.replicas).toBe(2);
     expect(v.operator.image.pullSecrets).toEqual([NGC]);
   });
 
+  it('never creates operator.image for charts that read it as a scalar (GPU Operator)', () => {
+    // The GPU Operator chart builds "<repository>/<image>:<version>" from a scalar
+    // operator.image; a created map rendered as
+    // "nvcr.io/nvidia/map[pullSecrets:[ngc-secret]]:<version>".
+    for (const chartName of ['gpu-operator', 'network-operator', '']) {
+      const empty: Record<string, any> = {};
+      injectNvidiaPullSecretRefs(empty, 'nvidia', chartName);
+      expect(empty.operator).toBeUndefined();
+
+      const withOperator: Record<string, any> = { operator: { upgradeCRD: true } };
+      injectNvidiaPullSecretRefs(withOperator, 'nvidia', chartName);
+      expect(withOperator.operator).toEqual({ upgradeCRD: true });
+    }
+  });
+
+  it('still fills an operator.image map the author supplied, for any chart', () => {
+    const v: Record<string, any> = { operator: { image: { tag: 'main' } } };
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'some-chart');
+
+    expect(v.operator.image).toEqual({ tag: 'main', pullSecrets: [NGC] });
+  });
+
+  it('recognizes a repository-prefixed NIM Operator chart', () => {
+    const v: Record<string, any> = {};
+    injectNvidiaPullSecretRefs(v, 'nvidia', 'nvidia/k8s-nim-operator');
+
+    expect(v.operator?.image?.pullSecrets).toEqual([NGC]);
+  });
+
   it('treats an explicit null the same as absent', () => {
     const v: Record<string, any> = { imagePullSecrets: null };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.imagePullSecrets).toEqual([{ name: NGC }]);
   });
@@ -88,7 +117,7 @@ describe('injectNvidiaPullSecretRefs', () => {
       image:    { pullSecrets: null },
       operator: { image: { pullSecrets: null } },
     };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.image.pullSecrets).toEqual([NGC]);
     expect(v.operator.image.pullSecrets).toEqual([NGC]);
@@ -103,7 +132,7 @@ describe('injectNvidiaPullSecretRefs', () => {
 describe('injectNvidiaPullSecretRefs — ngcImagePullSecretName', () => {
   it('replaces an empty-string default at both locations', () => {
     const v: Record<string, any> = { ngcImagePullSecretName: '', global: { ngcImagePullSecretName: '' } };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.ngcImagePullSecretName).toBe(NGC);
     expect(v.global.ngcImagePullSecretName).toBe(NGC);
@@ -114,7 +143,7 @@ describe('injectNvidiaPullSecretRefs — ngcImagePullSecretName', () => {
       ngcImagePullSecretName: 'user-top',
       global:                 { ngcImagePullSecretName: 'user-global' },
     };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.ngcImagePullSecretName).toBe('user-top');
     expect(v.global.ngcImagePullSecretName).toBe('user-global');
@@ -122,7 +151,7 @@ describe('injectNvidiaPullSecretRefs — ngcImagePullSecretName', () => {
 
   it('leaves a non-string top-level value untouched', () => {
     const v: Record<string, any> = { ngcImagePullSecretName: 42 };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.ngcImagePullSecretName).toBe(42);
     // global is still created for charts that read it there.
@@ -131,7 +160,7 @@ describe('injectNvidiaPullSecretRefs — ngcImagePullSecretName', () => {
 
   it('leaves a non-object global untouched', () => {
     const v: Record<string, any> = { global: 'not-a-map' };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.global).toBe('not-a-map');
     expect(v.ngcImagePullSecretName).toBe(NGC);
@@ -141,7 +170,7 @@ describe('injectNvidiaPullSecretRefs — ngcImagePullSecretName', () => {
     const v: Record<string, any> = {
       global: { imagePullSecrets: [{ name: 'author-secret' }] },
     };
-    injectNvidiaPullSecretRefs(v, 'nvidia');
+    injectNvidiaPullSecretRefs(v, 'nvidia', '');
 
     expect(v.global.ngcImagePullSecretName).toBe(NGC);
     expect(v.global.imagePullSecrets).toEqual([{ name: 'author-secret' }]);

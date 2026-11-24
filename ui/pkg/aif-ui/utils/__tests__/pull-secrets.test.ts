@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LEGACY_SUSE_PULL_SECRET_PREFIX, mergeImagePullSecrets, operatorPullSecretNames, OPERATOR_NVIDIA_PULL_SECRET, OPERATOR_SUSE_PULL_SECRET,
+  adaptPullSecretShapeForChart, LEGACY_SUSE_PULL_SECRET_PREFIX, mergeImagePullSecrets, operatorPullSecretNames, OPERATOR_NVIDIA_PULL_SECRET, OPERATOR_SUSE_PULL_SECRET,
 } from '../pull-secrets';
 import type { RegistryStatus } from '../../types/aiworkload-types';
 
@@ -8,6 +8,37 @@ const status = (overrides: Partial<RegistryStatus> = {}): RegistryStatus => ({
   applicationCollection: false, suseRegistry: false, nvidia: false, ...overrides,
 });
 const allTrue = status({ applicationCollection: true, suseRegistry: true, nvidia: true });
+
+describe('adaptPullSecretShapeForChart', () => {
+  it.each(['network-operator', 'nvidia/network-operator'])('uses string names for %s while preserving subchart lists and mirror overrides', (chartName) => {
+    const refs = [{ name: 'ngc-secret' }];
+    const values: Record<string, any> = {
+      imagePullSecrets: refs, global: { imagePullSecrets: refs },
+      operator: { repository: 'registry.internal.example/nvidia', image: 'network-operator', imagePullSecrets: ['mirror-auth'] },
+    };
+    adaptPullSecretShapeForChart(chartName, values);
+    adaptPullSecretShapeForChart(chartName, values);
+
+    expect(values.operator).toEqual({
+      repository: 'registry.internal.example/nvidia', image: 'network-operator', imagePullSecrets: ['ngc-secret', 'mirror-auth'],
+    });
+    expect(values.imagePullSecrets).toEqual(refs);
+    expect(values.global.imagePullSecrets).toEqual(refs);
+  });
+
+  it.each([
+    { chart: 'gpu-operator', values: { imagePullSecrets: [{ name: 'ngc-secret' }] } },
+    { chart: 'constructor', values: { imagePullSecrets: [{ name: 'ngc-secret' }] } },
+    { chart: 'network-operator', values: {} },
+    { chart: 'network-operator', values: { imagePullSecrets: ['existing-string'] } },
+    { chart: 'network-operator', values: { imagePullSecrets: [{ name: 'ngc-secret' }], operator: 'unexpected' } },
+    { chart: 'network-operator', values: { imagePullSecrets: [{ name: 'ngc-secret' }], operator: { imagePullSecrets: 'unexpected' } } },
+  ])('keeps unsupported or uninjected values untouched: %j', ({ chart, values }) => {
+    const before = JSON.parse(JSON.stringify(values));
+    adaptPullSecretShapeForChart(chart, values);
+    expect(values).toEqual(before);
+  });
+});
 
 describe('operatorPullSecretNames', () => {
   it('matches the operator secret names', () => {
