@@ -451,8 +451,15 @@ Run:ai UI.
 - **A pull secret you choose is kept.** The operator fills an empty
   `imagePullSecrets` or `global.imagePullSecrets` in a component's values with
   `suse-ai-pull-combined`, which holds every configured registry credential. It no
-  longer replaces a secret set there by the Blueprint or in the Values tab, so a value
-  that was silently overwritten before now takes effect on the next reconcile.
+  longer replaces a secret set there by the Blueprint or in the Values tab, and an
+  empty list or `null` set in the Values tab now means no pull secret there; the pods
+  still get the secret through their ServiceAccount. An empty list declared by a
+  Blueprint is still filled. A value that was silently overwritten before now takes
+  effect on the next reconcile.
+- **A component that waits on a failed dependency says why.** When Fleet fails to
+  apply a dependency's new deployment, the dependency stays Pending, and its
+  component status and the waiting component's Ready message now carry Fleet's
+  error instead of only "waiting for ... to roll out".
 - **The community NVIDIA RunAI OSS Blueprint hands no pull secret to the Run:ai
   cluster.** Its control plane hands the first `global.imagePullSecrets` entry to the
   cluster as its registry credential, which would be `suse-ai-pull-combined`. The

@@ -83,6 +83,8 @@ func heldConditionMessage(held []heldComponent, cells []aiplatformv1alpha1.AIWor
 					f += ": " + c.Message
 				}
 				failed = append(failed, f)
+			} else if c := firstCellWithMessage(cells, dep); c != nil {
+				waiting = append(waiting, fmt.Sprintf("%s (on %s: %s)", dep, c.ClusterID, c.Message))
 			} else {
 				waiting = append(waiting, dep)
 			}
@@ -97,6 +99,17 @@ func heldConditionMessage(held []heldComponent, cells []aiplatformv1alpha1.AIWor
 		parts = append(parts, h.name+": "+strings.Join(reasons, "; also "))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// firstCellWithMessage returns the first cell of component that explains its
+// state (see pendingFailureMessage), or nil.
+func firstCellWithMessage(cells []aiplatformv1alpha1.AIWorkloadComponentStatus, component string) *aiplatformv1alpha1.AIWorkloadComponentStatus {
+	for i := range cells {
+		if cells[i].ComponentName == component && cells[i].Message != "" {
+			return &cells[i]
+		}
+	}
+	return nil
 }
 
 // failedCell returns the first Failed cell of component (nil if none) and how

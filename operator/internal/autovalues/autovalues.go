@@ -166,6 +166,19 @@ func MergedValues(c aiplatformv1alpha1.BlueprintComponent, overrides []aiplatfor
 			return nil, fmt.Errorf("unmarshal blueprint values for %s: %w", c.ChartName, err)
 		}
 	}
+	override, err := Override(c, overrides)
+	if err != nil || override == nil {
+		return vals, err
+	}
+	if err := mergo.Merge(&vals, override, mergo.WithOverride); err != nil {
+		return nil, fmt.Errorf("merge component override for %s: %w", c.ChartName, err)
+	}
+	return vals, nil
+}
+
+// Override returns the values of the first override matching c.ChartName, the
+// one MergedValues applies, or nil when there is none.
+func Override(c aiplatformv1alpha1.BlueprintComponent, overrides []aiplatformv1alpha1.ComponentValueOverride) (map[string]any, error) {
 	for _, ov := range overrides {
 		if ov.ComponentName != c.ChartName || ov.Values == nil {
 			continue
@@ -174,10 +187,7 @@ func MergedValues(c aiplatformv1alpha1.BlueprintComponent, overrides []aiplatfor
 		if err := json.Unmarshal(ov.Values.Raw, &override); err != nil {
 			return nil, fmt.Errorf("unmarshal component override for %s: %w", c.ChartName, err)
 		}
-		if err := mergo.Merge(&vals, override, mergo.WithOverride); err != nil {
-			return nil, fmt.Errorf("merge component override for %s: %w", c.ChartName, err)
-		}
-		break
+		return override, nil
 	}
-	return vals, nil
+	return nil, nil
 }

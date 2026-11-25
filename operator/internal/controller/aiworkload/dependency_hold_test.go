@@ -572,6 +572,32 @@ func TestDependencyHold_ErrAppliedDependencyNamed(t *testing.T) {
 	f.expectHeld("b: waiting for comp, which failed on local: helm install failed: image pull secret missing; a: waiting for b to roll out")
 }
 
+// Fleet 0.14.1 reports a failed upgrade as ErrApplied while the BundleDeployment
+// still runs the previous deployment. The prerequisite stays Pending (a stale
+// failure must not fail a new render) and the dependent held, but both say why.
+func TestDependencyHold_FailedRolloutExplainsPendingDependency(t *testing.T) {
+	f := chainFixture(t, false, nil)
+	f.reconcile()
+	ho := f.helmOp("comp")
+	d := helmOpDigest(ho)
+	bd := settledBD("fleet-local", ho.GetName(), "local", d, "s-new", "s-old", "ErrApplied")
+	l := bd.GetLabels()
+	l["fleet.cattle.io/cluster"] = "local"
+	bd.SetLabels(l)
+	_ = unstructured.SetNestedSlice(bd.Object, []any{map[string]any{
+		"type": "Deployed", "status": "False", "message": "helm upgrade failed: image pull secret missing",
+	}}, "status", "conditions")
+	putBundleDeployment(t, f.r, bd)
+	putBundleOnly(t, f.r, types.NamespacedName{Namespace: "fleet-local", Name: ho.GetName()}, d, 0, 0)
+	f.reconcile()
+	f.expectHeld("b: waiting for comp (on local: helm upgrade failed: image pull secret missing) to roll out; a: waiting for b to roll out")
+	for _, c := range f.w.Status.ComponentStatuses {
+		if c.ComponentName == "comp" && (c.Phase != aiplatformv1alpha1.AIWorkloadClusterPhasePending || c.Message != "helm upgrade failed: image pull secret missing") {
+			t.Fatalf("comp cell = %s %q, want Pending with Fleet's Deployed message", c.Phase, c.Message)
+		}
+	}
+}
+
 func TestDependencyHold_PendingDependencyKeepsWording(t *testing.T) {
 	f := chainFixture(t, false, nil)
 	f.reconcile()

@@ -295,3 +295,37 @@ func TestCertifyDeployedSource_RefreshesCertifiedAtForActiveVersionOp(t *testing
 		})
 	}
 }
+
+func TestPendingFailureMessage(t *testing.T) {
+	failing := func(state string, conds ...map[string]any) *unstructured.Unstructured {
+		bd := settledBD("fleet-local", "b", "a", "d", "s-new", "s-old", state)
+		_ = unstructured.SetNestedField(bd.Object, "display failure", "status", "display", "message")
+		list := make([]any, 0, len(conds))
+		for _, c := range conds {
+			list = append(list, c)
+		}
+		_ = unstructured.SetNestedSlice(bd.Object, list, "status", "conditions")
+		return bd
+	}
+	deployedFalse := map[string]any{"type": "Deployed", "status": "False", "message": "helm upgrade failed: image not found"}
+	unpromoted := failing("ErrApplied", deployedFalse)
+	_ = unstructured.SetNestedField(unpromoted.Object, "s-staged", "spec", "stagedDeploymentID")
+	for _, tc := range []struct {
+		name    string
+		bd      *unstructured.Unstructured
+		current bool
+		want    string
+	}{
+		{"current rollout failed: Deployed message", failing("ErrApplied", deployedFalse), true, "helm upgrade failed: image not found"},
+		{"no Deployed message: display message", failing("ErrApplied", map[string]any{"type": "Deployed", "status": "False"}), true, "display failure"},
+		{"parent Bundle not at this render", failing("ErrApplied", deployedFalse), false, ""},
+		{"new deployment not promoted yet", unpromoted, true, ""},
+		{"current deployment applied", settledBD("fleet-local", "b", "a", "d", "s-new", "s-new", "ErrApplied"), true, ""},
+		{"still rolling out", failing("WaitApplied", deployedFalse), true, ""},
+		{"no BundleDeployment", nil, true, ""},
+	} {
+		if got := pendingFailureMessage(tc.bd, tc.current); got != tc.want {
+			t.Errorf("%s: pendingFailureMessage = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

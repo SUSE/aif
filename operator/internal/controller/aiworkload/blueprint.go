@@ -44,6 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/autovalues"
 	"github.com/SUSE/aif-operator/internal/blueprintdeps"
 	"github.com/SUSE/aif-operator/internal/blueprintpolicy"
 	"github.com/SUSE/aif-operator/internal/cluster"
@@ -966,6 +967,31 @@ func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNames
 	return []string{name}, nil
 }
 
+// suseInjectedPullSecretPaths are the value paths suseInjector fills.
+var suseInjectedPullSecretPaths = []string{"imagePullSecrets", "global.imagePullSecrets"}
+
+// userClearedPullSecrets returns the suseInjectedPullSecretPaths that the
+// workload's own override for c sets to an empty list or null, with that value.
+// The user chose no pull secret there, so the combined secret is not filled in
+// (an empty list declared by the Blueprint is a placeholder and still is).
+func userClearedPullSecrets(w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent) (map[string]any, error) {
+	override, err := autovalues.Override(c, w.Spec.ComponentValues)
+	if err != nil || override == nil {
+		return nil, err
+	}
+	cleared := map[string]any{}
+	for _, path := range suseInjectedPullSecretPaths {
+		v, ok := autovalues.Get(override, path)
+		if !ok {
+			continue
+		}
+		if list, isList := v.([]any); v == nil || (isList && len(list) == 0) {
+			cleared[path] = v
+		}
+	}
+	return cleared, nil
+}
+
 // setPullSecretsUnlessChosen writes the combined secret at m["imagePullSecrets"]
 // unless a non-empty list is already there: a secret the Blueprint or the user
 // chose, such as a private registry's, must not be replaced by the combined one,
@@ -1130,9 +1156,20 @@ func (r *AIWorkloadReconciler) injectorForRepo(vendor aiplatformv1alpha1.Compone
 // credentials leak into it.
 func (r *AIWorkloadReconciler) injectComponentPullSecrets(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, c aiplatformv1alpha1.BlueprintComponent, repoInfo clusterRepoInfo, ns string, vals map[string]any) error {
 	writeLocal := targetsLocalCluster(w)
-	names, err := r.injectorForRepo(c.Vendor, repoInfo, c.ChartName).Apply(ctx, r.localCC(), ns, repoInfo, vals, writeLocal)
+	injector := r.injectorForRepo(c.Vendor, repoInfo, c.ChartName)
+	var cleared map[string]any
+	if _, ok := injector.(*suseInjector); ok {
+		var err error
+		if cleared, err = userClearedPullSecrets(w, c); err != nil {
+			return err
+		}
+	}
+	names, err := injector.Apply(ctx, r.localCC(), ns, repoInfo, vals, writeLocal)
 	if err != nil {
 		return err
+	}
+	for path, v := range cleared {
+		autovalues.Set(vals, path, v)
 	}
 	for _, v := range c.AdditionalPullSecretVendors {
 		extra, err := r.injectorForRepo(v, repoInfo, c.ChartName).Apply(ctx, r.localCC(), ns, repoInfo, map[string]any{}, writeLocal)
@@ -2003,8 +2040,11 @@ func (r *AIWorkloadReconciler) buildComponentMatrix(
 			seenClusters[clusterID] = true
 			phase := matrixCellPhase(bd, current)
 			msg := ""
-			if phase == aiplatformv1alpha1.AIWorkloadClusterPhaseFailed {
+			switch phase {
+			case aiplatformv1alpha1.AIWorkloadClusterPhaseFailed:
 				msg, _, _ = unstructured.NestedString(bd.Object, "status", "display", "message")
+			case aiplatformv1alpha1.AIWorkloadClusterPhasePending:
+				msg = pendingFailureMessage(bd, current)
 			}
 			rev, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
 			cells = append(cells, aiplatformv1alpha1.AIWorkloadComponentStatus{

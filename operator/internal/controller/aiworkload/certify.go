@@ -129,6 +129,35 @@ func matrixCellPhase(bd *unstructured.Unstructured, parentRenderCurrent bool) ai
 	}
 }
 
+// pendingFailureMessage is why a Pending cell has not rolled out, when Fleet
+// reports that applying its current deployment failed: the BundleDeployment was
+// promoted to the current render's deployment but still runs the previous one,
+// so the cell stays Pending (a failure Fleet has not yet reported for this
+// deployment must not fail it) and the message only explains the wait. It is
+// Fleet's Deployed condition message, else its display message; "" otherwise.
+func pendingFailureMessage(bd *unstructured.Unstructured, parentRenderCurrent bool) string {
+	if bd == nil || !parentRenderCurrent {
+		return ""
+	}
+	desired, _, _ := unstructured.NestedString(bd.Object, "spec", "deploymentID")
+	staged, _, _ := unstructured.NestedString(bd.Object, "spec", "stagedDeploymentID")
+	applied, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
+	state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
+	if desired == "" || staged != desired || applied == desired || state != "ErrApplied" {
+		return ""
+	}
+	conds, _, _ := unstructured.NestedSlice(bd.Object, "status", "conditions")
+	for _, c := range conds {
+		if m, ok := c.(map[string]any); ok && m["type"] == "Deployed" && m["status"] == "False" {
+			if msg, _ := m["message"].(string); msg != "" {
+				return msg
+			}
+		}
+	}
+	msg, _, _ := unstructured.NestedString(bd.Object, "status", "display", "message")
+	return msg
+}
+
 // getBundle fetches a Fleet Bundle, returning (nil, nil) when it does not exist.
 func (r *AIWorkloadReconciler) getBundle(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
 	b := &unstructured.Unstructured{}
