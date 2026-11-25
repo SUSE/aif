@@ -18,11 +18,14 @@ package aiworkload
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -310,6 +313,33 @@ func TestBackfillOwnerLabels_ListsInsteadOfPerNameGets(t *testing.T) {
 	}
 	if b, _ := objExists(t, c, false, "wl-third"); b.GetLabels()[workloadUIDLabel] != switchUID {
 		t.Fatalf("legacy Bundle labels = %v, want it adopted", b.GetLabels())
+	}
+}
+
+// The shipped role lets the operator patch HelmOps but not update them, so the
+// backfill must work without Update.
+func TestBackfillOwnerLabels_NeedsNoUpdate(t *testing.T) {
+	w := switchWorkload()
+	w.Spec.FleetBundleNames = []string{"wl-other"}
+	scheme := clusterRepoErrorScheme(t)
+	legacy := seedHelmOp("wl-other", switchUID, false)
+	legacy.SetLabels(nil)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(legacy).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if obj.GetObjectKind().GroupVersionKind().Kind == "HelmOp" {
+					return apierrors.NewForbidden(schema.GroupResource{Group: "fleet.cattle.io", Resource: "helmops"}, obj.GetName(), errors.New("update is not allowed"))
+				}
+				return cl.Update(ctx, obj, opts...)
+			},
+		}).Build()
+	r := &AIWorkloadReconciler{Client: c, Scheme: scheme}
+	if _, err := r.backfillOwnerLabels(context.Background(), w); err != nil {
+		t.Fatalf("backfill needs Update on HelmOps: %v", err)
+	}
+	if ho, _ := objExists(t, c, true, "wl-other"); ho.GetLabels()[workloadUIDLabel] != switchUID {
+		t.Fatalf("HelmOp labels = %v, want it adopted", ho.GetLabels())
 	}
 }
 

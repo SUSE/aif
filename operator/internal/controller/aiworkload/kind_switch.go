@@ -370,6 +370,13 @@ func (r *AIWorkloadReconciler) ensureComponentKind(ctx context.Context, w *aipla
 			return err
 		}
 	}
+	if gitOps {
+		// The floor blocks the previous version, so don't raise it for a step the
+		// GitOps repository cannot take.
+		if err := r.checkGitOpsDestination(ctx); err != nil {
+			return err
+		}
+	}
 	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
 		return err
 	}

@@ -448,6 +448,17 @@ Run:ai UI.
   node that had not already pulled the image. Overriding
   `global.additionalImagePullSecrets` on `runai-cluster` replaces the default list,
   so keep `suse-ai-pull-combined` unless that image is mirrored.
+- **A pull secret you choose is kept.** The operator fills an empty
+  `imagePullSecrets` or `global.imagePullSecrets` in a component's values with
+  `suse-ai-pull-combined`, which holds every configured registry credential. It no
+  longer replaces a secret set there by the Blueprint or in the Values tab, so a value
+  that was silently overwritten before now takes effect on the next reconcile.
+- **The community NVIDIA RunAI OSS Blueprint hands no pull secret to the Run:ai
+  cluster.** Its control plane hands the first `global.imagePullSecrets` entry to the
+  cluster as its registry credential, which would be `suse-ai-pull-combined`, so the
+  Blueprint sets `clusterService.config.imagePullSecret.enabled: false`. For a private
+  registry, set `global.imagePullSecrets` and `keycloakx.imagePullSecrets` on
+  `control-plane`, and that setting to `true`.
 - **Known limitation:** on downstream clusters the `prometheus-statsd-exporter`
   bundle can show `Modified` with "namespace.v1 runai is not owned by us". The
   Blueprint creates the `runai` namespace with its Pod Security labels, and the

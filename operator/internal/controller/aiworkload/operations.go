@@ -208,10 +208,9 @@ func operationOutcome(w *aiplatformv1alpha1.AIWorkload, op aiplatformv1alpha1.AI
 		return out
 	}
 	// The spec was refused (see refuseRender), so waiting can't help.
-	if c := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady); c != nil &&
-		c.Status == metav1.ConditionFalse && c.ObservedGeneration == w.Generation && refusalReasons[c.Reason] {
+	if renderRefused(w) {
 		out.State = aiplatformv1alpha1.OperationStateFailed
-		out.Reason = c.Reason
+		out.Reason = readyReason(w)
 		return out
 	}
 	if op.Type == aiplatformv1alpha1.OperationTypeRollback && driftDetected {

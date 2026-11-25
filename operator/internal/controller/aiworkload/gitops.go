@@ -201,6 +201,17 @@ func (r *AIWorkloadReconciler) gitOpsSettings(ctx context.Context) (*aiplatformv
 	return &s, nil
 }
 
+// checkGitOpsDestination fails when the GitOps repository is not configured or
+// its git client cannot be built, so a caller can refuse before changing state.
+func (r *AIWorkloadReconciler) checkGitOpsDestination(ctx context.Context) error {
+	s, err := r.gitOpsSettings(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = r.gitOpsClient(ctx, s)
+	return err
+}
+
 // gitOpsClient builds the git client for the GitOps repository configured in s.
 func (r *AIWorkloadReconciler) gitOpsClient(ctx context.Context, s *aiplatformv1alpha1.Settings) (*igit.Client, error) {
 	gc, err := igit.NewFromSettings(ctx, s, r.OperatorNamespace, &controllerSecretReader{r.Client})

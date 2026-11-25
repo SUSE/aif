@@ -41,15 +41,22 @@ func bundleCertified(b *unstructured.Unstructured, expectedDigest string, expect
 }
 
 // bundleDeploymentsApplied reports whether exactly expectedClusters live
-// BundleDeployments have promoted (staged == deploymentID) and applied their
-// current deployment and report Ready, or Modified when allowModified. The
-// Bundle summary alone is not enough: Fleet's first status write after a spec
-// change carries the new observedGeneration with a summary of the old deployments.
-func bundleDeploymentsApplied(bds []unstructured.Unstructured, expectedClusters int, allowModified bool) bool {
+// BundleDeployments belong to the render at expectedDigest, have promoted
+// (staged == deploymentID) and applied their current deployment, and report
+// Ready, or Modified when allowModified. The Bundle summary alone is not enough:
+// Fleet's first status write after a spec change carries the new
+// observedGeneration with a summary of the old deployments. Nor are the IDs: a
+// BundleDeployment Fleet has not yet updated agrees with itself just as well, so
+// it must also carry the render digest label Fleet copies from the Bundle.
+func bundleDeploymentsApplied(bds []unstructured.Unstructured, expectedDigest string, expectedClusters int, allowModified bool) bool {
+	wantDigest := renderDigestLabelValue(expectedDigest)
 	n := 0
 	for i := range bds {
 		if bds[i].GetDeletionTimestamp() != nil {
 			continue
+		}
+		if bds[i].GetLabels()[renderDigestLabel] != wantDigest {
+			return false
 		}
 		staged, _, _ := unstructured.NestedString(bds[i].Object, "spec", "stagedDeploymentID")
 		switch appliedDeploymentState(&bds[i]) {
@@ -102,7 +109,7 @@ func (r *AIWorkloadReconciler) bundleRolledOut(ctx context.Context, k HelmOpKey,
 	if err != nil {
 		return false, err
 	}
-	return bundleDeploymentsApplied(bds, k.ExpectedClusters, allowModified), nil
+	return bundleDeploymentsApplied(bds, digest, k.ExpectedClusters, allowModified), nil
 }
 
 // matrixCellPhase computes one (component, cluster) cell, render-gated: only a render-current

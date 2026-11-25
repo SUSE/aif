@@ -87,6 +87,13 @@ var refusalReasons = map[string]bool{
 	reasonCRDOutdated:        true,
 }
 
+// renderRefused reports whether Ready records a refusal (see refuseRender) of
+// the current generation.
+func renderRefused(w *aiplatformv1alpha1.AIWorkload) bool {
+	c := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
+	return c != nil && c.Status == metav1.ConditionFalse && c.ObservedGeneration == w.Generation && refusalReasons[c.Reason]
+}
+
 // refuseRender records that this pass will not render the spec: Ready=False
 // with reason and a Warning event when the reason or message is new (so a
 // steady refusal doesn't emit an event per reconcile). A Running or Degraded
@@ -263,8 +270,10 @@ func (r *AIWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	if result.Requeue || result.RequeueAfter > 0 {
 		// Operations judge the component matrix, so only when this pass rebuilt it;
-		// as on the clean pass, they run before pull-secret delivery.
-		if matrixCurrent {
+		// as on the clean pass, they run before pull-secret delivery. A refusal needs
+		// no matrix: it fails an in-flight operation outright (see operationOutcome),
+		// and the requeue it asks for (the CRDOutdated probe) carries on.
+		if matrixCurrent || renderRefused(&w) {
 			res, err := r.reconcileOperation(ctx, &w)
 			if err != nil {
 				return ctrl.Result{}, err

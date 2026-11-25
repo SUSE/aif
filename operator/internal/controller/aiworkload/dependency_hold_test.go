@@ -157,7 +157,7 @@ func putBundleStatus(t *testing.T, r *AIWorkloadReconciler, key types.Namespaced
 	case modified > 0:
 		state = "Modified"
 	}
-	putBundleDeployment(t, r, settledBD(key.Namespace, key.Name, "local", "s-"+digest, "s-"+digest, state))
+	putBundleDeployment(t, r, settledBD(key.Namespace, key.Name, "local", digest, "s-"+digest, "s-"+digest, state))
 	putBundleOnly(t, r, key, digest, ready, modified)
 }
 
@@ -367,7 +367,7 @@ func TestDependencyHold_StaleBundleSummaryHeld(t *testing.T) {
 	cp := f.helmOp("control-plane")
 	key := types.NamespacedName{Namespace: cp.GetNamespace(), Name: cp.GetName()}
 	putBundleOnly(t, f.r, key, helmOpDigest(cp), 1, 0)
-	putBundleDeployment(t, f.r, settledBD(key.Namespace, key.Name, "local", "s-new", "s-old", "Ready"))
+	putBundleDeployment(t, f.r, settledBD(key.Namespace, key.Name, "local", helmOpDigest(cp), "s-new", "s-old", "Ready"))
 	f.reconcile()
 	if helmOpDigest(f.helmOp("cluster")) != helmOpDigest(before) {
 		t.Fatal("cluster released while control-plane's BundleDeployment still applied the previous deployment")
@@ -376,10 +376,46 @@ func TestDependencyHold_StaleBundleSummaryHeld(t *testing.T) {
 		t.Fatalf("expected WaitingForDependencies, got %+v", cond)
 	}
 
-	putBundleDeployment(t, f.r, settledBD(key.Namespace, key.Name, "local", "s-new", "s-new", "Ready"))
+	putBundleDeployment(t, f.r, settledBD(key.Namespace, key.Name, "local", helmOpDigest(cp), "s-new", "s-new", "Ready"))
 	f.reconcile()
 	if helmOpDigest(f.helmOp("cluster")) == helmOpDigest(before) {
 		t.Fatal("cluster must be released once control-plane's BundleDeployment applied the new deployment")
+	}
+}
+
+// A BundleDeployment Fleet has not yet updated is Ready at its own, previous
+// deployment: its IDs agree with each other, so only its render digest label
+// tells it from this render's.
+func TestDependencyHold_UntouchedPreviousBundleDeploymentHeld(t *testing.T) {
+	f := newHoldFixture(t, []string{"control-plane"}, nil)
+	f.reconcile()
+	f.setBundle("control-plane", 1)
+	f.reconcile()
+	f.setBundle("cluster", 1)
+	f.reconcile()
+	before := f.helmOp("cluster")
+
+	f.w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{
+		{ComponentName: "control-plane", Values: &apixv1.JSON{Raw: []byte(`{"v":2}`)}},
+		{ComponentName: "cluster", Values: &apixv1.JSON{Raw: []byte(`{"v":2}`)}},
+	}
+	f.reconcile()
+	cp := f.helmOp("control-plane")
+	key := types.NamespacedName{Namespace: cp.GetNamespace(), Name: cp.GetName()}
+	// The Bundle moves to the new render; its BundleDeployment, left from the last one, does not.
+	putBundleOnly(t, f.r, key, helmOpDigest(cp), 1, 0)
+	f.reconcile()
+	if helmOpDigest(f.helmOp("cluster")) != helmOpDigest(before) {
+		t.Fatal("cluster released while control-plane's BundleDeployment still belongs to the previous render")
+	}
+	if cond := f.ready(); cond == nil || cond.Reason != "WaitingForDependencies" {
+		t.Fatalf("expected WaitingForDependencies, got %+v", cond)
+	}
+
+	putBundleStatus(t, f.r, key, helmOpDigest(cp), 1, 0)
+	f.reconcile()
+	if helmOpDigest(f.helmOp("cluster")) == helmOpDigest(before) {
+		t.Fatal("cluster must be released once control-plane's BundleDeployment belongs to the new render")
 	}
 }
 
@@ -456,7 +492,7 @@ func TestDependencyHold_ErrAppliedDependencyNamed(t *testing.T) {
 	f.reconcile()
 	ho := f.helmOp("comp")
 	d := helmOpDigest(ho)
-	bd := settledBD("fleet-local", ho.GetName(), "local", "s-"+d, "s-"+d, "ErrApplied")
+	bd := settledBD("fleet-local", ho.GetName(), "local", d, "s-"+d, "s-"+d, "ErrApplied")
 	l := bd.GetLabels()
 	l["fleet.cattle.io/cluster"] = "local"
 	bd.SetLabels(l)

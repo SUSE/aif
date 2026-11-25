@@ -180,6 +180,7 @@ func TestOperationOutcome_RefusedSpecFailsImmediately(t *testing.T) {
 // whose Blueprint disables rollback, on one render path.
 type floorCase struct {
 	gitOps     bool
+	noGitRepo  bool // with gitOps: Settings has no fleet.repoURL
 	overlay    bool // install overlay: embedded Bundle
 	seedHelmOp bool // with overlay: an existing HelmOp makes it a kind switch
 	puller     chartArchivePuller
@@ -215,10 +216,14 @@ func newFloorEnv(t *testing.T, fc floorCase) *floorEnv {
 	if fc.gitOps {
 		w.Spec.DeployStrategy = aiplatformv1alpha1.AIWorkloadDeployGitOps
 		e.remote = newBlueprintGitOpsRemote(t)
+		gitRepoURL := e.remote
+		if fc.noGitRepo {
+			gitRepoURL = ""
+		}
 		objs = append(objs, &aiplatformv1alpha1.Settings{
 			ObjectMeta: metav1.ObjectMeta{Name: operatorSettingsName, Namespace: "aif-operator"},
 			Spec: aiplatformv1alpha1.SettingsSpec{
-				Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: e.remote, Branch: "main"}},
+				Fleet: aiplatformv1alpha1.FleetSettings{GitRepoSource: aiplatformv1alpha1.GitRepoSource{RepoURL: gitRepoURL, Branch: "main"}},
 			},
 		})
 	}
@@ -359,6 +364,26 @@ func TestMinimumSafeVersion_PreRenderRefusalLeavesFloorUnset(t *testing.T) {
 	}
 }
 
+// The floor blocks the previous version, so an unusable GitOps destination
+// refuses the render before it is raised.
+func TestMinimumSafeVersion_GitOpsWithoutRepoLeavesFloorUnset(t *testing.T) {
+	for name, fc := range map[string]floorCase{
+		"publish":     {gitOps: true},
+		"kind switch": {gitOps: true, overlay: true, seedHelmOp: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc.noGitRepo = true
+			e := newFloorEnv(t, fc)
+			if _, err := e.reconcile(); err == nil {
+				t.Fatal("want an error for the missing GitOps repository")
+			}
+			if e.w.Status.MinimumSafeVersion != "" || e.storedFloor(t) != "" {
+				t.Fatalf("the floor was raised to %q (stored %q) without a GitOps repository", e.w.Status.MinimumSafeVersion, e.storedFloor(t))
+			}
+		})
+	}
+}
+
 func TestMinimumSafeVersion_RollbackAllowedLeavesFloorUnset(t *testing.T) {
 	e := newFloorEnv(t, floorCase{mutate: func(_ *aiplatformv1alpha1.AIWorkload, bp *aiplatformv1alpha1.Blueprint) { bp.Spec.Rollback = "" }})
 	if _, err := e.reconcile(); err != nil {
@@ -388,6 +413,34 @@ func TestMinimumSafeVersion_PrunedRefusesWithoutRepeatedWrites(t *testing.T) {
 	}
 	if e.statusWrite != 0 || e.rendered(t, fc) {
 		t.Fatalf("known-pruned pass: %d status writes, rendered=%v; want a dry-run probe only", e.statusWrite, e.rendered(t, fc))
+	}
+}
+
+// A CRDOutdated refusal rebuilds no matrix, but it is the answer for an operation
+// in flight: the operation fails with it now, while the requeue that keeps
+// probing the CRD carries on.
+func TestReconcile_CRDOutdatedFailsInFlightOperation(t *testing.T) {
+	e := newFloorEnv(t, floorCase{pruneFloor: true, mutate: func(w *aiplatformv1alpha1.AIWorkload, _ *aiplatformv1alpha1.Blueprint) {
+		w.Finalizers = []string{aiWorkloadFinalizer}
+		inFlightVersionOp(w, aiplatformv1alpha1.OperationTypeUpgrade, "1.0.0", "", time.Now())
+	}})
+	key := client.ObjectKeyFromObject(e.w)
+	res, err := e.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RequeueAfter != time.Minute {
+		t.Fatalf("result = %+v, want the CRD probe requeue kept", res)
+	}
+	var got aiplatformv1alpha1.AIWorkload
+	if err := e.c.Get(context.Background(), key, &got); err != nil {
+		t.Fatal(err)
+	}
+	if op := got.Status.ActiveOperation; op == nil || op.State != aiplatformv1alpha1.OperationStateFailed || op.Reason != reasonCRDOutdated {
+		t.Fatalf("activeOperation = %+v, want Failed/%s", op, reasonCRDOutdated)
+	}
+	if _, ok := got.Annotations[operationAnnotation]; ok {
+		t.Fatal("the finished operation's journal was not cleared")
 	}
 }
 

@@ -5,7 +5,7 @@
 bundled: false
 displayName: NVIDIA RunAI OSS
 version: 1.0.0
-source: Custom
+source: Community
 category: infrastructure
 maintainer: https://github.com/SUSE/aif
 runaiRepo: nvidia-runai-oss
@@ -24,18 +24,29 @@ summary: |
   Connected.
 imagesNote: |
   - Run:ai images are public (nvcr.io/nvidia/runai-oss). To use a private registry, set
-    its pull secret on control-plane as global.imagePullSecrets and keycloakx.imagePullSecrets
-    (the control plane hands the first global.imagePullSecrets entry to the cluster as its
-    registry credential) and on runai-cluster as global.additionalImagePullSecrets, which
-    replaces the default list (suse-ai-pull-combined, the Application Collection
-    credential for the Prometheus config reloader image), so keep suse-ai-pull-combined
-    unless that image is mirrored too.
+    its pull secret on control-plane as global.imagePullSecrets and keycloakx.imagePullSecrets,
+    and set clusterService.config.imagePullSecret.enabled to true so the control plane
+    hands the first global.imagePullSecrets entry to the cluster as its registry
+    credential (it is off by default, so the Application Collection credential in
+    suse-ai-pull-combined is never handed out). On runai-cluster, set
+    global.additionalImagePullSecrets, which replaces the default list
+    (suse-ai-pull-combined, the Application Collection credential for the Prometheus
+    config reloader image), so keep suse-ai-pull-combined unless that image is mirrored too.
 registrarEnv: ""
 registrarLimitation: ""
 gpuOperatorComment: |
   # SUSE's RKE2 docs cover GPU Operator v26.3.x.
 gpuOperatorLead: |
   GPU Operator: v26.3.3. Following SUSE's RKE2 docs for
+control-plane.values: |
+  # The operator puts suse-ai-pull-combined, which holds every configured registry
+  # credential, in global.imagePullSecrets unless a secret is set there. The control
+  # plane would hand its first entry to the Run:ai cluster, and the public Run:ai
+  # images need no credential, so it hands out none.
+  clusterService:
+    config:
+      imagePullSecret:
+        enabled: false
 runai-cluster.fields: |
   # The Prometheus Operator injects its Application Collection config-reloader image
   # into the runai Prometheus pod; this delivers suse-ai-pull-combined to the runai

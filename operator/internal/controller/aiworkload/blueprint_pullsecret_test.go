@@ -1138,3 +1138,65 @@ func TestAppPullSecrets_GatedTeamRepoWiresHelmAuth(t *testing.T) {
 		t.Errorf("synced password = %q, want %q", string(synced.Data["password"]), "nvapi-chart-token")
 	}
 }
+
+// A pull secret the Blueprint or the user chose, such as a private registry's,
+// is kept: the combined secret holds every configured registry credential and
+// some charts, like the Run:ai control plane, hand the first entry to other
+// clusters. An empty list is the placeholder the injector fills.
+func TestSuseInjector_KeepsChosenPullSecrets(t *testing.T) {
+	chosen := func() []any { return []any{map[string]any{"name": "my-private-reg"}} }
+	combined := []any{map[string]any{"name": combinedPullSecretName}}
+	tests := []struct {
+		name       string
+		vals       map[string]any
+		wantTop    []any
+		wantGlobal []any
+	}{
+		{"no value: filled", map[string]any{}, combined, combined},
+		{"empty placeholders: filled", map[string]any{
+			"imagePullSecrets": []any{}, "global": map[string]any{"imagePullSecrets": []any{}},
+		}, combined, combined},
+		{"chosen global: kept", map[string]any{
+			"global": map[string]any{"imagePullSecrets": chosen()},
+		}, combined, chosen()},
+		{"chosen top-level: kept", map[string]any{"imagePullSecrets": chosen()}, chosen(), combined},
+		{"chosen both: kept", map[string]any{
+			"imagePullSecrets": chosen(), "global": map[string]any{"imagePullSecrets": chosen()},
+		}, chosen(), chosen()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := gitRepoTestScheme()
+			cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(appCollectionCredObjects()...).Build()
+			r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, OperatorNamespace: "aif-operator"}
+
+			names, err := (&suseInjector{r: r}).Apply(context.Background(), r.localCC(), "runai-backend", clusterRepoInfo{}, tc.vals, true)
+			if err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if len(names) != 1 || names[0] != combinedPullSecretName {
+				t.Fatalf("delivered %v, want the combined secret even when values keep another", names)
+			}
+			if got := tc.vals["imagePullSecrets"]; !equalPullSecretLists(got, tc.wantTop) {
+				t.Errorf("imagePullSecrets = %#v, want %#v", got, tc.wantTop)
+			}
+			global, _ := tc.vals["global"].(map[string]any)
+			if got := global["imagePullSecrets"]; !equalPullSecretLists(got, tc.wantGlobal) {
+				t.Errorf("global.imagePullSecrets = %#v, want %#v", got, tc.wantGlobal)
+			}
+		})
+	}
+}
+
+func equalPullSecretLists(got any, want []any) bool {
+	list, ok := got.([]any)
+	if !ok || len(list) != len(want) {
+		return false
+	}
+	for i := range want {
+		if list[i].(map[string]any)["name"] != want[i].(map[string]any)["name"] {
+			return false
+		}
+	}
+	return true
+}

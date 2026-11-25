@@ -30,14 +30,19 @@ func bundle(digest string, generation, observed, unavailable, ready, desired int
 	return b
 }
 
-// settledBD is a BundleDeployment of bundle ns/name on one cluster whose
-// spec targets deploymentID and whose agent last applied applied in state.
-func settledBD(ns, name, cluster, deploymentID, applied, state string) *unstructured.Unstructured {
+// settledBD is a BundleDeployment of bundle ns/name on one cluster, carrying the
+// render digest label Fleet copies from the Bundle, whose spec targets
+// deploymentID and whose agent last applied applied in state.
+func settledBD(ns, name, cluster, digest, deploymentID, applied, state string) *unstructured.Unstructured {
 	bd := &unstructured.Unstructured{Object: map[string]any{}}
 	bd.SetGroupVersionKind(bundleDeploymentGVK)
 	bd.SetNamespace("cluster-" + ns + "-" + cluster)
 	bd.SetName(name)
-	bd.SetLabels(map[string]string{"fleet.cattle.io/bundle-name": name, "fleet.cattle.io/bundle-namespace": ns})
+	bd.SetLabels(map[string]string{
+		"fleet.cattle.io/bundle-name":      name,
+		"fleet.cattle.io/bundle-namespace": ns,
+		renderDigestLabel:                  renderDigestLabelValue(digest),
+	})
 	_ = unstructured.SetNestedField(bd.Object, deploymentID, "spec", "deploymentID")
 	_ = unstructured.SetNestedField(bd.Object, deploymentID, "spec", "stagedDeploymentID")
 	_ = unstructured.SetNestedField(bd.Object, applied, "status", "appliedDeploymentID")
@@ -46,13 +51,15 @@ func settledBD(ns, name, cluster, deploymentID, applied, state string) *unstruct
 }
 
 func TestBundleDeploymentsApplied(t *testing.T) {
-	ready := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "Ready")
-	modified := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "Modified")
-	lagging := *settledBD("fleet-local", "b", "a", "s-new", "s-old", "Ready")
-	unpromoted := *settledBD("fleet-local", "b", "a", "s-old", "s-old", "Ready")
+	ready := *settledBD("fleet-local", "b", "a", "d", "s-new", "s-new", "Ready")
+	modified := *settledBD("fleet-local", "b", "a", "d", "s-new", "s-new", "Modified")
+	lagging := *settledBD("fleet-local", "b", "a", "d", "s-new", "s-old", "Ready")
+	unpromoted := *settledBD("fleet-local", "b", "a", "d", "s-old", "s-old", "Ready")
 	_ = unstructured.SetNestedField(unpromoted.Object, "s-new", "spec", "stagedDeploymentID")
-	notReady := *settledBD("fleet-local", "b", "a", "s-new", "s-new", "NotReady")
-	deleting := *settledBD("fleet-local", "b", "c", "s-old", "s-old", "WaitApplied")
+	notReady := *settledBD("fleet-local", "b", "a", "d", "s-new", "s-new", "NotReady")
+	// Fleet has not yet updated it: its IDs agree with each other, but it is the previous render's.
+	previousRender := *settledBD("fleet-local", "b", "a", "old", "s-old", "s-old", "Ready")
+	deleting := *settledBD("fleet-local", "b", "c", "d", "s-old", "s-old", "WaitApplied")
 	now := metav1.Now()
 	deleting.SetDeletionTimestamp(&now)
 	for _, tc := range []struct {
@@ -64,6 +71,7 @@ func TestBundleDeploymentsApplied(t *testing.T) {
 	}{
 		{"ready", []unstructured.Unstructured{ready}, 1, false, true},
 		{"applied previous deployment", []unstructured.Unstructured{lagging}, 1, true, false},
+		{"previous render, untouched by Fleet", []unstructured.Unstructured{previousRender}, 1, true, false},
 		{"staged not promoted", []unstructured.Unstructured{unpromoted}, 1, true, false},
 		{"missing BundleDeployment", nil, 1, true, false},
 		{"fewer than clusters", []unstructured.Unstructured{ready}, 2, true, false},
@@ -73,7 +81,7 @@ func TestBundleDeploymentsApplied(t *testing.T) {
 		{"deleting BundleDeployment ignored", []unstructured.Unstructured{ready, deleting}, 1, false, true},
 		{"zero clusters", nil, 0, false, true},
 	} {
-		if got := bundleDeploymentsApplied(tc.bds, tc.clusters, tc.allowModified); got != tc.want {
+		if got := bundleDeploymentsApplied(tc.bds, "d", tc.clusters, tc.allowModified); got != tc.want {
 			t.Errorf("%s: bundleDeploymentsApplied = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -210,7 +218,7 @@ func TestCertifyDeployedSource(t *testing.T) {
 	if w.Status.DeployedSource != nil {
 		t.Fatalf("expected DeployedSource nil without an applied BundleDeployment, got %+v", w.Status.DeployedSource)
 	}
-	if err := cl.Create(ctx, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-0", "Ready")); err != nil {
+	if err := cl.Create(ctx, settledBD("fleet-local", keys[0].Name, "local", "sha256:d", "s-1", "s-0", "Ready")); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
@@ -219,7 +227,7 @@ func TestCertifyDeployedSource(t *testing.T) {
 	if w.Status.DeployedSource != nil {
 		t.Fatalf("expected DeployedSource nil while the BundleDeployment applied the previous deployment, got %+v", w.Status.DeployedSource)
 	}
-	putBundleDeployment(t, r, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-1", "Ready"))
+	putBundleDeployment(t, r, settledBD("fleet-local", keys[0].Name, "local", "sha256:d", "s-1", "s-1", "Ready"))
 	if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
 		t.Fatalf("certifyDeployedSource failed with ready bundle: %v", err)
 	}
@@ -267,7 +275,7 @@ func TestCertifyDeployedSource_RefreshesCertifiedAtForActiveVersionOp(t *testing
 			b := bundle(renderDigestLabelValue("sha256:d"), 1, 1, 0, 1, 1)
 			b.SetName(keys[0].Name)
 			b.SetNamespace("fleet-local")
-			cl := fakeClient(w, b, settledBD("fleet-local", keys[0].Name, "local", "s-1", "s-1", "Ready"))
+			cl := fakeClient(w, b, settledBD("fleet-local", keys[0].Name, "local", "sha256:d", "s-1", "s-1", "Ready"))
 			r := &AIWorkloadReconciler{Client: cl, Scheme: cl.Scheme()}
 			if err := r.certifyDeployedSource(ctx, w, keys, digests); err != nil {
 				t.Fatal(err)

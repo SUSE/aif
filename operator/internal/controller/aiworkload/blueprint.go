@@ -951,7 +951,7 @@ func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNames
 		return nil, nil
 	}
 	pullSecrets := []any{map[string]any{"name": name}}
-	vals["imagePullSecrets"] = pullSecrets
+	setPullSecretsUnlessChosen(vals, pullSecrets)
 	// Merge into the existing global map rather than replacing it — the blueprint
 	// may set sibling keys under global (e.g. open-webui's global.tls for the
 	// suse-private-ai cert config). Replacing global wholesale dropped those,
@@ -960,9 +960,21 @@ func (s *suseInjector) Apply(ctx context.Context, cc cluster.Client, targetNames
 	if global == nil {
 		global = map[string]any{}
 	}
-	global["imagePullSecrets"] = pullSecrets
+	setPullSecretsUnlessChosen(global, pullSecrets)
 	vals["global"] = global
 	return []string{name}, nil
+}
+
+// setPullSecretsUnlessChosen writes the combined secret at m["imagePullSecrets"]
+// unless a non-empty list is already there: a secret the Blueprint or the user
+// chose, such as a private registry's, must not be replaced by the combined one,
+// which carries every configured registry credential. An empty list is the
+// placeholder Blueprints declare for the injector to fill.
+func setPullSecretsUnlessChosen(m map[string]any, pullSecrets []any) {
+	if chosen, ok := m["imagePullSecrets"].([]any); ok && len(chosen) > 0 {
+		return
+	}
+	m["imagePullSecrets"] = pullSecrets
 }
 
 // nvidiaInjector creates the conventional ngc-secret + ngc-api in the target
@@ -1564,11 +1576,11 @@ func (r *AIWorkloadReconciler) publishBlueprintGitFile(ctx context.Context, w *a
 	if w.Annotations[gitFileHashAnnotation(bundleName)] == publicationHash {
 		return nil
 	}
-	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
-		return err
-	}
 	gc, err := r.gitOpsClient(ctx, s)
 	if err != nil {
+		return err
+	}
+	if err := r.raiseMinimumSafeVersion(ctx, w); err != nil {
 		return err
 	}
 	r.gitWriteMu.Lock()
@@ -2208,14 +2220,26 @@ func (r *AIWorkloadReconciler) backfillOwnerLabels(ctx context.Context, w *aipla
 						continue
 					}
 				}
-				labelOwner(obj, w)
-				if err := r.Update(ctx, obj); err != nil {
+				if err := r.patchOwnerLabel(ctx, obj, w); err != nil {
 					return nil, err
 				}
 			}
 		}
 	}
 	return legacy, nil
+}
+
+// patchOwnerLabel adds the owner label with a metadata merge patch rather than
+// an Update: the shipped role lets the operator patch HelmOps but not update them.
+func (r *AIWorkloadReconciler) patchOwnerLabel(ctx context.Context, obj *unstructured.Unstructured, w *aiplatformv1alpha1.AIWorkload) error {
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": map[string]string{workloadUIDLabel: string(w.UID)}}})
+	if err != nil {
+		return err
+	}
+	if err := r.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return fmt.Errorf("label %s %s/%s with its owner: %w", obj.GetKind(), obj.GetNamespace(), obj.GetName(), err)
+	}
+	return nil
 }
 
 // getHelmOpIn fetches a HelmOp in a specific namespace, returning (nil,nil) when absent.

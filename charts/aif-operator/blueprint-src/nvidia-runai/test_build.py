@@ -197,6 +197,11 @@ class OutputTest(unittest.TestCase):
         self.assertIs(values["global"]["customCA"]["enabled"], True)
         self.assertEqual(values["openShift"]["mode"], "Disabled")
 
+    def test_control_plane_hands_ngc_secret_to_the_cluster(self):
+        cp = component(load_output(), "control-plane")
+        self.assertEqual(cp["values"]["global"]["imagePullSecrets"], [{"name": "ngc-secret"}])
+        self.assertNotIn("clusterService", cp["values"])
+
     def test_order(self):
         expected = {p: [] for p in PREREQS}
         expected[CARRIER] = sorted(p for p in PREREQS if p != "gpu-operator")
@@ -341,6 +346,13 @@ class NonBundledTest(unittest.TestCase):
         self.assertEqual(rc["values"]["global"]["additionalImagePullSecrets"], ["suse-ai-pull-combined"])
         self.assertNotIn("additionalPullSecretVendors", component(self.doc, "control-plane"))
         self.assertNotIn("ngc-secret", self.text)
+
+    def test_control_plane_does_not_hand_out_the_pull_secret(self):
+        # The operator fills global.imagePullSecrets with suse-ai-pull-combined (every
+        # configured registry credential); the control plane would forward its first entry.
+        cp = component(self.doc, "control-plane")["values"]
+        self.assertIs(cp["clusterService"]["config"]["imagePullSecret"]["enabled"], False)
+        self.assertNotIn("imagePullSecrets", cp["global"])
 
     def test_no_run_ai_2_26_specifics(self):
         description = self.doc["spec"]["description"]

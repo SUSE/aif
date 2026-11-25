@@ -9,10 +9,12 @@
 #
 # Charts: control-plane and runai-cluster at the Blueprint's chartVersion, from
 # CONTROL_PLANE_CHART / RUNAI_CLUSTER_CHART (local tgzs), else pulled from the gated
-# nvidia-runai NGC repo, which needs an entitled NGC key. A chart that is neither given
+# nvidia-runai NGC repo, which needs an entitled NGC key (the community Blueprint's
+# nvidia-runai-oss repo is public). A chart that is neither given
 # nor pullable is skipped, and the script then ends INCOMPLETE (exit 2), never PASS. Components with vendor: nvidia also
 # get the values the operator's NVIDIA injector adds, and every pod pulling from nvcr.io
-# must list ngc-secret. The carrier comes from Application Collection, which needs
+# must list ngc-secret. Without vendor: nvidia, the control plane is rendered with the
+# values the operator's SUSE injector adds, and must not hand them to the Run:ai cluster. The carrier comes from Application Collection, which needs
 # credentials; without them (or CARRIER_CHART, a local tgz) the carrier check runs
 # against a FAKE render holding only the chart's two workload objects as recorded here
 # (Service and Deployment runai-setup-prometheus-statsd-exporter).
@@ -134,6 +136,7 @@ pull_chart() {
   fi
   case "$repo" in
     nvidia-runai) url=https://helm.ngc.nvidia.com/nvidia/runai ;;
+    nvidia-runai-oss) url=https://helm.ngc.nvidia.com/nvidia/runai-oss ;;
     *) echo "no repo URL for chartRepo $repo; set $var" >&2; return 1 ;;
   esac
   if helm pull "$chart" --repo "$url" --version "$version" -d "$TMP" >/dev/null 2>&1; then
@@ -217,6 +220,23 @@ if [ "$(field control-plane vendor)" = "nvidia" ]; then
   check "every control-plane pod pulling from nvcr.io lists ngc-secret" "$cp_out" "$NVCR_PODS_WITHOUT_NGC_SECRET" 0
   check "the control plane hands ngc-secret to the cluster (STATIC_IMAGE_PULL_SECRET)" "$cp_out" \
     '.. | select(tag=="!!map" and has("secret")) | .secret | select(tag=="!!map" and .name=="ngc-secret") | .items[] | select(.path=="STATIC_IMAGE_PULL_SECRET")' 1
+else
+  # The operator's SUSE injector fills global.imagePullSecrets with suse-ai-pull-combined
+  # unless the Blueprint or the user set it (setPullSecretsUnlessChosen in blueprint.go);
+  # it holds every configured registry credential, so the control plane must not hand it out.
+  echo '{"global":{"imagePullSecrets":[{"name":"suse-ai-pull-combined"}]}}' > "$TMP/cp-injected.json"
+  helm template "$CP_RELEASE" "$CP_TGZ" -n runai-backend -f "$TMP/control-plane-values.json" -f "$TMP/cp-injected.json" > "$TMP/cp-default.yaml"
+  check "default install: the control plane hands no pull secret to the cluster" "$TMP/cp-default.yaml" \
+    'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="false")'
+  check "default install: no ConfigMap turns the hand-out on" "$TMP/cp-default.yaml" \
+    'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="true")' 0
+  # A private registry, set in the Values tab as the Blueprint's note describes; the operator keeps it.
+  echo '{"global":{"imagePullSecrets":[{"name":"private-registry"}]},"clusterService":{"config":{"imagePullSecret":{"enabled":true}}}}' > "$TMP/cp-private.json"
+  helm template "$CP_RELEASE" "$CP_TGZ" -n runai-backend -f "$TMP/control-plane-values.json" -f "$TMP/cp-private.json" > "$TMP/cp-private.yaml"
+  check "private registry: the control plane hands the selected secret to the cluster" "$TMP/cp-private.yaml" \
+    '.. | select(tag=="!!map" and has("secret")) | .secret | select(tag=="!!map" and .name=="private-registry") | .items[] | select(.path=="STATIC_IMAGE_PULL_SECRET")' 1
+  check "private registry: suse-ai-pull-combined is not handed to the cluster" "$TMP/cp-private.yaml" \
+    '.. | select(tag=="!!map" and has("secret")) | .secret | select(tag=="!!map" and .name=="suse-ai-pull-combined") | .items[] | select(.path=="STATIC_IMAGE_PULL_SECRET")' 0
 fi
 
 echo "embedded stored size: chart $cp_chart + overlay $cp_overlay = $cp_total B; limit $LIMIT B; margin $((LIMIT - cp_total)) B"
