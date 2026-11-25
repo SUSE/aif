@@ -315,7 +315,7 @@ class NonBundledTest(unittest.TestCase):
             "ai-factory.suse.com/blueprint-version": "1.0.0",
             "ai-factory.suse.com/category": "infrastructure"})
         self.assertEqual(self.doc["metadata"]["annotations"], {"ai-factory.suse.com/maintainer": "https://github.com/SUSE/aif"})
-        self.assertEqual(self.doc["spec"]["source"], "Custom")
+        self.assertEqual(self.doc["spec"]["source"], "Community")
         self.assertEqual(self.doc["spec"]["version"], "1.0.0")
         self.assertTrue(self.text.startswith(build.HEADER))
 
@@ -414,7 +414,7 @@ class NonBundledSettingsTest(unittest.TestCase):
         self.rejected(lambda t: t + "annotations: x\n", "annotations is derived")
 
     def test_source_required(self):
-        self.rejected(lambda t: t.replace("source: Custom\n", ""), "source is required")
+        self.rejected(lambda t: t.replace("source: Community\n", ""), "source is required")
 
     def test_conflicting_cluster_repo(self):
         def clone(t):
