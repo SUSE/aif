@@ -300,7 +300,7 @@ func TestEnsureBlueprintGitFile_AppliesComponentValueOverride(t *testing.T) {
 // the way TestEnsureBlueprintHelmOp_GitRepoEmitsBundle exercises it, but with
 // a fake rancher.ChartFetcher wired through r.ChartFetcher (same pattern as
 // blueprint_gitrepo_test.go's fakeChartFetcher) so reconciliation proceeds
-// to a rendered Bundle. Before the Step 3 fix, ensureBlueprintGitChartBundle
+// to a rendered Bundle. Before the Step 3 fix, ensureEmbeddedChartBundle (then ensureBlueprintGitChartBundle)
 // built vals via a bare json.Unmarshal of c.Values and never consulted
 // w.Spec.ComponentValues, so this override would be silently dropped.
 func TestEnsureBlueprintGitChartBundle_AppliesComponentValueOverride(t *testing.T) {

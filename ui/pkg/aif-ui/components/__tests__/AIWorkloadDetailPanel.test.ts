@@ -5,6 +5,7 @@ import { nextTick, ref } from 'vue';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import { LabeledInput } from '@components/Form/LabeledInput';
 import AIWorkloadDetailPanel from '../AIWorkloadDetailPanel.vue';
 import { BLUEPRINT_NAME_LABEL } from '../../types/blueprint-types';
 import type { AIWorkload } from '../../types/aiworkload-types';
@@ -265,6 +266,24 @@ describe('AIWorkloadDetailPanel', () => {
     await nextTick();
 
     expect(wrapper.get('[data-testid="version-drift"]').text()).toContain('Version 0.9.0 is deployed');
+  });
+
+  it('shows the minimum safe version with its help text only when the operator sets it', async() => {
+    const { wrapper, workload } = setup(blueprintWorkload(), blueprint);
+
+    expect(wrapper.find('[data-testid="minimum-safe-version"]').exists()).toBe(false);
+
+    workload.value = blueprintWorkload({ minimumSafeVersion: 'other-blueprint@2.0.0' });
+    await nextTick();
+    expect(wrapper.find('[data-testid="minimum-safe-version"]').exists()).toBe(false);
+
+    workload.value = blueprintWorkload({ minimumSafeVersion: 'simple-rag@2.0.0' });
+    await nextTick();
+
+    const field = wrapper.get('[data-testid="minimum-safe-version"]').findComponent(LabeledInput);
+    expect(field.props('value')).toBe('2.0.0');
+    expect(field.props('label')).toBe('Minimum safe version');
+    expect(field.props('tooltip')).toContain('disables rollback has started deploying');
   });
 
   it('adds the Status tab once status arrives while the drawer is open', async() => {

@@ -76,6 +76,13 @@ var gatedNGCPaths = map[string]bool{
 	"/nvidia/runai":              true,
 }
 
+// alwaysProvisionedPublicTeamRepos are public team repos provisioned whether or
+// not a bundled catalog entry references them. Blueprints install charts from
+// these repos, and their charts share slugs with other catalog entries, so they
+// cannot be listed in default-catalog.json (the UI and generate-catalog key on
+// slug_name).
+var alwaysProvisionedPublicTeamRepos = []string{}
+
 // excludedNGCPaths return an invalid Helm index and must never be provisioned.
 // Defense-in-depth: these are not in the curated catalog today.
 var excludedNGCPaths = map[string]bool{
@@ -243,6 +250,23 @@ func classifyNGCTeamRepos(items []Item) NGCTeamRepos {
 // is placed in Public (anonymous). Attaching auth is the operation with the
 // documented dangerous side-effect, so an unknown path must never get a secret;
 // a genuinely-gated new repo simply 403s anonymously until it is classified.
+//
+// alwaysProvisionedPublicTeamRepos are merged into Public.
 func ClassifyNGCTeamRepos() NGCTeamRepos {
-	return classifyNGCTeamRepos(Bundled())
+	return withAlwaysProvisioned(classifyNGCTeamRepos(Bundled()), alwaysProvisionedPublicTeamRepos)
+}
+
+func withAlwaysProvisioned(teams NGCTeamRepos, public []string) NGCTeamRepos {
+	seen := make(map[string]bool, len(teams.Public)+len(public))
+	for _, u := range teams.Public {
+		seen[u] = true
+	}
+	for _, u := range public {
+		if !seen[u] {
+			seen[u] = true
+			teams.Public = append(teams.Public, u)
+		}
+	}
+	sort.Strings(teams.Public)
+	return teams
 }

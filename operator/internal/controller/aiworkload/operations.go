@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/blueprintpolicy"
 )
 
 func readJournal(w *aiplatformv1alpha1.AIWorkload) (*aiplatformv1alpha1.AIWorkloadOperation, bool) {
@@ -46,7 +48,12 @@ func (r *AIWorkloadReconciler) projectOperation(w *aiplatformv1alpha1.AIWorkload
 	}
 }
 
-const defaultOperationDeadline = 30 * time.Minute
+const (
+	defaultOperationDeadline = 30 * time.Minute
+	reasonOperationTimedOut  = "TimedOut"
+	reasonRollbackDisabled   = "RollbackDisabled"
+	reasonCRDOutdated        = "CRDOutdated"
+)
 
 // handleTriggers processes at most one request annotation, metadata-atomically. Returns
 // handled=true when it mutated the object (caller should requeue and let status reconcile).
@@ -70,6 +77,12 @@ func (r *AIWorkloadReconciler) handleTriggers(ctx context.Context, w *aiplatform
 		if target == cur {
 			return r.startRetry(ctx, w, nonce)
 		}
+		if blocked, floor, err := r.rollbackBlocked(ctx, w, target); err != nil {
+			return false, err
+		} else if blocked {
+			r.event(w, corev1.EventTypeWarning, reasonRollbackDisabled, "upgrade to older version %s is a rollback, which is disabled for this Blueprint; use %s or newer", target, floor)
+			return r.finishTrigger(ctx, w, upgradeRequestAnnotation, id, nil, 0)
+		}
 		return r.startVersionOp(ctx, w, aiplatformv1alpha1.OperationTypeUpgrade, nonce, target, "", upgradeRequestAnnotation)
 	}
 
@@ -83,6 +96,19 @@ func (r *AIWorkloadReconciler) handleTriggers(ctx context.Context, w *aiplatform
 			r.event(w, corev1.EventTypeWarning, "RollbackSkipped", "no rollback target")
 			return r.finishTrigger(ctx, w, rollbackRequestAnnotation, id, nil, 0)
 		}
+		if src := w.Spec.Source.Blueprint; src != nil {
+			disabled, err := blueprintpolicy.RollbackDisabled(ctx, r.Client, src.Name, src.Version, w.Status.DeployedSource.Version)
+			if err != nil {
+				return false, err
+			}
+			if !disabled {
+				disabled = blueprintpolicy.IsRollback(blueprintpolicy.FloorFor(w.Status.MinimumSafeVersion, src.Name), w.Status.DeployedSource.Version)
+			}
+			if disabled {
+				r.event(w, corev1.EventTypeWarning, reasonRollbackDisabled, "rollback is disabled for this Blueprint")
+				return r.finishTrigger(ctx, w, rollbackRequestAnnotation, id, nil, 0)
+			}
+		}
 		return r.startVersionOp(ctx, w, aiplatformv1alpha1.OperationTypeRollback, v, w.Status.DeployedSource.Version, w.Status.DeployedSource.RenderDigest, rollbackRequestAnnotation)
 	}
 
@@ -95,6 +121,29 @@ func (r *AIWorkloadReconciler) handleTriggers(ctx context.Context, w *aiplatform
 	}
 
 	return false, nil
+}
+
+// readyReason is the reason of the workload's Ready condition, "" when unset.
+func readyReason(w *aiplatformv1alpha1.AIWorkload) string {
+	if c := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady); c != nil {
+		return c.Reason
+	}
+	return ""
+}
+
+// rollbackBlocked reports whether moving the workload's Blueprint to target is
+// a rollback its policy disables (see blueprintpolicy.MoveBlocked), and the
+// version to use instead.
+func (r *AIWorkloadReconciler) rollbackBlocked(ctx context.Context, w *aiplatformv1alpha1.AIWorkload, target string) (bool, string, error) {
+	src := w.Spec.Source.Blueprint
+	if src == nil {
+		return false, "", nil
+	}
+	deployed := ""
+	if w.Status.DeployedSource != nil {
+		deployed = w.Status.DeployedSource.Version
+	}
+	return blueprintpolicy.MoveBlocked(ctx, r.Client, src.Name, target, w.Status.MinimumSafeVersion, deployed)
 }
 
 // startVersionOp sets the blueprint version + writes the journal atomically (Upgrade/Rollback).
@@ -158,6 +207,12 @@ func operationOutcome(w *aiplatformv1alpha1.AIWorkload, op aiplatformv1alpha1.AI
 		out.State = aiplatformv1alpha1.OperationStateSuperseded
 		return out
 	}
+	// The spec was refused (see refuseRender), so waiting can't help.
+	if renderRefused(w) {
+		out.State = aiplatformv1alpha1.OperationStateFailed
+		out.Reason = readyReason(w)
+		return out
+	}
 	if op.Type == aiplatformv1alpha1.OperationTypeRollback && driftDetected {
 		out.State = aiplatformv1alpha1.OperationStateFailed
 		out.Reason = "BlueprintDrift"
@@ -173,7 +228,7 @@ func operationOutcome(w *aiplatformv1alpha1.AIWorkload, op aiplatformv1alpha1.AI
 	}
 	if time.Since(op.RequestedAt.Time) > deadline {
 		out.State = aiplatformv1alpha1.OperationStateFailed
-		out.Reason = "TimedOut"
+		out.Reason = reasonOperationTimedOut
 		return out
 	}
 	return out
@@ -187,10 +242,9 @@ func (r *AIWorkloadReconciler) reconcileOperation(ctx context.Context, w *aiplat
 		return ctrl.Result{}, nil
 	}
 
-	certified := false
-	if w.Status.DeployedSource != nil && w.Status.DeployedSource.Version == op.TargetVersion {
-		certified = true
-	}
+	// A Rollback starts at its target version, so version alone cannot prove it.
+	ds := w.Status.DeployedSource
+	certified := ds != nil && ds.Version == op.TargetVersion && certifiedSince(ds, op.RequestedAt)
 	if op.Type == aiplatformv1alpha1.OperationTypeRetry {
 		certified = w.Status.Phase == aiplatformv1alpha1.AIWorkloadPhaseRunning && r.retrySyncSettled(ctx, w, op.RetryEpoch)
 	}

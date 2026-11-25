@@ -22,7 +22,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
@@ -34,6 +36,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/credentials"
@@ -50,6 +53,48 @@ type Client struct {
 	branch   string
 	auth     *gogithttp.BasicAuth
 	caBundle []byte
+	// insecureSkipTLS disables HTTPS certificate verification.
+	insecureSkipTLS bool
+	// Test hooks: timeout overrides every operation's limit when set;
+	// onDeadline and onClone observe the limit applied and each clone's depth.
+	timeout    time.Duration
+	onDeadline func(op string, d time.Duration)
+	onClone    func(depth int)
+}
+
+// Per-operation limits, so a stalled git server cannot hold the reconcile
+// worker indefinitely. Writes clone and push a GitOps repo that can hold
+// several MiB of embedded charts, so they get more room than reads.
+const (
+	readTimeout  = 2 * time.Minute
+	writeTimeout = 5 * time.Minute
+)
+
+// readDirDepths are the clone depths ReadDir tries in turn; 0 is the full history.
+var readDirDepths = []int{1, 50, 0}
+
+// ErrCommitNotFound means the requested commit is not on the cloned branch,
+// typically because the ClusterRepo index is behind the branch (or ahead of a
+// force-push). It clears once the repo is re-indexed, so callers retry.
+var ErrCommitNotFound = errors.New("commit not found on branch")
+
+func (c *Client) withTimeout(ctx context.Context, op string, d time.Duration) (context.Context, context.CancelFunc) {
+	if c.timeout > 0 {
+		d = c.timeout
+	}
+	if c.onDeadline != nil {
+		c.onDeadline(op, d)
+	}
+	return context.WithTimeout(ctx, d)
+}
+
+// timedOut logs and annotates err when op ran out of time.
+func (c *Client) timedOut(ctx context.Context, op string, err error) error {
+	if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return err
+	}
+	log.FromContext(ctx).Info("git operation timed out", "operation", op, "branch", c.branch, "cause", err.Error())
+	return fmt.Errorf("git %s timed out: %w", op, err)
 }
 
 // NewFromSettings constructs a Client from the Fleet section of a Settings CR.
@@ -108,6 +153,15 @@ func NewFromSettings(ctx context.Context, s *aiplatformv1alpha1.Settings, namesp
 	return &Client{repoURL: s.Spec.Fleet.RepoURL, branch: branch, auth: auth, caBundle: caBundle}, nil
 }
 
+// NewForRepo constructs a Client for an arbitrary git-backed repository,
+// independent of the Settings GitOps repo. branch defaults to "main".
+func NewForRepo(repoURL, branch string, auth *gogithttp.BasicAuth, caBundle []byte, insecureSkipTLS bool) *Client {
+	if branch == "" {
+		branch = "main"
+	}
+	return &Client{repoURL: repoURL, branch: branch, auth: auth, caBundle: caBundle, insecureSkipTLS: insecureSkipTLS}
+}
+
 // CheckAuth verifies the configured repository is reachable and the credentials
 // authenticate, without cloning or writing. It is the equivalent of
 // `git ls-remote`. An empty remote (no commits yet) counts as reachable.
@@ -119,7 +173,7 @@ func (c *Client) CheckAuth(ctx context.Context) error {
 		Name: gogit.DefaultRemoteName,
 		URLs: []string{c.repoURL},
 	})
-	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth, CABundle: c.caBundle})
+	_, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: c.auth, CABundle: c.caBundle, InsecureSkipTLS: c.insecureSkipTLS})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		return nil
 	}
@@ -127,7 +181,10 @@ func (c *Client) CheckAuth(ctx context.Context) error {
 }
 
 // WriteFile clones the repo, writes content at path, commits with commitMsg, and pushes.
-func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string) (string, error) {
+func (c *Client) WriteFile(ctx context.Context, path, content, commitMsg string) (hash string, err error) {
+	ctx, cancel := c.withTimeout(ctx, "write", writeTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "write "+path, err) }()
 	repo, wt, err := c.clone(ctx)
 	if err != nil {
 		return "", err
@@ -175,7 +232,10 @@ func fileContentMatches(fs billy.Filesystem, path, expected string) (bool, error
 
 // DeleteFile clones the repo, removes path if it exists, commits, and pushes.
 // Returns ("", nil) if the file does not exist.
-func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (string, error) {
+func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (hash string, err error) {
+	ctx, cancel := c.withTimeout(ctx, "delete", writeTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "delete "+path, err) }()
 	repo, wt, err := c.clone(ctx)
 	if err != nil {
 		return "", err
@@ -189,14 +249,130 @@ func (c *Client) DeleteFile(ctx context.Context, path, commitMsg string) (string
 	return c.commitAndPush(ctx, repo, wt, commitMsg)
 }
 
+// ReadFile clones the repo (in-memory, shallow) and returns the content of filePath.
+// ok is false (with no error) when the file does not exist; a file larger than
+// maxBytes is an error.
+func (c *Client) ReadFile(ctx context.Context, filePath string, maxBytes int64) (content string, ok bool, err error) {
+	ctx, cancel := c.withTimeout(ctx, "read", readTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "read "+filePath, err) }()
+	_, wt, err := c.clone(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	f, err := wt.Filesystem.Open(filePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("open %q: %w", filePath, err)
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return "", false, fmt.Errorf("read %q: %w", filePath, err)
+	}
+	if int64(len(b)) > maxBytes {
+		return "", false, fmt.Errorf("file %q exceeds %d bytes", filePath, maxBytes)
+	}
+	return string(b), true, nil
+}
+
+// ReadDir returns the regular files under dirPath at commit (a full hash on
+// the branch), keyed by their path relative to dirPath. It reads the commit
+// tree without a worktree, cloning only the tip first (the usual case: the
+// indexed commit is the tip) and deepening only when the commit is older; blob
+// sizes are checked against the 1 MiB cap before reading them.
+func (c *Client) ReadDir(ctx context.Context, dirPath, commit string) (files map[string]string, err error) {
+	if !plumbing.IsHash(commit) {
+		return nil, fmt.Errorf("invalid commit %q: want a full commit hash", commit)
+	}
+	ctx, cancel := c.withTimeout(ctx, "read", readTimeout)
+	defer cancel()
+	defer func() { err = c.timedOut(ctx, "read "+dirPath, err) }()
+	co, err := c.commitAt(ctx, plumbing.NewHash(commit))
+	if err != nil {
+		return nil, err
+	}
+	root, err := co.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("read tree: %w", err)
+	}
+	// go-git resolves neither "." nor a leading "/" as the repo root.
+	tree := root
+	if rel := strings.Trim(filepath.ToSlash(filepath.Clean(dirPath)), "/"); rel != "" && rel != "." {
+		if tree, err = root.Tree(rel); err != nil {
+			return nil, fmt.Errorf("read dir %q: %w", dirPath, err)
+		}
+	}
+
+	const capBytes = 1 << 20
+	out := map[string]string{}
+	var total int64
+	err = tree.Files().ForEach(func(f *object.File) error {
+		if !f.Mode.IsRegular() {
+			return nil
+		}
+		if f.Name == ".." || strings.HasPrefix(f.Name, "../") || strings.HasPrefix(f.Name, "/") {
+			return fmt.Errorf("path %q escapes the overlay root", f.Name)
+		}
+		total += f.Size
+		if total > capBytes {
+			return fmt.Errorf("overlay under %q exceeds the %d-byte limit", dirPath, capBytes)
+		}
+		content, err := f.Contents()
+		if err != nil {
+			return err
+		}
+		out[f.Name] = content
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// commitAt clones the branch at increasing depths until it holds hash. It never
+// substitutes another commit: one the branch does not have is ErrCommitNotFound.
+func (c *Client) commitAt(ctx context.Context, hash plumbing.Hash) (*object.Commit, error) {
+	for _, depth := range readDirDepths {
+		if c.onClone != nil {
+			c.onClone(depth)
+		}
+		repo, err := gogit.CloneContext(ctx, memory.NewStorage(), nil, &gogit.CloneOptions{
+			URL:             c.repoURL,
+			ReferenceName:   plumbing.NewBranchReferenceName(c.branch),
+			SingleBranch:    true,
+			Depth:           depth,
+			NoCheckout:      true,
+			Auth:            c.auth,
+			CABundle:        c.caBundle,
+			InsecureSkipTLS: c.insecureSkipTLS,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("clone: %w", err)
+		}
+		co, err := repo.CommitObject(hash)
+		if err == nil {
+			return co, nil
+		}
+		if !errors.Is(err, plumbing.ErrObjectNotFound) {
+			return nil, fmt.Errorf("read commit %s: %w", hash, err)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s on %q (the repo index is behind the branch)", ErrCommitNotFound, hash, c.branch)
+}
+
 func (c *Client) clone(ctx context.Context) (*gogit.Repository, *gogit.Worktree, error) {
 	repo, err := gogit.CloneContext(ctx, memory.NewStorage(), memfs.New(), &gogit.CloneOptions{
-		URL:           c.repoURL,
-		ReferenceName: plumbing.NewBranchReferenceName(c.branch),
-		SingleBranch:  true,
-		Depth:         1,
-		Auth:          c.auth,
-		CABundle:      c.caBundle,
+		URL:             c.repoURL,
+		ReferenceName:   plumbing.NewBranchReferenceName(c.branch),
+		SingleBranch:    true,
+		Depth:           1,
+		Auth:            c.auth,
+		CABundle:        c.caBundle,
+		InsecureSkipTLS: c.insecureSkipTLS,
 	})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		// A freshly created GitOps repo has no commits yet, so go-git cannot
@@ -255,10 +431,11 @@ func (c *Client) commitAndPush(ctx context.Context, repo *gogit.Repository, wt *
 	// previously-empty remote (where there is no tracking config to default to).
 	branchRef := plumbing.NewBranchReferenceName(c.branch)
 	if err := repo.PushContext(ctx, &gogit.PushOptions{
-		RemoteName: gogit.DefaultRemoteName,
-		RefSpecs:   []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", branchRef, branchRef))},
-		Auth:       c.auth,
-		CABundle:   c.caBundle,
+		RemoteName:      gogit.DefaultRemoteName,
+		RefSpecs:        []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", branchRef, branchRef))},
+		Auth:            c.auth,
+		CABundle:        c.caBundle,
+		InsecureSkipTLS: c.insecureSkipTLS,
 	}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
 		return "", fmt.Errorf("push: %w", err)
 	}

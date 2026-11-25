@@ -1,5 +1,6 @@
 import type { BlueprintComponent } from '../types/blueprint-types';
 import type { RegistryStatus } from '../types/aiworkload-types';
+import type { AppCRD } from '../types/rancher-types';
 
 /**
  * Registry credentials the Settings page manages. These keys match both the
@@ -12,7 +13,8 @@ export type RequiredCredential = 'applicationCollection' | 'suseRegistry' | 'nvi
  * Maps a blueprint component's `chartRepo` (a ClusterRepo name) to the
  * credential that must be configured for the operator to create that repo.
  * Mirrors the operator's Settings controller: the ClusterRepo names come from
- * internal/credentials/credentials.go, and both NVIDIA repos gate on the single
+ * internal/credentials/credentials.go, and the NVIDIA repos (including the
+ * gated nvidia-runai team repo) gate on the single
  * NVIDIA credential.
  */
 export const REPO_CREDENTIAL: Record<string, RequiredCredential> = {
@@ -20,6 +22,7 @@ export const REPO_CREDENTIAL: Record<string, RequiredCredential> = {
   'suse-ai-registry':       'suseRegistry',
   nvidia:                   'nvidia',
   'nvidia-blueprints':      'nvidia',
+  'nvidia-runai':           'nvidia',
 };
 
 export function requiredCredentialForRepo(chartRepo: string): RequiredCredential | null {
@@ -27,14 +30,13 @@ export function requiredCredentialForRepo(chartRepo: string): RequiredCredential
 }
 
 /**
- * A credential counts as configured when the operator can resolve it. We read
- * this from getRegistryStatus() (the /registry-status endpoint), which resolves
- * credentials the way the operator does (EffectiveRefs: Settings spec refs and
- * well-known secret names) and reports true only when both user and token
- * resolve, the operator's requirement before it creates the ClusterRepo.
+ * A registry is satisfied when the operator can create its ClusterRepos, per
+ * getRegistryStatus(): `usable` covers resolved credentials and an anonymous
+ * NVIDIA mirror. An older operator omits `usable`; its top-level fields (both
+ * user and token resolve) are used instead.
  */
 function isCredentialConfigured(cred: RequiredCredential, status: RegistryStatus | null): boolean {
-  return status?.[cred] === true;
+  return (status?.usable ?? status)?.[cred] === true;
 }
 
 /**
@@ -55,4 +57,40 @@ export function missingCredentialsForBlueprint(
     if (cred) required.add(cred);
   }
   return Array.from(required).filter((cred) => !isCredentialConfigured(cred, registryStatus));
+}
+
+export interface ExistingRelease {
+  clusterId: string;
+  release:   string;
+  chart:     string;
+  version:   string;
+  namespace: string;
+}
+
+/**
+ * Returns, per component chartName, the Helm releases (catalog.cattle.io apps)
+ * on the target clusters that already run the same chart. Matching is by chart
+ * name only; components without a match are omitted.
+ */
+export function existingReleasesByComponent(
+  components: BlueprintComponent[],
+  appsByCluster: Record<string, AppCRD[]>,
+): Record<string, ExistingRelease[]> {
+  const wanted = new Set((components || []).map((c) => c.chartName));
+  const result: Record<string, ExistingRelease[]> = {};
+  for (const [clusterId, apps] of Object.entries(appsByCluster || {})) {
+    for (const app of apps || []) {
+      const chart = app?.spec?.chart?.metadata?.name;
+      if (!chart || !wanted.has(chart)) continue;
+      if (!result[chart]) result[chart] = [];
+      result[chart].push({
+        clusterId,
+        release:   app.metadata?.name || '',
+        chart,
+        version:   app.spec.chart?.metadata?.version || '',
+        namespace: app.metadata?.namespace || '',
+      });
+    }
+  }
+  return result;
 }

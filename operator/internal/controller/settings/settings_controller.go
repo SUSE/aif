@@ -962,8 +962,8 @@ func (r *SettingsReconciler) deleteAuthSecret(ctx context.Context, name string) 
 
 func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aiplatformv1alpha1.Settings) error {
 	acURL := credentials.DefaultApplicationCollectionURL
-	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-		acURL = s.Spec.RegistryEndpoints.ApplicationCollection
+	if mirror := credentials.MirrorURL(&s.Spec, credentials.RegistryApplicationCollection); mirror != "" {
+		acURL = mirror
 	}
 	acUser, acToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.ApplicationCollection.UserSecretRef,
@@ -981,8 +981,8 @@ func (r *SettingsReconciler) reconcileClusterRepos(ctx context.Context, s *aipla
 	}
 
 	srURL := credentials.DefaultSUSERegistryURL
-	if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-		srURL = s.Spec.RegistryEndpoints.SUSERegistry
+	if mirror := credentials.MirrorURL(&s.Spec, credentials.RegistrySUSERegistry); mirror != "" {
+		srURL = mirror
 	}
 	srUser, srToken := credentials.EffectiveRefs(ctx, r.Client, s.Namespace,
 		s.Spec.SUSERegistry.UserSecretRef,
@@ -1054,10 +1054,7 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 		s.Spec.Nvidia.TokenSecretRef,
 		credentials.RegistryNvidia,
 	)
-	nvURL := ""
-	if s.Spec.RegistryEndpoints != nil {
-		nvURL = s.Spec.RegistryEndpoints.Nvidia
-	}
+	nvURL := credentials.MirrorURL(&s.Spec, credentials.RegistryNvidia)
 
 	fixedNvidiaRepos := []string{credentials.ClusterRepoNvidia, credentials.ClusterRepoNvidiaBlueprint}
 
@@ -1072,7 +1069,7 @@ func (r *SettingsReconciler) reconcileNvidiaRepos(ctx context.Context, s *aiplat
 			return err
 		}
 
-		hasRefs := nvUser != nil && nvToken != nil
+		hasRefs := !credentials.AnonymousMirror(&s.Spec, credentials.RegistryNvidia, nvUser, nvToken)
 		secretName := ""
 		changed := false
 		if hasRefs {

@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 func TestResolveWorkloadScope_App(t *testing.T) {
@@ -53,7 +54,7 @@ func TestResolveWorkloadScope_App(t *testing.T) {
 func TestResolveWorkloadScope_Blueprint(t *testing.T) {
 	scheme := newAppTestScheme(t)
 	bp := &aiplatformv1alpha1.Blueprint{
-		ObjectMeta: metav1.ObjectMeta{Name: bpCRName("rag", "1.0.0")},
+		ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("rag", "1.0.0")},
 		Spec: aiplatformv1alpha1.BlueprintSpec{Components: []aiplatformv1alpha1.BlueprintComponent{
 			{ChartRepo: "private-charts", ChartName: "vector-db", TargetNamespace: "db-ns", ReleaseName: "vdb"},
 			{ChartRepo: "application-collection", ChartName: "open-webui"},

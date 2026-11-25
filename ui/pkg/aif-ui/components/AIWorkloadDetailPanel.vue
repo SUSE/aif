@@ -17,7 +17,9 @@ import { useT } from '../composables/useT';
 import ClusterChips from '../formatters/ClusterChips.vue';
 import { componentOverride, deepMergeValues, isComponentEnabled } from '../utils/blueprint-customize';
 import { fleetHelmOpLink, fleetWorkspaces } from '../utils/rancher-links';
-import { phaseBadgeColor, phaseBadgeIcon, phaseColor, workloadStatusMessage } from '../utils/workload-status';
+import {
+  minimumSafeVersion, phaseBadgeColor, phaseBadgeIcon, phaseColor, workloadStatusMessage,
+} from '../utils/workload-status';
 import type { AIWorkload } from '../types/aiworkload-types';
 import type { Blueprint } from '../types/blueprint-types';
 import type { ClusterInfo } from '../types/rancher-types';
@@ -84,6 +86,7 @@ const description = computed(() => (isBlueprint.value ? blueprint.value?.spec.de
 // The Blueprint version actually rendered, when it differs from the requested one.
 const deployedVersion = computed(() => (isBlueprint.value ? w.value.status?.deployedSource?.version || '' : ''));
 const versionDrift    = computed(() => !!deployedVersion.value && deployedVersion.value !== version.value);
+const minimumSafe = computed(() => (isBlueprint.value ? minimumSafeVersion(w.value) : ''));
 
 const deployStrategy = computed(() => w.value.spec.deployStrategy || 'Helm');
 const targetClusters = computed(() => w.value.spec.targetClusters || []);
@@ -411,6 +414,20 @@ function clusterName(clusterId: string): string {
                       :value="version"
                       :mode="_VIEW"
                       :label="t('suseai.common.labels.version', 'Version')"
+                    />
+                  </div>
+                </div>
+                <div
+                  v-if="minimumSafe"
+                  class="row mb-20"
+                  data-testid="minimum-safe-version"
+                >
+                  <div class="col span-4">
+                    <LabeledInput
+                      :value="minimumSafe"
+                      :mode="_VIEW"
+                      :label="t('suseai.pages.workloads.detail.minimumSafeVersion', 'Minimum safe version')"
+                      :tooltip="t('suseai.pages.workloads.detail.minimumSafeVersionHelp', 'A version whose Blueprint disables rollback has started deploying, so this workload can\'t be moved to an older version.')"
                     />
                   </div>
                 </div>

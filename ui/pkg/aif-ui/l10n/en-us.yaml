@@ -94,6 +94,7 @@ suseai:
           reasons:
             accessDenied: Access was denied. Check the selected credentials and their permission to read this chart repository.
             suseAccessDenied: Access was denied. Check the selected credentials and their SUSE AI subscription entitlement. A registry login can succeed without permission to read these charts.
+            nvidiaAccessDenied: "Access was denied. The NGC API key authenticated but is not allowed to read these charts. Check that its organization has the entitlement for this repository (for example NIM, cuOpt or NVIDIA Run:ai); a key can read the index and public charts without it."
             notFound: The sample chart or version was not found or is not visible to these credentials. Check the chart name and mirror contents; this result does not establish a missing entitlement.
             invalidIndex: The server did not return a valid Helm chart index. Check the repository URL and access permissions in Settings; this response alone does not identify a credential problem.
             invalidChart: The server did not return a valid Helm chart manifest. Check that this repository contains the selected chart.
@@ -325,6 +326,8 @@ suseai:
         valuesMerged: "Each component shows the values it deploys with: the Blueprint defaults, with this workload's overrides merged on top."
         valuesOverridesOnly: "The Blueprint is not available, so only this workload's overrides are shown. They are merged onto the Blueprint defaults at deploy time."
         versionDrift: Version {deployed} is deployed. This configuration describes the requested version {requested}.
+        minimumSafeVersion: Minimum safe version
+        minimumSafeVersionHelp: A version whose Blueprint disables rollback has started deploying, so this workload can't be moved to an older version.
         plaintextNotice: Values are shown in plain text. Keep credentials in Kubernetes Secrets rather than in Helm values.
         components: Components
         component: Component
@@ -450,6 +453,11 @@ suseai:
       blueprintNamePlaceholder: e.g. My AI Stack
       description: Description
       descriptionPlaceholder: Optional description
+      allowRollback: Allow rollback
+      allowRollbackHelp: Turn off when upgrades migrate data that older versions can't read (for example database schema changes). Workloads of this Blueprint then can't be rolled back.
+      rollback: Rollback
+      rollbackAllowed: Allowed
+      rollbackDisabled: Disabled
       deploymentType: Deployment Type
       searchApps: Search applications...
       componentNamespace: Target namespace (optional)
@@ -478,7 +486,7 @@ suseai:
       configureApps: Configure Applications
       configureAppsDesc: Set default Helm values for each application in this blueprint.
       customize: Customize
-      customizeDesc: Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Leave a component untouched to keep the blueprint's defaults.
+      customizeDesc: Override this blueprint's default Helm values for this deployment, or exclude a component entirely. Use the Advanced tab to change the deploy order or add a Kustomize overlay. Leave a component untouched to keep the blueprint's defaults.
       configuration: Configuration
       reviewInstall: Review & Install
       reviewCreate: Review & Create
@@ -498,10 +506,80 @@ suseai:
       includeComponent: Include
       componentExcluded: Excluded — this component will not be deployed.
       excluded: Excluded
+      valuesTab: Values
+      advancedTab: Advanced
+      dependsOn: Deploys after
+      dependsOnTooltip: This application is deployed only after the selected applications are Ready.
+      dependsOnSingleApp: This blueprint has a single application, so there is nothing to order it after.
+      kustomizeOverlay: Kustomize overlay
+      kustomizeChartRepo: Git ClusterRepo
+      kustomizePath: Path in repo
+      kustomizeNone: None
+      kustomizeInline: Inline
+      kustomizeGit: Git
+      kustomizeInlineHint: Patches the chart's rendered manifests after Helm renders them. Write patches in kustomization.yaml. To add new resources or patch files, use Add file and list them under resources or patches in kustomization.yaml. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
+      kustomizeAddFile: Add file
+      kustomizeAddFileConfirm: Add
+      kustomizeAddFileCancel: Cancel
+      kustomizeRemoveFile: Remove {name}
+      kustomizeFileName: File name
+      kustomizeFileNameInvalid: Use a relative path without empty, "." or ".." segments.
+      kustomizeFileNameReserved: The kustomization file already exists.
+      kustomizeFileNameDuplicate: A file with this name already exists.
+      kustomizeUnreferencedFiles: "Kustomize ignores files the kustomization file doesn't reference: {names}. List new objects under resources and patch files under patches."
+      kustomizeUnreferencedFile: Not referenced from the kustomization file
+      kustomizeEmptyReferencedFiles: "These files are listed in the kustomization file but are empty or only comments, so they add nothing: {names}. Uncomment their content."
+      kustomizeOutsideDirFiles: 'These files are outside the overlay directory "{dir}": {names}. They are kept unchanged, but the operator rejects the overlay until they are moved under it or removed.'
+      kustomizeWrapperWarning: This editor holds the contents of kustomization.yaml itself, not the kustomize/dir/files block of the resource. Put each file in its own tab with Add file instead.
+      kustomizeGitHint: Fetches a directory containing a kustomization.yaml and its patch files from a Git-type repository added in AI Factory Settings. The repository must use an HTTPS URL (SSH repositories are not supported and are not listed) and doesn't need to contain any Helm charts. An overlay embeds the chart in the Fleet bundle, so very large charts can't take one.
+      kustomizeNoGitRepos: No Git-type repositories with an HTTPS URL found. Add a repository of type Git with an HTTPS URL in AI Factory Settings to use it as an overlay source; SSH repositories are not supported. It doesn't need to contain any Helm charts.
+      reviewChangeValues: Helm values
+      reviewChangeOverlay: Kustomize overlay
+      reviewChangeOrder: Deploy order
+      blueprintOverlay: Blueprint overlay (read-only)
+      installOverlay: Overlay for this deployment
+      installOverlayHint: Applied after the blueprint overlay.
+      staleDependsOn: "These dependencies no longer exist in this Blueprint version and will be removed when you save: {names}"
+      deployOrder: Deploy Order
+      deploysAfter: deploys after
+      patched: Patched
+      ordered: Ordered
+      valuesFrom: Values from Secrets and ConfigMaps
+      valuesFromHelp: Read on the target cluster at deploy time and merged over this application's values (they win on conflicts). Leave Namespace empty to use the release namespace; Key defaults to values.yaml.
+      valuesFromHelpView: Set by the Blueprint. Read on the target cluster at deploy time and merged over this application's values (they win on conflicts).
+      valuesFromKind: Kind
+      valuesFromSecret: Secret
+      valuesFromConfigMap: ConfigMap
+      valuesFromName: Name
+      valuesFromNamespace: Namespace
+      valuesFromNamespacePlaceholder: Release namespace
+      valuesFromKey: Key
+      valuesFromKeyPlaceholder: values.yaml
+      valuesFromAdd: Add source
+      valuesFromReview: Values from {kind} {ref}
+      valuesFromReviewKey: Values from {kind} {ref} (key {key})
+    hints:
+      customized: This component differs from the blueprint for this deployment.
+      patched: This component has a kustomize patch applied.
+      ordered: This component has a deploy-order dependency.
+      valuesFromNote: Some values are read at deploy time from {kind} {namespace}/{name}.
+      valuesFromNoteReleaseNs: Some values are read at deploy time from {kind} {name} (release namespace).
+      autoDomainHint: 'Automatic: {label}.<node-ip>.sslip.io — set {path} to use your own domain.'
+      autoIngressClassHint: 'Automatic: the target cluster''s default ingress class — set {path} to choose one.'
+      lockedValues: "These values were set at install and are locked. Leave them unchanged in the values below; saving a different value is rejected."
+      advancedReadOnly: Only users who can update Blueprints can change the deploy order or Kustomize overlays. The current settings are shown.
     errors:
       allComponentsDisabled: At least one component must remain enabled.
+      valuesFromNameRequired: '{component}: values source {row} needs a name.'
+      valuesFromNameInvalid: '{component}: the name of values source {row} must be a valid Kubernetes object name (lowercase letters, digits, "-" and ".", max 253 characters).'
+      valuesFromNamespaceInvalid: '{component}: the namespace of values source {row} must be a valid namespace name (lowercase letters, digits and "-", max 63 characters).'
+      valuesFromNamespaceNotAllowed: '{component}: values source {row} reads from namespace {namespace}, which no application of this Blueprint deploys to. Use {allowed}, or leave Namespace empty for the release namespace.'
+      valuesFromNamespaceNotAllowedNone: '{component}: values source {row} reads from namespace {namespace}, which no application of this Blueprint deploys to. Leave Namespace empty to use the release namespace.'
+      valuesFromKeyInvalid: '{component}: the key of values source {row} may contain only letters, digits, "-", "_" and "." (max 253 characters) and must not start with "..".'
     warnings:
       excludingRunningComponent: This component is currently deployed — excluding it will remove its resources on the next sync.
+      alreadyInstalled: Already installed on {clusters}. Consider excluding this component.
+      alreadyInstalledRelease: '{cluster}: {release} ({chart}) in namespace {namespace}'
   repositories:
     title: Repositories
     add: Add Repository
@@ -554,6 +632,8 @@ suseai:
       confirmDelete: Are you sure you want to delete this item?
   workloads:
     customizedTooltip: Workload configuration deviates from the default blueprint definition
+    rollbackDisabled: "Rollback is disabled for this Blueprint: its upgrades migrate data that older versions can't read."
+    rollbackBelowMinimumSafe: "Rollback is disabled: a version whose Blueprint disables rollback has started deploying. Use {version} or newer."
     openInRancher: Open in Rancher
     viewApp: Open app in Rancher
     viewNamespace: View namespace in Rancher

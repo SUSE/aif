@@ -171,6 +171,45 @@ func TestIsWellKnownSecret(t *testing.T) {
 	}
 }
 
+func TestMirrorURLAndAnonymousMirror(t *testing.T) {
+	spec := &aiplatformv1alpha1.SettingsSpec{RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+		ApplicationCollection: "oci://m/ac", SUSERegistry: "oci://m/sr", Nvidia: "oci://m/nv",
+	}}
+	for r, want := range map[credentials.Registry]string{
+		credentials.RegistryApplicationCollection: "oci://m/ac",
+		credentials.RegistrySUSERegistry:          "oci://m/sr",
+		credentials.RegistryNvidia:                "oci://m/nv",
+	} {
+		if got := credentials.MirrorURL(spec, r); got != want {
+			t.Errorf("MirrorURL(%d) = %q, want %q", r, got, want)
+		}
+	}
+	if got := credentials.MirrorURL(&aiplatformv1alpha1.SettingsSpec{}, credentials.RegistryNvidia); got != "" {
+		t.Errorf("MirrorURL without endpoints = %q, want empty", got)
+	}
+
+	ref := &aiplatformv1alpha1.SecretKeyRef{Name: "n", Key: "k"}
+	tests := []struct {
+		name        string
+		spec        *aiplatformv1alpha1.SettingsSpec
+		registry    credentials.Registry
+		user, token *aiplatformv1alpha1.SecretKeyRef
+		want        bool
+	}{
+		{"nvidia mirror without refs", spec, credentials.RegistryNvidia, nil, nil, true},
+		{"nvidia mirror with a partial pair", spec, credentials.RegistryNvidia, ref, nil, true},
+		{"nvidia mirror with refs", spec, credentials.RegistryNvidia, ref, ref, false},
+		{"nvidia connected without refs", &aiplatformv1alpha1.SettingsSpec{}, credentials.RegistryNvidia, nil, nil, false},
+		{"application collection mirror without refs", spec, credentials.RegistryApplicationCollection, nil, nil, false},
+		{"suse registry mirror without refs", spec, credentials.RegistrySUSERegistry, nil, nil, false},
+	}
+	for _, tt := range tests {
+		if got := credentials.AnonymousMirror(tt.spec, tt.registry, tt.user, tt.token); got != tt.want {
+			t.Errorf("%s: AnonymousMirror = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestResolveGitHTTPSUsername(t *testing.T) {
 	tests := []struct {
 		name       string

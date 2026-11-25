@@ -1,0 +1,13 @@
+# Per SUSE's RKE2 GPU Operator docs for v26.3.x (helm template checked on v26.3.3): RKE2
+# containerd socket, and SUSE's precompiled driver images
+# (registry.suse.com/third-party/nvidia/driver:<branch>-<kernel>-<flavor>-<os>).
+# Nodes with a pre-installed driver are detected and skipped. Pick the branch your GPUs
+# and OS need: SLES 15.7 550 to 615, SLES 16.0 595, 610 or 615, SLES 16.1 615 only.
+toolkit:
+  env:
+    - name: CONTAINERD_SOCKET
+      value: /run/k3s/containerd/containerd.sock
+driver:
+  repository: registry.suse.com/third-party/nvidia
+  usePrecompiled: true
+  version: "595"

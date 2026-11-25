@@ -278,3 +278,7 @@ func TestEnsureBlueprintHelmOp_GitRepoNoChartFetcher(t *testing.T) {
 		t.Fatalf("expected an unavailable-fetcher error, got %v", err)
 	}
 }
+
+// A git-backed ClusterRepo has no HTTP/OCI URL a kustomize-enabled HelmOp/Bundle
+// could resolve overlays against, so kustomize on a git-backed chart repo must be
+// rejected up front rather than silently ignored.

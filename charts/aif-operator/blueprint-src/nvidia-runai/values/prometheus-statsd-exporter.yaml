@@ -1,0 +1,11 @@
+# Carrier chart only: the overlay supplies the setup and preflight resources.
+replicaCount: 0
+serviceAccount:
+  create: false
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 50m
+    memory: 32Mi

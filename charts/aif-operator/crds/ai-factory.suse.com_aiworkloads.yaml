@@ -59,13 +59,26 @@ spec:
                 items:
                   description: |-
                     ComponentValueOverride holds per-component customizations: Helm value
-                    overrides and/or an enable/disable toggle.
+                    overrides, an enable/disable toggle, a deploy-order override, and/or an
+                    install-time Kustomize overlay.
                   properties:
                     componentName:
                       description: ComponentName matches source.app.chartName (App)
                         or a Blueprint component name.
                       minLength: 1
                       type: string
+                    dependsOn:
+                      description: |-
+                        DependsOn, when set, replaces the Blueprint component's dependsOn for this
+                        workload. nil = use the Blueprint's; an empty list = no dependencies.
+                        Blueprint sources only.
+                      items:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      maxItems: 32
+                      type: array
+                      x-kubernetes-list-type: set
                     enabled:
                       description: |-
                         Enabled controls whether this Blueprint component is deployed at all.
@@ -74,12 +87,63 @@ spec:
                         for Blueprint-sourced workloads; ignored for App sources, which have no
                         component list to select from.
                       type: boolean
+                    kustomize:
+                      description: |-
+                        Kustomize is an install-time overlay layered on top of the Blueprint
+                        component's own overlay (applied after it). Optional. Blueprint sources only.
+                      properties:
+                        dir:
+                          description: |-
+                            Dir is the directory holding kustomization.yaml, relative to the embedded
+                            overlay tree (for Files) or the git path (for GitRef). Becomes the Fleet
+                            HelmOp/Bundle spec.kustomize.dir. Must be a clean relative path: no empty,
+                            "." or ".." segments and no leading or trailing slash.
+                          minLength: 1
+                          pattern: ^([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+)(/([^/.][^/]*|\.[^/.][^/]*|\.\.[^/]+))*$
+                          type: string
+                        files:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Files is the inline overlay: path -> file content. Embedded verbatim into
+                            the rendered bundle's spec.resources.
+                          type: object
+                        gitRef:
+                          description: |-
+                            GitRef fetches the overlay from a git-backed Rancher ClusterRepo, then
+                            embeds it the same way as Files.
+                          properties:
+                            chartRepo:
+                              description: |-
+                                ChartRepo is a git-backed Rancher ClusterRepo name (resolved via
+                                resolveClusterRepo, reusing its git credentials).
+                              minLength: 1
+                              type: string
+                            path:
+                              description: Path is the directory within the repo to
+                                embed.
+                              minLength: 1
+                              type: string
+                          required:
+                          - chartRepo
+                          - path
+                          type: object
+                      required:
+                      - dir
+                      type: object
+                      x-kubernetes-validations:
+                      - message: set exactly one of files or gitRef
+                        rule: has(self.files) != has(self.gitRef)
                     values:
                       description: Values are the Helm values for this component.
                       x-kubernetes-preserve-unknown-fields: true
                   required:
                   - componentName
                   type: object
+                  x-kubernetes-validations:
+                  - message: a component cannot depend on itself
+                    rule: '!has(self.dependsOn) || !(self.componentName in self.dependsOn)'
+                maxItems: 64
                 type: array
               deployStrategy:
                 default: Helm
@@ -369,6 +433,13 @@ spec:
                 - renderDigest
                 - version
                 type: object
+              minimumSafeVersion:
+                description: |-
+                  MinimumSafeVersion records, as "<blueprint name>@<version>", the highest
+                  rollback-disabled Blueprint version the controller has started
+                  rendering. Moving to an older version of that Blueprint is refused; unset
+                  means the deployed version is the floor.
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation observed by the
                   controller.
@@ -449,6 +520,47 @@ spec:
                   - retryEpoch
                   type: object
                 type: array
+              resolvedValues:
+                description: |-
+                  ResolvedValues pins every automatic Blueprint value (domain, ingress
+                  class) to the concrete value chosen at install, so later reconciles and
+                  upgrades render the same value even if the cluster changes.
+                items:
+                  description: ResolvedValue is the concrete value pinned for one
+                    automatic value.
+                  properties:
+                    clusterId:
+                      description: |-
+                        ClusterID is the cluster an auto value was resolved against, so a
+                        retargeted workload re-resolves it. Empty on user values and on pins
+                        recorded before this field existed.
+                      type: string
+                    componentName:
+                      type: string
+                    path:
+                      description: Path is the dot-joined Helm values path, e.g. "global.domain".
+                      type: string
+                    source:
+                      description: Source is "auto" (resolved from the cluster) or
+                        "user" (install override).
+                      enum:
+                      - auto
+                      - user
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - componentName
+                  - path
+                  - source
+                  - value
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - componentName
+                - path
+                x-kubernetes-list-type: map
             type: object
         type: object
     served: true

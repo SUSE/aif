@@ -47,3 +47,27 @@ func TestIntentDigest_ChangesOnIntentFields(t *testing.T) {
 		}
 	}
 }
+
+// A release name override is part of the render; the default (the chart name,
+// already hashed) is omitted so components without an override keep their digest.
+func TestDigest_ReleaseNameOverride(t *testing.T) {
+	if got := renderDigestLabelValue(perHelmOpRenderDigest(goldenNoOverlayInputs())); got != goldenNoOverlayDigest {
+		t.Fatalf("digest of a component without a release name override changed: %s", got)
+	}
+	c := aiplatformv1alpha1.BlueprintComponent{ChartName: "comp"}
+	if got := digestReleaseName(c); got != "" {
+		t.Fatalf("digestReleaseName without an override = %q, want empty", got)
+	}
+	c.ReleaseName = "runai-setup"
+	with := goldenNoOverlayInputs()
+	with.ReleaseName = digestReleaseName(c)
+	if perHelmOpRenderDigest(with) == perHelmOpRenderDigest(goldenNoOverlayInputs()) {
+		t.Fatal("a release name override must change the render digest")
+	}
+	renamed := goldenNoOverlayInputs()
+	c.ReleaseName = "runai-setup-2"
+	renamed.ReleaseName = digestReleaseName(c)
+	if perHelmOpRenderDigest(renamed) == perHelmOpRenderDigest(with) {
+		t.Fatal("changing the release name override must change the render digest")
+	}
+}

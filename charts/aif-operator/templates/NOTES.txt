@@ -7,3 +7,13 @@ kubectl logs deploy/{{ include "aif-operator.fullname" . }} -n {{ .Release.Names
 Default blueprints were installed and are visible on the Blueprints page.
 To manage blueprints yourself instead, set defaultBlueprints.enabled=false.
 {{- end }}
+
+{{- if and (dig "enabled" true (.Values.advancedCustomizationPolicy | default dict)) (not (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy")) }}
+
+WARNING: the advanced-customization ValidatingAdmissionPolicy was not rendered:
+the target does not report admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy.
+AIWorkload writes that bypass the operator API (kubectl, GitOps) can then add
+Kustomize overlays and dependsOn overrides without permission to update Blueprints.
+Kubernetes 1.30 or later serves it. For an offline render (helm template, Argo CD),
+pass --api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy.
+{{- end }}

@@ -31,6 +31,13 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - nodes
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ""
+  resources:
   - pods
   - services
   verbs:
@@ -202,12 +209,6 @@ rules:
 - apiGroups:
   - fleet.cattle.io
   resources:
-  - clusters
-  verbs:
-  - get
-- apiGroups:
-  - fleet.cattle.io
-  resources:
   - helmops
   verbs:
   - create
@@ -217,12 +218,32 @@ rules:
   - patch
   - watch
 - apiGroups:
+  - fleet.cattle.io
+  - management.cattle.io
+  resources:
+  - clusters
+  verbs:
+  - get
+- apiGroups:
+  - management.cattle.io
+  resources:
+  - nodes
+  verbs:
+  - list
+- apiGroups:
   - monitoring.coreos.com
   resources:
   - servicemonitors
   verbs:
   - delete
   - get
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingressclasses
+  verbs:
+  - get
+  - list
 - apiGroups:
   - networking.k8s.io
   resources:
@@ -238,6 +259,12 @@ rules:
   verbs:
   - delete
   - get
+- apiGroups:
+  - provisioning.cattle.io
+  resources:
+  - clusters
+  verbs:
+  - list
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

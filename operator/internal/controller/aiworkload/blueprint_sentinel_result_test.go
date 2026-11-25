@@ -30,13 +30,14 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
 	"github.com/SUSE/aif-operator/internal/infra/rancher"
+	"github.com/SUSE/aif-operator/internal/naming"
 )
 
 // gitBlueprintCR is newBlueprintCR's git-backed twin: no vendor, so the
 // component reaches the catalog fetch without a secret injection detour.
 func gitBlueprintCR(repo string) *aiplatformv1alpha1.Blueprint {
 	bp := &aiplatformv1alpha1.Blueprint{
-		ObjectMeta: metav1.ObjectMeta{Name: bpCRName("mini", "1.0.0")},
+		ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("mini", "1.0.0")},
 	}
 	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{
 		{ChartRepo: repo, ChartName: "app", ChartVersion: "1.0.0"},
@@ -69,7 +70,7 @@ func TestReconcileBlueprintStatus_WaitsForGitIndex(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(w, gitBlueprintCR("charts"), repo).Build()
 	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, ChartFetcher: rancher.NewGitChartFetcher(cl)}
 
-	result, err := r.reconcileBlueprintStatus(t.Context(), w)
+	result, _, err := r.reconcileBlueprintStatus(t.Context(), w)
 	ready := meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
 	if err != nil || result.RequeueAfter != 30*time.Second || ready == nil || ready.Reason != reasonClusterRepoNotReady {
 		t.Fatalf("unindexed repo: err=%v, result=%v, Ready=%v", err, result, ready)
@@ -80,7 +81,7 @@ func TestReconcileBlueprintStatus_WaitsForGitIndex(t *testing.T) {
 	if err := cl.Update(t.Context(), repo); err != nil {
 		t.Fatal(err)
 	}
-	_, err = r.reconcileBlueprintStatus(t.Context(), w)
+	_, _, err = r.reconcileBlueprintStatus(t.Context(), w)
 	ready = meta.FindStatusCondition(w.Status.Conditions, conditionTypeReady)
 	if err == nil || ready == nil || ready.Reason != "ComponentReconcileFailed" {
 		t.Fatalf("malformed indexed commit: err=%v, Ready=%v", err, ready)
@@ -137,7 +138,7 @@ func TestReconcileBlueprintStatus_ComponentErrorOutcomes(t *testing.T) {
 			r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, OperatorNamespace: "aif-operator"}
 			r.ChartFetcher = tc.catalog
 
-			result, err := r.reconcileBlueprintStatus(context.Background(), w)
+			result, _, err := r.reconcileBlueprintStatus(context.Background(), w)
 
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)

@@ -1,4 +1,6 @@
 // pkg/aif-ui/types/aiworkload-types.ts
+import type { ComponentKustomize } from './blueprint-types';
+
 export type AIWorkloadSourceType = 'App' | 'Blueprint';
 export type AIWorkloadDeployStrategy = 'Helm' | 'FleetBundle' | 'GitOps';
 export type AIWorkloadPhase = 'Pending' | 'Running' | 'Degraded' | 'Failed';
@@ -28,6 +30,10 @@ export interface ComponentValueOverride {
   // Enabled controls whether this Blueprint component is deployed at all.
   // Defaults to true (omitted/undefined == enabled).
   enabled?:      boolean;
+  // Install-time Kustomize overlay, applied after the Blueprint component's own overlay.
+  kustomize?:    ComponentKustomize;
+  // Replaces the Blueprint component's dependsOn when set; [] means no dependencies.
+  dependsOn?:    string[];
 }
 
 export interface AIWorkloadSpec {
@@ -87,6 +93,16 @@ export interface AIWorkloadStatus {
   componentStatuses?:  AIWorkloadComponentStatus[];
   activeOperation?:    AIWorkloadOperation;
   customized?:         boolean;
+  resolvedValues?:     ResolvedValue[];
+  /** "<blueprint name>@<version>": the highest rollback-disabled version the operator started rendering; moves below it are refused. */
+  minimumSafeVersion?: string;
+}
+
+export interface ResolvedValue {
+  componentName: string;
+  path:          string;
+  value:         string;
+  source:        'auto' | 'user';
 }
 
 export interface AIWorkload {
@@ -97,9 +113,23 @@ export interface AIWorkload {
   status?:    AIWorkloadStatus;
 }
 
-/** Whether the operator can resolve each registry's credentials. */
-export interface RegistryStatus {
+export interface RegistryFlags {
   applicationCollection: boolean;
   suseRegistry:          boolean;
   nvidia:                boolean;
+}
+
+/**
+ * Top-level fields: whether the operator can resolve each registry's
+ * credentials. `usable`: whether the operator can serve the registry's charts
+ * (credentials resolve or an anonymous mirror is set); absent from older
+ * operators.
+ */
+export interface RegistryStatus extends RegistryFlags {
+  usable?: RegistryFlags;
+}
+
+/** What the calling user may do, as evaluated by the operator. */
+export interface Capabilities {
+  advancedCustomization: boolean;
 }

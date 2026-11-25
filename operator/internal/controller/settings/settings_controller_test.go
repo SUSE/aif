@@ -1211,6 +1211,53 @@ func TestSettingsController_AirGapPreservesAllNvidiaRepoAliases(t *testing.T) {
 	}
 }
 
+// Application Collection and SUSE Registry ClusterRepos point at their
+// registryEndpoints override when set, and at the public defaults otherwise.
+func TestSettingsController_RegistryEndpointsSetRepoURLs(t *testing.T) {
+	const ns = "aif-operator"
+	for _, tt := range []struct {
+		name         string
+		endpoints    *aiplatformv1alpha1.RegistryEndpointsSettings
+		wantAC, want string
+	}{
+		{"defaults", nil, credentials.DefaultApplicationCollectionURL, credentials.DefaultSUSERegistryURL},
+		{"mirrors", &aiplatformv1alpha1.RegistryEndpointsSettings{
+			ApplicationCollection: "oci://mirror.test/appco", SUSERegistry: "oci://mirror.test/suse",
+		}, "oci://mirror.test/appco", "oci://mirror.test/suse"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newScheme(t)
+			registerClusterRepoTypes(s)
+			cr := &aiplatformv1alpha1.Settings{
+				ObjectMeta: metav1.ObjectMeta{Name: credentials.SettingsName, Namespace: ns},
+				Spec:       aiplatformv1alpha1.SettingsSpec{RegistryEndpoints: tt.endpoints},
+			}
+			creds := func(name string) *corev1.Secret {
+				return &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+					Data:       map[string][]byte{"username": []byte("u"), "password": []byte("p")},
+				}
+			}
+			c := fake.NewClientBuilder().WithScheme(s).WithObjects(cr, creds("appco"), creds("suse-registry")).
+				WithStatusSubresource(&aiplatformv1alpha1.Settings{}).Build()
+			r := &settings.SettingsReconciler{Client: c, Scheme: s, OperatorNamespace: ns}
+			if _, err := r.Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: credentials.SettingsName, Namespace: ns},
+			}); err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+			for name, want := range map[string]string{
+				credentials.ClusterRepoApplicationCollection: tt.wantAC,
+				credentials.ClusterRepoSUSERegistry:          tt.want,
+			} {
+				if url, _, _ := unstructured.NestedString(getClusterRepo(t, c, name).Object, "spec", "url"); url != want {
+					t.Errorf("%s URL = %q, want %q", name, url, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSettingsController_AirGapUnauthenticatedMirrorCreated(t *testing.T) {
 	s := newScheme(t)
 	registerClusterRepoTypes(s)

@@ -46,7 +46,9 @@ describe('slugifyBlueprintName and blueprintCRName', () => {
 });
 
 describe('buildBlueprintSpec', () => {
-  const info = { displayName: 'Acme RAG', version: '1.0.1', description: '' };
+  const info = {
+    displayName: 'Acme RAG', version: '1.0.1', description: '', allowRollback: true,
+  };
   const components: BlueprintComponent[] = [{ chartRepo: 'suse-ai', chartName: 'ollama', chartVersion: '1.0.0' }];
 
   it('carries the icon and source from the prefill when editing', () => {
@@ -78,6 +80,25 @@ describe('buildBlueprintSpec', () => {
 
   it('maps an empty description to undefined', () => {
     expect(buildBlueprintSpec(info, components).description).toBeUndefined();
+  });
+
+  it('omits rollback when rollback is allowed', () => {
+    const prefill: BlueprintSpec = {
+      displayName: 'Acme RAG', version: '1.0.1', components, rollback: 'Allowed',
+    };
+
+    expect(JSON.parse(JSON.stringify(buildBlueprintSpec(info, components)))).not.toHaveProperty('rollback');
+    expect(JSON.parse(JSON.stringify(buildBlueprintSpec(info, components, prefill)))).not.toHaveProperty('rollback');
+  });
+
+  it('sets rollback Disabled when rollback is not allowed', () => {
+    expect(buildBlueprintSpec({ ...info, allowRollback: false }, components).rollback).toBe('Disabled');
+  });
+
+  it('passes component valuesFrom through', () => {
+    const withValuesFrom: BlueprintComponent[] = [{ ...components[0], valuesFrom: [{ secretKeyRef: { name: 'ollama-values' } }] }];
+
+    expect(buildBlueprintSpec(info, withValuesFrom).components[0].valuesFrom).toEqual([{ secretKeyRef: { name: 'ollama-values' } }]);
   });
 });
 

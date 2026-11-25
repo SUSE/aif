@@ -2,9 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   deepMergeValues, deepDiffValues, seedComponentValues, diffComponentValues,
   componentOverride, isComponentEnabled, seedComponentEnabled, diffComponentOverrides,
-  customizedComponentNames, resolveInitialFormState,
+  customizedComponentNames, resolveInitialFormState, deployOrder,
+  seedComponentDependsOn, staleDependsOn, seedComponentKustomize, effectiveComponents, removeComponentDependency,
+  lockedPaths, sentinelHint,
 } from '../blueprint-customize';
-import type { BlueprintComponent } from '../../types/blueprint-types';
+import type { BlueprintComponent, ComponentKustomize } from '../../types/blueprint-types';
+import type { AIWorkloadStatus } from '../../types/aiworkload-types';
 
 describe('deepMergeValues', () => {
   it('overrides scalar keys', () => {
@@ -379,5 +382,176 @@ describe('wizard multi-component workflows and navigation (bug fixes 1 and 2)', 
     expect(formState.enabled.comp3).toBe(false);
     customized = customizedComponentNames(defaults, formState.values, formState.enabled);
     expect(customized).toEqual(new Set(['comp1']));
+  });
+});
+
+describe('deployOrder', () => {
+  it('groups by dependency wave', () => {
+    const order = deployOrder([
+      { chartName: 'app', chartRepo: 'r', chartVersion: '1', dependsOn: ['db'] },
+      { chartName: 'db', chartRepo: 'r', chartVersion: '1' },
+    ] as any);
+    expect(order[0]).toContain('db');
+    expect(order[1]).toContain('app');
+  });
+});
+
+describe('install-time deploy order and overlay overrides', () => {
+  const comp = (chartName: string, dependsOn?: string[]): BlueprintComponent => ({
+    chartRepo: 'r', chartName, chartVersion: '1.0.0', ...(dependsOn ? { dependsOn } : {}),
+  });
+  const components = [comp('a'), comp('b', ['a']), comp('c', ['a'])];
+  const overlay: ComponentKustomize = { dir: 'overlay', files: { 'overlay/kustomization.yaml': 'patches: []' } };
+  const noValues = { a: {}, b: {}, c: {} };
+  const allEnabled = { a: true, b: true, c: true };
+
+  it('seeds dependsOn from an override, else the blueprint', () => {
+    expect(seedComponentDependsOn(components, [{ componentName: 'c', dependsOn: ['b'] }])).toEqual({ a: [], b: ['a'], c: ['b'] });
+  });
+
+  it('seeds an empty override as no dependencies', () => {
+    expect(seedComponentDependsOn(components, [{ componentName: 'b', dependsOn: [] }]).b).toEqual([]);
+  });
+
+  it('removes names the blueprint no longer has and reports them', () => {
+    const existing = [{ componentName: 'b', dependsOn: ['a', 'gone'] }];
+
+    expect(seedComponentDependsOn(components, existing).b).toEqual(['a']);
+    expect(staleDependsOn(components, existing)).toEqual({ b: ['gone'] });
+    expect(staleDependsOn(components, [])).toEqual({});
+  });
+
+  it('seeds install overlays only', () => {
+    expect(seedComponentKustomize(components, [{ componentName: 'a', kustomize: overlay }, { componentName: 'b', values: { x: 1 } }])).toEqual({ a: overlay });
+  });
+
+  it('ignores install overlays of components this blueprint version no longer has', () => {
+    const existing = [{ componentName: 'gone', kustomize: overlay }];
+    const state = resolveInitialFormState(components, existing);
+    const advanced = { blueprintDependsOn: state.dependsOn, editedDependsOn: state.dependsOn, editedKustomize: state.kustomize };
+
+    expect(seedComponentKustomize(components, existing)).toEqual({});
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([]);
+  });
+
+  it('applies dependsOn overrides for display', () => {
+    const eff = effectiveComponents(components, [{ componentName: 'c', dependsOn: [] }]);
+
+    expect(eff.find((c) => c.chartName === 'c')?.dependsOn).toEqual([]);
+    expect(eff.find((c) => c.chartName === 'b')?.dependsOn).toEqual(['a']);
+    expect(components[2].dependsOn).toEqual(['a']);
+  });
+
+  const blueprintDependsOn = { a: [], b: ['a'], c: ['a'] };
+
+  it('omits dependsOn equal to the blueprint as a set', () => {
+    const multi = { ...blueprintDependsOn, c: ['a', 'b'] };
+    const advanced = { blueprintDependsOn: multi, editedDependsOn: { ...multi, c: ['b', 'a'] }, editedKustomize: {} };
+
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([]);
+  });
+
+  it('emits an empty dependsOn when clearing the blueprint order', () => {
+    const advanced = { blueprintDependsOn, editedDependsOn: { ...blueprintDependsOn, b: [] }, editedKustomize: {} };
+
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([{ componentName: 'b', dependsOn: [] }]);
+  });
+
+  it('emits a kustomize-only entry without values', () => {
+    const advanced = { blueprintDependsOn, editedDependsOn: blueprintDependsOn, editedKustomize: { a: overlay } };
+
+    expect(diffComponentOverrides(noValues, noValues, allEnabled, allEnabled, advanced)).toEqual([{ componentName: 'a', kustomize: overlay }]);
+  });
+
+  it('flags order-only and overlay-only changes as customized, but not excluded components', () => {
+    const advanced = {
+      blueprintDependsOn, editedDependsOn: { ...blueprintDependsOn, b: [] }, editedKustomize: { a: overlay, c: overlay },
+    };
+    const got = customizedComponentNames(noValues, noValues, { ...allEnabled, c: false }, advanced);
+
+    expect([...got].sort()).toEqual(['a', 'b']);
+  });
+
+  it('seeds dependsOn and kustomize in the initial form state', () => {
+    const state = resolveInitialFormState(components, [{ componentName: 'a', kustomize: overlay }, { componentName: 'b', dependsOn: [] }]);
+
+    expect(state.dependsOn).toEqual({ a: [], b: [], c: ['a'] });
+    expect(state.kustomize).toEqual({ a: overlay });
+  });
+});
+
+describe('removeComponentDependency', () => {
+  const comp = (chartName: string, extra: Partial<BlueprintComponent> = {}): BlueprintComponent => ({
+    chartRepo: 'r', chartName, chartVersion: '1.0.0', ...extra,
+  });
+
+  it('removes the name from every dependsOn and drops an emptied field', () => {
+    const components = [
+      comp('b', { dependsOn: ['a'], values: { x: 1 } }),
+      comp('c', { dependsOn: ['a', 'b'], targetNamespace: 'ns' }),
+      comp('d'),
+    ];
+    const before = structuredClone(components);
+    const result = removeComponentDependency(components, 'a');
+
+    expect(result).toEqual([
+      comp('b', { values: { x: 1 } }),
+      comp('c', { dependsOn: ['b'], targetNamespace: 'ns' }),
+      comp('d'),
+    ]);
+    expect(result[0]).not.toHaveProperty('dependsOn');
+    expect(result[2]).toBe(components[2]);
+    expect(components).toEqual(before);
+  });
+
+  it('is a no-op for a name nobody depends on', () => {
+    const components = [comp('b', { dependsOn: ['c'] }), comp('c')];
+    const result = removeComponentDependency(components, 'a');
+
+    expect(result).toEqual(components);
+    result.forEach((c, i) => expect(c).toBe(components[i]));
+  });
+});
+
+describe('lockedPaths', () => {
+  it('groups pins by component', () => {
+    const status: AIWorkloadStatus = {
+      resolvedValues: [
+        { componentName: 'runai', path: 'global.domain', value: 'runai.10.0.0.12.sslip.io', source: 'auto' },
+        { componentName: 'runai', path: 'global.ingressClass', value: 'nginx', source: 'auto' },
+        { componentName: 'ollama', path: 'domain', value: 'ollama.10.0.0.12.sslip.io', source: 'user' },
+      ],
+    };
+    expect(lockedPaths(status)).toEqual({
+      runai: [
+        { path: 'global.domain', value: 'runai.10.0.0.12.sslip.io' },
+        { path: 'global.ingressClass', value: 'nginx' },
+      ],
+      ollama: [
+        { path: 'domain', value: 'ollama.10.0.0.12.sslip.io' },
+      ],
+    });
+  });
+
+  it('returns empty object when no resolved values', () => {
+    expect(lockedPaths({})).toEqual({});
+    expect(lockedPaths(undefined)).toEqual({});
+  });
+});
+
+describe('sentinelHint', () => {
+  it('returns the auto-domain hint key', () => {
+    expect(sentinelHint('aif:auto-domain:runai')).toBe('suseai.wizard.hints.autoDomainHint');
+  });
+
+  it('returns the auto-ingress-class hint key', () => {
+    expect(sentinelHint('aif:auto-ingress-class')).toBe('suseai.wizard.hints.autoIngressClassHint');
+  });
+
+  it('returns undefined for non-sentinel values', () => {
+    expect(sentinelHint('x')).toBeUndefined();
+    expect(sentinelHint('custom.example.com')).toBeUndefined();
+    expect(sentinelHint(123)).toBeUndefined();
+    expect(sentinelHint(null)).toBeUndefined();
   });
 });

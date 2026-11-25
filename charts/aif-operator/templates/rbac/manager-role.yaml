@@ -288,6 +288,40 @@ rules:
       - selfsubjectaccessreviews
     verbs:
       - create
+  # Automatic Blueprint values (aif:auto-domain, aif:auto-ingress-class):
+  # ingress IP and default IngressClass of the target cluster.
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - management.cattle.io
+    resources:
+      - nodes
+    verbs:
+      - list
+  - apiGroups:
+      - management.cattle.io
+    resources:
+      - clusters
+    verbs:
+      - get
+  - apiGroups:
+      - provisioning.cattle.io
+    resources:
+      - clusters
+    verbs:
+      - list
 
 ---
 

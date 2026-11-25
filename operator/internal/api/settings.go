@@ -210,13 +210,21 @@ const (
 	defaultNvidiaHost        = "nvcr.io"
 )
 
-// RegistryStatus reports, per registry, whether a usable credential pair is
-// configured. It deliberately carries booleans only: the API never returns
-// secret values.
-type RegistryStatus struct {
+// RegistryFlags carries one boolean per managed registry.
+type RegistryFlags struct {
 	ApplicationCollection bool `json:"applicationCollection"`
 	SUSERegistry          bool `json:"suseRegistry"`
 	Nvidia                bool `json:"nvidia"`
+}
+
+// RegistryStatus reports, per registry, whether a usable credential pair is
+// configured (top-level fields) and whether the operator can serve the
+// registry's charts at all (Usable): credentials resolve, or an anonymous
+// mirror is configured. It deliberately carries booleans only: the API never
+// returns secret values.
+type RegistryStatus struct {
+	RegistryFlags
+	Usable RegistryFlags `json:"usable"`
 }
 
 func (h *SettingsHandler) getRegistryStatus(w http.ResponseWriter, r *http.Request) {
@@ -239,40 +247,32 @@ func (h *SettingsHandler) getRegistryStatus(w http.ResponseWriter, r *http.Reque
 	// (EffectiveRefs), so credentials supplied via well-known secret names — not
 	// just spec refs — are reported as configured. This keeps the UI pre-flight
 	// in lockstep with what the operator will actually be able to create.
+	// The values are read only to check them and are discarded.
 	var status RegistryStatus
 	for _, reg := range []struct {
-		configured        *bool
-		userRef, tokenRef *aiplatformv1alpha1.SecretKeyRef
-		registry          credentials.Registry
+		configured, usable *bool
+		userRef, tokenRef  *aiplatformv1alpha1.SecretKeyRef
+		registry           credentials.Registry
 	}{
-		{&status.ApplicationCollection, s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef,
+		{&status.ApplicationCollection, &status.Usable.ApplicationCollection,
+			s.Spec.ApplicationCollection.UserSecretRef, s.Spec.ApplicationCollection.TokenSecretRef,
 			credentials.RegistryApplicationCollection},
-		{&status.SUSERegistry, s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef,
+		{&status.SUSERegistry, &status.Usable.SUSERegistry,
+			s.Spec.SUSERegistry.UserSecretRef, s.Spec.SUSERegistry.TokenSecretRef,
 			credentials.RegistrySUSERegistry},
-		{&status.Nvidia, s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, credentials.RegistryNvidia},
+		{&status.Nvidia, &status.Usable.Nvidia,
+			s.Spec.Nvidia.UserSecretRef, s.Spec.Nvidia.TokenSecretRef, credentials.RegistryNvidia},
 	} {
-		ok, err := h.registryConfigured(r.Context(), reg.userRef, reg.tokenRef, reg.registry)
+		userRef, tokenRef := credentials.EffectiveRefs(r.Context(), h.client, h.namespace, reg.userRef, reg.tokenRef, reg.registry)
+		_, _, ok, err := credentials.ReadPair(r.Context(), h.client, h.namespace, userRef, tokenRef)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		*reg.configured = ok
+		*reg.usable = ok || credentials.AnonymousMirror(&s.Spec, reg.registry, userRef, tokenRef)
 	}
 	writeJSON(w, http.StatusOK, &status)
-}
-
-// registryConfigured reports whether the effective refs for registry resolve
-// to a non-empty username/token pair. A missing Secret or key is "not
-// configured"; any other error reading a Secret is returned. The values are
-// read only to check them and are discarded.
-func (h *SettingsHandler) registryConfigured(
-	ctx context.Context,
-	explicitUser, explicitToken *aiplatformv1alpha1.SecretKeyRef,
-	registry credentials.Registry,
-) (bool, error) {
-	userRef, tokenRef := credentials.EffectiveRefs(ctx, h.client, h.namespace, explicitUser, explicitToken, registry)
-	_, _, ok, err := credentials.ReadPair(ctx, h.client, h.namespace, userRef, tokenRef)
-	return ok, err
 }
 
 // readSecretKey resolves ref in the operator namespace only. The
@@ -880,24 +880,22 @@ func (h *SettingsHandler) registryHost(target string, s *aiplatformv1alpha1.Sett
 	if overrideURL != "" {
 		return registryurl.Host(overrideURL)
 	}
+	var registry credentials.Registry
+	var defaultHost string
 	switch target {
 	case "applicationCollection":
-		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.ApplicationCollection != "" {
-			return registryurl.Host(s.Spec.RegistryEndpoints.ApplicationCollection)
-		}
-		return defaultAppCollectionHost
+		registry, defaultHost = credentials.RegistryApplicationCollection, defaultAppCollectionHost
 	case "suseRegistry":
-		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.SUSERegistry != "" {
-			return registryurl.Host(s.Spec.RegistryEndpoints.SUSERegistry)
-		}
-		return defaultSUSERegistryHost
+		registry, defaultHost = credentials.RegistrySUSERegistry, defaultSUSERegistryHost
 	case "nvidia":
-		if s.Spec.RegistryEndpoints != nil && s.Spec.RegistryEndpoints.Nvidia != "" {
-			return registryurl.Host(s.Spec.RegistryEndpoints.Nvidia)
-		}
-		return defaultNvidiaHost
+		registry, defaultHost = credentials.RegistryNvidia, defaultNvidiaHost
+	default:
+		return ""
 	}
-	return ""
+	if mirror := credentials.MirrorURL(&s.Spec, registry); mirror != "" {
+		return registryurl.Host(mirror)
+	}
+	return defaultHost
 }
 
 // Compile-time guard: SettingsHandler satisfies Handler.

@@ -656,7 +656,8 @@ func TestGetRegistryStatus_NoSettings(t *testing.T) {
 
 	w, _ := getRegistryStatus(t, h)
 
-	const want = `{"applicationCollection":false,"suseRegistry":false,"nvidia":false}`
+	const want = `{"applicationCollection":false,"suseRegistry":false,"nvidia":false,` +
+		`"usable":{"applicationCollection":false,"suseRegistry":false,"nvidia":false}}`
 	if got := strings.TrimSpace(w.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
@@ -754,6 +755,110 @@ func TestGetRegistryStatus_PartialPair(t *testing.T) {
 
 	if body.SUSERegistry {
 		t.Errorf("expected suseRegistry not configured when token secret is missing, got %+v", body)
+	}
+}
+
+// usable mirrors the Settings controller: credentials resolve, or (NVIDIA
+// only) a mirror endpoint is set with no credential refs. configured keeps
+// meaning "credentials resolve" for the pull-secret consumers.
+func TestGetRegistryStatus_Usable(t *testing.T) {
+	const ns = "aif-operator"
+	nvUser := &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-user", Key: "username"}
+	nvToken := &aiplatformv1alpha1.SecretKeyRef{Name: "ngc-token", Key: "token"}
+	creds := []client.Object{
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ngc-user", Namespace: ns},
+			Data: map[string][]byte{"username": []byte("$oauthtoken")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ngc-token", Namespace: ns},
+			Data: map[string][]byte{"token": []byte("nvapi-secret")}},
+	}
+	mirrors := &aiplatformv1alpha1.RegistryEndpointsSettings{
+		ApplicationCollection: "oci://mirror.example.com/ac",
+		SUSERegistry:          "oci://mirror.example.com/sr",
+		Nvidia:                "oci://mirror.example.com/nvidia",
+	}
+
+	tests := []struct {
+		name           string
+		endpoints      *aiplatformv1alpha1.RegistryEndpointsSettings
+		refs           bool
+		secrets        []client.Object
+		wantConfigured bool
+		wantUsable     bool
+	}{
+		{"credentials only", nil, true, creds, true, true},
+		{"anonymous mirror", mirrors, false, nil, false, true},
+		{"mirror with credentials", mirrors, true, creds, true, true},
+		{"mirror with unreadable refs", mirrors, true, nil, false, false},
+		{"neither", nil, false, nil, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cr := &aiplatformv1alpha1.Settings{
+				ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns},
+				Spec:       aiplatformv1alpha1.SettingsSpec{RegistryEndpoints: tt.endpoints},
+			}
+			if tt.refs {
+				cr.Spec.Nvidia.UserSecretRef, cr.Spec.Nvidia.TokenSecretRef = nvUser, nvToken
+			}
+			h := newSettingsHandler(newSettingsFakeClient(t, append([]client.Object{cr}, tt.secrets...)...), ns)
+
+			_, body := getRegistryStatus(t, h)
+
+			if body.Nvidia != tt.wantConfigured || body.Usable.Nvidia != tt.wantUsable {
+				t.Errorf("nvidia configured=%v usable=%v, want %v/%v", body.Nvidia, body.Usable.Nvidia, tt.wantConfigured, tt.wantUsable)
+			}
+			// Application Collection and SUSE Registry mirrors still need credentials.
+			if body.ApplicationCollection || body.SUSERegistry || body.Usable.ApplicationCollection || body.Usable.SUSERegistry {
+				t.Errorf("status = %+v, want application collection and SUSE registry unusable", body)
+			}
+		})
+	}
+}
+
+// Application Collection credentials make that registry usable too.
+func TestGetRegistryStatus_UsableFollowsCredentials(t *testing.T) {
+	const ns = "aif-operator"
+	acSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "appco", Namespace: ns},
+		Data:       map[string][]byte{"username": []byte("u"), "password": []byte("p")},
+	}
+	cr := &aiplatformv1alpha1.Settings{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: ns}}
+	h := newSettingsHandler(newSettingsFakeClient(t, cr, acSecret), ns)
+
+	_, body := getRegistryStatus(t, h)
+
+	if !body.Usable.ApplicationCollection || body.Usable.SUSERegistry || body.Usable.Nvidia {
+		t.Errorf("usable = %+v, want only applicationCollection", body.Usable)
+	}
+}
+
+func TestRegistryHost(t *testing.T) {
+	h := &SettingsHandler{}
+	mirrored := &aiplatformv1alpha1.Settings{Spec: aiplatformv1alpha1.SettingsSpec{
+		RegistryEndpoints: &aiplatformv1alpha1.RegistryEndpointsSettings{
+			ApplicationCollection: "oci://ac.mirror.test/charts",
+			SUSERegistry:          "oci://sr.mirror.test/charts",
+			Nvidia:                "oci://nv.mirror.test/nvidia",
+		},
+	}}
+	tests := []struct {
+		target, override string
+		s                *aiplatformv1alpha1.Settings
+		want             string
+	}{
+		{"applicationCollection", "", &aiplatformv1alpha1.Settings{}, defaultAppCollectionHost},
+		{"suseRegistry", "", &aiplatformv1alpha1.Settings{}, defaultSUSERegistryHost},
+		{"nvidia", "", &aiplatformv1alpha1.Settings{}, defaultNvidiaHost},
+		{"applicationCollection", "", mirrored, "ac.mirror.test"},
+		{"suseRegistry", "", mirrored, "sr.mirror.test"},
+		{"nvidia", "", mirrored, "nv.mirror.test"},
+		{"nvidia", "oci://override.test/x", mirrored, "override.test"},
+		{"unknown", "", mirrored, ""},
+	}
+	for _, tt := range tests {
+		if got := h.registryHost(tt.target, tt.s, tt.override); got != tt.want {
+			t.Errorf("registryHost(%q, override %q) = %q, want %q", tt.target, tt.override, got, tt.want)
+		}
 	}
 }
 

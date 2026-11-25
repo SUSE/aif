@@ -20,11 +20,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	aiplatformv1alpha1 "github.com/SUSE/aif-operator/api/v1alpha1"
+	infrahelm "github.com/SUSE/aif-operator/internal/infra/helm"
+	"github.com/SUSE/aif-operator/internal/naming"
 	corev1 "k8s.io/api/core/v1"
+	apixv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -1136,5 +1141,146 @@ func TestAppPullSecrets_GatedTeamRepoWiresHelmAuth(t *testing.T) {
 	}
 	if string(synced.Data["password"]) != "nvapi-chart-token" {
 		t.Errorf("synced password = %q, want %q", string(synced.Data["password"]), "nvapi-chart-token")
+	}
+}
+
+// A pull secret the Blueprint or the user chose, such as a private registry's,
+// is kept: the combined secret holds every configured registry credential and
+// some charts, like the Run:ai control plane, hand the first entry to other
+// clusters. An empty list is the placeholder the injector fills.
+func TestSuseInjector_KeepsChosenPullSecrets(t *testing.T) {
+	chosen := func() []any { return []any{map[string]any{"name": "my-private-reg"}} }
+	combined := []any{map[string]any{"name": combinedPullSecretName}}
+	tests := []struct {
+		name       string
+		vals       map[string]any
+		wantTop    []any
+		wantGlobal []any
+	}{
+		{"no value: filled", map[string]any{}, combined, combined},
+		{"empty placeholders: filled", map[string]any{
+			"imagePullSecrets": []any{}, "global": map[string]any{"imagePullSecrets": []any{}},
+		}, combined, combined},
+		{"chosen global: kept", map[string]any{
+			"global": map[string]any{"imagePullSecrets": chosen()},
+		}, combined, chosen()},
+		{"chosen top-level: kept", map[string]any{"imagePullSecrets": chosen()}, chosen(), combined},
+		{"chosen both: kept", map[string]any{
+			"imagePullSecrets": chosen(), "global": map[string]any{"imagePullSecrets": chosen()},
+		}, chosen(), chosen()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := gitRepoTestScheme()
+			cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(appCollectionCredObjects()...).Build()
+			r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, OperatorNamespace: "aif-operator"}
+
+			names, err := (&suseInjector{r: r}).Apply(context.Background(), r.localCC(), "runai-backend", clusterRepoInfo{}, tc.vals, true)
+			if err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if len(names) != 1 || names[0] != combinedPullSecretName {
+				t.Fatalf("delivered %v, want the combined secret even when values keep another", names)
+			}
+			if got := tc.vals["imagePullSecrets"]; !equalPullSecretLists(got, tc.wantTop) {
+				t.Errorf("imagePullSecrets = %#v, want %#v", got, tc.wantTop)
+			}
+			global, _ := tc.vals["global"].(map[string]any)
+			if got := global["imagePullSecrets"]; !equalPullSecretLists(got, tc.wantGlobal) {
+				t.Errorf("global.imagePullSecrets = %#v, want %#v", got, tc.wantGlobal)
+			}
+		})
+	}
+}
+
+func equalPullSecretLists(got any, want []any) bool {
+	list, ok := got.([]any)
+	if !ok || len(list) != len(want) {
+		return false
+	}
+	for i := range want {
+		if list[i].(map[string]any)["name"] != want[i].(map[string]any)["name"] {
+			return false
+		}
+	}
+	return true
+}
+
+// renderPullSecrets reconciles a one-component Blueprint whose values set
+// global.imagePullSecrets to bpList (nil leaves it unset), with the workload
+// override overrideJSON, and returns the rendered global.imagePullSecrets and
+// whether the key is present. overlay renders the component as an embedded
+// Bundle (the Run:ai OSS control plane's path) instead of a HelmOp.
+func renderPullSecrets(t *testing.T, bpList []any, overrideJSON string, overlay bool) (any, bool) {
+	t.Helper()
+	scheme := clusterRepoErrorScheme(t)
+	w := newBlueprintWorkload(time.Now())
+	w.Spec.Source.Blueprint = &aiplatformv1alpha1.BlueprintSource{Name: "ps", Version: "1.0.0"}
+	comp := aiplatformv1alpha1.BlueprintComponent{ChartRepo: "application-collection", ChartName: "comp", ChartVersion: "1.0.0", Vendor: "suse"}
+	if bpList != nil {
+		raw, _ := json.Marshal(map[string]any{"global": map[string]any{"imagePullSecrets": bpList}})
+		comp.Values = &apixv1.JSON{Raw: raw}
+	}
+	if overlay {
+		comp.Kustomize = inlineOverlay("overlay", emptyPatches)
+	}
+	if overrideJSON != "" {
+		w.Spec.ComponentValues = []aiplatformv1alpha1.ComponentValueOverride{{ComponentName: "comp", Values: &apixv1.JSON{Raw: []byte(overrideJSON)}}}
+	}
+	bp := &aiplatformv1alpha1.Blueprint{ObjectMeta: metav1.ObjectMeta{Name: naming.BlueprintCRName("ps", "1.0.0")}}
+	bp.Spec.Components = []aiplatformv1alpha1.BlueprintComponent{comp}
+	repo := repoObj("application-collection", map[string]any{"url": "https://charts.example.com"})
+	tgz := compChartTgz(t)
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(appCollectionCredObjects(), w, bp, repo)...).Build()
+	r := &AIWorkloadReconciler{Client: cl, Scheme: scheme, OperatorNamespace: "aif-operator",
+		ChartPuller: func(context.Context, infrahelm.ChartArchiveRequest) ([]byte, error) { return tgz, nil }}
+	if _, _, err := r.reconcileBlueprintStatus(context.Background(), w); err != nil {
+		t.Fatalf("reconcileBlueprintStatus: %v", err)
+	}
+	kind := "HelmOp"
+	if overlay {
+		kind = "Bundle"
+	}
+	obj, ok := fleetObject(t, cl, kind, blueprintBundleName(w.Name, "comp"))
+	if !ok {
+		t.Fatalf("no %s rendered", kind)
+	}
+	v, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "spec", "helm", "values", "global", "imagePullSecrets")
+	return v, found
+}
+
+// An empty list or null the user sets in the workload's override means no pull
+// secret there, and is kept through the real merge and injection path. The Run:ai
+// OSS control plane hands the first global.imagePullSecrets entry to the cluster,
+// so filling it would hand out every configured registry credential. An empty list
+// the Blueprint declares is a placeholder and is still filled.
+func TestRender_KeepsPullSecretsTheUserCleared(t *testing.T) {
+	anonymous := []any{map[string]any{"name": "runai-anonymous-pull"}}
+	combined := []any{map[string]any{"name": combinedPullSecretName}}
+	for _, overlay := range []bool{true, false} {
+		path := map[bool]string{true: "embedded Bundle", false: "HelmOp"}[overlay]
+		for _, tc := range []struct {
+			name     string
+			bpList   []any
+			override string
+			want     any
+		}{
+			{"Blueprint default kept", anonymous, "", anonymous},
+			{"user empty list kept", anonymous, `{"global":{"imagePullSecrets":[]}}`, []any{}},
+			{"user null kept", anonymous, `{"global":{"imagePullSecrets":null}}`, nil},
+			{"user secret kept", anonymous, `{"global":{"imagePullSecrets":[{"name":"private-registry"}]}}`, []any{map[string]any{"name": "private-registry"}}},
+			{"Blueprint placeholder filled", []any{}, "", combined},
+			{"unrelated override still fills the placeholder", []any{}, `{"global":{"domain":"x"}}`, combined},
+		} {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				got, found := renderPullSecrets(t, tc.bpList, tc.override, overlay)
+				if !found {
+					t.Fatalf("global.imagePullSecrets missing from the rendered values")
+				}
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("global.imagePullSecrets = %#v, want %#v", got, tc.want)
+				}
+			})
+		}
 	}
 }

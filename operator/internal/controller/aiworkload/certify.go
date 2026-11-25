@@ -40,6 +40,78 @@ func bundleCertified(b *unstructured.Unstructured, expectedDigest string, expect
 	return desired == int64(expectedClusters) && ready == desired
 }
 
+// bundleDeploymentsApplied reports whether exactly expectedClusters live
+// BundleDeployments belong to the render at expectedDigest, have promoted
+// (staged == deploymentID) and applied their current deployment, and report
+// Ready, or Modified when allowModified. The Bundle summary alone is not enough:
+// Fleet's first status write after a spec change carries the new
+// observedGeneration with a summary of the old deployments. Nor are the IDs: a
+// BundleDeployment Fleet has not yet updated agrees with itself just as well, so
+// it must also carry the render digest label Fleet copies from the Bundle.
+func bundleDeploymentsApplied(bds []unstructured.Unstructured, expectedDigest string, expectedClusters int, allowModified bool) bool {
+	wantDigest := renderDigestLabelValue(expectedDigest)
+	n := 0
+	for i := range bds {
+		if bds[i].GetDeletionTimestamp() != nil {
+			continue
+		}
+		if bds[i].GetLabels()[renderDigestLabel] != wantDigest {
+			return false
+		}
+		staged, _, _ := unstructured.NestedString(bds[i].Object, "spec", "stagedDeploymentID")
+		switch appliedDeploymentState(&bds[i]) {
+		case "Ready":
+		case "Modified":
+			if !allowModified {
+				return false
+			}
+		default:
+			return false
+		}
+		want, _, _ := unstructured.NestedString(bds[i].Object, "spec", "deploymentID")
+		if staged != want {
+			return false
+		}
+		n++
+	}
+	return n == expectedClusters
+}
+
+// appliedDeploymentState returns the BundleDeployment's display state when it
+// has applied its current deploymentID, else "".
+func appliedDeploymentState(bd *unstructured.Unstructured) string {
+	desired, _, _ := unstructured.NestedString(bd.Object, "spec", "deploymentID")
+	applied, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
+	if applied == "" || applied != desired {
+		return ""
+	}
+	state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
+	return state
+}
+
+// bundleRolledOut reports whether k's Bundle is certified at digest (settled
+// with Modified counted when allowModified) and its BundleDeployments confirm
+// it. They are listed only once the Bundle passes; unstructured reads bypass
+// the manager cache.
+func (r *AIWorkloadReconciler) bundleRolledOut(ctx context.Context, k HelmOpKey, digest string, allowModified bool) (bool, error) {
+	b, err := r.getBundle(ctx, k.Namespace, k.Name)
+	if err != nil {
+		return false, err
+	}
+	ok := bundleCertified(b, digest, k.ExpectedClusters)
+	if allowModified {
+		ok = dependencySettled(b, digest, k.ExpectedClusters)
+	}
+	if !ok {
+		return false, nil
+	}
+	bds, err := r.listBundleDeployments(ctx, k.Namespace, k.Name)
+	if err != nil {
+		return false, err
+	}
+	return bundleDeploymentsApplied(bds, digest, k.ExpectedClusters, allowModified), nil
+}
+
 // matrixCellPhase computes one (component, cluster) cell, render-gated: only a render-current
 // parent Bundle whose BundleDeployment applied the current deploymentID yields a terminal
 // Running/Failed; otherwise Pending (prevents stale ErrApplied from failing a new render).
@@ -47,13 +119,7 @@ func matrixCellPhase(bd *unstructured.Unstructured, parentRenderCurrent bool) ai
 	if bd == nil || !parentRenderCurrent {
 		return aiplatformv1alpha1.AIWorkloadClusterPhasePending
 	}
-	desired, _, _ := unstructured.NestedString(bd.Object, "spec", "deploymentID")
-	applied, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
-	if applied == "" || applied != desired {
-		return aiplatformv1alpha1.AIWorkloadClusterPhasePending
-	}
-	state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
-	switch state {
+	switch appliedDeploymentState(bd) {
 	case "Ready", "Modified":
 		return aiplatformv1alpha1.AIWorkloadClusterPhaseRunning
 	case "ErrApplied":
@@ -61,6 +127,35 @@ func matrixCellPhase(bd *unstructured.Unstructured, parentRenderCurrent bool) ai
 	default:
 		return aiplatformv1alpha1.AIWorkloadClusterPhasePending
 	}
+}
+
+// pendingFailureMessage is why a Pending cell has not rolled out, when Fleet
+// reports that applying its current deployment failed: the BundleDeployment was
+// promoted to the current render's deployment but still runs the previous one,
+// so the cell stays Pending (a failure Fleet has not yet reported for this
+// deployment must not fail it) and the message only explains the wait. It is
+// Fleet's Deployed condition message, else its display message; "" otherwise.
+func pendingFailureMessage(bd *unstructured.Unstructured, parentRenderCurrent bool) string {
+	if bd == nil || !parentRenderCurrent {
+		return ""
+	}
+	desired, _, _ := unstructured.NestedString(bd.Object, "spec", "deploymentID")
+	staged, _, _ := unstructured.NestedString(bd.Object, "spec", "stagedDeploymentID")
+	applied, _, _ := unstructured.NestedString(bd.Object, "status", "appliedDeploymentID")
+	state, _, _ := unstructured.NestedString(bd.Object, "status", "display", "state")
+	if desired == "" || staged != desired || applied == desired || state != "ErrApplied" {
+		return ""
+	}
+	conds, _, _ := unstructured.NestedSlice(bd.Object, "status", "conditions")
+	for _, c := range conds {
+		if m, ok := c.(map[string]any); ok && m["type"] == "Deployed" && m["status"] == "False" {
+			if msg, _ := m["message"].(string); msg != "" {
+				return msg
+			}
+		}
+	}
+	msg, _, _ := unstructured.NestedString(bd.Object, "status", "display", "message")
+	return msg
 }
 
 // getBundle fetches a Fleet Bundle, returning (nil, nil) when it does not exist.
@@ -78,7 +173,8 @@ func (r *AIWorkloadReconciler) getBundle(ctx context.Context, namespace, name st
 
 // certifyDeployedSource sets w.Status.DeployedSource to the current spec version when EVERY
 // desired HelmOp Bundle is certified against its expected per-HelmOp digest. Idempotent: an
-// unchanged {version, aggregateDigest} leaves CertifiedAt untouched. Empty keys never certify.
+// unchanged {version, aggregateDigest} leaves CertifiedAt untouched, unless an in-flight
+// Upgrade/Rollback awaits certification since its request. Empty keys never certify.
 func (r *AIWorkloadReconciler) certifyDeployedSource(
 	ctx context.Context,
 	w *aiplatformv1alpha1.AIWorkload,
@@ -90,15 +186,7 @@ func (r *AIWorkloadReconciler) certifyDeployedSource(
 	}
 	entries := make([]AggregateEntry, 0, len(keys))
 	for _, k := range keys {
-		digest := expectedDigests[k.Namespace+"/"+k.Name]
-		b, err := r.getBundle(ctx, k.Namespace, k.Name)
-		if err != nil {
-			return err
-		}
-		if !bundleCertified(b, digest, k.ExpectedClusters) {
-			return nil // not (yet) certified; leave deployedSource untouched
-		}
-		entries = append(entries, AggregateEntry{Namespace: k.Namespace, Name: k.Name, Digest: digest})
+		entries = append(entries, AggregateEntry{Namespace: k.Namespace, Name: k.Name, Digest: expectedDigests[k.Namespace+"/"+k.Name]})
 	}
 	agg := aggregateRenderDigest(entries)
 	version := ""
@@ -107,8 +195,15 @@ func (r *AIWorkloadReconciler) certifyDeployedSource(
 	}
 	if w.Status.DeployedSource != nil &&
 		w.Status.DeployedSource.Version == version &&
-		w.Status.DeployedSource.RenderDigest == agg {
+		w.Status.DeployedSource.RenderDigest == agg &&
+		!versionOpAwaitingCertification(w) {
 		return nil // unchanged — no churn
+	}
+	for i, k := range keys {
+		ok, err := r.bundleRolledOut(ctx, k, entries[i].Digest, false)
+		if err != nil || !ok {
+			return err // not (yet) certified; leave deployedSource untouched
+		}
 	}
 	w.Status.DeployedSource = &aiplatformv1alpha1.DeployedSourceSnapshot{
 		Version:      version,
@@ -133,6 +228,23 @@ func acceptedConditionFingerprint(ho *unstructured.Unstructured) string {
 		}
 		b, _ := json.Marshal([]any{m["status"], m["reason"], m["message"], m["lastUpdateTime"]})
 		return sha256Hex(b)
+	}
+	return ""
+}
+
+// acceptedConditionMessage is the message of the HelmOp's Accepted condition,
+// prefixed with its reason when both are set.
+func acceptedConditionMessage(ho *unstructured.Unstructured) string {
+	conds, _, _ := unstructured.NestedSlice(ho.Object, "status", "conditions")
+	for _, c := range conds {
+		if m, ok := c.(map[string]any); ok && m["type"] == "Accepted" {
+			reason, _ := m["reason"].(string)
+			msg, _ := m["message"].(string)
+			if reason != "" && msg != "" {
+				return reason + ": " + msg
+			}
+			return reason + msg
+		}
 	}
 	return ""
 }
@@ -187,4 +299,22 @@ func upsertRenderBaseline(baselines []aiplatformv1alpha1.RenderBaseline, entry a
 		}
 	}
 	return append(baselines, entry)
+}
+
+// certifiedSince reports whether ds was certified at or after t.
+func certifiedSince(ds *aiplatformv1alpha1.DeployedSourceSnapshot, t metav1.Time) bool {
+	return ds != nil && !ds.CertifiedAt.Before(&t)
+}
+
+// versionOpAwaitingCertification reports whether an in-flight Upgrade/Rollback has not been
+// certified since it was requested.
+func versionOpAwaitingCertification(w *aiplatformv1alpha1.AIWorkload) bool {
+	op, ok := readJournal(w)
+	if !ok || op.State != aiplatformv1alpha1.OperationStateInProgress {
+		return false
+	}
+	if op.Type != aiplatformv1alpha1.OperationTypeUpgrade && op.Type != aiplatformv1alpha1.OperationTypeRollback {
+		return false
+	}
+	return !certifiedSince(w.Status.DeployedSource, op.RequestedAt)
 }

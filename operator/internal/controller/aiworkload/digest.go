@@ -63,14 +63,37 @@ func intentDigest(spec aiplatformv1alpha1.AIWorkloadSpec) string {
 // ComponentRenderInputs is the exact desired, operator-owned HelmOp render for one component.
 // It intentionally OMITS volatile fields (forceSyncGeneration) and the digest label itself.
 type ComponentRenderInputs struct {
-	ChartRepo    string         `json:"chartRepo"`
-	ChartName    string         `json:"chartName"`
-	ChartVersion string         `json:"chartVersion"`
-	Namespace    string         `json:"namespace"`
-	Vendor       string         `json:"vendor"`
+	ChartRepo    string `json:"chartRepo"`
+	ChartName    string `json:"chartName"`
+	ChartVersion string `json:"chartVersion"`
+	// ReleaseName is the effective Helm release name when the component overrides
+	// it (see digestReleaseName); omitted otherwise so existing components keep
+	// their digest. The default is derived from ChartName, which is hashed.
+	ReleaseName string `json:"releaseName,omitempty"`
+	Namespace   string `json:"namespace"`
+	Vendor      string `json:"vendor"`
+	// ExtraVendors is the sorted AdditionalPullSecretVendors; omitted when empty
+	// so existing components keep their digest.
+	ExtraVendors []string       `json:"additionalPullSecretVendors,omitempty"`
 	RepoURL      string         `json:"repoURL"`
 	Targets      []string       `json:"targets"`
 	Values       map[string]any `json:"values"`
+	// DependsOn is the rendered Fleet spec.dependsOn (see resolveDependsOn).
+	DependsOn  []any `json:"dependsOn,omitempty"`
+	ValuesFrom []any `json:"valuesFrom,omitempty"`
+}
+
+// extraVendorStrings returns the sorted vendor names, nil when there are none.
+func extraVendorStrings(in []aiplatformv1alpha1.ComponentVendor) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = string(v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // perHelmOpRenderDigest hashes the canonical form of one component's desired HelmOp render.

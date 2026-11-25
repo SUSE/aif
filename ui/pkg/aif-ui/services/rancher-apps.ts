@@ -45,7 +45,7 @@ import { getClusterContext } from '../utils/cluster-operations';
 import { filterAndSortVersions } from '../utils/chart-version';
 import { TIMEOUT_VALUES } from '../utils/constants';
 import { LEGACY_SUSE_PULL_SECRET_PREFIX } from '../utils/pull-secrets';
-import { isRepoReady, MANAGED_REPO_LABEL, repoNotReadyMessage } from './app-collection';
+import { CUSTOM_REPO_LABEL, isRepoReady, MANAGED_REPO_LABEL, repoNotReadyMessage } from './app-collection';
 import { repositoryFailureMessage } from './repository-health';
 
 /* ============================== logging helpers - CLEANED UP ============================== */
@@ -799,6 +799,17 @@ export async function listClusterRepos($store: Dispatchable): Promise<ClusterRes
     timeout: TIMEOUT_VALUES.READ
   });
     return res?.data?.items || res?.data || res?.items || [];
+}
+
+// listGitClusterRepoNames returns the Git-type custom repos from AI Factory
+// Settings with an HTTPS URL: the only sources the operator accepts for a
+// Kustomize overlay. The Fleet agent applies overlay content with its own
+// privileges, so plain HTTP (tamperable in transit) and SSH repos are left out.
+export async function listGitClusterRepoNames($store: Dispatchable): Promise<string[]> {
+  return (await listClusterRepos($store))
+    .filter((r) => /^https:\/\//i.test(r?.spec?.gitRepo || '') && r?.metadata?.labels?.[CUSTOM_REPO_LABEL] === 'true')
+    .map((r) => r?.metadata?.name)
+    .filter((n): n is string => !!n);
 }
 
 export async function inferClusterRepoForChart(
