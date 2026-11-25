@@ -154,7 +154,8 @@ class BuildTest(unittest.TestCase):
             overlay = os.path.join(src, "overlays", "control-plane")
             shutil.rmtree(overlay)
             for variant in ("nvaie", "oss"):
-                drop_variable(os.path.join(src, "variants", variant + ".yaml"), "registrarEnv")
+                for key in ("registrarEnv", "controlPlanePullSecretGenerator"):
+                    drop_variable(os.path.join(src, "variants", variant + ".yaml"), key)
             for rel, text in samples.items():
                 os.makedirs(os.path.dirname(os.path.join(overlay, rel)), exist_ok=True)
                 with open(os.path.join(overlay, rel), "w") as f:
@@ -201,6 +202,8 @@ class OutputTest(unittest.TestCase):
         cp = component(load_output(), "control-plane")
         self.assertEqual(cp["values"]["global"]["imagePullSecrets"], [{"name": "ngc-secret"}])
         self.assertNotIn("clusterService", cp["values"])
+        kz = yq_docs(cp["kustomize"]["files"]["overlay/kustomization.yaml"])[0]
+        self.assertNotIn("secretGenerator", kz)
 
     def test_order(self):
         expected = {p: [] for p in PREREQS}
@@ -348,11 +351,20 @@ class NonBundledTest(unittest.TestCase):
         self.assertNotIn("ngc-secret", self.text)
 
     def test_control_plane_does_not_hand_out_the_pull_secret(self):
-        # The operator fills global.imagePullSecrets with suse-ai-pull-combined (every
-        # configured registry credential); the control plane would forward its first entry.
-        cp = component(self.doc, "control-plane")["values"]
-        self.assertIs(cp["clusterService"]["config"]["imagePullSecret"]["enabled"], False)
-        self.assertNotIn("imagePullSecrets", cp["global"])
+        # The operator fills an empty global.imagePullSecrets with suse-ai-pull-combined
+        # (every configured registry credential); the control plane would forward its
+        # first entry. The hand-out is off, and the list starts with an empty credential,
+        # so turning the hand-out on without setting a secret still forwards none.
+        cp = component(self.doc, "control-plane")
+        self.assertIs(cp["values"]["clusterService"]["config"]["imagePullSecret"]["enabled"], False)
+        self.assertEqual(cp["values"]["global"]["imagePullSecrets"], [{"name": "runai-anonymous-pull"}])
+        kz = yq_docs(cp["kustomize"]["files"]["overlay/kustomization.yaml"])[0]
+        self.assertEqual(kz["secretGenerator"], [{
+            "name": "runai-anonymous-pull", "namespace": "runai-backend",
+            "type": "kubernetes.io/dockerconfigjson",
+            "literals": ['.dockerconfigjson={"auths":{}}'],
+            "options": {"disableNameSuffixHash": True},
+        }])
 
     def test_no_run_ai_2_26_specifics(self):
         description = self.doc["spec"]["description"]

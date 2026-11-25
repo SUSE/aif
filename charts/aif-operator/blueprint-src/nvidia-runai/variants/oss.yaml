@@ -24,12 +24,11 @@ summary: |
   Connected.
 imagesNote: |
   - Run:ai images are public (nvcr.io/nvidia/runai-oss). To use a private registry, set
-    its pull secret on control-plane as global.imagePullSecrets and keycloakx.imagePullSecrets,
-    and set clusterService.config.imagePullSecret.enabled to true so the control plane
-    hands the first global.imagePullSecrets entry to the cluster as its registry
-    credential (it is off by default, so the Application Collection credential in
-    suse-ai-pull-combined is never handed out). On runai-cluster, set
-    global.additionalImagePullSecrets, which replaces the default list
+    its pull secret on control-plane as global.imagePullSecrets (in place of
+    runai-anonymous-pull, an empty credential) and keycloakx.imagePullSecrets, and set
+    clusterService.config.imagePullSecret.enabled to true so the control plane hands the
+    first global.imagePullSecrets entry to the cluster as its registry credential. On
+    runai-cluster, set global.additionalImagePullSecrets, which replaces the default list
     (suse-ai-pull-combined, the Application Collection credential for the Prometheus
     config reloader image), so keep suse-ai-pull-combined unless that image is mirrored too.
 registrarEnv: ""
@@ -39,14 +38,29 @@ gpuOperatorComment: |
 gpuOperatorLead: |
   GPU Operator: v26.3.3. Following SUSE's RKE2 docs for
 control-plane.values: |
-  # The operator puts suse-ai-pull-combined, which holds every configured registry
-  # credential, in global.imagePullSecrets unless a secret is set there. The control
-  # plane would hand its first entry to the Run:ai cluster, and the public Run:ai
-  # images need no credential, so it hands out none.
+  global:
+    # The control plane hands the first entry to the Run:ai cluster as its registry
+    # credential. The operator fills an empty list with suse-ai-pull-combined, which
+    # holds every configured registry credential, so the list starts with
+    # runai-anonymous-pull, an empty credential the overlay creates: enabling the
+    # hand-out without setting a secret then hands out no credential.
+    imagePullSecrets:
+      - name: runai-anonymous-pull
+  # The public Run:ai images need no credential, so the hand-out is off.
   clusterService:
     config:
       imagePullSecret:
         enabled: false
+controlPlanePullSecretGenerator: |
+  # runai-anonymous-pull: an empty registry credential (see control-plane.values).
+  secretGenerator:
+    - name: runai-anonymous-pull
+      namespace: runai-backend
+      type: kubernetes.io/dockerconfigjson
+      literals:
+        - .dockerconfigjson={"auths":{}}
+      options:
+        disableNameSuffixHash: true
 runai-cluster.fields: |
   # The Prometheus Operator injects its Application Collection config-reloader image
   # into the runai Prometheus pod; this delivers suse-ai-pull-combined to the runai

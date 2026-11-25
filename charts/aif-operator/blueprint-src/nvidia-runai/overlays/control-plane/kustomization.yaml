@@ -7,3 +7,4 @@ configMapGenerator:
     namespace: runai-backend
     files:
       - registrar.py
+{{controlPlanePullSecretGenerator}}

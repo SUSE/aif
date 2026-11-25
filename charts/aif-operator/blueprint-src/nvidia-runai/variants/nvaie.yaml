@@ -24,6 +24,7 @@ imagesNote: |
     list (ngc-secret and suse-ai-pull-combined, the Application Collection credential for
     the Prometheus config reloader image), so keep suse-ai-pull-combined unless that image
     is mirrored too.
+controlPlanePullSecretGenerator: ""
 registrarLimitation: |
   Run:ai 2.26 limitation: the cluster install info needs "Service accounts edit" as
   well as "Cluster edit", and that set also lets the stored credential manage other

@@ -66,8 +66,12 @@ type ComponentRenderInputs struct {
 	ChartRepo    string `json:"chartRepo"`
 	ChartName    string `json:"chartName"`
 	ChartVersion string `json:"chartVersion"`
-	Namespace    string `json:"namespace"`
-	Vendor       string `json:"vendor"`
+	// ReleaseName is the effective Helm release name when the component overrides
+	// it (see digestReleaseName); omitted otherwise so existing components keep
+	// their digest. The default is derived from ChartName, which is hashed.
+	ReleaseName string `json:"releaseName,omitempty"`
+	Namespace   string `json:"namespace"`
+	Vendor      string `json:"vendor"`
 	// ExtraVendors is the sorted AdditionalPullSecretVendors; omitted when empty
 	// so existing components keep their digest.
 	ExtraVendors []string       `json:"additionalPullSecretVendors,omitempty"`

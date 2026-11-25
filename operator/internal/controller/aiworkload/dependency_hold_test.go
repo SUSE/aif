@@ -124,6 +124,28 @@ func (f *holdFixture) gitDigest(component string) string {
 	return d
 }
 
+// digestOf is component's current render digest on either strategy: the
+// HelmOp's label, or for GitOps the label on its published Bundle.
+func (f *holdFixture) digestOf(component string) string {
+	f.t.Helper()
+	if f.remote != "" {
+		return f.gitDigest(component)
+	}
+	ho := f.helmOp(component)
+	if ho == nil {
+		f.t.Fatalf("no HelmOp for %s", component)
+	}
+	return helmOpDigest(ho)
+}
+
+// settle stands in for Fleet: component's Bundle and BundleDeployment are
+// rolled out at its current render digest.
+func (f *holdFixture) settle(component string) {
+	f.t.Helper()
+	key := types.NamespacedName{Namespace: "fleet-local", Name: blueprintBundleName(f.w.Name, component)}
+	putBundleStatus(f.t, f.r, key, f.digestOf(component), 1, 0)
+}
+
 // certifyRenderedBundles stands in for Fleet: every fleet-local HelmOp gets a
 // Bundle fully rolled out at its current render digest.
 func certifyRenderedBundles(t *testing.T, r *AIWorkloadReconciler) {
@@ -416,6 +438,53 @@ func TestDependencyHold_UntouchedPreviousBundleDeploymentHeld(t *testing.T) {
 	f.reconcile()
 	if helmOpDigest(f.helmOp("cluster")) == helmOpDigest(before) {
 		t.Fatal("cluster must be released once control-plane's BundleDeployment belongs to the new render")
+	}
+}
+
+// A new render that changes only the prerequisite's release name must hold the
+// dependent until Fleet applies it, like any other change to the HelmOp spec:
+// until then the previous rollout's Fleet objects still look settled.
+func TestDependencyHold_ReleaseNameChangeHeld(t *testing.T) {
+	for _, strategy := range []aiplatformv1alpha1.AIWorkloadDeployStrategy{aiplatformv1alpha1.AIWorkloadDeployFleetBundle, aiplatformv1alpha1.AIWorkloadDeployGitOps} {
+		t.Run(string(strategy), func(t *testing.T) {
+			f := newHoldFixtureFor(t, strategy, []string{"control-plane"}, nil)
+			f.reconcile()
+			f.settle("control-plane")
+			f.reconcile()
+			f.settle("cluster")
+			f.reconcile()
+			if cond := f.ready(); cond == nil || cond.Reason != reasonReconciled {
+				t.Fatalf("expected the first rollout settled, got %+v", cond)
+			}
+
+			ctx := context.Background()
+			bp := &aiplatformv1alpha1.Blueprint{}
+			if err := f.r.Get(ctx, types.NamespacedName{Name: naming.BlueprintCRName("hold", "1.0.0")}, bp); err != nil {
+				t.Fatal(err)
+			}
+			for i := range bp.Spec.Components {
+				if bp.Spec.Components[i].ChartName == "control-plane" {
+					bp.Spec.Components[i].ReleaseName = "runai-backend"
+				}
+			}
+			if err := f.r.Update(ctx, bp); err != nil {
+				t.Fatal(err)
+			}
+			before := f.digestOf("control-plane")
+			f.reconcile()
+			if f.digestOf("control-plane") == before {
+				t.Fatal("the release name change did not change control-plane's render digest")
+			}
+			if cond := f.ready(); cond == nil || cond.Reason != "WaitingForDependencies" {
+				t.Fatalf("cluster released before Fleet applied control-plane's new release name, Ready = %+v", cond)
+			}
+
+			f.settle("control-plane")
+			f.reconcile()
+			if cond := f.ready(); cond == nil || cond.Reason == "WaitingForDependencies" {
+				t.Fatalf("cluster must be released once Fleet applied the new render, Ready = %+v", cond)
+			}
+		})
 	}
 }
 

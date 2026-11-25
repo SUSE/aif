@@ -455,10 +455,12 @@ Run:ai UI.
   that was silently overwritten before now takes effect on the next reconcile.
 - **The community NVIDIA RunAI OSS Blueprint hands no pull secret to the Run:ai
   cluster.** Its control plane hands the first `global.imagePullSecrets` entry to the
-  cluster as its registry credential, which would be `suse-ai-pull-combined`, so the
-  Blueprint sets `clusterService.config.imagePullSecret.enabled: false`. For a private
+  cluster as its registry credential, which would be `suse-ai-pull-combined`. The
+  Blueprint sets `clusterService.config.imagePullSecret.enabled: false`, and starts the
+  list with `runai-anonymous-pull`, an empty credential it creates, so turning the
+  hand-out on without setting a secret still hands out no credential. For a private
   registry, set `global.imagePullSecrets` and `keycloakx.imagePullSecrets` on
-  `control-plane`, and that setting to `true`.
+  `control-plane` to its pull secret, and that setting to `true`.
 - **Known limitation:** on downstream clusters the `prometheus-statsd-exporter`
   bundle can show `Modified` with "namespace.v1 runai is not owned by us". The
   Blueprint creates the `runai` namespace with its Pod Security labels, and the

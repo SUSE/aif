@@ -808,6 +808,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintHelmOp(
 		ChartRepo:    c.ChartRepo,
 		ChartName:    c.ChartName,
 		ChartVersion: c.ChartVersion,
+		ReleaseName:  digestReleaseName(c),
 		Namespace:    ns,
 		Vendor:       string(c.Vendor),
 		ExtraVendors: extraVendorStrings(c.AdditionalPullSecretVendors),
@@ -1473,6 +1474,7 @@ func (r *AIWorkloadReconciler) ensureBlueprintGitFile(
 		ChartRepo:    c.ChartRepo,
 		ChartName:    c.ChartName,
 		ChartVersion: c.ChartVersion,
+		ReleaseName:  digestReleaseName(c),
 		Namespace:    ns,
 		Vendor:       string(c.Vendor),
 		ExtraVendors: extraVendorStrings(c.AdditionalPullSecretVendors),
@@ -1938,6 +1940,17 @@ func componentReleaseName(c aiplatformv1alpha1.BlueprintComponent) string {
 		return c.ReleaseName
 	}
 	return c.ChartName
+}
+
+// digestReleaseName is the release name written to a HelmOp's spec when the
+// component overrides it, "" for the chart-name default. The render digest
+// hashes it: a HelmOp whose release name changed is a new render, and the
+// dependency hold must wait for Fleet to apply it.
+func digestReleaseName(c aiplatformv1alpha1.BlueprintComponent) string {
+	if c.ReleaseName == "" {
+		return ""
+	}
+	return capReleaseName(c.ReleaseName)
 }
 
 // buildComponentMatrix returns one sorted (component, cluster) cell per desired HelmOp key,

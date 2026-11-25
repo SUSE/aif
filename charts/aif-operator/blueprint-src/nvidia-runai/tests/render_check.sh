@@ -221,22 +221,59 @@ if [ "$(field control-plane vendor)" = "nvidia" ]; then
   check "the control plane hands ngc-secret to the cluster (STATIC_IMAGE_PULL_SECRET)" "$cp_out" \
     '.. | select(tag=="!!map" and has("secret")) | .secret | select(tag=="!!map" and .name=="ngc-secret") | .items[] | select(.path=="STATIC_IMAGE_PULL_SECRET")' 1
 else
-  # The operator's SUSE injector fills global.imagePullSecrets with suse-ai-pull-combined
-  # unless the Blueprint or the user set it (setPullSecretsUnlessChosen in blueprint.go);
-  # it holds every configured registry credential, so the control plane must not hand it out.
-  echo '{"global":{"imagePullSecrets":[{"name":"suse-ai-pull-combined"}]}}' > "$TMP/cp-injected.json"
-  helm template "$CP_RELEASE" "$CP_TGZ" -n runai-backend -f "$TMP/control-plane-values.json" -f "$TMP/cp-injected.json" > "$TMP/cp-default.yaml"
-  check "default install: the control plane hands no pull secret to the cluster" "$TMP/cp-default.yaml" \
-    'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="false")'
-  check "default install: no ConfigMap turns the hand-out on" "$TMP/cp-default.yaml" \
-    'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="true")' 0
-  # A private registry, set in the Values tab as the Blueprint's note describes; the operator keeps it.
-  echo '{"global":{"imagePullSecrets":[{"name":"private-registry"}]},"clusterService":{"config":{"imagePullSecret":{"enabled":true}}}}' > "$TMP/cp-private.json"
-  helm template "$CP_RELEASE" "$CP_TGZ" -n runai-backend -f "$TMP/control-plane-values.json" -f "$TMP/cp-private.json" > "$TMP/cp-private.yaml"
-  check "private registry: the control plane hands the selected secret to the cluster" "$TMP/cp-private.yaml" \
-    '.. | select(tag=="!!map" and has("secret")) | .secret | select(tag=="!!map" and .name=="private-registry") | .items[] | select(.path=="STATIC_IMAGE_PULL_SECRET")' 1
-  check "private registry: suse-ai-pull-combined is not handed to the cluster" "$TMP/cp-private.yaml" \
-    '.. | select(tag=="!!map" and has("secret")) | .secret | select(tag=="!!map" and .name=="suse-ai-pull-combined") | .items[] | select(.path=="STATIC_IMAGE_PULL_SECRET")' 0
+  # Renders the control plane with a Values-tab input merged over the Blueprint's values
+  # (maps merge, lists replace) and the values the operator's SUSE injector then adds: it
+  # fills an empty imagePullSecrets or global.imagePullSecrets with suse-ai-pull-combined,
+  # which holds every configured registry credential (setPullSecretsUnlessChosen in
+  # operator/internal/controller/aiworkload/blueprint.go). That secret must never be what
+  # the control plane hands to the cluster (STATIC_IMAGE_PULL_SECRET).
+  oss_case() {
+    local name="$1" input="$2"
+    python3 -I -B - "$TMP/control-plane-values.json" "$input" "$TMP/cp-$name.json" <<'EOF'
+import json, sys
+base, override, out = sys.argv[1], json.loads(sys.argv[2]), sys.argv[3]
+
+
+def merge(dst, src):
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            merge(dst[k], v)
+        else:
+            dst[k] = v
+
+
+values = json.load(open(base))
+merge(values, override)
+combined = [{"name": "suse-ai-pull-combined"}]
+for parent in (values, values.setdefault("global", {})):
+    if not parent.get("imagePullSecrets"):
+        parent["imagePullSecrets"] = combined
+json.dump(values, open(out, "w"))
+EOF
+    helm template "$CP_RELEASE" "$CP_TGZ" -n runai-backend -f "$TMP/cp-$name.json" > "$TMP/cp-$name.yaml"
+    echo "$TMP/cp-$name.yaml"
+  }
+  handed_out() { echo ".. | select(tag==\"!!map\" and has(\"secret\")) | .secret | select(tag==\"!!map\" and .name==\"$1\") | .items[] | select(.path==\"STATIC_IMAGE_PULL_SECRET\")"; }
+  hand_out_on='{"clusterService":{"config":{"imagePullSecret":{"enabled":true}}}}'
+
+  check "overlay creates runai-anonymous-pull with no credential" "$cp_out" \
+    'select(.kind=="Secret" and .metadata.name=="runai-anonymous-pull" and .metadata.namespace=="runai-backend" and .type=="kubernetes.io/dockerconfigjson" and (.data[".dockerconfigjson"] | @base64d) == "{\"auths\":{}}")'
+
+  out="$(oss_case default '{}')"
+  check "default install: the hand-out is off" "$out" 'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="false")'
+  check "default install: no ConfigMap turns the hand-out on" "$out" 'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="true")' 0
+  check "default install: suse-ai-pull-combined is not the cluster's credential" "$out" "$(handed_out suse-ai-pull-combined)" 0
+
+  # Hand-out turned on without setting a secret: the empty credential is handed out.
+  out="$(oss_case hand-out-only "$hand_out_on")"
+  check "hand-out on, no secret set: the hand-out is on" "$out" 'select(.kind=="ConfigMap" and .data.IMAGE_PULL_SECRET_ENABLED=="true")'
+  check "hand-out on, no secret set: runai-anonymous-pull is handed out" "$out" "$(handed_out runai-anonymous-pull)" 1
+  check "hand-out on, no secret set: suse-ai-pull-combined is not handed out" "$out" "$(handed_out suse-ai-pull-combined)" 0
+
+  # A private registry, set in the Values tab as the Blueprint's note describes.
+  out="$(oss_case private-registry '{"global":{"imagePullSecrets":[{"name":"private-registry"}]},"clusterService":{"config":{"imagePullSecret":{"enabled":true}}}}')"
+  check "private registry: the selected secret is handed out" "$out" "$(handed_out private-registry)" 1
+  check "private registry: suse-ai-pull-combined is not handed out" "$out" "$(handed_out suse-ai-pull-combined)" 0
 fi
 
 echo "embedded stored size: chart $cp_chart + overlay $cp_overlay = $cp_total B; limit $LIMIT B; margin $((LIMIT - cp_total)) B"
