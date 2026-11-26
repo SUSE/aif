@@ -179,8 +179,47 @@ jobs:
         run: |
           set -euo pipefail
 
-          LATEST_UC_RKE2_VERSION=$(skopeo list-tags docker://registry.suse.com/elemental/rke2/rke2-manifest | jq -r '.Tags[] | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.[0-9]+$"))' | sort -V | tail -n 1)
-          export CORE_PLATFORM_IMAGE="registry.suse.com/elemental/rke2/rke2-manifest:${LATEST_UC_RKE2_VERSION}"
+          MANIFEST=uc-release-manifest/release_manifest.yaml
+
+          # Pick the newest rke2-manifest whose Kubernetes version satisfies the
+          # kubeVersion constraint of the Rancher chart pinned in the manifest,
+          # so a core platform bump never outruns Rancher's supported range.
+          RANCHER_VERSION=$(yq -r '.components.helm.charts[] | select(.chart == "rancher") | .version' "$MANIFEST")
+          RANCHER_REPO=$(yq -r '.components.helm.charts[] | select(.chart == "rancher") | .repository' "$MANIFEST")
+          RANCHER_REPO_URL=$(RANCHER_REPO="$RANCHER_REPO" yq -r '.components.helm.repositories[] | select(.name == strenv(RANCHER_REPO)) | .url' "$MANIFEST")
+          RANCHER_KUBE_VERSION=$(curl -fsSL "${RANCHER_REPO_URL%/}/index.yaml" \
+            | RANCHER_VERSION="$RANCHER_VERSION" yq -r '.entries.rancher[] | select(.version == strenv(RANCHER_VERSION)) | .kubeVersion // ""')
+          if [ -z "$RANCHER_KUBE_VERSION" ]; then
+            echo "::error::Could not read kubeVersion for rancher ${RANCHER_VERSION} from ${RANCHER_REPO_URL}"
+            exit 1
+          fi
+          echo "Rancher ${RANCHER_VERSION} requires kubeVersion: ${RANCHER_KUBE_VERSION}"
+
+          # Let helm evaluate the constraint (same semver rules it applies at
+          # install time) against a throwaway chart carrying that kubeVersion.
+          PROBE_CHART=$(mktemp -d)
+          RANCHER_KUBE_VERSION="$RANCHER_KUBE_VERSION" yq -n '
+            .apiVersion = "v2" | .name = "kube-version-probe" | .version = "0.0.0" |
+            .kubeVersion = strenv(RANCHER_KUBE_VERSION)
+          ' > "$PROBE_CHART/Chart.yaml"
+
+          UC_RKE2_VERSION=""
+          for tag in $(skopeo list-tags docker://registry.suse.com/elemental/rke2/rke2-manifest \
+                        | jq -r '.Tags[] | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.[0-9]+$"))' \
+                        | sort -rV); do
+            if helm template kube-version-probe "$PROBE_CHART" --kube-version "v${tag%%-*}" >/dev/null 2>&1; then
+              UC_RKE2_VERSION="$tag"
+              break
+            fi
+            echo "Skipping rke2-manifest:${tag} (Kubernetes ${tag%%-*} does not satisfy ${RANCHER_KUBE_VERSION})"
+          done
+          rm -rf "$PROBE_CHART"
+          if [ -z "$UC_RKE2_VERSION" ]; then
+            echo "::error::No rke2-manifest tag satisfies rancher ${RANCHER_VERSION} kubeVersion ${RANCHER_KUBE_VERSION}"
+            exit 1
+          fi
+          echo "Selected rke2-manifest:${UC_RKE2_VERSION}"
+          export CORE_PLATFORM_IMAGE="registry.suse.com/elemental/rke2/rke2-manifest:${UC_RKE2_VERSION}"
 
           # The SUSE AI Factory release version and the aif-operator/aif-ui chart
           # entries move in lockstep with the operator version. yq targets the
@@ -190,10 +229,10 @@ jobs:
             .metadata.version = strenv(VERSION) |
             (.components.helm.charts[] | select(.chart == "aif-operator" or .chart == "aif-ui")).version = strenv(VERSION) |
             .corePlatform.image = strenv(CORE_PLATFORM_IMAGE)
-          ' uc-release-manifest/release_manifest.yaml
+          ' "$MANIFEST"
 
           echo "Bumped release manifest to $VERSION"
-          git status --porcelain uc-release-manifest/release_manifest.yaml
+          git status --porcelain "$MANIFEST"
 
       - name: Commit and open PR
         shell: bash
