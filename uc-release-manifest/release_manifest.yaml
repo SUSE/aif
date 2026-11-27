@@ -68,7 +68,7 @@ components:
           storageClass:
             defaultClass: true
       # SUSE Storage
-      # NOTE: DO NOT use this in conjunctin with local-path-provisioner as the both
+      # NOTE: DO NOT use this in conjunction with local-path-provisioner as the both
       # are configured as default storage class.
       - chart: "suse-storage"
         version: "1.12.2"
