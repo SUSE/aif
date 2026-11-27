@@ -4,18 +4,18 @@ metadata:
   version: 2.5.0-dev.2
   creationDate: "2026-07-15"
 corePlatform:
-  image: registry.suse.com/elemental/rke2/rke2-manifest:1.36.4-13.1
+  image: registry.suse.com/elemental/rke2/rke2-manifest:1.36.6-20.1
 components:
   systemd:
     extensions:
       # NOTE (fdegir): Longhorn/SUSE Storage can't be installed without open-iscsi
       # package so we have to use the only version that has sysext image
       - name: "suse-storage"
-        image: "registry.suse.com/elemental/longhorn:4.111-4.79"
+        image: "registry.suse.com/elemental/longhorn:6.33-6.61"
   helm:
     charts:
       - chart: "gpu-operator"
-        version: "v26.3.1"
+        version: "v26.7.3"
         namespace: "gpu-operator"
         repository: "nvidia"
         values:
@@ -28,7 +28,7 @@ components:
       # Rancher prime docs recommend cert-manager
       # https://documentation.suse.com/cloudnative/rancher-manager/v2.15/en/installation-and-upgrade/quick-start/deploy-rancher/helm-cli.html#_install_rancher_with_helm
       - chart: "cert-manager"
-        version: "v1.21.0"
+        version: "v1.21.3"
         namespace: "cert-manager"
         repository: "jetstack"
         values:
@@ -36,7 +36,7 @@ components:
             enabled: true
       # Latest Rancher version as of today
       - chart: "rancher"
-        version: "2.15.3"
+        version: "2.15.4"
         namespace: "cattle-system"
         repository: "rancher-prime"
         dependsOn:
@@ -65,13 +65,13 @@ components:
           global:
             imagePullSecrets:
               - name: "application-collection"
-            storageClass:
-              defaultClass: true
+          storageClass:
+            defaultClass: true
       # SUSE Storage
-      # NOTE: DO NOT use this in conjunctin with local-path-provisioner as the both
+      # NOTE: DO NOT use this in conjunction with local-path-provisioner as the both
       # are configured as default storage class.
       - chart: "suse-storage"
-        version: "1.11.3"
+        version: "1.12.2"
         namespace: "longhorn-system"
         repository: "application-collection"
         values:
